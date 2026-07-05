@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSPETSTOP Custom Aquarium Calculator WEB version</title>
+  <style>
+    :root {
+      --page-bg: #f4f7fb;
+      --panel-bg: #ffffff;
+      --panel-border: #d7e0ef;
+      --text-main: #1b355e;
+      --text-muted: #61738f;
+      --input-border: #c7d3e6;
+      --primary: #1d4f91;
+      --primary-strong: #173f74;
+      --success: #1e9a59;
+      --neutral: #7b8596;
+      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+      color: var(--text-main);
+    }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .title {
+      margin: 0 0 16px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+      min-height: 387px;
+    }
+
+    .card h2,
+    .drawing-card h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .field,
+    .checkbox-row,
+    .triple-field,
+    .inline-field {
+      margin-bottom: 10px;
+    }
+
+    .field label,
+    .group-label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #253f66;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      padding: 7px 10px;
+      font-size: 12px;
+      background: #fff;
+      color: #19345d;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: 2px solid rgba(29, 79, 145, 0.14);
+      border-color: #87a8d8;
+    }
+
+    textarea {
+      min-height: 82px;
+      resize: vertical;
+    }
+
+    .checkbox-stack {
+      display: grid;
+      gap: 6px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #213a61;
+    }
+
+    .checkbox-row input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+    }
+
+    .triple-field {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .inline-field {
+      display: grid;
+      grid-template-columns: 1fr 100px;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .inline-field .field {
+      margin-bottom: 0;
+    }
+
+    .actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 16px 0 14px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 4px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      transition: transform 120ms ease, background 120ms ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: var(--primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-strong);
+    }
+
+    .btn-success {
+      background: var(--success);
+    }
+
+    .btn-neutral {
+      background: var(--neutral);
+    }
+
+    .summary {
+      min-width: 280px;
+    }
+
+    .summary-line {
+      font-size: 13px;
+      line-height: 1.4;
+      color: #20395f;
+    }
+
+    .summary-line strong {
+      color: #132d52;
+    }
+
+    .summary-small {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .status-banner {
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: #eef5ff;
+      color: #1f3f6a;
+      font-size: 12px;
+      line-height: 1.4;
+      box-shadow: var(--shadow);
+    }
+
+    .status-banner.hidden {
+      display: none;
+    }
+
+    .status-banner.warning {
+      background: #fff7e8;
+      border-color: #e9cb89;
+      color: #785212;
+    }
+
+    .status-banner.error {
+      background: #fff0f0;
+      border-color: #e0a8a8;
+      color: #8a2626;
+    }
+
+    .drawing-card,
+    details {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+    }
+
+    .drawing-card {
+      padding: 10px 12px 14px;
+    }
+
+    .canvas-wrap {
+      border: 1px solid var(--panel-border);
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      min-height: 260px;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 260px;
+    }
+
+    details {
+      margin-top: 14px;
+      padding: 10px 12px;
+    }
+
+    details summary {
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    pre {
+      margin: 10px 0 0;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #29486f;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 1060px) {
+      .card-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        padding: 14px;
+      }
+
+      .card-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .actions-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .inline-field {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="title">RSPETSTOP Custom Aquarium Calculator WEB version</h1>
+
+    <div class="card-grid">
+      <section class="card">
+        <h2>Main dimensions</h2>
+
+        <div class="field">
+          <label for="length">Length</label>
+          <input id="length" type="number" value="24" step="0.01">
+        </div>
+
+        <div class="field">
+          <label for="width">Width</label>
+          <input id="width" type="number" value="12" step="0.01">
+        </div>
+
+        <div class="field">
+          <label for="height">Height</label>
+          <input id="height" type="number" value="12" step="0.01">
+        </div>
+
+        <div class="field">
+          <label for="unit">Unit of Measure</label>
+          <select id="unit">
+            <option>Inches</option>
+            <option>CM</option>
+            <option>Ft</option>
+            <option>MM</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="option">Option</label>
+          <select id="option">
+            <option>Aquarium only</option>
+            <option>Undersump</option>
+            <option>Overheadsump</option>
+            <option>Complete setup</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="glass">Glass Thickness</label>
+          <select id="glass">
+            <option>3mm</option>
+            <option selected>6mm</option>
+            <option>10mm</option>
+            <option>12mm</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="sealant">Sealant</label>
+          <select id="sealant">
+            <option value="">-- select --</option>
+            <option>Clear</option>
+            <option>Black</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Options</h2>
+        <div class="checkbox-stack">
+          <label class="checkbox-row"><input id="aio" type="checkbox">AIO</label>
+          <label class="checkbox-row"><input id="lowIron" type="checkbox">Low Iron</label>
+          <label class="checkbox-row"><input id="tempered" type="checkbox">Tempered Glass</label>
+          <label class="checkbox-row"><input id="rimless" type="checkbox">Rimless</label>
+          <label class="checkbox-row"><input id="highStrip" type="checkbox">High Strip</label>
+          <label class="checkbox-row"><input id="sumpEnabled" type="checkbox">Filtration sump</label>
+          <label class="checkbox-row"><input id="aquascape" type="checkbox">Aquascape service</label>
+          <label class="checkbox-row"><input id="enclosure" type="checkbox">Enclosure</label>
+          <label class="checkbox-row"><input id="standEnabled" type="checkbox">Stand</label>
+        </div>
+
+        <div id="standCalcWrap" class="hidden" style="margin-top: 12px;">
+          <div class="field">
+            <label for="standLayers">Stand Layers</label>
+            <input id="standLayers" type="number" value="2" min="2" step="1">
+          </div>
+
+          <div class="field">
+            <label for="standTubular">Stand Tubular</label>
+            <select id="standTubular">
+              <option value="1x1">1 x 1</option>
+              <option value="1.5x1.5">1 1/2 x 1 1/2</option>
+              <option value="2x2">2 x 2</option>
+            </select>
+          </div>
+
+          <div class="checkbox-stack">
+            <label class="checkbox-row"><input id="standStainless" type="checkbox">Stainless</label>
+            <label class="checkbox-row"><input id="standCabinet" type="checkbox">Cabinet</label>
+            <label class="checkbox-row"><input id="standSumpHolder" type="checkbox">Sump Holder</label>
+          </div>
+
+          <div id="standSumpWidthWrap" class="field hidden">
+            <label for="standSumpWidth">Sump Holder Width</label>
+            <input id="standSumpWidth" type="number" value="0" min="0" step="0.01">
+          </div>
+
+          <div id="standInfo" class="summary-small">Stand uses the aquarium length and width as its footprint.</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Sump &amp; extras</h2>
+
+        <div id="sumpFieldsWrap">
+          <div class="field">
+            <label for="sumpType">Sump Type</label>
+            <select id="sumpType">
+              <option>Undersump</option>
+              <option>Overhead Sump</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <span class="group-label">Sump Dimensions</span>
+            <div class="triple-field">
+              <input id="sumpLength" type="number" value="12" step="0.01" placeholder="L">
+              <input id="sumpWidth" type="number" value="12" step="0.01" placeholder="W">
+              <input id="sumpHeight" type="number" value="12" step="0.01" placeholder="H">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="sumpUnit">Sump UOM</label>
+            <select id="sumpUnit">
+              <option>Inches</option>
+              <option>CM</option>
+              <option>Ft</option>
+              <option>MM</option>
+            </select>
+          </div>
+
+          <div class="checkbox-stack">
+            <label class="checkbox-row"><input id="piping" type="checkbox">Set of Piping</label>
+            <label class="checkbox-row"><input id="overflowBox" type="checkbox">Overflow Box</label>
+            <label class="checkbox-row"><input id="filterMedias" type="checkbox">Filter medias</label>
+            <label class="checkbox-row"><input id="submersibleLight" type="checkbox">Submersible Light</label>
+            <label class="checkbox-row"><input id="submersiblePump" type="checkbox">Submersible Pump</label>
+            <label class="checkbox-row"><input id="allumTopCover" type="checkbox">Allum Top Cover</label>
+          </div>
+        </div>
+
+        <div id="sumpPriceInputs" class="hidden" style="margin-top: 12px;">
+          <div class="inline-field">
+            <div class="field">
+              <label for="lightPrice">Light Price</label>
+              <input id="lightPrice" type="number" value="0" step="0.01">
+            </div>
+            <div class="field">
+              <label for="pumpPrice">Pump Price</label>
+              <input id="pumpPrice" type="number" value="0" step="0.01">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Stickers &amp; notes</h2>
+
+        <div class="checkbox-stack">
+          <label class="checkbox-row"><input id="stickerBackground" type="checkbox">Sticker Background</label>
+          <label id="allSidesRow" class="checkbox-row hidden"><input id="allSides" type="checkbox">All Sides</label>
+        </div>
+
+        <div id="backgroundTypeWrap" class="field hidden">
+          <label for="stickerBackgroundType">Sticker Background Type</label>
+          <select id="stickerBackgroundType">
+            <option>Plain Sticker</option>
+            <option>Sticker Tiles</option>
+          </select>
+        </div>
+
+        <div class="checkbox-stack">
+          <label class="checkbox-row"><input id="stickerBottom" type="checkbox">Sticker Bottom</label>
+        </div>
+
+        <div id="bottomTypeWrap" class="field hidden">
+          <label for="stickerBottomType">Sticker Bottom Type</label>
+          <select id="stickerBottomType">
+            <option>Plain Sticker</option>
+            <option>Sticker Tiles</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="specialNote">Special note</label>
+          <textarea id="specialNote"></textarea>
+        </div>
+      </section>
+    </div>
+
+    <div class="actions-row">
+      <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
+      <button id="addToSale" class="btn btn-success" type="button">Add to sale</button>
+      <button id="closeButton" class="btn btn-neutral" type="button">Close</button>
+
+      <div class="summary">
+        <div id="volumeLine" class="summary-line"><strong>Volume:</strong> loading...</div>
+        <div id="priceLine" class="summary-line"><strong>Price:</strong> waiting for calculation</div>
+        <div id="dimensionsLine" class="summary-small">Dimensions (in): -</div>
+      </div>
+    </div>
+
+    <div id="safetyBanner" class="status-banner hidden"></div>
+
+    <section class="drawing-card">
+      <h2>Aquarium Drawing</h2>
+      <div class="canvas-wrap">
+        <canvas id="aquariumCanvas" width="1060" height="260"></canvas>
+      </div>
+    </section>
+
+  </div>
+
+  <script id="glassPricingFallback" type="application/json">
+[
+  { "UOM": "MM", "Units": "10", "PricePerSqFt": 290 },
+    { "UOM": "MM", "Units": "12", "PricePerSqFt": 350 },
+    { "UOM": "MM", "Units": "3", "PricePerSqFt": 65 },
+    { "UOM": "MM", "Units": "6", "PricePerSqFt": 185 }
+]
+  </script>
+
+  <script src="./custom-aquarium-calculator.js"></script>
+  <script>
+    var calculateButton = document.getElementById('calculate');
+    var addToSaleButton = document.getElementById('addToSale');
+    var closeButton = document.getElementById('closeButton');
+    var volumeLine = document.getElementById('volumeLine');
+    var priceLine = document.getElementById('priceLine');
+    var dimensionsLine = document.getElementById('dimensionsLine');
+    var safetyBanner = document.getElementById('safetyBanner');
+    var canvas = document.getElementById('aquariumCanvas');
+    var context = canvas.getContext('2d');
+    var glassPricingSetupRows = [];
+    var lastResult = null;
+    var suppressUiSync = false;
+    var ruleNoticeState = {
+      temperedMandatory: false,
+      aioGlassAutoFix: false,
+      lowIronGlassAutoFix: false,
+      lastAutoNoticeSignature: ''
+    };
+
+    function byId(id) {
+      return document.getElementById(id);
+    }
+
+    function stickerTypeValue(id) {
+      return byId(id).value === 'Sticker Tiles' ? 'tiles' : 'plain';
+    }
+
+    function round1(value) {
+      return Math.round((Number(value) || 0) * 10) / 10;
+    }
+
+    function parsePositiveNumber(id) {
+      var value = Number(byId(id).value);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    }
+
+    function convertInchesToSelectedUnit(inches, unit) {
+      var normalized = String(unit || 'Inches');
+      if (normalized === 'CM') {
+        return (inches * 2.54).toFixed(1);
+      }
+      if (normalized === 'MM') {
+        return (inches * 25.4).toFixed(1);
+      }
+      if (normalized === 'Ft') {
+        return (inches / 12).toFixed(3);
+      }
+      return inches.toFixed(0);
+    }
+
+    function getMainLengthInFeet() {
+      var length = parsePositiveNumber('length');
+      if (!length) {
+        return null;
+      }
+
+      var uom = byId('unit').value;
+      if (uom === 'CM') {
+        return length / 30.48;
+      }
+      if (uom === 'MM') {
+        return length / 304.8;
+      }
+      if (uom === 'Ft') {
+        return length;
+      }
+      return length / 12;
+    }
+
+    function trySetFieldValue(id, value) {
+      if (value === null || value === undefined || value === '') {
+        return;
+      }
+      byId(id).value = value;
+    }
+
+    function collectAutoNotices(result) {
+      var notices = [];
+
+      if (result && result.safetyNotice && result.safetyNotice.message) {
+        notices.push(result.safetyNotice);
+      }
+
+      if (result && result.standNotice && result.standNotice.message) {
+        notices.push(result.standNotice);
+      }
+
+      return notices;
+    }
+
+    function enforceOptionRules(showAlerts) {
+      if (suppressUiSync) {
+        return;
+      }
+
+      suppressUiSync = true;
+      try {
+        var optionValue = byId('option').value;
+        var aio = byId('aio');
+        var enclosure = byId('enclosure');
+        var lowIron = byId('lowIron');
+        var tempered = byId('tempered');
+        var glass = byId('glass');
+        var sumpEnabled = byId('sumpEnabled');
+        var previousTemperedMandatory = ruleNoticeState.temperedMandatory;
+        var width = parsePositiveNumber('width');
+        var height = parsePositiveNumber('height');
+        var temperedMandatory = Boolean(width && width >= 36 || height && height >= 36);
+        var isCompleteSetup = optionValue === 'Complete setup';
+
+        ruleNoticeState.temperedMandatory = temperedMandatory;
+
+        if (optionValue === 'Undersump') {
+          var underDefault = convertInchesToSelectedUnit(18, byId('unit').value);
+          trySetFieldValue('width', underDefault);
+          trySetFieldValue('height', underDefault);
+        } else if (optionValue === 'Overheadsump') {
+          var overheadDefault = convertInchesToSelectedUnit(6, byId('unit').value);
+          trySetFieldValue('width', overheadDefault);
+          trySetFieldValue('height', overheadDefault);
+        }
+
+        if (isCompleteSetup) {
+          sumpEnabled.checked = true;
+          byId('sumpType').value = 'Overhead Sump';
+        }
+
+        if (sumpEnabled.checked) {
+          aio.disabled = true;
+          enclosure.disabled = true;
+          if (aio.checked) {
+            aio.checked = false;
+            if (showAlerts) {
+              window.alert('AIO cannot be selected when Filtration sump is enabled.');
+            }
+          }
+          if (enclosure.checked) {
+            enclosure.checked = false;
+            if (showAlerts) {
+              window.alert('Enclosure cannot be selected when Filtration sump is enabled.');
+            }
+          }
+        } else {
+          aio.disabled = false;
+          enclosure.disabled = false;
+        }
+
+        if (aio.checked && enclosure.checked) {
+          enclosure.checked = false;
+          if (showAlerts) {
+            window.alert('AIO and Enclosure cannot both be selected.');
+          }
+        }
+
+        if (lowIron.checked) {
+          tempered.checked = true;
+          tempered.disabled = true;
+        } else {
+          tempered.disabled = temperedMandatory;
+        }
+
+        if (temperedMandatory) {
+          if (!tempered.checked && showAlerts && !previousTemperedMandatory) {
+            window.alert('Tempered glass is mandatory when the custom aquarium width or height reaches 36 inches or more.');
+          }
+          tempered.checked = true;
+        }
+
+        if (aio.checked && glass.value === '3mm') {
+          glass.value = '6mm';
+          if (showAlerts && !ruleNoticeState.aioGlassAutoFix) {
+            window.alert('AIO setup is not allowed with 3mm glass. Glass thickness has been set to 6mm.');
+          }
+          ruleNoticeState.aioGlassAutoFix = true;
+        } else {
+          ruleNoticeState.aioGlassAutoFix = false;
+        }
+
+        if (lowIron.checked && tempered.checked && (glass.value === '3mm' || glass.value === '6mm')) {
+          glass.value = '10mm';
+          if (showAlerts && !ruleNoticeState.lowIronGlassAutoFix) {
+            window.alert('Low Iron Tempered glass must be at least 10mm. Glass thickness has been set to 10mm.');
+          }
+          ruleNoticeState.lowIronGlassAutoFix = true;
+        } else {
+          ruleNoticeState.lowIronGlassAutoFix = false;
+        }
+
+        byId('sumpUnit').value = byId('unit').value;
+
+        if (sumpEnabled.checked) {
+          var sumpType = byId('sumpType').value;
+          var sumpDefault = convertInchesToSelectedUnit(sumpType === 'Undersump' ? 18 : 6, byId('sumpUnit').value);
+          trySetFieldValue('sumpWidth', sumpDefault);
+          trySetFieldValue('sumpHeight', sumpDefault);
+          if (sumpType === 'Overhead Sump') {
+            byId('sumpLength').value = byId('length').value;
+          }
+        }
+      } finally {
+        suppressUiSync = false;
+      }
+    }
+
+    function drawPlaceholder(message) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.strokeStyle = '#d7e0ef';
+      context.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+      context.fillStyle = '#6a7a93';
+      context.font = '13px Segoe UI';
+      context.fillText(message, 20, 28);
+    }
+
+    function drawAquarium(result) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.strokeStyle = '#d7e0ef';
+      context.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+
+      if (!result || !result.normalized) {
+        drawPlaceholder('Run a calculation to render the aquarium preview.');
+        return;
+      }
+
+      var dims = result.normalized;
+      var lengthIn = Math.max(1, Number(dims.lengthInches) || 1);
+      var widthIn = Math.max(1, Number(dims.widthInches) || 1);
+      var heightIn = Math.max(1, Number(dims.heightInches) || 1);
+      var showSump = Boolean(dims.sump);
+      var showStand = byId('standEnabled').checked;
+      var showHighStrip = byId('highStrip').checked;
+      var showRimless = byId('rimless').checked;
+
+      var baseX = 70;
+      var baseY = 188;
+      var scale = Math.min(5.4, Math.max(2.1, 240 / Math.max(lengthIn, widthIn, heightIn)));
+      var frontWidth = lengthIn * scale;
+      var frontHeight = heightIn * scale;
+      var depth = Math.max(28, widthIn * scale * 0.38);
+      var frontLeft = baseX;
+      var frontTop = baseY - frontHeight;
+      var backTop = frontTop - depth * 0.48;
+
+      context.fillStyle = '#dcecff';
+      context.fillRect(frontLeft, frontTop, frontWidth, frontHeight);
+
+      context.beginPath();
+      context.moveTo(frontLeft, frontTop);
+      context.lineTo(frontLeft + depth, backTop);
+      context.lineTo(frontLeft + depth + frontWidth, backTop);
+      context.lineTo(frontLeft + frontWidth, frontTop);
+      context.closePath();
+      context.fillStyle = '#d3d7d6';
+      context.fill();
+
+      context.beginPath();
+      context.moveTo(frontLeft + frontWidth, frontTop);
+      context.lineTo(frontLeft + frontWidth + depth, backTop);
+      context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight);
+      context.lineTo(frontLeft + frontWidth, frontTop + frontHeight);
+      context.closePath();
+      context.fillStyle = '#ebf3fb';
+      context.fill();
+
+      context.strokeStyle = '#334d68';
+      context.lineWidth = 2;
+      context.strokeRect(frontLeft, frontTop, frontWidth, frontHeight);
+      context.beginPath();
+      context.moveTo(frontLeft, frontTop);
+      context.lineTo(frontLeft + depth, backTop);
+      context.lineTo(frontLeft + depth + frontWidth, backTop);
+      context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight);
+      context.lineTo(frontLeft + frontWidth, frontTop + frontHeight);
+      context.stroke();
+
+      if (showHighStrip) {
+        context.fillStyle = '#b84040';
+        context.fillRect(frontLeft + 6, frontTop + 8, Math.max(24, frontWidth - 12), 8);
+      }
+
+      if (!showRimless) {
+        context.fillStyle = '#52606f';
+        context.fillRect(frontLeft - 1, frontTop - 3, frontWidth + 2, 5);
+      }
+
+      if (showStand) {
+        var standTop = baseY + 8;
+        context.strokeStyle = '#7f5631';
+        context.lineWidth = 4;
+        context.strokeRect(frontLeft + 10, standTop, Math.max(54, frontWidth - 20), 30);
+        context.beginPath();
+        context.moveTo(frontLeft + 28, standTop);
+        context.lineTo(frontLeft + 28, standTop + 30);
+        context.moveTo(frontLeft + frontWidth - 28, standTop);
+        context.lineTo(frontLeft + frontWidth - 28, standTop + 30);
+        context.stroke();
+      }
+
+      if (showSump) {
+        var overhead = byId('sumpType').value === 'Overhead Sump';
+        var sumpTop = overhead ? backTop - 26 : baseY + 24;
+        var sumpHeight = 22;
+        var sumpWidth = Math.max(56, frontWidth * 0.55);
+        var sumpLeft = frontLeft + ((frontWidth - sumpWidth) / 2);
+
+        context.fillStyle = '#f5fbff';
+        context.strokeStyle = '#507193';
+        context.lineWidth = 2;
+        context.fillRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
+        context.strokeRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
+        context.beginPath();
+        context.moveTo(frontLeft + frontWidth / 2, overhead ? frontTop : baseY);
+        context.lineTo(frontLeft + frontWidth / 2, overhead ? sumpTop + sumpHeight : sumpTop);
+        context.stroke();
+      }
+
+      context.fillStyle = '#213b64';
+      context.font = '12px Segoe UI';
+      context.fillText('Length: ' + round1(lengthIn) + '"', frontLeft + 20, baseY + 18);
+      context.fillText('Height: ' + round1(heightIn) + '"', frontLeft - 48, frontTop + frontHeight / 2);
+      context.fillText('Width: ' + round1(widthIn) + '"', frontLeft + frontWidth + 30, frontTop + frontHeight * 0.58);
+    }
+
+    function setVisibilityState() {
+      var sumpEnabled = byId('sumpEnabled').checked;
+      var backgroundEnabled = byId('stickerBackground').checked;
+      var bottomEnabled = byId('stickerBottom').checked;
+      var standEnabled = byId('standEnabled').checked;
+      var anyPumpOrLight = byId('submersibleLight').checked || byId('submersiblePump').checked;
+      var selectedOption = byId('option').value;
+
+      if (selectedOption === 'Complete setup') {
+        byId('sumpEnabled').checked = true;
+        byId('sumpType').value = 'Overhead Sump';
+        sumpEnabled = true;
+      }
+
+      byId('sumpFieldsWrap').style.opacity = sumpEnabled ? '1' : '0.42';
+      byId('sumpFieldsWrap').style.pointerEvents = sumpEnabled ? 'auto' : 'none';
+      byId('sumpPriceInputs').classList.toggle('hidden', !sumpEnabled || !anyPumpOrLight);
+      byId('allSidesRow').classList.toggle('hidden', !backgroundEnabled);
+      byId('backgroundTypeWrap').classList.toggle('hidden', !backgroundEnabled);
+      byId('bottomTypeWrap').classList.toggle('hidden', !bottomEnabled);
+      byId('standCalcWrap').classList.toggle('hidden', !standEnabled);
+      byId('standSumpWidthWrap').classList.toggle('hidden', !standEnabled || !byId('standSumpHolder').checked);
+    }
+
+    function buildPayload() {
+      return {
+        length: byId('length').value,
+        width: byId('width').value,
+        height: byId('height').value,
+        unit: byId('unit').value,
+        option: byId('option').value,
+        glassThickness: byId('glass').value,
+        temperedGlass: byId('tempered').checked,
+        lowIron: byId('lowIron').checked,
+        aio: byId('aio').checked,
+        rimless: byId('rimless').checked,
+        highStrip: byId('highStrip').checked,
+        aquascapeService: byId('aquascape').checked,
+        enclosure: byId('enclosure').checked,
+        filtrationSump: {
+          enabled: byId('sumpEnabled').checked,
+          type: byId('sumpType').value,
+          length: byId('sumpLength').value,
+          width: byId('sumpWidth').value,
+          height: byId('sumpHeight').value,
+          unit: byId('sumpUnit').value,
+          filterMedias: byId('filterMedias').checked,
+          piping: byId('piping').checked,
+          overflowBox: byId('overflowBox').checked,
+          allumTopCover: byId('allumTopCover').checked,
+          lightPrice: byId('submersibleLight').checked ? byId('lightPrice').value : 0,
+          pumpPrice: byId('submersiblePump').checked ? byId('pumpPrice').value : 0
+        },
+        stand: {
+          enabled: byId('standEnabled').checked,
+          layers: byId('standLayers').value,
+          tubular: byId('standTubular').value,
+          stainless: byId('standStainless').checked,
+          cabinet: byId('standCabinet').checked,
+          sumpHolder: byId('standSumpHolder').checked,
+          sumpWidth: byId('standSumpHolder').checked ? byId('standSumpWidth').value : 0,
+          unit: byId('unit').value
+        },
+        stickerBackground: {
+          enabled: byId('stickerBackground').checked,
+          allSides: byId('allSides').checked,
+          type: stickerTypeValue('stickerBackgroundType')
+        },
+        stickerBottom: {
+          enabled: byId('stickerBottom').checked,
+          type: stickerTypeValue('stickerBottomType')
+        },
+        specialNote: byId('specialNote').value,
+        glassPricingSetupRows: glassPricingSetupRows,
+        glassPricingUom: 'MM',
+        stickerPricesPerSqFt: {
+          plain: 70,
+          tiles: 90
+        }
+      };
+    }
+
+    function getAutoNoticeSignature(notices) {
+      if (!Array.isArray(notices) || notices.length === 0) {
+        return '';
+      }
+
+      return notices.map(function (notice) {
+        return String(notice.title || '') + '|' + String(notice.message || '') + '|' + String(notice.updatedGlassThickness || notice.updatedTubular || '');
+      }).join('||');
+    }
+
+    function syncCalculatedStateToUi(result, showAlerts) {
+      if (!result || !result.normalized) {
+        return;
+      }
+
+      suppressUiSync = true;
+      try {
+        if (result.normalized.glassThickness && byId('glass').value !== result.normalized.glassThickness) {
+          byId('glass').value = result.normalized.glassThickness;
+        }
+
+        if (typeof result.normalized.temperedGlass === 'boolean' && byId('tempered').checked !== result.normalized.temperedGlass) {
+          byId('tempered').checked = result.normalized.temperedGlass;
+        }
+
+        if (result.normalized.stand) {
+          if (result.normalized.stand.tubular && byId('standTubular').value !== result.normalized.stand.tubular) {
+            byId('standTubular').value = result.normalized.stand.tubular;
+          }
+
+          if (result.normalized.stand.layers && Number(byId('standLayers').value) !== Number(result.normalized.stand.layers)) {
+            byId('standLayers').value = result.normalized.stand.layers;
+          }
+        }
+      } finally {
+        suppressUiSync = false;
+      }
+
+      var notices = collectAutoNotices(result);
+      var signature = getAutoNoticeSignature(notices);
+
+      if (!signature) {
+        ruleNoticeState.lastAutoNoticeSignature = '';
+        return;
+      }
+
+      if (showAlerts && ruleNoticeState.lastAutoNoticeSignature !== signature) {
+        window.alert(notices.map(function (notice) {
+          return String(notice.message || '').trim();
+        }).join('\n\n'));
+      }
+
+      ruleNoticeState.lastAutoNoticeSignature = signature;
+    }
+
+    function renderSummary(result) {
+      if (!result || !result.ok) {
+        volumeLine.innerHTML = '<strong>Volume:</strong> invalid';
+        priceLine.innerHTML = '<strong>Price:</strong> check inputs';
+        dimensionsLine.textContent = result && result.error ? result.error : 'Dimensions (in): -';
+        renderSafetyBanner(result);
+        return;
+      }
+
+      volumeLine.innerHTML = '<strong>Volume:</strong> ' + result.gallons.toFixed(1) + ' gallons';
+      priceLine.innerHTML = '<strong>Price:</strong> ' + result.totalPrice.toFixed(2);
+      dimensionsLine.textContent = 'Dimensions (in): L: ' + result.normalized.lengthInches.toFixed(1) + ' x W: ' + result.normalized.widthInches.toFixed(1) + ' x H: ' + result.normalized.heightInches.toFixed(1);
+      if (result.normalized.stand && result.normalized.stand.enabled) {
+        byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in';
+      } else {
+        byId('standInfo').textContent = 'Stand uses the aquarium length and width as its footprint.';
+      }
+      renderSafetyBanner(result);
+    }
+
+    function renderSafetyBanner(result) {
+      safetyBanner.className = 'status-banner hidden';
+      safetyBanner.textContent = '';
+
+      if (!result) {
+        return;
+      }
+
+      if (!result.ok) {
+        safetyBanner.className = 'status-banner error';
+        safetyBanner.textContent = result.error || 'Safety validation failed.';
+        return;
+      }
+
+      var messages = [];
+      if (result.safetyNotice && result.safetyNotice.message) {
+        messages.push(String(result.safetyNotice.message).replace(/\s+/g, ' ').trim());
+      } else if (result.safety && result.safety.message && result.safety.message !== 'OK') {
+        messages.push(result.safety.message);
+      }
+
+      if (result.standNotice && result.standNotice.message) {
+        messages.push(String(result.standNotice.message).replace(/\s+/g, ' ').trim());
+      }
+
+      if (result.normalized && result.normalized.glassThickness && result.requested && result.requested.glassThickness) {
+        if (!result.safetyNotice && result.normalized.glassThickness !== result.requested.glassThickness) {
+          messages.push('Glass thickness was adjusted to ' + result.normalized.glassThickness + ' based on the safety rules.');
+        }
+      }
+
+      if (result.normalized && result.normalized.temperedGlass && !(result.requested && result.requested.temperedGlass)) {
+        messages.push('Tempered glass was enabled automatically based on the safety rules.');
+      }
+
+      if (messages.length === 0) {
+        safetyBanner.className = 'status-banner';
+        safetyBanner.textContent = 'Glass thickness safety rules are active.';
+        return;
+      }
+
+      safetyBanner.className = 'status-banner warning';
+      safetyBanner.textContent = messages.join(' ');
+    }
+
+    function loadEmbeddedGlassPricingSetupRows() {
+      var fallbackNode = byId('glassPricingFallback');
+      if (!fallbackNode) {
+        throw new Error('No embedded glass pricing fallback was found.');
+      }
+
+      var parsed = JSON.parse(fallbackNode.textContent || '[]');
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('Embedded glass pricing fallback is empty.');
+      }
+
+      glassPricingSetupRows = parsed;
+      return glassPricingSetupRows;
+    }
+
+    async function loadGlassPricingSetupRows() {
+      try {
+        var response = await fetch('./glass-pricing.json', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error('Failed to load glass-pricing.json');
+        }
+
+        glassPricingSetupRows = await response.json();
+        return glassPricingSetupRows;
+      } catch (error) {
+        return loadEmbeddedGlassPricingSetupRows();
+      }
+    }
+
+    async function ensureGlassPricingLoaded() {
+      if (glassPricingSetupRows.length > 0) {
+        return glassPricingSetupRows;
+      }
+
+      return loadGlassPricingSetupRows();
+    }
+
+    async function calculateAquarium(showAlerts) {
+      try {
+        enforceOptionRules(false);
+        setVisibilityState();
+        await ensureGlassPricingLoaded();
+        var result = window.CustomAquariumCalculator.calculateCustomAquarium(buildPayload());
+        lastResult = result;
+        syncCalculatedStateToUi(result, Boolean(showAlerts));
+        renderSummary(result);
+        drawAquarium(result);
+      } catch (error) {
+        lastResult = null;
+        renderSummary({ ok: false, error: error.message });
+        drawPlaceholder('Unable to load pricing data.');
+      }
+    }
+
+    function attachAutoStateHandlers() {
+      ['sumpEnabled', 'stickerBackground', 'stickerBottom', 'standEnabled', 'standSumpHolder', 'submersibleLight', 'submersiblePump']
+        .forEach(function (id) {
+          byId(id).addEventListener('change', setVisibilityState);
+        });
+
+      [
+        'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
+        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
+        'sumpUnit', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
+        'pumpPrice', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
+      ].forEach(function (id) {
+        var eventName = byId(id).tagName === 'INPUT' && (byId(id).type === 'number' || byId(id).type === 'text' || byId(id).tagName === 'TEXTAREA')
+          ? 'input'
+          : 'change';
+        byId(id).addEventListener(eventName, function () {
+          enforceOptionRules(true);
+          setVisibilityState();
+          calculateAquarium(true);
+        });
+      });
+
+      byId('unit').addEventListener('change', function () {
+        byId('sumpUnit').value = byId('unit').value;
+      });
+
+      closeButton.addEventListener('click', function () {
+        window.location.reload();
+      });
+
+      addToSaleButton.addEventListener('click', function () {
+        if (!lastResult || !lastResult.ok) {
+          window.alert('Calculate a valid aquarium first.');
+          return;
+        }
+
+        window.alert('Web demo only. Add to sale would use the current total: ' + lastResult.totalPrice.toFixed(2));
+      });
+    }
+
+    calculateButton.addEventListener('click', function () {
+      calculateAquarium(true);
+    });
+
+    attachAutoStateHandlers();
+    enforceOptionRules(false);
+    setVisibilityState();
+    drawPlaceholder('Loading glass pricing setup...');
+
+    ensureGlassPricingLoaded()
+      .then(function () {
+        renderSummary({ ok: false, error: 'Click Calculate to run the pricing.' });
+        drawPlaceholder('Glass pricing loaded. Click Calculate to render the aquarium.');
+      })
+      .catch(function (error) {
+        renderSummary({ ok: false, error: error.message });
+        drawPlaceholder('Initial pricing load failed.');
+      });
+  </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Suppress CA1416 (platform compatibility) for this Windows-only WinForms app -->
+    <NoWarn>CA1416</NoWarn>
+  <AssemblyName>RSPETSTOP POS</AssemblyName>
+  <AssemblyTitle>RSPETSTOP POS</AssemblyTitle>
+  <!-- Disable SDK auto-generation of assembly attributes to avoid duplicate attribute errors
+       when building additional tool projects under the solution. Assembly info can be
+       provided manually if needed. -->
+  <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+  <!-- Exclude tools subfolders from the main project's default compile includes. These
+       are separate tool projects and their source files should not be compiled into
+       the main AquariumPOS assembly. -->
+  <ItemGroup>
+    <Compile Remove="tools\**\*.cs" />
+    <None Remove="tools\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EPPlus" Version="7.0.0" />
+    <PackageReference Include="System.Data.SqlClient" Version="4.8.5" />
+    <PackageReference Include="Microsoft.VisualBasic" Version="10.3.0" />
+    <PackageReference Include="ZXing.Net" Version="0.16.11" />
+  </ItemGroup>
+
+</Project>

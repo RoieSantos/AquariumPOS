@@ -1,0 +1,40 @@
+﻿$connectionString = "Server=LAPTOP-20MJVLDK;Database=RSPETSTOPQ12026updated;Trusted_Connection=True;Connection Timeout=30;"
+$query1 = "SELECT ItemCode, Description, Quantity, Price, GrossAmount, NetAmount, VariationId, DocumentType, ReceiptNo, DocumentNo FROM ItemLedgerEntry WHERE DocumentNo = 'RS-0000006687'"
+$query2 = "SELECT LastResponse FROM dbo.InstoreOnlineOrderMap WHERE LocalReceiptNo = 'RS-0000006687'"
+$query3 = "SELECT Code, Name, Description, VariationId, IsActive FROM Items WHERE Code IN (SELECT ItemCode FROM ItemLedgerEntry WHERE DocumentNo = 'RS-0000006687')"
+
+$connection = New-Object System.Data.SqlClient.SqlConnection($connectionString)
+try {
+    $connection.Open()
+    
+    Write-Host "--- 1) Item Ledger Entries ---"
+    $cmd1 = $connection.CreateCommand()
+    $cmd1.CommandText = $query1
+    $adapter1 = New-Object System.Data.SqlClient.SqlDataAdapter($cmd1)
+    $dt1 = New-Object System.Data.DataTable
+    $null = $adapter1.Fill($dt1)
+    $dt1 | Format-Table -AutoSize | Out-String | Write-Host
+
+    Write-Host "--- 2) InstoreOnlineOrderMap LastResponse ---"
+    $cmd2 = $connection.CreateCommand()
+    $cmd2.CommandText = $query2
+    $adapter2 = New-Object System.Data.SqlClient.SqlDataAdapter($cmd2)
+    $dt2 = New-Object System.Data.DataTable
+    $null = $adapter2.Fill($dt2)
+    if ($dt2.Rows.Count -gt 0) {
+        $dt2.Rows[0].LastResponse | Write-Host
+    } else {
+        Write-Host "No record found."
+    }
+
+    Write-Host "`n--- 3) Items ---"
+    $cmd3 = $connection.CreateCommand()
+    $cmd3.CommandText = $query3
+    $adapter3 = New-Object System.Data.SqlClient.SqlDataAdapter($cmd3)
+    $dt3 = New-Object System.Data.DataTable
+    $null = $adapter3.Fill($dt3)
+    $dt3 | Format-Table -AutoSize | Out-String | Write-Host
+}
+finally {
+    $connection.Close()
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "UOM": "MM",
+    "Units": "10",
+    "PricePerSqFt": 290
+  },
+  {
+    "UOM": "MM",
+    "Units": "12",
+    "PricePerSqFt": 350
+  },
+  {
+    "UOM": "MM",
+    "Units": "3",
+    "PricePerSqFt": 65
+  },
+  {
+    "UOM": "MM",
+    "Units": "6",
+    "PricePerSqFt": 185
+  }
+]
