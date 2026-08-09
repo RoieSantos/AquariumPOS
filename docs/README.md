@@ -45,7 +45,7 @@ If you ever want the data itself to be genuinely protected (not just the UI), th
 
 ## Running the portal
 
-This is a static site - no build, no npm install. Just open `index.html` in a browser, or serve the `WebPortal` folder with any static file server (e.g. `npx serve`, IIS, GitHub Pages, etc.). It must be served over `http://` or `https://` (not `file://`) for the Supabase JS client to work reliably.
+This is a static site - no build, no npm install. Just open `index.html` in a browser, or serve the `docs` folder with any static file server (e.g. `npx serve`, IIS, GitHub Pages, etc.). It must be served over `http://` or `https://` (not `file://`) for the Supabase JS client to work reliably.
 
 ## Security notes
 
