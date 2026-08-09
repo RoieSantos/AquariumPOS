@@ -80,6 +80,12 @@ async function loadFinancialSummary(session) {
   const walkinWord = walkinCount === 1 ? 'order' : 'orders';
   document.getElementById('statWalkInSalesSub').textContent = `${monthLabel} · ${walkinCount} ${walkinWord} so far`;
 
+  // Mirrors the super-user "Walk-In Sales This Month" card above, for the standalone card shown
+  // to regular (non-sales, non-super) staff - see walkInOnlyCard gating below.
+  setStatValue('statWalkInSalesOnly', formatCurrency(row.walkin_sales_month));
+  const walkInSalesOnlySubEl = document.getElementById('statWalkInSalesOnlySub');
+  if (walkInSalesOnlySubEl) walkInSalesOnlySubEl.textContent = `${monthLabel} · ${walkinCount} ${walkinWord} so far`;
+
   const todayLabel = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   document.getElementById('statTodayOnlineSales').textContent = formatCurrency(row.today_online_sales);
@@ -411,6 +417,14 @@ async function loadNotifications(session) {
   if (session.isSuperUser || session.isSalesUser) {
     document.getElementById('salesByStaffSection').classList.remove('hidden');
     await loadSalesByStaff(session);
+  }
+
+  // Per "show Total Walk-in sales on the dashboard for the user that is not sales user and not
+  // super user" - a plain staff login (neither flag) gets just this one figure, not the full
+  // super-user finance grid (Amount to Receive/Total Sales/Expense stay hidden from them).
+  if (!session.isSuperUser && !session.isSalesUser) {
+    document.getElementById('walkInOnlyCard').classList.remove('hidden');
+    await loadFinancialSummary(session);
   }
 
   await loadStatusSummary(session);
