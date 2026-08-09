@@ -82,10 +82,31 @@ namespace AquariumPOS
             LoadData();
         }
 
+        private void EnsureSalesUserColumn()
+        {
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                using var cmd = new SqlCommand(@"
+IF COL_LENGTH('dbo.EmployeeSetup', 'SalesUser') IS NULL
+BEGIN
+    ALTER TABLE dbo.EmployeeSetup ADD SalesUser BIT NOT NULL CONSTRAINT DF_EmployeeSetup_SalesUser DEFAULT (0)
+END", conn);
+                cmd.ExecuteNonQuery();
+            }
+            catch
+            {
+                // best-effort - LoadData()'s own SELECT * still works either way, just without the column
+            }
+        }
+
         private void LoadData()
         {
             try
             {
+                EnsureSalesUserColumn();
+
                 table.Clear();
                 adapter = new SqlDataAdapter("SELECT * FROM dbo.EmployeeSetup", connectionString);
                 adapter.MissingSchemaAction = MissingSchemaAction.AddWithKey;
@@ -203,6 +224,13 @@ namespace AquariumPOS
                 if (isActiveCol != null && isActiveCol.DataType == typeof(bool))
                 {
                     try { newRow[isActiveCol] = true; } catch { }
+                }
+
+                // SalesUser defaults unchecked - it's an opt-in flag, not everyone added here is one.
+                var salesUserCol = table.Columns.Cast<DataColumn>().FirstOrDefault(c => string.Equals(c.ColumnName, "SalesUser", StringComparison.OrdinalIgnoreCase));
+                if (salesUserCol != null && salesUserCol.DataType == typeof(bool))
+                {
+                    try { newRow[salesUserCol] = false; } catch { }
                 }
 
                 // For common required string columns, set empty string as a safe default.

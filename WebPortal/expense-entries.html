@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Expenses - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Expenses</h1>
+    <p class="muted">Read-only view of posted Expense Entries. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it.
+         No password re-entry prompt otherwise - super user status alone is enough, same trust
+         model as Online Orders. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <!-- Shown when arriving from a Dashboard "Expense This Month"/"Expense Today" card
+           (?period=month|today) - see js/expenseEntries.js. -->
+      <p class="muted hidden" id="activeFilterNote"></p>
+      <div class="toolbar">
+        <h2 style="margin:0;">Posted Expenses</h2>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <input type="text" id="entrySearchInput" placeholder="Search by receipt no, description, category, user, or warehouse..." style="max-width:360px;" />
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Receipt No</th>
+              <th>Warehouse</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th>User</th>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Net Amount</th>
+              <th>Lines</th>
+            </tr>
+          </thead>
+          <tbody id="entryTableBody">
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="entryPaginationBar"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/expenseEntries.js"></script>
+</body>
+</html>

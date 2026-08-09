@@ -6,27 +6,22 @@ namespace AquariumPOS
 {
     public partial class PaymentEntryForm : Form
     {
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            // Prevent closing unless confirmed
-            if (!IsConfirmed)
-            {
-                e.Cancel = true;
-                MessageBox.Show("You must enter and confirm payment details before closing.", "Payment Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            base.OnFormClosing(e);
-        }
         public string TenderType { get; private set; } = "";
         public decimal Amount { get; private set; } = 0;
         public bool IsConfirmed { get; private set; } = false;
+        public decimal CardChargeAmount { get; private set; } = 0;
 
         private TextBox txtTenderType = null!;
+        private TextBox txtCardChargeAmount = null!;
         private TextBox txtAmount = null!;
         private Button btnConfirm = null!;
         private Button btnCancel = null!;
         private Label lblTenderType = null!;
+        private Label lblCardChargeAmount = null!;
         private Label lblAmount = null!;
         private Label lblTitle = null!;
+        private readonly decimal cardMarkupPercent;
+        private readonly bool showCardChargeAmount;
 
         protected override void OnShown(EventArgs e)
         {
@@ -34,21 +29,24 @@ namespace AquariumPOS
             txtAmount.Focus();
         }
 
-        public PaymentEntryForm(string defaultTenderType, decimal defaultAmount)
+        public PaymentEntryForm(string defaultTenderType, decimal defaultAmount, decimal cardMarkupPercent = 0m)
         {
             KeyPreview = true;
             this.KeyDown += PaymentEntryForm_KeyDown;
+            this.cardMarkupPercent = cardMarkupPercent;
+            showCardChargeAmount = cardMarkupPercent > 0m;
 
             InitializeComponent();
             txtTenderType.Text = defaultTenderType;
             txtAmount.Text = defaultAmount.ToString("F2");
+            UpdateCardChargeAmountDisplay();
             // Focus is now set in OnShown override
         }
 
         private void InitializeComponent()
         {
             this.Text = "Payment Entry";
-            this.Size = new Size(400, 250);
+            this.Size = new Size(400, showCardChargeAmount ? 290 : 250);
             this.StartPosition = FormStartPosition.CenterParent;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
@@ -87,12 +85,36 @@ namespace AquariumPOS
                 TabIndex = 0
             };
 
+            lblCardChargeAmount = new Label
+            {
+                Text = "Charge Amount:",
+                Font = new Font("Segoe UI", 10, FontStyle.Regular),
+                Location = new Point(30, 110),
+                Size = new Size(110, 25),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Visible = showCardChargeAmount
+            };
+
+            txtCardChargeAmount = new TextBox
+            {
+                Font = new Font("Segoe UI", 12, FontStyle.Regular),
+                Location = new Point(140, 108),
+                Size = new Size(200, 30),
+                ReadOnly = true,
+                TabStop = false,
+                BackColor = Color.Gainsboro,
+                Visible = showCardChargeAmount
+            };
+
+            int amountTop = showCardChargeAmount ? 150 : 110;
+            int buttonTop = showCardChargeAmount ? 200 : 160;
+
             // Amount Label
             lblAmount = new Label
             {
                 Text = "Amount:",
                 Font = new Font("Segoe UI", 10, FontStyle.Regular),
-                Location = new Point(30, 110),
+                Location = new Point(30, amountTop),
                 Size = new Size(100, 25),
                 TextAlign = ContentAlignment.MiddleLeft
             };
@@ -101,7 +123,7 @@ namespace AquariumPOS
             txtAmount = new TextBox
             {
                 Font = new Font("Segoe UI", 12, FontStyle.Regular),
-                Location = new Point(140, 108),
+                Location = new Point(140, amountTop - 2),
                 Size = new Size(200, 30),
                 TabIndex = 1
             };
@@ -114,7 +136,7 @@ namespace AquariumPOS
                 BackColor = Color.FromArgb(0, 122, 204),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Location = new Point(180, 160),
+                Location = new Point(180, buttonTop),
                 Size = new Size(80, 35),
                 TabIndex = 2
             };
@@ -129,7 +151,7 @@ namespace AquariumPOS
                 BackColor = Color.FromArgb(108, 117, 125),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Location = new Point(270, 160),
+                Location = new Point(270, buttonTop),
                 Size = new Size(80, 35),
                 TabIndex = 3
             };
@@ -140,6 +162,8 @@ namespace AquariumPOS
             this.Controls.Add(lblTitle);
             this.Controls.Add(lblTenderType);
             this.Controls.Add(txtTenderType);
+            this.Controls.Add(lblCardChargeAmount);
+            this.Controls.Add(txtCardChargeAmount);
             this.Controls.Add(lblAmount);
             this.Controls.Add(txtAmount);
             this.Controls.Add(btnConfirm);
@@ -149,6 +173,7 @@ namespace AquariumPOS
             this.KeyPreview = true;
             this.KeyDown += PaymentEntryForm_KeyDown;
             txtAmount.KeyPress += TxtAmount_KeyPress;
+            txtAmount.TextChanged += TxtAmount_TextChanged;
         }
 
         private void BtnConfirm_Click(object? sender, EventArgs e)
@@ -157,6 +182,7 @@ namespace AquariumPOS
             {
                 TenderType = txtTenderType.Text.Trim();
                 Amount = decimal.Parse(txtAmount.Text);
+                CardChargeAmount = CalculateCardChargeAmount(Amount);
                 IsConfirmed = true;
                 this.DialogResult = DialogResult.OK;
                 this.Close();
@@ -194,6 +220,39 @@ namespace AquariumPOS
             if (e.KeyChar == '.' && txtAmount.Text.Contains("."))
             {
                 e.Handled = true;
+            }
+        }
+
+        private void TxtAmount_TextChanged(object? sender, EventArgs e)
+        {
+            UpdateCardChargeAmountDisplay();
+        }
+
+        private decimal CalculateCardChargeAmount(decimal amount)
+        {
+            if (!showCardChargeAmount || amount <= 0m || cardMarkupPercent <= 0m)
+            {
+                return 0m;
+            }
+
+            decimal chargeAmount = amount * (cardMarkupPercent / (100m + cardMarkupPercent));
+            return decimal.Round(chargeAmount, 2, MidpointRounding.AwayFromZero);
+        }
+
+        private void UpdateCardChargeAmountDisplay()
+        {
+            if (!showCardChargeAmount)
+            {
+                return;
+            }
+
+            if (decimal.TryParse(txtAmount.Text, out decimal amount) && amount > 0m)
+            {
+                txtCardChargeAmount.Text = CalculateCardChargeAmount(amount).ToString("F2");
+            }
+            else
+            {
+                txtCardChargeAmount.Text = "0.00";
             }
         }
 

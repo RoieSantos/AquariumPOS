@@ -1,0 +1,1426 @@
+:root {
+  --page-bg: #f4f7fb;
+  --panel-bg: #ffffff;
+  --panel-border: #d7e0ef;
+  --text-main: #1b355e;
+  --text-muted: #61738f;
+  --input-border: #c7d3e6;
+  --primary: #1d4f91;
+  --primary-strong: #173f74;
+  --success: #1e9a59;
+  --danger: #c0392b;
+  --neutral: #7b8596;
+  --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+  color: var(--text-main);
+}
+
+/* Optional company background image (General Setup) on authenticated pages (currently
+   Dashboard - see js/companyBranding.js's applyAppBackground). A light tint, not a dark one like
+   the Login page's version, since this page's cards/text are designed for a light background -
+   the photo shows through faintly as texture rather than replacing the theme. .page/#topnav get
+   position+z-index below so they still paint above the fixed overlay (a position:fixed element
+   with an explicit z-index otherwise paints above non-positioned in-flow content). */
+body.app-has-photo-bg {
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+body.app-has-photo-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(244, 247, 251, 0.8);
+  z-index: 0;
+}
+
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.centered-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+h1, h2, h3 {
+  color: var(--text-main);
+  margin-top: 0;
+}
+
+/* Top navigation */
+#topnav {
+  background: var(--primary);
+  box-shadow: var(--shadow);
+  position: relative;
+  z-index: 1;
+}
+
+.topnav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.topnav-brand {
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.topnav-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.topnav-link {
+  color: #dce8fb;
+  text-decoration: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.topnav-link:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.topnav-link.active {
+  background: #fff;
+  color: var(--primary-strong);
+}
+
+.topnav-logout {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.topnav-logout:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Cards */
+.card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+
+/* Login page - dark gradient backdrop behind a frosted-glass sign-in card; swapped for an
+   uploaded photo background below when one is set (see js/companyBranding.js's
+   applyLoginBackground). */
+body.login-backdrop {
+  min-height: 100vh;
+  margin: 0;
+  background: radial-gradient(circle at 30% 20%, #24466f 0%, #0d1b2a 55%, #05090f 100%);
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Uploaded a dedicated background image (General Setup) - use it full-bleed instead of the
+   gradient+watermark fallback above, with a dark overlay so the glass card keeps enough
+   contrast regardless of how busy/light the photo is. */
+body.login-backdrop.login-has-photo-bg {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+body.login-backdrop.login-has-photo-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 9, 15, 0.4);
+  z-index: 0;
+}
+
+.login-card {
+  position: relative;
+  z-index: 1;
+  max-width: 380px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  padding: 32px 28px;
+}
+
+.login-card h1 {
+  color: #fff;
+}
+
+.login-card p.muted {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.login-card label {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.login-card input[type="text"],
+.login-card input[type="password"] {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.nav-card {
+  display: block;
+  text-decoration: none;
+  color: var(--text-main);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 26px 20px;
+  text-align: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.nav-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px rgba(21, 52, 94, 0.14);
+}
+
+.nav-card .icon {
+  font-size: 34px;
+  margin-bottom: 10px;
+}
+
+.nav-card .title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* Forms */
+label {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+select,
+textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text-main);
+  background: #fff;
+}
+
+.form-row {
+  margin-bottom: 14px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  padding: 10px 18px;
+  border-radius: 6px;
+  border: none;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--primary-strong);
+}
+
+.btn-secondary {
+  background: var(--neutral);
+  color: #fff;
+}
+
+.btn-success {
+  background: var(--success);
+  color: #fff;
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+th, td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--panel-border);
+  text-align: left;
+  font-size: 13px;
+}
+
+th {
+  background: #eef3fb;
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+tr.clickable-row {
+  cursor: pointer;
+}
+
+tr.clickable-row:hover {
+  background: #f2f7ff;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+/* Transfer Orders' Line Items table (js/transferOrders.js) needs its item/variant suggestion
+   dropdowns to extend below the table without being clipped. Plain .table-wrap can't allow that:
+   per the CSS overflow spec, when overflow-x is 'auto' and overflow-y is left at its 'visible'
+   default, the browser silently forces overflow-y to 'auto' too - so the dropdown was being
+   clipped/scrolled away by the table-wrap itself, not actually hidden. This override restores
+   true 'visible' on both axes for this one table. */
+.line-items-wrap {
+  overflow: visible;
+}
+
+/* Manage modal's lines table (js/transferOrders.js's renderManageLines) needs the same treatment -
+   its "Serials to Ship" .serial-tag-dropdown is position:absolute within this table-wrap, so a
+   plain .table-wrap's forced overflow-y:auto clipped/scrolled it away instead of letting it float
+   over the Pancake Sync section below. */
+.manage-lines-wrap {
+  overflow: visible;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.badge-success { background: #e3f7ea; color: var(--success); }
+.badge-warning { background: #fff3d6; color: #a6720a; }
+.badge-danger { background: #fbe4e1; color: var(--danger); }
+.badge-neutral { background: #eef1f6; color: var(--neutral); }
+.badge-primary { background: #e2ecfb; color: var(--primary); }
+.badge-purple { background: #ece5fa; color: #7b5bc9; }
+.badge-glass { background: #dcf1fb; color: #146b96; }
+
+/* Status count summary bar (Online Orders page) */
+.status-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.status-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.status-summary-pill:hover {
+  border-color: var(--primary);
+}
+
+/* Applied to whichever pill's status currently matches the status filter box, so clicking a
+   pill to filter the list gives a clear "this is the active filter" indication. */
+.status-summary-pill.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(29, 79, 145, 0.18);
+}
+
+.status-summary-pill .status-summary-count {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Dashboard status overview cards */
+.stat-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 20px 0 30px;
+}
+
+.stat-card {
+  display: block;
+  text-decoration: none;
+  color: var(--text-main);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px rgba(21, 52, 94, 0.14);
+}
+
+.stat-card .stat-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.stat-card .stat-icon {
+  font-size: 16px;
+}
+
+.stat-card .stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.stat-card.stat-confirmed .stat-value { color: var(--primary); }
+.stat-card.stat-printed .stat-value { color: #a6720a; }
+.stat-card.stat-to-ship .stat-value { color: #7b5bc9; }
+.stat-card.stat-shipped .stat-value { color: var(--success); }
+.stat-card.stat-cancelled .stat-value { color: var(--danger); }
+
+/* Dashboard notification center - attention-needed items (e.g. Requested transfer orders sitting
+   unshipped). Amber, matching the "Requested" status badge color elsewhere in the portal, so the
+   two visually reinforce each other. */
+.notification-center {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.notification-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #fff3d6;
+  border: 1px solid #f0d9a0;
+  border-radius: 10px;
+  padding: 14px 20px;
+  color: #7a5a05;
+}
+
+.notification-item .notification-message {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.notification-item .notification-icon {
+  font-size: 18px;
+}
+
+.notification-item .notification-action {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: 700;
+  color: #a6720a;
+  text-decoration: none;
+  border: 1px solid #a6720a;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.notification-item .notification-action:hover {
+  background: #a6720a;
+  color: #fff;
+}
+
+/* Dashboard financial overview cards (super users only), grouped into "Monthly"/"Daily" sections */
+.finance-section-heading {
+  margin: 22px 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.finance-section-heading:first-child {
+  margin-top: 20px;
+}
+
+.finance-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+  margin: 0 0 6px;
+}
+
+.finance-card {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  padding: 22px 24px;
+  color: #fff;
+  text-decoration: none;
+  box-shadow: 0 10px 30px rgba(21, 52, 94, 0.18);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.finance-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 36px rgba(21, 52, 94, 0.24);
+}
+
+.finance-card::after {
+  content: "";
+  position: absolute;
+  right: -30px;
+  top: -30px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.finance-card.finance-receive {
+  background: linear-gradient(135deg, #f5934a 0%, #c0392b 100%);
+}
+
+.finance-card.finance-sales {
+  background: linear-gradient(135deg, #22b6a3 0%, #1d4f91 100%);
+}
+
+.finance-card.finance-walkin {
+  background: linear-gradient(135deg, #f2994a 0%, #6a3093 100%);
+}
+
+.finance-card.finance-daily-online {
+  background: linear-gradient(135deg, #56ab2f 0%, #1d4f91 100%);
+}
+
+.finance-card.finance-daily-walkin {
+  background: linear-gradient(135deg, #f7971e 0%, #b3336a 100%);
+}
+
+.finance-card.finance-expense {
+  background: linear-gradient(135deg, #8a5cf6 0%, #c0392b 100%);
+}
+
+.finance-card.finance-daily-expense {
+  background: linear-gradient(135deg, #c0392b 0%, #6a3093 100%);
+}
+
+.finance-card.finance-purchase {
+  background: linear-gradient(135deg, #4a90d9 0%, #173f74 100%);
+}
+
+.finance-card .finance-value.placeholder {
+  font-size: 22px;
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.finance-card .finance-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  z-index: 1;
+}
+
+.finance-card .finance-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.finance-card .finance-icon {
+  font-size: 22px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.finance-card .finance-value {
+  font-size: 34px;
+  font-weight: 800;
+  margin-top: 14px;
+  position: relative;
+  z-index: 1;
+  letter-spacing: -0.01em;
+}
+
+.finance-card .finance-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  position: relative;
+  z-index: 1;
+}
+
+/* Dashboard "Sales by Staff (Confirmed By)" cards (super users only) - one card per Sales User,
+   each with three clickable figures (Daily/Monthly/Previous Month) that deep-link into Online
+   Orders scoped to that staff member + period (see js/dashboard.js's loadSalesByStaff and
+   onlineOrders.js's confirmedBy/period URL handling). */
+.staff-sales-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+  margin: 0 0 6px;
+}
+
+.staff-sales-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+
+.staff-sales-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.staff-sales-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Rank badge (staffRankBadgeHtml in js/dashboard.js) - top 3 get a medal emoji (larger, no pill
+   background needed), the rest get a plain "#N" pill. */
+.staff-rank-badge {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.staff-rank-badge-top {
+  background: transparent;
+  font-size: 22px;
+  padding: 0;
+}
+
+.staff-sales-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #22b6a3 0%, #1d4f91 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.staff-sales-name {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.staff-sales-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.staff-sales-stat {
+  display: block;
+  text-decoration: none;
+  background: var(--page-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 8px;
+  text-align: center;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.staff-sales-stat:hover {
+  background: #e2ecfb;
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
+
+.staff-stat-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.staff-stat-value {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: -0.01em;
+}
+
+.staff-stat-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+@media (max-width: 420px) {
+  .staff-sales-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Per-staff monthly target progress block (staffTargetHtml in js/dashboard.js) - only rendered
+   when that staff member has a target set in User Setup. Smaller-scale version of the site-wide
+   .target-progress-track/.target-progress-fill pair, sized to fit inside a staff card. */
+.staff-sales-target {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.staff-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.staff-target-percent {
+  font-size: 13px;
+  color: var(--primary);
+}
+
+.staff-target-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #e7edf6;
+  overflow: hidden;
+}
+
+.staff-target-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22b6a3 0%, #1d4f91 100%);
+  transition: width 0.4s ease;
+}
+
+.staff-target-fill-over {
+  background: linear-gradient(90deg, #f5934a 0%, #1e9a59 100%);
+}
+
+.staff-target-sub {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Dashboard monthly sales target progress card (super users only) */
+.target-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 20px 24px;
+  margin: 6px 0 30px;
+}
+
+.target-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.target-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.target-label .finance-icon {
+  font-size: 18px;
+  background: rgba(29, 79, 145, 0.1);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.target-percent {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.target-progress-track {
+  margin-top: 14px;
+  height: 16px;
+  border-radius: 999px;
+  background: #e7edf6;
+  overflow: hidden;
+}
+
+.target-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22b6a3 0%, #1d4f91 100%);
+  transition: width 0.4s ease;
+}
+
+.target-progress-fill.target-over {
+  background: linear-gradient(90deg, #f5934a 0%, #1e9a59 100%);
+}
+
+.target-details {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Misc */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.error-text {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.success-text {
+  color: var(--success);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 30, 55, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 40px 16px;
+  z-index: 100;
+}
+
+.modal-panel {
+  background: #fff;
+  border-radius: 10px;
+  padding: 24px;
+  max-width: 720px;
+  width: 100%;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.line-items-table input,
+.line-items-table select {
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.line-items-table .line-qty {
+  /* Sized for a 4-digit qty, not the auto-layout table's full column width. */
+  width: 60px;
+}
+
+/* Item/Variant lookup suggestion dropdowns (Transfer Orders' line items - js/transferOrders.js) */
+.item-search-cell {
+  position: relative;
+}
+
+.item-suggest-dropdown,
+.variant-suggest-dropdown,
+.serial-tag-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  margin-top: 2px;
+}
+
+.item-suggest-option {
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.item-suggest-option:hover,
+.item-suggest-option.active {
+  background: var(--page-bg);
+}
+
+.item-suggest-option .item-suggest-code {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.item-suggest-option .item-suggest-name {
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.item-suggest-empty {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.item-suggest-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--panel-border);
+  font-size: 12px;
+}
+
+/* Serial-tag picker (Manage modal's Ship flow, Production Category lines - js/transferOrders.js) -
+   reuses .item-search-cell/.item-suggest-dropdown/.item-suggest-option's positioning/search-result
+   styling above, adding just the chip list and the "N / required" count. */
+.serial-tag-picker {
+  position: relative;
+  min-width: 180px;
+}
+
+.serial-tag-count {
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.serial-tag-count.satisfied { color: var(--success); }
+.serial-tag-count.unsatisfied { color: var(--danger); }
+
+.serial-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.serial-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: var(--primary);
+  font-size: 12px;
+}
+
+.serial-tag-chip-remove {
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.item-suggest-pager .btn {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.section-divider {
+  border-top: 1px solid var(--panel-border);
+  margin: 18px 0;
+}
+
+/* Online Order Lines - per-line attachments (js/onlineOrderLines.js) */
+.attachment-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.attachment-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.attachment-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  display: block;
+}
+
+.attachment-file-chip {
+  display: inline-block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #eef3fb;
+  color: var(--primary);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.attachment-remove-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Delivery page - month calendar + day-detail map */
+.delivery-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.delivery-weekday-cell {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.delivery-day-cell {
+  min-height: 84px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.delivery-day-cell:hover {
+  box-shadow: var(--shadow);
+}
+
+.delivery-day-cell-empty {
+  background: transparent;
+  border: none;
+  cursor: default;
+}
+
+.delivery-day-cell.has-stops {
+  border-color: var(--primary);
+}
+
+.delivery-day-cell.today {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.delivery-day-number {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+#dayMap {
+  height: 320px;
+  margin-top: 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Item Setup - table + side factbox layout (js/itemSetup.js) */
+.item-setup-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.item-setup-table-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-factbox {
+  width: 300px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 20px;
+}
+
+@media (max-width: 900px) {
+  .item-setup-layout {
+    flex-direction: column;
+  }
+
+  .item-factbox {
+    width: 100%;
+    position: static;
+  }
+}
+
+.factbox-section-heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.factbox-image-thumb {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  display: block;
+}
+
+.factbox-variant-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.factbox-variant-row:last-child {
+  border-bottom: none;
+}
+
+.factbox-variant-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  flex-shrink: 0;
+}
+
+.factbox-variant-thumb-placeholder {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background: #eef3fb;
+  flex-shrink: 0;
+}
+
+.factbox-variant-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.factbox-variant-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.factbox-variant-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Shared pagination bar (js/pagination.js) - sits directly under a .table-wrap */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 4px 2px;
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pagination-page-size {
+  width: auto;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+/* Company branding (see js/companyBranding.js) - collapses to nothing when no logo/info is set
+   yet, so pages that opt in don't need a placeholder box. */
+.company-logo-img {
+  max-height: 70px;
+  max-width: 260px;
+}
+
+/* Letterhead - bordered box, logo on the left and company name/Facebook/address/contact/DTI no.
+   stacked on the right, used at the top of printable pages. */
+.letterhead {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  border: 1px solid var(--text-main);
+  border-radius: 4px;
+  padding: 14px 24px;
+  margin-bottom: 20px;
+}
+
+.letterhead-logo {
+  max-height: 90px;
+  max-width: 110px;
+  flex-shrink: 0;
+}
+
+.letterhead-info {
+  flex: 1;
+  text-align: center;
+}
+
+.letterhead-name {
+  font-weight: 700;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.letterhead-line {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+/* Signature lines on printable documents (e.g. Transfer Order print view) - a blank underline
+   for a physical/pen signature plus a printed label underneath, side by side. */
+.print-signature-row {
+  display: flex;
+  gap: 60px;
+  margin-top: 64px;
+}
+
+.print-signature-block {
+  flex: 1;
+}
+
+.print-signature-line {
+  border-bottom: 1px solid var(--neutral, #333);
+  height: 40px;
+}
+
+.print-signature-label {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--neutral, #555);
+}
+
+/* "Production Order" print layout - a larger-font warehouse packing list (see
+   transfer-order-print-production.html / js/transferOrderPrintProduction.js), deliberately
+   plainer than the customer-facing standard Transfer Order print - no letterhead/signature
+   formality, just big and easy to read from a few feet away on the production floor. */
+.production-order-print h1 {
+  font-size: 32px;
+}
+
+/* Header fields (From/To Warehouse, Requested Date/By) are bumped up from the site's normal
+   13px label/14px value sizing, same "big and easy to read from a few feet away" goal as the
+   line table below. Target Delivery Date shares this same size - only its color singles it out. */
+.production-order-print .form-grid label {
+  font-size: 18px;
+}
+
+.production-order-print .form-grid .muted {
+  font-size: 20px;
+  color: var(--text-main);
+}
+
+.production-order-print .target-delivery-row label,
+.production-order-print .target-delivery-row .muted {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.production-order-table th,
+.production-order-table td {
+  font-size: 20px;
+  padding: 12px 10px;
+}
+
+/* Printable pages (Delivery Manifest) - hide nav/buttons, reset the page background to plain
+   white so it doesn't waste ink/toner on the gradient body background used on-screen. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .page {
+    max-width: none;
+    padding: 0;
+  }
+
+  .table-wrap {
+    border: none;
+    overflow: visible;
+  }
+}

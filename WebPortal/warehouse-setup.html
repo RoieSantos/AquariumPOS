@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Warehouse Setup - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Warehouse Setup</h1>
+    <p class="muted">Warehouses synced from Pancake. Sales Target and Active are local-only and editable here. Production/Stock Warehouse are editable here too, same as the Local POS's Warehouse Setup - but the Local POS's own sync overwrites them on its next run, so edit there if the change needs to stick. Inactive warehouses are hidden from the Transfer Orders From/To Warehouse lookup. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it.
+         No password re-entry prompt otherwise - super user status alone is enough, same trust
+         model as Online Orders/Expenses. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Warehouses</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Production Warehouse</th>
+              <th>Stock Warehouse</th>
+              <th>Active</th>
+              <th>Sales Target</th>
+              <th>Last Synced</th>
+            </tr>
+          </thead>
+          <tbody id="warehouseTableBody">
+            <tr><td colspan="7" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="warehousePaginationBar"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/warehouseSetup.js"></script>
+</body>
+</html>

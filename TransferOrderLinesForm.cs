@@ -9,6 +9,7 @@ namespace AquariumPOS
     public class TransferOrderLinesForm : Form
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
+        private readonly TransferOrderData.DocumentTableContext documentContext;
         private DataGridView grid = null!;
         private bool suppressAutoSave;
         private string? currentDocument;
@@ -21,9 +22,16 @@ namespace AquariumPOS
         private string? itemLookupLoadError;
 
         public TransferOrderLinesForm()
+            : this(TransferOrderData.PostedTransferOrders)
         {
+        }
+
+        internal TransferOrderLinesForm(TransferOrderData.DocumentTableContext documentContext)
+        {
+            this.documentContext = documentContext;
             InitializeComponent();
             TransferOrderData.EnsureTablesExist(connectionString);
+            ApplyWarehouseColumnVisibility();
             UpdateAddLineAvailability();
         }
 
@@ -39,7 +47,7 @@ namespace AquariumPOS
 
                 using var conn = new SqlConnection(connectionString);
                 conn.Open();
-                using var cmd = new SqlCommand("SELECT [Document No.], [Item No.], [Variant ID], [Description], [CategoryCode], [Line No.], [Available QTY], [Qty To Transfer], [Qty Received] FROM [Transfer Line] WHERE [Document No.] = @Doc ORDER BY [Line No.]", conn);
+                using var cmd = new SqlCommand($"SELECT [Document No.], [Item No.], [Variant ID], [Description], [CategoryCode], [Line No.], [Available QTY], [Qty To Transfer], [Qty To Receive], [Qty Received] FROM {documentContext.LineTableName} WHERE [Document No.] = @Doc ORDER BY [Line No.]", conn);
                 cmd.Parameters.AddWithValue("@Doc", docNo);
                 using var rdr = cmd.ExecuteReader();
                 while (rdr.Read())
@@ -54,15 +62,17 @@ namespace AquariumPOS
                     string cat = rdr["CategoryCode"] != DBNull.Value ? rdr["CategoryCode"].ToString() ?? "" : "";
                     string line = rdr["Line No."] != DBNull.Value ? rdr["Line No."].ToString() ?? "" : "";
                     string avail = rdr["Available QTY"] != DBNull.Value ? rdr["Available QTY"].ToString() ?? "" : "";
-                    string transfer = rdr["Qty To Transfer"] != DBNull.Value ? rdr["Qty To Transfer"].ToString() ?? "" : "";
+                    string qtyToShip = rdr["Qty To Transfer"] != DBNull.Value ? rdr["Qty To Transfer"].ToString() ?? "" : "";
+                    string qtyToReceive = rdr["Qty To Receive"] != DBNull.Value ? rdr["Qty To Receive"].ToString() ?? "" : "";
                     string received = rdr["Qty Received"] != DBNull.Value ? rdr["Qty Received"].ToString() ?? "" : "";
-                    int rowIndex = grid.Rows.Add(doc, item, variantName, variantId, desc, cat, line, avail, transfer, received);
+                    string qtyShipped = received;
+                    int rowIndex = grid.Rows.Add(doc, item, variantName, variantId, desc, cat, line, avail, qtyToShip, qtyToReceive, qtyShipped, received);
                     if (documentFixed) grid.Rows[rowIndex].Cells[0].ReadOnly = true;
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Failed to load Transfer Line for document '{docNo}': {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, $"Failed to load {documentContext.DocumentTitle} lines for document '{docNo}': {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
@@ -74,7 +84,6 @@ namespace AquariumPOS
         {
             sourceWarehouseId = string.IsNullOrWhiteSpace(warehouseId) ? null : warehouseId.Trim();
             UpdateAddLineAvailability();
-            RefreshAvailableQtyForCurrentRows();
         }
 
         public void SetUseProductionCategory(bool useProductionCategory)
@@ -99,7 +108,7 @@ namespace AquariumPOS
 
         private void InitializeComponent()
         {
-            Text = "Transfer Order Lines";
+            Text = documentContext.DocumentTitle + " Lines";
             Size = new Size(1000, 600);
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
@@ -134,6 +143,14 @@ namespace AquariumPOS
                 }
             };
 
+            if (documentContext.IsReadOnly)
+            {
+                grid.AllowUserToAddRows = false;
+                grid.AllowUserToDeleteRows = false;
+                grid.ReadOnly = true;
+                grid.EditMode = DataGridViewEditMode.EditProgrammatically;
+            }
+
             grid.DefaultValuesNeeded += Grid_DefaultValuesNeeded;
             grid.EditingControlShowing += Grid_EditingControlShowing;
             grid.CellEndEdit += Grid_CellEndEdit;
@@ -149,17 +166,60 @@ namespace AquariumPOS
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Description", HeaderText = "Description", Width = 400 });
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "CategoryCode", HeaderText = "Category Code", Width = 140 });
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "LineNo", HeaderText = "Line No.", Width = 120, Visible = false });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "AvailableQty", HeaderText = "Available QTY", Width = 120 });
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "QtyToTransfer", HeaderText = "Qty To Transfer", Width = 140 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "AvailableQty", HeaderText = "Quantity", Width = 120 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "QtyToShip", HeaderText = "Qty To Ship", Width = 120, Visible = false });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "QtyToReceive", HeaderText = "Qty To Receive", Width = 140 });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "QtyToShipped", HeaderText = "Qty Shipped", Width = 140, Visible = false });
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "QtyReceived", HeaderText = "Qty Received", Width = 120 });
 
-            grid.Columns["AvailableQty"].ReadOnly = true;
             grid.Columns["DocumentNo"].ReadOnly = true;
             grid.Columns["Description"].ReadOnly = true;
             grid.Columns["CategoryCode"].ReadOnly = true;
+            grid.Columns["QtyToShipped"].ReadOnly = true;
 
             Controls.Add(grid);
             RefreshItemLookupOptions();
+        }
+
+        private void ApplyWarehouseColumnVisibility()
+        {
+            var currentWarehouse = TransferOrderData.GetCurrentWarehouse(connectionString);
+            bool useStockWarehouseLayout = currentWarehouse != null
+                && !currentWarehouse.IsProductionWarehouse
+                && currentWarehouse.IsStockWarehouse;
+            bool useTransferRequestShippingLayout = IsTransferRequestShippingLayout(currentWarehouse);
+
+            if (grid.Columns.Contains("DocumentNo"))
+            {
+                grid.Columns["DocumentNo"].Visible = !useStockWarehouseLayout;
+            }
+
+            if (grid.Columns.Contains("AvailableQty"))
+            {
+                grid.Columns["AvailableQty"].HeaderText = "Quantity";
+                if (!documentContext.IsReadOnly)
+                    grid.Columns["AvailableQty"].ReadOnly = useTransferRequestShippingLayout;
+            }
+
+            if (grid.Columns.Contains("QtyToShip"))
+                grid.Columns["QtyToShip"].Visible = useTransferRequestShippingLayout;
+
+            if (grid.Columns.Contains("QtyToReceive"))
+                grid.Columns["QtyToReceive"].Visible = !useTransferRequestShippingLayout;
+
+            if (grid.Columns.Contains("QtyToShipped"))
+                grid.Columns["QtyToShipped"].Visible = useTransferRequestShippingLayout;
+
+            if (grid.Columns.Contains("QtyReceived"))
+                grid.Columns["QtyReceived"].Visible = !useTransferRequestShippingLayout;
+        }
+
+        private bool IsTransferRequestShippingLayout(TransferOrderData.WarehouseOption? currentWarehouse = null)
+        {
+            currentWarehouse ??= TransferOrderData.GetCurrentWarehouse(connectionString);
+            return string.Equals(documentContext.HeaderTableName, TransferOrderData.TransferRequests.HeaderTableName, StringComparison.OrdinalIgnoreCase)
+                && currentWarehouse != null
+                && (currentWarehouse.IsProductionWarehouse || currentWarehouse.IsStockWarehouse);
         }
 
         private void Grid_EditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
@@ -385,6 +445,71 @@ namespace AquariumPOS
             return false;
         }
 
+        public bool HasAnyQtyShipped()
+        {
+            if (grid == null)
+                return false;
+
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                if (row == null || row.IsNewRow)
+                    continue;
+
+                decimal? qtyShipped = ParseNullableDecimalSafe((row.Cells["QtyToShipped"].Value ?? string.Empty).ToString());
+                if (qtyShipped.HasValue && qtyShipped.Value > 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        public bool HasAnyShipmentToPost()
+        {
+            if (grid == null)
+                return false;
+
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                if (row == null || row.IsNewRow)
+                    continue;
+
+                decimal? quantity = ParseNullableDecimalSafe((row.Cells["AvailableQty"].Value ?? string.Empty).ToString());
+                decimal? qtyToShip = ParseNullableDecimalSafe((row.Cells["QtyToShip"].Value ?? string.Empty).ToString());
+                decimal? qtyShipped = CalculateQtyShipped(quantity, qtyToShip);
+                if (qtyShipped.HasValue && qtyShipped.Value > 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        public void FocusFirstQtyShippedCell()
+        {
+            if (grid == null)
+                return;
+
+            string targetColumn = grid.Columns.Contains("QtyToShip") && grid.Columns["QtyToShip"].Visible
+                ? "QtyToShip"
+                : grid.Columns.Contains("QtyToShipped")
+                    ? "QtyToShipped"
+                    : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(targetColumn))
+                return;
+
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                if (row == null || row.IsNewRow)
+                    continue;
+
+                grid.CurrentCell = row.Cells[targetColumn];
+                grid.Focus();
+                if (!grid.ReadOnly && !row.Cells[targetColumn].ReadOnly)
+                    grid.BeginEdit(true);
+                return;
+            }
+        }
+
         private void Grid_DefaultValuesNeeded(object? sender, DataGridViewRowEventArgs e)
         {
             try
@@ -408,7 +533,7 @@ namespace AquariumPOS
                 if (row == null || row.IsNewRow) return;
 
                 var columnName = grid.Columns[e.ColumnIndex]?.Name;
-                if (columnName != "ItemNo" && columnName != "VariantName" && columnName != "QtyToTransfer" && columnName != "QtyReceived") return;
+                if (columnName != "ItemNo" && columnName != "VariantName" && columnName != "AvailableQty" && columnName != "QtyToShip" && columnName != "QtyToReceive" && columnName != "QtyReceived") return;
 
                 string doc = (row.Cells["DocumentNo"].Value ?? string.Empty).ToString()!.Trim();
                 string lineNo = (row.Cells["LineNo"].Value ?? string.Empty).ToString()!.Trim();
@@ -441,7 +566,10 @@ namespace AquariumPOS
                 if (variantRequired && string.IsNullOrWhiteSpace(currentVariantId))
                 {
                     MessageBox.Show(this, "Select a Variant before entering quantities for this item.", "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    if (columnName == "QtyToTransfer") row.Cells["QtyToTransfer"].Value = string.Empty;
+                    if (columnName == "AvailableQty") row.Cells["AvailableQty"].Value = string.Empty;
+                    if (columnName == "QtyToShip") row.Cells["QtyToShip"].Value = string.Empty;
+                    if (columnName == "QtyToReceive") row.Cells["QtyToReceive"].Value = string.Empty;
+                    if (columnName == "QtyToShipped") row.Cells["QtyToShipped"].Value = string.Empty;
                     if (columnName == "QtyReceived") row.Cells["QtyReceived"].Value = string.Empty;
                     if (grid.Columns.Contains("VariantName"))
                     {
@@ -451,14 +579,29 @@ namespace AquariumPOS
                     return;
                 }
 
-                if (columnName == "QtyToTransfer")
+                if (columnName == "AvailableQty")
                 {
-                    decimal? qtyToTransfer = ParseNullableDecimal((row.Cells["QtyToTransfer"].Value ?? string.Empty).ToString());
-                    SaveQty(doc, lineNo, "[Qty To Transfer]", qtyToTransfer);
+                    decimal? quantity = ParseNullableDecimal((row.Cells["AvailableQty"].Value ?? string.Empty).ToString());
+                    SaveQty(doc, lineNo, "[Available QTY]", quantity);
+                    if (!IsTransferRequestShippingLayout())
+                    {
+                        SaveQty(doc, lineNo, "[Qty To Transfer]", quantity);
+                    }
+                }
+                else if (columnName == "QtyToShip")
+                {
+                    decimal? qtyToShip = ParseNullableDecimal((row.Cells["QtyToShip"].Value ?? string.Empty).ToString());
+                    SaveQty(doc, lineNo, "[Qty To Transfer]", qtyToShip);
+                }
+                else if (columnName == "QtyToReceive")
+                {
+                    decimal? qtyToReceive = ParseNullableDecimal((row.Cells["QtyToReceive"].Value ?? string.Empty).ToString());
+                    SaveQty(doc, lineNo, "[Qty To Receive]", qtyToReceive);
                 }
                 else if (columnName == "QtyReceived")
                 {
                     decimal? qtyReceived = ParseNullableDecimal((row.Cells["QtyReceived"].Value ?? string.Empty).ToString());
+                    row.Cells["QtyToShipped"].Value = row.Cells["QtyReceived"].Value;
                     SaveQty(doc, lineNo, "[Qty Received]", qtyReceived);
                 }
             }
@@ -472,7 +615,7 @@ namespace AquariumPOS
         {
             using var conn = new SqlConnection(connectionString);
             conn.Open();
-            using var cmd = new SqlCommand($"UPDATE [Transfer Line] SET {columnName} = @Value WHERE [Document No.] = @Doc AND [Line No.] = @Line", conn);
+            using var cmd = new SqlCommand($"UPDATE {documentContext.LineTableName} SET {columnName} = @Value WHERE [Document No.] = @Doc AND [Line No.] = @Line", conn);
             cmd.Parameters.AddWithValue("@Doc", documentNo);
             cmd.Parameters.AddWithValue("@Line", Convert.ToInt32(lineNo));
             cmd.Parameters.AddWithValue("@Value", (object?)value ?? DBNull.Value);
@@ -521,19 +664,24 @@ namespace AquariumPOS
             row.Cells["VariantId"].Value = string.Empty;
             row.Cells["Description"].Value = itemInfo.Description;
             row.Cells["CategoryCode"].Value = itemInfo.CategoryCode;
-            row.Cells["AvailableQty"].Value = itemInfo.AvailableQty?.ToString("0.##") ?? string.Empty;
-
-            decimal? qtyToTransfer = ParseNullableDecimal((row.Cells["QtyToTransfer"].Value ?? string.Empty).ToString());
+            decimal? quantity = ParseNullableDecimal((row.Cells["AvailableQty"].Value ?? string.Empty).ToString());
+            decimal? qtyToTransfer = ParseNullableDecimal((row.Cells["QtyToShip"].Value ?? string.Empty).ToString()) ?? quantity;
+            decimal? qtyToReceive = ParseNullableDecimal((row.Cells["QtyToReceive"].Value ?? string.Empty).ToString());
             decimal? qtyReceived = ParseNullableDecimal((row.Cells["QtyReceived"].Value ?? string.Empty).ToString());
-            UpsertLine(documentNo, Convert.ToInt32(lineNo), itemInfo.ItemCode, null, itemInfo.Description, itemInfo.CategoryCode, itemInfo.AvailableQty, qtyToTransfer, qtyReceived);
+            row.Cells["QtyToShipped"].Value = qtyReceived?.ToString("0.##") ?? string.Empty;
+            UpsertLine(documentNo, Convert.ToInt32(lineNo), itemInfo.ItemCode, null, itemInfo.Description, itemInfo.CategoryCode, quantity, qtyToTransfer, qtyToReceive, qtyReceived);
 
             if (ItemRequiresVariant(itemInfo.ItemCode) && grid.Columns.Contains("VariantName"))
             {
                 grid.CurrentCell = row.Cells["VariantName"];
             }
-            else if (grid.Columns.Contains("QtyToTransfer"))
+            else if (grid.Columns.Contains("QtyToShip") && grid.Columns["QtyToShip"].Visible)
             {
-                grid.CurrentCell = row.Cells["QtyToTransfer"];
+                grid.CurrentCell = row.Cells["QtyToShip"];
+            }
+            else if (grid.Columns.Contains("QtyToReceive"))
+            {
+                grid.CurrentCell = row.Cells["QtyToReceive"];
             }
         }
 
@@ -575,7 +723,6 @@ namespace AquariumPOS
                     row.Cells["VariantId"].Value = string.Empty;
                     row.Cells["Description"].Value = baseItemInfo.Description;
                     row.Cells["CategoryCode"].Value = baseItemInfo.CategoryCode;
-                    row.Cells["AvailableQty"].Value = baseItemInfo.AvailableQty?.ToString("0.##") ?? string.Empty;
                     return;
                 }
 
@@ -588,11 +735,37 @@ namespace AquariumPOS
             row.Cells["VariantId"].Value = finalVariantId ?? string.Empty;
             row.Cells["Description"].Value = finalInfo.Description;
             row.Cells["CategoryCode"].Value = finalInfo.CategoryCode;
-            row.Cells["AvailableQty"].Value = finalInfo.AvailableQty?.ToString("0.##") ?? string.Empty;
-
-            decimal? qtyToTransfer = ParseNullableDecimal((row.Cells["QtyToTransfer"].Value ?? string.Empty).ToString());
+            decimal? quantity = ParseNullableDecimal((row.Cells["AvailableQty"].Value ?? string.Empty).ToString());
+            decimal? qtyToTransfer = ParseNullableDecimal((row.Cells["QtyToShip"].Value ?? string.Empty).ToString()) ?? quantity;
+            decimal? qtyToReceive = ParseNullableDecimal((row.Cells["QtyToReceive"].Value ?? string.Empty).ToString());
             decimal? qtyReceived = ParseNullableDecimal((row.Cells["QtyReceived"].Value ?? string.Empty).ToString());
-            UpsertLine(documentNo, Convert.ToInt32(lineNo), itemNo, finalVariantId, finalInfo.Description, finalInfo.CategoryCode, finalInfo.AvailableQty, qtyToTransfer, qtyReceived);
+            row.Cells["QtyToShipped"].Value = qtyReceived?.ToString("0.##") ?? string.Empty;
+            UpsertLine(documentNo, Convert.ToInt32(lineNo), itemNo, finalVariantId, finalInfo.Description, finalInfo.CategoryCode, quantity, qtyToTransfer, qtyToReceive, qtyReceived);
+        }
+
+        public void ApplyCalculatedQtyShippedForPosting()
+        {
+            if (grid == null)
+                return;
+
+            foreach (DataGridViewRow row in grid.Rows)
+            {
+                if (row == null || row.IsNewRow)
+                    continue;
+
+                string doc = (row.Cells["DocumentNo"].Value ?? string.Empty).ToString()!.Trim();
+                string lineNo = (row.Cells["LineNo"].Value ?? string.Empty).ToString()!.Trim();
+                if (string.IsNullOrWhiteSpace(doc) || string.IsNullOrWhiteSpace(lineNo))
+                    continue;
+
+                decimal? quantity = ParseNullableDecimalSafe((row.Cells["AvailableQty"].Value ?? string.Empty).ToString());
+                decimal? qtyToShip = ParseNullableDecimalSafe((row.Cells["QtyToShip"].Value ?? string.Empty).ToString());
+                decimal? qtyShipped = CalculateQtyShipped(quantity, qtyToShip);
+                string displayValue = qtyShipped?.ToString("0.##") ?? string.Empty;
+                row.Cells["QtyToShipped"].Value = displayValue;
+                row.Cells["QtyReceived"].Value = displayValue;
+                SaveQty(doc, lineNo, "[Qty Received]", qtyShipped);
+            }
         }
 
         private TransferItemInfo? PromptForItemSelection(string initialSearch)
@@ -1149,7 +1322,7 @@ namespace AquariumPOS
                     continue;
                 }
 
-                UpsertLine(documentNo, lineNo, itemInfo.ItemCode, null, itemInfo.Description, itemInfo.CategoryCode, itemInfo.AvailableQty, null, null);
+                UpsertLine(documentNo, lineNo, itemInfo.ItemCode, null, itemInfo.Description, itemInfo.CategoryCode, null, null, null, null);
                 existingItems.Add(itemInfo.ItemCode);
                 lineNo++;
                 addedCount++;
@@ -1723,7 +1896,7 @@ ORDER BY
         {
             using var conn = new SqlConnection(connectionString);
             conn.Open();
-            using var cmd = new SqlCommand("SELECT ISNULL(MAX([Line No.]), 0) + 1 FROM [Transfer Line] WHERE [Document No.] = @Doc", conn);
+            using var cmd = new SqlCommand($"SELECT ISNULL(MAX([Line No.]), 0) + 1 FROM {documentContext.LineTableName} WHERE [Document No.] = @Doc", conn);
             cmd.Parameters.AddWithValue("@Doc", documentNo);
             object? value = cmd.ExecuteScalar();
             try
@@ -1744,19 +1917,66 @@ ORDER BY
             return parsed;
         }
 
-        private void UpsertLine(string documentNo, int lineNo, string itemNo, string? variantId, string description, string categoryCode, decimal? availableQty, decimal? qtyToTransfer, decimal? qtyReceived)
+        private static decimal? ParseNullableDecimalSafe(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            return decimal.TryParse(value.Trim(), out var parsed) ? parsed : null;
+        }
+
+        private static decimal? CalculateQtyShipped(decimal? quantity, decimal? qtyToShip)
+        {
+            if (!quantity.HasValue && !qtyToShip.HasValue)
+                return null;
+
+            decimal totalQuantity = quantity ?? 0m;
+            decimal remainingToShip = qtyToShip ?? 0m;
+            decimal shipped = totalQuantity - remainingToShip;
+            return shipped < 0m ? 0m : shipped;
+        }
+
+        private static string CalculateQtyShippedDisplayValue(string? quantityText, string? qtyToShipText, string? fallbackText)
+        {
+            decimal? quantity = ParseNullableDecimalSafe(quantityText);
+            decimal? qtyToShip = ParseNullableDecimalSafe(qtyToShipText);
+            decimal? qtyShipped = CalculateQtyShipped(quantity, qtyToShip);
+            if (qtyShipped.HasValue)
+                return qtyShipped.Value.ToString("0.##");
+
+            return fallbackText?.Trim() ?? string.Empty;
+        }
+
+        private void UpdateCalculatedQtyShipped(DataGridViewRow row, string documentNo, string lineNo)
+        {
+            if (row == null)
+                return;
+
+            decimal? quantity = ParseNullableDecimalSafe((row.Cells["AvailableQty"].Value ?? string.Empty).ToString());
+            decimal? qtyToShip = ParseNullableDecimalSafe((row.Cells["QtyToShip"].Value ?? string.Empty).ToString());
+            decimal? qtyShipped = CalculateQtyShipped(quantity, qtyToShip);
+            string displayValue = qtyShipped?.ToString("0.##") ?? string.Empty;
+
+            row.Cells["QtyToShipped"].Value = displayValue;
+            row.Cells["QtyReceived"].Value = displayValue;
+
+            if (!string.IsNullOrWhiteSpace(documentNo) && !string.IsNullOrWhiteSpace(lineNo))
+                SaveQty(documentNo, lineNo, "[Qty Received]", qtyShipped);
+        }
+
+        private void UpsertLine(string documentNo, int lineNo, string itemNo, string? variantId, string description, string categoryCode, decimal? availableQty, decimal? qtyToTransfer, decimal? qtyToReceive, decimal? qtyReceived)
         {
             using var conn = new SqlConnection(connectionString);
             conn.Open();
 
-            using var check = new SqlCommand("SELECT COUNT(1) FROM [Transfer Line] WHERE [Document No.] = @Doc AND [Line No.] = @Line", conn);
+            using var check = new SqlCommand($"SELECT COUNT(1) FROM {documentContext.LineTableName} WHERE [Document No.] = @Doc AND [Line No.] = @Line", conn);
             check.Parameters.AddWithValue("@Doc", documentNo);
             check.Parameters.AddWithValue("@Line", lineNo);
             bool exists = Convert.ToInt32(check.ExecuteScalar() ?? 0) > 0;
 
             string sql = exists
-                ? "UPDATE [Transfer Line] SET [Item No.] = @Item, [Variant ID] = @VariantId, [Description] = @Description, [CategoryCode] = @CategoryCode, [Available QTY] = @AvailableQty, [Qty To Transfer] = @QtyToTransfer, [Qty Received] = @QtyReceived WHERE [Document No.] = @Doc AND [Line No.] = @Line"
-                : "INSERT INTO [Transfer Line] ([Document No.], [Item No.], [Variant ID], [Description], [CategoryCode], [Line No.], [Available QTY], [Qty To Transfer], [Qty Received]) VALUES (@Doc, @Item, @VariantId, @Description, @CategoryCode, @Line, @AvailableQty, @QtyToTransfer, @QtyReceived)";
+                ? $"UPDATE {documentContext.LineTableName} SET [Item No.] = @Item, [Variant ID] = @VariantId, [Description] = @Description, [CategoryCode] = @CategoryCode, [Available QTY] = @AvailableQty, [Qty To Transfer] = @QtyToTransfer, [Qty To Receive] = @QtyToReceive, [Qty Received] = @QtyReceived WHERE [Document No.] = @Doc AND [Line No.] = @Line"
+                : $"INSERT INTO {documentContext.LineTableName} ([Document No.], [Item No.], [Variant ID], [Description], [CategoryCode], [Line No.], [Available QTY], [Qty To Transfer], [Qty To Receive], [Qty Received]) VALUES (@Doc, @Item, @VariantId, @Description, @CategoryCode, @Line, @AvailableQty, @QtyToTransfer, @QtyToReceive, @QtyReceived)";
 
             using var cmd = new SqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@Doc", documentNo);
@@ -1767,6 +1987,7 @@ ORDER BY
             cmd.Parameters.AddWithValue("@Line", lineNo);
             cmd.Parameters.AddWithValue("@AvailableQty", (object?)availableQty ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@QtyToTransfer", (object?)qtyToTransfer ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@QtyToReceive", (object?)qtyToReceive ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@QtyReceived", (object?)qtyReceived ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         }
@@ -1778,7 +1999,7 @@ ORDER BY
                 grid.Rows.Clear();
                 using var conn = new SqlConnection(connectionString);
                 conn.Open();
-                using var cmd = new SqlCommand("SELECT [Document No.], [Item No.], [Variant ID], [Description], [CategoryCode], [Line No.], [Available QTY], [Qty To Transfer], [Qty Received] FROM [Transfer Line] ORDER BY [Document No.], [Line No.]", conn);
+                using var cmd = new SqlCommand($"SELECT [Document No.], [Item No.], [Variant ID], [Description], [CategoryCode], [Line No.], [Available QTY], [Qty To Transfer], [Qty To Receive], [Qty Received] FROM {documentContext.LineTableName} ORDER BY [Document No.], [Line No.]", conn);
                 using var rdr = cmd.ExecuteReader();
                 while (rdr.Read())
                 {
@@ -1789,17 +2010,17 @@ ORDER BY
                     string cat = rdr["CategoryCode"] != DBNull.Value ? rdr["CategoryCode"].ToString() ?? "" : "";
                     string line = rdr["Line No."] != DBNull.Value ? rdr["Line No."].ToString() ?? "" : "";
                     string avail = rdr["Available QTY"] != DBNull.Value ? rdr["Available QTY"].ToString() ?? "" : "";
-                    string transfer = rdr["Qty To Transfer"] != DBNull.Value ? rdr["Qty To Transfer"].ToString() ?? "" : "";
+                    string qtyToReceive = rdr["Qty To Receive"] != DBNull.Value ? rdr["Qty To Receive"].ToString() ?? "" : "";
                     string received = rdr["Qty Received"] != DBNull.Value ? rdr["Qty Received"].ToString() ?? "" : "";
                     string variantName = string.IsNullOrWhiteSpace(item) || string.IsNullOrWhiteSpace(variantId)
                         ? string.Empty
                         : ResolveVariantDisplayName(item, variantId);
-                    grid.Rows.Add(doc, item, variantName, variantId, desc, cat, line, avail, transfer, received);
+                    grid.Rows.Add(doc, item, variantName, variantId, desc, cat, line, avail, qtyToReceive, received);
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Failed to load Transfer Line: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, $"Failed to load {documentContext.DocumentTitle} lines: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
     }

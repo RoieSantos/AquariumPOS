@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Expense Entry Lines - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Expense Entry Lines</h1>
+    <p class="muted" id="entrySummaryNote">Read-only view of a posted expense's line items. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it.
+         No password re-entry prompt otherwise - super user status alone is enough, same trust
+         model as Online Orders. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <p><a href="expense-entries.html">&larr; Back to Expenses</a></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Line ID</th>
+              <th>Item Code</th>
+              <th>Description</th>
+              <th>Quantity</th>
+              <th>Unit Cost</th>
+              <th>Price</th>
+              <th>Discount</th>
+              <th>Gross Amount</th>
+              <th>Net Amount</th>
+              <th>User</th>
+            </tr>
+          </thead>
+          <tbody id="lineTableBody">
+            <tr><td colspan="10" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="linePaginationBar"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/expenseEntryLines.js"></script>
+</body>
+</html>

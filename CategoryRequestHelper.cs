@@ -235,6 +235,7 @@ BEGIN
         DisableChangePrice BIT NOT NULL CONSTRAINT DF_Category_DisableChangePrice DEFAULT(0),
         IsProductionCategory BIT NOT NULL CONSTRAINT DF_Category_IsProductionCategory DEFAULT(0),
         ShowInMainPos BIT NOT NULL CONSTRAINT DF_Category_ShowInMainPos DEFAULT(1),
+        ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_Category_ExcludeOnInventoryReport DEFAULT(0),
         CreatedDate DATETIME2 DEFAULT GETDATE(),
         UpdatedDate DATETIME2 DEFAULT GETDATE()
     )
@@ -258,6 +259,11 @@ BEGIN
     IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Category' AND COLUMN_NAME = 'ShowInMainPos')
     BEGIN
         ALTER TABLE Category ADD ShowInMainPos BIT NOT NULL CONSTRAINT DF_Category_ShowInMainPos DEFAULT(1)
+    END
+
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Category' AND COLUMN_NAME = 'ExcludeOnInventoryReport')
+    BEGIN
+        ALTER TABLE Category ADD ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_Category_ExcludeOnInventoryReport DEFAULT(0)
     END
 END", connection);
 

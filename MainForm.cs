@@ -40,6 +40,9 @@ namespace AquariumPOS
         private System.Windows.Forms.Timer? onlineSyncTimer = null;
         // Prevent overlapping online sync runs
         private volatile bool _isOnlineSyncRunning = false;
+        // Background master data (Warehouses/Items) sync timer - pushes to Supabase automatically
+        private System.Windows.Forms.Timer? masterDataSyncTimer = null;
+        private volatile bool _isMasterDataSyncRunning = false;
         // Prevent overlapping failed-transactions send runs (0 = idle, 1 = running)
         private int _isSendingFailedTransactionsRunning = 0;
         private readonly string connectionString = GlobalSettings.ConnectionString;
@@ -165,6 +168,31 @@ namespace AquariumPOS
             return FunctionEvents.ToAscii(noteText);
         }
 
+        private static decimal ExtractCardProcessingFeeFromHeaderDescription(string? headerDescription)
+        {
+            string source = headerDescription?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                return 0m;
+            }
+
+            const string marker = "| CardFee:";
+            int markerIndex = source.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex < 0)
+            {
+                return 0m;
+            }
+
+            string afterMarker = source.Substring(markerIndex + marker.Length).Trim();
+            int nextPipe = afterMarker.IndexOf('|');
+            if (nextPipe >= 0)
+            {
+                afterMarker = afterMarker.Substring(0, nextPipe).Trim();
+            }
+
+            return decimal.TryParse(afterMarker, out decimal feeAmount) ? feeAmount : 0m;
+        }
+
         private static void AppendWrappedReceiptNote(StringBuilder receipt, string noteText, int receiptWidth)
         {
             string normalizedNote = FunctionEvents.ToAscii(noteText ?? string.Empty).Trim();
@@ -192,12 +220,115 @@ namespace AquariumPOS
             receipt.AppendLine();
         }
 
+        private decimal GetCurrentCardProcessingFeeTotal()
+        {
+            if (salesListView == null || salesListView.Items.Count == 0)
+            {
+                return 0m;
+            }
+
+            return salesListView.Items.Cast<ListViewItem>()
+                .Where(item => string.Equals(item.Tag?.ToString(), CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase))
+                .Sum(GetListViewItemTotal);
+        }
+
+        private void EnsureCardProcessingFeeLogTable(SqlConnection connection)
+        {
+            using var command = new SqlCommand(@"
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'CardProcessingFeeLog')
+BEGIN
+    CREATE TABLE CardProcessingFeeLog (
+        Id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        StoreNo NVARCHAR(20) NOT NULL,
+        POSTerminalNo NVARCHAR(20) NOT NULL,
+        TransactionNo NVARCHAR(50) NOT NULL,
+        ReceiptNo NVARCHAR(50) NOT NULL,
+        TenderTypeCode NVARCHAR(200) NULL,
+        FeeAmount DECIMAL(18,2) NOT NULL,
+        SaleAmount DECIMAL(18,2) NOT NULL,
+        MarkupPercent DECIMAL(18,2) NOT NULL,
+        UserID NVARCHAR(100) NULL,
+        CreatedDate DATETIME2 NOT NULL CONSTRAINT DF_CardProcessingFeeLog_CreatedDate DEFAULT(GETDATE())
+    )
+END", connection);
+            command.ExecuteNonQuery();
+        }
+
+        private void LogCardProcessingFee(decimal feeAmount, decimal saleAmount)
+        {
+            if (feeAmount <= 0m || string.IsNullOrWhiteSpace(currentReceiptNo) || string.IsNullOrWhiteSpace(currentTransNo))
+            {
+                return;
+            }
+
+            try
+            {
+                string tenderCodes = string.Join(",",
+                    payments
+                        .Where(payment => IsCreditCardTender(payment.TenderCode, payment.TenderType))
+                        .Select(payment => payment.TenderCode?.Trim())
+                        .Where(code => !string.IsNullOrWhiteSpace(code))
+                        .Distinct(StringComparer.OrdinalIgnoreCase));
+
+                if (string.IsNullOrWhiteSpace(tenderCodes))
+                {
+                    tenderCodes = "CARD";
+                }
+
+                decimal markupPercent = LoadCardMarkupPercent();
+
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+                EnsureCardProcessingFeeLogTable(connection);
+
+                using var command = new SqlCommand(@"
+INSERT INTO CardProcessingFeeLog (
+    StoreNo,
+    POSTerminalNo,
+    TransactionNo,
+    ReceiptNo,
+    TenderTypeCode,
+    FeeAmount,
+    SaleAmount,
+    MarkupPercent,
+    UserID
+) VALUES (
+    @storeNo,
+    @posTerminalNo,
+    @transactionNo,
+    @receiptNo,
+    @tenderTypeCode,
+    @feeAmount,
+    @saleAmount,
+    @markupPercent,
+    @userId
+)", connection);
+
+                command.Parameters.AddWithValue("@storeNo", "001");
+                command.Parameters.AddWithValue("@posTerminalNo", "001");
+                command.Parameters.AddWithValue("@transactionNo", currentTransNo);
+                command.Parameters.AddWithValue("@receiptNo", currentReceiptNo);
+                command.Parameters.AddWithValue("@tenderTypeCode", tenderCodes);
+                command.Parameters.AddWithValue("@feeAmount", feeAmount);
+                command.Parameters.AddWithValue("@saleAmount", saleAmount);
+                command.Parameters.AddWithValue("@markupPercent", markupPercent);
+                command.Parameters.AddWithValue("@userId", CurrentUser.Username ?? "POS_SYSTEM");
+                command.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Card processing fee log warning: {ex.Message}");
+            }
+        }
+
         // Commission expense line management (added at post-time when a salesperson is selected)
         private const string CommissionExpenseTag = "COMMISSION_EXPENSE";
         private const string ReturnLineTag = "RETURN";
         private const string AquariumSetDiscountTag = "AQUARIUM_SET_DISCOUNT";
         private const string AquariumSetAccessoryTag = "AQUARIUM_SET_ACCESSORY";
         private const string AquariumSetComponentLineMarker = "AQUARIUM_SET_COMPONENT";
+        private const string CardProcessingFeeTag = "CARD_PROCESSING_FEE";
+        private const string CardProcessingFeeDescription = "Card Processing Fee";
 
         // Selected return items are staged into the main POS as negative lines,
         // then the cashier can add the exchange items normally.
@@ -685,6 +816,13 @@ namespace AquariumPOS
                         }
                     }
 
+                    decimal cardProcessingFee = ExtractCardProcessingFeeFromHeaderDescription(headerDescription);
+                    if (cardProcessingFee > 0m)
+                    {
+                        subtotal += cardProcessingFee;
+                        lines.Add($"{CardProcessingFeeDescription,-12} {1,-3} {cardProcessingFee:N2,-8}");
+                    }
+
                     // Fallback: if no item ledger entries, try TransactionHeader single-line
                     if (lines.Count == 0)
                     {
@@ -869,6 +1007,21 @@ namespace AquariumPOS
                     onlineSyncTimer.Tick += OnlineSyncTimer_Tick;
                     onlineSyncTimer.Start();
                 }
+
+                // Master data (Warehouses/Items) auto-sync - runs every 5 minutes, much less
+                // frequently than the order sync since this is slower-changing data. Each run:
+                // 1) pulls the latest Warehouses/Items from the Pancake (pages.fm) API into the
+                //    local DB (same calls as WarehouseSetupForm's/Sync Products' manual buttons), then
+                // 2) pushes the resulting local data to Supabase.
+                if (masterDataSyncTimer == null)
+                {
+                    masterDataSyncTimer = new System.Windows.Forms.Timer();
+                    masterDataSyncTimer.Interval = 300000; // 5 minutes
+                    masterDataSyncTimer.Tick += MasterDataSyncTimer_Tick;
+                    masterDataSyncTimer.Start();
+                    // Kick off one sync right away on startup too, instead of waiting a full 5 minutes.
+                    Task.Run(() => MasterDataSyncTimer_Tick(null, EventArgs.Empty));
+                }
                 // Subscribe to network availability changes so we can attempt to resend failed transactions
                 try
                 {
@@ -984,6 +1137,42 @@ namespace AquariumPOS
             }
         }
 
+        // Master data sync timer tick handler. Awaits the async sync calls with
+        // ConfigureAwait(false) so the (potentially slow, many-HTTP-call) sync work runs on a
+        // background thread instead of blocking the UI thread.
+        // Pulls fresh Warehouses/Items from Pancake (pages.fm) into the local DB first, then
+        // pushes the local data to Supabase, so Supabase ends up reflecting the latest Pancake data.
+        private async void MasterDataSyncTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_isMasterDataSyncRunning) return;
+            _isMasterDataSyncRunning = true;
+            try
+            {
+                try { await OnlinefunctionsEvents.SyncWarehouseAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+                try { await OnlinefunctionsEvents.SyncProductVariationsAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
+                try { await OnlinefunctionsEvents.SyncWarehousesToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+                try { await OnlinefunctionsEvents.SyncItemsToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+                try { await OnlinefunctionsEvents.SyncOnlineOrdersToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+                try { await OnlinefunctionsEvents.SyncAdvanceOrdersToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
+                // Opposite direction from everything else above (Supabase -> desktop) - the Web
+                // Portal's Category Setup screen is the only place "Production Category" can be
+                // toggled, so this is what makes that reach Stock Counts' own local filter.
+                try { await OnlinefunctionsEvents.SyncCategoryProductionFlagsFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
+                // Also Supabase -> desktop, but two-way (last-writer-wins) rather than single-owner
+                // like Categories above - the Portal's Transfer Order Ship flow tags serials
+                // IN_TRANSIT directly in Supabase (see staff_claim_serials_for_transfer_shipment),
+                // which local wouldn't otherwise ever find out about.
+                try { await OnlinefunctionsEvents.SyncItemSerialTrackingFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+            }
+            finally
+            {
+                _isMasterDataSyncRunning = false;
+            }
+        }
+
         private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
         {
             try
@@ -994,6 +1183,13 @@ namespace AquariumPOS
                     try { onlineSyncTimer.Tick -= OnlineSyncTimer_Tick; } catch { }
                     try { onlineSyncTimer.Dispose(); } catch { }
                     onlineSyncTimer = null;
+                }
+                if (masterDataSyncTimer != null)
+                {
+                    try { masterDataSyncTimer.Stop(); } catch { }
+                    try { masterDataSyncTimer.Tick -= MasterDataSyncTimer_Tick; } catch { }
+                    try { masterDataSyncTimer.Dispose(); } catch { }
+                    masterDataSyncTimer = null;
                 }
                 try
                 {
@@ -4912,6 +5108,7 @@ END", connection);
                         DisableChangePrice BIT NOT NULL CONSTRAINT DF_Category_DisableChangePrice DEFAULT(0),
                         IsProductionCategory BIT NOT NULL CONSTRAINT DF_Category_IsProductionCategory DEFAULT(0),
                         ShowInMainPos BIT NOT NULL CONSTRAINT DF_Category_ShowInMainPos DEFAULT(1),
+                        ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_Category_ExcludeOnInventoryReport DEFAULT(0),
                         CreatedDate DATETIME2 DEFAULT GETDATE(),
                         UpdatedDate DATETIME2 DEFAULT GETDATE()
                     )
@@ -4936,6 +5133,11 @@ END", connection);
                     BEGIN
                         ALTER TABLE Category ADD ShowInMainPos BIT NOT NULL CONSTRAINT DF_Category_ShowInMainPos DEFAULT(1)
                     END
+
+                    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Category' AND COLUMN_NAME = 'ExcludeOnInventoryReport')
+                    BEGIN
+                        ALTER TABLE Category ADD ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_Category_ExcludeOnInventoryReport DEFAULT(0)
+                    END
                 END", connection);
             createTableCmd.ExecuteNonQuery();
         }
@@ -4943,6 +5145,29 @@ END", connection);
         private void CategoryMgmtButton_Click(object? sender, EventArgs e)
         {
             bool isRefreshingCategoryGrid = false;
+
+            static void MatchParentFormBounds(Form form)
+            {
+                try
+                {
+                    var main = Application.OpenForms.Cast<Form>().FirstOrDefault(f => f.GetType().Name == "MainForm");
+                    if (main != null)
+                    {
+                        form.StartPosition = FormStartPosition.Manual;
+                        form.Bounds = main.Bounds;
+                        form.WindowState = main.WindowState;
+                        form.Location = main.Location;
+                    }
+                    else
+                    {
+                        form.WindowState = FormWindowState.Maximized;
+                    }
+                }
+                catch
+                {
+                    form.WindowState = FormWindowState.Maximized;
+                }
+            }
 
             static bool TryParseCategoryBoolean(string? text, out bool value)
             {
@@ -4980,7 +5205,7 @@ END", connection);
                 {
                     connection.Open();
                     EnsureCategoryTableSchema(connection);
-                    var command = new SqlCommand("SELECT Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos FROM Category ORDER BY Code", connection);
+                    var command = new SqlCommand("SELECT Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos, ExcludeOnInventoryReport FROM Category ORDER BY Code", connection);
                     using (var reader = command.ExecuteReader())
                     {
                         while (reader.Read())
@@ -4991,7 +5216,8 @@ END", connection);
                             bool disableChangePrice = reader["DisableChangePrice"] != DBNull.Value && Convert.ToBoolean(reader["DisableChangePrice"]);
                             bool isProductionCategory = reader["IsProductionCategory"] != DBNull.Value && Convert.ToBoolean(reader["IsProductionCategory"]);
                             bool showInMainPos = reader["ShowInMainPos"] != DBNull.Value && Convert.ToBoolean(reader["ShowInMainPos"]);
-                            grid.Rows.Add(code, description, wholeSale, disableChangePrice, isProductionCategory, showInMainPos, "Edit", "Delete");
+                            bool excludeOnInventoryReport = reader["ExcludeOnInventoryReport"] != DBNull.Value && Convert.ToBoolean(reader["ExcludeOnInventoryReport"]);
+                            grid.Rows.Add(code, description, wholeSale, disableChangePrice, isProductionCategory, showInMainPos, excludeOnInventoryReport, "Edit", "Delete");
                             rowCount++;
                         }
                     }
@@ -5016,7 +5242,7 @@ END", connection);
 
                 using var package = new ExcelPackage();
                 var worksheet = package.Workbook.Worksheets.Add("Categories");
-                string[] headers = { "Code", "Description", "WholeSale", "DisableChangePrice", "IsProductionCategory", "ShowInMainPos" };
+                string[] headers = { "Code", "Description", "WholeSale", "DisableChangePrice", "IsProductionCategory", "ShowInMainPos", "ExcludeOnInventoryReport" };
 
                 for (int i = 0; i < headers.Length; i++)
                 {
@@ -5031,7 +5257,7 @@ END", connection);
                     connection.Open();
                     EnsureCategoryTableSchema(connection);
 
-                    using var command = new SqlCommand("SELECT Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos FROM Category ORDER BY Code", connection);
+                    using var command = new SqlCommand("SELECT Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos, ExcludeOnInventoryReport FROM Category ORDER BY Code", connection);
                     using var reader = command.ExecuteReader();
 
                     int row = 2;
@@ -5043,6 +5269,7 @@ END", connection);
                         worksheet.Cells[row, 4].Value = reader["DisableChangePrice"] != DBNull.Value && Convert.ToBoolean(reader["DisableChangePrice"]);
                         worksheet.Cells[row, 5].Value = reader["IsProductionCategory"] != DBNull.Value && Convert.ToBoolean(reader["IsProductionCategory"]);
                         worksheet.Cells[row, 6].Value = reader["ShowInMainPos"] != DBNull.Value && Convert.ToBoolean(reader["ShowInMainPos"]);
+                        worksheet.Cells[row, 7].Value = reader["ExcludeOnInventoryReport"] != DBNull.Value && Convert.ToBoolean(reader["ExcludeOnInventoryReport"]);
                         row++;
                     }
 
@@ -5054,6 +5281,7 @@ END", connection);
                         worksheet.Cells[2, 4].Value = false;
                         worksheet.Cells[2, 5].Value = false;
                         worksheet.Cells[2, 6].Value = true;
+                        worksheet.Cells[2, 7].Value = false;
                     }
                 }
 
@@ -5074,6 +5302,9 @@ END", connection);
                 var showValidation = worksheet.DataValidations.AddListValidation("F:F");
                 showValidation.Formula.Values.Add("TRUE");
                 showValidation.Formula.Values.Add("FALSE");
+                var excludeValidation = worksheet.DataValidations.AddListValidation("G:G");
+                excludeValidation.Formula.Values.Add("TRUE");
+                excludeValidation.Formula.Values.Add("FALSE");
 
                 package.SaveAs(new FileInfo(saveDialog.FileName));
                 MessageBox.Show($"Categories exported successfully.\nFile saved: {saveDialog.FileName}", "Export Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -5107,13 +5338,13 @@ END", connection);
                     return;
                 }
 
-                string[] expectedHeaders = { "Code", "Description", "WholeSale", "DisableChangePrice", "IsProductionCategory", "ShowInMainPos" };
+                string[] expectedHeaders = { "Code", "Description", "WholeSale", "DisableChangePrice", "IsProductionCategory", "ShowInMainPos", "ExcludeOnInventoryReport" };
                 for (int i = 0; i < expectedHeaders.Length; i++)
                 {
                     string actualHeader = worksheet.Cells[1, i + 1].Text?.Trim() ?? string.Empty;
                     if (!string.Equals(actualHeader, expectedHeaders[i], StringComparison.OrdinalIgnoreCase))
                     {
-                        MessageBox.Show("Invalid category import template. Expected headers: Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos.", "Import Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show("Invalid category import template. Expected headers: Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos, ExcludeOnInventoryReport.", "Import Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
                 }
@@ -5155,6 +5386,8 @@ END", connection);
                                 isProductionCategory = false;
                             if (!TryParseCategoryBoolean(worksheet.Cells[row, 6].Text, out bool showInMainPos))
                                 showInMainPos = true;
+                            if (!TryParseCategoryBoolean(worksheet.Cells[row, 7].Text, out bool excludeOnInventoryReport))
+                                excludeOnInventoryReport = false;
 
                             using var existsCmd = new SqlCommand("SELECT COUNT(*) FROM Category WHERE Code = @code", connection);
                             existsCmd.Parameters.AddWithValue("@code", code);
@@ -5175,6 +5408,7 @@ SET Description = @description,
     DisableChangePrice = @disableChangePrice,
     IsProductionCategory = @isProductionCategory,
     ShowInMainPos = @showInMainPos,
+    ExcludeOnInventoryReport = @excludeOnInventoryReport,
     UpdatedDate = GETDATE()
 WHERE Code = @code", connection);
                                 updateCmd.Parameters.AddWithValue("@code", code);
@@ -5183,19 +5417,21 @@ WHERE Code = @code", connection);
                                 updateCmd.Parameters.AddWithValue("@disableChangePrice", disableChangePrice);
                                 updateCmd.Parameters.AddWithValue("@isProductionCategory", isProductionCategory);
                                 updateCmd.Parameters.AddWithValue("@showInMainPos", showInMainPos);
+                                updateCmd.Parameters.AddWithValue("@excludeOnInventoryReport", excludeOnInventoryReport);
                                 updateCmd.ExecuteNonQuery();
                             }
                             else
                             {
                                 using var insertCmd = new SqlCommand(@"
-INSERT INTO Category (Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos)
-VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCategory, @showInMainPos)", connection);
+INSERT INTO Category (Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos, ExcludeOnInventoryReport)
+VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCategory, @showInMainPos, @excludeOnInventoryReport)", connection);
                                 insertCmd.Parameters.AddWithValue("@code", code);
                                 insertCmd.Parameters.AddWithValue("@description", description);
                                 insertCmd.Parameters.AddWithValue("@wholeSale", wholesale);
                                 insertCmd.Parameters.AddWithValue("@disableChangePrice", disableChangePrice);
                                 insertCmd.Parameters.AddWithValue("@isProductionCategory", isProductionCategory);
                                 insertCmd.Parameters.AddWithValue("@showInMainPos", showInMainPos);
+                                insertCmd.Parameters.AddWithValue("@excludeOnInventoryReport", excludeOnInventoryReport);
                                 insertCmd.ExecuteNonQuery();
                             }
 
@@ -5249,15 +5485,20 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 var categoryForm = new Form
                 {
                     Text = "Category Management",
-                    Size = new Size(600, 560),
+                    Size = new Size(1180, 760),
+                    MinimumSize = new Size(980, 680),
                     StartPosition = FormStartPosition.CenterParent,
-                    BackColor = Color.White
+                    BackColor = Color.White,
+                    FormBorderStyle = FormBorderStyle.Sizable,
+                    MaximizeBox = true,
+                    MinimizeBox = true
                 };
+                MatchParentFormBounds(categoryForm);
 
                 var dataGridView = new DataGridView
                 {
                     Location = new Point(10, 10),
-                    Size = new Size(560, 300),
+                    Size = new Size(1140, 500),
                     ReadOnly = false,
                     AllowUserToAddRows = false,
                     AllowUserToDeleteRows = false,
@@ -5266,7 +5507,8 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                     SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                     BackgroundColor = Color.White,
                     BorderStyle = BorderStyle.Fixed3D,
-                    RowHeadersVisible = false
+                    RowHeadersVisible = false,
+                    Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
                 };
 
                 dataGridView.Columns.Add("Code", "Category Code");
@@ -5295,6 +5537,12 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                     HeaderText = "Show In Main POS",
                     Width = 110
                 });
+                dataGridView.Columns.Add(new DataGridViewCheckBoxColumn
+                {
+                    Name = "ExcludeOnInventoryReport",
+                    HeaderText = "Exclude on Inventory Report",
+                    Width = 165
+                });
 
                 var editButtonColumn = new DataGridViewButtonColumn
                 {
@@ -5317,7 +5565,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 dataGridView.Columns.Add(deleteButtonColumn);
 
                 dataGridView.Columns["Code"].Width = 120;
-                dataGridView.Columns["Description"].Width = 150;
+                dataGridView.Columns["Description"].Width = 260;
                 dataGridView.Columns["Code"].ReadOnly = true;
                 dataGridView.Columns["Description"].ReadOnly = true;
                 dataGridView.Columns["ShowInMainPos"].ReadOnly = true;
@@ -5328,10 +5576,11 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 var countLabel = new Label
                 {
                     Text = "Total Categories: 0",
-                    Location = new Point(10, 320),
+                    Location = new Point(10, 520),
                     Size = new Size(250, 20),
                     Font = new Font("Arial", 10, FontStyle.Bold),
-                    ForeColor = Color.DarkBlue
+                    ForeColor = Color.DarkBlue,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Bottom
                 };
 
                 // Handle button clicks
@@ -5346,6 +5595,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         bool disableChangePrice = row.Cells["DisableChangePrice"].Value != null && Convert.ToBoolean(row.Cells["DisableChangePrice"].Value);
                         bool isProductionCategory = row.Cells["IsProductionCategory"].Value != null && Convert.ToBoolean(row.Cells["IsProductionCategory"].Value);
                         bool showInMainPos = row.Cells["ShowInMainPos"].Value != null && Convert.ToBoolean(row.Cells["ShowInMainPos"].Value);
+                        bool excludeOnInventoryReport = row.Cells["ExcludeOnInventoryReport"].Value != null && Convert.ToBoolean(row.Cells["ExcludeOnInventoryReport"].Value);
 
                         if (gridE.ColumnIndex == dataGridView.Columns["Edit"].Index)
                         {
@@ -5353,7 +5603,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                             var editForm = new Form
                             {
                                 Text = "Edit Category",
-                                Size = new Size(420, 360),
+                                Size = new Size(460, 400),
                                 StartPosition = FormStartPosition.CenterParent,
                                 BackColor = Color.White,
                                 FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -5434,10 +5684,19 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                                 Checked = isProductionCategory
                             };
 
+                            var excludeOnInventoryReportCheckBox = new CheckBox
+                            {
+                                Text = "Exclude on Inventory Report",
+                                Location = new Point(130, 290),
+                                Size = new Size(240, 24),
+                                Font = new Font("Arial", 10, FontStyle.Regular),
+                                Checked = excludeOnInventoryReport
+                            };
+
                             var saveButton = new Button
                             {
                                 Text = "Save",
-                                Location = new Point(130, 298),
+                                Location = new Point(130, 326),
                                 Size = new Size(80, 30),
                                 BackColor = Color.Green,
                                 ForeColor = Color.White,
@@ -5447,7 +5706,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                             var cancelButton = new Button
                             {
                                 Text = "Cancel",
-                                Location = new Point(220, 298),
+                                Location = new Point(220, 326),
                                 Size = new Size(80, 30),
                                 BackColor = Color.Gray,
                                 ForeColor = Color.White,
@@ -5468,12 +5727,13 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                                     {
                                         connection.Open();
                                         EnsureCategoryTableSchema(connection);
-                                        var cmd = new SqlCommand("UPDATE Category SET Description = @description, WholeSale = @wholeSale, DisableChangePrice = @disableChangePrice, IsProductionCategory = @isProductionCategory, ShowInMainPos = @showInMainPos, UpdatedDate = GETDATE() WHERE Code = @code", connection);
+                                        var cmd = new SqlCommand("UPDATE Category SET Description = @description, WholeSale = @wholeSale, DisableChangePrice = @disableChangePrice, IsProductionCategory = @isProductionCategory, ShowInMainPos = @showInMainPos, ExcludeOnInventoryReport = @excludeOnInventoryReport, UpdatedDate = GETDATE() WHERE Code = @code", connection);
                                         cmd.Parameters.AddWithValue("@description", descTextBox.Text.Trim());
                                         cmd.Parameters.AddWithValue("@wholeSale", wholeSaleCheckBox.Checked);
                                         cmd.Parameters.AddWithValue("@disableChangePrice", disableChangePriceCheckBox.Checked);
                                         cmd.Parameters.AddWithValue("@isProductionCategory", isProductionCategoryCheckBox.Checked);
                                         cmd.Parameters.AddWithValue("@showInMainPos", showInMainPosCheckBox.Checked);
+                                        cmd.Parameters.AddWithValue("@excludeOnInventoryReport", excludeOnInventoryReportCheckBox.Checked);
                                         cmd.Parameters.AddWithValue("@code", code);
                                         cmd.ExecuteNonQuery();
                                     }
@@ -5489,7 +5749,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
 
                             cancelButton.Click += (s, args) => editForm.Close();
 
-                            editForm.Controls.AddRange(new Control[] { codeLabel, codeTextBox, descLabel, descTextBox, showInMainPosCheckBox, wholeSaleCheckBox, disableChangePriceCheckBox, isProductionCategoryCheckBox, saveButton, cancelButton });
+                            editForm.Controls.AddRange(new Control[] { codeLabel, codeTextBox, descLabel, descTextBox, showInMainPosCheckBox, wholeSaleCheckBox, disableChangePriceCheckBox, isProductionCategoryCheckBox, excludeOnInventoryReportCheckBox, saveButton, cancelButton });
                             editForm.ShowDialog();
                         }
                         else if (gridE.ColumnIndex == dataGridView.Columns["Delete"].Index)
@@ -5544,7 +5804,8 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
 
                     bool isWholeSaleColumn = gridE.ColumnIndex == dataGridView.Columns["WholeSale"].Index;
                     bool isDisableChangePriceColumn = gridE.ColumnIndex == dataGridView.Columns["DisableChangePrice"].Index;
-                    if (!isWholeSaleColumn && !isDisableChangePriceColumn)
+                    bool isExcludeOnInventoryReportColumn = gridE.ColumnIndex == dataGridView.Columns["ExcludeOnInventoryReport"].Index;
+                    if (!isWholeSaleColumn && !isDisableChangePriceColumn && !isExcludeOnInventoryReportColumn)
                         return;
 
                     var row = dataGridView.Rows[gridE.RowIndex];
@@ -5552,6 +5813,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                     bool wholeSale = row.Cells["WholeSale"].Value != null && Convert.ToBoolean(row.Cells["WholeSale"].Value);
                     bool disableChangePrice = row.Cells["DisableChangePrice"].Value != null && Convert.ToBoolean(row.Cells["DisableChangePrice"].Value);
                     bool isProductionCategory = row.Cells["IsProductionCategory"].Value != null && Convert.ToBoolean(row.Cells["IsProductionCategory"].Value);
+                    bool excludeOnInventoryReport = row.Cells["ExcludeOnInventoryReport"].Value != null && Convert.ToBoolean(row.Cells["ExcludeOnInventoryReport"].Value);
 
                     if (string.IsNullOrWhiteSpace(code))
                         return;
@@ -5562,17 +5824,22 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         {
                             connection.Open();
                             EnsureCategoryTableSchema(connection);
-                            var cmd = new SqlCommand("UPDATE Category SET WholeSale = @wholeSale, DisableChangePrice = @disableChangePrice, IsProductionCategory = @isProductionCategory, UpdatedDate = GETDATE() WHERE Code = @code", connection);
+                            var cmd = new SqlCommand("UPDATE Category SET WholeSale = @wholeSale, DisableChangePrice = @disableChangePrice, IsProductionCategory = @isProductionCategory, ExcludeOnInventoryReport = @excludeOnInventoryReport, UpdatedDate = GETDATE() WHERE Code = @code", connection);
                             cmd.Parameters.AddWithValue("@wholeSale", wholeSale);
                             cmd.Parameters.AddWithValue("@disableChangePrice", disableChangePrice);
                             cmd.Parameters.AddWithValue("@isProductionCategory", isProductionCategory);
+                            cmd.Parameters.AddWithValue("@excludeOnInventoryReport", excludeOnInventoryReport);
                             cmd.Parameters.AddWithValue("@code", code);
                             cmd.ExecuteNonQuery();
                         }
                     }
                     catch (Exception ex)
                     {
-                        string settingLabel = isWholeSaleColumn ? "wholesale" : "disable change price";
+                        string settingLabel = isWholeSaleColumn
+                            ? "wholesale"
+                            : isDisableChangePriceColumn
+                                ? "disable change price"
+                                : "exclude on inventory report";
                         MessageBox.Show($"Failed to update {settingLabel} setting: {ex.Message}", "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         RefreshCategoryGrid(dataGridView, countLabel);
                     }
@@ -5582,79 +5849,98 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 var newCodeLabel = new Label
                 {
                     Text = "Code:",
-                    Location = new Point(10, 360),
+                    Location = new Point(10, 560),
                     Size = new Size(50, 20),
                     Font = new Font("Arial", 9, FontStyle.Bold)
                 };
+                newCodeLabel.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
 
                 var newCodeTextBox = new TextBox
                 {
-                    Location = new Point(65, 358),
+                    Location = new Point(65, 558),
                     Size = new Size(100, 25),
                     Font = new Font("Arial", 9),
                     CharacterCasing = CharacterCasing.Upper
                 };
+                newCodeTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
 
                 var newDescLabel = new Label
                 {
                     Text = "Description:",
-                    Location = new Point(175, 360),
+                    Location = new Point(175, 560),
                     Size = new Size(80, 20),
                     Font = new Font("Arial", 9, FontStyle.Bold)
                 };
+                newDescLabel.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
 
                 var newDescTextBox = new TextBox
                 {
-                    Location = new Point(260, 358),
-                    Size = new Size(170, 25),
+                    Location = new Point(260, 558),
+                    Size = new Size(280, 25),
                     Font = new Font("Arial", 9)
                 };
+                newDescTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
 
                 var showInMainPosCheckBox = new CheckBox
                 {
                     Text = "Main POS",
-                    Location = new Point(435, 360),
+                    Location = new Point(560, 558),
                     Size = new Size(85, 22),
                     Font = new Font("Arial", 9, FontStyle.Regular),
                     Checked = true
                 };
+                showInMainPosCheckBox.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
 
                 var wholeSaleCheckBox = new CheckBox
                 {
                     Text = "Wholesale",
-                    Location = new Point(435, 385),
+                    Location = new Point(560, 586),
                     Size = new Size(95, 22),
                     Font = new Font("Arial", 9, FontStyle.Regular),
                     Checked = false
                 };
+                wholeSaleCheckBox.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
 
                 var disableChangePriceCheckBox = new CheckBox
                 {
                     Text = "No Price Change",
-                    Location = new Point(435, 410),
+                    Location = new Point(560, 614),
                     Size = new Size(120, 22),
                     Font = new Font("Arial", 9, FontStyle.Regular),
                     Checked = false
                 };
+                disableChangePriceCheckBox.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
 
                 var isProductionCategoryCheckBox = new CheckBox
                 {
                     Text = "Production",
-                    Location = new Point(435, 435),
+                    Location = new Point(700, 558),
                     Size = new Size(95, 22),
                     Font = new Font("Arial", 9, FontStyle.Regular),
                     Checked = false
                 };
+                isProductionCategoryCheckBox.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+
+                var excludeOnInventoryReportCheckBox = new CheckBox
+                {
+                    Text = "Exclude on Inventory Report",
+                    Location = new Point(700, 586),
+                    Size = new Size(190, 22),
+                    Font = new Font("Arial", 9, FontStyle.Regular),
+                    Checked = false
+                };
+                excludeOnInventoryReportCheckBox.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
 
                 var addButton = new Button
                 {
                     Text = "Add",
-                    Location = new Point(525, 355),
-                    Size = new Size(50, 30),
+                    Location = new Point(1085, 556),
+                    Size = new Size(65, 30),
                     BackColor = Color.Green,
                     ForeColor = Color.White,
                     Font = new Font("Arial", 9, FontStyle.Bold)
                 };
+                addButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
 
                 addButton.Click += (s, args) =>
                 {
@@ -5673,13 +5959,14 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         {
                             connection.Open();
                             EnsureCategoryTableSchema(connection);
-                            var cmd = new SqlCommand("INSERT INTO Category (Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos) VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCategory, @showInMainPos)", connection);
+                            var cmd = new SqlCommand("INSERT INTO Category (Code, Description, WholeSale, DisableChangePrice, IsProductionCategory, ShowInMainPos, ExcludeOnInventoryReport) VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCategory, @showInMainPos, @excludeOnInventoryReport)", connection);
                             cmd.Parameters.AddWithValue("@code", newCode);
                             cmd.Parameters.AddWithValue("@description", newDesc);
                             cmd.Parameters.AddWithValue("@wholeSale", wholeSaleCheckBox.Checked);
                             cmd.Parameters.AddWithValue("@disableChangePrice", disableChangePriceCheckBox.Checked);
                             cmd.Parameters.AddWithValue("@isProductionCategory", isProductionCategoryCheckBox.Checked);
                             cmd.Parameters.AddWithValue("@showInMainPos", showInMainPosCheckBox.Checked);
+                            cmd.Parameters.AddWithValue("@excludeOnInventoryReport", excludeOnInventoryReportCheckBox.Checked);
                             cmd.ExecuteNonQuery();
                         }
                         RefreshCategoryGrid(dataGridView, countLabel);
@@ -5689,6 +5976,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         wholeSaleCheckBox.Checked = false;
                         disableChangePriceCheckBox.Checked = false;
                         isProductionCategoryCheckBox.Checked = false;
+                        excludeOnInventoryReportCheckBox.Checked = false;
                         MessageBox.Show("Category added successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                     catch (Exception ex)
@@ -5700,12 +5988,13 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 var syncButton = new Button
                 {
                     Text = "Sync",
-                    Location = new Point(395, 455),
-                    Size = new Size(60, 30),
+                    Location = new Point(890, 612),
+                    Size = new Size(80, 30),
                     BackColor = Color.MidnightBlue,
                     ForeColor = Color.White,
                     Font = new Font("Arial", 9, FontStyle.Bold)
                 };
+                syncButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
                 syncButton.Click += async (s, args) =>
                 {
                     await RunManualCategorySyncAsync(syncButton, () => RefreshCategoryGrid(dataGridView, countLabel));
@@ -5714,12 +6003,13 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 var exportButton = new Button
                 {
                     Text = "Export",
-                    Location = new Point(265, 455),
-                    Size = new Size(60, 30),
+                    Location = new Point(710, 612),
+                    Size = new Size(80, 30),
                     BackColor = Color.SeaGreen,
                     ForeColor = Color.White,
                     Font = new Font("Arial", 9, FontStyle.Bold)
                 };
+                exportButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
                 exportButton.Click += (s, args) =>
                 {
                     try
@@ -5735,12 +6025,13 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 var importButton = new Button
                 {
                     Text = "Import",
-                    Location = new Point(330, 455),
-                    Size = new Size(60, 30),
+                    Location = new Point(800, 612),
+                    Size = new Size(80, 30),
                     BackColor = Color.DarkOrange,
                     ForeColor = Color.White,
                     Font = new Font("Arial", 9, FontStyle.Bold)
                 };
+                importButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
                 importButton.Click += (s, args) =>
                 {
                     try
@@ -5756,16 +6047,17 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 var closeButton = new Button
                 {
                     Text = "Close",
-                    Location = new Point(460, 455),
-                    Size = new Size(50, 30),
+                    Location = new Point(980, 612),
+                    Size = new Size(80, 30),
                     BackColor = Color.DarkBlue,
                     ForeColor = Color.White,
                     Font = new Font("Arial", 9, FontStyle.Bold)
                 };
+                closeButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
                 closeButton.Click += (s, args) => categoryForm.Close();
 
                 categoryForm.Controls.AddRange(new Control[] {
-                    dataGridView, countLabel, newCodeLabel, newCodeTextBox, newDescLabel, newDescTextBox, showInMainPosCheckBox, wholeSaleCheckBox, disableChangePriceCheckBox, isProductionCategoryCheckBox, addButton, exportButton, importButton, syncButton, closeButton
+                    dataGridView, countLabel, newCodeLabel, newCodeTextBox, newDescLabel, newDescTextBox, showInMainPosCheckBox, wholeSaleCheckBox, disableChangePriceCheckBox, isProductionCategoryCheckBox, excludeOnInventoryReportCheckBox, addButton, exportButton, importButton, syncButton, closeButton
                 });
 
                 RefreshCategoryGrid(dataGridView, countLabel);
@@ -6722,7 +7014,8 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 new { Text = "INCOME", Color = Color.DarkGreen, Category = "Income", Type = "Action" },
                 new { Text = "CUSTOM STICKERS", Color = Color.Blue, Category = "CustomStickers", Type = "Action" },
                 new { Text = "PURCHASE ORDER", Color = Color.MediumBlue, Category = "PurchaseOrder", Type = "Action" },
-                new { Text = "TRANSFER ORDER", Color = Color.SteelBlue, Category = "TransferOrder", Type = "Action" },
+                new { Text = "TRANSFER\nREQUEST", Color = Color.DodgerBlue, Category = "TransferRequest", Type = "Action" },
+                new { Text = "POSTED TRANSFER ORDER", Color = Color.SteelBlue, Category = "TransferOrder", Type = "Action" },
                 new { Text = "REPORTS", Color = Color.DarkSlateBlue, Category = "Reports", Type = "Action" },
                 new { Text = "LOGOFF", Color = Color.Red, Category = "Logoff", Type = "Action" }
             });
@@ -6932,6 +7225,19 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                             try { MessageBox.Show(this, $"Failed to open Transfer Order: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
                         }
                         break;
+                    case "TransferRequest":
+                        try
+                        {
+                            using (var transferHeaderForm = new TransferHeaderForm(TransferOrderData.TransferRequests))
+                            {
+                                transferHeaderForm.ShowDialog(this);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            try { MessageBox.Show(this, $"Failed to open Transfer Request: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+                        }
+                        break;
                     case "DeleteTrans":
                         // Delete all data from specified tables
                         var confirmDelete = MessageBox.Show("Are you sure you want to delete ALL data from key tables? This action cannot be undone.", "Confirm Data Deletion", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
@@ -6983,7 +7289,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
             var reportsForm = new Form
             {
                 Text = "Reports",
-                Size = new Size(520, 300),
+                Size = new Size(520, 455),
                 StartPosition = FormStartPosition.CenterParent,
                 BackColor = Color.White,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -7011,19 +7317,39 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 Font = new Font("Arial", 20, FontStyle.Bold)
             };
 
+            var itemVariantSalesButton = new Button
+            {
+                Text = "MONTH END GENERATION WORKSHEET",
+                Location = new Point(40, 200),
+                Size = new Size(420, 60),
+                BackColor = Color.SteelBlue,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 14, FontStyle.Bold)
+            };
+
             var cancelButton = new Button
             {
                 Text = "Cancel",
-                Location = new Point(180, 205),
+                Location = new Point(180, 350),
                 Size = new Size(140, 40),
                 BackColor = Color.LightGray,
                 Font = new Font("Arial", 14, FontStyle.Bold)
             };
 
+            var monthEndButton = new Button
+            {
+                Text = "MONTH END",
+                Location = new Point(40, 275),
+                Size = new Size(420, 60),
+                BackColor = Color.MidnightBlue,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 20, FontStyle.Bold)
+            };
+
             expenseButton.Click += (s, e) =>
             {
                 reportsForm.Close();
-                ShowReportDateRangeDialog("Expense Report", (startDate, endDate) =>
+                ShowMonthPickerReportDialog("Expense Report", (startDate, endDate) =>
                 {
                     AquariumPOS.PostingEvents.PrintExpenseReport($"EXPRPT-{DateTime.Now:yyyyMMdd-HHmmss}", startDate, endDate);
                 });
@@ -7038,10 +7364,28 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 });
             };
 
+            itemVariantSalesButton.Click += (s, e) =>
+            {
+                reportsForm.Close();
+                ShowItemVariantReportDialog(async (startDate, endDate) =>
+                {
+                    await AquariumPOS.PostingEvents.OpenItemVariantSalesWorksheet($"IVSRPT-{DateTime.Now:yyyyMMdd-HHmmss}", startDate, endDate, owner: this);
+                });
+            };
+
+            monthEndButton.Click += (s, e) =>
+            {
+                reportsForm.Close();
+                using var monthEndForm = new MonthEndViewForm();
+                monthEndForm.ShowDialog(this);
+            };
+
             cancelButton.Click += (s, e) => reportsForm.Close();
 
             reportsForm.Controls.Add(expenseButton);
             reportsForm.Controls.Add(profitAndLossButton);
+            reportsForm.Controls.Add(itemVariantSalesButton);
+            reportsForm.Controls.Add(monthEndButton);
             reportsForm.Controls.Add(cancelButton);
             reportsForm.ShowDialog(this);
         }
@@ -7137,6 +7481,297 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
             dialog.Controls.Add(okButton);
             dialog.Controls.Add(cancelButton);
             dialog.ShowDialog(this);
+        }
+
+        private void ShowMonthPickerReportDialog(string reportTitle, Action<DateTime, DateTime> onConfirm)
+        {
+            var dialog = new Form
+            {
+                Text = reportTitle,
+                Size = new Size(460, 210),
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.White,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var monthLabel = new Label
+            {
+                Text = "Month:",
+                Location = new Point(30, 35),
+                Size = new Size(120, 30),
+                Font = new Font("Arial", 12, FontStyle.Bold)
+            };
+
+            var monthPicker = new DateTimePicker
+            {
+                Location = new Point(170, 30),
+                Size = new Size(260, 30),
+                Font = new Font("Arial", 12),
+                Format = DateTimePickerFormat.Custom,
+                CustomFormat = "MMMM yyyy",
+                ShowUpDown = true,
+                Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1)
+            };
+
+            var okButton = new Button
+            {
+                Text = "OK",
+                Location = new Point(120, 100),
+                Size = new Size(90, 40),
+                BackColor = Color.Green,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 12, FontStyle.Bold)
+            };
+
+            var cancelButton = new Button
+            {
+                Text = "Cancel",
+                Location = new Point(230, 100),
+                Size = new Size(90, 40),
+                BackColor = Color.Gray,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 12, FontStyle.Bold)
+            };
+
+            okButton.Click += (s, e) =>
+            {
+                DateTime startDate = new DateTime(monthPicker.Value.Year, monthPicker.Value.Month, 1);
+                DateTime endDate = startDate.AddMonths(1).AddDays(-1);
+
+                dialog.Close();
+                onConfirm(startDate, endDate);
+            };
+
+            cancelButton.Click += (s, e) => dialog.Close();
+
+            dialog.Controls.Add(monthLabel);
+            dialog.Controls.Add(monthPicker);
+            dialog.Controls.Add(okButton);
+            dialog.Controls.Add(cancelButton);
+            dialog.ShowDialog(this);
+        }
+
+        private sealed class ItemVariantReportLookupOption
+        {
+            public string FilterKey { get; init; } = string.Empty;
+            public string DisplayText { get; init; } = string.Empty;
+            public string SearchText { get; init; } = string.Empty;
+
+            public override string ToString()
+            {
+                return DisplayText;
+            }
+        }
+
+        private void ShowItemVariantReportDialog(Action<DateTime, DateTime> onConfirm)
+        {
+            var currentWarehouse = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString);
+            string currentWarehouseName = currentWarehouse?.Name ?? "Not Set";
+            var localTransferSummary = TransferOrderData.GetLocalTransferSyncSummary(
+                GlobalSettings.ConnectionString,
+                currentWarehouse?.Id,
+                currentWarehouse?.Name);
+            var dialog = new Form
+            {
+                Text = "Month End Generation Worksheet",
+                Size = new Size(760, 280),
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.White,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var monthLabel = new Label
+            {
+                Text = "Month:",
+                Location = new Point(30, 35),
+                Size = new Size(120, 30),
+                Font = new Font("Arial", 12, FontStyle.Bold)
+            };
+
+            var monthPicker = new DateTimePicker
+            {
+                Location = new Point(170, 30),
+                Size = new Size(260, 30),
+                Font = new Font("Arial", 12),
+                Format = DateTimePickerFormat.Custom,
+                CustomFormat = "MMMM yyyy",
+                ShowUpDown = true,
+                Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1)
+            };
+
+            var warehouseLabel = new Label
+            {
+                Text = "To Warehouse:",
+                Location = new Point(30, 85),
+                Size = new Size(120, 30),
+                Font = new Font("Arial", 12, FontStyle.Bold)
+            };
+
+            var warehouseTextBox = new TextBox
+            {
+                Location = new Point(170, 80),
+                Size = new Size(540, 32),
+                Font = new Font("Arial", 12),
+                ReadOnly = true,
+                Text = currentWarehouseName,
+                BackColor = Color.WhiteSmoke
+            };
+
+            string syncText = localTransferSummary.LatestSyncAt.HasValue
+                ? $"Last Local Transfer Sync: {localTransferSummary.LatestSyncAt.Value:yyyy-MM-dd hh:mm tt}"
+                : "Last Local Transfer Sync: no local transfer data yet";
+
+            var syncSummaryLabel = new Label
+            {
+                Text = $"{syncText}   |   Local Transfer Headers: {localTransferSummary.HeaderCount:N0}",
+                Location = new Point(170, 118),
+                Size = new Size(540, 22),
+                Font = new Font("Arial", 9, FontStyle.Italic),
+                ForeColor = Color.DimGray
+            };
+
+            var syncWarningLabel = new Label
+            {
+                Text = localTransferSummary.HeaderCount == 0
+                    ? "Warning: no local transfer data found for the current warehouse. Run Transfer Order sync before printing this report."
+                    : string.Empty,
+                Location = new Point(170, 142),
+                Size = new Size(540, 30),
+                Font = new Font("Arial", 9, FontStyle.Bold),
+                ForeColor = Color.Firebrick
+            };
+
+            var okButton = new Button
+            {
+                Text = "OK",
+                Location = new Point(220, 185),
+                Size = new Size(90, 40),
+                BackColor = Color.Green,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 12, FontStyle.Bold)
+            };
+
+            var cancelButton = new Button
+            {
+                Text = "Cancel",
+                Location = new Point(340, 185),
+                Size = new Size(90, 40),
+                BackColor = Color.Gray,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 12, FontStyle.Bold)
+            };
+
+            okButton.Click += (s, e) =>
+            {
+                DateTime startDate = new DateTime(monthPicker.Value.Year, monthPicker.Value.Month, 1);
+                DateTime endDate = startDate.AddMonths(1).AddDays(-1);
+
+                dialog.Close();
+                onConfirm(startDate, endDate);
+            };
+
+            cancelButton.Click += (s, e) => dialog.Close();
+
+            dialog.Controls.Add(monthLabel);
+            dialog.Controls.Add(monthPicker);
+            dialog.Controls.Add(warehouseLabel);
+            dialog.Controls.Add(warehouseTextBox);
+            dialog.Controls.Add(syncSummaryLabel);
+            dialog.Controls.Add(syncWarningLabel);
+            dialog.Controls.Add(okButton);
+            dialog.Controls.Add(cancelButton);
+            dialog.ShowDialog(this);
+        }
+
+        private List<ItemVariantReportLookupOption> LoadItemVariantReportLookupOptions()
+        {
+            var options = new System.Collections.Generic.List<ItemVariantReportLookupOption>();
+
+            try
+            {
+                using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+                conn.Open();
+
+                bool hasVariantTable = Convert.ToInt32(new SqlCommand("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Variant'", conn).ExecuteScalar()) > 0;
+                if (hasVariantTable)
+                {
+                    using var variantCmd = new SqlCommand(@"SELECT DISTINCT
+    ISNULL(NULLIF(v.VariationId, ''), '') AS VariationId,
+    ISNULL(NULLIF(v.ItemCode, ''), ISNULL(v.MainItemCode, '')) AS ItemCode,
+    ISNULL(NULLIF(v.VariantName, ''), ISNULL(NULLIF(variantItem.[Name], ''), ISNULL(NULLIF(variantItem.[Description], ''), ISNULL(v.VariationId, '')))) AS VariantName,
+    ISNULL(NULLIF(variantItem.[Description], ''), ISNULL(NULLIF(mainItem.[Description], ''), ISNULL(NULLIF(mainItem.[Name], ''), ''))) AS ItemDescription
+FROM dbo.[Variant] v
+LEFT JOIN Items variantItem ON variantItem.Code = ISNULL(NULLIF(v.ItemCode, ''), v.MainItemCode)
+LEFT JOIN Items mainItem ON mainItem.Code = v.MainItemCode
+WHERE ISNULL(NULLIF(v.VariationId, ''), '') <> ''
+  AND ISNULL(variantItem.IsActive, ISNULL(mainItem.IsActive, 1)) = 1
+ORDER BY VariantName, ItemCode, VariationId", conn);
+                    using var variantReader = variantCmd.ExecuteReader();
+                    while (variantReader.Read())
+                    {
+                        string variationId = variantReader["VariationId"]?.ToString()?.Trim() ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(variationId))
+                            continue;
+
+                        string itemCode = variantReader["ItemCode"]?.ToString()?.Trim() ?? string.Empty;
+                        string variantName = variantReader["VariantName"]?.ToString()?.Trim() ?? string.Empty;
+                        string itemDescription = variantReader["ItemDescription"]?.ToString()?.Trim() ?? string.Empty;
+                        string preferredVariantName = string.IsNullOrWhiteSpace(variantName) ? variationId : variantName;
+                        string displayText = string.IsNullOrWhiteSpace(itemCode)
+                            ? $"{preferredVariantName} [{variationId}]"
+                            : $"{preferredVariantName} [{variationId}] - {itemCode}";
+
+                        if (!string.IsNullOrWhiteSpace(itemDescription)
+                            && !displayText.Contains(itemDescription, StringComparison.OrdinalIgnoreCase))
+                        {
+                            displayText += $" - {itemDescription}";
+                        }
+
+                        options.Add(new ItemVariantReportLookupOption
+                        {
+                            FilterKey = "VAR:" + variationId,
+                            DisplayText = displayText,
+                            SearchText = string.Join(" ", new[] { variationId, preferredVariantName, itemCode, itemDescription })
+                        });
+                    }
+                }
+
+                using var cmd = new SqlCommand(@"SELECT Code, ISNULL(NULLIF([Description], ''), ISNULL(NULLIF([Name], ''), '')) AS ItemDescription
+FROM Items
+WHERE ISNULL(IsActive, 1) = 1
+ORDER BY Code", conn);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    string code = reader["Code"]?.ToString()?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(code))
+                        continue;
+
+                    string description = reader["ItemDescription"]?.ToString()?.Trim() ?? string.Empty;
+                    options.Add(new ItemVariantReportLookupOption
+                    {
+                        FilterKey = "ITEM:" + code,
+                        DisplayText = string.IsNullOrWhiteSpace(description)
+                            ? code
+                            : $"{code} - {description}",
+                        SearchText = string.Join(" ", new[] { code, description })
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to load item variant list: {ex.Message}", "Item Variant Lookup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
+            return options
+                .GroupBy(option => option.FilterKey, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(option => option.DisplayText, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private void ShowPurchaseDialog()
@@ -9021,9 +9656,134 @@ END", connection);
             }
         }
 
+        private decimal LoadCardMarkupPercent()
+        {
+            try
+            {
+                string setupValue = LoadGeneralSetupValue("CardMarkupPercent");
+                if (string.IsNullOrWhiteSpace(setupValue))
+                {
+                    return 0m;
+                }
+
+                if (decimal.TryParse(setupValue, out decimal value))
+                {
+                    return value < 0m ? 0m : value;
+                }
+
+                if (decimal.TryParse(setupValue, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out value))
+                {
+                    return value < 0m ? 0m : value;
+                }
+
+                return 0m;
+            }
+            catch
+            {
+                return 0m;
+            }
+        }
+
         private void SaveMinimumWholesalesPrice(decimal value)
         {
             SaveGeneralSetupValue("MinimumWholesalesPrice", value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        private void SaveCardMarkupPercent(decimal value)
+        {
+            decimal normalized = value < 0m ? 0m : value;
+            SaveGeneralSetupValue("CardMarkupPercent", normalized.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        private bool IsCreditCardTender(string tenderCode, string tenderDescription)
+        {
+            string code = (tenderCode ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+
+                using var colCmd = new SqlCommand(@"SELECT COUNT(*)
+                                                    FROM INFORMATION_SCHEMA.COLUMNS
+                                                    WHERE TABLE_NAME = 'TenderTypes' AND COLUMN_NAME = 'Is_Card_Payment'", connection);
+                bool hasFlagColumn = Convert.ToInt32(colCmd.ExecuteScalar()) > 0;
+                if (!hasFlagColumn)
+                {
+                    return false;
+                }
+
+                using var cmd = new SqlCommand("SELECT TOP 1 ISNULL(Is_Card_Payment, 0) FROM TenderTypes WHERE Code = @code", connection);
+                cmd.Parameters.AddWithValue("@code", code);
+                object? result = cmd.ExecuteScalar();
+                return result != null && result != DBNull.Value && Convert.ToBoolean(result);
+            }
+            catch
+            {
+                string description = (tenderDescription ?? string.Empty).Trim();
+                return description.IndexOf("credit", StringComparison.OrdinalIgnoreCase) >= 0
+                    && description.IndexOf("card", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        private static decimal ApplyMarkupPercent(decimal baseAmount, decimal markupPercent)
+        {
+            if (baseAmount <= 0m || markupPercent <= 0m)
+            {
+                return baseAmount;
+            }
+
+            decimal multiplier = 1m + (markupPercent / 100m);
+            return decimal.Round(baseAmount * multiplier, 2, MidpointRounding.AwayFromZero);
+        }
+
+        private static decimal CalculateCardProcessingFeeFromChargedAmount(decimal chargedAmount, decimal markupPercent)
+        {
+            if (chargedAmount <= 0m || markupPercent <= 0m)
+            {
+                return 0m;
+            }
+
+            decimal feeAmount = chargedAmount * (markupPercent / (100m + markupPercent));
+            return decimal.Round(feeAmount, 2, MidpointRounding.AwayFromZero);
+        }
+
+        private void AddOrIncreaseCardProcessingFeeLine(decimal feeAmount)
+        {
+            if (feeAmount <= 0m)
+            {
+                return;
+            }
+
+            ListViewItem? existingFeeLine = salesListView.Items.Cast<ListViewItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase));
+
+            if (existingFeeLine != null)
+            {
+                decimal existingAmount = GetListViewItemTotal(existingFeeLine);
+                decimal updatedAmount = decimal.Round(existingAmount + feeAmount, 2, MidpointRounding.AwayFromZero);
+                existingFeeLine.SubItems[2].Text = $"{updatedAmount:F2}";
+                existingFeeLine.SubItems[3].Text = $"{updatedAmount:F2}";
+                currentTotal += feeAmount;
+                UpdateTotal();
+                return;
+            }
+
+            var feeLine = new ListViewItem(CardProcessingFeeDescription);
+            feeLine.SubItems.Add("1");
+            feeLine.SubItems.Add($"{feeAmount:F2}");
+            feeLine.SubItems.Add($"{feeAmount:F2}");
+            feeLine.SubItems.Add(string.Empty);
+            feeLine.SubItems.Add(CardProcessingFeeTag);
+            feeLine.ForeColor = Color.DarkBlue;
+            feeLine.Tag = CardProcessingFeeTag;
+            salesListView.Items.Add(feeLine);
+            currentTotal += feeAmount;
+            UpdateTotal();
         }
 
         private string LoadGeneralSetupValue(string key)
@@ -9070,7 +9830,7 @@ END", connection);
                 var setupForm = new Form
                 {
                     Text = "General Setup",
-                    Size = new Size(460, 220),
+                    Size = new Size(460, 280),
                     StartPosition = FormStartPosition.CenterParent,
                     BackColor = Color.White,
                     FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -9107,10 +9867,39 @@ END", connection);
                     Value = LoadMinimumWholesalesPrice()
                 };
 
+                var cardMarkupLabel = new Label
+                {
+                    Text = "Card Markup %:",
+                    Location = new Point(20, 106),
+                    Size = new Size(180, 24),
+                    Font = new Font("Arial", 10, FontStyle.Bold)
+                };
+
+                var cardMarkupInput = new NumericUpDown
+                {
+                    Location = new Point(210, 104),
+                    Size = new Size(180, 26),
+                    Font = new Font("Arial", 10),
+                    DecimalPlaces = 2,
+                    ThousandsSeparator = true,
+                    Minimum = 0,
+                    Maximum = 100,
+                    Value = LoadCardMarkupPercent()
+                };
+
+                var cardMarkupHintLabel = new Label
+                {
+                    Text = "Applied automatically to credit card payments.",
+                    Location = new Point(20, 136),
+                    Size = new Size(370, 18),
+                    Font = new Font("Arial", 8, FontStyle.Italic),
+                    ForeColor = Color.DimGray
+                };
+
                 var saveButton = new Button
                 {
                     Text = "Save",
-                    Location = new Point(210, 120),
+                    Location = new Point(210, 176),
                     Size = new Size(80, 32),
                     BackColor = Color.Green,
                     ForeColor = Color.White,
@@ -9120,7 +9909,7 @@ END", connection);
                 var closeButton = new Button
                 {
                     Text = "Close",
-                    Location = new Point(310, 120),
+                    Location = new Point(310, 176),
                     Size = new Size(80, 32),
                     BackColor = Color.Gray,
                     ForeColor = Color.White,
@@ -9132,6 +9921,7 @@ END", connection);
                     try
                     {
                         SaveMinimumWholesalesPrice(minimumWholesaleInput.Value);
+                        SaveCardMarkupPercent(cardMarkupInput.Value);
                         MessageBox.Show("General setup saved successfully.", "General Setup", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                     catch (Exception ex)
@@ -9147,6 +9937,9 @@ END", connection);
                     titleLabel,
                     minimumWholesaleLabel,
                     minimumWholesaleInput,
+                    cardMarkupLabel,
+                    cardMarkupInput,
+                    cardMarkupHintLabel,
                     saveButton,
                     closeButton
                 });
@@ -14482,12 +15275,42 @@ ORDER BY VariantName, ItemCode", connection);
                 return false;
             }
 
-            return string.Equals(normalizedCategory, "AQUARIUM", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(normalizedCategory, "STAND", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(normalizedCategory, "SUMP", StringComparison.OrdinalIgnoreCase)
-                || normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
+            // Item-code prefixes stay as a safety net for items whose Category field is blank or
+            // mismatched but are still clearly aquarium-type builds. The category name allowlist
+            // this used to be (AQUARIUM/STAND/SUMP only) is now driven by the same
+            // Category.IsProductionCategory flag Stock Counts and Transfer Order Ship-time serial
+            // tagging already use (toggled from the Web Portal's Category Setup screen) - as of
+            // this fix, all three surfaces agree on which categories are serial-tracked, instead
+            // of this one being stuck on a separate hardcoded list that never picked up categories
+            // like Divider added after the fact.
+            return normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM-", StringComparison.OrdinalIgnoreCase)
-                || normalizedItemCode.StartsWith("CUSTOM_", StringComparison.OrdinalIgnoreCase);
+                || normalizedItemCode.StartsWith("CUSTOM_", StringComparison.OrdinalIgnoreCase)
+                || IsProductionCategoryCode(normalizedCategory);
+        }
+
+        private bool IsProductionCategoryCode(string? categoryCode)
+        {
+            string normalizedCategory = categoryCode?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedCategory))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+                using var command = new SqlCommand(
+                    "SELECT ISNULL(IsProductionCategory, 0) FROM dbo.Category WHERE Code = @Code", connection);
+                command.Parameters.AddWithValue("@Code", normalizedCategory);
+                object? result = command.ExecuteScalar();
+                return result != null && result != DBNull.Value && Convert.ToBoolean(result);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private bool ShouldResolveCustomAquariumCatalogVariation(string? categoryCode)
@@ -14927,6 +15750,11 @@ BEGIN
     CREATE TABLE Category (
         Code NVARCHAR(50) PRIMARY KEY,
         Description NVARCHAR(255) NOT NULL,
+        WholeSale BIT NOT NULL CONSTRAINT DF_Category_WholeSale_CustomAquarium DEFAULT(0),
+        DisableChangePrice BIT NOT NULL CONSTRAINT DF_Category_DisableChangePrice_CustomAquarium DEFAULT(0),
+        IsProductionCategory BIT NOT NULL CONSTRAINT DF_Category_IsProductionCategory_CustomAquarium DEFAULT(0),
+        ShowInMainPos BIT NOT NULL CONSTRAINT DF_Category_ShowInMainPos_CustomAquarium DEFAULT(1),
+        ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_Category_ExcludeOnInventoryReport_CustomAquarium DEFAULT(0),
         CreatedDate DATETIME2 DEFAULT GETDATE(),
         UpdatedDate DATETIME2 DEFAULT GETDATE()
     )
@@ -14967,11 +15795,16 @@ END", connection);
 
         private List<ProductSerialTrackingForm.AvailableSerialRecord>? PromptForAquariumSaleSerials(string itemCode, string? variantCode, string? itemDescription, int quantity, IEnumerable<string>? additionalExcludedSerialNumbers = null)
         {
-            if (!IsCurrentWarehouseProductionForLabels())
-            {
-                return new List<ProductSerialTrackingForm.AvailableSerialRecord>();
-            }
-
+            // Previously skipped entirely at non-production warehouses (borrowing the same gate
+            // label printing uses) - but a non-production store can genuinely have real, available
+            // serials sitting locally now that Transfer Order receiving moves them to
+            // Status='IN_STOCK' at the destination store (see releaseReceivedSerials in
+            // transferOrders.js / SyncItemSerialTrackingFromSupabaseAsync). Skipping the picker
+            // there meant a sold unit's serial never got marked SOLD. Per direct instruction,
+            // non-production stores now go through the exact same required picker as production
+            // warehouses - GetAvailableSerials below already only looks at *this* item/variant's
+            // locally-known serials, not a warehouse-scoped view, so this doesn't risk offering a
+            // serial that's still sitting at a different store.
             int requiredQuantity = Math.Max(1, quantity);
             var serialsAlreadyInSale = GetSelectedSaleSerialNumbers();
             foreach (string excludedSerialNo in additionalExcludedSerialNumbers ?? Enumerable.Empty<string>())
@@ -15478,6 +16311,7 @@ END", connection);
                 {
                     var tag = item.Tag?.ToString() ?? string.Empty;
                     return !string.Equals(tag, "PAYMENT", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(tag, CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase)
                         && !string.Equals(tag, "EXPENSE", StringComparison.OrdinalIgnoreCase)
                         && !string.Equals(tag, "INCOME", StringComparison.OrdinalIgnoreCase);
                 })
@@ -15500,6 +16334,7 @@ END", connection);
             {
                 string tag = item.Tag?.ToString() ?? string.Empty;
                 if (string.Equals(tag, "PAYMENT", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(tag, CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(tag, "EXPENSE", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(tag, "INCOME", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(tag, ReturnLineTag, StringComparison.OrdinalIgnoreCase))
@@ -15713,6 +16548,12 @@ END", connection);
             }
 
             ListViewItem selectedItem = salesListView.SelectedItems[0];
+            if (string.Equals(selectedItem.Tag?.ToString(), CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("Card Processing Fee lines are managed automatically and cannot be removed manually.", "Protected Line", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             decimal itemTotal = GetListViewItemTotal(selectedItem);
 
             currentTotal -= itemTotal;
@@ -15729,6 +16570,12 @@ END", connection);
             }
 
             ListViewItem selectedItem = salesListView.SelectedItems[0];
+            if (string.Equals(selectedItem.Tag?.ToString(), CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("Card Processing Fee lines are managed automatically and quantity cannot be changed.", "Protected Line", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             string itemName = selectedItem.Text;
             int currentQty = int.Parse(selectedItem.SubItems[1].Text);
             decimal unitPrice = decimal.Parse(selectedItem.SubItems[2].Text.Replace("?", ""));
@@ -15943,6 +16790,12 @@ END", connection);
             }
 
             ListViewItem selectedItem = salesListView.SelectedItems[0];
+            if (string.Equals(selectedItem.Tag?.ToString(), CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("Card Processing Fee lines are managed automatically and price cannot be changed.", "Protected Line", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             string categoryCode = selectedItem.SubItems.Count > 4 ? selectedItem.SubItems[4].Text?.Trim() ?? string.Empty : string.Empty;
             if (IsChangePriceDisabledForCategory(categoryCode))
             {
@@ -16100,6 +16953,7 @@ END", connection);
                 {
                     var tag = it.Tag?.ToString() ?? string.Empty;
                     if (string.Equals(tag, "PAYMENT", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(tag, CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(tag, AquariumSetDiscountTag, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(tag, "EXPENSE", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(tag, "INCOME", StringComparison.OrdinalIgnoreCase))
@@ -16353,9 +17207,6 @@ END", connection);
         {
             if (sender is Button button && button.Tag is string tenderCode)
             {
-                // Restore original buttons first
-                RestoreOriginalBottomButtons();
-
                 if (tenderCode.Equals("ADVANCEORDERS", StringComparison.OrdinalIgnoreCase))
                 {
                     using (var advanceOrdersForm = new AdvanceOrdersHeaderForm())
@@ -16366,10 +17217,27 @@ END", connection);
                 }
 
                 // Show payment entry form
-                using (var paymentForm = new PaymentEntryForm(button.Text, grandTotal))
+                decimal defaultPaymentAmount = grandTotal;
+                decimal cardMarkupPercent = 0m;
+                bool isCardTender = IsCreditCardTender(tenderCode, button.Text);
+                if (isCardTender)
+                {
+                    cardMarkupPercent = LoadCardMarkupPercent();
+                    defaultPaymentAmount = ApplyMarkupPercent(grandTotal, cardMarkupPercent);
+                }
+
+                using (var paymentForm = new PaymentEntryForm(button.Text, defaultPaymentAmount, isCardTender ? cardMarkupPercent : 0m))
                 {
                     if (paymentForm.ShowDialog(this) == DialogResult.OK)
                     {
+                        RestoreOriginalBottomButtons();
+
+                        if (isCardTender && cardMarkupPercent > 0m)
+                        {
+                            decimal feeAmount = CalculateCardProcessingFeeFromChargedAmount(paymentForm.Amount, cardMarkupPercent);
+                            AddOrIncreaseCardProcessingFeeLine(feeAmount);
+                        }
+
                         // Process the checkout with entered payment details
                         ProcessCheckout(paymentForm.TenderType, tenderCode, paymentForm.Amount);
                     }
@@ -16809,14 +17677,20 @@ END", connection);
                 string effectiveOrderDescription = isReturnExchangeMode
                     ? orderDescription
                     : BuildPostedOrderDescription(orderDescription);
+                decimal cardProcessingFeeTotal = GetCurrentCardProcessingFeeTotal();
                 // Save customer name and order description into the TransactionHeader.Description field
                 string txDescription = isReturnExchangeMode
                     ? $"Exchange from Receipt: {returnExchangeOriginalReceiptNo} | Customer: {currentCustomerName}"
                     : $"Customer: {currentCustomerName} | Order: {effectiveOrderDescription}";
+                if (!isReturnExchangeMode && cardProcessingFeeTotal > 0m)
+                {
+                    txDescription += $" | CardFee: {cardProcessingFeeTotal:F2}";
+                }
                 WriteSalesTransactionHeader(currentReceiptNo, isReturnExchangeMode ? "EXCHANGE" : "SALES", saleNetTotal, "", txDescription);
 
                 // Process inventory entries for all items (finish SALES posting first)
                 ProcessInventoryEntries();
+                LogCardProcessingFee(cardProcessingFeeTotal, saleNetTotal);
 
                 string mappedOnlineOrderId = OnlinefunctionsEvents.GetMappedOnlineOrderIdForReceipt(currentReceiptNo);
 
@@ -16853,9 +17727,6 @@ END", connection);
                 {
                     MessageBox.Show($"Sale posted, but the selected serial-tracked items could not be marked as sold: {ex.Message}", "Serial Tracking Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
-
-                // Best-effort: deduct sold quantities from cloud inventory using posted ItemLedgerEntry.VariationId values.
-                try { TriggerCloudInventoryDeductionForCurrentSale(); } catch { }
 
                 // Then post commission as a separate EXPENSE line (second)
                 // Commission = sum((effectiveRetail - WholesalePrice) for Aquarium/Stand items) + Change.
@@ -17070,6 +17941,8 @@ GROUP BY LTRIM(RTRIM(ISNULL(VariationId, '')))", conn))
             {
                 string lineTag = saleItem.Tag?.ToString() ?? string.Empty;
                 if (string.Equals(lineTag, "PAYMENT", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (string.Equals(lineTag, CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (string.Equals(lineTag, AquariumSetDiscountTag, StringComparison.OrdinalIgnoreCase))
                     continue;
@@ -18662,6 +19535,40 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
                 }
 
                 try { TriggerCloudInventoryDeductionForCurrentSale(); } catch { }
+
+                // Send this posted Expense Entry to Supabase (ExpenseEntryHeader/ExpenseEntryLines -
+                // see supabase_expense_entry_tables.sql). Run in the background, same as
+                // TriggerCloudInventoryDeductionForCurrentSale above, so a slow/unreachable Supabase
+                // can never block or fail the POST button itself - local posting has already
+                // succeeded by this point regardless of whether this sync succeeds.
+                try
+                {
+                    string expenseReceiptNoForSync = currentReceiptNo;
+                    string expenseWarehouseNameForSync = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString)?.Name ?? string.Empty;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await OnlinefunctionsEvents.SyncExpenseEntryToSupabaseAsync(expenseReceiptNoForSync, expenseWarehouseNameForSync).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            try { System.Diagnostics.Trace.TraceError($"Failed to sync expense entry {expenseReceiptNoForSync} to Supabase: {ex}"); } catch { }
+                            // Trace.TraceError has no listener configured in this app, so it's normally
+                            // invisible outside a debugger - dump the real error to disk too (same
+                            // "last_..._payload" debug-file convention OnlinefunctionsEvents.cs already
+                            // uses for the Advance Order cloud sync) so a sync failure is actually
+                            // diagnosable after the fact.
+                            try
+                            {
+                                string errorDumpPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"last_expense_entry_sync_error_{expenseReceiptNoForSync}.txt");
+                                System.IO.File.WriteAllText(errorDumpPath, ex.ToString(), System.Text.Encoding.UTF8);
+                            }
+                            catch { }
+                        }
+                    });
+                }
+                catch { }
 
                 // Remove expense items from salesListView after posting
                 foreach (var item in expenseItems)
@@ -21620,6 +22527,24 @@ ORDER BY [Name]", conn);
 
         private void ShowUserSetup()
         {
+            try
+            {
+                using (var ensureConn = new SqlConnection(connectionString))
+                {
+                    ensureConn.Open();
+                    var ensureCmd = new SqlCommand(@"
+                        IF OBJECT_ID('dbo.UserSetup', 'U') IS NOT NULL AND COL_LENGTH('dbo.UserSetup', 'WarehouseID') IS NULL
+                        BEGIN
+                            ALTER TABLE dbo.UserSetup ADD WarehouseID NVARCHAR(100) NULL;
+                        END", ensureConn);
+                    ensureCmd.ExecuteNonQuery();
+                }
+            }
+            catch
+            {
+                // Best-effort; the form still works without the column present (Warehouse selection just won't persist).
+            }
+
             var userSetupForm = new Form
             {
                 Text = "User Setup Management",
@@ -21750,6 +22675,24 @@ ORDER BY [Name]", conn);
                 Checked = true
             };
 
+            // Warehouse field
+            var warehouseLabel = new Label
+            {
+                Text = "Warehouse:",
+                Location = new Point(20, 110),
+                Size = new Size(80, 20),
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            var warehouseComboBox = new ComboBox
+            {
+                Location = new Point(100, 108),
+                Size = new Size(200, 25),
+                Font = new Font("Arial", 10),
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            var warehouseIdByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var warehouseNameById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
             // Buttons
             var addButton = new Button
             {
@@ -21808,6 +22751,7 @@ ORDER BY [Name]", conn);
             {
                 detailsLabel, idLabel, idTextBox, passwordLabel, passwordTextBox,
                 nameLabel, nameTextBox, managerCheckBox, superUserCheckBox, activeCheckBox,
+                warehouseLabel, warehouseComboBox,
                 addButton, editButton, deleteButton, refreshButton
             });
 
@@ -21816,6 +22760,47 @@ ORDER BY [Name]", conn);
             {
                 titleLabel, usersDataGridView, detailsPanel, closeButton
             });
+
+            // Load available warehouses into the combo box (ID stored on UserSetup, Name shown to the user)
+            Action loadWarehouseOptions = () =>
+            {
+                warehouseComboBox.Items.Clear();
+                warehouseComboBox.Items.Add("(None)");
+                warehouseIdByName.Clear();
+                warehouseNameById.Clear();
+
+                try
+                {
+                    using (var connection = new SqlConnection(connectionString))
+                    {
+                        connection.Open();
+                        var cmd = new SqlCommand("SELECT ID, [Name] FROM dbo.Warehouses ORDER BY [Name]", connection);
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                var whId = reader["ID"]?.ToString() ?? "";
+                                var whName = reader["Name"]?.ToString() ?? "";
+                                if (string.IsNullOrWhiteSpace(whName) || string.IsNullOrWhiteSpace(whId))
+                                    continue;
+
+                                if (!warehouseIdByName.ContainsKey(whName))
+                                {
+                                    warehouseComboBox.Items.Add(whName);
+                                    warehouseIdByName[whName] = whId;
+                                }
+                                warehouseNameById[whId] = whName;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Best-effort; the combo box will just show "(None)" if warehouses can't be loaded.
+                }
+
+                warehouseComboBox.SelectedIndex = 0;
+            };
 
             // Load users data
             Action loadUsers = () =>
@@ -21826,10 +22811,11 @@ ORDER BY [Name]", conn);
                     {
                         connection.Open();
                         var cmd = new SqlCommand(@"
-                            SELECT ID, [Name], [Manager], [SuperUser], IsActive, 
-                                   CreatedDate, LastLoginDate
-                            FROM UserSetup
-                            ORDER BY ID", connection);
+                            SELECT u.ID, u.[Name], u.[Manager], u.[SuperUser], u.IsActive, 
+                                   u.CreatedDate, u.LastLoginDate, u.WarehouseID, w.[Name] AS WarehouseName
+                            FROM UserSetup u
+                            LEFT JOIN dbo.Warehouses w ON w.ID = u.WarehouseID
+                            ORDER BY u.ID", connection);
 
                         var adapter = new SqlDataAdapter(cmd);
                         var dataTable = new DataTable();
@@ -21854,6 +22840,15 @@ ORDER BY [Name]", conn);
                             usersDataGridView.Columns["CreatedDate"].Width = 120;
                             usersDataGridView.Columns["LastLoginDate"].HeaderText = "Last Login";
                             usersDataGridView.Columns["LastLoginDate"].Width = 120;
+                            if (usersDataGridView.Columns.Contains("WarehouseID"))
+                            {
+                                usersDataGridView.Columns["WarehouseID"].Visible = false;
+                            }
+                            if (usersDataGridView.Columns.Contains("WarehouseName"))
+                            {
+                                usersDataGridView.Columns["WarehouseName"].HeaderText = "Warehouse";
+                                usersDataGridView.Columns["WarehouseName"].Width = 120;
+                            }
                         }
                     }
                 }
@@ -21876,6 +22871,16 @@ ORDER BY [Name]", conn);
                     managerCheckBox.Checked = Convert.ToBoolean(row.Cells["Manager"].Value ?? false);
                     superUserCheckBox.Checked = Convert.ToBoolean(row.Cells["SuperUser"].Value ?? false);
                     activeCheckBox.Checked = Convert.ToBoolean(row.Cells["IsActive"].Value ?? true);
+
+                    var selectedWarehouseId = usersDataGridView.Columns.Contains("WarehouseID") ? row.Cells["WarehouseID"].Value?.ToString() ?? "" : "";
+                    if (!string.IsNullOrWhiteSpace(selectedWarehouseId) && warehouseNameById.TryGetValue(selectedWarehouseId, out var selectedWarehouseName))
+                    {
+                        warehouseComboBox.SelectedItem = selectedWarehouseName;
+                    }
+                    else
+                    {
+                        warehouseComboBox.SelectedIndex = 0;
+                    }
 
                     editButton.Enabled = true;
                     deleteButton.Enabled = true;
@@ -21916,9 +22921,12 @@ ORDER BY [Name]", conn);
                             return;
                         }
 
+                        string addWarehouseName = warehouseComboBox.SelectedItem?.ToString() ?? "(None)";
+                        string? addWarehouseId = (addWarehouseName != "(None)" && warehouseIdByName.TryGetValue(addWarehouseName, out var addWhId)) ? addWhId : null;
+
                         var cmd = new SqlCommand(@"
-                            INSERT INTO UserSetup (ID, Password, [Name], [Manager], [SuperUser], IsActive)
-                            VALUES (@id, @password, @name, @manager, @superUser, @active)", connection);
+                            INSERT INTO UserSetup (ID, Password, [Name], [Manager], [SuperUser], IsActive, WarehouseID)
+                            VALUES (@id, @password, @name, @manager, @superUser, @active, @warehouseId)", connection);
 
                         cmd.Parameters.AddWithValue("@id", idTextBox.Text.Trim());
                         cmd.Parameters.AddWithValue("@password", passwordTextBox.Text);
@@ -21926,6 +22934,7 @@ ORDER BY [Name]", conn);
                         cmd.Parameters.AddWithValue("@manager", managerCheckBox.Checked);
                         cmd.Parameters.AddWithValue("@superUser", superUserCheckBox.Checked);
                         cmd.Parameters.AddWithValue("@active", activeCheckBox.Checked);
+                        cmd.Parameters.AddWithValue("@warehouseId", (object?)addWarehouseId ?? DBNull.Value);
 
                         cmd.ExecuteNonQuery();
 
@@ -21939,6 +22948,7 @@ ORDER BY [Name]", conn);
                         managerCheckBox.Checked = false;
                         superUserCheckBox.Checked = false;
                         activeCheckBox.Checked = true;
+                        warehouseComboBox.SelectedIndex = 0;
                         loadUsers();
                     }
                 }
@@ -21973,7 +22983,7 @@ ORDER BY [Name]", conn);
 
                         string sql = @"
                             UPDATE UserSetup 
-                            SET [Name] = @name, [Manager] = @manager, [SuperUser] = @superUser, IsActive = @active";
+                            SET [Name] = @name, [Manager] = @manager, [SuperUser] = @superUser, IsActive = @active, WarehouseID = @warehouseId";
 
                         // Only update password if it's provided
                         if (!string.IsNullOrWhiteSpace(passwordTextBox.Text))
@@ -21983,12 +22993,16 @@ ORDER BY [Name]", conn);
 
                         sql += " WHERE ID = @id";
 
+                        string editWarehouseName = warehouseComboBox.SelectedItem?.ToString() ?? "(None)";
+                        string? editWarehouseId = (editWarehouseName != "(None)" && warehouseIdByName.TryGetValue(editWarehouseName, out var editWhId)) ? editWhId : null;
+
                         var cmd = new SqlCommand(sql, connection);
                         cmd.Parameters.AddWithValue("@id", idTextBox.Text.Trim());
                         cmd.Parameters.AddWithValue("@name", nameTextBox.Text.Trim());
                         cmd.Parameters.AddWithValue("@manager", managerCheckBox.Checked);
                         cmd.Parameters.AddWithValue("@superUser", superUserCheckBox.Checked);
                         cmd.Parameters.AddWithValue("@active", activeCheckBox.Checked);
+                        cmd.Parameters.AddWithValue("@warehouseId", (object?)editWarehouseId ?? DBNull.Value);
 
                         if (!string.IsNullOrWhiteSpace(passwordTextBox.Text))
                         {
@@ -22063,6 +23077,7 @@ ORDER BY [Name]", conn);
                                 managerCheckBox.Checked = false;
                                 superUserCheckBox.Checked = false;
                                 activeCheckBox.Checked = true;
+                                warehouseComboBox.SelectedIndex = 0;
                                 loadUsers();
                             }
                             else
@@ -22084,6 +23099,7 @@ ORDER BY [Name]", conn);
             closeButton.Click += (s, e) => userSetupForm.Close();
 
             // Load initial data
+            loadWarehouseOptions();
             loadUsers();
 
             // Show the form

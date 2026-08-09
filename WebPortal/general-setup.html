@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>General Setup - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>General Setup</h1>
+    <p class="muted">Manage portal-wide settings and API keys (e.g. the Google Maps key used by Delivery). Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it.
+         No password re-entry prompt otherwise - super user status alone is enough, same trust
+         model as Online Orders/Expenses. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Company Info / Letterhead</h2>
+      </div>
+      <p class="muted">Shown on printable pages (Transfer Order print, Delivery Manifest) and as a logo on the Login page and Dashboard.</p>
+
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px;">
+        <img id="logoPreview" class="hidden" alt="Company logo" style="max-height:70px; max-width:220px; border:1px solid var(--panel-border); border-radius:6px; padding:6px; background:#fff;" />
+        <span id="logoPreviewEmpty" class="muted">No logo uploaded yet.</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
+        <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" />
+        <button class="btn btn-success btn-sm" id="uploadLogoBtn" type="button">Upload Logo</button>
+        <span class="muted" style="font-size:12px;">PNG/JPG/WEBP/GIF/SVG, up to 5 MB</span>
+      </div>
+
+      <label style="margin-bottom:6px;">Login Page Background Image</label>
+      <p class="muted" style="margin-top:0;">Optional - shown full-bleed behind the sign-in card. Falls back to a plain dark background if not set.</p>
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px;">
+        <img id="backgroundPreview" class="hidden" alt="Login background" style="max-height:70px; max-width:220px; border:1px solid var(--panel-border); border-radius:6px; padding:6px; background:#fff;" />
+        <span id="backgroundPreviewEmpty" class="muted">No background image uploaded yet.</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+        <input type="file" id="backgroundFileInput" accept="image/png,image/jpeg,image/webp,image/gif" />
+        <button class="btn btn-success btn-sm" id="uploadBackgroundBtn" type="button">Upload Background</button>
+        <span class="muted" style="font-size:12px;">PNG/JPG/WEBP/GIF, up to 5 MB</span>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="companyNameInput">Company Name</label>
+          <input type="text" id="companyNameInput" placeholder="e.g. RSPETSTOP AQUARIUM SERVICES" />
+        </div>
+        <div class="form-row">
+          <label for="companyFacebookInput">Facebook / Website</label>
+          <input type="text" id="companyFacebookInput" placeholder="e.g. http://facebook.com/RSPetStop" />
+        </div>
+        <div class="form-row">
+          <label for="companyAddressInput">Address</label>
+          <input type="text" id="companyAddressInput" />
+        </div>
+        <div class="form-row">
+          <label for="companyContactNoInput">Contact No.</label>
+          <input type="text" id="companyContactNoInput" />
+        </div>
+        <div class="form-row">
+          <label for="companyDtiNoInput">DTI No.</label>
+          <input type="text" id="companyDtiNoInput" />
+        </div>
+      </div>
+
+      <div id="logoError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveCompanyInfoBtn" type="button">Save Company Info</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 id="noSeriesFormTitle" style="margin:0;">Add No. Series</h2>
+      </div>
+      <p class="muted">Running-number formats used to generate document numbers (e.g. the Transfer Order Document No.). "Warehouse Scoped" restarts the count separately for each warehouse.</p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="noSeriesCodeInput">Document Table</label>
+          <select id="noSeriesCodeInput"></select>
+        </div>
+        <div class="form-row">
+          <label for="noSeriesDescriptionInput">Description</label>
+          <input type="text" id="noSeriesDescriptionInput" />
+        </div>
+        <div class="form-row">
+          <label for="noSeriesPrefixInput">Prefix</label>
+          <input type="text" id="noSeriesPrefixInput" placeholder="e.g. TR-" />
+        </div>
+        <div class="form-row">
+          <label for="noSeriesPaddingInput">Padding (digits)</label>
+          <input type="number" id="noSeriesPaddingInput" min="1" max="10" value="4" />
+        </div>
+        <div class="form-row">
+          <label for="noSeriesStartingNoInput">Starting No.</label>
+          <input type="number" id="noSeriesStartingNoInput" min="0" value="1" />
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="noSeriesWarehouseScopedInput" style="width:auto;" />
+            <span>Warehouse Scoped (numbering restarts per warehouse)</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="noSeriesFormError" class="error-text hidden"></div>
+      <div style="margin-top:8px; display:flex; gap:10px;">
+        <button class="btn btn-success" id="saveNoSeriesBtn" type="button">Save No. Series</button>
+        <button class="btn btn-secondary hidden" id="cancelNoSeriesEditBtn" type="button">Cancel</button>
+      </div>
+
+      <div class="table-wrap" style="margin-top:16px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Series Code</th>
+              <th>Description</th>
+              <th>Prefix</th>
+              <th>Padding</th>
+              <th>Starting No.</th>
+              <th>Warehouse Scoped</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="noSeriesTableBody">
+            <tr><td colspan="7" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 id="formTitle" style="margin:0;">Add Setting</h2>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="settingKeyInput">Setting Key</label>
+          <input type="text" id="settingKeyInput" placeholder="e.g. GOOGLE_MAPS_API_KEY" />
+        </div>
+        <div class="form-row">
+          <label for="settingValueInput">Value</label>
+          <input type="text" id="settingValueInput" />
+        </div>
+        <div class="form-row">
+          <label for="settingDescriptionInput">Description</label>
+          <input type="text" id="settingDescriptionInput" />
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="settingPublicInput" style="width:auto;" />
+            <span>Visible to all staff (needed if a portal page for regular staff has to read this value)</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="settingFormError" class="error-text hidden"></div>
+      <div style="margin-top:8px; display:flex; gap:10px;">
+        <button class="btn btn-success" id="saveSettingBtn" type="button">Save Setting</button>
+        <button class="btn btn-secondary hidden" id="cancelEditBtn" type="button">Cancel</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Settings</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Value</th>
+              <th>Description</th>
+              <th>Visible to Staff</th>
+              <th>Last Updated</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="settingsTableBody">
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="settingsPaginationBar"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/generalSetup.js"></script>
+</body>
+</html>

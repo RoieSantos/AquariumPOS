@@ -318,6 +318,10 @@ namespace AquariumPOS
                         }
                     }
                     //MessageBox.Show($"0after owner's recording balance {balance}");
+                    bool receiptPrinted = false;
+                    bool transactionLogged = false;
+                    string? paymentWarning = null;
+
                     // If the order is now fully paid, log a sales transaction header for the grand total
                     try
                     {
@@ -342,12 +346,14 @@ namespace AquariumPOS
                             if (mainFormForWrite != null)
                             {
                                 var mi = typeof(MainForm).GetMethod("WriteSalesTransactionHeader", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                mi?.Invoke(mainFormForWrite, new object[] { receiptNo, "SALES", grandTotal, "", "" });
+                                mi?.Invoke(mainFormForWrite, new object[] { receiptNo, "SALES", grandTotal, "", "", "" });
+                                transactionLogged = true;
                             }
                             else
                             {
                                 var staticMi = typeof(MainForm).GetMethod("WriteSalesTransactionHeader", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                                staticMi?.Invoke(null, new object[] { receiptNo, "SALES", grandTotal, "", "" });
+                                staticMi?.Invoke(null, new object[] { receiptNo, "SALES", grandTotal, "", "", "" });
+                                transactionLogged = true;
 
                             }
                             //Record Payment
@@ -384,14 +390,18 @@ namespace AquariumPOS
                                         }
                                         catch
                                         {
-                                            // ignore invocation errors
+                                            paymentWarning = string.IsNullOrWhiteSpace(paymentWarning)
+                                                ? "Payment entry mirroring into TransPaymentEntry failed."
+                                                : paymentWarning + Environment.NewLine + "Payment entry mirroring into TransPaymentEntry failed.";
                                         }
                                     }
                                 }
                             }
                             catch
                             {
-                                // ignore errors from owner's recording; payment lines in AdvanceOrderLines are already saved
+                                paymentWarning = string.IsNullOrWhiteSpace(paymentWarning)
+                                    ? "Payment entry mirroring into TransPaymentEntry failed."
+                                    : paymentWarning + Environment.NewLine + "Payment entry mirroring into TransPaymentEntry failed.";
                             }
 
                             try
@@ -437,23 +447,29 @@ namespace AquariumPOS
                                     // Prefer the centralized fully-paid advance order printer
                                     var pm = typeof(MainForm).GetMethod("PrintFullyPaidAdvanceOrderReceipt", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                     pm?.Invoke(mainFormForPrint, new object[] { receiptNo });
+                                    receiptPrinted = true;
                                 }
                                 else
                                 {
                                     // Fallback: try to call a static PrintFullyPaidAdvanceOrderReceipt if implemented as static
                                     var staticPm = typeof(MainForm).GetMethod("PrintFullyPaidAdvanceOrderReceipt", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
                                     staticPm?.Invoke(null, new object[] { receiptNo });
+                                    receiptPrinted = true;
                                 }
                             }
                             catch (Exception ex)
                             {
-                                MessageBox.Show($"Sale completed but printing failed: {ex.Message}", "Print Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                paymentWarning = string.IsNullOrWhiteSpace(paymentWarning)
+                                    ? $"Receipt printing failed: {ex.Message}"
+                                    : paymentWarning + Environment.NewLine + $"Receipt printing failed: {ex.Message}";
                             }
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // ignore logging errors
+                        paymentWarning = string.IsNullOrWhiteSpace(paymentWarning)
+                            ? $"Transaction logging failed: {ex.Message}"
+                            : paymentWarning + Environment.NewLine + $"Transaction logging failed: {ex.Message}";
                     }
 
                     // Update the grid row in-place instead of reloading the entire dataset
@@ -551,10 +567,33 @@ namespace AquariumPOS
                     {
                         // Ignore printing errors to avoid breaking the payment flow
                     }
-                    string successMessage = changeDue > 0m
-                        ? $"Payment recorded and receipt printed. Change due: {changeDue:F2}"
-                        : "Payment recorded and receipt printed.";
-                    MessageBox.Show(successMessage, "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    if (balance <= 0m)
+                    {
+                        if (receiptPrinted && transactionLogged)
+                        {
+                            string successMessage = changeDue > 0m
+                                ? $"Payment recorded, receipt printed, and transaction logged. Change due: {changeDue:F2}"
+                                : "Payment recorded, receipt printed, and transaction logged.";
+                            MessageBox.Show(successMessage, "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+                        else
+                        {
+                            MessageBox.Show(
+                                "Payment was recorded, but the receipt print or transaction logging did not complete."
+                                + Environment.NewLine + Environment.NewLine
+                                + (paymentWarning ?? "Please review the transaction list and receipt output."),
+                                "Payment Warning",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Warning);
+                        }
+                    }
+                    else
+                    {
+                        string successMessage = changeDue > 0m
+                            ? $"Payment recorded. Change due: {changeDue:F2}"
+                            : "Payment recorded.";
+                        MessageBox.Show(successMessage, "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
                 }
                 catch (Exception ex)
                 {

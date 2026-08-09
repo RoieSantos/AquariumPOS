@@ -67,9 +67,11 @@ namespace AquariumPOS
             dgvExpenseCategories.Columns.Add("Code", "Code");
             dgvExpenseCategories.Columns.Add("Description", "Description");
             dgvExpenseCategories.Columns.Add("InStoreItems", "In-Store-Items");
-            dgvExpenseCategories.Columns["Code"].FillWeight = 25;
-            dgvExpenseCategories.Columns["Description"].FillWeight = 50;
-            dgvExpenseCategories.Columns["InStoreItems"].FillWeight = 25;
+            dgvExpenseCategories.Columns.Add("FloatExpense", "Float_Expense");
+            dgvExpenseCategories.Columns["Code"].FillWeight = 20;
+            dgvExpenseCategories.Columns["Description"].FillWeight = 40;
+            dgvExpenseCategories.Columns["InStoreItems"].FillWeight = 20;
+            dgvExpenseCategories.Columns["FloatExpense"].FillWeight = 20;
 
             lblCount = new Label
             {
@@ -188,6 +190,7 @@ namespace AquariumPOS
                                 Code NVARCHAR(20) PRIMARY KEY,
                                 Description NVARCHAR(100) NOT NULL,
                                 InStoreItems BIT NOT NULL DEFAULT 0,
+                                Float_Expense BIT NOT NULL DEFAULT 0,
                                 CreatedDate DATETIME2 DEFAULT GETDATE(),
                                 UpdatedDate DATETIME2 DEFAULT GETDATE()
                             )
@@ -196,6 +199,11 @@ namespace AquariumPOS
                         IF COL_LENGTH('ExpenseCategorySetup', 'InStoreItems') IS NULL
                         BEGIN
                             ALTER TABLE ExpenseCategorySetup ADD InStoreItems BIT NOT NULL CONSTRAINT DF_ExpenseCategorySetup_InStoreItems DEFAULT 0;
+                        END
+
+                        IF COL_LENGTH('ExpenseCategorySetup', 'Float_Expense') IS NULL
+                        BEGIN
+                            ALTER TABLE ExpenseCategorySetup ADD Float_Expense BIT NOT NULL CONSTRAINT DF_ExpenseCategorySetup_FloatExpense DEFAULT 0;
                         END", connection);
                     command.ExecuteNonQuery();
                 }
@@ -217,7 +225,7 @@ namespace AquariumPOS
                 using (var connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
-                    var command = new SqlCommand("SELECT Code, Description, ISNULL(InStoreItems, 0) AS InStoreItems FROM ExpenseCategorySetup ORDER BY Code", connection);
+                    var command = new SqlCommand("SELECT Code, Description, ISNULL(InStoreItems, 0) AS InStoreItems, ISNULL(Float_Expense, 0) AS Float_Expense FROM ExpenseCategorySetup ORDER BY Code", connection);
                     using (var reader = command.ExecuteReader())
                     {
                         while (reader.Read())
@@ -225,7 +233,8 @@ namespace AquariumPOS
                             string code = reader["Code"]?.ToString() ?? string.Empty;
                             string description = reader["Description"]?.ToString() ?? string.Empty;
                             bool inStoreItems = reader["InStoreItems"] != DBNull.Value && Convert.ToBoolean(reader["InStoreItems"]);
-                            dgvExpenseCategories.Rows.Add(code, description, inStoreItems ? "Yes" : "No");
+                            bool floatExpense = reader["Float_Expense"] != DBNull.Value && Convert.ToBoolean(reader["Float_Expense"]);
+                            dgvExpenseCategories.Rows.Add(code, description, inStoreItems ? "Yes" : "No", floatExpense ? "Yes" : "No");
                             count++;
                         }
                     }
@@ -258,7 +267,8 @@ namespace AquariumPOS
             string code = selectedRow.Cells["Code"].Value?.ToString() ?? string.Empty;
             string description = selectedRow.Cells["Description"].Value?.ToString() ?? string.Empty;
             bool inStoreItems = string.Equals(selectedRow.Cells["InStoreItems"].Value?.ToString(), "Yes", StringComparison.OrdinalIgnoreCase);
-            ShowExpenseCategoryDialog(code, description, inStoreItems);
+            bool floatExpense = string.Equals(selectedRow.Cells["FloatExpense"].Value?.ToString(), "Yes", StringComparison.OrdinalIgnoreCase);
+            ShowExpenseCategoryDialog(code, description, inStoreItems, floatExpense);
         }
 
         private void BtnDelete_Click(object? sender, EventArgs e)
@@ -350,7 +360,7 @@ namespace AquariumPOS
 
                 using var package = new ExcelPackage();
                 var worksheet = package.Workbook.Worksheets.Add("ExpenseCategories");
-                string[] headers = { "Code", "Description", "InStoreItems" };
+                string[] headers = { "Code", "Description", "InStoreItems", "Float_Expense" };
 
                 for (int i = 0; i < headers.Length; i++)
                 {
@@ -363,7 +373,7 @@ namespace AquariumPOS
                 using (var connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
-                    using var command = new SqlCommand("SELECT Code, Description, ISNULL(InStoreItems, 0) AS InStoreItems FROM ExpenseCategorySetup ORDER BY Code", connection);
+                    using var command = new SqlCommand("SELECT Code, Description, ISNULL(InStoreItems, 0) AS InStoreItems, ISNULL(Float_Expense, 0) AS Float_Expense FROM ExpenseCategorySetup ORDER BY Code", connection);
                     using var reader = command.ExecuteReader();
 
                     int row = 2;
@@ -372,6 +382,7 @@ namespace AquariumPOS
                         worksheet.Cells[row, 1].Value = reader["Code"]?.ToString() ?? string.Empty;
                         worksheet.Cells[row, 2].Value = reader["Description"]?.ToString() ?? string.Empty;
                         worksheet.Cells[row, 3].Value = reader["InStoreItems"] != DBNull.Value && Convert.ToBoolean(reader["InStoreItems"]);
+                        worksheet.Cells[row, 4].Value = reader["Float_Expense"] != DBNull.Value && Convert.ToBoolean(reader["Float_Expense"]);
                         row++;
                     }
 
@@ -380,6 +391,7 @@ namespace AquariumPOS
                         worksheet.Cells[row, 1].Value = "GENEXP";
                         worksheet.Cells[row, 2].Value = "General Expense";
                         worksheet.Cells[row, 3].Value = false;
+                        worksheet.Cells[row, 4].Value = false;
                     }
                 }
 
@@ -391,6 +403,9 @@ namespace AquariumPOS
                 var inStoreValidation = worksheet.DataValidations.AddListValidation("C:C");
                 inStoreValidation.Formula.Values.Add("TRUE");
                 inStoreValidation.Formula.Values.Add("FALSE");
+                var floatExpenseValidation = worksheet.DataValidations.AddListValidation("D:D");
+                floatExpenseValidation.Formula.Values.Add("TRUE");
+                floatExpenseValidation.Formula.Values.Add("FALSE");
 
                 package.SaveAs(new FileInfo(saveDialog.FileName));
                 MessageBox.Show(this, $"Expense categories exported successfully.\nFile saved: {saveDialog.FileName}", "Export Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -433,13 +448,13 @@ namespace AquariumPOS
                     return;
                 }
 
-                string[] expectedHeaders = { "Code", "Description", "InStoreItems" };
+                string[] expectedHeaders = { "Code", "Description", "InStoreItems", "Float_Expense" };
                 for (int i = 0; i < expectedHeaders.Length; i++)
                 {
                     string actualHeader = worksheet.Cells[1, i + 1].Text?.Trim() ?? string.Empty;
                     if (!string.Equals(actualHeader, expectedHeaders[i], StringComparison.OrdinalIgnoreCase))
                     {
-                        MessageBox.Show(this, "Invalid expense category import template. Expected headers: Code, Description, InStoreItems.", "Import Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show(this, "Invalid expense category import template. Expected headers: Code, Description, InStoreItems, Float_Expense.", "Import Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
                 }
@@ -471,6 +486,7 @@ namespace AquariumPOS
                             string code = worksheet.Cells[row, 1].Text?.Trim().ToUpperInvariant() ?? string.Empty;
                             string description = worksheet.Cells[row, 2].Text?.Trim() ?? string.Empty;
                             string inStoreText = worksheet.Cells[row, 3].Text?.Trim() ?? string.Empty;
+                            string floatExpenseText = worksheet.Cells[row, 4].Text?.Trim() ?? string.Empty;
 
                             if (string.IsNullOrWhiteSpace(code))
                             {
@@ -483,6 +499,7 @@ namespace AquariumPOS
                             }
 
                             bool inStoreItems = TryParseExcelBoolean(inStoreText, out bool parsedValue) && parsedValue;
+                            bool floatExpense = TryParseExcelBoolean(floatExpenseText, out bool parsedFloatExpense) && parsedFloatExpense;
 
                             using var existsCmd = new SqlCommand("SELECT COUNT(*) FROM ExpenseCategorySetup WHERE Code = @code", connection);
                             existsCmd.Parameters.AddWithValue("@code", code);
@@ -500,21 +517,24 @@ namespace AquariumPOS
 UPDATE ExpenseCategorySetup
 SET Description = @description,
     InStoreItems = @inStoreItems,
+    Float_Expense = @floatExpense,
     UpdatedDate = GETDATE()
 WHERE Code = @code", connection);
                                 updateCmd.Parameters.AddWithValue("@code", code);
                                 updateCmd.Parameters.AddWithValue("@description", description);
                                 updateCmd.Parameters.AddWithValue("@inStoreItems", inStoreItems);
+                                updateCmd.Parameters.AddWithValue("@floatExpense", floatExpense);
                                 updateCmd.ExecuteNonQuery();
                             }
                             else
                             {
                                 using var insertCmd = new SqlCommand(@"
-INSERT INTO ExpenseCategorySetup (Code, Description, InStoreItems)
-VALUES (@code, @description, @inStoreItems)", connection);
+INSERT INTO ExpenseCategorySetup (Code, Description, InStoreItems, Float_Expense)
+VALUES (@code, @description, @inStoreItems, @floatExpense)", connection);
                                 insertCmd.Parameters.AddWithValue("@code", code);
                                 insertCmd.Parameters.AddWithValue("@description", description);
                                 insertCmd.Parameters.AddWithValue("@inStoreItems", inStoreItems);
+                                insertCmd.Parameters.AddWithValue("@floatExpense", floatExpense);
                                 insertCmd.ExecuteNonQuery();
                             }
 
@@ -581,14 +601,14 @@ VALUES (@code, @description, @inStoreItems)", connection);
             return false;
         }
 
-        private void ShowExpenseCategoryDialog(string existingCode = "", string existingDescription = "", bool existingInStoreItems = false)
+        private void ShowExpenseCategoryDialog(string existingCode = "", string existingDescription = "", bool existingInStoreItems = false, bool existingFloatExpense = false)
         {
             bool isEdit = !string.IsNullOrWhiteSpace(existingCode);
 
             var dialog = new Form
             {
                 Text = isEdit ? "Edit Expense Category" : "Add Expense Category",
-            Size = new Size(420, 280),
+            Size = new Size(420, 320),
                 StartPosition = FormStartPosition.CenterParent,
                 BackColor = Color.White,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -640,10 +660,19 @@ VALUES (@code, @description, @inStoreItems)", connection);
                 Checked = existingInStoreItems
             };
 
+            var chkFloatExpense = new CheckBox
+            {
+                Text = "Float_Expense",
+                Location = new Point(110, 138),
+                Size = new Size(180, 25),
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                Checked = existingFloatExpense
+            };
+
             var btnSave = new Button
             {
                 Text = "Save",
-                Location = new Point(200, 170),
+                Location = new Point(200, 210),
                 Size = new Size(80, 35),
                 BackColor = Color.Green,
                 ForeColor = Color.White,
@@ -653,7 +682,7 @@ VALUES (@code, @description, @inStoreItems)", connection);
             var btnCancel = new Button
             {
                 Text = "Cancel",
-                Location = new Point(290, 170),
+                Location = new Point(290, 210),
                 Size = new Size(80, 35),
                 BackColor = Color.Gray,
                 ForeColor = Color.White,
@@ -665,6 +694,7 @@ VALUES (@code, @description, @inStoreItems)", connection);
                 string code = txtCode.Text.Trim().ToUpperInvariant();
                 string description = txtDescription.Text.Trim();
                 bool inStoreItems = chkInStoreItems.Checked;
+                bool floatExpense = chkFloatExpense.Checked;
 
                 if (string.IsNullOrWhiteSpace(code))
                 {
@@ -693,7 +723,7 @@ VALUES (@code, @description, @inStoreItems)", connection);
                         {
                             command = new SqlCommand(@"
                                 UPDATE ExpenseCategorySetup
-                                SET Description = @description, InStoreItems = @inStoreItems, UpdatedDate = GETDATE()
+                                SET Description = @description, InStoreItems = @inStoreItems, Float_Expense = @floatExpense, UpdatedDate = GETDATE()
                                 WHERE Code = @code", connection);
                         }
                         else
@@ -710,13 +740,14 @@ VALUES (@code, @description, @inStoreItems)", connection);
                             }
 
                             command = new SqlCommand(@"
-                                INSERT INTO ExpenseCategorySetup (Code, Description, InStoreItems)
-                                VALUES (@code, @description, @inStoreItems)", connection);
+                                INSERT INTO ExpenseCategorySetup (Code, Description, InStoreItems, Float_Expense)
+                                VALUES (@code, @description, @inStoreItems, @floatExpense)", connection);
                         }
 
                         command.Parameters.AddWithValue("@code", code);
                         command.Parameters.AddWithValue("@description", description);
                         command.Parameters.AddWithValue("@inStoreItems", inStoreItems);
+                        command.Parameters.AddWithValue("@floatExpense", floatExpense);
 
                         int rowsAffected = command.ExecuteNonQuery();
                         if (rowsAffected > 0)
@@ -744,7 +775,7 @@ VALUES (@code, @description, @inStoreItems)", connection);
 
             dialog.Controls.AddRange(new Control[]
             {
-                lblCode, txtCode, lblDescription, txtDescription, chkInStoreItems, btnSave, btnCancel
+                lblCode, txtCode, lblDescription, txtDescription, chkInStoreItems, chkFloatExpense, btnSave, btnCancel
             });
 
             dialog.ShowDialog();

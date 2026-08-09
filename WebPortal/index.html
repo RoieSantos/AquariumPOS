@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RS Pet Stop Portal - Sign In</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="login-backdrop">
+  <div class="centered-page">
+    <div class="login-card">
+      <h1 style="text-align:center;">RS Pet Stop Portal</h1>
+      <p class="muted" style="text-align:center; margin-top:-8px;">Staff sign in</p>
+
+      <form id="loginForm">
+        <div class="form-row">
+          <label for="username">Username</label>
+          <input type="text" id="username" required autocomplete="username" />
+        </div>
+        <div class="form-row">
+          <label for="password">Password</label>
+          <input type="password" id="password" required autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;">Sign In</button>
+        <div id="loginError" class="error-text hidden"></div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script>
+    (function () {
+      const existingSession = getPortalSession();
+      if (existingSession) {
+        window.location.href = existingSession.mustChangePassword ? 'change-password.html' : 'dashboard.html';
+      }
+    })();
+
+    applyLoginBackground();
+
+    document.getElementById('loginForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const errorEl = document.getElementById('loginError');
+      errorEl.classList.add('hidden');
+
+      const submitBtn = event.target.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Signing in...';
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      const result = await attemptLogin(username, password);
+
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Sign In';
+
+      if (!result.success) {
+        errorEl.textContent = result.message;
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      const session = getPortalSession();
+      window.location.href = session?.mustChangePassword ? 'change-password.html' : 'dashboard.html';
+    });
+  </script>
+</body>
+</html>

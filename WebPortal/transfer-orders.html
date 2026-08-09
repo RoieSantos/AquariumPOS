@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transfer Orders - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <div class="toolbar">
+      <h1>Transfer Orders</h1>
+      <button class="btn btn-primary" id="newTransferBtn" type="button">+ New Transfer Order</button>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Search by No., description, warehouse..." style="max-width:320px;" />
+      <select id="statusFilter" style="max-width:200px;">
+        <option value="">All statuses</option>
+        <option value="Requested">Requested</option>
+        <option value="Partial Shipped">Partial Shipped</option>
+        <option value="In-Transit">In-Transit</option>
+        <!-- Comma-separated "multi-status" value - renderHeaders() in transferOrders.js splits
+             this on comma and matches any of them. Also what the Dashboard's "waiting to be
+             received" notification deep-links to (see dashboard.js's loadNotifications). -->
+        <option value="In-Transit,Partial Shipped">Awaiting Receipt (In-Transit + Partial Shipped)</option>
+        <option value="Partial Received">Partial Received</option>
+        <option value="Received">Received</option>
+        <option value="Cancelled">Cancelled</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>No.</th>
+            <th>Description</th>
+            <th>Status</th>
+            <th>From</th>
+            <th>To</th>
+            <th>Requested Date</th>
+            <th>Target Delivery Date</th>
+            <th>Transfer Date</th>
+            <th>Receive Date</th>
+          </tr>
+        </thead>
+        <tbody id="headerTableBody">
+          <tr><td colspan="9" class="muted">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Manage transfer order modal (view + Ship/Receive/Cancel actions) -->
+  <div id="viewLinesModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:1100px; width:95vw;">
+      <div class="toolbar">
+        <h2 id="viewLinesTitle">Transfer Order</h2>
+        <span id="viewLinesStatusBadge" class="badge badge-neutral"></span>
+        <span id="viewLinesLockIcon" class="hidden" title="Locked - no more changes except Ship/Receive" style="font-size:18px;">🔒</span>
+        <button class="btn btn-secondary btn-sm" id="printProductionBtn" type="button" style="margin-left:auto;">Print Production Order</button>
+        <button class="btn btn-secondary btn-sm" id="printTransferBtn" type="button">Print (Standard Layout)</button>
+        <button class="btn btn-secondary btn-sm" id="closeViewLinesBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>From Warehouse</label>
+          <div id="viewFromWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>To Warehouse</label>
+          <div id="viewToWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Requested Date</label>
+          <div id="viewRequestedDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Transfer Date</label>
+          <div id="viewTransferDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Receive Date</label>
+          <div id="viewReceiveDate" class="muted"></div>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="table-wrap manage-lines-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item No.</th>
+              <th>Variant</th>
+              <th>Description</th>
+              <th>Qty To Transfer</th>
+              <th>Qty To Ship</th>
+              <th>Serials to Ship</th>
+              <th>Qty Shipped</th>
+              <th>Qty To Receive</th>
+              <th>Qty Received</th>
+            </tr>
+          </thead>
+          <tbody id="viewLinesBody"></tbody>
+        </table>
+      </div>
+
+      <div id="pancakeSyncSection" class="hidden">
+        <div class="section-divider"></div>
+        <h3 style="margin-bottom:8px;">Pancake Sync</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Shipped</th>
+                <th>Pancake Transfer ID</th>
+                <th>Status</th>
+                <th>Error</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="pancakeSyncBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="viewLinesError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-danger" id="cancelTransferBtn" type="button">Cancel Order</button>
+        <button class="btn btn-primary" id="shipTransferBtn" type="button">Ship</button>
+        <button class="btn btn-success" id="receiveTransferBtn" type="button">Receive</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New transfer order modal -->
+  <div id="newTransferModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:1400px; width:95vw;">
+      <div class="toolbar">
+        <h2>New Transfer Order</h2>
+        <button class="btn btn-secondary btn-sm" id="closeNewTransferBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newNo">Document No.</label>
+          <input type="text" id="newNo" />
+        </div>
+        <div class="form-row">
+          <label for="newDescription">Description</label>
+          <input type="text" id="newDescription" />
+        </div>
+        <div class="form-row">
+          <label for="newFromWarehouse">From Warehouse</label>
+          <input type="text" id="newFromWarehouse" autocomplete="off" disabled />
+          <input type="hidden" id="newFromWarehouseId" value="" />
+        </div>
+        <div class="form-row">
+          <label for="newToWarehouse">To Warehouse</label>
+          <input type="text" id="newToWarehouse" autocomplete="off" disabled />
+          <input type="hidden" id="newToWarehouseId" value="" />
+        </div>
+        <div class="form-row">
+          <label for="newRequestedDate">Requested Date</label>
+          <input type="date" id="newRequestedDate" disabled />
+        </div>
+        <div class="form-row">
+          <label for="newEstimatedDeliveryDate">Estimated Delivery Date</label>
+          <input type="date" id="newEstimatedDeliveryDate" disabled />
+          <span class="muted" style="font-size:12px;">Store delivery runs Wed &amp; Sun - auto-set to the next one at least 3 days out, to give production time to build.</span>
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="newUseProductionCategory" style="width:auto;" />
+            <span>Use Production Category (Production Items Warehouse)</span>
+          </label>
+          <span class="muted hidden" id="useProductionCategoryLockHint" style="font-size:12px;">Locked - remove all line items to change this or the From Warehouse.</span>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="toolbar">
+        <h3 style="margin:0;">Line Items</h3>
+        <button class="btn btn-secondary btn-sm" id="addLineBtn" type="button">+ Add Line</button>
+      </div>
+
+      <div class="table-wrap line-items-wrap">
+        <table class="line-items-table">
+          <thead>
+            <tr>
+              <th style="min-width:280px;">Item No.</th>
+              <th style="min-width:260px;">Variant</th>
+              <th style="min-width:610px;">Description</th>
+              <th style="width:60px;">Qty To Transfer</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="newLinesBody"></tbody>
+        </table>
+      </div>
+
+      <div id="newTransferError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveTransferBtn" type="button">Save Transfer Order</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/transferOrders.js"></script>
+</body>
+</html>

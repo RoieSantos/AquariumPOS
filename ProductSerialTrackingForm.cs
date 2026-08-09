@@ -5,6 +5,8 @@ using System.Data.SqlClient;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace AquariumPOS
 {
@@ -33,6 +35,41 @@ namespace AquariumPOS
             }
         }
 
+        // Guards against a stampede of overlapping auto-syncs when several mutation points fire in
+        // quick succession (e.g. a stock-count batch commit followed immediately by a sale) - if a
+        // sync is already in flight, this trigger is skipped rather than queued, since the next
+        // mutation's own trigger call will catch up anyway. Best-effort, same tolerance as every
+        // other background sync in this app (masterDataSyncTimer, SendFailedTransactionToCloud).
+        private static int isAutoCloudSyncRunning = 0;
+
+        // Fires an automatic "Sync Cloud" (same call the manual button makes) in the background
+        // after any local ItemSerialTracking write completes - so the Web Portal's Serial Tracker
+        // (js/serialTracker.js) stays current without staff needing to remember to click Sync Cloud.
+        // Must only be called AFTER the write is durable (auto-commit, or past an explicit
+        // tran.Commit()) - never from inside a still-open transaction, since a rollback after this
+        // fires would push data that then reverts locally.
+        internal static void TriggerCloudSyncFireAndForget()
+        {
+            if (Interlocked.Exchange(ref isAutoCloudSyncRunning, 1) == 1)
+                return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await OnlinefunctionsEvents.SyncItemSerialTrackingToSupabaseAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best-effort - the next mutation's trigger, or the manual "Sync Cloud" button, will retry.
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref isAutoCloudSyncRunning, 0);
+                }
+            });
+        }
+
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private readonly Dictionary<string, string> itemDescriptionsByCode = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> itemVariantCodesByCode = new(StringComparer.OrdinalIgnoreCase);
@@ -49,6 +86,7 @@ namespace AquariumPOS
         private Button btnRefresh = null!;
         private Button btnMarkSold = null!;
         private Button btnMarkInStock = null!;
+        private Button btnSyncCloud = null!;
         private Button btnDeleteSerial = null!;
         private Button btnClose = null!;
 
@@ -244,6 +282,17 @@ namespace AquariumPOS
             };
             btnMarkInStock.Click += (_, _) => UpdateSelectedStatus("IN_STOCK");
 
+            btnSyncCloud = new Button
+            {
+                Text = "Sync Cloud",
+                Location = new Point(1042, 22),
+                Size = new Size(120, 30),
+                BackColor = Color.MediumSlateBlue,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 9, FontStyle.Bold)
+            };
+            btnSyncCloud.Click += async (_, _) => await SyncSerialsToCloudAsync();
+
             btnDeleteSerial = new Button
             {
                 Text = "Delete Serial",
@@ -260,8 +309,8 @@ namespace AquariumPOS
             lblSummary = new Label
             {
                 Text = "0 serials",
-                Location = new Point(1168, 28),
-                Size = new Size(60, 22),
+                Location = new Point(1042, 28),
+                Size = new Size(186, 22),
                 Font = new Font("Arial", 9, FontStyle.Bold),
                 ForeColor = Color.DarkSlateBlue,
                 TextAlign = ContentAlignment.MiddleRight
@@ -269,8 +318,18 @@ namespace AquariumPOS
 
             filterPanel.Controls.AddRange(new Control[]
             {
-                lblSearch, txtSearch, lblStatus, cboStatusFilter, btnRefresh, btnMarkSold, btnMarkInStock, btnDeleteSerial, lblSummary
+                lblSearch, txtSearch, lblStatus, cboStatusFilter, btnRefresh, btnMarkSold, btnMarkInStock, btnSyncCloud, btnDeleteSerial, lblSummary
             });
+
+            if (CurrentUser.IsSuperUser)
+            {
+                btnDeleteSerial.Location = new Point(912, 22);
+                btnSyncCloud.Location = new Point(1042, 22);
+            }
+            else
+            {
+                btnSyncCloud.Location = new Point(1042, 22);
+            }
 
             dgvSerials = new DataGridView
             {
@@ -293,12 +352,14 @@ namespace AquariumPOS
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "ItemCode", HeaderText = "Item Code", FillWeight = 14 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "VariantCode", HeaderText = "Variant Code", FillWeight = 14 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "ItemDescription", HeaderText = "Description", FillWeight = 24 });
+            dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "Location", HeaderText = "Location", FillWeight = 16 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", FillWeight = 10 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "SourceDocumentNo", HeaderText = "Source Doc", FillWeight = 12 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "SoldReceiptNo", HeaderText = "Sold Receipt", FillWeight = 12 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "SoldOnlineOrderId", HeaderText = "Sold Online Order", FillWeight = 14 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "CreatedBy", HeaderText = "Created By", FillWeight = 10 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "CreatedAtLocal", HeaderText = "Created At", FillWeight = 14 });
+            dgvSerials.Columns.Add(new DataGridViewCheckBoxColumn { Name = "SyncedToSupabase", HeaderText = "Synced", FillWeight = 8, ReadOnly = true });
 
             btnClose = new Button
             {
@@ -390,6 +451,7 @@ BEGIN
         SerialNo NVARCHAR(120) NOT NULL,
         ItemCode NVARCHAR(100) NOT NULL,
         ItemDescription NVARCHAR(255) NULL,
+        Location NVARCHAR(255) NULL,
         Status NVARCHAR(30) NOT NULL CONSTRAINT DF_ItemSerialTracking_Status DEFAULT('IN_STOCK'),
         SourceDocumentNo NVARCHAR(100) NULL,
         CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_ItemSerialTracking_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
@@ -407,6 +469,11 @@ BEGIN
     ALTER TABLE dbo.ItemSerialTracking ADD VariantCode NVARCHAR(200) NULL;
 END
 
+IF COL_LENGTH('dbo.ItemSerialTracking', 'Location') IS NULL
+BEGIN
+    ALTER TABLE dbo.ItemSerialTracking ADD Location NVARCHAR(255) NULL;
+END
+
 IF COL_LENGTH('dbo.ItemSerialTracking', 'SoldReceiptNo') IS NULL
 BEGIN
     ALTER TABLE dbo.ItemSerialTracking ADD SoldReceiptNo NVARCHAR(100) NULL;
@@ -415,6 +482,22 @@ END
 IF COL_LENGTH('dbo.ItemSerialTracking', 'SoldOnlineOrderId') IS NULL
 BEGIN
     ALTER TABLE dbo.ItemSerialTracking ADD SoldOnlineOrderId NVARCHAR(100) NULL;
+END
+
+IF COL_LENGTH('dbo.ItemSerialTracking', 'LastSyncedAtUtc') IS NULL
+BEGIN
+    ALTER TABLE dbo.ItemSerialTracking ADD LastSyncedAtUtc DATETIME2 NULL;
+END
+
+IF COL_LENGTH('dbo.ItemSerialTracking', 'SyncedToSupabase') IS NULL
+BEGIN
+    -- Computed, not a stored/manually-set flag, so it can never drift out of sync with reality -
+    -- true only when LastSyncedAtUtc is set AND is not older than the row's own last modification
+    -- (same comparison LoadItemSerialTrackingRows uses to decide what still needs pushing).
+    ALTER TABLE dbo.ItemSerialTracking ADD SyncedToSupabase AS (
+        CASE WHEN LastSyncedAtUtc IS NOT NULL AND LastSyncedAtUtc >= COALESCE(UpdatedAtUtc, CreatedAtUtc)
+             THEN CONVERT(BIT, 1) ELSE CONVERT(BIT, 0) END
+    );
 END
 
 IF EXISTS (
@@ -511,6 +594,7 @@ ORDER BY RunningSerialNo", conn);
             EnsureSerialTrackingTable(conn, null);
 
             MarkSerialsSold(conn, null, serials, soldReceiptNo, soldOnlineOrderId);
+            TriggerCloudSyncFireAndForget();
         }
 
         public static void UpdateSerialStatus(IEnumerable<string> serialNumbers, string status)
@@ -542,6 +626,8 @@ WHERE SerialNo = @SerialNo", conn);
                 cmd.Parameters["@SerialNo"].Value = serialNo;
                 cmd.ExecuteNonQuery();
             }
+
+            TriggerCloudSyncFireAndForget();
         }
 
         public static List<(string SerialNo, string ItemCode, string Description)> CreateSoldSerialRecords(
@@ -562,6 +648,14 @@ WHERE SerialNo = @SerialNo", conn);
             }
 
             MarkSerialsSold(conn, tran, createdSerials.Select(serial => serial.SerialNo), sourceDocumentNo, soldOnlineOrderId);
+
+            // Safe to fire here unconditionally - every real call site passes tran: null (auto-commit),
+            // so both writes above are already durable by the time we reach this line.
+            if (tran == null)
+            {
+                TriggerCloudSyncFireAndForget();
+            }
+
             return createdSerials;
         }
 
@@ -678,11 +772,12 @@ ORDER BY {codeColumn}", conn);
             string status = cboStatusFilter.SelectedItem?.ToString() ?? "ALL";
 
             using var cmd = new SqlCommand(@"
-SELECT RunningSerialNo, SerialNo, ItemCode, ISNULL(VariantCode, '') AS VariantCode, ItemDescription, Status,
+SELECT RunningSerialNo, SerialNo, ItemCode, ISNULL(VariantCode, '') AS VariantCode, ItemDescription, ISNULL([Location], '') AS [Location], Status,
        SourceDocumentNo, ISNULL(SoldReceiptNo, '') AS SoldReceiptNo, ISNULL(SoldOnlineOrderId, '') AS SoldOnlineOrderId, CreatedBy,
-       DATEADD(MINUTE, DATEDIFF(MINUTE, SYSUTCDATETIME(), GETDATE()), CreatedAtUtc) AS CreatedAtLocal
+       DATEADD(MINUTE, DATEDIFF(MINUTE, SYSUTCDATETIME(), GETDATE()), CreatedAtUtc) AS CreatedAtLocal,
+       SyncedToSupabase
 FROM dbo.ItemSerialTracking
-WHERE (@search = '' OR ItemCode LIKE @likeSearch OR ISNULL(VariantCode, '') LIKE @likeSearch OR ItemDescription LIKE @likeSearch OR SerialNo LIKE @likeSearch)
+WHERE (@search = '' OR ItemCode LIKE @likeSearch OR ISNULL(VariantCode, '') LIKE @likeSearch OR ItemDescription LIKE @likeSearch OR ISNULL([Location], '') LIKE @likeSearch OR SerialNo LIKE @likeSearch)
   AND (@status = 'ALL' OR Status = @status)
 ORDER BY RunningSerialNo DESC", conn);
             cmd.Parameters.AddWithValue("@search", searchText);
@@ -701,12 +796,14 @@ ORDER BY RunningSerialNo DESC", conn);
                     rdr["ItemCode"],
                     rdr["VariantCode"],
                     rdr["ItemDescription"],
+                    rdr["Location"],
                     rowStatus,
                     rdr["SourceDocumentNo"],
                     rdr["SoldReceiptNo"],
                     rdr["SoldOnlineOrderId"],
                     rdr["CreatedBy"],
-                    Convert.ToDateTime(rdr["CreatedAtLocal"]).ToString("yyyy-MM-dd HH:mm"));
+                    Convert.ToDateTime(rdr["CreatedAtLocal"]).ToString("yyyy-MM-dd HH:mm"),
+                    rdr["SyncedToSupabase"] != DBNull.Value && Convert.ToBoolean(rdr["SyncedToSupabase"]));
 
                 total++;
                 if (string.Equals(rowStatus, "IN_STOCK", StringComparison.OrdinalIgnoreCase))
@@ -751,6 +848,10 @@ ORDER BY RunningSerialNo DESC", conn);
                 }
 
                 List<(string SerialNo, string ItemCode, string Description)> createdSerials = CreateSerialRecords(conn, null, itemCode, variantCode, itemDescription, sourceDocumentNo, userName, quantity, customSerial);
+                if (createdSerials.Count > 0)
+                {
+                    TriggerCloudSyncFireAndForget();
+                }
 
                 txtCustomSerial.Clear();
                 nudQuantity.Value = 1;
@@ -761,6 +862,43 @@ ORDER BY RunningSerialNo DESC", conn);
             {
                 MessageBox.Show($"Failed to add serials: {ex.Message}", "Serial Tracker", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private async Task SyncSerialsToCloudAsync()
+        {
+            try
+            {
+                UseWaitCursor = true;
+                ToggleCloudSyncButton(false);
+
+                var result = await Task.Run(() => OnlinefunctionsEvents.SyncItemSerialTrackingToSupabase()).ConfigureAwait(true);
+                string skippedNote = result.SkippedDueToConflictCount > 0
+                    ? $"\nSkipped (newer in Portal): {result.SkippedDueToConflictCount}"
+                    : string.Empty;
+                MessageBox.Show(this,
+                    $"Serial tracking sync completed.\n\nSynced: {result.SyncedCount}\nInserted: {result.InsertedCount}\nUpdated: {result.UpdatedCount}{skippedNote}",
+                    "Serial Tracking Sync",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Serial tracking sync failed: {ex.Message}", "Serial Tracking Sync", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                UseWaitCursor = false;
+                ToggleCloudSyncButton(true);
+            }
+        }
+
+        private void ToggleCloudSyncButton(bool enabled)
+        {
+            if (btnSyncCloud == null)
+                return;
+
+            btnSyncCloud.Enabled = enabled;
+            btnSyncCloud.Text = enabled ? "Sync Cloud" : "Syncing...";
         }
 
         public static List<(string SerialNo, string ItemCode, string Description)> CreateSerialRecords(
@@ -781,12 +919,13 @@ ORDER BY RunningSerialNo DESC", conn);
                 return new List<(string SerialNo, string ItemCode, string Description)>();
 
             EnsureSerialTrackingTable(conn, tran);
+            string location = GetCurrentSerialTrackingLocation();
 
             List<(string SerialNo, string ItemCode, string Description)> createdSerials = new();
             for (int index = 0; index < quantity; index++)
             {
                 string serialToUse = index == 0 ? (requestedSerialNo ?? string.Empty) : string.Empty;
-                string serialNo = InsertSerialRecord(conn, tran, itemCode, variantCode, itemDescription, sourceDocumentNo, createdBy, serialToUse);
+                string serialNo = InsertSerialRecord(conn, tran, itemCode, variantCode, itemDescription, location, sourceDocumentNo, createdBy, serialToUse);
                 if (!string.IsNullOrWhiteSpace(serialNo))
                 {
                     createdSerials.Add((serialNo, itemCode, itemDescription));
@@ -796,14 +935,25 @@ ORDER BY RunningSerialNo DESC", conn);
             return createdSerials;
         }
 
-        private static string InsertSerialRecord(SqlConnection conn, SqlTransaction? tran, string itemCode, string? variantCode, string itemDescription, string sourceDocumentNo, string createdBy, string requestedSerialNo)
+        private static string GetCurrentSerialTrackingLocation()
+        {
+            var currentWarehouse = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString);
+            if (currentWarehouse == null)
+                return string.Empty;
+
+            return !string.IsNullOrWhiteSpace(currentWarehouse.Name)
+                ? currentWarehouse.Name.Trim()
+                : (currentWarehouse.Id ?? string.Empty).Trim();
+        }
+
+        private static string InsertSerialRecord(SqlConnection conn, SqlTransaction? tran, string itemCode, string? variantCode, string itemDescription, string location, string sourceDocumentNo, string createdBy, string requestedSerialNo)
         {
             const string sql = @"
 DECLARE @Inserted TABLE (RunningSerialNo BIGINT);
 
-    INSERT INTO dbo.ItemSerialTracking (SerialNo, ItemCode, VariantCode, ItemDescription, Status, SourceDocumentNo, CreatedBy)
+    INSERT INTO dbo.ItemSerialTracking (SerialNo, ItemCode, VariantCode, ItemDescription, Location, Status, SourceDocumentNo, CreatedBy)
 OUTPUT INSERTED.RunningSerialNo INTO @Inserted(RunningSerialNo)
-    VALUES (@TempSerialNo, @ItemCode, NULLIF(@VariantCode, ''), @ItemDescription, 'IN_STOCK', NULLIF(@SourceDocumentNo, ''), @CreatedBy);
+    VALUES (@TempSerialNo, @ItemCode, NULLIF(@VariantCode, ''), @ItemDescription, NULLIF(@Location, ''), 'IN_STOCK', NULLIF(@SourceDocumentNo, ''), @CreatedBy);
 
 DECLARE @RunningSerialNo BIGINT = (SELECT TOP 1 RunningSerialNo FROM @Inserted);
 DECLARE @SerialYear VARCHAR(2) = RIGHT(CONVERT(VARCHAR(4), DATEPART(YEAR, GETDATE())), 2);
@@ -840,6 +990,7 @@ SELECT @FinalSerialNo;";
             cmd.Parameters.AddWithValue("@ItemCode", itemCode);
             cmd.Parameters.AddWithValue("@VariantCode", variantCode ?? string.Empty);
             cmd.Parameters.AddWithValue("@ItemDescription", itemDescription);
+            cmd.Parameters.AddWithValue("@Location", location ?? string.Empty);
             cmd.Parameters.AddWithValue("@SourceDocumentNo", sourceDocumentNo ?? string.Empty);
             cmd.Parameters.AddWithValue("@CreatedBy", createdBy ?? string.Empty);
             cmd.Parameters.AddWithValue("@RequestedSerialNo", requestedSerialNo ?? string.Empty);
@@ -877,6 +1028,7 @@ WHERE RunningSerialNo = @RunningSerialNo", conn);
                     cmd.ExecuteNonQuery();
                 }
 
+                TriggerCloudSyncFireAndForget();
                 LoadSerials();
             }
             catch (Exception ex)
@@ -933,6 +1085,11 @@ WHERE RunningSerialNo = @RunningSerialNo", conn);
 
                     cmd.Parameters["@RunningSerialNo"].Value = Convert.ToInt64(row.Cells["RunningSerialNo"].Value);
                     deletedCount += cmd.ExecuteNonQuery();
+                }
+
+                if (deletedCount > 0)
+                {
+                    TriggerCloudSyncFireAndForget();
                 }
 
                 LoadSerials();

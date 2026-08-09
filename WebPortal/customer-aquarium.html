@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customer Aquarium - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <div class="toolbar">
+      <h1>Customer Aquarium Packages</h1>
+      <button class="btn btn-primary" id="newPackageBtn" type="button">+ New Package</button>
+    </div>
+    <p class="muted">Complete aquarium set packages sold via POS. Packages created here are stored in Supabase.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Package Name</th>
+            <th>Price</th>
+            <th>Variant ID</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="packageTableBody">
+          <tr><td colspan="4" class="muted">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Package editor modal -->
+  <div id="packageModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 id="packageModalTitle">New Package</h2>
+        <button class="btn btn-secondary btn-sm" id="closePackageModalBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="pkgName">Package Name</label>
+          <input type="text" id="pkgName" />
+        </div>
+        <div class="form-row">
+          <label for="pkgPrice">Package Price</label>
+          <input type="number" id="pkgPrice" step="0.01" min="0" />
+        </div>
+        <div class="form-row">
+          <label for="pkgVariantId">Variant ID</label>
+          <input type="text" id="pkgVariantId" />
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="toolbar">
+        <h3 style="margin:0;">Package Items</h3>
+        <button class="btn btn-secondary btn-sm" id="addPkgLineBtn" type="button">+ Add Item</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="line-items-table">
+          <thead>
+            <tr>
+              <th>Item No.</th>
+              <th>Item Name</th>
+              <th>Qty</th>
+              <th>Price</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="pkgLinesBody"></tbody>
+        </table>
+      </div>
+
+      <div id="packageError" class="error-text hidden"></div>
+      <div class="toolbar" style="margin-top:16px; justify-content:flex-end;">
+        <button class="btn btn-danger hidden" id="deletePackageBtn" type="button">Delete Package</button>
+        <button class="btn btn-success" id="savePackageBtn" type="button">Save Package</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/customerAquarium.js"></script>
+</body>
+</html>

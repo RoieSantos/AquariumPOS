@@ -165,8 +165,52 @@ namespace AquariumPOS
             Controls.Add(bottomPanel);
         }
 
-        private void StockCountsForm_Load(object? sender, EventArgs e)
+        private async void StockCountsForm_Load(object? sender, EventArgs e)
         {
+            // Stock Counts is now restricted to Production warehouses only (per direct
+            // instruction) - previously any warehouse could post counts/adjustments here, with
+            // only the serial-tracking side effect (see ProductSerialTrackingForm.CreateSerialRecords)
+            // silently skipped at non-production locations. Reuses TransferOrderData.GetCurrentWarehouse
+            // (the same schema-flexible Current_Warehouse/Is_Production_Warehouse lookup Transfer
+            // Orders already relies on) rather than duplicating that column-detection logic here.
+            bool isProductionWarehouse;
+            try
+            {
+                isProductionWarehouse = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString)?.IsProductionWarehouse ?? false;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to verify the current warehouse: {ex.Message}", "Stock Counts", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Close();
+                return;
+            }
+
+            if (!isProductionWarehouse)
+            {
+                MessageBox.Show(
+                    "Stock Counts can only be done at a Production warehouse. Switch to a Production warehouse to use this feature.",
+                    "Stock Counts",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                Close();
+                return;
+            }
+
+            // Pull the latest "Production Category" flags from Supabase before filtering, rather
+            // than relying solely on MainForm's 5-minute MasterDataSyncTimer_Tick - otherwise a
+            // category just checked in the Web Portal's Category Setup screen wouldn't show up
+            // here until the next timer tick fires. Best-effort: if this fails (e.g. offline),
+            // fall through and filter on whatever dbo.Category already has locally rather than
+            // blocking Stock Counts entirely.
+            try
+            {
+                await OnlinefunctionsEvents.SyncCategoryProductionFlagsFromSupabaseAsync().ConfigureAwait(true);
+            }
+            catch
+            {
+                // best-effort - LoadProducts() below just uses the last-known local flags
+            }
+
             LoadProducts();
             FocusFirstVisibleCountCell();
         }
@@ -340,13 +384,8 @@ LEFT JOIN dbo.Items variantItem ON variantItem.Code = ISNULL(NULLIF(v.ItemCode, 
 LEFT JOIN dbo.Items mainItem ON mainItem.Code = v.MainItemCode
 LEFT JOIN dbo.Category c ON c.Code = ISNULL(NULLIF(v.CategoryCode, ''), ISNULL(NULLIF(variantItem.CategoryCode, ''), ISNULL(mainItem.CategoryCode, '')))
 WHERE ISNULL(variantItem.IsActive, ISNULL(mainItem.IsActive, 1)) = 1
-  AND (
-        UPPER(ISNULL(NULLIF(v.CategoryCode, ''), ISNULL(NULLIF(variantItem.CategoryCode, ''), ISNULL(mainItem.CategoryCode, '')))) LIKE '%AQUARIUM%'
-        OR UPPER(ISNULL(NULLIF(v.CategoryCode, ''), ISNULL(NULLIF(variantItem.CategoryCode, ''), ISNULL(mainItem.CategoryCode, '')))) LIKE '%STAND%'
-        OR UPPER(ISNULL(NULLIF(v.CategoryCode, ''), ISNULL(NULLIF(variantItem.CategoryCode, ''), ISNULL(mainItem.CategoryCode, '')))) LIKE '%SUMP%'
-      )
-  AND UPPER(ISNULL(NULLIF(v.CategoryCode, ''), ISNULL(NULLIF(variantItem.CategoryCode, ''), ISNULL(mainItem.CategoryCode, '')))) NOT LIKE '%HIGH-STRIP%'
-  AND UPPER(ISNULL(NULLIF(v.CategoryCode, ''), ISNULL(NULLIF(variantItem.CategoryCode, ''), ISNULL(mainItem.CategoryCode, '')))) NOT LIKE '%CUSTOM_STAND%'
+    AND ISNULL(c.ExcludeOnInventoryReport, 0) = 0
+    AND ISNULL(c.IsProductionCategory, 0) = 1
 ORDER BY
     ISNULL(c.[Description], ISNULL(NULLIF(v.CategoryCode, ''), ISNULL(NULLIF(variantItem.CategoryCode, ''), ISNULL(mainItem.CategoryCode, '')))),
     ISNULL(NULLIF(v.VariantName, ''), ISNULL(NULLIF(variantItem.[Name], ''), ISNULL(NULLIF(variantItem.[Description], ''), ISNULL(NULLIF(mainItem.[Name], ''), ISNULL(mainItem.[Description], ''))))),
@@ -356,18 +395,14 @@ SELECT
     i.Code,
     ISNULL(NULLIF(i.[Name], ''), ISNULL(i.[Description], '')) AS ItemName,
     ISNULL(i.[Description], '') AS ItemDescription,
-    ISNULL(i.CategoryCode, '') AS Category,
+        ISNULL(c.[Description], ISNULL(i.CategoryCode, '')) AS Category,
     '' AS MainItemCode,
     '' AS MainItemName,
     ISNULL(i.VariationId, '') AS VariationId
 FROM dbo.Items i
-WHERE (
-        UPPER(ISNULL(i.CategoryCode, '')) LIKE '%AQUARIUM%'
-        OR UPPER(ISNULL(i.CategoryCode, '')) LIKE '%STAND%'
-        OR UPPER(ISNULL(i.CategoryCode, '')) LIKE '%SUMP%'
-      )
-  AND UPPER(ISNULL(i.CategoryCode, '')) NOT LIKE '%HIGH-STRIP%'
-  AND UPPER(ISNULL(i.CategoryCode, '')) NOT LIKE '%CUSTOM_STAND%'
+LEFT JOIN dbo.Category c ON c.Code = i.CategoryCode
+WHERE ISNULL(c.IsProductionCategory, 0) = 1
+    AND ISNULL(c.ExcludeOnInventoryReport, 0) = 0
 ORDER BY ISNULL(i.CategoryCode, ''), ISNULL(NULLIF(i.[Name], ''), ISNULL(i.[Description], '')), i.Code";
 
                     using (var cmd = new SqlCommand(sql, conn))
@@ -393,9 +428,15 @@ ORDER BY ISNULL(i.CategoryCode, ''), ISNULL(NULLIF(i.[Name], ''), ISNULL(i.[Desc
                             }
                             catch { variationId = string.Empty; }
 
+                            // NOTE: this exclusion list predates the switch to the real
+                            // Category.IsProductionCategory flag (see the SQL WHERE clause
+                            // above) - it's now only a secondary override for items that
+                            // shouldn't be counted even if their category is a Production
+                            // Category. "DIVIDER" was removed from here since Divider is now
+                            // an intentional production category managed via the Web Portal's
+                            // Category Setup screen.
                             string filterText = $"{code} {desc} {cat}".ToUpperInvariant();
                             if (string.IsNullOrWhiteSpace(code)
-                                || filterText.Contains("DIVIDER")
                                 || filterText.Contains("HIGH-STRIP")
                                 || filterText.Contains("CUSTOM_STAND")
                                 || filterText.Contains("10MM")
@@ -592,6 +633,12 @@ ORDER BY Id DESC", conn))
                         }
 
                         tran.Commit();
+
+                        // Now that the transaction is durable, safe to auto-sync any serials created above.
+                        if (createdSerialLabels.Count > 0)
+                        {
+                            ProductSerialTrackingForm.TriggerCloudSyncFireAndForget();
+                        }
 
                         // Attempt to print the saved stock counts for this batch (do not block on print errors)
                         try

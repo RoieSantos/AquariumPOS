@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Online Order Lines - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Online Order Lines</h1>
+    <p class="muted" id="orderSummaryNote">Read-only view of an order's line items.</p>
+    <p id="glassFlagNote" class="hidden"><span class="badge badge-glass"></span></p>
+
+    <!-- Not authorized (unused now that Online Orders is open to all staff; kept for markup parity) -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown by default now that no password re-entry is required -->
+    <div id="setupContent" class="hidden">
+      <p><a href="online-orders.html">&larr; Back to Online Orders</a></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Line ID</th>
+              <th>Item Code</th>
+              <th>Description</th>
+              <th>Quantity</th>
+              <th>Unit Cost</th>
+              <th>Price</th>
+              <th>Discount</th>
+              <th>Gross Amount</th>
+              <th>Net Amount</th>
+              <th>Note</th>
+              <th>Attachments</th>
+            </tr>
+          </thead>
+          <tbody id="lineTableBody">
+            <tr><td colspan="11" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="attachmentFileInput" class="hidden" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" />
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/onlineOrderLines.js"></script>
+</body>
+</html>

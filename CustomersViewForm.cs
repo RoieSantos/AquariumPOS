@@ -10,6 +10,7 @@ namespace AquariumPOS
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataTable customersTable = new DataTable();
+        private bool suppressGridEvents;
         private DataGridView grid = null!;
         private Label summaryLabel = null!;
         private TextBox searchTextBox = null!;
@@ -70,7 +71,7 @@ namespace AquariumPOS
             grid = new DataGridView
             {
                 Dock = DockStyle.Fill,
-                ReadOnly = true,
+                ReadOnly = false,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
@@ -80,6 +81,9 @@ namespace AquariumPOS
                 BackgroundColor = Color.White,
                 BorderStyle = BorderStyle.None
             };
+            grid.CurrentCellDirtyStateChanged += Grid_CurrentCellDirtyStateChanged;
+            grid.CellValueChanged += Grid_CellValueChanged;
+            grid.DataError += Grid_DataError;
 
             refreshButton = CreateButton("Refresh", Color.RoyalBlue, (s, e) => LoadData());
             closeButton = CreateButton("Close", Color.DimGray, (s, e) => Close());
@@ -122,6 +126,7 @@ namespace AquariumPOS
             {
                 using var connection = new SqlConnection(connectionString);
                 connection.Open();
+                EnsureOnlineCustomersSchema(connection);
 
                 using (var existsCmd = new SqlCommand("SELECT OBJECT_ID('dbo.OnlineCustomers', 'U')", connection))
                 {
@@ -137,22 +142,26 @@ namespace AquariumPOS
 
                 using var adapter = new SqlDataAdapter(@"
 SELECT
+    ISNULL(Id, '') AS [RowId],
     ISNULL(Name, '') AS [Name],
     ISNULL(PrimaryPhoneNumber, '') AS [Phone Number],
     ISNULL(PrimaryEmail, '') AS [Email],
     ISNULL(PrimaryAddress, '') AS [Address],
     ISNULL(OrderCount, 0) AS [Orders],
     ISNULL(CustomerID, '') AS [Customer ID],
+    CAST(ISNULL(ExcludeOnInventoryReport, 0) AS bit) AS [Exclude on Inventory Report],
     UpdatedAt AS [Updated At],
     LastSyncedUtc AS [Last Synced UTC]
 FROM dbo.OnlineCustomers
 ORDER BY ISNULL(Name, ''), ISNULL(PrimaryPhoneNumber, ''), ISNULL(CustomerID, '')", connection);
 
+                suppressGridEvents = true;
                 customersTable = new DataTable();
                 adapter.Fill(customersTable);
                 grid.DataSource = customersTable;
 
                 ApplySearchFilter();
+                ConfigureGridColumns();
 
                 if (grid.Columns.Contains("Name"))
                 {
@@ -185,6 +194,11 @@ ORDER BY ISNULL(Name, ''), ISNULL(PrimaryPhoneNumber, ''), ISNULL(CustomerID, ''
                     grid.Columns["Customer ID"].FillWeight = 90;
                 }
 
+                if (grid.Columns.Contains("Exclude on Inventory Report"))
+                {
+                    grid.Columns["Exclude on Inventory Report"].FillWeight = 90;
+                }
+
                 if (grid.Columns.Contains("Updated At"))
                 {
                     grid.Columns["Updated At"].FillWeight = 95;
@@ -196,10 +210,113 @@ ORDER BY ISNULL(Name, ''), ISNULL(PrimaryPhoneNumber, ''), ISNULL(CustomerID, ''
                     grid.Columns["Last Synced UTC"].FillWeight = 95;
                     grid.Columns["Last Synced UTC"].DefaultCellStyle.Format = "g";
                 }
+
+                suppressGridEvents = false;
             }
             catch (Exception ex)
             {
+                suppressGridEvents = false;
                 MessageBox.Show(this, $"Failed to load customers: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void EnsureOnlineCustomersSchema(SqlConnection connection)
+        {
+            using var command = new SqlCommand(@"
+IF OBJECT_ID('dbo.OnlineCustomers', 'U') IS NOT NULL
+   AND COL_LENGTH('dbo.OnlineCustomers', 'ExcludeOnInventoryReport') IS NULL
+BEGIN
+    ALTER TABLE dbo.OnlineCustomers
+    ADD ExcludeOnInventoryReport BIT NOT NULL
+        CONSTRAINT DF_OnlineCustomers_ExcludeOnInventoryReport DEFAULT(0)
+END", connection);
+            command.ExecuteNonQuery();
+        }
+
+        private void ConfigureGridColumns()
+        {
+            foreach (DataGridViewColumn column in grid.Columns)
+            {
+                column.ReadOnly = true;
+            }
+
+            if (grid.Columns.Contains("RowId"))
+            {
+                grid.Columns["RowId"].Visible = false;
+            }
+
+            if (grid.Columns.Contains("Exclude on Inventory Report"))
+            {
+                var excludeColumn = grid.Columns["Exclude on Inventory Report"];
+                excludeColumn.ReadOnly = false;
+            }
+        }
+
+        private void Grid_CurrentCellDirtyStateChanged(object? sender, EventArgs e)
+        {
+            if (grid.IsCurrentCellDirty && grid.CurrentCell is DataGridViewCheckBoxCell)
+            {
+                grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            }
+        }
+
+        private void Grid_CellValueChanged(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (suppressGridEvents || e.RowIndex < 0)
+            {
+                return;
+            }
+
+            if (!string.Equals(grid.Columns[e.ColumnIndex].Name, "Exclude on Inventory Report", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var row = grid.Rows[e.RowIndex];
+            var rowId = Convert.ToString(row.Cells["RowId"].Value)?.Trim();
+            if (string.IsNullOrWhiteSpace(rowId))
+            {
+                return;
+            }
+
+            bool excludeOnInventoryReport = false;
+            if (row.Cells["Exclude on Inventory Report"].Value != null && row.Cells["Exclude on Inventory Report"].Value != DBNull.Value)
+            {
+                excludeOnInventoryReport = Convert.ToBoolean(row.Cells["Exclude on Inventory Report"].Value);
+            }
+
+            try
+            {
+                UpdateExcludeOnInventoryReport(rowId, excludeOnInventoryReport);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to update customer flag: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                LoadData();
+            }
+        }
+
+        private void Grid_DataError(object? sender, DataGridViewDataErrorEventArgs e)
+        {
+            e.ThrowException = false;
+        }
+
+        private void UpdateExcludeOnInventoryReport(string rowId, bool excludeOnInventoryReport)
+        {
+            using var connection = new SqlConnection(connectionString);
+            connection.Open();
+            EnsureOnlineCustomersSchema(connection);
+
+            using var command = new SqlCommand(@"
+UPDATE dbo.OnlineCustomers
+SET ExcludeOnInventoryReport = @ExcludeOnInventoryReport
+WHERE Id = @Id", connection);
+            command.Parameters.AddWithValue("@Id", rowId);
+            command.Parameters.AddWithValue("@ExcludeOnInventoryReport", excludeOnInventoryReport);
+
+            if (command.ExecuteNonQuery() <= 0)
+            {
+                throw new InvalidOperationException("Customer record was not found.");
             }
         }
 

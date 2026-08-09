@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Serial Tracker - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Serial Tracker</h1>
+    <p class="muted">Search item serial numbers and view their status, location, and source document.</p>
+    <p class="muted hidden" id="warehouseFilterNote"></p>
+
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Search by serial no. or item code..." style="max-width:320px;" />
+      <select id="statusFilter" style="max-width:200px;">
+        <option value="">All statuses</option>
+        <option value="IN_STOCK">In Stock</option>
+        <option value="SOLD">Sold</option>
+        <option value="RESERVED">Reserved</option>
+        <option value="RETURNED">Returned</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Serial No.</th>
+            <th>Item Code</th>
+            <th>Description</th>
+            <th>Location</th>
+            <th>Status</th>
+            <th>Source Doc.</th>
+          </tr>
+        </thead>
+        <tbody id="serialTableBody">
+          <tr><td colspan="6" class="muted">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Read-only Transfer Order preview - opened from the Source Doc. column, in-place so Serial
+       Tracker stays the active tab instead of navigating away to transfer-orders.html /
+       posted-transfer-orders.html. -->
+  <div id="viewTransferModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:900px; width:95vw;">
+      <div class="toolbar">
+        <h2 id="viewTransferTitle">Transfer Order</h2>
+        <span id="viewTransferStatusBadge" class="badge badge-neutral"></span>
+        <button class="btn btn-secondary btn-sm hidden" id="openTransferModuleBtn" type="button" style="margin-left:auto;">Open in Transfer Orders</button>
+        <button class="btn btn-secondary btn-sm" id="closeViewTransferBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>From Warehouse</label>
+          <div id="viewTransferFromWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>To Warehouse</label>
+          <div id="viewTransferToWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Requested Date</label>
+          <div id="viewTransferRequestedDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Transfer Date</label>
+          <div id="viewTransferTransferDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Receive Date</label>
+          <div id="viewTransferReceiveDate" class="muted"></div>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item No.</th>
+              <th>Variant</th>
+              <th>Description</th>
+              <th>Qty To Transfer</th>
+              <th>Qty Shipped</th>
+              <th>Qty Received</th>
+            </tr>
+          </thead>
+          <tbody id="viewTransferLinesBody"></tbody>
+        </table>
+      </div>
+      <div id="viewTransferError" class="error-text hidden"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/serialTracker.js"></script>
+</body>
+</html>

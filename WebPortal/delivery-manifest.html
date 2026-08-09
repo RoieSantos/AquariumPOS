@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Delivery Manifest - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav" class="no-print"></div>
+
+  <div class="page">
+    <div class="toolbar no-print">
+      <a href="delivery.html">&larr; Back to Delivery</a>
+      <button class="btn btn-primary" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden no-print">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="manifestContent" class="hidden">
+      <div id="companyLetterhead"></div>
+      <h1 id="manifestTitle">Delivery Manifest</h1>
+      <p class="muted" id="manifestSubtitle"></p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Order ID</th>
+              <th>Customer</th>
+              <th>Address</th>
+              <th>Balance</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="manifestTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/deliveryManifest.js"></script>
+</body>
+</html>

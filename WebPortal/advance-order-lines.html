@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Advance Order Lines - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Advance Order Lines</h1>
+    <p class="muted" id="orderSummaryNote">Read-only view of an advance order's line items. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it.
+         No password re-entry prompt otherwise - super user status alone is enough, same trust
+         model as Online Orders/Expenses. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <p><a href="advance-orders.html">&larr; Back to Advance Orders</a></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Line No</th>
+              <th>Type</th>
+              <th>Item No</th>
+              <th>Description</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Discount</th>
+              <th>Gross Amount</th>
+              <th>Net Amount</th>
+              <th>User</th>
+            </tr>
+          </thead>
+          <tbody id="lineTableBody">
+            <tr><td colspan="10" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="linePaginationBar"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/advanceOrderLines.js"></script>
+</body>
+</html>

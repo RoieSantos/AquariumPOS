@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1 id="welcomeHeading">Welcome back,</h1>
+    <p class="muted" id="welcomeText">Welcome.</p>
+
+    <div class="notification-center hidden" id="notificationCenter"></div>
+
+    <div class="hidden" id="financeCardGrid">
+      <h3 class="finance-section-heading">Monthly</h3>
+      <div class="finance-card-grid">
+        <a class="finance-card finance-receive" href="online-orders.html?filter=outstanding">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">💰</span> Amount to Receive</div>
+          </div>
+          <div class="finance-value" id="statAmountToReceive">-</div>
+          <div class="finance-sub">Outstanding balance across all unpaid online orders</div>
+        </a>
+        <a class="finance-card finance-sales" href="online-orders.html?period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">📈</span> Total Sales This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthSales">-</div>
+          <div class="finance-sub" id="statMonthSalesSub">Online orders, current month to date</div>
+        </a>
+        <a class="finance-card finance-walkin" href="online-orders.html?scope=walkin&period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🏪</span> Walk-In Sales This Month</div>
+          </div>
+          <div class="finance-value" id="statWalkInSales">-</div>
+          <div class="finance-sub" id="statWalkInSalesSub">In-store orders, current month to date</div>
+        </a>
+        <a class="finance-card finance-expense" href="expense-entries.html?period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🧾</span> Expense This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthExpense">-</div>
+          <div class="finance-sub" id="statMonthExpenseSub">Posted expenses, current month to date</div>
+        </a>
+        <div class="finance-card finance-purchase">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🛒</span> Total Purchase</div>
+          </div>
+          <div class="finance-value placeholder" id="statTotalPurchase">Coming soon</div>
+          <div class="finance-sub" id="statTotalPurchaseSub">Formula to be added</div>
+        </div>
+      </div>
+
+      <h3 class="finance-section-heading">Daily</h3>
+      <div class="finance-card-grid">
+        <a class="finance-card finance-daily-online" href="online-orders.html?period=today">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">☀️</span> Today's Online Sales</div>
+          </div>
+          <div class="finance-value" id="statTodayOnlineSales">-</div>
+          <div class="finance-sub" id="statTodayOnlineSalesSub">Online orders, today</div>
+        </a>
+        <a class="finance-card finance-daily-walkin" href="online-orders.html?scope=walkin&period=today">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🛍️</span> Today's Walk-In Sales</div>
+          </div>
+          <div class="finance-value" id="statTodayWalkInSales">-</div>
+          <div class="finance-sub" id="statTodayWalkInSalesSub">In-store orders, today</div>
+        </a>
+        <a class="finance-card finance-daily-expense" href="expense-entries.html?period=today">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🧾</span> Expense Today</div>
+          </div>
+          <div class="finance-value" id="statTodayExpense">-</div>
+          <div class="finance-sub" id="statTodayExpenseSub">Posted expenses, today</div>
+        </a>
+      </div>
+    </div>
+
+    <div class="hidden" id="salesByStaffSection">
+      <h3 class="finance-section-heading">Sales by Staff (Confirmed By)</h3>
+      <p class="muted" style="margin: -4px 0 12px;">Ranked by sales this month. Click a figure to view that staff member's orders for the period.</p>
+      <div class="staff-sales-grid" id="salesByStaffGrid">
+        <p class="muted">Loading...</p>
+      </div>
+    </div>
+
+    <div class="target-card hidden" id="salesTargetCard">
+      <div class="target-top">
+        <div class="target-label"><span class="finance-icon">🎯</span> Monthly Sales Target</div>
+        <div class="target-percent" id="targetPercentValue">-</div>
+      </div>
+      <div class="target-progress-track">
+        <div class="target-progress-fill" id="targetProgressFill" style="width: 0%;"></div>
+      </div>
+      <div class="target-details">
+        <span id="targetProgressDetail">Set a monthly sales target to track progress here.</span>
+      </div>
+    </div>
+
+    <div class="stat-card-grid" id="statCardGrid">
+      <a class="stat-card stat-confirmed" href="online-orders.html?status=Confirmed">
+        <div class="stat-label"><span class="stat-icon">✅</span> Confirmed</div>
+        <div class="stat-value" id="statConfirmed">-</div>
+      </a>
+      <a class="stat-card stat-printed" href="online-orders.html?status=Printed">
+        <div class="stat-label"><span class="stat-icon">🖨️</span> Printed</div>
+        <div class="stat-value" id="statPrinted">-</div>
+      </a>
+      <a class="stat-card stat-to-ship" href="online-orders.html?status=To+Ship">
+        <div class="stat-label"><span class="stat-icon">📦</span> To Ship</div>
+        <div class="stat-value" id="statToShip">-</div>
+      </a>
+      <a class="stat-card stat-shipped" href="online-orders.html?status=Shipped">
+        <div class="stat-label"><span class="stat-icon">🚚</span> Shipped</div>
+        <div class="stat-value" id="statShipped">-</div>
+      </a>
+      <a class="stat-card stat-cancelled" href="online-orders.html?status=Cancelled">
+        <div class="stat-label"><span class="stat-icon">🚫</span> Cancelled</div>
+        <div class="stat-value" id="statCancelled">-</div>
+      </a>
+    </div>
+
+    <div class="card-grid">
+      <a class="nav-card" id="transferOrdersCard" href="transfer-orders.html">
+        <div class="icon">🚚</div>
+        <div class="title">Transfer Orders</div>
+        <div class="muted">View &amp; create warehouse transfer requests</div>
+      </a>
+      <a class="nav-card" id="reportsCard" href="reports.html">
+        <div class="icon">📊</div>
+        <div class="title">Reports</div>
+        <div class="muted">Month End &amp; Expense reports</div>
+      </a>
+      <a class="nav-card" id="customerAquariumCard" href="customer-aquarium.html">
+        <div class="icon">🐠</div>
+        <div class="title">Customer Aquarium</div>
+        <div class="muted">Manage complete aquarium set packages</div>
+      </a>
+      <a class="nav-card" href="stand-calculator.html">
+        <div class="icon">📐</div>
+        <div class="title">Custom Calculator</div>
+        <div class="muted">Aquarium stand &amp; glass pricing calculator</div>
+      </a>
+      <a class="nav-card" id="serialTrackerCard" href="serial-tracker.html">
+        <div class="icon">🔎</div>
+        <div class="title">Serial Tracker</div>
+        <div class="muted">Search &amp; update item serial numbers</div>
+      </a>
+      <a class="nav-card hidden" id="warehouseSetupCard" href="warehouse-setup.html">
+        <div class="icon">🏬</div>
+        <div class="title">Warehouse Setup</div>
+        <div class="muted">View &amp; sync Warehouses from Pancake (super users only)</div>
+      </a>
+      <a class="nav-card hidden" id="itemSetupCard" href="item-setup.html">
+        <div class="icon">📦</div>
+        <div class="title">Item Setup</div>
+        <div class="muted">View &amp; sync Items from Pancake (super users only)</div>
+      </a>
+      <a class="nav-card hidden" id="variantSetupCard" href="variant-setup.html">
+        <div class="icon">🧩</div>
+        <div class="title">Variants</div>
+        <div class="muted">View product variants linked to Items (super users only)</div>
+      </a>
+      <a class="nav-card" href="online-orders.html">
+        <div class="icon">🛒</div>
+        <div class="title">Online Orders</div>
+        <div class="muted">View customer orders synced from Pancake</div>
+      </a>
+      <a class="nav-card hidden" id="advanceOrdersCard" href="advance-orders.html">
+        <div class="icon">💵</div>
+        <div class="title">Advance Orders</div>
+        <div class="muted">View customer deposit/downpayment orders (super users only)</div>
+      </a>
+      <a class="nav-card hidden" id="userSetupCard" href="user-setup.html">
+        <div class="icon">🛠️</div>
+        <div class="title">User Setup</div>
+        <div class="muted">Create new staff logins (super users only)</div>
+      </a>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/dashboard.js"></script>
+</body>
+</html>

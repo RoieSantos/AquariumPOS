@@ -323,19 +323,39 @@ namespace AquariumPOS
                         }
                     }
 
-                    // Print receipt via MainForm if possible
-                    if (this.Owner is MainForm mf)
+                    bool receiptPrinted = false;
+                    bool transactionLogged = false;
+                    string? warningMessage = null;
+
+                    // Print receipt and mirror payment via MainForm when possible.
+                    var mainForm = ResolveMainForm();
+                    if (mainForm != null)
                     {
-                        mf.PrintAdvanceOrderReceipt(receiptNo, customerName, orderDescription, downpayment, balance);
+                        try
+                        {
+                            mainForm.PrintAdvanceOrderReceipt(receiptNo, customerName, orderDescription, downpayment, balance);
+                            receiptPrinted = true;
+                        }
+                        catch (Exception exPrint)
+                        {
+                            warningMessage = $"Receipt printing failed: {exPrint.Message}";
+                        }
 
                         try
                         {
-                            mf.RecordAdvanceOrderPayment(receiptNo, transactionNo, tenderCode ?? "CASH", paidAmount, null, DateTime.Now, nextLine);
+                            mainForm.RecordAdvanceOrderPayment(receiptNo, transactionNo, tenderCode ?? "CASH", paidAmount, null, DateTime.Now, nextLine);
+                            transactionLogged = true;
                         }
-                        catch
+                        catch (Exception exLog)
                         {
-                            // Ignore payment-entry mirror failures; AdvanceOrderLines already has the payment row.
+                            warningMessage = string.IsNullOrWhiteSpace(warningMessage)
+                                ? $"Transaction logging failed: {exLog.Message}"
+                                : warningMessage + Environment.NewLine + $"Transaction logging failed: {exLog.Message}";
                         }
+                    }
+                    else
+                    {
+                        warningMessage = "Main POS form was not available, so the receipt was not printed and the transaction list was not updated.";
                     }
 
                     try
@@ -358,7 +378,20 @@ namespace AquariumPOS
                         // Ignore cloud sync scheduling failures.
                     }
 
-                    MessageBox.Show("Payment recorded and receipt printed.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    if (receiptPrinted && transactionLogged)
+                    {
+                        MessageBox.Show("Payment recorded, receipt printed, and transaction logged.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    else
+                    {
+                        MessageBox.Show(
+                            "Payment was recorded, but the receipt print or transaction logging did not complete."
+                            + Environment.NewLine + Environment.NewLine
+                            + (warningMessage ?? "Please review the advance order and transaction list before proceeding."),
+                            "Payment Warning",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
                     LoadLines();
                 }
                 catch (Exception ex)
@@ -366,6 +399,30 @@ namespace AquariumPOS
                     MessageBox.Show($"Failed to record payment: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
+        }
+
+        private MainForm? ResolveMainForm()
+        {
+            Form? current = this;
+            while (current != null)
+            {
+                if (current is MainForm mainForm)
+                {
+                    return mainForm;
+                }
+
+                current = current.Owner;
+            }
+
+            foreach (Form form in Application.OpenForms)
+            {
+                if (form is MainForm openMainForm)
+                {
+                    return openMainForm;
+                }
+            }
+
+            return null;
         }
     }
 }

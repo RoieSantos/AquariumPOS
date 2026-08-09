@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Print Transfer Order - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav" class="no-print"></div>
+
+  <div class="page">
+    <div class="toolbar no-print">
+      <button class="btn btn-primary" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="notAuthorizedBox" class="hidden no-print">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="orderContent" class="hidden">
+      <div id="companyLetterhead"></div>
+      <h1 id="orderTitle">Transfer Order</h1>
+      <p class="muted" id="orderSubtitle"></p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>From Warehouse</label>
+          <div id="fromWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>To Warehouse</label>
+          <div id="toWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Requested Date</label>
+          <div id="requestedDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Transfer Date</label>
+          <div id="transferDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Receive Date</label>
+          <div id="receiveDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Requested By</label>
+          <div id="requestedBy" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Shipped By</label>
+          <div id="shippedBy" class="muted"></div>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item No.</th>
+              <th>Variant</th>
+              <th>Description</th>
+              <th>Qty To Transfer</th>
+              <th>Qty Shipped</th>
+              <th>Qty Received</th>
+            </tr>
+          </thead>
+          <tbody id="linesBody"></tbody>
+        </table>
+      </div>
+
+      <div class="print-signature-row">
+        <div class="print-signature-block">
+          <div class="print-signature-line"></div>
+          <div class="print-signature-label">Delivered By</div>
+        </div>
+        <div class="print-signature-block">
+          <div class="print-signature-line"></div>
+          <div class="print-signature-label">Received By</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/transferOrderPrint.js"></script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Item Setup - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Item Setup</h1>
+    <p class="muted">Read-only view of Items, kept fresh automatically by a background sync from Pancake every 5 minutes. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it.
+         No password re-entry prompt otherwise - super user status alone is enough, same trust
+         model as Online Orders/Expenses. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Items</h2>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <input type="text" id="itemSearchInput" placeholder="Search by code or name..." style="max-width:280px;" />
+        </div>
+      </div>
+      <div class="item-setup-layout">
+        <div class="item-setup-table-col">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th style="text-align:right;">Price</th>
+                  <th>Variants</th>
+                </tr>
+              </thead>
+              <tbody id="itemTableBody">
+                <tr><td colspan="5" class="muted">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="itemPaginationBar"></div>
+        </div>
+
+        <!-- Factbox: details for whichever item row was last clicked. -->
+        <div id="itemFactbox" class="card item-factbox">
+          <p class="muted" id="factboxPlaceholder">Click an item row to view its variants and images.</p>
+          <div id="factboxContent" class="hidden">
+            <div class="toolbar" style="margin-bottom:12px;">
+              <h3 id="factboxTitle" style="margin:0; font-size:15px;"></h3>
+              <button class="btn btn-secondary btn-sm" id="factboxCloseBtn" type="button">Close</button>
+            </div>
+
+            <div id="factboxImageSection" style="margin-bottom:18px;">
+              <h4 class="factbox-section-heading">Images</h4>
+              <div id="factboxImage"></div>
+            </div>
+
+            <div>
+              <h4 class="factbox-section-heading">Variants</h4>
+              <div id="factboxVariants"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/itemSetup.js"></script>
+</body>
+</html>

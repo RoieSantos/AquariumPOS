@@ -5,6 +5,8 @@ using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
 
@@ -17,6 +19,135 @@ namespace AquariumPOS
     {
         private const string InstoreOnlineOrderMapTable = "dbo.InstoreOnlineOrderMap";
         private const string AdvanceOrderTransferVariationId = "1e412dc9-ffde-4b4d-af91-10606f355963";
+        public static Action<string>? HttpRequestDebugNotifier { get; set; }
+
+        private static void NotifyHttpRequestDebug(string method, string endpoint, string payloadJson)
+        {
+            try
+            {
+                var handler = HttpRequestDebugNotifier;
+                if (handler == null)
+                    return;
+
+                string bodyText = string.IsNullOrWhiteSpace(payloadJson) ? "(no payload)" : payloadJson;
+                handler(
+                    $"Method: {method}{Environment.NewLine}{Environment.NewLine}" +
+                    $"Endpoint:{Environment.NewLine}{endpoint}{Environment.NewLine}{Environment.NewLine}" +
+                    $"Payload:{Environment.NewLine}{bodyText}");
+            }
+            catch
+            {
+            }
+        }
+
+        public readonly struct TransferOnlineOrderRequestPreview
+        {
+            public TransferOnlineOrderRequestPreview(string headerMethod, string headerEndpointUrl, string headerPayloadJson, string lineEndpointUrl, string linePayloadJson, string lineRequestPreviewText, string previewWarning)
+            {
+                HeaderMethod = string.IsNullOrWhiteSpace(headerMethod) ? "POST" : headerMethod.Trim().ToUpperInvariant();
+                HeaderEndpointUrl = headerEndpointUrl ?? string.Empty;
+                HeaderPayloadJson = headerPayloadJson ?? string.Empty;
+                LineEndpointUrl = lineEndpointUrl ?? string.Empty;
+                LinePayloadJson = linePayloadJson ?? string.Empty;
+                LineRequestPreviewText = lineRequestPreviewText ?? string.Empty;
+                PreviewWarning = previewWarning ?? string.Empty;
+            }
+
+            public string HeaderMethod { get; }
+            public string HeaderEndpointUrl { get; }
+            public string HeaderPayloadJson { get; }
+            public string LineEndpointUrl { get; }
+            public string LinePayloadJson { get; }
+            public string LineRequestPreviewText { get; }
+            public string PreviewWarning { get; }
+        }
+
+        public readonly struct SerialTrackingSyncSummary
+        {
+            public SerialTrackingSyncSummary(int syncedCount, int insertedCount, int updatedCount, int skippedDueToConflictCount = 0)
+            {
+                SyncedCount = syncedCount;
+                InsertedCount = insertedCount;
+                UpdatedCount = updatedCount;
+                SkippedDueToConflictCount = skippedDueToConflictCount;
+            }
+
+            public int SyncedCount { get; }
+            public int InsertedCount { get; }
+            public int UpdatedCount { get; }
+
+            /// <summary>
+            /// Rows not pushed because Supabase's own UpdatedAtUtc was already newer than this
+            /// row's local modification (e.g. the Portal tagged it IN_TRANSIT after this local
+            /// row went dirty but before this sync ran) - see SyncItemSerialTrackingToSupabaseAsync.
+            /// Left dirty locally on purpose so SyncItemSerialTrackingFromSupabaseAsync's next run
+            /// pulls the newer Supabase state down instead.
+            /// </summary>
+            public int SkippedDueToConflictCount { get; }
+        }
+
+        private static async Task<string> PostJsonWithHeadersAsync(string endpointUrl, string payloadJson, TimeSpan timeout)
+        {
+            using var http = new HttpClient { Timeout = timeout };
+            using var req = new HttpRequestMessage(HttpMethod.Post, endpointUrl);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+            req.Content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            var respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Transfer POST failed for '{endpointUrl}': {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            return respText ?? string.Empty;
+        }
+
+        private static async Task<string> PatchJsonWithHeadersAsync(string endpointUrl, string payloadJson, TimeSpan timeout)
+        {
+            using var http = new HttpClient { Timeout = timeout };
+            using var req = new HttpRequestMessage(new HttpMethod("PATCH"), endpointUrl);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+            req.Content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            var respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Transfer PATCH failed for '{endpointUrl}': {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            return respText ?? string.Empty;
+        }
+
+        private static string AppendApiKeyIfMissing(string url, string apiKeyValue)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return url;
+            if (url.IndexOf("api_key=", StringComparison.OrdinalIgnoreCase) >= 0) return url;
+            var sep = url.Contains("?") ? "&" : "?";
+            return url + sep + "api_key=" + Uri.EscapeDataString(apiKeyValue ?? string.Empty);
+        }
+
+        private static string ResolveApiUrl(string urlOrPath)
+        {
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new InvalidOperationException("OnlineOrdersApiBaseUrl is not configured.");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("OnlineOrdersApiKey is not configured.");
+
+            string url;
+            if (urlOrPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || urlOrPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                url = urlOrPath.Trim();
+            else
+                url = baseUrl + "/" + urlOrPath.TrimStart('/');
+
+            return AppendApiKeyIfMissing(url, apiKey);
+        }
 
         /// <summary>
         /// Generic helper for calling the configured online API for purchase-related operations.
@@ -56,25 +187,7 @@ namespace AquariumPOS
             method ??= HttpMethod.Post;
             timeout ??= TimeSpan.FromSeconds(30);
 
-            static string AppendApiKeyIfMissing(string url, string apiKeyValue)
-            {
-                if (string.IsNullOrWhiteSpace(url)) return url;
-                if (url.IndexOf("api_key=", StringComparison.OrdinalIgnoreCase) >= 0) return url;
-                var sep = url.Contains("?") ? "&" : "?";
-                return url + sep + "api_key=" + Uri.EscapeDataString(apiKeyValue ?? string.Empty);
-            }
-
-            string url;
-            if (urlOrPath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || urlOrPath.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                url = urlOrPath.Trim();
-            }
-            else
-            {
-                url = baseUrl + "/" + urlOrPath.TrimStart('/');
-            }
-
-            url = AppendApiKeyIfMissing(url, apiKey);
+            string url = ResolveApiUrl(urlOrPath);
 
             using var http = new HttpClient { Timeout = timeout.Value };
             using var req = new HttpRequestMessage(method, url);
@@ -2468,6 +2581,1575 @@ ORDER BY
             return await PurchaseApiCallAsync(path, HttpMethod.Post, bodyJson, timeout).ConfigureAwait(false);
         }
 
+        public static string CreateTransferOnlineOrder(string documentNo)
+        {
+            return CreateTransferOnlineOrderAsync(documentNo).GetAwaiter().GetResult();
+        }
+
+        public static TransferOnlineOrderRequestPreview GetTransferOnlineOrderRequestPreview(string documentNo)
+        {
+            return GetTransferOnlineOrderRequestPreviewAsync(documentNo).GetAwaiter().GetResult();
+        }
+
+        internal static TransferOnlineOrderRequestPreview GetTransferOnlineOrderRequestPreview(string documentNo, TransferOrderData.DocumentTableContext documentContext)
+        {
+            return GetTransferOnlineOrderRequestPreviewAsync(documentNo, documentContext).GetAwaiter().GetResult();
+        }
+
+        public static async Task<TransferOnlineOrderRequestPreview> GetTransferOnlineOrderRequestPreviewAsync(string documentNo)
+        {
+            var request = await BuildTransferOnlineOrderRequestAsync(documentNo).ConfigureAwait(false);
+            return request;
+        }
+
+        internal static async Task<TransferOnlineOrderRequestPreview> GetTransferOnlineOrderRequestPreviewAsync(string documentNo, TransferOrderData.DocumentTableContext documentContext)
+        {
+            var request = await BuildTransferOnlineOrderRequestAsync(documentNo, documentContext).ConfigureAwait(false);
+            return request;
+        }
+
+        public static async Task<string> CreateTransferOnlineOrderAsync(string documentNo, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            var request = await BuildTransferOnlineOrderRequestAsync(documentNo).ConfigureAwait(false);
+            string headerResponse = await PostJsonWithHeadersAsync(request.HeaderEndpointUrl, request.HeaderPayloadJson, timeout.Value).ConfigureAwait(false);
+            string lineResponse = await PostJsonWithHeadersAsync(request.LineEndpointUrl, request.LinePayloadJson, timeout.Value).ConfigureAwait(false);
+            return $"Header Response:{Environment.NewLine}{headerResponse}{Environment.NewLine}{Environment.NewLine}Line Response:{Environment.NewLine}{lineResponse}";
+        }
+
+        internal static string CreateTransferOnlineOrder(string documentNo, TransferOrderData.DocumentTableContext documentContext)
+        {
+            return CreateTransferOnlineOrderAsync(documentNo, documentContext).GetAwaiter().GetResult();
+        }
+
+        internal static async Task<string> CreateTransferOnlineOrderAsync(string documentNo, TransferOrderData.DocumentTableContext documentContext, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            var request = await BuildTransferOnlineOrderRequestAsync(documentNo, documentContext).ConfigureAwait(false);
+            using var headerLookup = await GetSupabaseRowsAsync(request.HeaderEndpointUrl, timeout.Value, ("No.", documentNo.Trim())).ConfigureAwait(false);
+            bool headerExists = headerLookup.RootElement.ValueKind == JsonValueKind.Array && headerLookup.RootElement.GetArrayLength() > 0;
+            string headerResponse = headerExists
+                ? await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(request.HeaderEndpointUrl, ("No.", documentNo.Trim())), request.HeaderPayloadJson, timeout.Value).ConfigureAwait(false)
+                : await PostJsonWithHeadersAsync(request.HeaderEndpointUrl, request.HeaderPayloadJson, timeout.Value).ConfigureAwait(false);
+
+            string lineResponse = await SyncTransferLinePayloadAsync(request.LineEndpointUrl, request.LinePayloadJson, timeout.Value).ConfigureAwait(false);
+            return $"Header Response:{Environment.NewLine}{headerResponse}{Environment.NewLine}{Environment.NewLine}Line Response:{Environment.NewLine}{lineResponse}";
+        }
+
+        private static async Task<string> SyncTransferLinePayloadAsync(string endpointUrl, string payloadJson, TimeSpan timeout)
+        {
+            using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(payloadJson) ? "[]" : payloadJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return string.Empty;
+
+            var responses = new List<string>();
+            foreach (JsonElement line in document.RootElement.EnumerateArray())
+            {
+                string documentNo = GetTransferSupabaseJsonString(line, "Document No.", "document_no", "documentNo");
+                string lineNo = GetTransferSupabaseJsonString(line, "Line No.", "line_no", "lineNo");
+                string lineJson = line.GetRawText();
+
+                bool lineExists = !string.IsNullOrWhiteSpace(documentNo)
+                    && !string.IsNullOrWhiteSpace(lineNo)
+                    && await SupabaseRecordExistsAsync(endpointUrl, timeout, ("Document No.", documentNo), ("Line No.", lineNo)).ConfigureAwait(false);
+
+                string response = lineExists
+                    ? await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(endpointUrl, ("Document No.", documentNo), ("Line No.", lineNo)), lineJson, timeout).ConfigureAwait(false)
+                    : await PostJsonWithHeadersAsync(endpointUrl, lineJson, timeout).ConfigureAwait(false);
+
+                if (!string.IsNullOrWhiteSpace(response))
+                    responses.Add(response);
+            }
+
+            return string.Join(Environment.NewLine + Environment.NewLine, responses);
+        }
+
+        private static async Task<JsonDocument> GetSupabaseRowsAsync(string endpointUrl, TimeSpan timeout, params (string ColumnName, string Value)[] filters)
+        {
+            using var http = new HttpClient { Timeout = timeout };
+            string filteredUrl = BuildSupabaseFilteredUrl(endpointUrl, filters);
+            string separator = filteredUrl.Contains("?", StringComparison.Ordinal) ? "&" : "?";
+            string requestUrl = filteredUrl + separator + "select=*&limit=1";
+            using var req = new HttpRequestMessage(HttpMethod.Get, requestUrl);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Transfer Supabase GET failed for '{endpointUrl}': {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            return JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+        }
+
+        private static async Task<bool> SupabaseRecordExistsAsync(string endpointUrl, TimeSpan timeout, params (string ColumnName, string Value)[] filters)
+        {
+            using var document = await GetSupabaseRowsAsync(endpointUrl, timeout, filters).ConfigureAwait(false);
+            return document.RootElement.ValueKind == JsonValueKind.Array && document.RootElement.GetArrayLength() > 0;
+        }
+
+        private static string BuildSupabaseFilteredUrl(string endpointUrl, params (string ColumnName, string Value)[] filters)
+        {
+            string result = endpointUrl ?? string.Empty;
+            foreach (var filter in filters)
+            {
+                string separator = result.Contains("?", StringComparison.Ordinal) ? "&" : "?";
+                result += separator
+                    + Uri.EscapeDataString(FormatSupabaseFilterColumnName(filter.ColumnName))
+                    + "=eq."
+                    + Uri.EscapeDataString(filter.Value ?? string.Empty);
+            }
+
+            return result;
+        }
+
+        private static string FormatSupabaseFilterColumnName(string columnName)
+        {
+            string resolved = columnName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(resolved))
+                return string.Empty;
+
+            bool requiresQuoting = false;
+            foreach (char ch in resolved)
+            {
+                if (!(char.IsLetterOrDigit(ch) || ch == '_'))
+                {
+                    requiresQuoting = true;
+                    break;
+                }
+            }
+
+            if (!requiresQuoting)
+                return resolved;
+
+            return "\"" + resolved.Replace("\"", "\"\"") + "\"";
+        }
+
+        private static string GetTransferSupabaseJsonString(JsonElement element, params string[] propertyNames)
+        {
+            if (element.ValueKind != JsonValueKind.Object)
+                return string.Empty;
+
+            foreach (string propertyName in propertyNames)
+            {
+                if (!TryGetTransferSupabasePropertyIgnoreCase(element, propertyName, out JsonElement value))
+                    continue;
+
+                switch (value.ValueKind)
+                {
+                    case JsonValueKind.String:
+                        return value.GetString()?.Trim() ?? string.Empty;
+                    case JsonValueKind.Number:
+                    case JsonValueKind.True:
+                    case JsonValueKind.False:
+                        return value.ToString().Trim();
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static bool TryGetTransferSupabasePropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = property.Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = default;
+            return false;
+        }
+
+        private static async Task<TransferOnlineOrderRequestPreview> BuildTransferOnlineOrderRequestAsync(string documentNo)
+        {
+            return await BuildTransferOnlineOrderRequestAsync(documentNo, TransferOrderData.PostedTransferOrders).ConfigureAwait(false);
+        }
+
+        private static async Task<TransferOnlineOrderRequestPreview> BuildTransferOnlineOrderRequestAsync(string documentNo, TransferOrderData.DocumentTableContext documentContext)
+        {
+            if (string.IsNullOrWhiteSpace(documentNo))
+                throw new ArgumentException("documentNo is required", nameof(documentNo));
+
+            string no = documentNo.Trim();
+            string? description = null;
+            string? status = null;
+            DateTime? requestedDate = null;
+            DateTime? estimatedDeliveryDate = null;
+            DateTime? transferDate = null;
+            DateTime? receiveDate = null;
+            string? fromWarehouseId = null;
+            string? fromWarehouse = null;
+            string? toWarehouseId = null;
+            string? toWarehouse = null;
+            string? categoryCode = null;
+            bool? useProductionCategory = null;
+            DateTime? postedDate = null;
+            bool? sentToOnline = null;
+            var linePayload = new List<Dictionary<string, object?>>();
+
+            using (var conn = new SqlConnection(GlobalSettings.ConnectionString))
+            {
+                await conn.OpenAsync().ConfigureAwait(false);
+
+                using (var headerCmd = new SqlCommand(@"
+SELECT TOP 1 [No.], [Description], [Status], [Requested Date], [Estimated Delivery Date], [Transfer Date], [Receive Date], [From Warehouse ID], [From Warehouse], [To Warehouse ID], [To Warehouse], [Category Code], [Use Production Category], [Posted Date], [Sent To Online]
+FROM " + documentContext.HeaderTableName + @"
+WHERE [No.] = @DocNo", conn))
+                {
+                    headerCmd.Parameters.AddWithValue("@DocNo", documentNo);
+                    using var rdr = await headerCmd.ExecuteReaderAsync().ConfigureAwait(false);
+                    if (!await rdr.ReadAsync().ConfigureAwait(false))
+                        throw new InvalidOperationException($"{documentContext.DocumentTitle} '{documentNo}' was not found.");
+
+                    no = rdr[0] != DBNull.Value ? rdr[0].ToString()?.Trim() ?? no : no;
+                    description = rdr[1] != DBNull.Value ? rdr[1].ToString()?.Trim() : null;
+                    status = rdr[2] != DBNull.Value ? rdr[2].ToString()?.Trim() : null;
+                    try { if (rdr[3] != DBNull.Value) requestedDate = Convert.ToDateTime(rdr[3]); } catch { requestedDate = null; }
+                    try { if (rdr[4] != DBNull.Value) estimatedDeliveryDate = Convert.ToDateTime(rdr[4]); } catch { estimatedDeliveryDate = null; }
+                    try { if (rdr[5] != DBNull.Value) transferDate = Convert.ToDateTime(rdr[5]); } catch { transferDate = null; }
+                    try { if (rdr[6] != DBNull.Value) receiveDate = Convert.ToDateTime(rdr[6]); } catch { receiveDate = null; }
+                    fromWarehouseId = rdr[7] != DBNull.Value ? rdr[7].ToString()?.Trim() : null;
+                    fromWarehouse = rdr[8] != DBNull.Value ? rdr[8].ToString()?.Trim() : null;
+                    toWarehouseId = rdr[9] != DBNull.Value ? rdr[9].ToString()?.Trim() : null;
+                    toWarehouse = rdr[10] != DBNull.Value ? rdr[10].ToString()?.Trim() : null;
+                    categoryCode = rdr[11] != DBNull.Value ? rdr[11].ToString()?.Trim() : null;
+                    try { if (rdr[12] != DBNull.Value) useProductionCategory = Convert.ToBoolean(rdr[12]); } catch { useProductionCategory = null; }
+                    try { if (rdr[13] != DBNull.Value) postedDate = Convert.ToDateTime(rdr[13]); } catch { postedDate = null; }
+                    try { if (rdr[14] != DBNull.Value) sentToOnline = Convert.ToBoolean(rdr[14]); } catch { sentToOnline = null; }
+                }
+
+                using (var lineCmd = new SqlCommand(@"
+SELECT [Document No.], [Item No.], [Variant ID], [Description], [CategoryCode], [Line No.], [Available QTY], [Qty To Transfer], [Qty To Receive], [Qty Received]
+FROM " + documentContext.LineTableName + @"
+WHERE [Document No.] = @DocNo
+ORDER BY [Line No.]", conn))
+                {
+                    lineCmd.Parameters.AddWithValue("@DocNo", documentNo);
+                    using var rdr = await lineCmd.ExecuteReaderAsync().ConfigureAwait(false);
+                    while (await rdr.ReadAsync().ConfigureAwait(false))
+                    {
+                        var line = new Dictionary<string, object?>
+                        {
+                            ["Document No."] = rdr[0] != DBNull.Value ? rdr[0].ToString()?.Trim() : null,
+                            ["Item No."] = rdr[1] != DBNull.Value ? rdr[1].ToString()?.Trim() : null,
+                            ["Variant ID"] = rdr[2] != DBNull.Value ? rdr[2].ToString()?.Trim() : null,
+                            ["Description"] = rdr[3] != DBNull.Value ? rdr[3].ToString()?.Trim() : null,
+                            ["CategoryCode"] = rdr[4] != DBNull.Value ? rdr[4].ToString()?.Trim() : null,
+                            ["Line No."] = rdr[5] != DBNull.Value ? Convert.ToInt32(rdr[5]) : null,
+                            ["Available QTY"] = rdr[6] != DBNull.Value ? Convert.ToDecimal(rdr[6]) : null,
+                            ["Qty To Transfer"] = rdr[7] != DBNull.Value ? Convert.ToDecimal(rdr[7]) : null,
+                            ["Qty To Receive"] = rdr[8] != DBNull.Value ? Convert.ToDecimal(rdr[8]) : null,
+                            ["Qty Received"] = rdr[9] != DBNull.Value ? Convert.ToDecimal(rdr[9]) : null
+                        };
+
+                        linePayload.Add(line);
+                    }
+                }
+            }
+
+            var payload = new Dictionary<string, object?>
+            {
+                ["No."] = no,
+                ["Description"] = string.IsNullOrWhiteSpace(description) ? null : description,
+                ["Status"] = string.IsNullOrWhiteSpace(status) ? null : status,
+                ["Requested Date"] = requestedDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["Estimated Delivery Date"] = estimatedDeliveryDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["Transfer Date"] = transferDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["Receive Date"] = receiveDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["From Warehouse ID"] = string.IsNullOrWhiteSpace(fromWarehouseId) ? null : fromWarehouseId,
+                ["From Warehouse"] = string.IsNullOrWhiteSpace(fromWarehouse) ? null : fromWarehouse,
+                ["To Warehouse ID"] = string.IsNullOrWhiteSpace(toWarehouseId) ? null : toWarehouseId,
+                ["To Warehouse"] = string.IsNullOrWhiteSpace(toWarehouse) ? null : toWarehouse,
+                ["Category Code"] = string.IsNullOrWhiteSpace(categoryCode) ? null : categoryCode,
+                ["Use Production Category"] = useProductionCategory,
+                ["Posted Date"] = postedDate?.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
+                ["Sent To Online"] = sentToOnline
+            };
+
+            string headerBodyJson = JsonSerializer.Serialize(payload);
+            string lineBodyJson = JsonSerializer.Serialize(linePayload);
+            string headerEndpointUrl = GlobalSettings.TransferHeaderSupabaseEndpoint;
+            string lineEndpointUrl = GlobalSettings.TransferLineSupabaseEndpoint;
+            string resolvedHeaderMethod = "POST";
+            string resolvedHeaderEndpointUrl = headerEndpointUrl;
+            string lineRequestPreviewText;
+            string previewWarning = string.Empty;
+
+            try
+            {
+                using var headerLookup = await GetSupabaseRowsAsync(headerEndpointUrl, TimeSpan.FromSeconds(30), ("No.", no)).ConfigureAwait(false);
+                bool headerExists = headerLookup.RootElement.ValueKind == JsonValueKind.Array && headerLookup.RootElement.GetArrayLength() > 0;
+                resolvedHeaderMethod = headerExists ? "PATCH" : "POST";
+                resolvedHeaderEndpointUrl = headerExists
+                    ? BuildSupabaseFilteredUrl(headerEndpointUrl, ("No.", no))
+                    : headerEndpointUrl;
+                lineRequestPreviewText = await BuildTransferLineRequestPreviewTextAsync(lineEndpointUrl, lineBodyJson, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                resolvedHeaderMethod = "POST/PATCH (unresolved)";
+                resolvedHeaderEndpointUrl = headerEndpointUrl;
+                lineRequestPreviewText = BuildFallbackTransferLineRequestPreviewText(lineEndpointUrl, lineBodyJson);
+                previewWarning = "Preview could not confirm whether this will POST or PATCH before sending. Reason: " + ex.Message;
+            }
+
+            return new TransferOnlineOrderRequestPreview(resolvedHeaderMethod, resolvedHeaderEndpointUrl, headerBodyJson, lineEndpointUrl, lineBodyJson, lineRequestPreviewText, previewWarning);
+        }
+
+        private static async Task<string> BuildTransferLineRequestPreviewTextAsync(string endpointUrl, string payloadJson, TimeSpan timeout)
+        {
+            using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(payloadJson) ? "[]" : payloadJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() == 0)
+                return "No line requests will be sent.";
+
+            var sections = new List<string>();
+            int lineIndex = 0;
+            foreach (JsonElement line in document.RootElement.EnumerateArray())
+            {
+                lineIndex++;
+                string documentNo = GetTransferSupabaseJsonString(line, "Document No.", "document_no", "documentNo");
+                string lineNo = GetTransferSupabaseJsonString(line, "Line No.", "line_no", "lineNo");
+                bool lineExists = !string.IsNullOrWhiteSpace(documentNo)
+                    && !string.IsNullOrWhiteSpace(lineNo)
+                    && await SupabaseRecordExistsAsync(endpointUrl, timeout, ("Document No.", documentNo), ("Line No.", lineNo)).ConfigureAwait(false);
+
+                string method = lineExists ? "PATCH" : "POST";
+                string resolvedEndpointUrl = lineExists
+                    ? BuildSupabaseFilteredUrl(endpointUrl, ("Document No.", documentNo), ("Line No.", lineNo))
+                    : endpointUrl;
+
+                sections.Add(
+                    $"Line {lineIndex}\nMethod: {method}\nEndpoint:\n{resolvedEndpointUrl}\nPayload:\n{line.GetRawText()}");
+            }
+
+            return string.Join(Environment.NewLine + Environment.NewLine, sections);
+        }
+
+        private static string BuildFallbackTransferLineRequestPreviewText(string endpointUrl, string payloadJson)
+        {
+            using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(payloadJson) ? "[]" : payloadJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() == 0)
+                return "No line requests will be sent.";
+
+            var sections = new List<string>();
+            int lineIndex = 0;
+            foreach (JsonElement line in document.RootElement.EnumerateArray())
+            {
+                lineIndex++;
+                sections.Add(
+                    $"Line {lineIndex}\nMethod: POST/PATCH (unresolved)\nEndpoint:\n{endpointUrl}\nPayload:\n{line.GetRawText()}");
+            }
+
+            return string.Join(Environment.NewLine + Environment.NewLine, sections);
+        }
+
+        public static SerialTrackingSyncSummary SyncItemSerialTrackingToSupabase()
+        {
+            return SyncItemSerialTrackingToSupabaseAsync().GetAwaiter().GetResult();
+        }
+
+        public static async Task<SerialTrackingSyncSummary> SyncItemSerialTrackingToSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string endpointUrl = GlobalSettings.ItemSerialTrackingSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+                throw new InvalidOperationException("ItemSerialTrackingSupabaseEndpoint is not configured.");
+
+            var serialRecords = LoadItemSerialTrackingRows();
+            int insertedCount = 0;
+            int updatedCount = 0;
+            int skippedDueToConflictCount = 0;
+
+            using var markSyncedConn = new SqlConnection(GlobalSettings.ConnectionString);
+            markSyncedConn.Open();
+            using var markSyncedCmd = new SqlCommand(
+                "UPDATE dbo.ItemSerialTracking SET LastSyncedAtUtc = @LastSyncedAtUtc WHERE RunningSerialNo = @RunningSerialNo", markSyncedConn);
+            markSyncedCmd.Parameters.Add("@LastSyncedAtUtc", System.Data.SqlDbType.DateTime2);
+            markSyncedCmd.Parameters.Add("@RunningSerialNo", System.Data.SqlDbType.BigInt);
+
+            foreach (var serialRecord in serialRecords)
+            {
+                string payloadJson = JsonSerializer.Serialize(serialRecord.Payload);
+
+                using var existingDoc = await GetSupabaseRowsAsync(endpointUrl, timeout.Value, ("SerialNo", serialRecord.SerialNo)).ConfigureAwait(false);
+                bool exists = existingDoc.RootElement.ValueKind == JsonValueKind.Array && existingDoc.RootElement.GetArrayLength() > 0;
+
+                if (exists)
+                {
+                    var existingRow = existingDoc.RootElement[0];
+
+                    // Last-writer-wins against the Portal's own direct writes to this same
+                    // Supabase row (e.g. staff_claim_serials_for_transfer_shipment tagging a
+                    // serial IN_TRANSIT) - if Supabase's own UpdatedAtUtc is already newer than
+                    // what this local row knew about when it went dirty, blindly PATCHing now
+                    // would clobber that with stale local data. Skip it and leave the row dirty -
+                    // SyncItemSerialTrackingFromSupabaseAsync's own next run will pull Supabase's
+                    // newer state down locally (which also clears the dirty flag naturally).
+                    if (existingRow.TryGetProperty("UpdatedAtUtc", out var existingUpdatedAtProp)
+                        && existingUpdatedAtProp.ValueKind == JsonValueKind.String
+                        && TryParseSupabaseTimestamp(existingUpdatedAtProp.GetString(), out DateTime existingUpdatedAtUtc)
+                        && existingUpdatedAtUtc > serialRecord.ModifiedAtUtc)
+                    {
+                        skippedDueToConflictCount++;
+                        continue;
+                    }
+
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(endpointUrl, ("SerialNo", serialRecord.SerialNo)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(endpointUrl, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+
+                // Stamp with the modified-at value that was actually just synced (not "now") - if the
+                // row gets modified again between this read and this write, its ModifiedAtUtc will end
+                // up newer than what we stamp here, so the next sync picks it up again instead of it
+                // being silently skipped as already-current.
+                markSyncedCmd.Parameters["@LastSyncedAtUtc"].Value = serialRecord.ModifiedAtUtc;
+                markSyncedCmd.Parameters["@RunningSerialNo"].Value = serialRecord.RunningSerialNo;
+                markSyncedCmd.ExecuteNonQuery();
+            }
+
+            return new SerialTrackingSyncSummary(serialRecords.Count, insertedCount, updatedCount, skippedDueToConflictCount);
+        }
+
+        /// <summary>
+        /// Parses a PostgREST/Postgres timestamptz string (e.g. "2026-08-09T10:00:00.123456+00:00")
+        /// into a UTC DateTime. Shared by the ItemSerialTracking push (conflict check against
+        /// Supabase's own UpdatedAtUtc) and pull (applying/watermarking rows) below.
+        /// </summary>
+        private static bool TryParseSupabaseTimestamp(string? raw, out DateTime utcValue)
+        {
+            if (!string.IsNullOrWhiteSpace(raw)
+                && DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dto))
+            {
+                utcValue = dto.UtcDateTime;
+                return true;
+            }
+
+            utcValue = default;
+            return false;
+        }
+
+        /// <summary>
+        /// Pulls ItemSerialTracking changes made directly in Supabase (currently just the
+        /// Portal's Transfer Order Ship flow tagging a serial IN_TRANSIT, and Receive releasing it
+        /// back to IN_STOCK at the destination - see staff_claim_serials_for_transfer_shipment and
+        /// releaseReceivedSerials) down into the matching local dbo.ItemSerialTracking row. Unlike
+        /// SyncCategoryProductionFlagsFromSupabaseAsync (a single owner, Supabase always wins),
+        /// this table is written from both sides, so this applies a Supabase row only when its
+        /// own UpdatedAtUtc is strictly newer than the local row's - a plain last-writer-wins
+        /// merge, matching the conflict check SyncItemSerialTrackingToSupabaseAsync does in the
+        /// opposite direction.
+        ///
+        /// Matched by SerialNo (globally unique - see UX_ItemSerialTracking_SerialNo), NOT
+        /// RunningSerialNo. Every store runs its own separate local SQL Server database (see the
+        /// per-machine Server= entries in GlobalSettings.ConnectionString's history), each with
+        /// its own independent RunningSerialNo IDENTITY sequence - a serial created at the
+        /// production warehouse's database has a RunningSerialNo that means nothing in a different
+        /// store's database. If a Supabase row's SerialNo has no local match at all (e.g. this
+        /// store just received a shipment tagged/created at a different store), this now INSERTs a
+        /// brand-new local row instead of skipping it, so a receiving store's own
+        /// GetAvailableSerials/PromptForAquariumSaleSerials can actually find and sell it. Without
+        /// this, a non-production store required to pick a serial at sale (see
+        /// ShouldRequireAquariumSerialSelection) would never have anything to pick from serials
+        /// that physically arrived via Transfer Order.
+        ///
+        /// Uses a small local watermark table (dbo.ItemSerialTrackingPullState) instead of Category's
+        /// full-table-every-time approach, since ItemSerialTracking can grow far larger than the
+        /// handful of Categories - only rows Supabase reports changed since the last successful
+        /// pull are fetched. Note this does mean every store's local database eventually ends up
+        /// with a full replica of every serial system-wide has ever touched it or not, not just its
+        /// own - simpler and more robust than trying to filter server-side by "is this store's
+        /// warehouse name", at the cost of some redundant local storage.
+        /// </summary>
+        public static async Task<int> SyncItemSerialTrackingFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string endpointUrl = GlobalSettings.ItemSerialTrackingSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+                throw new InvalidOperationException("ItemSerialTrackingSupabaseEndpoint is not configured.");
+
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+            ProductSerialTrackingForm.EnsureSerialTrackingTable(conn, null);
+            EnsureItemSerialTrackingPullStateTable(conn);
+
+            DateTime watermarkUtc = GetItemSerialTrackingPullWatermarkUtc(conn);
+            string watermarkFilterValue = watermarkUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture);
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            string requestUrl = endpointUrl
+                + "?select=SerialNo,ItemCode,ItemDescription,VariantCode,Location,Status,SourceDocumentNo,CreatedAtUtc,CreatedBy,UpdatedAtUtc,SoldReceiptNo,SoldOnlineOrderId"
+                + "&UpdatedAtUtc=gt." + Uri.EscapeDataString(watermarkFilterValue)
+                + "&order=UpdatedAtUtc.asc&limit=1000";
+            using var req = new HttpRequestMessage(HttpMethod.Get, requestUrl);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"ItemSerialTracking Supabase GET failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0)
+                return 0;
+
+            int appliedCount = 0;
+            DateTime? maxUpdatedAtUtcSeen = null;
+
+            using var localLookupCmd = new SqlCommand(
+                "SELECT COALESCE(UpdatedAtUtc, CreatedAtUtc) FROM dbo.ItemSerialTracking WHERE SerialNo = @SerialNo", conn);
+            localLookupCmd.Parameters.Add("@SerialNo", System.Data.SqlDbType.NVarChar, 120);
+
+            using var updateCmd = new SqlCommand(@"
+UPDATE dbo.ItemSerialTracking
+SET Status = @Status,
+    Location = @Location,
+    SourceDocumentNo = @SourceDocumentNo,
+    VariantCode = @VariantCode,
+    SoldReceiptNo = @SoldReceiptNo,
+    SoldOnlineOrderId = @SoldOnlineOrderId,
+    UpdatedAtUtc = @UpdatedAtUtc,
+    LastSyncedAtUtc = @UpdatedAtUtc
+WHERE SerialNo = @SerialNo", conn);
+            updateCmd.Parameters.Add("@Status", System.Data.SqlDbType.NVarChar, 255);
+            updateCmd.Parameters.Add("@Location", System.Data.SqlDbType.NVarChar, 255);
+            updateCmd.Parameters.Add("@SourceDocumentNo", System.Data.SqlDbType.NVarChar, 100);
+            updateCmd.Parameters.Add("@VariantCode", System.Data.SqlDbType.NVarChar, 200);
+            updateCmd.Parameters.Add("@SoldReceiptNo", System.Data.SqlDbType.NVarChar, 100);
+            updateCmd.Parameters.Add("@SoldOnlineOrderId", System.Data.SqlDbType.NVarChar, 100);
+            updateCmd.Parameters.Add("@UpdatedAtUtc", System.Data.SqlDbType.DateTime2);
+            updateCmd.Parameters.Add("@SerialNo", System.Data.SqlDbType.NVarChar, 120);
+
+            using var insertCmd = new SqlCommand(@"
+INSERT INTO dbo.ItemSerialTracking
+    (SerialNo, ItemCode, ItemDescription, VariantCode, Location, Status, SourceDocumentNo,
+     CreatedAtUtc, CreatedBy, UpdatedAtUtc, SoldReceiptNo, SoldOnlineOrderId, LastSyncedAtUtc)
+VALUES
+    (@SerialNo, @ItemCode, @ItemDescription, @VariantCode, @Location, @Status, @SourceDocumentNo,
+     @CreatedAtUtc, @CreatedBy, @UpdatedAtUtc, @SoldReceiptNo, @SoldOnlineOrderId, @UpdatedAtUtc)", conn);
+            insertCmd.Parameters.Add("@SerialNo", System.Data.SqlDbType.NVarChar, 120);
+            insertCmd.Parameters.Add("@ItemCode", System.Data.SqlDbType.NVarChar, 100);
+            insertCmd.Parameters.Add("@ItemDescription", System.Data.SqlDbType.NVarChar, 255);
+            insertCmd.Parameters.Add("@VariantCode", System.Data.SqlDbType.NVarChar, 200);
+            insertCmd.Parameters.Add("@Location", System.Data.SqlDbType.NVarChar, 255);
+            insertCmd.Parameters.Add("@Status", System.Data.SqlDbType.NVarChar, 255);
+            insertCmd.Parameters.Add("@SourceDocumentNo", System.Data.SqlDbType.NVarChar, 100);
+            insertCmd.Parameters.Add("@CreatedAtUtc", System.Data.SqlDbType.DateTime2);
+            insertCmd.Parameters.Add("@CreatedBy", System.Data.SqlDbType.NVarChar, 100);
+            insertCmd.Parameters.Add("@UpdatedAtUtc", System.Data.SqlDbType.DateTime2);
+            insertCmd.Parameters.Add("@SoldReceiptNo", System.Data.SqlDbType.NVarChar, 100);
+            insertCmd.Parameters.Add("@SoldOnlineOrderId", System.Data.SqlDbType.NVarChar, 100);
+
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object) continue;
+
+                string serialNo = row.TryGetProperty("SerialNo", out var serialNoProp) && serialNoProp.ValueKind == JsonValueKind.String
+                    ? serialNoProp.GetString()?.Trim() ?? string.Empty
+                    : string.Empty;
+                string itemCode = row.TryGetProperty("ItemCode", out var itemCodeProp) && itemCodeProp.ValueKind == JsonValueKind.String
+                    ? itemCodeProp.GetString()?.Trim() ?? string.Empty
+                    : string.Empty;
+                if (string.IsNullOrWhiteSpace(serialNo) || string.IsNullOrWhiteSpace(itemCode))
+                    continue; // can't insert - SerialNo/ItemCode are NOT NULL locally
+
+                string? updatedAtRaw = row.TryGetProperty("UpdatedAtUtc", out var updatedAtProp) && updatedAtProp.ValueKind == JsonValueKind.String
+                    ? updatedAtProp.GetString()
+                    : null;
+                if (!TryParseSupabaseTimestamp(updatedAtRaw, out DateTime supabaseUpdatedAtUtc))
+                    continue;
+
+                if (maxUpdatedAtUtcSeen == null || supabaseUpdatedAtUtc > maxUpdatedAtUtcSeen.Value)
+                    maxUpdatedAtUtcSeen = supabaseUpdatedAtUtc;
+
+                localLookupCmd.Parameters["@SerialNo"].Value = serialNo;
+                object? localModifiedObj = localLookupCmd.ExecuteScalar();
+
+                string? status = row.TryGetProperty("Status", out var statusProp) && statusProp.ValueKind == JsonValueKind.String ? statusProp.GetString() : "IN_STOCK";
+                object location = row.TryGetProperty("Location", out var locProp) && locProp.ValueKind == JsonValueKind.String ? (object)locProp.GetString()! : DBNull.Value;
+                object sourceDocumentNo = row.TryGetProperty("SourceDocumentNo", out var srcProp) && srcProp.ValueKind == JsonValueKind.String ? (object)srcProp.GetString()! : DBNull.Value;
+                object variantCode = row.TryGetProperty("VariantCode", out var varProp) && varProp.ValueKind == JsonValueKind.String ? (object)varProp.GetString()! : DBNull.Value;
+                object soldReceiptNo = row.TryGetProperty("SoldReceiptNo", out var soldReceiptProp) && soldReceiptProp.ValueKind == JsonValueKind.String ? (object)soldReceiptProp.GetString()! : DBNull.Value;
+                object soldOnlineOrderId = row.TryGetProperty("SoldOnlineOrderId", out var soldOnlineProp) && soldOnlineProp.ValueKind == JsonValueKind.String ? (object)soldOnlineProp.GetString()! : DBNull.Value;
+
+                if (localModifiedObj == null || localModifiedObj == DBNull.Value)
+                {
+                    // No local row for this SerialNo at all - this store has never seen it before
+                    // (created and/or last touched at a different store's database). Insert it
+                    // fresh rather than skipping, so it becomes pickable here.
+                    string itemDescription = row.TryGetProperty("ItemDescription", out var descProp) && descProp.ValueKind == JsonValueKind.String ? descProp.GetString() ?? string.Empty : string.Empty;
+                    string createdBy = row.TryGetProperty("CreatedBy", out var createdByProp) && createdByProp.ValueKind == JsonValueKind.String ? createdByProp.GetString() ?? string.Empty : string.Empty;
+                    string? createdAtRaw = row.TryGetProperty("CreatedAtUtc", out var createdAtProp) && createdAtProp.ValueKind == JsonValueKind.String ? createdAtProp.GetString() : null;
+                    DateTime createdAtUtc = TryParseSupabaseTimestamp(createdAtRaw, out DateTime parsedCreatedAtUtc) ? parsedCreatedAtUtc : supabaseUpdatedAtUtc;
+
+                    insertCmd.Parameters["@SerialNo"].Value = serialNo;
+                    insertCmd.Parameters["@ItemCode"].Value = itemCode;
+                    insertCmd.Parameters["@ItemDescription"].Value = string.IsNullOrWhiteSpace(itemDescription) ? (object)DBNull.Value : itemDescription;
+                    insertCmd.Parameters["@VariantCode"].Value = variantCode;
+                    insertCmd.Parameters["@Location"].Value = location;
+                    insertCmd.Parameters["@Status"].Value = status;
+                    insertCmd.Parameters["@SourceDocumentNo"].Value = sourceDocumentNo;
+                    insertCmd.Parameters["@CreatedAtUtc"].Value = createdAtUtc;
+                    insertCmd.Parameters["@CreatedBy"].Value = string.IsNullOrWhiteSpace(createdBy) ? (object)DBNull.Value : createdBy;
+                    insertCmd.Parameters["@UpdatedAtUtc"].Value = supabaseUpdatedAtUtc;
+                    insertCmd.Parameters["@SoldReceiptNo"].Value = soldReceiptNo;
+                    insertCmd.Parameters["@SoldOnlineOrderId"].Value = soldOnlineOrderId;
+                    appliedCount += insertCmd.ExecuteNonQuery();
+                    continue;
+                }
+
+                DateTime localModifiedAtUtc = Convert.ToDateTime(localModifiedObj, CultureInfo.InvariantCulture);
+
+                // Last-writer-wins: only apply Supabase's version if it's strictly newer than
+                // what's already local - otherwise local's own (equal-or-newer) state is correct
+                // and the push side will (re)send it up, so overwriting here would be self-defeating.
+                if (supabaseUpdatedAtUtc <= localModifiedAtUtc)
+                    continue;
+
+                updateCmd.Parameters["@Status"].Value = status;
+                updateCmd.Parameters["@Location"].Value = location;
+                updateCmd.Parameters["@SourceDocumentNo"].Value = sourceDocumentNo;
+                updateCmd.Parameters["@VariantCode"].Value = variantCode;
+                updateCmd.Parameters["@SoldReceiptNo"].Value = soldReceiptNo;
+                updateCmd.Parameters["@SoldOnlineOrderId"].Value = soldOnlineOrderId;
+                updateCmd.Parameters["@UpdatedAtUtc"].Value = supabaseUpdatedAtUtc;
+                updateCmd.Parameters["@SerialNo"].Value = serialNo;
+                appliedCount += updateCmd.ExecuteNonQuery();
+            }
+
+            if (maxUpdatedAtUtcSeen.HasValue)
+                SetItemSerialTrackingPullWatermarkUtc(conn, maxUpdatedAtUtcSeen.Value);
+
+            return appliedCount;
+        }
+
+        private static void EnsureItemSerialTrackingPullStateTable(SqlConnection conn)
+        {
+            const string sql = @"
+IF OBJECT_ID('dbo.ItemSerialTrackingPullState', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.ItemSerialTrackingPullState (
+        Id INT NOT NULL PRIMARY KEY CHECK (Id = 1),
+        LastPulledUpdatedAtUtc DATETIME2 NULL
+    );
+    INSERT INTO dbo.ItemSerialTrackingPullState (Id, LastPulledUpdatedAtUtc) VALUES (1, NULL);
+END";
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.ExecuteNonQuery();
+        }
+
+        private static DateTime GetItemSerialTrackingPullWatermarkUtc(SqlConnection conn)
+        {
+            using var cmd = new SqlCommand("SELECT LastPulledUpdatedAtUtc FROM dbo.ItemSerialTrackingPullState WHERE Id = 1", conn);
+            object? result = cmd.ExecuteScalar();
+            // Default far enough in the past to capture every existing Supabase row on the very
+            // first pull ever run on this machine.
+            return result == null || result == DBNull.Value
+                ? new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                : DateTime.SpecifyKind(Convert.ToDateTime(result, CultureInfo.InvariantCulture), DateTimeKind.Utc);
+        }
+
+        private static void SetItemSerialTrackingPullWatermarkUtc(SqlConnection conn, DateTime lastPulledUpdatedAtUtc)
+        {
+            using var cmd = new SqlCommand("UPDATE dbo.ItemSerialTrackingPullState SET LastPulledUpdatedAtUtc = @Value WHERE Id = 1", conn);
+            cmd.Parameters.Add("@Value", System.Data.SqlDbType.DateTime2).Value = lastPulledUpdatedAtUtc;
+            cmd.ExecuteNonQuery();
+        }
+
+        // Only rows modified since their last successful sync (see SyncItemSerialTrackingToSupabaseAsync's
+        // LastSyncedAtUtc stamping) - lets this run cheaply and often (e.g. from a timer/cron), instead of
+        // re-checking every serial ever tracked on every call.
+        private static List<ItemSerialTrackingSupabaseRow> LoadItemSerialTrackingRows()
+        {
+            var serialRecords = new List<ItemSerialTrackingSupabaseRow>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+            ProductSerialTrackingForm.EnsureSerialTrackingTable(connection, null);
+
+            using var cmd = new SqlCommand(@"
+SELECT [RunningSerialNo], [SerialNo], [ItemCode], ISNULL([VariantCode], '') AS [VariantCode],
+    [ItemDescription], ISNULL([Location], '') AS [Location], [Status], [SourceDocumentNo], [CreatedAtUtc], [CreatedBy],
+       [UpdatedAtUtc], [SoldReceiptNo], [SoldOnlineOrderId],
+       COALESCE([UpdatedAtUtc], [CreatedAtUtc]) AS [ModifiedAtUtc]
+FROM dbo.ItemSerialTracking
+WHERE ISNULL([SerialNo], '') <> ''
+  AND ([LastSyncedAtUtc] IS NULL OR COALESCE([UpdatedAtUtc], [CreatedAtUtc]) > [LastSyncedAtUtc])
+ORDER BY [RunningSerialNo]", connection);
+
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string serialNo = rdr["SerialNo"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(serialNo))
+                    continue;
+
+                long runningSerialNo = rdr["RunningSerialNo"] != DBNull.Value ? Convert.ToInt64(rdr["RunningSerialNo"], CultureInfo.InvariantCulture) : 0;
+                DateTime modifiedAtUtc = Convert.ToDateTime(rdr["ModifiedAtUtc"], CultureInfo.InvariantCulture);
+
+                serialRecords.Add(new ItemSerialTrackingSupabaseRow(
+                    serialNo,
+                    runningSerialNo,
+                    modifiedAtUtc,
+                    new Dictionary<string, object?>
+                    {
+                        ["RunningSerialNo"] = rdr["RunningSerialNo"] != DBNull.Value ? Convert.ToInt64(rdr["RunningSerialNo"], CultureInfo.InvariantCulture) : null,
+                        ["SerialNo"] = serialNo,
+                        ["ItemCode"] = rdr["ItemCode"]?.ToString()?.Trim() ?? string.Empty,
+                        ["VariantCode"] = rdr["VariantCode"]?.ToString()?.Trim() ?? string.Empty,
+                        ["ItemDescription"] = rdr["ItemDescription"] != DBNull.Value ? rdr["ItemDescription"]?.ToString() : null,
+                        ["Location"] = rdr["Location"]?.ToString()?.Trim() ?? string.Empty,
+                        ["Status"] = rdr["Status"]?.ToString()?.Trim() ?? "IN_STOCK",
+                        ["SourceDocumentNo"] = rdr["SourceDocumentNo"] != DBNull.Value ? rdr["SourceDocumentNo"]?.ToString() : null,
+                        ["CreatedAtUtc"] = rdr["CreatedAtUtc"] != DBNull.Value ? Convert.ToDateTime(rdr["CreatedAtUtc"], CultureInfo.InvariantCulture).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture) : null,
+                        ["CreatedBy"] = rdr["CreatedBy"] != DBNull.Value ? rdr["CreatedBy"]?.ToString() : null,
+                        ["UpdatedAtUtc"] = rdr["UpdatedAtUtc"] != DBNull.Value ? Convert.ToDateTime(rdr["UpdatedAtUtc"], CultureInfo.InvariantCulture).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture) : null,
+                        ["SoldReceiptNo"] = rdr["SoldReceiptNo"] != DBNull.Value ? rdr["SoldReceiptNo"]?.ToString() : null,
+                        ["SoldOnlineOrderId"] = rdr["SoldOnlineOrderId"] != DBNull.Value ? rdr["SoldOnlineOrderId"]?.ToString() : null
+                    }));
+            }
+
+            return serialRecords;
+        }
+
+        private readonly struct ItemSerialTrackingSupabaseRow
+        {
+            public ItemSerialTrackingSupabaseRow(string serialNo, long runningSerialNo, DateTime modifiedAtUtc, Dictionary<string, object?> payload)
+            {
+                SerialNo = serialNo;
+                RunningSerialNo = runningSerialNo;
+                ModifiedAtUtc = modifiedAtUtc;
+                Payload = payload;
+            }
+
+            public string SerialNo { get; }
+            public long RunningSerialNo { get; }
+            public DateTime ModifiedAtUtc { get; }
+            public Dictionary<string, object?> Payload { get; }
+        }
+
+        public readonly struct MasterDataSyncSummary
+        {
+            public MasterDataSyncSummary(int syncedCount, int insertedCount, int updatedCount)
+            {
+                SyncedCount = syncedCount;
+                InsertedCount = insertedCount;
+                UpdatedCount = updatedCount;
+            }
+
+            public int SyncedCount { get; }
+            public int InsertedCount { get; }
+            public int UpdatedCount { get; }
+        }
+
+        /// <summary>
+        /// Pushes the local Warehouses table (dbo.Warehouses, resolved the same flexible way as
+        /// TransferOrderData.GetWarehouseOptions) up to Supabase, inserting new rows or patching
+        /// existing ones (matched by ID) so re-running the sync is always safe.
+        /// </summary>
+        public static MasterDataSyncSummary SyncWarehousesToSupabase()
+        {
+            return SyncWarehousesToSupabaseAsync().GetAwaiter().GetResult();
+        }
+
+        public static async Task<MasterDataSyncSummary> SyncWarehousesToSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string endpointUrl = GlobalSettings.WarehousesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+                throw new InvalidOperationException("WarehousesSupabaseEndpoint is not configured.");
+
+            var warehouses = TransferOrderData.GetWarehouseOptions(GlobalSettings.ConnectionString);
+            int insertedCount = 0;
+            int updatedCount = 0;
+
+            foreach (var warehouse in warehouses)
+            {
+                if (string.IsNullOrWhiteSpace(warehouse.Id))
+                    continue;
+
+                var payload = new Dictionary<string, object?>
+                {
+                    ["ID"] = warehouse.Id,
+                    ["Name"] = warehouse.Name,
+                    ["IsProductionWarehouse"] = warehouse.IsProductionWarehouse,
+                    ["IsStockWarehouse"] = warehouse.IsStockWarehouse,
+                    ["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture)
+                };
+                string payloadJson = JsonSerializer.Serialize(payload);
+
+                bool exists = await SupabaseRecordExistsAsync(endpointUrl, timeout.Value, ("ID", warehouse.Id)).ConfigureAwait(false);
+                if (exists)
+                {
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(endpointUrl, ("ID", warehouse.Id)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(endpointUrl, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+            }
+
+            return new MasterDataSyncSummary(warehouses.Count, insertedCount, updatedCount);
+        }
+
+        /// <summary>
+        /// Pushes the local Items table (dbo.Items - product master data) up to Supabase, inserting
+        /// new rows or patching existing ones (matched by Code) so re-running the sync is always
+        /// safe. Only columns that actually exist on the local Items table are read/sent, since the
+        /// exact column set can vary slightly between installs (VariationId/ProductId etc. are
+        /// added by other sync features on demand).
+        /// </summary>
+        public static MasterDataSyncSummary SyncItemsToSupabase()
+        {
+            return SyncItemsToSupabaseAsync().GetAwaiter().GetResult();
+        }
+
+        public static async Task<MasterDataSyncSummary> SyncItemsToSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string endpointUrl = GlobalSettings.ItemsSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+                throw new InvalidOperationException("ItemsSupabaseEndpoint is not configured.");
+
+            var itemRows = LoadItemRows();
+            int insertedCount = 0;
+            int updatedCount = 0;
+
+            foreach (var itemRow in itemRows)
+            {
+                string payloadJson = JsonSerializer.Serialize(itemRow.Payload);
+                bool exists = await SupabaseRecordExistsAsync(endpointUrl, timeout.Value, ("Code", itemRow.Code)).ConfigureAwait(false);
+                if (exists)
+                {
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(endpointUrl, ("Code", itemRow.Code)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(endpointUrl, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+            }
+
+            return new MasterDataSyncSummary(itemRows.Count, insertedCount, updatedCount);
+        }
+
+        private static readonly string[] OptionalItemColumns = new[]
+        {
+            "Description", "Cost", "Price", "WholesalePrice", "RetailPrice", "PromoPrice",
+            "CategoryCode", "Brand", "SKU", "QuantityInStock", "MinimumStock", "IsActive",
+            "VariationId", "ProductId"
+        };
+
+        private static List<(string Code, Dictionary<string, object?> Payload)> LoadItemRows()
+        {
+            var rows = new List<(string Code, Dictionary<string, object?> Payload)>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var colCmd = new SqlCommand("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Items'", connection))
+            using (var colRdr = colCmd.ExecuteReader())
+            {
+                while (colRdr.Read())
+                {
+                    string columnName = colRdr[0]?.ToString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(columnName))
+                        columns.Add(columnName);
+                }
+            }
+
+            if (!columns.Contains("Code"))
+                return rows;
+
+            var presentOptionalColumns = OptionalItemColumns.Where(c => columns.Contains(c)).ToList();
+            string selectColumns = "[Code]"
+                + (columns.Contains("Name") ? ", [Name]" : string.Empty)
+                + (presentOptionalColumns.Count > 0 ? ", [" + string.Join("], [", presentOptionalColumns) + "]" : string.Empty);
+
+            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.Items", connection);
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string code = rdr["Code"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(code))
+                    continue;
+
+                var payload = new Dictionary<string, object?> { ["Code"] = code };
+                if (columns.Contains("Name"))
+                    payload["Name"] = rdr["Name"] != DBNull.Value ? rdr["Name"]?.ToString() : null;
+
+                foreach (var column in presentOptionalColumns)
+                {
+                    var value = rdr[column];
+                    payload[column] = value == DBNull.Value ? null : value;
+                }
+
+                payload["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+
+                rows.Add((code, payload));
+            }
+
+            return rows;
+        }
+
+        /// <summary>
+        /// Pushes the local Online Orders tables (dbo.OnlineOrderHeader/dbo.OnlineOrderLines - Pancake
+        /// customer orders) up to Supabase, inserting new rows or patching existing ones (matched by
+        /// OrderID, and OrderID+LineID for lines) so re-running the sync is always safe. Only columns
+        /// that actually exist locally are read/sent, since some (LocationID, PrintCount, Note, etc.)
+        /// were added to the schema over time and may be missing on older installs.
+        /// </summary>
+        public static MasterDataSyncSummary SyncOnlineOrdersToSupabase()
+        {
+            return SyncOnlineOrdersToSupabaseAsync().GetAwaiter().GetResult();
+        }
+
+        public static async Task<MasterDataSyncSummary> SyncOnlineOrdersToSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string headerEndpoint = GlobalSettings.OnlineOrdersSupabaseEndpoint?.Trim() ?? string.Empty;
+            string lineEndpoint = GlobalSettings.OnlineOrderLinesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(headerEndpoint))
+                throw new InvalidOperationException("OnlineOrdersSupabaseEndpoint is not configured.");
+            if (string.IsNullOrWhiteSpace(lineEndpoint))
+                throw new InvalidOperationException("OnlineOrderLinesSupabaseEndpoint is not configured.");
+
+            var headerRows = LoadOnlineOrderHeaderRows();
+            int insertedCount = 0;
+            int updatedCount = 0;
+
+            foreach (var headerRow in headerRows)
+            {
+                string payloadJson = JsonSerializer.Serialize(headerRow.Payload);
+                bool exists = await SupabaseRecordExistsAsync(headerEndpoint, timeout.Value, ("OrderID", headerRow.OrderId)).ConfigureAwait(false);
+                if (exists)
+                {
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(headerEndpoint, ("OrderID", headerRow.OrderId)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(headerEndpoint, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+            }
+
+            var lineRows = LoadOnlineOrderLineRows();
+            foreach (var lineRow in lineRows)
+            {
+                string payloadJson = JsonSerializer.Serialize(lineRow.Payload);
+                bool exists = await SupabaseRecordExistsAsync(lineEndpoint, timeout.Value, ("OrderID", lineRow.OrderId), ("LineID", lineRow.LineId)).ConfigureAwait(false);
+                if (exists)
+                {
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(lineEndpoint, ("OrderID", lineRow.OrderId), ("LineID", lineRow.LineId)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(lineEndpoint, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+            }
+
+            return new MasterDataSyncSummary(headerRows.Count + lineRows.Count, insertedCount, updatedCount);
+        }
+
+        private static readonly string[] OptionalOnlineOrderHeaderColumns = new[]
+        {
+            "Date", "Time", "Status", "CustomerName", "Page_ID", "Conversation_ID", "LocationID",
+            "MoneyToCollect", "AmountPaid", "Discount", "Balance", "For Delivery", "Shipping Address",
+            "Estimated Delivery Date", "PrintCount", "Last_Updated_At", "Converted_LastUpdated_At",
+            "LastPaid_Date", "LastPaid_Time", "Date of Completion"
+        };
+
+        private static List<(string OrderId, Dictionary<string, object?> Payload)> LoadOnlineOrderHeaderRows()
+        {
+            var rows = new List<(string OrderId, Dictionary<string, object?> Payload)>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+
+            var columns = LoadTableColumnNames(connection, "OnlineOrderHeader");
+            if (!columns.Contains("OrderID"))
+                return rows;
+
+            var presentColumns = OptionalOnlineOrderHeaderColumns.Where(c => columns.Contains(c)).ToList();
+            string selectColumns = "[OrderID]" + (presentColumns.Count > 0 ? ", [" + string.Join("], [", presentColumns) + "]" : string.Empty);
+
+            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.OnlineOrderHeader", connection);
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string orderId = rdr["OrderID"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(orderId))
+                    continue;
+
+                var payload = new Dictionary<string, object?> { ["OrderID"] = orderId };
+                foreach (var column in presentColumns)
+                {
+                    var value = rdr[column];
+                    payload[SanitizeSupabaseColumnName(column)] = value == DBNull.Value ? null : ConvertSupabaseValue(value);
+                }
+                payload["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+
+                rows.Add((orderId, payload));
+            }
+
+            return rows;
+        }
+
+        private static readonly string[] OptionalOnlineOrderLineColumns = new[]
+        {
+            "ItemCode", "product_display_id", "VariationId", "Quantity", "UnitCost", "Price",
+            "Discount", "GrossAmount", "NetAmount", "Note", "Description"
+        };
+
+        private static List<(string OrderId, string LineId, Dictionary<string, object?> Payload)> LoadOnlineOrderLineRows()
+        {
+            var rows = new List<(string OrderId, string LineId, Dictionary<string, object?> Payload)>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+
+            var columns = LoadTableColumnNames(connection, "OnlineOrderLines");
+            if (!columns.Contains("OrderID") || !columns.Contains("LineID"))
+                return rows;
+
+            var presentColumns = OptionalOnlineOrderLineColumns.Where(c => columns.Contains(c)).ToList();
+            string selectColumns = "[OrderID], [LineID]" + (presentColumns.Count > 0 ? ", [" + string.Join("], [", presentColumns) + "]" : string.Empty);
+
+            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.OnlineOrderLines", connection);
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string orderId = rdr["OrderID"]?.ToString()?.Trim() ?? string.Empty;
+                string lineId = rdr["LineID"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(orderId) || string.IsNullOrWhiteSpace(lineId))
+                    continue;
+
+                var payload = new Dictionary<string, object?> { ["OrderID"] = orderId, ["LineID"] = lineId };
+                foreach (var column in presentColumns)
+                {
+                    var value = rdr[column];
+                    payload[SanitizeSupabaseColumnName(column)] = value == DBNull.Value ? null : ConvertSupabaseValue(value);
+                }
+                payload["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+
+                rows.Add((orderId, lineId, payload));
+            }
+
+            return rows;
+        }
+
+        /// <summary>
+        /// Pushes the local Advance Orders tables (dbo.AdvanceOrderHeader/dbo.AdvanceOrderLines -
+        /// customer deposit/downpayment orders) up to Supabase, inserting new rows or patching
+        /// existing ones (matched by TransactionNo, and TransactionNo+LineNo for lines).
+        /// </summary>
+        public static MasterDataSyncSummary SyncAdvanceOrdersToSupabase()
+        {
+            return SyncAdvanceOrdersToSupabaseAsync().GetAwaiter().GetResult();
+        }
+
+        public static async Task<MasterDataSyncSummary> SyncAdvanceOrdersToSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string headerEndpoint = GlobalSettings.AdvanceOrdersSupabaseEndpoint?.Trim() ?? string.Empty;
+            string lineEndpoint = GlobalSettings.AdvanceOrderLinesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(headerEndpoint))
+                throw new InvalidOperationException("AdvanceOrdersSupabaseEndpoint is not configured.");
+            if (string.IsNullOrWhiteSpace(lineEndpoint))
+                throw new InvalidOperationException("AdvanceOrderLinesSupabaseEndpoint is not configured.");
+
+            var headerRows = LoadAdvanceOrderHeaderRows();
+            int insertedCount = 0;
+            int updatedCount = 0;
+
+            foreach (var headerRow in headerRows)
+            {
+                string payloadJson = JsonSerializer.Serialize(headerRow.Payload);
+                bool exists = await SupabaseRecordExistsAsync(headerEndpoint, timeout.Value, ("TransactionNo", headerRow.TransactionNo)).ConfigureAwait(false);
+                if (exists)
+                {
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(headerEndpoint, ("TransactionNo", headerRow.TransactionNo)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(headerEndpoint, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+            }
+
+            var lineRows = LoadAdvanceOrderLineRows();
+            foreach (var lineRow in lineRows)
+            {
+                string payloadJson = JsonSerializer.Serialize(lineRow.Payload);
+                bool exists = await SupabaseRecordExistsAsync(lineEndpoint, timeout.Value, ("TransactionNo", lineRow.TransactionNo), ("LineNo", lineRow.LineNo)).ConfigureAwait(false);
+                if (exists)
+                {
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(lineEndpoint, ("TransactionNo", lineRow.TransactionNo), ("LineNo", lineRow.LineNo)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(lineEndpoint, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+            }
+
+            return new MasterDataSyncSummary(headerRows.Count + lineRows.Count, insertedCount, updatedCount);
+        }
+
+        private static readonly string[] OptionalAdvanceOrderHeaderColumns = new[]
+        {
+            "StoreNo", "POSTerminalNo", "ReceiptNo", "Type", "Quantity", "Price", "Discount",
+            "GrossAmount", "NetAmount", "Date", "Time", "UserID", "Downpayment", "Balance",
+            "CustomerName", "Order_Description", "EODID"
+        };
+
+        private static List<(string TransactionNo, Dictionary<string, object?> Payload)> LoadAdvanceOrderHeaderRows()
+        {
+            var rows = new List<(string TransactionNo, Dictionary<string, object?> Payload)>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+
+            var columns = LoadTableColumnNames(connection, "AdvanceOrderHeader");
+            if (!columns.Contains("TransactionNo"))
+                return rows;
+
+            var presentColumns = OptionalAdvanceOrderHeaderColumns.Where(c => columns.Contains(c)).ToList();
+            string selectColumns = "[TransactionNo]" + (presentColumns.Count > 0 ? ", [" + string.Join("], [", presentColumns) + "]" : string.Empty);
+
+            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.AdvanceOrderHeader", connection);
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string transactionNo = rdr["TransactionNo"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(transactionNo))
+                    continue;
+
+                var payload = new Dictionary<string, object?> { ["TransactionNo"] = transactionNo };
+                foreach (var column in presentColumns)
+                {
+                    var value = rdr[column];
+                    payload[SanitizeSupabaseColumnName(column)] = value == DBNull.Value ? null : ConvertSupabaseValue(value);
+                }
+                payload["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+
+                rows.Add((transactionNo, payload));
+            }
+
+            return rows;
+        }
+
+        private static readonly string[] OptionalAdvanceOrderLineColumns = new[]
+        {
+            "StoreNo", "POSTerminalNo", "ReceiptNo", "Type", "No.", "Description", "Quantity",
+            "Price", "Discount", "GrossAmount", "NetAmount", "Date", "Time", "EODID", "UserID",
+            "VariationId"
+        };
+
+        private static List<(string TransactionNo, string LineNo, Dictionary<string, object?> Payload)> LoadAdvanceOrderLineRows()
+        {
+            var rows = new List<(string TransactionNo, string LineNo, Dictionary<string, object?> Payload)>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+
+            var columns = LoadTableColumnNames(connection, "AdvanceOrderLines");
+            if (!columns.Contains("TransactionNo") || !columns.Contains("LineNo"))
+                return rows;
+
+            var presentColumns = OptionalAdvanceOrderLineColumns.Where(c => columns.Contains(c)).ToList();
+            string selectColumns = "[TransactionNo], [LineNo]" + (presentColumns.Count > 0 ? ", [" + string.Join("], [", presentColumns) + "]" : string.Empty);
+
+            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.AdvanceOrderLines", connection);
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string transactionNo = rdr["TransactionNo"]?.ToString()?.Trim() ?? string.Empty;
+                string lineNo = rdr["LineNo"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(transactionNo) || string.IsNullOrWhiteSpace(lineNo))
+                    continue;
+
+                var payload = new Dictionary<string, object?> { ["TransactionNo"] = transactionNo, ["LineNo"] = lineNo };
+                foreach (var column in presentColumns)
+                {
+                    var value = rdr[column];
+                    payload[SanitizeSupabaseColumnName(column)] = value == DBNull.Value ? null : ConvertSupabaseValue(value);
+                }
+                payload["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+
+                rows.Add((transactionNo, lineNo, payload));
+            }
+
+            return rows;
+        }
+
+        /// <summary>
+        /// Returns the set of column names that exist on a local table, used to defensively build
+        /// SELECT lists for tables whose schema has grown incrementally over time (ALTER TABLE ADD
+        /// COLUMN IF NOT EXISTS-style migrations spread across the codebase).
+        /// </summary>
+        private static HashSet<string> LoadTableColumnNames(SqlConnection connection, string tableName)
+        {
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var colCmd = new SqlCommand("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName", connection);
+            colCmd.Parameters.AddWithValue("@TableName", tableName);
+            using var colRdr = colCmd.ExecuteReader();
+            while (colRdr.Read())
+            {
+                string columnName = colRdr[0]?.ToString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(columnName))
+                    columns.Add(columnName);
+            }
+            return columns;
+        }
+
+        /// <summary>
+        /// Supabase/Postgres column names can't contain spaces or dots, so square-bracketed local
+        /// column names like "For Delivery" or "No." are converted to a safe identifier (spaces and
+        /// dots removed) when building the JSON payload sent to Supabase.
+        /// </summary>
+        private static string SanitizeSupabaseColumnName(string columnName)
+        {
+            return columnName.Replace(" ", string.Empty).Replace(".", string.Empty);
+        }
+
+        private static object? ConvertSupabaseValue(object value)
+        {
+            switch (value)
+            {
+                case DateTime dt:
+                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+                case bool b:
+                    return b;
+                case decimal or double or float or int or long or short:
+                    return value;
+                default:
+                    return value.ToString();
+            }
+        }
+
+        /// <summary>
+        /// Sends a posted Month End header and its lines to Supabase (MonthEndHeader/MonthEndLines
+        /// endpoints), inserting new rows or patching existing ones (matched by DocumentNo, and
+        /// DocumentNo+LineNo for lines) so re-running a sync after a partial failure is safe.
+        /// </summary>
+        public static async Task SyncMonthEndToSupabaseAsync(MonthEndHeader header, IReadOnlyList<MonthEndLine> lines, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string headerEndpoint = GlobalSettings.MonthEndHeaderSupabaseEndpoint?.Trim() ?? string.Empty;
+            string lineEndpoint = GlobalSettings.MonthEndLinesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(headerEndpoint))
+                throw new InvalidOperationException("MonthEndHeaderSupabaseEndpoint is not configured.");
+            if (string.IsNullOrWhiteSpace(lineEndpoint))
+                throw new InvalidOperationException("MonthEndLinesSupabaseEndpoint is not configured.");
+
+            var headerPayload = new Dictionary<string, object?>
+            {
+                ["DocumentNo"] = header.DocumentNo,
+                ["WorksheetDocumentNo"] = header.WorksheetDocumentNo,
+                ["WorksheetGeneratedDate"] = header.WorksheetGeneratedDate == default ? null : header.WorksheetGeneratedDate.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture),
+                ["FromDate"] = header.FromDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["ToDate"] = header.ToDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["WarehouseName"] = string.IsNullOrWhiteSpace(header.WarehouseName) ? null : header.WarehouseName,
+                ["ItemVariantFilter"] = string.IsNullOrWhiteSpace(header.ItemVariantFilter) ? null : header.ItemVariantFilter,
+                ["WorksheetGeneratedBy"] = string.IsNullOrWhiteSpace(header.WorksheetGeneratedBy) ? null : header.WorksheetGeneratedBy,
+                ["PostedBy"] = string.IsNullOrWhiteSpace(header.PostedBy) ? null : header.PostedBy,
+                ["PostedAtUtc"] = (header.PostedAtUtc == default ? DateTime.UtcNow : header.PostedAtUtc).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture),
+                ["TotalLines"] = header.TotalLines,
+                ["CloudPatchedLines"] = header.CloudPatchedLines,
+                ["CloudSkippedLines"] = header.CloudSkippedLines,
+                ["CloudFailedLines"] = header.CloudFailedLines
+            };
+
+            string headerJson = JsonSerializer.Serialize(headerPayload);
+            bool headerExists = await SupabaseRecordExistsAsync(headerEndpoint, timeout.Value, ("DocumentNo", header.DocumentNo)).ConfigureAwait(false);
+            if (headerExists)
+                await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(headerEndpoint, ("DocumentNo", header.DocumentNo)), headerJson, timeout.Value).ConfigureAwait(false);
+            else
+                await PostJsonWithHeadersAsync(headerEndpoint, headerJson, timeout.Value).ConfigureAwait(false);
+
+            foreach (var line in lines)
+            {
+                var linePayload = new Dictionary<string, object?>
+                {
+                    ["DocumentNo"] = header.DocumentNo,
+                    ["LineNo"] = line.LineNo,
+                    ["ReportKey"] = string.IsNullOrWhiteSpace(line.ReportKey) ? null : line.ReportKey,
+                    ["ItemNo"] = string.IsNullOrWhiteSpace(line.ItemNo) ? null : line.ItemNo,
+                    ["Description"] = string.IsNullOrWhiteSpace(line.Description) ? null : line.Description,
+                    ["QtyTransferred"] = line.QtyTransferred,
+                    ["LocalSales"] = line.LocalSales,
+                    ["OnlineSales"] = line.OnlineSales,
+                    ["QtyOnHand"] = line.QtyOnHand,
+                    ["PhysicalQtyOnHand"] = line.PhysicalQtyOnHand,
+                    ["OpeningStock"] = line.OpeningStock,
+                    ["Variance"] = line.Variance,
+                    ["ShrinkagePercent"] = line.ShrinkagePercent,
+                    ["VariationId"] = string.IsNullOrWhiteSpace(line.VariationId) ? null : line.VariationId,
+                    ["CloudWarehouseId"] = string.IsNullOrWhiteSpace(line.CloudWarehouseId) ? null : line.CloudWarehouseId,
+                    ["CloudPreviousQtyOnHand"] = line.CloudPreviousQtyOnHand,
+                    ["CloudUpdatedQtyOnHand"] = line.CloudUpdatedQtyOnHand,
+                    ["CloudPatchStatus"] = string.IsNullOrWhiteSpace(line.CloudPatchStatus) ? null : line.CloudPatchStatus,
+                    ["CloudPatchMessage"] = string.IsNullOrWhiteSpace(line.CloudPatchMessage) ? null : line.CloudPatchMessage,
+                    ["SentToOnline"] = line.SentToOnline,
+                    ["LastErrorEndpoint"] = string.IsNullOrWhiteSpace(line.LastErrorEndpoint) ? null : line.LastErrorEndpoint,
+                    ["LastErrorPayload"] = string.IsNullOrWhiteSpace(line.LastErrorPayload) ? null : line.LastErrorPayload,
+                    ["LastErrorMessage"] = string.IsNullOrWhiteSpace(line.LastErrorMessage) ? null : line.LastErrorMessage,
+                    ["ProductId"] = string.IsNullOrWhiteSpace(line.ProductId) ? null : line.ProductId
+                };
+
+                string lineJson = JsonSerializer.Serialize(linePayload);
+                string lineNoText = line.LineNo.ToString(CultureInfo.InvariantCulture);
+                bool lineExists = await SupabaseRecordExistsAsync(lineEndpoint, timeout.Value, ("DocumentNo", header.DocumentNo), ("LineNo", lineNoText)).ConfigureAwait(false);
+                if (lineExists)
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(lineEndpoint, ("DocumentNo", header.DocumentNo), ("LineNo", lineNoText)), lineJson, timeout.Value).ConfigureAwait(false);
+                else
+                    await PostJsonWithHeadersAsync(lineEndpoint, lineJson, timeout.Value).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Sends a generated Expense Report (header + lines) to Supabase (ExpenseReportHeader/ExpenseReportLines
+        /// endpoints), inserting new rows or patching existing ones (matched by DocumentNo, and
+        /// DocumentNo+LineNo for lines) so re-running a sync after a partial failure is safe.
+        /// </summary>
+        internal static async Task SyncExpenseReportToSupabaseAsync(
+            string documentNo,
+            DateTime generatedDate,
+            DateTime fromDate,
+            DateTime toDate,
+            string? warehouseName,
+            string? generatedBy,
+            IReadOnlyList<PostingEvents.ExpenseReportLine> lines,
+            TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string headerEndpoint = GlobalSettings.ExpenseReportHeaderSupabaseEndpoint?.Trim() ?? string.Empty;
+            string lineEndpoint = GlobalSettings.ExpenseReportLinesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(headerEndpoint))
+                throw new InvalidOperationException("ExpenseReportHeaderSupabaseEndpoint is not configured.");
+            if (string.IsNullOrWhiteSpace(lineEndpoint))
+                throw new InvalidOperationException("ExpenseReportLinesSupabaseEndpoint is not configured.");
+
+            decimal grandTotal = lines.Sum(line => line.Amount);
+
+            var headerPayload = new Dictionary<string, object?>
+            {
+                ["DocumentNo"] = documentNo,
+                ["GeneratedDate"] = generatedDate.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture),
+                ["FromDate"] = fromDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["ToDate"] = toDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["WarehouseName"] = string.IsNullOrWhiteSpace(warehouseName) ? null : warehouseName,
+                ["GeneratedBy"] = string.IsNullOrWhiteSpace(generatedBy) ? null : generatedBy,
+                ["TotalLines"] = lines.Count,
+                ["GrandTotal"] = grandTotal
+            };
+
+            string headerJson = JsonSerializer.Serialize(headerPayload);
+            bool headerExists = await SupabaseRecordExistsAsync(headerEndpoint, timeout.Value, ("DocumentNo", documentNo)).ConfigureAwait(false);
+            if (headerExists)
+                await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(headerEndpoint, ("DocumentNo", documentNo)), headerJson, timeout.Value).ConfigureAwait(false);
+            else
+                await PostJsonWithHeadersAsync(headerEndpoint, headerJson, timeout.Value).ConfigureAwait(false);
+
+            int lineNo = 0;
+            foreach (var line in lines)
+            {
+                lineNo++;
+                DateTime? transactionDate = DateTime.TryParseExact(line.DateText, "MM/dd/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate)
+                    ? parsedDate
+                    : (DateTime?)null;
+
+                var linePayload = new Dictionary<string, object?>
+                {
+                    ["DocumentNo"] = documentNo,
+                    ["LineNo"] = lineNo,
+                    ["Category"] = string.IsNullOrWhiteSpace(line.Category) ? null : line.Category,
+                    ["Description"] = string.IsNullOrWhiteSpace(line.Description) ? null : line.Description,
+                    ["UserId"] = string.IsNullOrWhiteSpace(line.UserId) ? null : line.UserId,
+                    ["TransactionDate"] = transactionDate.HasValue ? transactionDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null,
+                    ["TransactionTime"] = string.IsNullOrWhiteSpace(line.TimeText) ? null : line.TimeText,
+                    ["Quantity"] = line.Quantity,
+                    ["Amount"] = line.Amount
+                };
+
+                string lineJson = JsonSerializer.Serialize(linePayload);
+                string lineNoText = lineNo.ToString(CultureInfo.InvariantCulture);
+                bool lineExists = await SupabaseRecordExistsAsync(lineEndpoint, timeout.Value, ("DocumentNo", documentNo), ("LineNo", lineNoText)).ConfigureAwait(false);
+                if (lineExists)
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(lineEndpoint, ("DocumentNo", documentNo), ("LineNo", lineNoText)), lineJson, timeout.Value).ConfigureAwait(false);
+                else
+                    await PostJsonWithHeadersAsync(lineEndpoint, lineJson, timeout.Value).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// Sends a single just-posted Expense Entry to Supabase (ExpenseEntryHeader/ExpenseEntryLines
+        /// endpoints - see supabase_expense_entry_tables.sql), inserting new rows or patching existing
+        /// ones (matched by ReceiptNo, and ReceiptNo+LineID for lines) so re-calling this after a
+        /// partial failure is safe. Distinct from SyncExpenseReportToSupabaseAsync above, which mirrors
+        /// the aggregated, printed Expense Report instead of one individual posted entry.
+        ///
+        /// Reads straight from the two local tables MainForm.PostPendingExpenses just wrote to
+        /// (rather than taking the posted data as parameters), so the Supabase copy always reflects
+        /// exactly what was actually persisted locally:
+        ///   Header <- dbo.TransactionHeader WHERE ReceiptNo = @receiptNo AND Type = 'EXPENSE'
+        ///   Lines  <- dbo.ItemLedgerEntry WHERE DocumentNo = @receiptNo AND DocumentType = 'EXPENSE'
+        ///     (ItemLedgerEntry.ID, a local IDENTITY column, becomes each line's LineID).
+        ///
+        /// warehouseName: the machine's current warehouse at POST time (caller passes
+        /// TransferOrderData.GetCurrentWarehouse(...)?.Name - same source PostingEvents.
+        /// PrintExpenseReport already uses for ExpenseReportHeader.WarehouseName), written to the
+        /// header-level ExpenseEntryHeader.Warehouse column. Not resolved in here since this method
+        /// only has a SqlConnection open against the local DB, not any UI/session context.
+        /// </summary>
+        public static async Task SyncExpenseEntryToSupabaseAsync(string receiptNo, string? warehouseName = null, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            if (string.IsNullOrWhiteSpace(receiptNo))
+                throw new ArgumentException("receiptNo is required.", nameof(receiptNo));
+
+            string headerEndpoint = GlobalSettings.ExpenseEntryHeaderSupabaseEndpoint?.Trim() ?? string.Empty;
+            string lineEndpoint = GlobalSettings.ExpenseEntryLinesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(headerEndpoint))
+                throw new InvalidOperationException("ExpenseEntryHeaderSupabaseEndpoint is not configured.");
+            if (string.IsNullOrWhiteSpace(lineEndpoint))
+                throw new InvalidOperationException("ExpenseEntryLinesSupabaseEndpoint is not configured.");
+
+            string syncedAtUtc = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+            Dictionary<string, object?>? headerPayload = null;
+            var linePayloads = new List<(string LineId, Dictionary<string, object?> Payload)>();
+
+            using (var connection = new SqlConnection(GlobalSettings.ConnectionString))
+            {
+                connection.Open();
+
+                using (var headerCmd = new SqlCommand(@"
+SELECT TOP 1 StoreNo, POSTerminalNo, TransactionNo, Quantity, Price, Discount, GrossAmount, NetAmount,
+       [Date], [Time], UserID, Description, EODID, ExpenseCategory
+FROM dbo.TransactionHeader
+WHERE ReceiptNo = @ReceiptNo AND Type = 'EXPENSE'
+ORDER BY TransactionNo DESC", connection))
+                {
+                    headerCmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                    using var rdr = headerCmd.ExecuteReader();
+                    if (rdr.Read())
+                    {
+                        headerPayload = new Dictionary<string, object?>
+                        {
+                            ["ReceiptNo"] = receiptNo,
+                            ["Type"] = "EXPENSE",
+                            ["Warehouse"] = string.IsNullOrWhiteSpace(warehouseName) ? null : warehouseName,
+                            ["StoreNo"] = rdr["StoreNo"] == DBNull.Value ? null : Convert.ToString(rdr["StoreNo"]),
+                            ["POSTerminalNo"] = rdr["POSTerminalNo"] == DBNull.Value ? null : Convert.ToString(rdr["POSTerminalNo"]),
+                            ["TransactionNo"] = rdr["TransactionNo"] == DBNull.Value ? null : Convert.ToString(rdr["TransactionNo"]),
+                            ["Quantity"] = rdr["Quantity"] == DBNull.Value ? null : Convert.ToDecimal(rdr["Quantity"]),
+                            ["Price"] = rdr["Price"] == DBNull.Value ? null : Convert.ToDecimal(rdr["Price"]),
+                            ["Discount"] = rdr["Discount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["Discount"]),
+                            ["GrossAmount"] = rdr["GrossAmount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["GrossAmount"]),
+                            ["NetAmount"] = rdr["NetAmount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["NetAmount"]),
+                            ["Date"] = rdr["Date"] == DBNull.Value ? null : Convert.ToDateTime(rdr["Date"]).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                            ["Time"] = rdr["Time"] == DBNull.Value ? null : Convert.ToString(rdr["Time"]),
+                            ["UserID"] = rdr["UserID"] == DBNull.Value ? null : Convert.ToString(rdr["UserID"]),
+                            ["Description"] = rdr["Description"] == DBNull.Value ? null : Convert.ToString(rdr["Description"]),
+                            ["EODID"] = rdr["EODID"] == DBNull.Value ? null : Convert.ToString(rdr["EODID"]),
+                            ["ExpenseCategory"] = rdr["ExpenseCategory"] == DBNull.Value ? null : Convert.ToString(rdr["ExpenseCategory"]),
+                            ["SyncedAtUtc"] = syncedAtUtc
+                        };
+                    }
+                }
+
+                if (headerPayload == null)
+                    throw new InvalidOperationException($"No posted EXPENSE TransactionHeader row found for ReceiptNo '{receiptNo}'.");
+
+                using (var lineCmd = new SqlCommand(@"
+SELECT ID, EntryDate, ItemCode, VariationId, StoreNo, PosTerminalNo, Quantity, UnitCost, TotalCost, Price, Discount, GrossAmount, NetAmount, Description, UserID
+FROM dbo.ItemLedgerEntry
+WHERE DocumentNo = @ReceiptNo AND DocumentType = 'EXPENSE'
+ORDER BY ID", connection))
+                {
+                    lineCmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                    using var rdr = lineCmd.ExecuteReader();
+                    while (rdr.Read())
+                    {
+                        string lineId = rdr["ID"] == DBNull.Value ? string.Empty : Convert.ToString(rdr["ID"]) ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(lineId))
+                            continue;
+
+                        var linePayload = new Dictionary<string, object?>
+                        {
+                            ["ReceiptNo"] = receiptNo,
+                            ["LineID"] = lineId,
+                            ["EntryDate"] = rdr["EntryDate"] == DBNull.Value ? null : Convert.ToDateTime(rdr["EntryDate"]).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture),
+                            ["ItemCode"] = rdr["ItemCode"] == DBNull.Value ? null : Convert.ToString(rdr["ItemCode"]),
+                            ["VariationId"] = rdr["VariationId"] == DBNull.Value ? null : Convert.ToString(rdr["VariationId"]),
+                            ["StoreNo"] = rdr["StoreNo"] == DBNull.Value ? null : Convert.ToString(rdr["StoreNo"]),
+                            ["POSTerminalNo"] = rdr["PosTerminalNo"] == DBNull.Value ? null : Convert.ToString(rdr["PosTerminalNo"]),
+                            ["Quantity"] = rdr["Quantity"] == DBNull.Value ? null : Convert.ToDecimal(rdr["Quantity"]),
+                            ["UnitCost"] = rdr["UnitCost"] == DBNull.Value ? null : Convert.ToDecimal(rdr["UnitCost"]),
+                            ["TotalCost"] = rdr["TotalCost"] == DBNull.Value ? null : Convert.ToDecimal(rdr["TotalCost"]),
+                            ["Price"] = rdr["Price"] == DBNull.Value ? null : Convert.ToDecimal(rdr["Price"]),
+                            ["Discount"] = rdr["Discount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["Discount"]),
+                            ["GrossAmount"] = rdr["GrossAmount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["GrossAmount"]),
+                            ["NetAmount"] = rdr["NetAmount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["NetAmount"]),
+                            ["Description"] = rdr["Description"] == DBNull.Value ? null : Convert.ToString(rdr["Description"]),
+                            ["UserID"] = rdr["UserID"] == DBNull.Value ? null : Convert.ToString(rdr["UserID"]),
+                            ["SyncedAtUtc"] = syncedAtUtc
+                        };
+
+                        linePayloads.Add((lineId, linePayload));
+                    }
+                }
+            }
+
+            string headerJson = JsonSerializer.Serialize(headerPayload);
+            bool headerExists = await SupabaseRecordExistsAsync(headerEndpoint, timeout.Value, ("ReceiptNo", receiptNo)).ConfigureAwait(false);
+            if (headerExists)
+                await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(headerEndpoint, ("ReceiptNo", receiptNo)), headerJson, timeout.Value).ConfigureAwait(false);
+            else
+                await PostJsonWithHeadersAsync(headerEndpoint, headerJson, timeout.Value).ConfigureAwait(false);
+
+            foreach (var (lineId, payload) in linePayloads)
+            {
+                string lineJson = JsonSerializer.Serialize(payload);
+                bool lineExists = await SupabaseRecordExistsAsync(lineEndpoint, timeout.Value, ("ReceiptNo", receiptNo), ("LineID", lineId)).ConfigureAwait(false);
+                if (lineExists)
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(lineEndpoint, ("ReceiptNo", receiptNo), ("LineID", lineId)), lineJson, timeout.Value).ConfigureAwait(false);
+                else
+                    await PostJsonWithHeadersAsync(lineEndpoint, lineJson, timeout.Value).ConfigureAwait(false);
+            }
+        }
+
         /// <summary>
         /// Create an online purchase order from local stock-count adjustments.
         ///
@@ -2500,15 +4182,26 @@ ORDER BY
                 throw new InvalidOperationException("No current warehouse is selected.");
 
             // Load ItemLedgerEntry POSITIVE_ADJ rows for this specific document that have not been sent online yet.
-            var itemLines = new List<(string ItemCode, decimal Quantity)>();
+            // ItemLedgerEntry.VariationId (when present) was already resolved correctly at Stock Count save time
+            // via dbo.[Variant] (see StockCountsForm.cs LoadProducts/BtnSave_Click) - carry it through here so a
+            // multi-variant item's real Pancake variation id isn't lost/guessed again below.
+            var itemLines = new List<(string ItemCode, decimal Quantity, string VariationId)>();
             try
             {
                 using (var conn = new SqlConnection(GlobalSettings.ConnectionString))
                 {
                     conn.Open();
 
+                    bool ledgerHasVariationId;
+                    using (var colCmd = new SqlCommand("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ItemLedgerEntry' AND COLUMN_NAME = 'VariationId'", conn))
+                    {
+                        ledgerHasVariationId = Convert.ToInt32(colCmd.ExecuteScalar()) > 0;
+                    }
+
                     var sql = new StringBuilder();
-                    sql.Append("SELECT ItemCode, Quantity FROM ItemLedgerEntry WHERE ISNULL(SentToOnline,0) = 0 AND DocumentType = 'POSITIVE_ADJ' AND DocumentNo = @DocNo");
+                    sql.Append(ledgerHasVariationId
+                        ? "SELECT ItemCode, Quantity, VariationId FROM ItemLedgerEntry WHERE ISNULL(SentToOnline,0) = 0 AND DocumentType = 'POSITIVE_ADJ' AND DocumentNo = @DocNo"
+                        : "SELECT ItemCode, Quantity FROM ItemLedgerEntry WHERE ISNULL(SentToOnline,0) = 0 AND DocumentType = 'POSITIVE_ADJ' AND DocumentNo = @DocNo");
 
                     using (var cmd = new SqlCommand(sql.ToString(), conn))
                     {
@@ -2530,7 +4223,13 @@ ORDER BY
                                 }
                                 catch { qty = 0m; }
 
-                                itemLines.Add((lineItemCode, qty));
+                                string lineVariationId = string.Empty;
+                                if (ledgerHasVariationId)
+                                {
+                                    try { lineVariationId = rdr["VariationId"]?.ToString() ?? string.Empty; } catch { lineVariationId = string.Empty; }
+                                }
+
+                                itemLines.Add((lineItemCode, qty, lineVariationId));
                             }
                         }
                     }
@@ -2552,6 +4251,32 @@ ORDER BY
                 using (var conn = new SqlConnection(GlobalSettings.ConnectionString))
                 {
                     conn.Open();
+
+                    // Multi-variant items (see StockCountsForm.LoadProducts) store their real Pancake
+                    // variation id on dbo.[Variant], not dbo.Items - Items.VariationId is often blank or
+                    // holds a different/default variation for those items. Check for it first, same
+                    // priority order LoadProducts and FinancePurchasePayroll's ResolveCloudVariationId use.
+                    bool hasVariantTable;
+                    using (var existsCmd = new SqlCommand("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Variant'", conn))
+                    {
+                        hasVariantTable = Convert.ToInt32(existsCmd.ExecuteScalar()) > 0;
+                    }
+
+                    string ResolveVariantTableVariationId(string itemCode)
+                    {
+                        if (!hasVariantTable || string.IsNullOrWhiteSpace(itemCode)) return string.Empty;
+                        try
+                        {
+                            using (var vcmd = new SqlCommand(
+                                "SELECT TOP 1 VariationId FROM dbo.[Variant] WHERE ItemCode = @code OR (ISNULL(ItemCode,'') = '' AND MainItemCode = @code)", conn))
+                            {
+                                vcmd.Parameters.AddWithValue("@code", itemCode);
+                                var ov = vcmd.ExecuteScalar();
+                                return (ov != null && ov != DBNull.Value) ? (ov.ToString() ?? string.Empty) : string.Empty;
+                            }
+                        }
+                        catch { return string.Empty; }
+                    }
 
                     // Discover Items table columns so we can:
                     //  - detect the correct variation-id column
@@ -2612,23 +4337,36 @@ ORDER BY
                         var qtyValue = Math.Abs(line.Quantity);
                         if (qtyValue == 0m) qtyValue = 1m;
 
-                        // Try to resolve VariationId from Items table using discovered key columns
-                        string variationId = string.Empty;
-                        try
+                        // Prefer the VariationId already captured on the ledger row at Stock Count save
+                        // time (resolved via dbo.[Variant] then - see StockCountsForm.cs BtnSave_Click).
+                        // Only re-resolve here for older rows saved before that column existed.
+                        string variationId = line.VariationId ?? string.Empty;
+
+                        if (string.IsNullOrWhiteSpace(variationId))
                         {
-                            if (!string.IsNullOrEmpty(variationColumn) && codeColumns.Count > 0)
+                            variationId = ResolveVariantTableVariationId(line.ItemCode);
+                        }
+
+                        if (string.IsNullOrWhiteSpace(variationId))
+                        {
+                            // Last resort: Items table, mirroring LoadProducts' own fallback when no
+                            // Variant row exists for this item at all.
+                            try
                             {
-                                var whereParts = codeColumns.Select(c => c + " = @code").ToArray();
-                                var sqlVar = $"SELECT TOP 1 {variationColumn} FROM Items WHERE " + string.Join(" OR ", whereParts);
-                                using (var vcmd = new SqlCommand(sqlVar, conn))
+                                if (!string.IsNullOrEmpty(variationColumn) && codeColumns.Count > 0)
                                 {
-                                    vcmd.Parameters.AddWithValue("@code", line.ItemCode);
-                                    var ov = vcmd.ExecuteScalar();
-                                    if (ov != null && ov != DBNull.Value) variationId = ov.ToString() ?? string.Empty;
+                                    var whereParts = codeColumns.Select(c => c + " = @code").ToArray();
+                                    var sqlVar = $"SELECT TOP 1 {variationColumn} FROM Items WHERE " + string.Join(" OR ", whereParts);
+                                    using (var vcmd = new SqlCommand(sqlVar, conn))
+                                    {
+                                        vcmd.Parameters.AddWithValue("@code", line.ItemCode);
+                                        var ov = vcmd.ExecuteScalar();
+                                        if (ov != null && ov != DBNull.Value) variationId = ov.ToString() ?? string.Empty;
+                                    }
                                 }
                             }
+                            catch { variationId = string.Empty; }
                         }
-                        catch { variationId = string.Empty; }
 
                         try { System.Diagnostics.Trace.TraceInformation($"ItemCode='{line.ItemCode}' -> VariationId='{variationId}', Qty={line.Quantity}"); } catch { }
 
@@ -3100,7 +4838,135 @@ WHERE ISNULL(SentToOnline,0) = 0
             if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
                 return null;
 
-            string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/variations/{Uri.EscapeDataString(variationId)}/update_quantity?api_key={Uri.EscapeDataString(apiKey)}";
+            string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/variations/{Uri.EscapeDataString(variationId)}?api_key={Uri.EscapeDataString(apiKey)}";
+
+            static decimal? GetDecimal(JsonElement obj, params string[] names)
+            {
+                foreach (var n in names)
+                {
+                    try
+                    {
+                        if (obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(n, out var v))
+                        {
+                            if (v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d)) return d;
+                            if (v.ValueKind == JsonValueKind.String)
+                            {
+                                var s = v.GetString();
+                                if (!string.IsNullOrWhiteSpace(s) && decimal.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var dd))
+                                    return dd;
+                                if (!string.IsNullOrWhiteSpace(s) && decimal.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.CurrentCulture, out dd))
+                                    return dd;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                return null;
+            }
+
+            static string GetString(JsonElement obj, params string[] names)
+            {
+                foreach (var n in names)
+                {
+                    try
+                    {
+                        if (obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(n, out var v))
+                        {
+                            if (v.ValueKind == JsonValueKind.String) return v.GetString() ?? string.Empty;
+                            if (v.ValueKind == JsonValueKind.Number) return v.ToString();
+                            if (v.ValueKind == JsonValueKind.True) return "true";
+                            if (v.ValueKind == JsonValueKind.False) return "false";
+                            if (v.ValueKind == JsonValueKind.Null) return string.Empty;
+                            return v.ToString();
+                        }
+                    }
+                    catch { }
+                }
+
+                return string.Empty;
+            }
+
+            using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = timeout.Value };
+
+            try
+            {
+                using var readReq = new HttpRequestMessage(HttpMethod.Post, endpoint);
+                NotifyHttpRequestDebug(HttpMethod.Post.Method, endpoint, string.Empty);
+                using var postResp = await http.SendAsync(readReq).ConfigureAwait(false);
+
+                HttpResponseMessage respToParse = postResp;
+                if (!postResp.IsSuccessStatusCode && ((int)postResp.StatusCode == 404 || (int)postResp.StatusCode == 405))
+                {
+                    NotifyHttpRequestDebug(HttpMethod.Get.Method, endpoint, string.Empty);
+                    var getResp = await http.GetAsync(endpoint).ConfigureAwait(false);
+                    if (getResp.IsSuccessStatusCode)
+                        respToParse = getResp;
+                }
+
+                if (!respToParse.IsSuccessStatusCode)
+                    return null;
+
+                var json = await respToParse.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(json))
+                    return null;
+
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                JsonElement vw = default;
+                bool found = false;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("variations_warehouses", out vw) && vw.ValueKind == JsonValueKind.Array) found = true;
+                    else if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object && data.TryGetProperty("variations_warehouses", out vw) && vw.ValueKind == JsonValueKind.Array) found = true;
+                    else if (root.TryGetProperty("variation", out var variation) && variation.ValueKind == JsonValueKind.Object && variation.TryGetProperty("variations_warehouses", out vw) && vw.ValueKind == JsonValueKind.Array) found = true;
+                }
+
+                if (!found)
+                    return null;
+
+                foreach (var item in vw.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object)
+                        continue;
+
+                    var wid = GetString(item, "warehouse_id", "warehouseId", "id", "ID").Trim();
+                    if (!string.Equals(wid, warehouseId, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    return GetDecimal(item, "remain_quantity", "remainQuantity", "quantity", "qty");
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        public sealed class CloudVariationDetails
+        {
+            public string ProductId { get; init; } = string.Empty;
+            public decimal? RemainQuantity { get; init; }
+        }
+
+        public static async Task<CloudVariationDetails> GetCloudVariationDetailsForWarehouseAsync(string shopId, string variationId, string warehouseId, TimeSpan? timeout = null)
+        {
+            var empty = new CloudVariationDetails();
+
+            if (string.IsNullOrWhiteSpace(shopId) || string.IsNullOrWhiteSpace(variationId) || string.IsNullOrWhiteSpace(warehouseId))
+                return empty;
+
+            timeout ??= TimeSpan.FromSeconds(15);
+
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
+                return empty;
+
+            string endpoint = BuildCloudVariationDetailsEndpoint(shopId, variationId);
 
             static decimal? GetDecimal(JsonElement obj, params string[] names)
             {
@@ -3165,44 +5031,582 @@ WHERE ISNULL(SentToOnline,0) = 0
                 }
 
                 if (!respToParse.IsSuccessStatusCode)
-                    return null;
+                    return empty;
 
                 var json = await respToParse.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(json))
-                    return null;
+                    return empty;
 
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
-                JsonElement vw = default;
-                bool found = false;
+                JsonElement container = root;
                 if (root.ValueKind == JsonValueKind.Object)
                 {
-                    if (root.TryGetProperty("variations_warehouses", out vw) && vw.ValueKind == JsonValueKind.Array) found = true;
-                    else if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object && data.TryGetProperty("variations_warehouses", out vw) && vw.ValueKind == JsonValueKind.Array) found = true;
-                    else if (root.TryGetProperty("variation", out var variation) && variation.ValueKind == JsonValueKind.Object && variation.TryGetProperty("variations_warehouses", out vw) && vw.ValueKind == JsonValueKind.Array) found = true;
+                    if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+                        container = data;
+                    else if (root.TryGetProperty("variation", out var variation) && variation.ValueKind == JsonValueKind.Object)
+                        container = variation;
                 }
 
-                if (!found)
-                    return null;
+                string productId = GetString(container, "product_id", "productId", "ProductId");
+                decimal? remainQuantity = null;
 
-                foreach (var item in vw.EnumerateArray())
+                if (container.ValueKind == JsonValueKind.Object && container.TryGetProperty("variations_warehouses", out var vw) && vw.ValueKind == JsonValueKind.Array)
                 {
-                    if (item.ValueKind != JsonValueKind.Object)
-                        continue;
+                    foreach (var item in vw.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object)
+                            continue;
 
-                    var wid = GetString(item, "warehouse_id", "warehouseId", "id", "ID").Trim();
-                    if (!string.Equals(wid, warehouseId, StringComparison.OrdinalIgnoreCase))
-                        continue;
+                        var wid = GetString(item, "warehouse_id", "warehouseId", "id", "ID").Trim();
+                        if (!string.Equals(wid, warehouseId, StringComparison.OrdinalIgnoreCase))
+                            continue;
 
-                    return GetDecimal(item, "remain_quantity", "remainQuantity", "quantity", "qty");
+                        remainQuantity = GetDecimal(item, "remain_quantity", "remainQuantity", "quantity", "qty");
+                        break;
+                    }
                 }
+
+                return new CloudVariationDetails { ProductId = productId, RemainQuantity = remainQuantity };
             }
             catch
             {
+                return empty;
+            }
+        }
+
+        public sealed class StocktakingItem
+        {
+            public string ProductId { get; init; } = string.Empty;
+            public string VariationId { get; init; } = string.Empty;
+            public decimal ActualQuantity { get; init; }
+        }
+
+        public sealed class StocktakingRequestException : Exception
+        {
+            public string Endpoint { get; }
+            public string PayloadJson { get; }
+
+            public StocktakingRequestException(string message, string endpoint, string payloadJson, Exception? innerException = null)
+                : base(message, innerException)
+            {
+                Endpoint = endpoint ?? string.Empty;
+                PayloadJson = payloadJson ?? string.Empty;
+            }
+        }
+
+        public sealed class StocktakingRequestPreview
+        {
+            public string LookupEndpoint { get; init; } = string.Empty;
+            public string Endpoint { get; init; } = string.Empty;
+            public string PayloadJson { get; init; } = string.Empty;
+            public string ProductId { get; init; } = string.Empty;
+            public string VariationId { get; init; } = string.Empty;
+            public string ErrorMessage { get; init; } = string.Empty;
+        }
+
+        public static string BuildCloudVariationDetailsEndpoint(string shopId, string variationId)
+        {
+            if (string.IsNullOrWhiteSpace(shopId))
+                throw new ArgumentException("ShopId is required", nameof(shopId));
+            if (string.IsNullOrWhiteSpace(variationId))
+                throw new ArgumentException("VariationId is required", nameof(variationId));
+
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new InvalidOperationException("OnlineOrdersApiBaseUrl is not configured.");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("OnlineOrdersApiKey is not configured.");
+
+            return $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/variations/{Uri.EscapeDataString(variationId)}?api_key={Uri.EscapeDataString(apiKey)}";
+        }
+
+        public sealed class UpdateQuantityRequestException : Exception
+        {
+            public string Endpoint { get; }
+            public string PayloadJson { get; }
+
+            public UpdateQuantityRequestException(string message, string endpoint, string payloadJson, Exception? innerException = null)
+                : base(message, innerException)
+            {
+                Endpoint = endpoint ?? string.Empty;
+                PayloadJson = payloadJson ?? string.Empty;
+            }
+        }
+
+        public sealed class UpdateQuantityRequestPreview
+        {
+            public string LookupEndpoint { get; init; } = string.Empty;
+            public string Endpoint { get; init; } = string.Empty;
+            public string PayloadJson { get; init; } = string.Empty;
+            public string ProductId { get; init; } = string.Empty;
+            public string VariationId { get; init; } = string.Empty;
+            public string WarehouseId { get; init; } = string.Empty;
+            public string ErrorMessage { get; init; } = string.Empty;
+        }
+
+        public static UpdateQuantityRequestPreview BuildUpdateQuantityPreview(string shopId, string variationId, string warehouseId, decimal actualQuantity)
+        {
+            if (string.IsNullOrWhiteSpace(shopId))
+                throw new ArgumentException("ShopId is required", nameof(shopId));
+            if (string.IsNullOrWhiteSpace(variationId))
+                throw new ArgumentException("VariationId is required", nameof(variationId));
+            if (string.IsNullOrWhiteSpace(warehouseId))
+                throw new ArgumentException("WarehouseId is required", nameof(warehouseId));
+
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new InvalidOperationException("OnlineOrdersApiBaseUrl is not configured.");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("OnlineOrdersApiKey is not configured.");
+
+            string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/variations/{Uri.EscapeDataString(variationId)}/update_quantity?api_key={Uri.EscapeDataString(apiKey)}";
+
+            decimal remainQuantity = actualQuantity < 0m ? 0m : actualQuantity;
+            var payload = new
+            {
+                variations_warehouses = new object[]
+                {
+                    new
+                    {
+                        remain_quantity = remainQuantity,
+                        warehouse_id = warehouseId
+                    }
+                }
+            };
+
+            return new UpdateQuantityRequestPreview
+            {
+                Endpoint = endpoint,
+                PayloadJson = JsonSerializer.Serialize(payload),
+                VariationId = variationId,
+                WarehouseId = warehouseId
+            };
+        }
+
+        public static void PostUpdateQuantity(string shopId, string variationId, string warehouseId, decimal actualQuantity, TimeSpan? timeout = null)
+        {
+            PostUpdateQuantityAsync(shopId, variationId, warehouseId, actualQuantity, timeout).GetAwaiter().GetResult();
+        }
+
+        public static async Task PostUpdateQuantityAsync(string shopId, string variationId, string warehouseId, decimal actualQuantity, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+            var preview = BuildUpdateQuantityPreview(shopId, variationId, warehouseId, actualQuantity);
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string endpoint = preview.Endpoint;
+            string bodyJson = preview.PayloadJson;
+
+            using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = timeout.Value };
+
+            async Task<HttpResponseMessage> SendAsync(HttpMethod method)
+            {
+                var req = new HttpRequestMessage(method, endpoint)
+                {
+                    Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+                };
+                NotifyHttpRequestDebug(method.Method, endpoint, bodyJson);
+                return await http.SendAsync(req).ConfigureAwait(false);
             }
 
-            return null;
+            try
+            {
+                using var postResp = await SendAsync(HttpMethod.Post).ConfigureAwait(false);
+                if (postResp.IsSuccessStatusCode)
+                    return;
+
+                if ((int)postResp.StatusCode == 404 || (int)postResp.StatusCode == 405)
+                {
+                    using var putResp = await SendAsync(HttpMethod.Put).ConfigureAwait(false);
+                    if (putResp.IsSuccessStatusCode)
+                        return;
+
+                    if ((int)putResp.StatusCode == 404 || (int)putResp.StatusCode == 405)
+                    {
+                        using var patchResp = await SendAsync(new HttpMethod("PATCH")).ConfigureAwait(false);
+                        if (patchResp.IsSuccessStatusCode)
+                            return;
+
+                        var patchText = string.Empty;
+                        try { patchText = await patchResp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                        throw new UpdateQuantityRequestException($"Quantity update failed ({(int)patchResp.StatusCode} {patchResp.ReasonPhrase}). {patchText}", endpoint, bodyJson);
+                    }
+
+                    var putText = string.Empty;
+                    try { putText = await putResp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                    throw new UpdateQuantityRequestException($"Quantity update failed ({(int)putResp.StatusCode} {putResp.ReasonPhrase}). {putText}", endpoint, bodyJson);
+                }
+
+                var responseText = string.Empty;
+                try { responseText = await postResp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                throw new UpdateQuantityRequestException($"Quantity update failed ({(int)postResp.StatusCode} {postResp.ReasonPhrase}). {responseText}", endpoint, bodyJson);
+            }
+            catch (UpdateQuantityRequestException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new UpdateQuantityRequestException($"Quantity update request failed: {ex.Message}", endpoint, bodyJson, ex);
+            }
+        }
+
+        public sealed class MonthEndAdjustmentRequestException : Exception
+        {
+            public string Endpoint { get; }
+            public string PayloadJson { get; }
+
+            public MonthEndAdjustmentRequestException(string message, string endpoint, string payloadJson, Exception? innerException = null)
+                : base(message, innerException)
+            {
+                Endpoint = endpoint ?? string.Empty;
+                PayloadJson = payloadJson ?? string.Empty;
+            }
+        }
+
+        public sealed class MonthEndAdjustmentRequestPreview
+        {
+            public string Endpoint { get; init; } = string.Empty;
+            public string PayloadJson { get; init; } = string.Empty;
+            public string VariationId { get; init; } = string.Empty;
+            public string WarehouseId { get; init; } = string.Empty;
+            public decimal Quantity { get; init; }
+            /// <summary>"DEFECT" (export/write-off), "PURCHASE" (stock-in), or "NONE" (no adjustment needed).</summary>
+            public string ActionType { get; init; } = string.Empty;
+            public string ErrorMessage { get; init; } = string.Empty;
+        }
+
+        /// <summary>
+        /// Builds a request to write off (defect) inventory via the export endpoint:
+        ///   {BaseUrl}/shops/{ShopId}/export?api_key={ApiKey}
+        /// Used when Qty on Hand (system) is greater than the counted Physical Qty on Hand.
+        /// </summary>
+        public static MonthEndAdjustmentRequestPreview BuildDefectAdjustmentPreview(string shopId, string warehouseId, string variationId, decimal quantity, string note, decimal importedPrice = 0m)
+        {
+            if (string.IsNullOrWhiteSpace(shopId))
+                throw new ArgumentException("ShopId is required", nameof(shopId));
+            if (string.IsNullOrWhiteSpace(variationId))
+                throw new ArgumentException("VariationId is required", nameof(variationId));
+            if (string.IsNullOrWhiteSpace(warehouseId))
+                throw new ArgumentException("WarehouseId is required", nameof(warehouseId));
+
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new InvalidOperationException("OnlineOrdersApiBaseUrl is not configured.");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("OnlineOrdersApiKey is not configured.");
+
+            string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/export?api_key={Uri.EscapeDataString(apiKey)}";
+
+            decimal exportQuantity = quantity < 0m ? 0m : quantity;
+            var payload = new
+            {
+                export_list = new
+                {
+                    note = note ?? string.Empty,
+                    tags = new[] { 1 },
+                    status = 1,
+                    type = 0,
+                    warehouse_id = warehouseId,
+                    export_items = new object[]
+                    {
+                        new
+                        {
+                            imported_price = importedPrice,
+                            quantity = exportQuantity,
+                            variation_id = variationId
+                        }
+                    }
+                }
+            };
+
+            return new MonthEndAdjustmentRequestPreview
+            {
+                Endpoint = endpoint,
+                PayloadJson = JsonSerializer.Serialize(payload),
+                VariationId = variationId,
+                WarehouseId = warehouseId,
+                Quantity = exportQuantity,
+                ActionType = "DEFECT"
+            };
+        }
+
+        /// <summary>
+        /// Builds a request to add stock via the purchase endpoint:
+        ///   {BaseUrl}/shops/{ShopId}/purchases?api_key={ApiKey}
+        /// Used when the counted Physical Qty on Hand is greater than Qty on Hand (system).
+        /// </summary>
+        public static MonthEndAdjustmentRequestPreview BuildPurchaseAdjustmentPreview(string shopId, string warehouseId, string variationId, decimal quantity, string note)
+        {
+            if (string.IsNullOrWhiteSpace(shopId))
+                throw new ArgumentException("ShopId is required", nameof(shopId));
+            if (string.IsNullOrWhiteSpace(variationId))
+                throw new ArgumentException("VariationId is required", nameof(variationId));
+            if (string.IsNullOrWhiteSpace(warehouseId))
+                throw new ArgumentException("WarehouseId is required", nameof(warehouseId));
+
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new InvalidOperationException("OnlineOrdersApiBaseUrl is not configured.");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("OnlineOrdersApiKey is not configured.");
+
+            string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/purchases?api_key={Uri.EscapeDataString(apiKey)}";
+
+            decimal purchaseQuantity = quantity < 0m ? 0m : quantity;
+            var payload = new
+            {
+                purchase = new
+                {
+                    note = note ?? string.Empty,
+                    status = 1,
+                    not_create_transaction = true,
+                    auto_create_debts = true,
+                    shop_id = shopId,
+                    warehouse_id = warehouseId,
+                    change_received_at = true,
+                    items = new object[]
+                    {
+                        new
+                        {
+                            quantity = purchaseQuantity,
+                            variation_id = variationId,
+                            index = 0
+                        }
+                    }
+                }
+            };
+
+            return new MonthEndAdjustmentRequestPreview
+            {
+                Endpoint = endpoint,
+                PayloadJson = JsonSerializer.Serialize(payload),
+                VariationId = variationId,
+                WarehouseId = warehouseId,
+                Quantity = purchaseQuantity,
+                ActionType = "PURCHASE"
+            };
+        }
+
+        public static void PostMonthEndAdjustment(MonthEndAdjustmentRequestPreview preview, TimeSpan? timeout = null)
+        {
+            PostMonthEndAdjustmentAsync(preview, timeout).GetAwaiter().GetResult();
+        }
+
+        public static async Task PostMonthEndAdjustmentAsync(MonthEndAdjustmentRequestPreview preview, TimeSpan? timeout = null)
+        {
+            if (preview == null)
+                throw new ArgumentNullException(nameof(preview));
+
+            timeout ??= TimeSpan.FromSeconds(30);
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string endpoint = preview.Endpoint;
+            string bodyJson = preview.PayloadJson;
+
+            try
+            {
+                using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = timeout.Value };
+                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                {
+                    Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+                };
+
+                NotifyHttpRequestDebug(HttpMethod.Post.Method, endpoint, bodyJson);
+
+                using var response = await http.SendAsync(request).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                    return;
+
+                var responseText = string.Empty;
+                try { responseText = await response.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                throw new MonthEndAdjustmentRequestException(
+                    $"{preview.ActionType} adjustment failed ({(int)response.StatusCode} {response.ReasonPhrase}). {responseText}",
+                    endpoint,
+                    bodyJson);
+            }
+            catch (MonthEndAdjustmentRequestException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new MonthEndAdjustmentRequestException($"{preview.ActionType} adjustment request failed: {ex.Message}", endpoint, bodyJson, ex);
+            }
+        }
+
+        public static void PostStocktakingAdjustment(string shopId, string warehouseId, string remarks, IReadOnlyList<StocktakingItem> items, TimeSpan? timeout = null)
+        {
+            PostStocktakingAdjustmentAsync(shopId, warehouseId, remarks, items, timeout).GetAwaiter().GetResult();
+        }
+
+        public static StocktakingRequestPreview BuildStocktakingAdjustmentPreview(string shopId, string warehouseId, string remarks, IReadOnlyList<StocktakingItem> items)
+        {
+            if (string.IsNullOrWhiteSpace(shopId))
+                throw new ArgumentException("ShopId is required", nameof(shopId));
+            if (string.IsNullOrWhiteSpace(warehouseId))
+                throw new ArgumentException("WarehouseId is required", nameof(warehouseId));
+            if (items == null || items.Count == 0)
+                throw new ArgumentException("At least one stocktaking item is required.", nameof(items));
+
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new InvalidOperationException("OnlineOrdersApiBaseUrl is not configured.");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("OnlineOrdersApiKey is not configured.");
+
+            string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/stocktaking?api_key={Uri.EscapeDataString(apiKey)}";
+
+            static object IdOrString(string value)
+            {
+                if (long.TryParse(value, out var idNumber))
+                    return idNumber;
+                return value;
+            }
+
+            var payload = new
+            {
+                warehouse_id = IdOrString(warehouseId),
+                remarks = remarks ?? string.Empty,
+                items = items.Select(item => new
+                {
+                    product_id = IdOrString(item.ProductId),
+                    variation_id = IdOrString(item.VariationId),
+                    actual_quantity = item.ActualQuantity
+                }).ToArray()
+            };
+
+            return new StocktakingRequestPreview
+            {
+                Endpoint = endpoint,
+                PayloadJson = JsonSerializer.Serialize(payload)
+            };
+        }
+
+        public static async Task PostStocktakingAdjustmentAsync(string shopId, string warehouseId, string remarks, IReadOnlyList<StocktakingItem> items, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(60);
+            var preview = BuildStocktakingAdjustmentPreview(shopId, warehouseId, remarks, items);
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string endpoint = preview.Endpoint;
+            string bodyJson = preview.PayloadJson;
+
+            try
+            {
+                using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = timeout.Value };
+                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                {
+                    Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+                };
+
+                using var response = await http.SendAsync(request).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                    return;
+
+                var responseText = string.Empty;
+                try { responseText = await response.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                throw new StocktakingRequestException(
+                    $"Stocktaking adjustment failed ({(int)response.StatusCode} {response.ReasonPhrase}). {responseText}",
+                    endpoint,
+                    bodyJson);
+            }
+            catch (StocktakingRequestException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new StocktakingRequestException($"Stocktaking adjustment request failed: {ex.Message}", endpoint, bodyJson, ex);
+            }
+        }
+
+        public static Dictionary<string, decimal> GetCloudRemainingQuantitiesByReportKey(IEnumerable<string> reportKeys, TimeSpan? timeout = null)
+        {
+            return GetCloudRemainingQuantitiesByReportKeyAsync(reportKeys, timeout).GetAwaiter().GetResult();
+        }
+
+        public static async Task<Dictionary<string, decimal>> GetCloudRemainingQuantitiesByReportKeyAsync(IEnumerable<string> reportKeys, TimeSpan? timeout = null)
+        {
+            var result = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            if (reportKeys == null)
+                return result;
+
+            var normalizedKeys = reportKeys
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Select(key => key.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (normalizedKeys.Count == 0)
+                return result;
+
+            string shopId = GlobalSettings.OnlineOrdersShopId ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(shopId))
+                return result;
+
+            string warehouseId;
+            try
+            {
+                warehouseId = await GetCurrentWarehouseIdAsync(shopId).ConfigureAwait(false);
+            }
+            catch
+            {
+                return result;
+            }
+
+            var variationKeys = normalizedKeys
+                .Where(key => key.StartsWith("VAR:", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (variationKeys.Count == 0)
+                return result;
+
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            const int maxConcurrentRequests = 8;
+            var syncRoot = new object();
+            using var semaphore = new SemaphoreSlim(maxConcurrentRequests, maxConcurrentRequests);
+            var fetchTasks = variationKeys.Select(async reportKey =>
+            {
+                string variationId = reportKey.Substring(4).Trim();
+                if (string.IsNullOrWhiteSpace(variationId))
+                    return;
+
+                await semaphore.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    decimal? remainQuantity = await GetCloudVariationAvailableQuantityForWarehouseAsync(shopId, variationId, warehouseId, timeout).ConfigureAwait(false);
+                    if (!remainQuantity.HasValue)
+                        return;
+
+                    lock (syncRoot)
+                    {
+                        result[reportKey] = remainQuantity.Value;
+                    }
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }).ToList();
+
+            await Task.WhenAll(fetchTasks).ConfigureAwait(false);
+
+            return result;
         }
 
         public static async Task<bool> DeductCloudInventoryAsync(string ShopID, string VariationID, decimal QtytoDeduct, TimeSpan? timeout = null)
@@ -3401,6 +5805,91 @@ WHERE ISNULL(SentToOnline,0) = 0
                 try { responseText = await postResp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
                 throw new HttpRequestException($"Cloud inventory update failed ({(int)postResp.StatusCode} {postResp.ReasonPhrase}). {responseText}");
             }
+        }
+
+        public static bool SetCloudInventoryForWarehouse(string ShopID, string VariationID, string WarehouseID, decimal newRemainQuantity, TimeSpan? timeout = null)
+        {
+            return SetCloudInventoryForWarehouseAsync(ShopID, VariationID, WarehouseID, newRemainQuantity, timeout).GetAwaiter().GetResult();
+        }
+
+        public static async Task<bool> SetCloudInventoryForWarehouseAsync(string ShopID, string VariationID, string WarehouseID, decimal newRemainQuantity, TimeSpan? timeout = null)
+        {
+            if (string.IsNullOrWhiteSpace(ShopID))
+                throw new ArgumentException("ShopID is required", nameof(ShopID));
+            if (string.IsNullOrWhiteSpace(VariationID))
+                throw new ArgumentException("VariationID is required", nameof(VariationID));
+            if (string.IsNullOrWhiteSpace(WarehouseID))
+                throw new ArgumentException("WarehouseID is required", nameof(WarehouseID));
+
+            if (newRemainQuantity < 0m)
+                newRemainQuantity = 0m;
+
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                throw new InvalidOperationException("OnlineOrdersApiBaseUrl is not configured.");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("OnlineOrdersApiKey is not configured.");
+
+            string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(ShopID)}/variations/{Uri.EscapeDataString(VariationID)}/update_quantity?api_key={Uri.EscapeDataString(apiKey)}";
+
+            var payload = new
+            {
+                variations_warehouses = new object[]
+                {
+                    new
+                    {
+                        remain_quantity = newRemainQuantity,
+                        warehouse_id = WarehouseID
+                    }
+                }
+            };
+
+            string bodyJson = JsonSerializer.Serialize(payload);
+
+            using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = timeout.Value };
+
+            async Task<HttpResponseMessage> SendAsync(HttpMethod method)
+            {
+                var req = new HttpRequestMessage(method, endpoint)
+                {
+                    Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+                };
+                return await http.SendAsync(req).ConfigureAwait(false);
+            }
+
+            using var postResp = await SendAsync(HttpMethod.Post).ConfigureAwait(false);
+            if (postResp.IsSuccessStatusCode)
+                return true;
+
+            if ((int)postResp.StatusCode == 404 || (int)postResp.StatusCode == 405)
+            {
+                using var putResp = await SendAsync(HttpMethod.Put).ConfigureAwait(false);
+                if (putResp.IsSuccessStatusCode)
+                    return true;
+
+                if ((int)putResp.StatusCode == 404 || (int)putResp.StatusCode == 405)
+                {
+                    using var patchResp = await SendAsync(new HttpMethod("PATCH")).ConfigureAwait(false);
+                    if (patchResp.IsSuccessStatusCode)
+                        return true;
+
+                    var patchText = string.Empty;
+                    try { patchText = await patchResp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                    throw new HttpRequestException($"Cloud inventory set failed ({(int)patchResp.StatusCode} {patchResp.ReasonPhrase}). {patchText}");
+                }
+
+                var putText = string.Empty;
+                try { putText = await putResp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                throw new HttpRequestException($"Cloud inventory set failed ({(int)putResp.StatusCode} {putResp.ReasonPhrase}). {putText}");
+            }
+
+            var postText = string.Empty;
+            try { postText = await postResp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+            throw new HttpRequestException($"Cloud inventory set failed ({(int)postResp.StatusCode} {postResp.ReasonPhrase}). {postText}");
         }
 
 
@@ -4222,6 +6711,7 @@ BEGIN
         LastOrderAt DATETIME2 NULL,
         DateOfBirth DATETIME2 NULL,
         RawJson NVARCHAR(MAX) NULL,
+        ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_OnlineCustomers_ExcludeOnInventoryReport DEFAULT(0),
         LastSyncedUtc DATETIME2 NOT NULL CONSTRAINT DF_OnlineCustomers_LastSyncedUtc DEFAULT SYSUTCDATETIME()
     )
 
@@ -4232,6 +6722,18 @@ END";
 
             using (var createCmd = new SqlCommand(createSql, conn))
                 await createCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+
+            using (var ensureExcludeColumnCmd = new SqlCommand(@"
+IF OBJECT_ID('dbo.OnlineCustomers', 'U') IS NOT NULL
+   AND COL_LENGTH('dbo.OnlineCustomers', 'ExcludeOnInventoryReport') IS NULL
+BEGIN
+    ALTER TABLE dbo.OnlineCustomers
+    ADD ExcludeOnInventoryReport BIT NOT NULL
+        CONSTRAINT DF_OnlineCustomers_ExcludeOnInventoryReport DEFAULT(0)
+END", conn))
+            {
+                await ensureExcludeColumnCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
 
             using var tx = conn.BeginTransaction();
 
@@ -4303,7 +6805,7 @@ WHEN NOT MATCHED THEN
         PrimaryEmail, PrimaryPhoneNumber, PrimaryAddress, PrimaryPageID, PrimaryPageName, PrimaryPagePlatform,
         CurrentDebts, PurchasedAmount, OrderCount, SucceedOrderCount, ReturnedOrderCount, RewardPoint, UsedRewardPoint,
         CountReferrals, TotalAmountReferred, IsBlock, IsDiscountByLevel, IsAdjustDebts, ActiveLeveraPay,
-        InsertedAt, UpdatedAt, LastOrderAt, DateOfBirth, RawJson, LastSyncedUtc
+        InsertedAt, UpdatedAt, LastOrderAt, DateOfBirth, RawJson, ExcludeOnInventoryReport, LastSyncedUtc
     )
     VALUES (
         @Id, @CustomerID, @ShopID, @Name, @Username, @Gender, @FbID, @IdentityCode, @ReferralCode, @Currency, @ConversationLink,
@@ -4313,7 +6815,7 @@ WHEN NOT MATCHED THEN
         @PrimaryEmail, @PrimaryPhoneNumber, @PrimaryAddress, @PrimaryPageID, @PrimaryPageName, @PrimaryPagePlatform,
         @CurrentDebts, @PurchasedAmount, @OrderCount, @SucceedOrderCount, @ReturnedOrderCount, @RewardPoint, @UsedRewardPoint,
         @CountReferrals, @TotalAmountReferred, @IsBlock, @IsDiscountByLevel, @IsAdjustDebts, @ActiveLeveraPay,
-        @InsertedAt, @UpdatedAt, @LastOrderAt, @DateOfBirth, @RawJson, SYSUTCDATETIME()
+        @InsertedAt, @UpdatedAt, @LastOrderAt, @DateOfBirth, @RawJson, 0, SYSUTCDATETIME()
     );";
 
             using var cmd = new SqlCommand(upsertSql, conn, tx);
@@ -4423,6 +6925,70 @@ WHEN NOT MATCHED THEN
         public static int SyncProductVariations()
         {
             return SyncProductVariationsAsync().GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Pulls "Production Category" from Supabase public."Categories" down into local
+        /// dbo.Category, keyed by Code - the Web Portal's Category Setup screen is the only place
+        /// staff can actually toggle this flag (writes to Supabase via admin_update_category_flags,
+        /// see WebPortal/js/categorySetup.js). Local dbo.Category otherwise only ever gets Code/
+        /// Description from SyncCategoriesAsync's Pancake pull below, which has no equivalent field
+        /// and never touches this column - without this pull, checking the box in the portal would
+        /// silently never reach Stock Counts' own "WHERE IsProductionCategory = 1" filter (see
+        /// StockCountsForm.LoadProducts). Update-only (never inserts) - a Code that doesn't exist
+        /// locally yet (not seen by the Pancake sync) just has nothing to update.
+        /// Uses the same GET-with-secret-key pattern as GetSupabaseRowsAsync above, but unfiltered
+        /// (every category, not a single lookup) since this needs the full set each run.
+        /// </summary>
+        public static async Task<int> SyncCategoryProductionFlagsFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string endpointUrl = GlobalSettings.CategoriesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+                throw new InvalidOperationException("CategoriesSupabaseEndpoint is not configured.");
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            using var req = new HttpRequestMessage(HttpMethod.Get, endpointUrl + "?select=Code,IsProductionCategory");
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Categories Supabase GET failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return 0;
+
+            int updatedCount = 0;
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+
+            using var cmd = new SqlCommand("UPDATE dbo.Category SET IsProductionCategory = @IsProductionCategory WHERE Code = @Code", conn);
+            cmd.Parameters.Add("@Code", System.Data.SqlDbType.NVarChar, 100);
+            cmd.Parameters.Add("@IsProductionCategory", System.Data.SqlDbType.Bit);
+
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object) continue;
+
+                string code = row.TryGetProperty("Code", out var codeProp) && codeProp.ValueKind == JsonValueKind.String
+                    ? codeProp.GetString() ?? string.Empty
+                    : string.Empty;
+                if (string.IsNullOrWhiteSpace(code)) continue;
+
+                bool isProduction = row.TryGetProperty("IsProductionCategory", out var prodProp) && prodProp.ValueKind == JsonValueKind.True;
+
+                cmd.Parameters["@Code"].Value = code;
+                cmd.Parameters["@IsProductionCategory"].Value = isProduction;
+                updatedCount += cmd.ExecuteNonQuery();
+            }
+
+            return updatedCount;
         }
 
         public static async Task<int> SyncCategoriesAsync(TimeSpan? timeout = null)
@@ -4705,6 +7271,7 @@ BEGIN
         DisableChangePrice BIT NOT NULL CONSTRAINT DF_Category_DisableChangePrice DEFAULT(0),
         IsProductionCategory BIT NOT NULL CONSTRAINT DF_Category_IsProductionCategory DEFAULT(0),
         ShowInMainPos BIT NOT NULL CONSTRAINT DF_Category_ShowInMainPos DEFAULT(1),
+        ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_Category_ExcludeOnInventoryReport DEFAULT(0),
         CreatedDate DATETIME2 DEFAULT GETDATE(),
         UpdatedDate DATETIME2 DEFAULT GETDATE()
     )
@@ -4729,6 +7296,11 @@ BEGIN
     IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Category' AND COLUMN_NAME = 'ShowInMainPos')
     BEGIN
         ALTER TABLE Category ADD ShowInMainPos BIT NOT NULL CONSTRAINT DF_Category_ShowInMainPos DEFAULT(1)
+    END
+
+    IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Category' AND COLUMN_NAME = 'ExcludeOnInventoryReport')
+    BEGIN
+        ALTER TABLE Category ADD ExcludeOnInventoryReport BIT NOT NULL CONSTRAINT DF_Category_ExcludeOnInventoryReport DEFAULT(0)
     END
 END", conn))
             {
@@ -4923,7 +7495,7 @@ END", conn, tx);
                 return string.Empty;
             }
 
-            static void AddMappingsFromItems(JsonElement itemsArray, List<(string VariationId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)> mappings, HashSet<string> seen, Func<JsonElement, string[], string> getString)
+            static void AddMappingsFromItems(JsonElement itemsArray, List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)> mappings, HashSet<string> seen, Func<JsonElement, string[], string> getString)
             {
                 if (itemsArray.ValueKind != JsonValueKind.Array)
                     return;
@@ -4931,7 +7503,7 @@ END", conn, tx);
                 static void AddMapping(
                     JsonElement source,
                     JsonElement? parentProduct,
-                    List<(string VariationId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)> mappings,
+                    List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)> mappings,
                     HashSet<string> seen,
                     Func<JsonElement, string[], string> getString)
                 {
@@ -4939,6 +7511,7 @@ END", conn, tx);
                     if (string.IsNullOrWhiteSpace(variationId))
                         return;
 
+                    var productId = getString(source, new[] { "product_id", "productId", "ProductId" }).Trim();
                     var displayId = getString(source, new[] { "display_id", "displayId" }).Trim();
                     var productDisplayId = getString(source, new[] { "product_display_id", "productDisplayId", "product_display", "product_code" }).Trim();
                     var sku = getString(source, new[] { "sku", "SKU" }).Trim();
@@ -4950,6 +7523,9 @@ END", conn, tx);
                     if (parentProduct.HasValue && parentProduct.Value.ValueKind == JsonValueKind.Object)
                     {
                         var product = parentProduct.Value;
+
+                        if (string.IsNullOrWhiteSpace(productId))
+                            productId = getString(product, new[] { "product_id", "productId", "ProductId", "id", "ID" }).Trim();
 
                         if (string.IsNullOrWhiteSpace(productDisplayId))
                             productDisplayId = getString(product, new[] { "display_id", "displayId", "product_display_id", "productDisplayId", "product_display", "product_code", "code" }).Trim();
@@ -4995,6 +7571,9 @@ END", conn, tx);
                     {
                         if (source.TryGetProperty("product", out var prod) && prod.ValueKind == JsonValueKind.Object)
                         {
+                            if (string.IsNullOrWhiteSpace(productId))
+                                productId = getString(prod, new[] { "product_id", "productId", "ProductId", "id", "ID" }).Trim();
+
                             var disp = getString(prod, new[] { "display_id", "displayId", "product_display_id", "productDisplayId", "product_display", "product_code", "code" }).Trim();
                             if (!string.IsNullOrWhiteSpace(disp))
                                 productDisplayId = disp;
@@ -5015,6 +7594,7 @@ END", conn, tx);
                     {
                         if (source.TryGetProperty("variation_info", out var vi) && vi.ValueKind == JsonValueKind.Object)
                         {
+                            if (string.IsNullOrWhiteSpace(productId)) productId = getString(vi, new[] { "product_id", "productId", "ProductId" }).Trim();
                             if (string.IsNullOrWhiteSpace(productDisplayId)) productDisplayId = getString(vi, new[] { "product_display_id", "productDisplayId" }).Trim();
                             if (string.IsNullOrWhiteSpace(displayId)) displayId = getString(vi, new[] { "display_id", "displayId" }).Trim();
                             if (string.IsNullOrWhiteSpace(sku)) sku = getString(vi, new[] { "sku", "SKU" }).Trim();
@@ -5032,7 +7612,7 @@ END", conn, tx);
                     if (!seen.Add(key))
                         return;
 
-                    mappings.Add((variationId, productDisplayId, displayId, sku, name + "\u0001" + retailPriceRaw + "\u0001" + categoryName, images));
+                    mappings.Add((variationId, productId, productDisplayId, displayId, sku, name + "\u0001" + retailPriceRaw + "\u0001" + categoryName, images));
                 }
 
                 foreach (var item in itemsArray.EnumerateArray())
@@ -5058,7 +7638,7 @@ END", conn, tx);
 
             string GetStringWrapper(JsonElement obj, string[] names) => GetString(obj, names);
 
-            var mappings = new List<(string VariationId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)>();
+            var mappings = new List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             Exception? lastEx = null;
@@ -5192,6 +7772,10 @@ IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Item
 BEGIN
     ALTER TABLE {itemsTable} ADD VariationId NVARCHAR(50)
 END
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Items' AND COLUMN_NAME = 'ProductId')
+BEGIN
+    ALTER TABLE {itemsTable} ADD ProductId NVARCHAR(100)
+END
 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Items' AND COLUMN_NAME = 'Images')
 BEGIN
     ALTER TABLE {itemsTable} ADD Images NVARCHAR(MAX)
@@ -5265,6 +7849,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                 bool hasName = itemColumns.Contains("Name");
                 bool hasDescription = itemColumns.Contains("Description");
                 bool hasPrice = itemColumns.Contains("Price");
+                bool hasProductId = itemColumns.Contains("ProductId");
                 bool hasCategoryCode = itemColumns.Contains("CategoryCode");
                 bool hasImages = itemColumns.Contains("Images");
 
@@ -5298,6 +7883,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                     }
 
                     string byCodeSql = $"UPDATE {itemsTable} SET VariationId=@VariationId" +
+                        (hasProductId ? ", ProductId = COALESCE(NULLIF(@ProductId,''), ProductId)" : string.Empty) +
                         (hasPrice ? ", Price = COALESCE(@Price, Price)" : string.Empty) +
                         (hasImages ? ", Images = COALESCE(NULLIF(@Images,''), Images)" : string.Empty) +
                         (hasCategoryCode ? ", CategoryCode = COALESCE(NULLIF(@CategoryCode,''), CategoryCode)" : string.Empty) +
@@ -5305,6 +7891,8 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                     using var byCode = new SqlCommand(byCodeSql, conn, tx);
                     byCode.Parameters.Add(new SqlParameter("@VariationId", System.Data.SqlDbType.NVarChar, 50));
                     byCode.Parameters.Add(new SqlParameter("@Code", System.Data.SqlDbType.NVarChar, 50));
+                    if (hasProductId)
+                        byCode.Parameters.Add(new SqlParameter("@ProductId", System.Data.SqlDbType.NVarChar, 100));
                     if (hasPrice)
                     {
                         var p = new SqlParameter("@Price", System.Data.SqlDbType.Decimal) { Precision = 18, Scale = 2 };
@@ -5319,6 +7907,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                     if (hasSku)
                     {
                         string bySkuSql = $"UPDATE {itemsTable} SET VariationId=@VariationId" +
+                            (hasProductId ? ", ProductId = COALESCE(NULLIF(@ProductId,''), ProductId)" : string.Empty) +
                             (hasPrice ? ", Price = COALESCE(@Price, Price)" : string.Empty) +
                             (hasImages ? ", Images = COALESCE(NULLIF(@Images,''), Images)" : string.Empty) +
                             (hasCategoryCode ? ", CategoryCode = COALESCE(NULLIF(@CategoryCode,''), CategoryCode)" : string.Empty) +
@@ -5326,6 +7915,8 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                         bySku = new SqlCommand(bySkuSql, conn, tx);
                         bySku.Parameters.Add(new SqlParameter("@VariationId", System.Data.SqlDbType.NVarChar, 50));
                         bySku.Parameters.Add(new SqlParameter("@SKU", System.Data.SqlDbType.NVarChar, 100));
+                        if (hasProductId)
+                            bySku.Parameters.Add(new SqlParameter("@ProductId", System.Data.SqlDbType.NVarChar, 100));
                         if (hasPrice)
                         {
                             var p = new SqlParameter("@Price", System.Data.SqlDbType.Decimal) { Precision = 18, Scale = 2 };
@@ -5395,6 +7986,12 @@ END", conn, tx);
                             insertCols.Add("[VariationId]");
                             insertVals.Add("@VariationId");
                             insertParams.Add(new SqlParameter("@VariationId", System.Data.SqlDbType.NVarChar, 50));
+                        }
+                        if (hasProductId)
+                        {
+                            insertCols.Add("[ProductId]");
+                            insertVals.Add("@ProductId");
+                            insertParams.Add(new SqlParameter("@ProductId", System.Data.SqlDbType.NVarChar, 100));
                         }
                         if (hasName)
                         {
@@ -5486,6 +8083,8 @@ END", conn, tx);
                         {
                             bySku.Parameters["@VariationId"].Value = m.VariationId;
                             bySku.Parameters["@SKU"].Value = m.Sku;
+                            if (hasProductId)
+                                bySku.Parameters["@ProductId"].Value = string.IsNullOrWhiteSpace(m.ProductId) ? DBNull.Value : m.ProductId;
                             if (hasPrice)
                                 bySku.Parameters["@Price"].Value = retailPrice.HasValue ? retailPrice.Value : DBNull.Value;
                             if (hasImages)
@@ -5499,6 +8098,8 @@ END", conn, tx);
                         {
                             byCode.Parameters["@VariationId"].Value = m.VariationId;
                             byCode.Parameters["@Code"].Value = m.ProductDisplayId;
+                            if (hasProductId)
+                                byCode.Parameters["@ProductId"].Value = string.IsNullOrWhiteSpace(m.ProductId) ? DBNull.Value : m.ProductId;
                             if (hasPrice)
                                 byCode.Parameters["@Price"].Value = retailPrice.HasValue ? retailPrice.Value : DBNull.Value;
                             if (hasImages)
@@ -5522,6 +8123,8 @@ END", conn, tx);
 
                             if (insertItem.Parameters.Contains("@VariationId"))
                                 insertItem.Parameters["@VariationId"].Value = (object?)m.VariationId ?? DBNull.Value;
+                            if (insertItem.Parameters.Contains("@ProductId"))
+                                insertItem.Parameters["@ProductId"].Value = string.IsNullOrWhiteSpace(m.ProductId) ? DBNull.Value : m.ProductId;
                             if (insertItem.Parameters.Contains("@Name"))
                                 insertItem.Parameters["@Name"].Value = (object?)name ?? DBNull.Value;
                             if (insertItem.Parameters.Contains("@Description"))

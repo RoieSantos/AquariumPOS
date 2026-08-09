@@ -140,6 +140,41 @@ namespace AquariumPOS
         public static string PublicURL { get; } = "https://pages.fm/api/public_api/v1";
         public static string PublicApiKey { get; } = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjE5NTcxNjY0NDQxMDgyOSIsInRpbWVzdGFtcCI6MTc2MDc4NzE3NX0.AsYdKZrGA1F4_Pln6wlz_eS-EmGWG9RythyjTDWEEq8";
 
+        // Transfer Header Supabase configuration
+        public static string TransferHeaderSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/Transfer_Header";
+        public static string TransferLineSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/Transfer_Line";
+        public static string ItemSerialTrackingSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/ItemSerialTracking";
+        public static string MonthEndHeaderSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/MonthEndHeader";
+        public static string MonthEndLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/MonthEndLines";
+        public static string ExpenseReportHeaderSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/ExpenseReportHeader";
+        public static string ExpenseReportLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/ExpenseReportLines";
+        // Individual posted Expense Entries (MainForm.PostPendingExpenses) - distinct from the
+        // aggregated Expense Report endpoints above. See supabase_expense_entry_tables.sql.
+        public static string ExpenseEntryHeaderSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/ExpenseEntryHeader";
+        public static string ExpenseEntryLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/ExpenseEntryLines";
+        // Master data (Warehouses/Items) - synced one-way, desktop -> Supabase, via the same
+        // secret-key POST/PATCH-if-exists pattern as the other endpoints above. Not exposed to
+        // the Web Portal's anon key (see supabase_warehouses_items_tables.sql).
+        public static string WarehousesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/Warehouses";
+        public static string ItemsSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/Items";
+        // Online Orders / Advance Orders - synced one-way, desktop -> Supabase, same pattern as
+        // Warehouses/Items above. Not exposed to the Web Portal's anon key directly - only via the
+        // admin_list_* RPCs in supabase_orders_sync_tables.sql (customer PII, super users only).
+        public static string OnlineOrdersSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/OnlineOrders";
+        public static string OnlineOrderLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/OnlineOrderLines";
+        public static string AdvanceOrdersSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrders";
+        public static string AdvanceOrderLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrderLines";
+        public static string TransferHeaderSupabaseApiKey { get; } = "sb_publishable_QWDFggQ9ce9zm65xFEzmHA_rGaOUFQz";
+        public static string TransferHeaderSupabaseAuthorization { get; } = "sb_secret_reOTA1Ggd4VkoHz3au7j4g_gOKYYpAW";
+        // Categories - pulled the OPPOSITE direction from everything else on this page (Supabase ->
+        // desktop, not desktop -> Supabase). The Web Portal's Category Setup screen is the only place
+        // staff can toggle "Production Category"/"Exclude In Transfer Orders" (writes to Supabase
+        // public."Categories" via admin_update_category_flags); local dbo.Category otherwise only ever
+        // gets Code/Description from the Pancake sync (see OnlinefunctionsEvents.SyncCategoriesAsync)
+        // and never learns about those two portal-only flags on its own. See
+        // OnlinefunctionsEvents.SyncCategoryProductionFlagsFromSupabaseAsync.
+        public static string CategoriesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/Categories";
+
         /// <summary>
         /// Optional: Page ID and Conversation IDs to receive admin notifications via the Public API.
         /// If not configured (empty array or empty strings), admin notifications will be skipped.

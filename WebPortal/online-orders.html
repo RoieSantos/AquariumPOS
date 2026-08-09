@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Online Orders - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Online Orders</h1>
+    <p class="muted">Live, read-only view of customer orders fetched directly from Pancake.</p>
+
+    <!-- Not authorized (unused now that Online Orders is open to all staff; kept for markup parity) -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown by default now that no password re-entry is required -->
+    <div id="setupContent" class="hidden">
+      <!-- Shown when arriving from a Dashboard finance card (?period=/?scope=/?filter=), per
+           "once I click the dashboard I want to be able to open the corresponding data/page of
+           entries filtered" - describes the active deep-link filter and offers a way back out. -->
+      <p class="muted hidden" id="activeFilterNote"></p>
+      <div class="toolbar">
+        <h2 style="margin:0;">Orders</h2>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <input type="text" id="orderSearchInput" placeholder="Search by order ID or customer..." style="max-width:280px;" />
+          <input type="text" id="statusFilterInput" placeholder="Filter by status..." style="max-width:180px;" />
+          <!-- Super users only - see js/onlineOrders.js's init() (session.isSuperUser gate) -->
+          <button type="button" class="btn btn-success btn-sm hidden" id="exportExcelBtn">📊 Export to Excel</button>
+        </div>
+      </div>
+      <!-- Exact per-status record counts (from the persisted OnlineOrders table, kept fresh by the
+           background cron sync) - not the live/paged Pancake list below, which only shows what's
+           been loaded so far. See admin_get_online_order_status_summary(). Clickable: sets the
+           status filter box to that status and reloads the list (click the active pill again to
+           clear the filter). -->
+      <div class="status-summary-bar" id="statusSummaryBar">
+        <button type="button" class="status-summary-pill" data-status="Confirmed"><span class="badge badge-primary">Confirmed</span> <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
+        <button type="button" class="status-summary-pill" data-status="Printed"><span class="badge badge-warning">Printed</span> <span class="status-summary-count" id="statusCountPrinted">-</span></button>
+        <button type="button" class="status-summary-pill" data-status="To Ship"><span class="badge badge-purple">To Ship</span> <span class="status-summary-count" id="statusCountToShip">-</span></button>
+        <button type="button" class="status-summary-pill" data-status="Shipped"><span class="badge badge-success">Shipped</span> <span class="status-summary-count" id="statusCountShipped">-</span></button>
+        <button type="button" class="status-summary-pill" data-status="Cancelled"><span class="badge badge-danger">Cancelled</span> <span class="status-summary-count" id="statusCountCancelled">-</span></button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Order ID</th>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Customer</th>
+              <th>Status</th>
+              <th>Confirmed By</th>
+              <th>Created By</th>
+              <th>Glass</th>
+              <th>Warehouse</th>
+              <th>For Delivery</th>
+              <th>Est. Delivery Date</th>
+              <th>Last Updated</th>
+              <th>Lines</th>
+            </tr>
+          </thead>
+          <tbody id="orderTableBody">
+          </tbody>
+        </table>
+      </div>
+      <div id="orderPaginationBar"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/onlineOrders.js"></script>
+</body>
+</html>

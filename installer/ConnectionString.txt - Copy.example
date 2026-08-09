@@ -1,0 +1,29 @@
+# Optional connection string override for client machines (e.g. a laptop).
+#
+# Rename this file to "ConnectionString.txt" and place it in the SAME FOLDER as
+# "RSPETSTOP POS.exe" (the published output). On startup, GlobalSettings.cs will
+# use the contents of that file (trimmed) instead of the hardcoded connection
+# string, so the same published build can be deployed to multiple machines that
+# all connect to the same SQL Server/database - no rebuild required.
+#
+# The file must contain ONLY the connection string on a single line (no comments).
+#
+# Example using SQL Server Authentication (recommended for a laptop that is not
+# on the same Windows domain as the SQL Server, since Trusted/Windows auth
+# generally does not work across untrusted machines):
+#
+# Server=192.168.1.50;Database=RSPETSTOPQ12026updated;User Id=aquariumpos_user;Password=CHANGE_ME;Connection Timeout=30;
+#
+# Example using Trusted (Windows) Authentication (only works if both machines
+# are on the same domain, or share matching local credentials):
+#
+# Server=LAPTOP-20MJVLDK;Database=RSPETSTOPQ12026updated;Trusted_Connection=True;Connection Timeout=30;
+#
+# Requirements on the SQL Server machine for a remote laptop to connect:
+#   1. SQL Server Configuration Manager -> enable the "TCP/IP" protocol for the instance.
+#   2. If using SQL Authentication, enable "SQL Server and Windows Authentication mode"
+#      (Server Properties -> Security), restart the SQL Server service, then create a
+#      SQL login (Security -> Logins -> New Login) with access to the database.
+#   3. Open the SQL Server port (default 1433, or the instance's dynamic port) on the
+#      Windows Firewall (inbound rule) on the SQL Server machine.
+#   4. Confirm the laptop can reach the server: `Test-NetConnection <server-ip> -Port 1433`

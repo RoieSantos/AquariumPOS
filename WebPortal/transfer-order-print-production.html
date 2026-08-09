@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Print Production Order - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav" class="no-print"></div>
+
+  <div class="page">
+    <div class="toolbar no-print">
+      <button class="btn btn-primary" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="orderContent" class="hidden production-order-print">
+      <h1 id="orderTitle">Production Order</h1>
+      <p class="muted" id="orderSubtitle"></p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>From Warehouse</label>
+          <div id="fromWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>To Warehouse</label>
+          <div id="toWarehouse" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Requested Date</label>
+          <div id="requestedDate" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Requested By</label>
+          <div id="requestedBy" class="muted"></div>
+        </div>
+        <div class="form-row target-delivery-row">
+          <label>Target Delivery Date</label>
+          <div id="targetDeliveryDate" class="muted"></div>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="table-wrap">
+        <table class="production-order-table">
+          <thead>
+            <tr>
+              <th>Item No.</th>
+              <th>Variant</th>
+              <th>Description</th>
+              <th>Qty To Ship</th>
+            </tr>
+          </thead>
+          <tbody id="linesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/transferOrderPrintProduction.js"></script>
+</body>
+</html>

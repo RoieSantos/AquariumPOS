@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Delivery - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Delivery</h1>
+    <p class="muted">Schedule which orders go out for delivery on which day, and see each stop on a map.</p>
+
+    <!-- Not authorized (unused - Delivery is open to all staff; kept for markup parity with other pages) -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button">&larr; Prev</button>
+          <h2 id="calendarMonthLabel" style="margin:0; min-width:180px; text-align:center;"></h2>
+          <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button">Next &rarr;</button>
+        </div>
+        <button class="btn btn-primary" id="assignOrderBtn" type="button">+ Assign Order</button>
+      </div>
+
+      <div class="delivery-calendar-grid" id="calendarWeekdayRow">
+        <div class="delivery-weekday-cell">Sun</div>
+        <div class="delivery-weekday-cell">Mon</div>
+        <div class="delivery-weekday-cell">Tue</div>
+        <div class="delivery-weekday-cell">Wed</div>
+        <div class="delivery-weekday-cell">Thu</div>
+        <div class="delivery-weekday-cell">Fri</div>
+        <div class="delivery-weekday-cell">Sat</div>
+      </div>
+      <div class="delivery-calendar-grid" id="calendarGrid"></div>
+
+      <div id="dayDetailPanel" class="card hidden" style="margin-top:20px;">
+        <div class="toolbar">
+          <h3 id="dayDetailTitle" style="margin:0;"></h3>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-secondary btn-sm" id="printManifestBtn" type="button">Print Manifest</button>
+            <button class="btn btn-secondary btn-sm" id="closeDayDetailBtn" type="button">Close</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Address</th>
+                <th>Balance</th>
+                <th>Notes</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="dayStopsTableBody"></tbody>
+          </table>
+        </div>
+        <div id="dayMap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Assign order modal -->
+  <div id="assignModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2>Assign Order to Delivery</h2>
+        <button class="btn btn-secondary btn-sm" id="closeAssignModalBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="assignSearchInput">Search Orders</label>
+          <input type="text" id="assignSearchInput" placeholder="Search by order ID or customer..." />
+        </div>
+        <div class="form-row">
+          <label for="assignDateInput">Delivery Date</label>
+          <input type="date" id="assignDateInput" />
+        </div>
+      </div>
+
+      <div class="table-wrap" style="max-height:320px; overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Order ID</th>
+              <th>Customer</th>
+              <th>Status</th>
+              <th>Balance</th>
+              <th>Currently Scheduled</th>
+            </tr>
+          </thead>
+          <tbody id="assignOrdersTableBody">
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="assignOrdersPaginationBar"></div>
+
+      <div id="assignError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="confirmAssignBtn" type="button" disabled>Assign to Selected Date</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/delivery.js"></script>
+</body>
+</html>

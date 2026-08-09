@@ -1,0 +1,21 @@
+-- Portal-only Transfer_Line quantity columns: "Qty To Ship" / "Qty Shipped".
+-- Transfer_Header/Transfer_Line already exist in Supabase (see supabase_web_portal_rls_policies.sql)
+-- but have no CREATE TABLE anywhere in this repo - these ALTERs extend the existing table.
+--
+-- These two columns do NOT exist on the desktop's dbo.[Transfer Line]/[Transfer Request Line]
+-- tables (see TransferOrderData.cs) and are never synced from/to the desktop - consistent with
+-- the portal running its own standalone Ship/Receive workflow (Requested -> In Transit ->
+-- Received) independent of the desktop's Status vocabulary and posting logic.
+--
+-- Full per-line quantity pipeline after this change:
+--   Qty To Transfer - intended qty, set at creation (New Transfer Order form).
+--   Qty To Ship     - editable while Requested; what staff plan to actually ship, defaults to
+--                      Qty To Transfer. Not synced/desktop column.
+--   Qty Shipped     - frozen snapshot of Qty To Ship, written once when Ship is clicked. Not
+--                      synced/desktop column.
+--   Qty To Receive  - editable while In Transit; what staff expect to receive, defaults to
+--                      Qty Shipped. Already existed.
+--   Qty Received    - frozen snapshot of Qty To Receive, written once when Receive is clicked.
+--                      Already existed.
+alter table public."Transfer_Line" add column if not exists "Qty To Ship" numeric(18, 2);
+alter table public."Transfer_Line" add column if not exists "Qty Shipped" numeric(18, 2);

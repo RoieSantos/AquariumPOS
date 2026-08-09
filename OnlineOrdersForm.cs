@@ -2171,6 +2171,185 @@ WHERE OrderID = @OrderID", conn);
             return string.Empty;
         }
 
+        private string ResolveOnlineLineItemCode(string variationId, string itemCode)
+        {
+            string ExecuteScalarString(string sql, Action<SqlParameterCollection> addParameters)
+            {
+                try
+                {
+                    using var lookupConnection = new SqlConnection(connectionString);
+                    lookupConnection.Open();
+                    using var cmd = new SqlCommand(sql, lookupConnection);
+                    addParameters(cmd.Parameters);
+                    var value = cmd.ExecuteScalar();
+                    return value == null || value == DBNull.Value ? string.Empty : (value.ToString()?.Trim() ?? string.Empty);
+                }
+                catch
+                {
+                    return string.Empty;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(variationId))
+            {
+                string variantItemCode = ExecuteScalarString(
+                    "SELECT TOP 1 ISNULL(NULLIF(ItemCode, ''), ISNULL(NULLIF(MainItemCode, ''), '')) FROM dbo.[Variant] WHERE VariationId = @VariationId",
+                    parameters => parameters.AddWithValue("@VariationId", variationId));
+                if (!string.IsNullOrWhiteSpace(variantItemCode))
+                {
+                    return variantItemCode;
+                }
+
+                string itemVariationCode = ExecuteScalarString(
+                    "SELECT TOP 1 ISNULL(Code, '') FROM dbo.Items WHERE VariationId = @VariationId",
+                    parameters => parameters.AddWithValue("@VariationId", variationId));
+                if (!string.IsNullOrWhiteSpace(itemVariationCode))
+                {
+                    return itemVariationCode;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(itemCode))
+            {
+                string matchedItemCode = ExecuteScalarString(
+                    "SELECT TOP 1 ISNULL(Code, '') FROM dbo.Items WHERE Code = @ItemCode OR VariationId = @ItemCode",
+                    parameters => parameters.AddWithValue("@ItemCode", itemCode));
+                if (!string.IsNullOrWhiteSpace(matchedItemCode))
+                {
+                    return matchedItemCode;
+                }
+            }
+
+            return itemCode?.Trim() ?? string.Empty;
+        }
+
+        private string ResolveOnlineLineDescription(string variationId, string itemCode, string fallbackDescription)
+        {
+            string ExecuteScalarString(string sql, Action<SqlParameterCollection> addParameters)
+            {
+                try
+                {
+                    using var lookupConnection = new SqlConnection(connectionString);
+                    lookupConnection.Open();
+                    using var cmd = new SqlCommand(sql, lookupConnection);
+                    addParameters(cmd.Parameters);
+                    var value = cmd.ExecuteScalar();
+                    return value == null || value == DBNull.Value ? string.Empty : (value.ToString()?.Trim() ?? string.Empty);
+                }
+                catch
+                {
+                    return string.Empty;
+                }
+            }
+
+            static string NormalizeDescriptionPart(string value)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return string.Empty;
+                }
+
+                var parts = value
+                    .Replace("\r\n", "\n")
+                    .Replace('\r', '\n')
+                    .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(part => FunctionEvents.ToAscii(part).Trim())
+                    .Where(part => !string.IsNullOrWhiteSpace(part))
+                    .ToList();
+
+                string normalized = parts.Count > 0
+                    ? string.Join(" | ", parts)
+                    : FunctionEvents.ToAscii(value).Trim();
+
+                while (normalized.Contains("  "))
+                {
+                    normalized = normalized.Replace("  ", " ");
+                }
+
+                return normalized.Trim(' ', '|');
+            }
+
+            static string BuildVariantStyleDescription(string baseDescription, string variantDescription)
+            {
+                string normalizedBase = NormalizeDescriptionPart(baseDescription);
+                string normalizedVariant = NormalizeDescriptionPart(variantDescription);
+
+                if (string.IsNullOrWhiteSpace(normalizedBase))
+                {
+                    return normalizedVariant;
+                }
+
+                if (string.IsNullOrWhiteSpace(normalizedVariant)
+                    || string.Equals(normalizedBase, normalizedVariant, StringComparison.OrdinalIgnoreCase))
+                {
+                    return normalizedBase;
+                }
+
+                int baseIndex = normalizedVariant.IndexOf(normalizedBase, StringComparison.OrdinalIgnoreCase);
+                if (baseIndex >= 0)
+                {
+                    string beforeBase = normalizedVariant.Substring(0, baseIndex).Trim(' ', '-', '|', ':');
+                    string afterBase = normalizedVariant.Substring(baseIndex + normalizedBase.Length).Trim(' ', '-', '|', ':');
+                    normalizedVariant = string.IsNullOrWhiteSpace(afterBase)
+                        ? beforeBase
+                        : (string.IsNullOrWhiteSpace(beforeBase) ? afterBase : $"{beforeBase} - {afterBase}");
+                    normalizedVariant = NormalizeDescriptionPart(normalizedVariant);
+                }
+
+                if (string.IsNullOrWhiteSpace(normalizedVariant)
+                    || string.Equals(normalizedBase, normalizedVariant, StringComparison.OrdinalIgnoreCase))
+                {
+                    return normalizedBase;
+                }
+
+                return $"{normalizedBase} - {normalizedVariant}";
+            }
+
+            string baseItemDescription = string.Empty;
+            string variantDescription = string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(variationId))
+            {
+                variantDescription = ExecuteScalarString(
+                    "SELECT TOP 1 ISNULL(NULLIF(v.VariantName, ''), ISNULL(NULLIF(variantItem.[Description], ''), ISNULL(NULLIF(variantItem.[Name], ''), ISNULL(NULLIF(mainItem.[Description], ''), ISNULL(NULLIF(mainItem.[Name], ''), ''))))) FROM dbo.[Variant] v LEFT JOIN dbo.Items variantItem ON variantItem.Code = ISNULL(NULLIF(v.ItemCode, ''), v.MainItemCode) LEFT JOIN dbo.Items mainItem ON mainItem.Code = v.MainItemCode WHERE v.VariationId = @VariationId",
+                    parameters => parameters.AddWithValue("@VariationId", variationId));
+
+                baseItemDescription = ExecuteScalarString(
+                    "SELECT TOP 1 ISNULL(NULLIF(mainItem.[Description], ''), ISNULL(NULLIF(mainItem.[Name], ''), '')) FROM dbo.[Variant] v LEFT JOIN dbo.Items mainItem ON mainItem.Code = v.MainItemCode WHERE v.VariationId = @VariationId",
+                    parameters => parameters.AddWithValue("@VariationId", variationId));
+
+                string itemVariationDescription = ExecuteScalarString(
+                    "SELECT TOP 1 ISNULL(NULLIF([Description], ''), ISNULL(NULLIF([Name], ''), '')) FROM dbo.Items WHERE VariationId = @VariationId",
+                    parameters => parameters.AddWithValue("@VariationId", variationId));
+                if (string.IsNullOrWhiteSpace(variantDescription) && !string.IsNullOrWhiteSpace(itemVariationDescription))
+                {
+                    variantDescription = itemVariationDescription;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(itemCode))
+            {
+                string itemDescription = ExecuteScalarString(
+                    "SELECT TOP 1 ISNULL(NULLIF([Description], ''), ISNULL(NULLIF([Name], ''), '')) FROM dbo.Items WHERE Code = @ItemCode OR VariationId = @ItemCode",
+                    parameters => parameters.AddWithValue("@ItemCode", itemCode));
+                if (string.IsNullOrWhiteSpace(baseItemDescription) && !string.IsNullOrWhiteSpace(itemDescription))
+                {
+                    baseItemDescription = itemDescription;
+                }
+            }
+
+            string combinedDescription = BuildVariantStyleDescription(baseItemDescription, variantDescription);
+            if (!string.IsNullOrWhiteSpace(combinedDescription))
+            {
+                return combinedDescription;
+            }
+
+            string normalizedFallbackDescription = NormalizeDescriptionPart(fallbackDescription);
+            return string.IsNullOrWhiteSpace(normalizedFallbackDescription)
+                ? itemCode?.Trim() ?? string.Empty
+                : normalizedFallbackDescription;
+        }
+
         private void EnsureOnlineOrderLinesColumns(SqlConnection conn, SqlTransaction? tran = null)
         {
             using var cmd = new SqlCommand(@"
@@ -2223,14 +2402,41 @@ END
                 return false;
             }
 
-            return string.Equals(normalizedCategory, "AQUARIUM", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(normalizedCategory, "STAND", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(normalizedCategory, "SUMP", StringComparison.OrdinalIgnoreCase)
-                || normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
+            // Same fix as MainForm.ShouldRequireAquariumSerialSelection (the regular in-store sale
+            // gate) - the category name allowlist is now driven by Category.IsProductionCategory
+            // (toggled from the Web Portal's Category Setup screen), so this path agrees with
+            // Stock Counts / Transfer Order Ship / the regular sale gate on which categories are
+            // serial-tracked, instead of carrying its own separate stale hardcoded list.
+            return normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM-AQUARIUM", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM_STAND", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM-SUMP", StringComparison.OrdinalIgnoreCase)
-                || normalizedItemCode.StartsWith("CUSTOM_SUMP", StringComparison.OrdinalIgnoreCase);
+                || normalizedItemCode.StartsWith("CUSTOM_SUMP", StringComparison.OrdinalIgnoreCase)
+                || IsProductionCategoryCode(normalizedCategory);
+        }
+
+        private bool IsProductionCategoryCode(string? categoryCode)
+        {
+            string normalizedCategory = categoryCode?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedCategory))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+                using var command = new SqlCommand(
+                    "SELECT ISNULL(IsProductionCategory, 0) FROM dbo.Category WHERE Code = @Code", connection);
+                command.Parameters.AddWithValue("@Code", normalizedCategory);
+                object? result = command.ExecuteScalar();
+                return result != null && result != DBNull.Value && Convert.ToBoolean(result);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static List<string> ParseOnlineOrderLineSerialNumbers(string note)
@@ -2323,8 +2529,10 @@ END
                 }
 
                 string variationId = SafeGetString(reader, "VariationId");
-                string categoryCode = ResolveOnlineLineCategoryCode(conn, variationId, itemCode);
-                if (!ShouldRequireOnlineOrderSerialSelection(categoryCode, itemCode))
+                string resolvedItemCode = ResolveOnlineLineItemCode(variationId, itemCode);
+                string categoryCode = ResolveOnlineLineCategoryCode(conn, variationId, resolvedItemCode);
+                string resolvedDescription = ResolveOnlineLineDescription(variationId, resolvedItemCode, SafeGetString(reader, "Description"));
+                if (!ShouldRequireOnlineOrderSerialSelection(categoryCode, resolvedItemCode))
                 {
                     continue;
                 }
@@ -2338,9 +2546,9 @@ END
                 result.Add(new OnlineOrderSerialTrackingLine
                 {
                     LineId = SafeGetString(reader, "LineID"),
-                    ItemCode = itemCode,
+                    ItemCode = resolvedItemCode,
                     VariationId = variationId,
-                    Description = SafeGetString(reader, "Description"),
+                    Description = resolvedDescription,
                     CategoryCode = categoryCode,
                     Quantity = quantity,
                     ExistingNote = SafeGetString(reader, "Note")

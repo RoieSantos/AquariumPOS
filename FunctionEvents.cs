@@ -499,6 +499,7 @@ ORDER BY Name", connection, transaction);
         {
             return salesListView.Items.Cast<ListViewItem>()
                 .Where(item => item.Tag?.ToString() != "PAYMENT"
+                    && item.Tag?.ToString() != "CARD_PROCESSING_FEE"
                     && item.Tag?.ToString() != "AQUARIUM_SET_DISCOUNT"
                     && item.Tag?.ToString() != "AQUARIUM_SET_ACCESSORY")
                 .Sum(item => int.Parse(item.SubItems[1].Text));
@@ -515,7 +516,8 @@ ORDER BY Name", connection, transaction);
                 {
                     if (item.Tag?.ToString() != "PAYMENT")
                     {
-                        if (item.Tag?.ToString() == "AQUARIUM_SET_DISCOUNT"
+                        if (item.Tag?.ToString() == "CARD_PROCESSING_FEE"
+                            || item.Tag?.ToString() == "AQUARIUM_SET_DISCOUNT"
                             || item.Tag?.ToString() == "AQUARIUM_SET_ACCESSORY")
                         {
                             continue;

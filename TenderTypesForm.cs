@@ -64,11 +64,13 @@ namespace AquariumPOS
             dgvTenderTypes.Columns.Add("Code", "Code");
             dgvTenderTypes.Columns.Add("Description", "Description");
             dgvTenderTypes.Columns.Add("POSBankID", "POS Bank ID");
+            dgvTenderTypes.Columns.Add("IsCardPayment", "Is Card Payment");
 
             // Set column widths
             dgvTenderTypes.Columns["Code"].FillWeight = 25;
-            dgvTenderTypes.Columns["Description"].FillWeight = 55;
+            dgvTenderTypes.Columns["Description"].FillWeight = 45;
             dgvTenderTypes.Columns["POSBankID"].FillWeight = 20;
+            dgvTenderTypes.Columns["IsCardPayment"].FillWeight = 10;
 
             // Count label
             lblCount = new Label
@@ -163,27 +165,35 @@ namespace AquariumPOS
                     var createTableCmd = new SqlCommand(@"
                         IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'TenderTypes')
                         BEGIN
-                            CREATE TABLE TenderTypes (
-                                Code NVARCHAR(20) PRIMARY KEY,
-                                Description NVARCHAR(100) NOT NULL,
-                                POSBankID NVARCHAR(50) NULL,
-                                CreatedDate DATETIME2 DEFAULT GETDATE(),
-                                UpdatedDate DATETIME2 DEFAULT GETDATE()
-                            )
-                            
-                            -- Insert default tender types
-                            INSERT INTO TenderTypes (Code, Description) VALUES
-                            ('CASH', 'Cash'),
-                            ('CREDIT', 'Credit Card'),
-                            ('DEBIT', 'Debit Card'),
-                            ('GCASH', 'GCash'),
-                            ('BANK', 'Bank Transfer')
+                            EXEC(N'
+                                CREATE TABLE TenderTypes (
+                                    Code NVARCHAR(20) PRIMARY KEY,
+                                    Description NVARCHAR(100) NOT NULL,
+                                    POSBankID NVARCHAR(50) NULL,
+                                    Is_Card_Payment BIT NOT NULL CONSTRAINT DF_TenderTypes_Is_Card_Payment DEFAULT(0),
+                                    CreatedDate DATETIME2 DEFAULT GETDATE(),
+                                    UpdatedDate DATETIME2 DEFAULT GETDATE()
+                                );
+
+                                INSERT INTO TenderTypes (Code, Description, Is_Card_Payment) VALUES
+                                (''CASH'', ''Cash'', 0),
+                                (''CREDIT'', ''Credit Card'', 1),
+                                (''DEBIT'', ''Debit Card'', 1),
+                                (''GCASH'', ''GCash'', 0),
+                                (''BANK'', ''Bank Transfer'', 0);
+                            ')
                         END
 
                         -- Ensure POSBankID column exists for existing databases
                         IF COL_LENGTH('TenderTypes', 'POSBankID') IS NULL
                         BEGIN
                             ALTER TABLE TenderTypes ADD POSBankID NVARCHAR(50) NULL;
+                        END
+
+                        -- Ensure Is_Card_Payment column exists for existing databases
+                        IF COL_LENGTH('TenderTypes', 'Is_Card_Payment') IS NULL
+                        BEGIN
+                            EXEC('ALTER TABLE TenderTypes ADD Is_Card_Payment BIT NOT NULL CONSTRAINT DF_TenderTypes_Is_Card_Payment_Default DEFAULT(0)');
                         END", connection);
                     createTableCmd.ExecuteNonQuery();
                 }
@@ -205,7 +215,11 @@ namespace AquariumPOS
                 using (var connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
-                    var command = new SqlCommand("SELECT Code, Description, POSBankID FROM TenderTypes ORDER BY Code", connection);
+                    bool hasIsCardPaymentColumn = TenderTypesHasColumn(connection, "Is_Card_Payment");
+                    string query = hasIsCardPaymentColumn
+                        ? "SELECT Code, Description, POSBankID, ISNULL(Is_Card_Payment, 0) AS Is_Card_Payment FROM TenderTypes ORDER BY Code"
+                        : "SELECT Code, Description, POSBankID FROM TenderTypes ORDER BY Code";
+                    var command = new SqlCommand(query, connection);
 
                     using (var reader = command.ExecuteReader())
                     {
@@ -214,8 +228,11 @@ namespace AquariumPOS
                             string code = reader["Code"].ToString() ?? "";
                             string description = reader["Description"].ToString() ?? "";
                             string posBankId = reader["POSBankID"].ToString() ?? "";
+                            bool isCardPayment = hasIsCardPaymentColumn
+                                && reader["Is_Card_Payment"] != DBNull.Value
+                                && Convert.ToBoolean(reader["Is_Card_Payment"]);
 
-                            dgvTenderTypes.Rows.Add(code, description, posBankId);
+                            dgvTenderTypes.Rows.Add(code, description, posBankId, isCardPayment ? "Yes" : "No");
                             count++;
                         }
                     }
@@ -248,8 +265,9 @@ namespace AquariumPOS
             string code = selectedRow.Cells["Code"].Value.ToString() ?? "";
             string description = selectedRow.Cells["Description"].Value.ToString() ?? "";
             string posBankId = selectedRow.Cells["POSBankID"].Value?.ToString() ?? "";
+            bool isCardPayment = string.Equals(selectedRow.Cells["IsCardPayment"].Value?.ToString(), "Yes", StringComparison.OrdinalIgnoreCase);
 
-            ShowTenderTypeDialog(code, description, posBankId);
+            ShowTenderTypeDialog(code, description, posBankId, isCardPayment);
         }
 
         private void BtnDelete_Click(object? sender, EventArgs e)
@@ -311,14 +329,14 @@ namespace AquariumPOS
             this.Close();
         }
 
-        private void ShowTenderTypeDialog(string existingCode = "", string existingDescription = "", string existingPOSBankID = "")
+        private void ShowTenderTypeDialog(string existingCode = "", string existingDescription = "", string existingPOSBankID = "", bool existingIsCardPayment = false)
         {
             bool isEdit = !string.IsNullOrEmpty(existingCode);
 
             var dialog = new Form
             {
                 Text = isEdit ? "Edit Tender Type" : "Add Tender Type",
-                Size = new Size(400, 250),
+                Size = new Size(420, 290),
                 StartPosition = FormStartPosition.CenterParent,
                 BackColor = Color.White,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -381,11 +399,20 @@ namespace AquariumPOS
                 MaxLength = 50
             };
 
+            var chkIsCardPayment = new CheckBox
+            {
+                Text = "Is Card Payment",
+                Location = new Point(110, 142),
+                Size = new Size(180, 24),
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                Checked = existingIsCardPayment
+            };
+
             // Buttons
             var btnSave = new Button
             {
                 Text = "Save",
-                Location = new Point(200, 150),
+                Location = new Point(200, 188),
                 Size = new Size(80, 35),
                 BackColor = Color.Green,
                 ForeColor = Color.White,
@@ -395,7 +422,7 @@ namespace AquariumPOS
             var btnCancel = new Button
             {
                 Text = "Cancel",
-                Location = new Point(290, 150),
+                Location = new Point(290, 188),
                 Size = new Size(80, 35),
                 BackColor = Color.Gray,
                 ForeColor = Color.White,
@@ -407,6 +434,7 @@ namespace AquariumPOS
                 string code = txtCode.Text.Trim().ToUpper();
                 string description = txtDescription.Text.Trim();
                 string posBankId = txtPOSBankID.Text.Trim();
+                bool isCardPayment = chkIsCardPayment.Checked;
 
                 if (string.IsNullOrEmpty(code))
                 {
@@ -429,14 +457,21 @@ namespace AquariumPOS
                     using (var connection = new SqlConnection(connectionString))
                     {
                         connection.Open();
+                        bool hasIsCardPaymentColumn = TenderTypesHasColumn(connection, "Is_Card_Payment");
                         SqlCommand command;
 
                         if (isEdit)
                         {
-                            command = new SqlCommand(@"
+                            string updateSql = hasIsCardPaymentColumn
+                                ? @"
+                                UPDATE TenderTypes 
+                                SET Description = @description, POSBankID = @posBankID, Is_Card_Payment = @isCardPayment, UpdatedDate = GETDATE() 
+                                WHERE Code = @code"
+                                : @"
                                 UPDATE TenderTypes 
                                 SET Description = @description, POSBankID = @posBankID, UpdatedDate = GETDATE() 
-                                WHERE Code = @code", connection);
+                                WHERE Code = @code";
+                            command = new SqlCommand(updateSql, connection);
                         }
                         else
                         {
@@ -453,14 +488,23 @@ namespace AquariumPOS
                                 return;
                             }
 
-                            command = new SqlCommand(@"
+                            string insertSql = hasIsCardPaymentColumn
+                                ? @"
+                                INSERT INTO TenderTypes (Code, Description, POSBankID, Is_Card_Payment) 
+                                VALUES (@code, @description, @posBankID, @isCardPayment)"
+                                : @"
                                 INSERT INTO TenderTypes (Code, Description, POSBankID) 
-                                VALUES (@code, @description, @posBankID)", connection);
+                                VALUES (@code, @description, @posBankID)";
+                            command = new SqlCommand(insertSql, connection);
                         }
 
                         command.Parameters.AddWithValue("@code", code);
                         command.Parameters.AddWithValue("@description", description);
                         command.Parameters.AddWithValue("@posBankID", string.IsNullOrWhiteSpace(posBankId) ? (object)DBNull.Value : posBankId);
+                        if (hasIsCardPaymentColumn)
+                        {
+                            command.Parameters.AddWithValue("@isCardPayment", isCardPayment);
+                        }
 
                         int rowsAffected = command.ExecuteNonQuery();
 
@@ -488,10 +532,19 @@ namespace AquariumPOS
             btnCancel.Click += (s, args) => dialog.Close();
 
             dialog.Controls.AddRange(new Control[] {
-                lblCode, txtCode, lblDescription, txtDescription, lblPOSBankID, txtPOSBankID, btnSave, btnCancel
+                lblCode, txtCode, lblDescription, txtDescription, lblPOSBankID, txtPOSBankID, chkIsCardPayment, btnSave, btnCancel
             });
 
             dialog.ShowDialog();
+        }
+
+        private static bool TenderTypesHasColumn(SqlConnection connection, string columnName)
+        {
+            using var command = new SqlCommand(@"SELECT COUNT(*)
+                                                 FROM INFORMATION_SCHEMA.COLUMNS
+                                                 WHERE TABLE_NAME = 'TenderTypes' AND COLUMN_NAME = @columnName", connection);
+            command.Parameters.AddWithValue("@columnName", columnName);
+            return Convert.ToInt32(command.ExecuteScalar()) > 0;
         }
 
         private void TenderTypesForm_KeyDown(object? sender, KeyEventArgs e)
