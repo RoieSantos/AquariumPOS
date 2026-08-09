@@ -1,0 +1,14 @@
+# Build outputs
+bin/
+obj/
+publish/
+build_temp/
+installer/publish/
+
+# Visual Studio / user-specific
+.vs/
+*.user
+*.suo
+
+# Logs
+*.log
