@@ -98,6 +98,22 @@ async function loadFinancialSummary(session) {
   const todayWalkinWord = todayWalkinCount === 1 ? 'order' : 'orders';
   document.getElementById('statTodayWalkInSalesSub').textContent = `${todayLabel} · ${todayWalkinCount} ${todayWalkinWord}`;
 
+  // Mirrors of the above, for the standalone cards shown to regular (non-sales, non-super)
+  // staff - see walkInOnlyCard gating below. setStatValue no-ops when an id isn't on the page.
+  setStatValue('statTodayWalkInSalesOnly', formatCurrency(row.today_walkin_sales));
+  const todayWalkInSalesOnlySubEl = document.getElementById('statTodayWalkInSalesOnlySub');
+  if (todayWalkInSalesOnlySubEl) todayWalkInSalesOnlySubEl.textContent = `${todayLabel} · ${todayWalkinCount} ${todayWalkinWord}`;
+
+  const prevMonthDate = new Date();
+  prevMonthDate.setDate(1);
+  prevMonthDate.setMonth(prevMonthDate.getMonth() - 1);
+  const prevMonthLabel = prevMonthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const prevMonthWalkinCount = row.previous_month_walkin_order_count || 0;
+  const prevMonthWalkinWord = prevMonthWalkinCount === 1 ? 'order' : 'orders';
+  setStatValue('statPrevMonthWalkInSalesOnly', formatCurrency(row.previous_month_walkin_sales));
+  const prevMonthWalkInSalesOnlySubEl = document.getElementById('statPrevMonthWalkInSalesOnlySub');
+  if (prevMonthWalkInSalesOnlySubEl) prevMonthWalkInSalesOnlySubEl.textContent = `${prevMonthLabel} · ${prevMonthWalkinCount} ${prevMonthWalkinWord}`;
+
   updateSalesTargetTile(row.month_sales, row.month_sales_target);
 }
 

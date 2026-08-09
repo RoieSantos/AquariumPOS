@@ -404,6 +404,11 @@ $$;
 -- per "can you add daily online sales and walk-in sales too?" - identical online/walk-in split
 -- and exclusion rules as the month_* / walkin_*_month figures above, just scoped to today's
 -- Asia/Manila business date instead of the whole month.
+--
+-- previous_month_walkin_sales / previous_month_walkin_order_count: per "show daily sales and
+-- previous month (Walk-in)" - same walk-in split/exclusion rules as walkin_sales_month above,
+-- scoped to the full calendar month immediately before the current one (same Asia/Manila
+-- boundary convention as admin_get_sales_by_confirmed_by's previous_month_sales).
 drop function if exists public.admin_get_online_order_financial_summary(text, text, text);
 
 create or replace function public.admin_get_online_order_financial_summary(p_admin_username text, p_admin_password text, p_warehouse_name text default null)
@@ -411,7 +416,8 @@ returns table(
   amount_to_receive numeric, month_sales numeric, month_order_count int, month_sales_target numeric,
   walkin_sales_month numeric, walkin_order_count int,
   today_online_sales numeric, today_online_order_count int,
-  today_walkin_sales numeric, today_walkin_order_count int
+  today_walkin_sales numeric, today_walkin_order_count int,
+  previous_month_walkin_sales numeric, previous_month_walkin_order_count int
 )
 language plpgsql
 security definer
@@ -422,6 +428,7 @@ declare
   v_month_end date;
   v_days_in_month int;
   v_today date;
+  v_prev_month_start date;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -431,6 +438,7 @@ begin
   v_month_end := (v_month_start + interval '1 month')::date;
   v_days_in_month := v_month_end - v_month_start;
   v_today := (now() at time zone 'Asia/Manila')::date;
+  v_prev_month_start := (v_month_start - interval '1 month')::date;
 
   return query
     select
@@ -479,7 +487,17 @@ begin
         where o."Date" = v_today
           and o."ReceivedAtShop" is true
           and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
-      )::int as today_walkin_order_count
+      )::int as today_walkin_order_count,
+      coalesce(sum(o."MoneyToCollect") filter (
+        where o."Date" >= v_prev_month_start and o."Date" < v_month_start
+          and o."ReceivedAtShop" is true
+          and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
+      ), 0)::numeric as previous_month_walkin_sales,
+      count(*) filter (
+        where o."Date" >= v_prev_month_start and o."Date" < v_month_start
+          and o."ReceivedAtShop" is true
+          and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
+      )::int as previous_month_walkin_order_count
     from public."OnlineOrders" o
     left join public."Warehouses" w on w."ID" = o."LocationID"
     where p_warehouse_name is null or trim(p_warehouse_name) = '' or w."Name" = p_warehouse_name;
