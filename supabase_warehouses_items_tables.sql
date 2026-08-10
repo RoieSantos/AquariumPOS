@@ -594,6 +594,39 @@ begin
 end;
 $$;
 
+drop function if exists public.staff_list_items_by_category(text, text, text);
+
+-- Aquarium accessory item lookup for the Web Portal's Custom Calculator
+-- (WebAquariumCalculator) - per "how is the local DB looking up the pump and lights, can you
+-- apply that into the portal too". Mirrors MainForm.cs's Submersible Light/Submersible Pump
+-- item pickers in the desktop's Complete Aquarium Set builder exactly: same CategoryCode
+-- match ('LIGHTS' for light, 'PUMP' for pump - see the two "Populate ... from Items table"
+-- blocks around MainForm.cs's submersibleLightItemCombo/submersiblePumpItemCombo), same
+-- Name-falls-back-to-Description display text, same "use that item's own Price" behavior
+-- instead of a free-typed number. Open to any active staff login (is_staff_authorized), same
+-- as the rest of the Custom Calculator page (no super-user gate on that nav card).
+create or replace function public.staff_list_items_by_category(p_admin_username text, p_admin_password text, p_category_code text)
+returns table(code text, item_name text, price numeric)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  return query
+    select
+      i."Code"::text,
+      coalesce(nullif(trim(i."Name"), ''), nullif(trim(i."Description"), ''), i."Code")::text as item_name,
+      coalesce(i."Price", 0)::numeric as price
+    from public."Items" i
+    where trim(coalesce(i."CategoryCode", '')) = trim(p_category_code)
+    order by item_name;
+end;
+$$;
+
 -- Direct table access stays fully blocked by RLS (no policies); only the
 -- re-verifying functions above are reachable from the portal's anon key.
 revoke all on public."Warehouses" from anon, authenticated;
@@ -612,3 +645,4 @@ grant execute on function public.staff_search_items(text, text, text, int, boole
 grant execute on function public.staff_search_variants(text, text, text, text, int, boolean, int) to anon;
 grant execute on function public.staff_search_warehouses(text, text, text, int) to anon;
 grant execute on function public.staff_next_transfer_no(text, text, text) to anon;
+grant execute on function public.staff_list_items_by_category(text, text, text) to anon;

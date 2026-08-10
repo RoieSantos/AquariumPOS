@@ -58,6 +58,10 @@
       min-height: 387px;
     }
 
+    #sumpExtrasCard {
+      grid-column: span 2;
+    }
+
     .card h2,
     .drawing-card h2 {
       margin: 0 0 12px;
@@ -294,6 +298,10 @@
         grid-template-columns: 1fr;
       }
 
+      #sumpExtrasCard {
+        grid-column: span 1;
+      }
+
       .actions-row {
         align-items: flex-start;
         flex-direction: column;
@@ -412,7 +420,7 @@
         </div>
       </section>
 
-      <section class="card">
+      <section id="sumpExtrasCard" class="card">
         <h2>Sump &amp; extras</h2>
 
         <div id="sumpFieldsWrap">
@@ -454,15 +462,19 @@
         </div>
 
         <div id="sumpPriceInputs" class="hidden" style="margin-top: 12px;">
-          <div class="inline-field">
-            <div class="field">
-              <label for="lightPrice">Light Price</label>
-              <input id="lightPrice" type="number" value="0" step="0.01">
-            </div>
-            <div class="field">
-              <label for="pumpPrice">Pump Price</label>
-              <input id="pumpPrice" type="number" value="0" step="0.01">
-            </div>
+          <div class="field">
+            <label for="lightItemSelect">Light Item</label>
+            <select id="lightItemSelect">
+              <option value="0">Loading items...</option>
+            </select>
+            <input id="lightPrice" type="hidden" value="0">
+          </div>
+          <div class="field">
+            <label for="pumpItemSelect">Pump Item</label>
+            <select id="pumpItemSelect">
+              <option value="0">Loading items...</option>
+            </select>
+            <input id="pumpPrice" type="hidden" value="0">
           </div>
         </div>
       </section>
@@ -534,6 +546,14 @@
 ]
   </script>
 
+  <!-- Loaded so the Light/Pump Item dropdowns below can query the real Items catalog from
+       Supabase (see staff_list_items_by_category in supabase_warehouses_items_tables.sql),
+       same as the rest of the portal - reuses the already-logged-in portal_session from
+       sessionStorage (shared with the parent window since this iframe is same-origin), so
+       this only works when opened from within the portal, not as a fully standalone page. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../js/config.js"></script>
+  <script src="../js/supabaseClient.js"></script>
   <script src="./custom-aquarium-calculator.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -1101,6 +1121,119 @@
       return loadGlassPricingSetupRows();
     }
 
+    // Mirrors MainForm.cs's Submersible Light/Submersible Pump item pickers in the desktop's
+    // Complete Aquarium Set builder: same CategoryCode lookup ('LIGHTS' / 'PUMP') against the
+    // Items catalog, same "use that item's own Price" behavior, instead of a free-typed number.
+    // Reads the already-logged-in portal session straight out of sessionStorage (see
+    // PORTAL_SESSION_KEY in js/auth.js) - this iframe is same-origin with the portal page that
+    // embeds it, so sessionStorage is shared without needing postMessage plumbing.
+    function getPortalSessionForCalculator() {
+      try {
+        var raw = sessionStorage.getItem('portal_session');
+        return raw ? JSON.parse(raw) : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function populateAquariumItemSelect(selectEl, items, options) {
+      options = options || {};
+      selectEl.innerHTML = '';
+
+      if (!items || items.length === 0) {
+        var emptyOpt = document.createElement('option');
+        emptyOpt.value = '0';
+        emptyOpt.textContent = options.emptyText || 'No items found';
+        selectEl.appendChild(emptyOpt);
+        selectEl.disabled = true;
+        return;
+      }
+
+      selectEl.disabled = false;
+
+      if (options.includeBlankOption) {
+        var blankOpt = document.createElement('option');
+        blankOpt.value = '';
+        blankOpt.dataset.price = '0';
+        blankOpt.textContent = options.blankText || 'Select...';
+        selectEl.appendChild(blankOpt);
+      }
+
+      items.forEach(function (item) {
+        var opt = document.createElement('option');
+        opt.value = item.code;
+        opt.dataset.price = String(item.price || 0);
+        opt.textContent = item.item_name + ' - ₱' + Number(item.price || 0).toFixed(2);
+        selectEl.appendChild(opt);
+      });
+    }
+
+    function applyLightSelection() {
+      var select = byId('lightItemSelect');
+      var selectedOption = select.options[select.selectedIndex];
+      byId('lightPrice').value = selectedOption ? (selectedOption.dataset.price || '0') : '0';
+    }
+
+    function applyPumpSelection() {
+      var select = byId('pumpItemSelect');
+      var selectedOption = select.options[select.selectedIndex];
+      byId('pumpPrice').value = selectedOption ? (selectedOption.dataset.price || '0') : '0';
+    }
+
+    var aquariumItemsLoadPromise = null;
+
+    function ensureAquariumItemsLoaded() {
+      if (aquariumItemsLoadPromise) {
+        return aquariumItemsLoadPromise;
+      }
+
+      aquariumItemsLoadPromise = (async function () {
+        var session = getPortalSessionForCalculator();
+        if (!session || !session.username || !session.password || typeof supabaseClient === 'undefined') {
+          populateAquariumItemSelect(byId('lightItemSelect'), [], { emptyText: 'Not available (open via the portal)' });
+          populateAquariumItemSelect(byId('pumpItemSelect'), [], { emptyText: 'Not available (open via the portal)' });
+          applyLightSelection();
+          applyPumpSelection();
+          return;
+        }
+
+        try {
+          var results = await Promise.all([
+            supabaseClient.rpc('staff_list_items_by_category', {
+              p_admin_username: session.username,
+              p_admin_password: session.password,
+              p_category_code: 'LIGHTS'
+            }),
+            supabaseClient.rpc('staff_list_items_by_category', {
+              p_admin_username: session.username,
+              p_admin_password: session.password,
+              p_category_code: 'PUMP'
+            })
+          ]);
+
+          var lightResult = results[0];
+          var pumpResult = results[1];
+
+          populateAquariumItemSelect(byId('lightItemSelect'), lightResult.error ? [] : lightResult.data, {
+            emptyText: lightResult.error ? 'Failed to load lights' : 'No light items found'
+          });
+          populateAquariumItemSelect(byId('pumpItemSelect'), pumpResult.error ? [] : pumpResult.data, {
+            emptyText: pumpResult.error ? 'Failed to load pumps' : 'No pump items found',
+            includeBlankOption: true,
+            blankText: 'Select a pump...'
+          });
+        } catch (error) {
+          populateAquariumItemSelect(byId('lightItemSelect'), [], { emptyText: 'Failed to load lights' });
+          populateAquariumItemSelect(byId('pumpItemSelect'), [], { emptyText: 'Failed to load pumps' });
+        }
+
+        applyLightSelection();
+        applyPumpSelection();
+      })();
+
+      return aquariumItemsLoadPromise;
+    }
+
     async function calculateAquarium(showAlerts) {
       try {
         enforceOptionRules(false);
@@ -1144,6 +1277,16 @@
         byId('sumpUnit').value = byId('unit').value;
       });
 
+      byId('lightItemSelect').addEventListener('change', function () {
+        applyLightSelection();
+        calculateAquarium(true);
+      });
+
+      byId('pumpItemSelect').addEventListener('change', function () {
+        applyPumpSelection();
+        calculateAquarium(true);
+      });
+
       closeButton.addEventListener('click', function () {
         window.location.reload();
       });
@@ -1166,6 +1309,7 @@
     enforceOptionRules(false);
     setVisibilityState();
     drawPlaceholder('Loading glass pricing setup...');
+    ensureAquariumItemsLoaded();
 
     ensureGlassPricingLoaded()
       .then(function () {

@@ -7,7 +7,7 @@ A lightweight, staff-only web portal for AquariumPOS - plain HTML/CSS/JS, no bui
 - **Transfer Orders** - view existing transfer requests and create new ones (writes to `Transfer_Header` / `Transfer_Line`, the same tables the desktop app already pulls from via `SyncTransferRequestsFromSupabaseToLocalDb`, so new web-created transfer orders will show up in the desktop app too).
 - **Reports** - read-only Month End and Expense Report viewers (`MonthEndHeader`/`MonthEndLines`, `ExpenseReportHeader`/`ExpenseReportLines`).
 - **Customer Aquarium** - create/edit "complete aquarium set" packages (`CompleteAquariumSetHeader`/`CompleteAquariumSetLine`). These are **new Supabase-only tables** - the desktop app does not currently push its local packages here, so the portal starts empty.
-- **Custom Calculator** - embeds the `WebAquariumCalculator` static calculator (pure client-side, no database), copied under `docs/` so GitHub Pages serves it too.
+- **Custom Calculator** - embeds the `WebAquariumCalculator` calculator (copied under `docs/` so GitHub Pages serves it too). Its Light/Pump Item dropdowns query the real `Items` catalog (`staff_list_items_by_category`, same `CategoryCode` lookup - `LIGHTS` / `PUMP` - the desktop app's Complete Aquarium Set builder uses) instead of a free-typed price, so it now requires being opened from within the portal (reads the logged-in session from `sessionStorage`) rather than as a fully standalone page.
 - **Serial Tracker** - search/filter `ItemSerialTracking` and update Status/Location.
 - **User Setup** - lets **super user** staff create new portal logins (username, password, display name, assigned warehouse). Only visible/usable to accounts with `"SuperUser" = true`.
 
