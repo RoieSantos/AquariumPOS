@@ -49,6 +49,15 @@ async function loadWarehouseOptionsOnce() {
   warehouseOptions = (data || []).filter((w) => w.name).map((w) => ({ id: w.id, name: w.name }));
 }
 
+// True when the row's Location matches the acting Serial Admin's own warehouse, or when the
+// account has no single warehouse assigned ("All warehouses" - nothing to restrict against, same
+// precedent as the Location editor's own picker).
+function isOwnWarehouseLocation(location) {
+  const ownWarehouse = (currentSession?.warehouseName || '').trim().toLowerCase();
+  if (!ownWarehouse) return true;
+  return (location || '').trim().toLowerCase() === ownWarehouse;
+}
+
 function openEditLocationModal(serialNo, currentLocation) {
   editLocationSerialNo = serialNo;
   document.getElementById('editLocationSerialNo').textContent = serialNo;
@@ -334,11 +343,14 @@ function renderSerials() {
     return;
   }
 
-  // Status stays fully read-only here - it's owned by whichever workflow moved the serial (Stock
-  // Counts, Transfer Order shipment tagging, a sale, etc.) and editing it freely here could desync
-  // it from that workflow's own state. Location is the one exception: staff flagged "Serial Admin"
-  // (User Setup) get an Edit control for it, to correct mistagged/legacy (untagged) serials -
-  // everyone else still sees it as plain text.
+  // Status stays otherwise read-only here - it's owned by whichever workflow moved the serial
+  // (Stock Counts, Transfer Order shipment tagging, a sale, etc.) and editing it freely could
+  // desync it from that workflow's own state. Serial Admins get one narrow, targeted exception -
+  // a "Mark In Stock" action to restore a mistakenly SOLD/RETURNED/IN_TRANSIT serial back to
+  // IN_STOCK - not a general status editor. Location's own Edit control is the other exception,
+  // same admin gate. Mark In Stock only shows when the serial's current Location already matches
+  // the admin's own warehouse - marking a serial physically tagged to a DIFFERENT store as
+  // in-stock here would falsely claim that unit is on hand locally.
   tbody.innerHTML = rows
     .map((r) => `
       <tr>
@@ -346,7 +358,7 @@ function renderSerials() {
         <td>${escapeHtml(r.ItemCode)}</td>
         <td>${escapeHtml(r.ItemDescription)}</td>
         <td>${escapeHtml(r.Location)}${isSerialAdmin ? ` <button class="btn btn-secondary btn-sm edit-location-btn" data-serial="${encodeURIComponent(r.SerialNo)}" data-location="${encodeURIComponent(r.Location || '')}" type="button">Edit</button>` : ''}</td>
-        <td><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span></td>
+        <td><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span>${isSerialAdmin && (r.Status || '').toUpperCase() !== 'IN_STOCK' && isOwnWarehouseLocation(r.Location) ? ` <button class="btn btn-secondary btn-sm mark-in-stock-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark In Stock</button>` : ''}</td>
         <td>${renderSourceDocCell(r.SourceDocumentNo)}</td>
         <td>${escapeHtml(r.SoldReceiptNo)}</td>
         <td>${escapeHtml(r.SoldOnlineOrderId)}</td>
@@ -368,6 +380,39 @@ function renderSerials() {
       openEditLocationModal(decodeURIComponent(btn.dataset.serial), decodeURIComponent(btn.dataset.location));
     });
   });
+
+  tbody.querySelectorAll('.mark-in-stock-btn').forEach((btn) => {
+    btn.addEventListener('click', () => markInStock(decodeURIComponent(btn.dataset.serial)));
+  });
+}
+
+async function markInStock(serialNo) {
+  // Re-check against the row's actual current Location, not just the (already-filtered) button
+  // that was clicked - matches saveEditLocation's own defensive re-check rather than trusting the
+  // DOM alone.
+  const row = allSerials.find((r) => r.SerialNo === serialNo);
+  if (!row || !isOwnWarehouseLocation(row.Location)) {
+    alert('This serial is tagged to a different warehouse - it can only be marked In Stock from its own location.');
+    renderSerials();
+    return;
+  }
+
+  if (!confirm(`Mark ${serialNo} as IN_STOCK?`)) return;
+
+  const { error } = await supabaseClient
+    .from('ItemSerialTracking')
+    .update({ Status: 'IN_STOCK', UpdatedAtUtc: new Date().toISOString(), UpdatedBy: currentSession?.username || null })
+    .eq('SerialNo', serialNo);
+
+  if (error) {
+    alert(`Failed to update status: ${error.message}`);
+    return;
+  }
+
+  row.Status = 'IN_STOCK';
+  row.UpdatedAtUtc = new Date().toISOString();
+  row.UpdatedBy = currentSession?.username || null;
+  renderSerials();
 }
 
 (async function init() {
