@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Top Selling Items - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Top Selling Items</h1>
+    <p class="muted">Ranked by quantity sold. Covers online orders and in-store orders received at the shop.</p>
+
+    <div class="toolbar">
+      <div>
+        <button class="btn btn-primary btn-sm" id="granularityDailyBtn" type="button">Daily</button>
+        <button class="btn btn-secondary btn-sm" id="granularityWeeklyBtn" type="button">Weekly</button>
+        <button class="btn btn-secondary btn-sm" id="granularityMonthlyBtn" type="button">Monthly</button>
+      </div>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <button class="btn btn-secondary btn-sm" id="prevPeriodBtn" type="button">&larr; Prev</button>
+        <span id="periodLabel" style="font-weight:600; min-width:220px; text-align:center;">-</span>
+        <button class="btn btn-secondary btn-sm" id="nextPeriodBtn" type="button">Next &rarr;</button>
+        <label for="topNSelect" class="muted" style="margin:0;">Show top</label>
+        <select id="topNSelect">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="itemsLoading" class="muted">Loading...</div>
+    <div id="itemsError" class="error-text hidden"></div>
+
+    <div id="itemsResults" class="hidden">
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📦</span> Items Sold</div>
+          <div class="stat-value" id="statItemsSold">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏆</span> Top Item</div>
+          <div class="stat-value" id="statTopItem" style="font-size:16px;">-</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="itemRankChart"></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Item Code</th>
+              <th>Item Name</th>
+              <th>Category</th>
+              <th style="text-align:right;">Qty Sold</th>
+              <th style="text-align:right;">Revenue</th>
+              <th style="text-align:right;">Orders</th>
+            </tr>
+          </thead>
+          <tbody id="itemsTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/topSellingItems.js"></script>
+</body>
+</html>

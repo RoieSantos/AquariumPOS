@@ -410,6 +410,7 @@ async function loadNotifications(session) {
   if (isSalesOnlyUser) {
     document.getElementById('transferOrdersCard').classList.add('hidden');
     document.getElementById('reportsCard').classList.add('hidden');
+    document.getElementById('topSellingItemsCard').classList.add('hidden');
     document.getElementById('customerAquariumCard').classList.add('hidden');
     document.getElementById('serialTrackerCard').classList.add('hidden');
   }
@@ -419,6 +420,8 @@ async function loadNotifications(session) {
     document.getElementById('itemSetupCard').classList.remove('hidden');
     document.getElementById('variantSetupCard').classList.remove('hidden');
     document.getElementById('advanceOrdersCard').classList.remove('hidden');
+    document.getElementById('orderTimingDashboardCard').classList.remove('hidden');
+    document.getElementById('vendorSetupCard').classList.remove('hidden');
     document.getElementById('userSetupCard').classList.remove('hidden');
     document.getElementById('financeCardGrid').classList.remove('hidden');
     await loadFinancialSummary(session);

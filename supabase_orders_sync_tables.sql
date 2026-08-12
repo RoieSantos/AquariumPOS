@@ -93,6 +93,16 @@ alter table public."OnlineOrders" add column if not exists "GlassThicknessChecke
 alter table public."OnlineOrders" add column if not exists "CreatedBy" varchar(200);
 alter table public."OnlineOrders" add column if not exists "ConfirmedBy" varchar(200);
 
+-- WHEN the order was confirmed (as opposed to "ConfirmedBy" above, which is WHO) - for the
+-- Order Confirmation Timing dashboard (super users only), so staff can see which day/hour orders
+-- tend to get confirmed. Same status_history[status=1] entry as ConfirmedBy, just reading that
+-- entry's own timestamp instead of its name - see the extended pancake_extract_created_confirmed_by
+-- in supabase_pancake_manual_sync.sql. Nullable: only populated once a matching timestamp field is
+-- found on the entry, and only for orders synced/re-synced after this column was added (see
+-- supabase_order_confirmation_timing_rpc.sql's admin_backfill_order_confirmed_at for backfilling
+-- existing orders).
+alter table public."OnlineOrders" add column if not exists "ConfirmedAtUtc" timestamptz;
+
 create table if not exists public."OnlineOrderLines" (
     "OrderID" varchar(100) not null,
     "LineID" varchar(100) not null,

@@ -3,6 +3,7 @@ using System.Data;
 using System.Data.SqlClient;
 using System.Drawing;
 using System.Reflection;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace AquariumPOS
@@ -16,6 +17,9 @@ namespace AquariumPOS
         private Button refreshButton;
 
         private Button payInFullButton;
+        private Button resendToPancakeButton;
+        private Button resendToPortalButton;
+        private Button showErrorsButton;
 
         public AdvanceOrdersHeaderForm()
         {
@@ -32,7 +36,13 @@ namespace AquariumPOS
                 Dock = DockStyle.Top,
                 Height = 500,
                 ReadOnly = true,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                // Fill mode forces every column to share the grid's total width equally-ish - with
+                // this many columns that meant every header/value was truncated to 2-3 characters
+                // (per "fix the column ui so it can be readable and presentable"). AllCells instead
+                // sizes each column to fit its own header text and cell contents, so nothing gets
+                // cut off; if the total exceeds the visible width the grid just gets a horizontal
+                // scrollbar, which is far more readable than uniformly-crushed columns.
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells,
                 ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
                 {
                     Font = new Font("Arial", 10, FontStyle.Bold),
@@ -87,6 +97,42 @@ namespace AquariumPOS
             };
             payInFullButton.Click += PayInFullButton_Click;
 
+            resendToPancakeButton = new Button
+            {
+                Text = "Resend to Pancake",
+                Dock = DockStyle.Top,
+                Height = 40,
+                BackColor = Color.DarkOrange,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            resendToPancakeButton.Click += async (s, e) => await ResendToPancakeButton_ClickAsync();
+
+            resendToPortalButton = new Button
+            {
+                Text = "Resend to Portal",
+                Dock = DockStyle.Top,
+                Height = 40,
+                BackColor = Color.DarkOrange,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            resendToPortalButton.Click += async (s, e) => await ResendToPortalButton_ClickAsync();
+
+            showErrorsButton = new Button
+            {
+                Text = "Show Errors",
+                Dock = DockStyle.Top,
+                Height = 40,
+                BackColor = Color.Firebrick,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            showErrorsButton.Click += ShowErrorsButton_Click;
+
+            Controls.Add(showErrorsButton);
+            Controls.Add(resendToPortalButton);
+            Controls.Add(resendToPancakeButton);
             Controls.Add(payInFullButton);
             Controls.Add(refreshButton);
             Controls.Add(searchButton);
@@ -98,6 +144,196 @@ namespace AquariumPOS
             dataGridView.CellFormatting += DataGridView_CellFormatting;
             LoadAdvanceOrdersHeader("");
 
+        }
+
+        // Shared by ResendToPancakeButton_ClickAsync/ResendToPortalButton_ClickAsync/ShowErrorsButton_Click
+        // so all three agree on which row "the selected order" means (full row selection or just a
+        // clicked cell), instead of triplicating this lookup.
+        private bool TryGetSelectedReceiptNo(out string receiptNo)
+        {
+            receiptNo = string.Empty;
+
+            DataGridViewRow row;
+            if (dataGridView.SelectedRows.Count > 0)
+            {
+                row = dataGridView.SelectedRows[0];
+            }
+            else if (dataGridView.SelectedCells.Count > 0)
+            {
+                int rowIndex = dataGridView.SelectedCells[0].RowIndex;
+                row = dataGridView.Rows[rowIndex];
+            }
+            else
+            {
+                MessageBox.Show("Please select an advance order.", "Select Order", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            receiptNo = row.Cells["ReceiptNo"].Value?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(receiptNo))
+            {
+                MessageBox.Show("Selected row does not contain a ReceiptNo.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+
+            return true;
+        }
+
+        // Resends the selected order's current state to Pancake on demand - reuses the exact
+        // OnlinefunctionsEvents.SyncAdvanceOrderToCloudAsync call the automatic (silent)
+        // triggers already use, so it's safe to call repeatedly (idempotent UPDATE once a prior
+        // successful CREATE has recorded a Pancake order id in dbo.InstoreOnlineOrderMap).
+        private async Task ResendToPancakeButton_ClickAsync()
+        {
+            if (!TryGetSelectedReceiptNo(out string receiptNo))
+                return;
+
+            resendToPancakeButton.Enabled = false;
+            var previousCursor = Cursor;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                await OnlinefunctionsEvents.SyncAdvanceOrderToCloudAsync(receiptNo).ConfigureAwait(true);
+                MessageBox.Show(this, $"Advance order {receiptNo} was resent to Pancake successfully.", "Resend Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to resend {receiptNo} to Pancake.\n\nError: {ex.Message}", "Resend Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                Cursor = previousCursor;
+                resendToPancakeButton.Enabled = true;
+                LoadAdvanceOrdersHeader(searchTextBox.Text);
+            }
+        }
+
+        // Same idea as ResendToPancakeButton_ClickAsync above, but for the separate Supabase portal
+        // push (OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabaseAsync) - independent status,
+        // independent resend.
+        private async Task ResendToPortalButton_ClickAsync()
+        {
+            if (!TryGetSelectedReceiptNo(out string receiptNo))
+                return;
+
+            resendToPortalButton.Enabled = false;
+            var previousCursor = Cursor;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                await OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabaseAsync(receiptNo).ConfigureAwait(true);
+                MessageBox.Show(this, $"Advance order {receiptNo} was resent to the Portal successfully.", "Resend Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to resend {receiptNo} to the Portal.\n\nError: {ex.Message}", "Resend Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                Cursor = previousCursor;
+                resendToPortalButton.Enabled = true;
+                LoadAdvanceOrdersHeader(searchTextBox.Text);
+            }
+        }
+
+        // Shows the full LastResponse text (successful API response, or the exception detail on
+        // failure) recorded for the selected order by both the Pancake sync
+        // (dbo.InstoreOnlineOrderMap) and the Portal sync (dbo.AdvanceOrderPortalSyncMap), so staff
+        // can see exactly why a "Failed" status happened without having to read server logs.
+        private void ShowErrorsButton_Click(object? sender, EventArgs e)
+        {
+            if (!TryGetSelectedReceiptNo(out string receiptNo))
+                return;
+
+            try
+            {
+                OnlinefunctionsEvents.EnsureInstoreOnlineOrderMapTable();
+                OnlinefunctionsEvents.EnsureAdvanceOrderPortalSyncMapTable();
+
+                string pancakeAction = "", pancakeResponse = "", pancakeUpdated = "";
+                string portalAction = "", portalResponse = "", portalUpdated = "";
+
+                using (var conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+
+                    using (var cmd = new SqlCommand("SELECT LastAction, LastResponse, UpdatedAtUtc FROM dbo.InstoreOnlineOrderMap WHERE LocalReceiptNo = @receiptNo", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@receiptNo", receiptNo);
+                        using var rdr = cmd.ExecuteReader();
+                        if (rdr.Read())
+                        {
+                            pancakeAction = rdr["LastAction"]?.ToString()?.Trim() ?? "";
+                            pancakeResponse = rdr["LastResponse"]?.ToString() ?? "";
+                            pancakeUpdated = rdr["UpdatedAtUtc"] is DateTime pdt ? pdt.ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "";
+                        }
+                    }
+
+                    using (var cmd = new SqlCommand("SELECT LastAction, LastResponse, UpdatedAtUtc FROM dbo.AdvanceOrderPortalSyncMap WHERE ReceiptNo = @receiptNo", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@receiptNo", receiptNo);
+                        using var rdr = cmd.ExecuteReader();
+                        if (rdr.Read())
+                        {
+                            portalAction = rdr["LastAction"]?.ToString()?.Trim() ?? "";
+                            portalResponse = rdr["LastResponse"]?.ToString() ?? "";
+                            portalUpdated = rdr["UpdatedAtUtc"] is DateTime pdt ? pdt.ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "";
+                        }
+                    }
+                }
+
+                string details =
+                    $"=== Pancake Sync ===\r\n" +
+                    $"Status: {(string.IsNullOrWhiteSpace(pancakeAction) ? "Not Sent" : pancakeAction)}\r\n" +
+                    $"Last Updated: {(string.IsNullOrWhiteSpace(pancakeUpdated) ? "-" : pancakeUpdated)}\r\n" +
+                    $"Details:\r\n{(string.IsNullOrWhiteSpace(pancakeResponse) ? "(none)" : pancakeResponse)}\r\n\r\n" +
+                    $"=== Portal (Supabase) Sync ===\r\n" +
+                    $"Status: {(string.IsNullOrWhiteSpace(portalAction) ? "Not Sent" : portalAction)}\r\n" +
+                    $"Last Updated: {(string.IsNullOrWhiteSpace(portalUpdated) ? "-" : portalUpdated)}\r\n" +
+                    $"Details:\r\n{(string.IsNullOrWhiteSpace(portalResponse) ? "(none)" : portalResponse)}";
+
+                ShowSyncDetailsDialog(receiptNo, details);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to load sync details for {receiptNo}.\n\nError: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ShowSyncDetailsDialog(string receiptNo, string details)
+        {
+            using var dlg = new Form
+            {
+                Text = $"Sync Details - {receiptNo}",
+                Size = new Size(700, 500),
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = true,
+                FormBorderStyle = FormBorderStyle.Sizable
+            };
+
+            var textBox = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                Dock = DockStyle.Fill,
+                Font = new Font("Consolas", 9),
+                Text = details
+            };
+
+            var closeButton = new Button
+            {
+                Text = "Close",
+                Dock = DockStyle.Bottom,
+                Height = 35,
+                DialogResult = DialogResult.Cancel
+            };
+
+            dlg.Controls.Add(textBox);
+            dlg.Controls.Add(closeButton);
+            dlg.CancelButton = closeButton;
+            dlg.ShowDialog(this);
         }
 
         private void PayInFullButton_Click(object? sender, EventArgs e)
@@ -282,8 +518,19 @@ namespace AquariumPOS
                             insert.Parameters.AddWithValue("@time", DateTime.Now.ToString("hh:mm:ss tt"));
                             insert.ExecuteNonQuery();
 
+                            // FullyPaid/DatePaid are optional columns (see sql_advance_order_paid_
+                            // status.sql) - not every install will have run that script yet, so check
+                            // before referencing them. This flow always pays off the full remaining
+                            // balance (partial payments are rejected above), so reaching this point
+                            // means the order is now fully paid, unconditionally.
+                            bool hasFullyPaidColumns = false;
+                            using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'AdvanceOrderHeader' AND COLUMN_NAME IN ('FullyPaid', 'DatePaid')", conn, tx))
+                            {
+                                hasFullyPaidColumns = Convert.ToInt32(checkCmd.ExecuteScalar()) == 2;
+                            }
+
                             // Update AdvanceOrderHeader downpayment and recompute balance as NetAmount - (Downpayment + paid)
-                            var update = new SqlCommand(@"
+                            string updateSql = @"
                                 UPDATE AdvanceOrderHeader
                                 SET Downpayment = CASE
                                         WHEN ISNULL(Downpayment,0) + @paid > ISNULL(NetAmount,0) THEN ISNULL(NetAmount,0)
@@ -292,8 +539,10 @@ namespace AquariumPOS
                                     Balance = CASE
                                         WHEN ISNULL(NetAmount,0) - (ISNULL(Downpayment,0) + @paid) < 0 THEN 0
                                         ELSE ISNULL(NetAmount,0) - (ISNULL(Downpayment,0) + @paid)
-                                    END
-                                WHERE TransactionNo = @tn", conn, tx);
+                                    END" +
+                                (hasFullyPaidColumns ? ", FullyPaid = 1, DatePaid = SYSUTCDATETIME()" : "") + @"
+                                WHERE TransactionNo = @tn";
+                            var update = new SqlCommand(updateSql, conn, tx);
                             update.Parameters.AddWithValue("@paid", appliedAmount);
                             update.Parameters.AddWithValue("@tn", transactionNo);
                             update.ExecuteNonQuery();
@@ -416,6 +665,16 @@ namespace AquariumPOS
                                     catch (Exception exSync)
                                     {
                                         System.Diagnostics.Debug.WriteLine($"SyncAdvanceOrderToCloud(update) failed for {receiptNo}: {exSync.Message}");
+                                    }
+
+                                    try
+                                    {
+                                        var portalResp = OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabase(receiptNo);
+                                        System.Diagnostics.Debug.WriteLine($"SyncSingleAdvanceOrderToSupabase(update) response for {receiptNo}: {portalResp}");
+                                    }
+                                    catch (Exception portalSyncEx)
+                                    {
+                                        System.Diagnostics.Debug.WriteLine($"SyncSingleAdvanceOrderToSupabase(update) failed for {receiptNo}: {portalSyncEx.Message}");
                                     }
                                 });
                             }
@@ -608,15 +867,28 @@ namespace AquariumPOS
         {
             try
             {
+                // Defensive - dbo.InstoreOnlineOrderMap/dbo.AdvanceOrderPortalSyncMap may not exist yet
+                // on a fresh install if no Pancake/portal sync has ever run, and the LEFT JOINs below
+                // would fail without them.
+                OnlinefunctionsEvents.EnsureInstoreOnlineOrderMapTable();
+                OnlinefunctionsEvents.EnsureAdvanceOrderPortalSyncMapTable();
+
                 using (var connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
-                    string query = "SELECT * FROM AdvanceOrderHeader";
+                    // PancakeSyncStatus: joined from dbo.InstoreOnlineOrderMap.LastAction - raw value is
+                    // translated to friendly text/color in DataGridView_CellFormatting below. Null means
+                    // this order has never been synced to Pancake at all.
+                    // PortalStatus: same idea, joined from dbo.AdvanceOrderPortalSyncMap.LastAction -
+                    // tracks the separate push into Supabase's AdvanceOrders/AdvanceOrderLines tables
+                    // that feeds the web portal (SyncSingleAdvanceOrderToSupabase), independent of the
+                    // Pancake sync above.
+                    string query = "SELECT h.*, m.LastAction AS PancakeSyncStatus, p.LastAction AS PortalStatus FROM AdvanceOrderHeader h LEFT JOIN dbo.InstoreOnlineOrderMap m ON m.LocalReceiptNo = h.ReceiptNo LEFT JOIN dbo.AdvanceOrderPortalSyncMap p ON p.ReceiptNo = h.ReceiptNo";
                     if (!string.IsNullOrWhiteSpace(searchTerm))
                     {
-                        query += " WHERE TransactionNo LIKE @search OR ReceiptNo LIKE @search OR UserID LIKE @search";
+                        query += " WHERE h.TransactionNo LIKE @search OR h.ReceiptNo LIKE @search OR h.UserID LIKE @search";
                     }
-                    query += " ORDER BY TransactionNo DESC";
+                    query += " ORDER BY h.TransactionNo DESC";
                     var command = new SqlCommand(query, connection);
                     if (!string.IsNullOrWhiteSpace(searchTerm))
                     {
@@ -653,7 +925,18 @@ namespace AquariumPOS
                         }
                     }
 
-                    // Make ReceiptNo column wider for readability (defensive)
+                    // Page ID / Conversation ID are rarely-needed technical columns per "squeeze the
+                    // ui so it can be readable.. hide the page ID and Conversation ID" - hiding them
+                    // (AutoSizeColumnsMode.Fill on this grid) automatically lets the remaining columns
+                    // expand into the freed space. Tries a few plausible underlying column-name
+                    // spellings defensively since this table's exact schema isn't defined anywhere in
+                    // source (it was evidently altered directly against the live database).
+                    HideColumnIfPresent("Page ID", "Page_ID", "PageID");
+                    HideColumnIfPresent("Conversation ID", "Conversation_ID", "ConversationID");
+
+                    // Make ReceiptNo column wider for readability (defensive) - AllCells already
+                    // sizes it to fit "RS-0000006687"-style values, MinimumWidth is just a safety
+                    // net so it never shrinks back down on a narrow result set.
                     if (dataGridView.Columns.Contains("ReceiptNo"))
                     {
                         var rc = dataGridView.Columns["ReceiptNo"];
@@ -661,16 +944,43 @@ namespace AquariumPOS
                         {
                             try
                             {
-                                rc.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-                                // FillWeight expects float
-                                rc.FillWeight = 250f; // larger share of the fill
-                                // MinimumWidth may trigger internal grid resizing; guard in try/catch
-                                if (rc.MinimumWidth < 180) rc.MinimumWidth = 180;
+                                if (rc.MinimumWidth < 130) rc.MinimumWidth = 130;
                             }
                             catch
                             {
                                 // ignore any column-thickness related errors (avoid crashing the form)
                             }
+                        }
+                    }
+
+                    if (dataGridView.Columns.Contains("PancakeSyncStatus"))
+                    {
+                        var psc = dataGridView.Columns["PancakeSyncStatus"];
+                        if (psc != null)
+                        {
+                            try { psc.HeaderText = "Pancake Status"; psc.MinimumWidth = 130; } catch { }
+                        }
+                    }
+
+                    if (dataGridView.Columns.Contains("PortalStatus"))
+                    {
+                        var pst = dataGridView.Columns["PortalStatus"];
+                        if (pst != null)
+                        {
+                            try { pst.HeaderText = "Portal Status"; pst.MinimumWidth = 130; } catch { }
+                        }
+                    }
+
+                    // OnlineOrderID: h.* already includes AdvanceOrderHeader's own OnlineOrderID
+                    // column (populated by OnlinefunctionsEvents.SyncAdvanceOrderToCloud on every
+                    // successful CREATE/UPDATE) - just relabel it for readability, mirroring
+                    // PancakeSyncStatus above.
+                    if (dataGridView.Columns.Contains("OnlineOrderID"))
+                    {
+                        var ooc = dataGridView.Columns["OnlineOrderID"];
+                        if (ooc != null)
+                        {
+                            try { ooc.HeaderText = "Pancake Order ID"; ooc.MinimumWidth = 120; } catch { }
                         }
                     }
                 }
@@ -682,8 +992,84 @@ namespace AquariumPOS
             }
         }
 
+        // Hides the first candidate column name that actually exists on dataGridView - lets a
+        // caller try a few plausible spellings of an underlying SQL column without needing to know
+        // its exact name up front.
+        private void HideColumnIfPresent(params string[] candidateNames)
+        {
+            foreach (var name in candidateNames)
+            {
+                if (dataGridView.Columns.Contains(name))
+                {
+                    var c = dataGridView.Columns[name];
+                    if (c != null)
+                    {
+                        try { c.Visible = false; } catch { }
+                    }
+                    return;
+                }
+            }
+        }
+
         private void DataGridView_CellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
+            if (dataGridView.Columns[e.ColumnIndex].Name == "PancakeSyncStatus")
+            {
+                string rawStatus = e.Value?.ToString()?.Trim() ?? "";
+                Color statusColor;
+                switch (rawStatus.ToUpperInvariant())
+                {
+                    case "CREATE":
+                    case "UPDATE":
+                        e.Value = "Synced";
+                        statusColor = Color.DarkGreen;
+                        break;
+                    case "SYNC_FAILED":
+                        e.Value = "Failed";
+                        statusColor = Color.DarkRed;
+                        break;
+                    default:
+                        e.Value = "Not Sent";
+                        statusColor = Color.Gray;
+                        break;
+                }
+                if (e.CellStyle != null)
+                {
+                    e.CellStyle.ForeColor = statusColor;
+                    e.CellStyle.Font = new Font("Arial", 10, FontStyle.Bold);
+                }
+                e.FormattingApplied = true;
+                return;
+            }
+
+            if (dataGridView.Columns[e.ColumnIndex].Name == "PortalStatus")
+            {
+                string rawStatus = e.Value?.ToString()?.Trim() ?? "";
+                Color statusColor;
+                switch (rawStatus.ToUpperInvariant())
+                {
+                    case "SYNCED":
+                        e.Value = "Synced";
+                        statusColor = Color.DarkGreen;
+                        break;
+                    case "SYNC_FAILED":
+                        e.Value = "Failed";
+                        statusColor = Color.DarkRed;
+                        break;
+                    default:
+                        e.Value = "Not Sent";
+                        statusColor = Color.Gray;
+                        break;
+                }
+                if (e.CellStyle != null)
+                {
+                    e.CellStyle.ForeColor = statusColor;
+                    e.CellStyle.Font = new Font("Arial", 10, FontStyle.Bold);
+                }
+                e.FormattingApplied = true;
+                return;
+            }
+
             if (dataGridView.Columns[e.ColumnIndex].Name == "Time" && e.Value != null)
             {
                 // Try to format as AM/PM if value is DateTime or TimeSpan

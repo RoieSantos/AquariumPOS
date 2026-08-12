@@ -1366,16 +1366,31 @@ exception when others then
 end;
 $$;
 
--- Who created/confirmed the order, per Pancake's own status_history array on that order (each
--- entry has a numeric "status" and a "name" - status 0 = order created, status 1 = order
+-- Who/when created/confirmed the order, per Pancake's own status_history array on that order
+-- (each entry has a numeric "status" and a "name" - status 0 = order created, status 1 = order
 -- confirmed). Shared by all three Pancake-order-sync functions below (admin_sync_online_orders_
 -- from_pancake, cron_sync_online_orders_from_pancake, admin_list_online_orders_live) so this
--- logic lives in exactly one place. Purely for reporting (see CreatedBy/ConfirmedBy columns on
--- public."OnlineOrders" in supabase_orders_sync_tables.sql) - nothing here is enforced/gated.
--- Deliberately entirely Supabase-side (calls Pancake directly via extensions.http_get, same as
--- the rest of this file) - the desktop POS is not involved in populating these at all.
+-- logic lives in exactly one place. Purely for reporting (see CreatedBy/ConfirmedBy/ConfirmedAtUtc
+-- columns on public."OnlineOrders" in supabase_orders_sync_tables.sql) - nothing here is
+-- enforced/gated. Deliberately entirely Supabase-side (calls Pancake directly via
+-- extensions.http_get, same as the rest of this file) - the desktop POS is not involved in
+-- populating these at all.
+--
+-- confirmed_at: the status=1 entry's own timestamp, for the Order Confirmation Timing dashboard.
+-- The exact key Pancake uses per status_history entry isn't documented anywhere in this codebase,
+-- so this tries every plausible candidate (same defensive-coalesce style already used for the
+-- order-level created/updated timestamps just below in this file) via
+-- public.pancake_try_parse_timestamptz() - stays null, harmlessly, if none of them match a given
+-- entry's actual shape.
+--
+-- Explicit DROP first: this function's return signature is widening (added confirmed_at), and
+-- Postgres refuses a CREATE OR REPLACE that changes a function's OUT-parameter/return-table shape
+-- (42P13 "cannot change return type of existing function") - unlike every other signature change
+-- in this file, this one never had a drop guard because its shape never changed until now.
+drop function if exists public.pancake_extract_created_confirmed_by(jsonb);
+
 create or replace function public.pancake_extract_created_confirmed_by(p_item jsonb)
-returns table(created_by text, confirmed_by text)
+returns table(created_by text, confirmed_by text, confirmed_at timestamptz)
 language plpgsql
 as $$
 declare
@@ -1384,6 +1399,8 @@ declare
   v_status_code int;
   v_created_by text := null;
   v_confirmed_by text := null;
+  v_confirmed_at timestamptz := null;
+  v_confirmed_at_raw text;
 begin
   v_status_history := p_item -> 'status_history';
   if jsonb_typeof(v_status_history) = 'array' then
@@ -1400,11 +1417,16 @@ begin
         v_created_by := v_entry ->> 'name';
       elsif v_status_code = 1 and v_confirmed_by is null then
         v_confirmed_by := v_entry ->> 'name';
+        v_confirmed_at_raw := coalesce(
+          v_entry ->> 'inserted_at', v_entry ->> 'insertedAt', v_entry ->> 'created_at', v_entry ->> 'createdAt',
+          v_entry ->> 'updated_at', v_entry ->> 'updatedAt', v_entry ->> 'time', v_entry ->> 'at', v_entry ->> 'date'
+        );
+        v_confirmed_at := public.pancake_try_parse_timestamptz(v_confirmed_at_raw);
       end if;
     end loop;
   end if;
 
-  return query select v_created_by, v_confirmed_by;
+  return query select v_created_by, v_confirmed_by, v_confirmed_at;
 end;
 $$;
 
@@ -1472,6 +1494,7 @@ declare
   v_est_delivery_date date;
   v_created_by text;
   v_confirmed_by text;
+  v_confirmed_at timestamptz;
   v_was_existing boolean;
   v_orders_synced int := 0;
   v_orders_inserted int := 0;
@@ -1669,7 +1692,7 @@ begin
           else (public.pancake_try_parse_timestamptz(v_est_delivery_raw) at time zone 'Asia/Manila')::date
         end;
 
-        select t.created_by, t.confirmed_by into v_created_by, v_confirmed_by
+        select t.created_by, t.confirmed_by, t.confirmed_at into v_created_by, v_confirmed_by, v_confirmed_at
         from public.pancake_extract_created_confirmed_by(v_item) t;
 
         select exists(select 1 from public."OnlineOrders" where "OrderID" = v_order_id) into v_was_existing;
@@ -1678,12 +1701,12 @@ begin
           "OrderID", "Date", "Time", "Status", "CustomerName", "Page_ID", "Conversation_ID", "LocationID",
           "MoneyToCollect", "AmountPaid", "Discount", "Balance", "ForDelivery", "ShippingAddress",
           "EstimatedDeliveryDate", "Last_Updated_At", "Converted_LastUpdated_At", "LastPaid_Date", "LastPaid_Time", "ReceivedAtShop",
-          "CreatedBy", "ConfirmedBy", "SyncedAtUtc"
+          "CreatedBy", "ConfirmedBy", "ConfirmedAtUtc", "SyncedAtUtc"
         ) values (
           v_order_id, v_date, v_time, v_status, v_customer, v_page_id, v_conversation_id, v_location_id,
           v_money_to_collect, v_amount_paid, v_discount, v_balance, v_for_delivery, v_shipping_address,
           v_est_delivery_date, v_last_updated_utc, v_converted_last_updated_date, v_last_paid_date, v_last_paid_time, v_received_at_shop,
-          v_created_by, v_confirmed_by, now()
+          v_created_by, v_confirmed_by, v_confirmed_at, now()
         )
         on conflict ("OrderID") do update set
           "Date" = excluded."Date",
@@ -1707,6 +1730,7 @@ begin
           "ReceivedAtShop" = excluded."ReceivedAtShop",
           "CreatedBy" = coalesce(excluded."CreatedBy", "OnlineOrders"."CreatedBy"),
           "ConfirmedBy" = coalesce(excluded."ConfirmedBy", "OnlineOrders"."ConfirmedBy"),
+          "ConfirmedAtUtc" = coalesce(excluded."ConfirmedAtUtc", "OnlineOrders"."ConfirmedAtUtc"),
           "SyncedAtUtc" = now();
 
         v_orders_synced := v_orders_synced + 1;
@@ -1855,15 +1879,29 @@ grant execute on function public.admin_sync_online_orders_from_pancake(text, tex
 -- need checking again. admin_list_online_orders (supabase_orders_sync_tables.sql) reads the
 -- cached "GlassThickness" column directly, so the flag is already sitting there with zero added
 -- cost by the time anyone opens the Online Orders list page.
+-- ORDER LINES BACKFILL (per discovering, while building the Top Selling Items report, that
+-- public."OnlineOrderLines" was completely empty - 2205 orders, 0 with lines - because no
+-- automatic path had ever populated it: this header-only cron never touched lines, the manual
+-- admin_sync_online_orders_from_pancake button has no UI trigger wired up, and admin_get_online_
+-- order_detail_live is fetch-for-display-only, never persisted). Same "compute once, cache
+-- forever" bounded-per-run pattern as the glass thickness backfill just below - up to
+-- p_max_lines_detail_calls (default 30) one-off detail fetches for orders with zero rows in
+-- OnlineOrderLines, ordered by Last_Updated_At so the most relevant/recent orders backfill first.
+-- Deliberately NOT restricted to ReceivedAtShop = false (unlike the glass check) - Top Selling
+-- Items intentionally includes walk-in/in-store orders too. See also the one-off
+-- admin_backfill_online_order_lines RPC (supabase_backfill_online_order_lines.sql) for catching
+-- up the existing backlog faster than ~30/minute from the SQL editor.
 drop function if exists public.cron_sync_online_orders_from_pancake(int, int);
 drop function if exists public.cron_sync_online_orders_from_pancake(int, int, int);
+drop function if exists public.cron_sync_online_orders_from_pancake(int, int, int, int);
 
 create or replace function public.cron_sync_online_orders_from_pancake(
   p_max_pages int default 100,
   p_page_size int default 100,
-  p_max_glass_detail_calls int default 30
+  p_max_glass_detail_calls int default 30,
+  p_max_lines_detail_calls int default 30
 )
-returns table(orders_synced int, orders_inserted int, orders_updated int, glass_checked int)
+returns table(orders_synced int, orders_inserted int, orders_updated int, glass_checked int, lines_checked int)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -1898,6 +1936,23 @@ declare
   v_glass_has_10mm boolean;
   v_glass_thickness text;
   v_glass_checked int := 0;
+  v_max_lines_detail_calls int := least(greatest(coalesce(p_max_lines_detail_calls, 30), 0), 200);
+  v_lines_order_id text;
+  v_lines_detail_url text;
+  v_lines_detail_response extensions.http_response;
+  v_lines_detail_body jsonb;
+  v_lines_order_el jsonb;
+  v_lines_items jsonb;
+  v_lines_item jsonb;
+  v_lines_variation_info jsonb;
+  v_lines_product_display_id text;
+  v_lines_variation_id text;
+  v_lines_qty numeric;
+  v_lines_price numeric;
+  v_lines_name text;
+  v_lines_note text;
+  v_lines_line_id text;
+  v_lines_checked int := 0;
   v_last_sync_utc timestamptz;
   v_since_qs text := '';
   v_iso text;
@@ -1945,6 +2000,7 @@ declare
   v_est_delivery_date date;
   v_created_by text;
   v_confirmed_by text;
+  v_confirmed_at timestamptz;
   v_was_existing boolean;
   v_orders_synced int := 0;
   v_orders_inserted int := 0;
@@ -2128,7 +2184,7 @@ begin
           else (public.pancake_try_parse_timestamptz(v_est_delivery_raw) at time zone 'Asia/Manila')::date
         end;
 
-        select t.created_by, t.confirmed_by into v_created_by, v_confirmed_by
+        select t.created_by, t.confirmed_by, t.confirmed_at into v_created_by, v_confirmed_by, v_confirmed_at
         from public.pancake_extract_created_confirmed_by(v_item) t;
 
         select exists(select 1 from public."OnlineOrders" where "OrderID" = v_order_id) into v_was_existing;
@@ -2137,12 +2193,12 @@ begin
           "OrderID", "Date", "Time", "Status", "CustomerName", "Page_ID", "Conversation_ID", "LocationID",
           "MoneyToCollect", "AmountPaid", "Discount", "Balance", "ForDelivery", "ShippingAddress",
           "EstimatedDeliveryDate", "Last_Updated_At", "Converted_LastUpdated_At", "LastPaid_Date", "LastPaid_Time", "ReceivedAtShop",
-          "CreatedBy", "ConfirmedBy", "SyncedAtUtc"
+          "CreatedBy", "ConfirmedBy", "ConfirmedAtUtc", "SyncedAtUtc"
         ) values (
           v_order_id, v_date, v_time, v_status, v_customer, v_page_id, v_conversation_id, v_location_id,
           v_money_to_collect, v_amount_paid, v_discount, v_balance, v_for_delivery, v_shipping_address,
           v_est_delivery_date, v_last_updated_utc, v_converted_last_updated_date, v_last_paid_date, v_last_paid_time, v_received_at_shop,
-          v_created_by, v_confirmed_by, now()
+          v_created_by, v_confirmed_by, v_confirmed_at, now()
         )
         on conflict ("OrderID") do update set
           "Date" = excluded."Date",
@@ -2166,6 +2222,7 @@ begin
           "ReceivedAtShop" = excluded."ReceivedAtShop",
           "CreatedBy" = coalesce(excluded."CreatedBy", "OnlineOrders"."CreatedBy"),
           "ConfirmedBy" = coalesce(excluded."ConfirmedBy", "OnlineOrders"."ConfirmedBy"),
+          "ConfirmedAtUtc" = coalesce(excluded."ConfirmedAtUtc", "OnlineOrders"."ConfirmedAtUtc"),
           "SyncedAtUtc" = now();
 
         v_orders_synced := v_orders_synced + 1;
@@ -2268,7 +2325,84 @@ begin
     end loop;
   end if;
 
-  return query select v_orders_synced, v_orders_inserted, v_orders_updated, v_glass_checked;
+  -- ORDER LINES BACKFILL - see the header comment above. Runs after the glass thickness pass so
+  -- neither can block the other's progress; each order costs one extra Pancake detail call,
+  -- same as the glass check, but is not filtered to ReceivedAtShop = false.
+  if v_max_lines_detail_calls > 0 then
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '15000');
+
+    for v_lines_order_id in
+      select o."OrderID" from public."OnlineOrders" o
+      where not exists (select 1 from public."OnlineOrderLines" l where l."OrderID" = o."OrderID")
+      order by o."Last_Updated_At" desc nulls last
+      limit v_max_lines_detail_calls
+    loop
+      begin
+        v_lines_detail_url := v_base_url || '/shops/' || v_shop_id || '/orders/' || v_lines_order_id || '?api_key=' || v_api_key || '&page_size=1000';
+        v_lines_detail_response := extensions.http_get(v_lines_detail_url);
+
+        if v_lines_detail_response.status < 200 or v_lines_detail_response.status >= 300 then
+          continue; -- no OnlineOrderLines rows written - retried on a future run
+        end if;
+
+        v_lines_detail_body := v_lines_detail_response.content::jsonb;
+        v_lines_order_el := case
+          when jsonb_typeof(v_lines_detail_body -> 'data') = 'object' then v_lines_detail_body -> 'data'
+          when jsonb_typeof(v_lines_detail_body) = 'object' then v_lines_detail_body
+          else null
+        end;
+        v_lines_items := case
+          when v_lines_order_el is not null and jsonb_typeof(v_lines_order_el -> 'items') = 'array' then v_lines_order_el -> 'items'
+          else '[]'::jsonb
+        end;
+
+        for v_lines_item in select * from jsonb_array_elements(v_lines_items)
+        loop
+          begin
+            v_lines_variation_info := v_lines_item -> 'variation_info';
+            v_lines_product_display_id := coalesce(v_lines_variation_info ->> 'product_display_id', v_lines_item ->> 'product_display_id');
+            if v_lines_product_display_id is null or trim(v_lines_product_display_id) = '' then
+              continue;
+            end if;
+
+            v_lines_variation_id := coalesce(v_lines_variation_info ->> 'variation_id', v_lines_item ->> 'variation_id', v_lines_item ->> 'variationId');
+            v_lines_qty := public.pancake_parse_decimal(v_lines_item ->> 'quantity');
+            v_lines_price := public.pancake_parse_decimal(coalesce(v_lines_variation_info ->> 'retail_price', v_lines_item ->> 'retail_price'));
+            v_lines_name := coalesce(v_lines_variation_info ->> 'name', v_lines_item ->> 'name');
+            v_lines_note := v_lines_item ->> 'note';
+            v_lines_line_id := coalesce(
+              v_lines_item ->> 'line_id', v_lines_item ->> 'id', v_lines_item ->> 'order_line_id',
+              v_lines_item ->> 'order_item_id', v_lines_item ->> 'item_id', ''
+            );
+
+            insert into public."OnlineOrderLines" (
+              "OrderID", "LineID", "ItemCode", "product_display_id", "VariationId", "Quantity", "UnitCost", "Price", "GrossAmount", "Note", "Description", "SyncedAtUtc"
+            ) values (
+              v_lines_order_id, v_lines_line_id, v_lines_product_display_id, v_lines_product_display_id, nullif(v_lines_variation_id, ''), v_lines_qty, null, v_lines_price, v_lines_price * v_lines_qty, nullif(v_lines_note, ''), nullif(v_lines_name, ''), now()
+            )
+            on conflict ("OrderID", "LineID") do update set
+              "ItemCode" = excluded."ItemCode",
+              "product_display_id" = excluded."product_display_id",
+              "VariationId" = excluded."VariationId",
+              "Quantity" = excluded."Quantity",
+              "Price" = excluded."Price",
+              "GrossAmount" = excluded."GrossAmount",
+              "Note" = excluded."Note",
+              "Description" = excluded."Description",
+              "SyncedAtUtc" = now();
+          exception when others then
+            null; -- skip malformed line, keep processing the rest
+          end;
+        end loop;
+
+        v_lines_checked := v_lines_checked + 1;
+      exception when others then
+        null; -- skip this order's lines fetch, retried on a future run
+      end;
+    end loop;
+  end if;
+
+  return query select v_orders_synced, v_orders_inserted, v_orders_updated, v_glass_checked, v_lines_checked;
 end;
 $$;
 
@@ -2439,6 +2573,7 @@ declare
   v_warehouse_name text;
   v_created_by text;
   v_confirmed_by text;
+  v_confirmed_at timestamptz;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -2645,18 +2780,18 @@ begin
       -- last persisted. No extra table/read needed - "Last_Updated_At"/"SyncedAtUtc" already
       -- live on this same row and are what track "when did this order last change" (Pancake's
       -- timestamp) vs. "when did we last touch this row" (ours) respectively.
-      select t.created_by, t.confirmed_by into v_created_by, v_confirmed_by
+      select t.created_by, t.confirmed_by, t.confirmed_at into v_created_by, v_confirmed_by, v_confirmed_at
       from public.pancake_extract_created_confirmed_by(v_item) t;
 
       begin
         insert into public."OnlineOrders" (
           "OrderID", "Date", "Time", "Status", "CustomerName", "LocationID",
           "MoneyToCollect", "AmountPaid", "Discount", "Balance", "ForDelivery", "ShippingAddress",
-          "EstimatedDeliveryDate", "Last_Updated_At", "ReceivedAtShop", "CreatedBy", "ConfirmedBy", "SyncedAtUtc"
+          "EstimatedDeliveryDate", "Last_Updated_At", "ReceivedAtShop", "CreatedBy", "ConfirmedBy", "ConfirmedAtUtc", "SyncedAtUtc"
         ) values (
           v_order_id, v_date, v_time, v_status, v_customer, v_location_id,
           v_money_to_collect, v_amount_paid, v_discount, v_balance, v_for_delivery, v_shipping_address,
-          v_est_delivery_date, v_last_updated_utc, v_received_at_shop, v_created_by, v_confirmed_by, now()
+          v_est_delivery_date, v_last_updated_utc, v_received_at_shop, v_created_by, v_confirmed_by, v_confirmed_at, now()
         )
         on conflict ("OrderID") do update set
           "Date" = excluded."Date",
@@ -2675,6 +2810,7 @@ begin
           "ReceivedAtShop" = excluded."ReceivedAtShop",
           "CreatedBy" = coalesce(excluded."CreatedBy", "OnlineOrders"."CreatedBy"),
           "ConfirmedBy" = coalesce(excluded."ConfirmedBy", "OnlineOrders"."ConfirmedBy"),
+          "ConfirmedAtUtc" = coalesce(excluded."ConfirmedAtUtc", "OnlineOrders"."ConfirmedAtUtc"),
           "SyncedAtUtc" = now()
         where public."OnlineOrders"."Last_Updated_At" is distinct from excluded."Last_Updated_At"
            or public."OnlineOrders"."Status" is distinct from excluded."Status"

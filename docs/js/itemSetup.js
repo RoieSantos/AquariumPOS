@@ -48,6 +48,75 @@ async function loadVariantCounts() {
 
 let variantCountsByItemCode = new Map();
 
+// Vendor tagging (factbox) - per "tag the item" to a vendor, see supabase_vendor_tables.sql /
+// docs/vendor-setup.html. Vendor counts are expected to be small, so a plain <select> loaded
+// once at page load is enough - no need for the debounced search-dropdown pattern Transfer
+// Orders uses for large item/variant lookups.
+let vendorOptions = []; // [{ code, name }]
+
+async function loadVendorOptionsOnce() {
+  const { data, error } = await supabaseClient.rpc('admin_list_vendors', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: null,
+    p_page: 1,
+    p_page_size: 500
+  });
+
+  if (error || !data) {
+    vendorOptions = [];
+    return;
+  }
+
+  vendorOptions = data.filter((v) => v.vendor_code).map((v) => ({ code: v.vendor_code, name: v.name }));
+}
+
+function populateFactboxVendorSelect(selectedCode) {
+  const select = document.getElementById('factboxVendorSelect');
+  const options = vendorOptions
+    .map((v) => `<option value="${v.code}">${v.code} - ${v.name}</option>`)
+    .join('');
+  select.innerHTML = '<option value="">(No vendor tagged)</option>' + options;
+  select.value = selectedCode || '';
+}
+
+async function saveFactboxVendor() {
+  if (!openFactboxCode) return;
+
+  const savedEl = document.getElementById('factboxVendorSaved');
+  savedEl.classList.add('hidden');
+
+  const saveBtn = document.getElementById('factboxVendorSaveBtn');
+  const vendorCode = document.getElementById('factboxVendorSelect').value;
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  const { error } = await supabaseClient.rpc('admin_set_item_vendor', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: openFactboxCode,
+    p_vendor_code: vendorCode || null
+  });
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = 'Save';
+
+  if (error) {
+    window.alert(error.message);
+    return;
+  }
+
+  // Keep the cached row in sync so re-opening the factbox (or a later render) shows the tag
+  // without a full list reload.
+  const item = itemsByCode.get(openFactboxCode);
+  if (item) {
+    item.vendor_code = vendorCode || null;
+    item.vendor_name = vendorOptions.find((v) => v.code === vendorCode)?.name || null;
+  }
+
+  savedEl.classList.remove('hidden');
+}
+
 function itemRowsHtml(items) {
   return items
     .map((i) => {
@@ -173,6 +242,9 @@ async function openFactbox(code) {
     ? imageHtml(item.images, 'factbox-image-thumb')
     : '<p class="muted">No image available.</p>';
 
+  document.getElementById('factboxVendorSaved').classList.add('hidden');
+  populateFactboxVendorSelect(item.vendor_code);
+
   const variantsSection = document.getElementById('factboxVariants');
   variantsSection.innerHTML = '<p class="muted">Loading variants...</p>';
 
@@ -210,6 +282,7 @@ function wireFactbox() {
   });
 
   document.getElementById('factboxCloseBtn').addEventListener('click', closeFactbox);
+  document.getElementById('factboxVendorSaveBtn').addEventListener('click', saveFactboxVendor);
 }
 
 (async function init() {
@@ -236,5 +309,6 @@ function wireFactbox() {
   wireItemSearch();
   wireFactbox();
   await loadVariantCounts();
+  await loadVendorOptionsOnce();
   await loadItems();
 })();

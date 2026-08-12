@@ -18,6 +18,12 @@ namespace AquariumPOS
     public static class OnlinefunctionsEvents
     {
         private const string InstoreOnlineOrderMapTable = "dbo.InstoreOnlineOrderMap";
+        // Separate from InstoreOnlineOrderMapTable (which tracks the Pancake order sync and is keyed
+        // by ReceiptNo as its PK) because this tracks a different, independent sync - AdvanceOrderHeader/
+        // Lines rows pushed to Supabase's AdvanceOrders/AdvanceOrderLines tables for the web portal.
+        // Reusing InstoreOnlineOrderMapTable would mean the Pancake and portal statuses for the same
+        // receipt fight over the same row.
+        private const string AdvanceOrderPortalSyncMapTable = "dbo.AdvanceOrderPortalSyncMap";
         private const string AdvanceOrderTransferVariationId = "1e412dc9-ffde-4b4d-af91-10606f355963";
         public static Action<string>? HttpRequestDebugNotifier { get; set; }
 
@@ -478,7 +484,11 @@ namespace AquariumPOS
             }
         }
 
-        private static void EnsureInstoreOnlineOrderMapTable()
+        // Widened from private to internal so callers outside this class (AdvanceOrdersHeaderForm,
+        // AdvanceOrderLinesForm) can defensively ensure this table exists before querying it
+        // directly for Pancake sync status display - a fresh install may not have it yet if no
+        // sync has ever run.
+        internal static void EnsureInstoreOnlineOrderMapTable()
         {
             using var conn = new SqlConnection(GlobalSettings.ConnectionString);
             conn.Open();
@@ -777,6 +787,92 @@ WHEN NOT MATCHED THEN
             cmd.Parameters.AddWithValue("@LocalReceiptNo", receiptNo.Trim());
             cmd.Parameters.AddWithValue("@OnlineOrderId", (object?)(onlineOrderId?.Trim() ?? string.Empty) ?? string.Empty);
             cmd.Parameters.AddWithValue("@LocalType", (object?)(localType ?? string.Empty) ?? string.Empty);
+            cmd.Parameters.AddWithValue("@LastAction", (object?)(lastAction ?? string.Empty) ?? string.Empty);
+            cmd.Parameters.AddWithValue("@LastResponse", (object?)(responseText ?? string.Empty) ?? string.Empty);
+            cmd.ExecuteNonQuery();
+        }
+
+        // AdvanceOrderHeader has its own OnlineOrderID column (added directly against the live DB,
+        // not present in every install) separate from dbo.InstoreOnlineOrderMap's mapping row - the
+        // latter is what SyncAdvanceOrderToCloud actually keys off of to decide CREATE vs UPDATE, but
+        // callers displaying/reporting on AdvanceOrderHeader directly (grids, Supabase sync) had no
+        // way to see the Pancake order id without also joining that side table. Best-effort/no-op if
+        // the column doesn't exist on this install - never masks the real sync success/failure.
+        private static void UpdateAdvanceOrderHeaderOnlineOrderId(string receiptNo, string onlineOrderId)
+        {
+            if (string.IsNullOrWhiteSpace(receiptNo) || string.IsNullOrWhiteSpace(onlineOrderId))
+                return;
+
+            try
+            {
+                using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+                conn.Open();
+
+                using var checkCmd = new SqlCommand("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'AdvanceOrderHeader' AND COLUMN_NAME = 'OnlineOrderID'", conn);
+                if (checkCmd.ExecuteScalar() == null)
+                    return;
+
+                using var cmd = new SqlCommand("UPDATE dbo.AdvanceOrderHeader SET OnlineOrderID = @OnlineOrderId WHERE ReceiptNo = @ReceiptNo", conn);
+                cmd.Parameters.AddWithValue("@OnlineOrderId", onlineOrderId.Trim());
+                cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo.Trim());
+                cmd.ExecuteNonQuery();
+            }
+            catch
+            {
+                // best-effort - never mask the original sync success/failure
+            }
+        }
+
+        // Widened from private to internal for the same reason as EnsureInstoreOnlineOrderMapTable
+        // above - AdvanceOrdersHeaderForm/AdvanceOrderLinesForm need to defensively ensure this
+        // table exists before querying it directly for the "Portal Status" display, since a fresh
+        // install (or one that's never posted an advance order since this shipped) may not have it.
+        internal static void EnsureAdvanceOrderPortalSyncMapTable()
+        {
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+
+            var sql = $@"
+IF OBJECT_ID('{AdvanceOrderPortalSyncMapTable}', 'U') IS NULL
+BEGIN
+    CREATE TABLE {AdvanceOrderPortalSyncMapTable} (
+        ReceiptNo NVARCHAR(100) NOT NULL PRIMARY KEY,
+        LastAction NVARCHAR(20) NULL,
+        LastResponse NVARCHAR(MAX) NULL,
+        CreatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_AdvanceOrderPortalSyncMap_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
+        UpdatedAtUtc DATETIME2 NOT NULL CONSTRAINT DF_AdvanceOrderPortalSyncMap_UpdatedAtUtc DEFAULT SYSUTCDATETIME()
+    );
+END";
+
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.ExecuteNonQuery();
+        }
+
+        private static void UpsertAdvanceOrderPortalSyncStatus(string receiptNo, string lastAction, string responseText)
+        {
+            if (string.IsNullOrWhiteSpace(receiptNo))
+                return;
+
+            EnsureAdvanceOrderPortalSyncMapTable();
+
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+
+            var sql = $@"
+MERGE {AdvanceOrderPortalSyncMapTable} AS target
+USING (SELECT @ReceiptNo AS ReceiptNo) AS source
+ON target.ReceiptNo = source.ReceiptNo
+WHEN MATCHED THEN
+    UPDATE SET
+        LastAction = @LastAction,
+        LastResponse = @LastResponse,
+        UpdatedAtUtc = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN
+    INSERT (ReceiptNo, LastAction, LastResponse, CreatedAtUtc, UpdatedAtUtc)
+    VALUES (@ReceiptNo, @LastAction, @LastResponse, SYSUTCDATETIME(), SYSUTCDATETIME());";
+
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo.Trim());
             cmd.Parameters.AddWithValue("@LastAction", (object?)(lastAction ?? string.Empty) ?? string.Empty);
             cmd.Parameters.AddWithValue("@LastResponse", (object?)(responseText ?? string.Empty) ?? string.Empty);
             cmd.ExecuteNonQuery();
@@ -1543,7 +1639,59 @@ END";
             return SyncAdvanceOrderToCloudAsync(receiptNo).GetAwaiter().GetResult();
         }
 
+        // Short delays between automatic retry attempts for transient Pancake sync failures (network
+        // blip, momentary 5xx, request timeout). 2 retries (3 attempts total) with a growing delay -
+        // enough to ride out a brief outage without the caller (silent auto-sync triggers, or a
+        // staff member clicking "Resend to Pancake") waiting too long for a doomed call to give up.
+        private static readonly TimeSpan[] AdvanceOrderSyncRetryDelays = { TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5) };
+
+        // Only retry failures that are plausibly transient. Everything else (missing receipt,
+        // missing AdvanceOrderHeader row, bad API key/shop config, a 4xx the API will reject again
+        // identically) would just fail the same way 3 times in a row, so there's no point delaying
+        // the error - fail fast and let it be recorded/surfaced immediately.
+        private static bool IsTransientAdvanceOrderSyncFailure(Exception ex)
+        {
+            return ex is HttpRequestException
+                || ex is TaskCanceledException
+                || ex is TimeoutException
+                || ex is System.Net.Sockets.SocketException;
+        }
+
+        // Persists a SYNC_FAILED status to dbo.InstoreOnlineOrderMap once retries are exhausted (or
+        // immediately for a non-transient failure) - the core logic below has 3 throw points plus
+        // whatever LoadAdvanceOrderCloudContext/GetCurrentWarehouseIdAsync/JSON building/network
+        // calls can throw, and previously none of them left any trace in InstoreOnlineOrderMap (only
+        // successes were ever recorded there). Mirrors the existing CREATE_FAILED pattern already
+        // used for regular in-store orders in CreateInstoreOnlineOrder's catch block. Passing an
+        // empty onlineOrderId is safe - UpsertInstoreOnlineOrderMap's MERGE preserves the existing
+        // OnlineOrderId when passed blank, so a failed resend after a prior success can't wipe out
+        // the real Pancake order id (and the next resend still correctly takes the idempotent UPDATE
+        // path instead of creating a duplicate order).
         public static async Task<string> SyncAdvanceOrderToCloudAsync(string receiptNo, TimeSpan? timeout = null)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    return await SyncAdvanceOrderToCloudCoreAsync(receiptNo, timeout).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (attempt < AdvanceOrderSyncRetryDelays.Length && IsTransientAdvanceOrderSyncFailure(ex))
+                {
+                    await Task.Delay(AdvanceOrderSyncRetryDelays[attempt]).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        UpsertInstoreOnlineOrderMap(receiptNo?.Trim() ?? string.Empty, string.Empty, "ADVANCEORDER", "SYNC_FAILED", ex.ToString());
+                    }
+                    catch { /* best-effort status write, never mask the original failure */ }
+                    throw;
+                }
+            }
+        }
+
+        private static async Task<string> SyncAdvanceOrderToCloudCoreAsync(string receiptNo, TimeSpan? timeout)
         {
             if (string.IsNullOrWhiteSpace(receiptNo))
                 throw new ArgumentException("receiptNo is required", nameof(receiptNo));
@@ -1608,6 +1756,7 @@ END";
                     var updateText = await putResp.Content.ReadAsStringAsync().ConfigureAwait(false);
                     await SyncAdvanceOrderPaymentsAsync(http, baseUrl, apiKey, shopId, context, onlineOrderId).ConfigureAwait(false);
                     UpsertInstoreOnlineOrderMap(context.ReceiptNo, onlineOrderId, "ADVANCEORDER", "UPDATE", updateText);
+                    UpdateAdvanceOrderHeaderOnlineOrderId(context.ReceiptNo, onlineOrderId);
                     MarkReceiptSentToOnline(context.ReceiptNo);
                     return updateText;
                 }
@@ -1621,6 +1770,7 @@ END";
 
                     await SyncAdvanceOrderPaymentsAsync(http, baseUrl, apiKey, shopId, context, onlineOrderId).ConfigureAwait(false);
                     UpsertInstoreOnlineOrderMap(context.ReceiptNo, onlineOrderId, "ADVANCEORDER", "UPDATE", patchText);
+                    UpdateAdvanceOrderHeaderOnlineOrderId(context.ReceiptNo, onlineOrderId);
                     MarkReceiptSentToOnline(context.ReceiptNo);
                     return patchText;
                 }
@@ -1644,6 +1794,7 @@ END";
 
                 string createdOrderId = ExtractOnlineOrderId(createRespText);
                 UpsertInstoreOnlineOrderMap(context.ReceiptNo, createdOrderId, "ADVANCEORDERS", "CREATE", createRespText);
+                UpdateAdvanceOrderHeaderOnlineOrderId(context.ReceiptNo, createdOrderId);
                 MarkReceiptSentToOnline(context.ReceiptNo);
                 if (string.IsNullOrWhiteSpace(createdOrderId))
                     return createRespText;
@@ -3686,53 +3837,175 @@ ORDER BY [RunningSerialNo]", connection);
                 throw new InvalidOperationException("AdvanceOrderLinesSupabaseEndpoint is not configured.");
 
             var headerRows = LoadAdvanceOrderHeaderRows();
-            int insertedCount = 0;
-            int updatedCount = 0;
+            ApplyCurrentWarehouseToHeaderRows(headerRows);
+            var (headerInserted, headerUpdated) = await UpsertAdvanceOrderHeaderRowsAsync(headerEndpoint, headerRows, timeout.Value).ConfigureAwait(false);
+
+            var lineRows = LoadAdvanceOrderLineRows();
+            var (lineInserted, lineUpdated) = await UpsertAdvanceOrderLineRowsAsync(lineEndpoint, lineRows, timeout.Value).ConfigureAwait(false);
+
+            return new MasterDataSyncSummary(headerRows.Count + lineRows.Count, headerInserted + lineInserted, headerUpdated + lineUpdated);
+        }
+
+        public static string SyncSingleAdvanceOrderToSupabase(string receiptNo)
+        {
+            return SyncSingleAdvanceOrderToSupabaseAsync(receiptNo).GetAwaiter().GetResult();
+        }
+
+        // Pushes just one advance order's header + lines to Supabase right after it's posted, instead
+        // of waiting for the next masterDataSyncTimer tick (every 5 minutes - see MainForm.
+        // MasterDataSyncTimer_Tick) to pick it up. Records the outcome into
+        // dbo.AdvanceOrderPortalSyncMap so AdvanceOrdersHeaderForm/AdvanceOrderLinesForm can show a
+        // "Portal Status" the same way they already show "Pancake Status" from
+        // dbo.InstoreOnlineOrderMap. The periodic bulk sync above still runs regardless, as a safety
+        // net for anything this per-receipt push missed or failed.
+        public static async Task<string> SyncSingleAdvanceOrderToSupabaseAsync(string receiptNo, TimeSpan? timeout = null)
+        {
+            if (string.IsNullOrWhiteSpace(receiptNo))
+                throw new ArgumentException("receiptNo is required", nameof(receiptNo));
+
+            timeout ??= TimeSpan.FromSeconds(30);
+            receiptNo = receiptNo.Trim();
+
+            try
+            {
+                string headerEndpoint = GlobalSettings.AdvanceOrdersSupabaseEndpoint?.Trim() ?? string.Empty;
+                string lineEndpoint = GlobalSettings.AdvanceOrderLinesSupabaseEndpoint?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(headerEndpoint))
+                    throw new InvalidOperationException("AdvanceOrdersSupabaseEndpoint is not configured.");
+                if (string.IsNullOrWhiteSpace(lineEndpoint))
+                    throw new InvalidOperationException("AdvanceOrderLinesSupabaseEndpoint is not configured.");
+
+                var headerRows = LoadAdvanceOrderHeaderRows(receiptNo);
+                ApplyCurrentWarehouseToHeaderRows(headerRows);
+                var (headerInserted, headerUpdated) = await UpsertAdvanceOrderHeaderRowsAsync(headerEndpoint, headerRows, timeout.Value).ConfigureAwait(false);
+
+                var lineRows = LoadAdvanceOrderLineRows(receiptNo);
+                var (lineInserted, lineUpdated) = await UpsertAdvanceOrderLineRowsAsync(lineEndpoint, lineRows, timeout.Value).ConfigureAwait(false);
+
+                string summary = $"{headerInserted + lineInserted} inserted, {headerUpdated + lineUpdated} updated";
+                UpsertAdvanceOrderPortalSyncStatus(receiptNo, "SYNCED", summary);
+                return summary;
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    UpsertAdvanceOrderPortalSyncStatus(receiptNo, "SYNC_FAILED", ex.ToString());
+                }
+                catch { /* best-effort status write, never mask the original failure */ }
+                throw;
+            }
+        }
+
+        private static async Task<(int Inserted, int Updated)> UpsertAdvanceOrderHeaderRowsAsync(string headerEndpoint, List<(string TransactionNo, Dictionary<string, object?> Payload)> headerRows, TimeSpan timeout)
+        {
+            int inserted = 0;
+            int updated = 0;
 
             foreach (var headerRow in headerRows)
             {
                 string payloadJson = JsonSerializer.Serialize(headerRow.Payload);
-                bool exists = await SupabaseRecordExistsAsync(headerEndpoint, timeout.Value, ("TransactionNo", headerRow.TransactionNo)).ConfigureAwait(false);
+                bool exists = await SupabaseRecordExistsAsync(headerEndpoint, timeout, ("TransactionNo", headerRow.TransactionNo)).ConfigureAwait(false);
                 if (exists)
                 {
-                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(headerEndpoint, ("TransactionNo", headerRow.TransactionNo)), payloadJson, timeout.Value).ConfigureAwait(false);
-                    updatedCount++;
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(headerEndpoint, ("TransactionNo", headerRow.TransactionNo)), payloadJson, timeout).ConfigureAwait(false);
+                    updated++;
                 }
                 else
                 {
-                    await PostJsonWithHeadersAsync(headerEndpoint, payloadJson, timeout.Value).ConfigureAwait(false);
-                    insertedCount++;
+                    await PostJsonWithHeadersAsync(headerEndpoint, payloadJson, timeout).ConfigureAwait(false);
+                    inserted++;
                 }
             }
 
-            var lineRows = LoadAdvanceOrderLineRows();
+            return (inserted, updated);
+        }
+
+        private static async Task<(int Inserted, int Updated)> UpsertAdvanceOrderLineRowsAsync(string lineEndpoint, List<(string TransactionNo, string LineNo, Dictionary<string, object?> Payload)> lineRows, TimeSpan timeout)
+        {
+            int inserted = 0;
+            int updated = 0;
+
             foreach (var lineRow in lineRows)
             {
                 string payloadJson = JsonSerializer.Serialize(lineRow.Payload);
-                bool exists = await SupabaseRecordExistsAsync(lineEndpoint, timeout.Value, ("TransactionNo", lineRow.TransactionNo), ("LineNo", lineRow.LineNo)).ConfigureAwait(false);
+                bool exists = await SupabaseRecordExistsAsync(lineEndpoint, timeout, ("TransactionNo", lineRow.TransactionNo), ("LineNo", lineRow.LineNo)).ConfigureAwait(false);
                 if (exists)
                 {
-                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(lineEndpoint, ("TransactionNo", lineRow.TransactionNo), ("LineNo", lineRow.LineNo)), payloadJson, timeout.Value).ConfigureAwait(false);
-                    updatedCount++;
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(lineEndpoint, ("TransactionNo", lineRow.TransactionNo), ("LineNo", lineRow.LineNo)), payloadJson, timeout).ConfigureAwait(false);
+                    updated++;
                 }
                 else
                 {
-                    await PostJsonWithHeadersAsync(lineEndpoint, payloadJson, timeout.Value).ConfigureAwait(false);
-                    insertedCount++;
+                    await PostJsonWithHeadersAsync(lineEndpoint, payloadJson, timeout).ConfigureAwait(false);
+                    inserted++;
                 }
             }
 
-            return new MasterDataSyncSummary(headerRows.Count + lineRows.Count, insertedCount, updatedCount);
+            return (inserted, updated);
         }
 
         private static readonly string[] OptionalAdvanceOrderHeaderColumns = new[]
         {
             "StoreNo", "POSTerminalNo", "ReceiptNo", "Type", "Quantity", "Price", "Discount",
             "GrossAmount", "NetAmount", "Date", "Time", "UserID", "Downpayment", "Balance",
-            "CustomerName", "Order_Description", "EODID"
+            "CustomerName", "Order_Description", "EODID",
+            // OnlineOrderID: written by UpdateAdvanceOrderHeaderOnlineOrderId on every successful
+            // Pancake sync. FullyPaid/DatePaid: written by MainForm's advance-order posting (paid in
+            // full upfront) and AdvanceOrdersHeaderForm's PayInFullButton_Click (paid later) - see
+            // sql_advance_order_paid_status.sql/supabase_advance_orders_paid_status_fields.sql. Safe
+            // to list here unconditionally: the column-presence check below just omits them from the
+            // payload on any install where that SQL hasn't been run yet.
+            //
+            // Warehouse is deliberately NOT here / not a local column at all - per "make sure the
+            // warehouse is being sent too without logging it on local DB, I just want to see it on
+            // the portal", it's looked up live from dbo.Warehouses and stitched into the payload at
+            // sync time instead (see GetCurrentAdvanceOrderWarehouseName below).
+            "OnlineOrderID", "FullyPaid", "DatePaid"
         };
 
-        private static List<(string TransactionNo, Dictionary<string, object?> Payload)> LoadAdvanceOrderHeaderRows()
+        // "Current warehouse" for tagging Advance Orders in the Portal - deliberately not persisted
+        // onto dbo.AdvanceOrderHeader (see OptionalAdvanceOrderHeaderColumns above); looked up fresh
+        // every sync instead, same Current_Warehouse flag GetCurrentWarehouseIdAsync uses for the
+        // Pancake sync, but returning the human-readable Name rather than the Pancake warehouse GUID
+        // since that's what's actually useful to read/filter by in the Portal.
+        private static string GetCurrentAdvanceOrderWarehouseName()
+        {
+            try
+            {
+                using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+                conn.Open();
+                using var cmd = new SqlCommand("SELECT TOP 1 Name FROM dbo.Warehouses WHERE Current_Warehouse = 1 ORDER BY [ID]", conn);
+                return cmd.ExecuteScalar()?.ToString()?.Trim() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        // Stitches "Warehouse" into every row's payload right before it's sent, since it isn't a real
+        // local column LoadAdvanceOrderHeaderRows could have picked up on its own. One lookup shared
+        // across all rows in a batch (not one query per row) since it's the same "current warehouse"
+        // for the whole sync run regardless of how many orders are in it.
+        private static void ApplyCurrentWarehouseToHeaderRows(List<(string TransactionNo, Dictionary<string, object?> Payload)> headerRows)
+        {
+            if (headerRows.Count == 0)
+                return;
+
+            string warehouseName = GetCurrentAdvanceOrderWarehouseName();
+            object? warehouseValue = string.IsNullOrWhiteSpace(warehouseName) ? null : warehouseName;
+            foreach (var headerRow in headerRows)
+            {
+                headerRow.Payload["Warehouse"] = warehouseValue;
+            }
+        }
+
+        // receiptNoFilter: when provided (and the ReceiptNo column exists), restricts the result to
+        // just that one advance order - used by SyncSingleAdvanceOrderToSupabaseAsync so posting an
+        // order doesn't have to push every advance order in the table to sync just the one that
+        // changed. Null/omitted (the periodic bulk sync's usage) loads every row, as before.
+        private static List<(string TransactionNo, Dictionary<string, object?> Payload)> LoadAdvanceOrderHeaderRows(string? receiptNoFilter = null)
         {
             var rows = new List<(string TransactionNo, Dictionary<string, object?> Payload)>();
             using var connection = new SqlConnection(GlobalSettings.ConnectionString);
@@ -3745,7 +4018,12 @@ ORDER BY [RunningSerialNo]", connection);
             var presentColumns = OptionalAdvanceOrderHeaderColumns.Where(c => columns.Contains(c)).ToList();
             string selectColumns = "[TransactionNo]" + (presentColumns.Count > 0 ? ", [" + string.Join("], [", presentColumns) + "]" : string.Empty);
 
-            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.AdvanceOrderHeader", connection);
+            bool filterByReceipt = !string.IsNullOrWhiteSpace(receiptNoFilter) && columns.Contains("ReceiptNo");
+            string sql = $"SELECT {selectColumns} FROM dbo.AdvanceOrderHeader" + (filterByReceipt ? " WHERE ReceiptNo = @ReceiptNo" : string.Empty);
+
+            using var cmd = new SqlCommand(sql, connection);
+            if (filterByReceipt)
+                cmd.Parameters.AddWithValue("@ReceiptNo", receiptNoFilter!.Trim());
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
             {
@@ -3774,7 +4052,8 @@ ORDER BY [RunningSerialNo]", connection);
             "VariationId"
         };
 
-        private static List<(string TransactionNo, string LineNo, Dictionary<string, object?> Payload)> LoadAdvanceOrderLineRows()
+        // receiptNoFilter: see LoadAdvanceOrderHeaderRows above - same single-order filtering purpose.
+        private static List<(string TransactionNo, string LineNo, Dictionary<string, object?> Payload)> LoadAdvanceOrderLineRows(string? receiptNoFilter = null)
         {
             var rows = new List<(string TransactionNo, string LineNo, Dictionary<string, object?> Payload)>();
             using var connection = new SqlConnection(GlobalSettings.ConnectionString);
@@ -3787,7 +4066,12 @@ ORDER BY [RunningSerialNo]", connection);
             var presentColumns = OptionalAdvanceOrderLineColumns.Where(c => columns.Contains(c)).ToList();
             string selectColumns = "[TransactionNo], [LineNo]" + (presentColumns.Count > 0 ? ", [" + string.Join("], [", presentColumns) + "]" : string.Empty);
 
-            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.AdvanceOrderLines", connection);
+            bool filterByReceipt = !string.IsNullOrWhiteSpace(receiptNoFilter) && columns.Contains("ReceiptNo");
+            string sql = $"SELECT {selectColumns} FROM dbo.AdvanceOrderLines" + (filterByReceipt ? " WHERE ReceiptNo = @ReceiptNo" : string.Empty);
+
+            using var cmd = new SqlCommand(sql, connection);
+            if (filterByReceipt)
+                cmd.Parameters.AddWithValue("@ReceiptNo", receiptNoFilter!.Trim());
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
             {

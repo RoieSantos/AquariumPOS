@@ -19,6 +19,7 @@ function renderTopNav(activeLabel) {
     items.push({ href: 'transfer-orders.html', label: 'Transfer Orders' });
     items.push({ href: 'posted-transfer-orders.html', label: 'Posted Transfers' });
     items.push({ href: 'reports.html', label: 'Reports' });
+    items.push({ href: 'top-selling-items.html', label: 'Top Selling Items' });
     items.push({ href: 'customer-aquarium.html', label: 'Customer Aquarium' });
   }
 
@@ -39,6 +40,8 @@ function renderTopNav(activeLabel) {
     items.push({ href: 'category-setup.html', label: 'Categories' });
     items.push({ href: 'advance-orders.html', label: 'Advance Orders' });
     items.push({ href: 'expense-entries.html', label: 'Expenses' });
+    items.push({ href: 'order-timing-dashboard.html', label: 'Order Timing' });
+    items.push({ href: 'vendor-setup.html', label: 'Vendors' });
     items.push({ href: 'user-setup.html', label: 'User Setup' });
   }
 

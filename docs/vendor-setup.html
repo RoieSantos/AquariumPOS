@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vendors - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Vendors</h1>
+    <p class="muted">Manage suppliers, tag items to a vendor from Item Setup, and track bills owed and payments made. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it.
+         No password re-entry prompt otherwise - super user status alone is enough, same trust
+         model as Online Orders/Expenses. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="vendorSetupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Vendors</h2>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <input type="text" id="vendorSearchInput" placeholder="Search by code, name, or contact..." style="max-width:280px;" />
+          <button class="btn btn-primary" id="newVendorBtn" type="button">+ New Vendor</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Contact</th>
+              <th>Phone</th>
+              <th style="text-align:right;">Balance</th>
+              <th>Active</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="vendorTableBody">
+            <tr><td colspan="7" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="vendorPaginationBar"></div>
+    </div>
+  </div>
+
+  <!-- New vendor modal -->
+  <div id="newVendorModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">New Vendor</h2>
+        <button class="btn btn-secondary btn-sm" id="closeNewVendorBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newVendorCode">Vendor Code</label>
+          <input type="text" id="newVendorCode" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="newVendorName">Name</label>
+          <input type="text" id="newVendorName" />
+        </div>
+        <div class="form-row">
+          <label for="newVendorContact">Contact Person</label>
+          <input type="text" id="newVendorContact" />
+        </div>
+        <div class="form-row">
+          <label for="newVendorPhone">Phone</label>
+          <input type="text" id="newVendorPhone" />
+        </div>
+        <div class="form-row">
+          <label for="newVendorEmail">Email</label>
+          <input type="text" id="newVendorEmail" />
+        </div>
+        <div class="form-row">
+          <label for="newVendorAddress">Address</label>
+          <input type="text" id="newVendorAddress" />
+        </div>
+        <div class="form-row">
+          <label for="newVendorTerms">Payment Terms</label>
+          <input type="text" id="newVendorTerms" placeholder="e.g. Net 30" />
+        </div>
+        <div class="form-row">
+          <label for="newVendorNotes">Notes</label>
+          <input type="text" id="newVendorNotes" />
+        </div>
+      </div>
+
+      <div id="newVendorError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveNewVendorBtn" type="button">Create Vendor</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage vendor modal: info edit + bills + payments -->
+  <div id="manageVendorModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:820px;">
+      <div class="toolbar">
+        <h2 style="margin:0;" id="manageVendorTitle">Vendor</h2>
+        <button class="btn btn-secondary btn-sm" id="closeManageVendorBtn" type="button">Close</button>
+      </div>
+
+      <div class="stat-card-grid" style="margin-bottom:18px;">
+        <div class="stat-card">
+          <div class="stat-label">Total Billed</div>
+          <div class="stat-value" id="manageVendorBilled">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Paid</div>
+          <div class="stat-value" id="manageVendorPaid">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Balance</div>
+          <div class="stat-value" id="manageVendorBalance">-</div>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="manageVendorCode">Vendor Code</label>
+          <input type="text" id="manageVendorCode" disabled />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorName">Name</label>
+          <input type="text" id="manageVendorName" />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorContact">Contact Person</label>
+          <input type="text" id="manageVendorContact" />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorPhone">Phone</label>
+          <input type="text" id="manageVendorPhone" />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorEmail">Email</label>
+          <input type="text" id="manageVendorEmail" />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorAddress">Address</label>
+          <input type="text" id="manageVendorAddress" />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorTerms">Payment Terms</label>
+          <input type="text" id="manageVendorTerms" />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorNotes">Notes</label>
+          <input type="text" id="manageVendorNotes" />
+        </div>
+        <div class="form-row">
+          <label for="manageVendorActive" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="manageVendorActive" style="width:auto;" />
+            <span>Active</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="manageVendorError" class="error-text hidden"></div>
+      <div style="margin-top:12px; text-align:right;">
+        <button class="btn btn-success" id="saveManageVendorBtn" type="button">Save Vendor Info</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h3 style="margin:0; font-size:15px;">Bills</h3>
+        <button class="btn btn-secondary btn-sm" id="toggleAddBillBtn" type="button">+ Add Bill</button>
+      </div>
+
+      <div id="addBillForm" class="hidden" style="margin-bottom:14px;">
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="newBillDate">Bill Date</label>
+            <input type="date" id="newBillDate" />
+          </div>
+          <div class="form-row">
+            <label for="newBillDueDate">Due Date</label>
+            <input type="date" id="newBillDueDate" />
+          </div>
+          <div class="form-row">
+            <label for="newBillReference">Reference No.</label>
+            <input type="text" id="newBillReference" />
+          </div>
+          <div class="form-row">
+            <label for="newBillAmount">Amount</label>
+            <input type="number" id="newBillAmount" min="0" step="0.01" />
+          </div>
+          <div class="form-row">
+            <label for="newBillNotes">Notes</label>
+            <input type="text" id="newBillNotes" />
+          </div>
+        </div>
+        <div id="addBillError" class="error-text hidden"></div>
+        <div style="margin-top:8px; text-align:right;">
+          <button class="btn btn-success btn-sm" id="saveBillBtn" type="button">Save Bill</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Bill No.</th>
+              <th>Date</th>
+              <th>Due</th>
+              <th>Reference</th>
+              <th style="text-align:right;">Amount</th>
+              <th style="text-align:right;">Paid</th>
+              <th style="text-align:right;">Balance</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="vendorBillsBody">
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h3 style="margin:0; font-size:15px;">Payments</h3>
+        <button class="btn btn-secondary btn-sm" id="toggleAddPaymentBtn" type="button">+ Record Payment</button>
+      </div>
+
+      <div id="addPaymentForm" class="hidden" style="margin-bottom:14px;">
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="newPaymentBill">Apply to Bill</label>
+            <select id="newPaymentBill">
+              <option value="">(Not applied to a specific bill)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="newPaymentDate">Payment Date</label>
+            <input type="date" id="newPaymentDate" />
+          </div>
+          <div class="form-row">
+            <label for="newPaymentAmount">Amount</label>
+            <input type="number" id="newPaymentAmount" min="0" step="0.01" />
+          </div>
+          <div class="form-row">
+            <label for="newPaymentMethod">Method</label>
+            <input type="text" id="newPaymentMethod" placeholder="e.g. Cash, Bank Transfer" />
+          </div>
+          <div class="form-row">
+            <label for="newPaymentReference">Reference No.</label>
+            <input type="text" id="newPaymentReference" />
+          </div>
+          <div class="form-row">
+            <label for="newPaymentNotes">Notes</label>
+            <input type="text" id="newPaymentNotes" />
+          </div>
+        </div>
+        <div id="addPaymentError" class="error-text hidden"></div>
+        <div style="margin-top:8px; text-align:right;">
+          <button class="btn btn-success btn-sm" id="savePaymentBtn" type="button">Save Payment</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Payment No.</th>
+              <th>Date</th>
+              <th>Bill No.</th>
+              <th style="text-align:right;">Amount</th>
+              <th>Method</th>
+              <th>Reference</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="vendorPaymentsBody">
+            <tr><td colspan="7" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/vendorSetup.js"></script>
+</body>
+</html>

@@ -2,6 +2,7 @@ using System;
 using System.Data;
 using System.Data.SqlClient;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace AquariumPOS
@@ -14,10 +15,16 @@ namespace AquariumPOS
         private Button searchButton;
         private Button closeButton;
         private Button payInFullButton;
+        private Label pancakeSyncStatusLabel;
+        private Button resendToPancakeButton;
+        private Label portalSyncStatusLabel;
+        private Button resendToPortalButton;
+        private Button showErrorsButton;
 
         private string filterStoreNo = "";
         private string filterPosTerminalNo = "";
         private string filterTransactionNo = "";
+        private string resolvedReceiptNo = ""; // resolved from filterTransactionNo, cached by RefreshPancakeSyncStatus
 
         // public AdvanceOrderLinesForm()
 
@@ -102,14 +109,339 @@ namespace AquariumPOS
             // };
             // payInFullButton.Click += PayInFullButton_Click;
 
+            pancakeSyncStatusLabel = new Label
+            {
+                Text = "Pancake: -",
+                Location = new Point(20, 625),
+                Size = new Size(400, 25),
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                ForeColor = Color.Gray
+            };
+
+            portalSyncStatusLabel = new Label
+            {
+                Text = "Portal: -",
+                Location = new Point(20, 650),
+                Size = new Size(400, 25),
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                ForeColor = Color.Gray
+            };
+
+            resendToPancakeButton = new Button
+            {
+                Text = "Resend to Pancake",
+                Location = new Point(430, 620),
+                Size = new Size(160, 30),
+                BackColor = Color.DarkOrange,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            resendToPancakeButton.Click += async (s, e) => await ResendToPancakeButton_ClickAsync();
+
+            resendToPortalButton = new Button
+            {
+                Text = "Resend to Portal",
+                Location = new Point(600, 620),
+                Size = new Size(160, 30),
+                BackColor = Color.DarkOrange,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            resendToPortalButton.Click += async (s, e) => await ResendToPortalButton_ClickAsync();
+
+            showErrorsButton = new Button
+            {
+                Text = "Show Errors",
+                Location = new Point(770, 620),
+                Size = new Size(130, 30),
+                BackColor = Color.Firebrick,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            showErrorsButton.Click += ShowErrorsButton_Click;
+
             Controls.Add(titleLabel);
             Controls.Add(searchTextBox);
             Controls.Add(searchButton);
             Controls.Add(linesGridView);
             Controls.Add(payInFullButton);
+            Controls.Add(pancakeSyncStatusLabel);
+            Controls.Add(portalSyncStatusLabel);
+            Controls.Add(resendToPancakeButton);
+            Controls.Add(resendToPortalButton);
+            Controls.Add(showErrorsButton);
             Controls.Add(closeButton);
 
             LoadLines();
+            RefreshPancakeSyncStatus();
+            RefreshPortalSyncStatus();
+        }
+
+        // Resolves ReceiptNo from filterTransactionNo (same query PayInFullButton_Click in this
+        // form already uses) and refreshes the status label from dbo.InstoreOnlineOrderMap. Same
+        // friendly-text/color mapping as AdvanceOrdersHeaderForm's grid column, so both places
+        // agree on what "Synced"/"Failed"/"Not Sent" mean.
+        private void RefreshPancakeSyncStatus()
+        {
+            try
+            {
+                OnlinefunctionsEvents.EnsureInstoreOnlineOrderMapTable();
+
+                using (var conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+
+                    var headerCmd = new SqlCommand("SELECT ReceiptNo FROM AdvanceOrderHeader WHERE TransactionNo = @tn", conn);
+                    headerCmd.Parameters.AddWithValue("@tn", filterTransactionNo);
+                    resolvedReceiptNo = headerCmd.ExecuteScalar()?.ToString()?.Trim() ?? "";
+
+                    string rawStatus = "";
+                    string onlineOrderId = "";
+                    if (!string.IsNullOrWhiteSpace(resolvedReceiptNo))
+                    {
+                        var statusCmd = new SqlCommand("SELECT LastAction, OnlineOrderId FROM dbo.InstoreOnlineOrderMap WHERE LocalReceiptNo = @receiptNo", conn);
+                        statusCmd.Parameters.AddWithValue("@receiptNo", resolvedReceiptNo);
+                        using var statusRdr = statusCmd.ExecuteReader();
+                        if (statusRdr.Read())
+                        {
+                            rawStatus = statusRdr["LastAction"]?.ToString()?.Trim() ?? "";
+                            onlineOrderId = statusRdr["OnlineOrderId"]?.ToString()?.Trim() ?? "";
+                        }
+                    }
+
+                    string orderIdSuffix = string.IsNullOrWhiteSpace(onlineOrderId) ? "" : $" (Order #{onlineOrderId})";
+                    switch (rawStatus.ToUpperInvariant())
+                    {
+                        case "CREATE":
+                        case "UPDATE":
+                            pancakeSyncStatusLabel.Text = $"Pancake: Synced{orderIdSuffix}";
+                            pancakeSyncStatusLabel.ForeColor = Color.DarkGreen;
+                            break;
+                        case "SYNC_FAILED":
+                            pancakeSyncStatusLabel.Text = $"Pancake: Failed{orderIdSuffix}";
+                            pancakeSyncStatusLabel.ForeColor = Color.DarkRed;
+                            break;
+                        default:
+                            pancakeSyncStatusLabel.Text = "Pancake: Not Sent";
+                            pancakeSyncStatusLabel.ForeColor = Color.Gray;
+                            break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                pancakeSyncStatusLabel.Text = "Pancake: Unknown";
+                pancakeSyncStatusLabel.ForeColor = Color.Gray;
+                System.Diagnostics.Debug.WriteLine($"RefreshPancakeSyncStatus failed: {ex.Message}");
+            }
+        }
+
+        // Same pattern as RefreshPancakeSyncStatus above, but reads dbo.AdvanceOrderPortalSyncMap -
+        // the separate status tracked by SyncSingleAdvanceOrderToSupabase for the push into Supabase's
+        // AdvanceOrders/AdvanceOrderLines tables that feeds the web portal. Relies on
+        // RefreshPancakeSyncStatus having already resolved resolvedReceiptNo, so call that first.
+        private void RefreshPortalSyncStatus()
+        {
+            try
+            {
+                OnlinefunctionsEvents.EnsureAdvanceOrderPortalSyncMapTable();
+
+                string rawStatus = "";
+                if (!string.IsNullOrWhiteSpace(resolvedReceiptNo))
+                {
+                    using var conn = new SqlConnection(connectionString);
+                    conn.Open();
+                    var statusCmd = new SqlCommand("SELECT LastAction FROM dbo.AdvanceOrderPortalSyncMap WHERE ReceiptNo = @receiptNo", conn);
+                    statusCmd.Parameters.AddWithValue("@receiptNo", resolvedReceiptNo);
+                    rawStatus = statusCmd.ExecuteScalar()?.ToString()?.Trim() ?? "";
+                }
+
+                switch (rawStatus.ToUpperInvariant())
+                {
+                    case "SYNCED":
+                        portalSyncStatusLabel.Text = "Portal: Synced";
+                        portalSyncStatusLabel.ForeColor = Color.DarkGreen;
+                        break;
+                    case "SYNC_FAILED":
+                        portalSyncStatusLabel.Text = "Portal: Failed";
+                        portalSyncStatusLabel.ForeColor = Color.DarkRed;
+                        break;
+                    default:
+                        portalSyncStatusLabel.Text = "Portal: Not Sent";
+                        portalSyncStatusLabel.ForeColor = Color.Gray;
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                portalSyncStatusLabel.Text = "Portal: Unknown";
+                portalSyncStatusLabel.ForeColor = Color.Gray;
+                System.Diagnostics.Debug.WriteLine($"RefreshPortalSyncStatus failed: {ex.Message}");
+            }
+        }
+
+        private async Task ResendToPancakeButton_ClickAsync()
+        {
+            if (string.IsNullOrWhiteSpace(resolvedReceiptNo))
+            {
+                MessageBox.Show(this, "Could not resolve a Receipt No. for this advance order.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            resendToPancakeButton.Enabled = false;
+            var previousCursor = Cursor;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                await OnlinefunctionsEvents.SyncAdvanceOrderToCloudAsync(resolvedReceiptNo).ConfigureAwait(true);
+                MessageBox.Show(this, $"Advance order {resolvedReceiptNo} was resent to Pancake successfully.", "Resend Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to resend {resolvedReceiptNo} to Pancake.\n\nError: {ex.Message}", "Resend Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                Cursor = previousCursor;
+                resendToPancakeButton.Enabled = true;
+                RefreshPancakeSyncStatus();
+                RefreshPortalSyncStatus();
+            }
+        }
+
+        // Same idea as ResendToPancakeButton_ClickAsync above, but for the separate Supabase portal
+        // push (OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabaseAsync) - independent status,
+        // independent resend.
+        private async Task ResendToPortalButton_ClickAsync()
+        {
+            if (string.IsNullOrWhiteSpace(resolvedReceiptNo))
+            {
+                MessageBox.Show(this, "Could not resolve a Receipt No. for this advance order.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            resendToPortalButton.Enabled = false;
+            var previousCursor = Cursor;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                await OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabaseAsync(resolvedReceiptNo).ConfigureAwait(true);
+                MessageBox.Show(this, $"Advance order {resolvedReceiptNo} was resent to the Portal successfully.", "Resend Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to resend {resolvedReceiptNo} to the Portal.\n\nError: {ex.Message}", "Resend Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                Cursor = previousCursor;
+                resendToPortalButton.Enabled = true;
+                RefreshPancakeSyncStatus();
+                RefreshPortalSyncStatus();
+            }
+        }
+
+        // Shows the full LastResponse text (successful API response, or the exception detail on
+        // failure) recorded for this advance order by both the Pancake sync
+        // (dbo.InstoreOnlineOrderMap) and the Portal sync (dbo.AdvanceOrderPortalSyncMap), so staff
+        // can see exactly why a "Failed" status happened without having to read server logs.
+        private void ShowErrorsButton_Click(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(resolvedReceiptNo))
+            {
+                MessageBox.Show(this, "Could not resolve a Receipt No. for this advance order.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            try
+            {
+                OnlinefunctionsEvents.EnsureInstoreOnlineOrderMapTable();
+                OnlinefunctionsEvents.EnsureAdvanceOrderPortalSyncMapTable();
+
+                string pancakeAction = "", pancakeResponse = "", pancakeUpdated = "";
+                string portalAction = "", portalResponse = "", portalUpdated = "";
+
+                using (var conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+
+                    using (var cmd = new SqlCommand("SELECT LastAction, LastResponse, UpdatedAtUtc FROM dbo.InstoreOnlineOrderMap WHERE LocalReceiptNo = @receiptNo", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@receiptNo", resolvedReceiptNo);
+                        using var rdr = cmd.ExecuteReader();
+                        if (rdr.Read())
+                        {
+                            pancakeAction = rdr["LastAction"]?.ToString()?.Trim() ?? "";
+                            pancakeResponse = rdr["LastResponse"]?.ToString() ?? "";
+                            pancakeUpdated = rdr["UpdatedAtUtc"] is DateTime pdt ? pdt.ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "";
+                        }
+                    }
+
+                    using (var cmd = new SqlCommand("SELECT LastAction, LastResponse, UpdatedAtUtc FROM dbo.AdvanceOrderPortalSyncMap WHERE ReceiptNo = @receiptNo", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@receiptNo", resolvedReceiptNo);
+                        using var rdr = cmd.ExecuteReader();
+                        if (rdr.Read())
+                        {
+                            portalAction = rdr["LastAction"]?.ToString()?.Trim() ?? "";
+                            portalResponse = rdr["LastResponse"]?.ToString() ?? "";
+                            portalUpdated = rdr["UpdatedAtUtc"] is DateTime pdt ? pdt.ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "";
+                        }
+                    }
+                }
+
+                string details =
+                    $"=== Pancake Sync ===\r\n" +
+                    $"Status: {(string.IsNullOrWhiteSpace(pancakeAction) ? "Not Sent" : pancakeAction)}\r\n" +
+                    $"Last Updated: {(string.IsNullOrWhiteSpace(pancakeUpdated) ? "-" : pancakeUpdated)}\r\n" +
+                    $"Details:\r\n{(string.IsNullOrWhiteSpace(pancakeResponse) ? "(none)" : pancakeResponse)}\r\n\r\n" +
+                    $"=== Portal (Supabase) Sync ===\r\n" +
+                    $"Status: {(string.IsNullOrWhiteSpace(portalAction) ? "Not Sent" : portalAction)}\r\n" +
+                    $"Last Updated: {(string.IsNullOrWhiteSpace(portalUpdated) ? "-" : portalUpdated)}\r\n" +
+                    $"Details:\r\n{(string.IsNullOrWhiteSpace(portalResponse) ? "(none)" : portalResponse)}";
+
+                ShowSyncDetailsDialog(details);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to load sync details for {resolvedReceiptNo}.\n\nError: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ShowSyncDetailsDialog(string details)
+        {
+            using var dlg = new Form
+            {
+                Text = $"Sync Details - {resolvedReceiptNo}",
+                Size = new Size(700, 500),
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = true,
+                FormBorderStyle = FormBorderStyle.Sizable
+            };
+
+            var textBox = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                Dock = DockStyle.Fill,
+                Font = new Font("Consolas", 9),
+                Text = details
+            };
+
+            var closeBtn = new Button
+            {
+                Text = "Close",
+                Dock = DockStyle.Bottom,
+                Height = 35,
+                DialogResult = DialogResult.Cancel
+            };
+
+            dlg.Controls.Add(textBox);
+            dlg.Controls.Add(closeBtn);
+            dlg.CancelButton = closeBtn;
+            dlg.ShowDialog(this);
         }
 
         // public AdvanceOrderLinesForm(string storeNo, string posTerminalNo, string transactionNo) : this()
@@ -370,6 +702,16 @@ namespace AquariumPOS
                             catch (Exception exSync)
                             {
                                 System.Diagnostics.Debug.WriteLine($"SyncAdvanceOrderToCloud(update) failed for {receiptNo}: {exSync.Message}");
+                            }
+
+                            try
+                            {
+                                var portalResp = OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabase(receiptNo);
+                                System.Diagnostics.Debug.WriteLine($"SyncSingleAdvanceOrderToSupabase(update) response for {receiptNo}: {portalResp}");
+                            }
+                            catch (Exception portalSyncEx)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"SyncSingleAdvanceOrderToSupabase(update) failed for {receiptNo}: {portalSyncEx.Message}");
                             }
                         });
                     }

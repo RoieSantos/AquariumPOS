@@ -967,7 +967,36 @@ INSERT INTO CardProcessingFeeLog (
                     {
                         command4.ExecuteNonQuery();
                     }
-        
+
+                    // FullyPaid/DatePaid on AdvanceOrderHeader - previously a manual one-off script
+                    // (sql_advance_order_paid_status.sql) that had to be run by hand and was easy to
+                    // forget; auto-applying here on every startup (idempotent, additive-only ALTER)
+                    // matches how the columns above are already self-healed instead of relying on
+                    // someone remembering to run a script.
+                    string addAdvanceOrderFullyPaidColumn = @"
+                        IF EXISTS (SELECT * FROM sysobjects WHERE name='AdvanceOrderHeader' AND xtype='U')
+                        AND NOT EXISTS (SELECT * FROM syscolumns WHERE id = OBJECT_ID('AdvanceOrderHeader') AND name = 'FullyPaid')
+                        BEGIN
+                            ALTER TABLE dbo.AdvanceOrderHeader ADD FullyPaid BIT NOT NULL CONSTRAINT DF_AdvanceOrderHeader_FullyPaid DEFAULT (0);
+                        END";
+
+                    using (var command5 = new SqlCommand(addAdvanceOrderFullyPaidColumn, connection))
+                    {
+                        command5.ExecuteNonQuery();
+                    }
+
+                    string addAdvanceOrderDatePaidColumn = @"
+                        IF EXISTS (SELECT * FROM sysobjects WHERE name='AdvanceOrderHeader' AND xtype='U')
+                        AND NOT EXISTS (SELECT * FROM syscolumns WHERE id = OBJECT_ID('AdvanceOrderHeader') AND name = 'DatePaid')
+                        BEGIN
+                            ALTER TABLE dbo.AdvanceOrderHeader ADD DatePaid DATETIME2 NULL;
+                        END";
+
+                    using (var command6 = new SqlCommand(addAdvanceOrderDatePaidColumn, connection))
+                    {
+                        command6.ExecuteNonQuery();
+                    }
+
                     CompleteAquariumSetData.EnsureTablesExist(connectionString);
 
                 }
@@ -24545,12 +24574,27 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                         MessageBox.Show("Error: 'UserID' column does not exist in AdvanceOrderHeader table. Please check your database schema.", "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return;
                     }
-                    var cmd = new SqlCommand(@"
+                    // ensure balance equals NetAmount - Downpayment
+                    decimal computedBalance = NetAmount - downpayment;
+                    advanceReceiptBalance = computedBalance;
+
+                    // FullyPaid/DatePaid are optional columns (see sql_advance_order_paid_status.sql) -
+                    // not every install will have run that script yet, so check before referencing
+                    // them. Covers the customer paying the full amount upfront (no separate downpayment
+                    // step needed later via AdvanceOrdersHeaderForm's "Pay In Full" button).
+                    var checkPaidCmd = new SqlCommand("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'AdvanceOrderHeader' AND COLUMN_NAME IN ('FullyPaid', 'DatePaid')", connection);
+                    bool hasFullyPaidColumns = Convert.ToInt32(checkPaidCmd.ExecuteScalar()) == 2;
+                    bool isFullyPaidAtCreation = computedBalance <= 0m;
+
+                    string insertSql = @"
                         INSERT INTO AdvanceOrderHeader (
-                            StoreNo, POSTerminalNo, TransactionNo, ReceiptNo, Type, Quantity, Price, Discount, GrossAmount, NetAmount, Date, Time, UserID, Downpayment, Balance
+                            StoreNo, POSTerminalNo, TransactionNo, ReceiptNo, Type, Quantity, Price, Discount, GrossAmount, NetAmount, Date, Time, UserID, Downpayment, Balance, CustomerName, Order_Description" +
+                            (hasFullyPaidColumns ? ", FullyPaid, DatePaid" : "") + @"
                         ) VALUES (
-                            @storeNo, @posTerminalNo, @transactionNo, @receiptNo, @type, @quantity, @price, @discount, @grossAmount, @netAmount, @date, @time, @UserID, @downpayment, @balance
-                        )", connection);
+                            @storeNo, @posTerminalNo, @transactionNo, @receiptNo, @type, @quantity, @price, @discount, @grossAmount, @netAmount, @date, @time, @UserID, @downpayment, @balance, @customerName, @orderDescription" +
+                            (hasFullyPaidColumns ? ", @fullyPaid, @datePaid" : "") + @"
+                        )";
+                    var cmd = new SqlCommand(insertSql, connection);
                     cmd.Parameters.AddWithValue("@storeNo", storeNo);
                     cmd.Parameters.AddWithValue("@posTerminalNo", posTerminalNo);
                     cmd.Parameters.AddWithValue("@transactionNo", currentTransNo);
@@ -24563,12 +24607,21 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                     cmd.Parameters.AddWithValue("@netAmount", NetAmount);
                     cmd.Parameters.AddWithValue("@date", date);
                     cmd.Parameters.AddWithValue("@time", time);
+                    // Captured from the PromptForCustomerName/PromptForOrderDescription prompts above
+                    // (both required, so always non-blank here) - previously prompted for but never
+                    // actually persisted onto AdvanceOrderHeader, so CustomerName/Order_Description
+                    // were blank on every advance order ever created despite the Pancake note and
+                    // Supabase sync already being wired to read them.
+                    cmd.Parameters.AddWithValue("@customerName", customerName);
+                    cmd.Parameters.AddWithValue("@orderDescription", orderDescription);
                     cmd.Parameters.AddWithValue("@UserID", userID);
                     cmd.Parameters.AddWithValue("@downpayment", downpayment);
-                    // ensure balance equals NetAmount - Downpayment
-                    decimal computedBalance = NetAmount - downpayment;
-                    advanceReceiptBalance = computedBalance;
                     cmd.Parameters.AddWithValue("@balance", computedBalance);
+                    if (hasFullyPaidColumns)
+                    {
+                        cmd.Parameters.AddWithValue("@fullyPaid", isFullyPaidAtCreation);
+                        cmd.Parameters.AddWithValue("@datePaid", isFullyPaidAtCreation ? (object)DateTime.UtcNow : DBNull.Value);
+                    }
                     cmd.ExecuteNonQuery();
                 }
                 // If this is a full advance order (not just an initial downpayment), record payment entries as well
@@ -24593,6 +24646,20 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                                 "Cloud Sync Warning",
                                 MessageBoxButtons.OK,
                                 MessageBoxIcon.Warning);
+                        }
+
+                        // Portal (Supabase) push - independent of the Pancake push above, so a
+                        // Pancake failure doesn't also block this, and vice versa. Silent/best-effort
+                        // like the auto-sync elsewhere; the masterDataSyncTimer's 5-minute bulk sync
+                        // is the safety net if this fails.
+                        try
+                        {
+                            var portalResp = OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabase(advanceReceiptToSync);
+                            System.Diagnostics.Debug.WriteLine($"SyncSingleAdvanceOrderToSupabase(create) response for {advanceReceiptToSync}: {portalResp}");
+                        }
+                        catch (Exception portalSyncEx)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"SyncSingleAdvanceOrderToSupabase(create) failed for {advanceReceiptToSync}: {portalSyncEx.Message}");
                         }
                     }
                 }

@@ -225,6 +225,11 @@ $$;
 drop function if exists public.admin_list_items(text, text, text);
 drop function if exists public.admin_list_items(text, text, text, int, int);
 
+-- Widened to also expose the tagged vendor (Items."VendorCode", left-joined to Vendors for the
+-- display name) - see supabase_vendor_tables.sql. Return columns are widening, so this needs the
+-- explicit drop below (Postgres 42P13 "cannot change return type of existing function").
+drop function if exists public.admin_list_items(text, text, text, int, int);
+
 create or replace function public.admin_list_items(p_admin_username text, p_admin_password text, p_search text default null, p_page int default 1, p_page_size int default 50)
 returns table(
   code text,
@@ -243,6 +248,8 @@ returns table(
   is_active boolean,
   images text,
   synced_at_utc timestamptz,
+  vendor_code text,
+  vendor_name text,
   total_count bigint
 )
 language plpgsql
@@ -258,12 +265,14 @@ begin
   end if;
 
   return query
-    select "Code"::text, "Name"::text, "Description"::text, "Cost", "Price", "WholesalePrice", "RetailPrice", "PromoPrice",
-           "CategoryCode"::text, "Brand"::text, "SKU"::text, "QuantityInStock", "MinimumStock", "IsActive", "Images"::text, "SyncedAtUtc",
+    select i."Code"::text, i."Name"::text, i."Description"::text, i."Cost", i."Price", i."WholesalePrice", i."RetailPrice", i."PromoPrice",
+           i."CategoryCode"::text, i."Brand"::text, i."SKU"::text, i."QuantityInStock", i."MinimumStock", i."IsActive", i."Images"::text, i."SyncedAtUtc",
+           i."VendorCode"::text, v."Name"::text,
            count(*) over()
-    from public."Items"
-    where p_search is null or trim(p_search) = '' or "Code" ilike '%' || p_search || '%' or "Name" ilike '%' || p_search || '%'
-    order by "Name"
+    from public."Items" i
+    left join public."Vendors" v on v."VendorCode" = i."VendorCode"
+    where p_search is null or trim(p_search) = '' or i."Code" ilike '%' || p_search || '%' or i."Name" ilike '%' || p_search || '%'
+    order by i."Name"
     limit v_page_size offset (v_page - 1) * v_page_size;
 end;
 $$;

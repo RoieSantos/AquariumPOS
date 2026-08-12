@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Timing - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Order Timing</h1>
+    <p class="muted">When orders get created vs. confirmed, by day of week and hour of day, so you can spot the best times to staff order confirmation. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Filter by date</h2>
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <label for="dateFromInput" class="muted" style="margin:0;">From</label>
+          <input type="date" id="dateFromInput" />
+          <label for="dateToInput" class="muted" style="margin:0;">To</label>
+          <input type="date" id="dateToInput" />
+          <button class="btn btn-primary" id="applyFilterBtn" type="button">Apply</button>
+          <button class="btn btn-secondary" id="clearFilterBtn" type="button">Clear</button>
+        </div>
+      </div>
+
+      <div id="timingLoading" class="muted">Loading...</div>
+      <div id="timingError" class="error-text hidden"></div>
+
+      <div id="timingResults" class="hidden">
+        <div class="stat-card-grid">
+          <div class="stat-card">
+            <div class="stat-label"><span class="stat-icon">📅</span> Best Day to Confirm</div>
+            <div class="stat-value" id="bestConfirmDay">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label"><span class="stat-icon">⏰</span> Best Hour to Confirm</div>
+            <div class="stat-value" id="bestConfirmHour">-</div>
+          </div>
+        </div>
+
+        <div class="card timing-section">
+          <div class="timing-section-title">Order Creation Timing</div>
+          <div class="timing-section-sub">When customers/staff place orders</div>
+          <div class="timing-section-sub" style="margin-top:14px;font-weight:600;">By day of week</div>
+          <div class="timing-bar-row timing-bar-row-created" id="createdByDayRow"></div>
+          <div class="timing-section-sub" style="margin-top:18px;font-weight:600;">By hour of day</div>
+          <div class="timing-bar-row timing-bar-row-created timing-bar-row-hours" id="createdByHourRow"></div>
+          <div class="timing-section-sub" style="margin-top:18px;font-weight:600;">Strongest individual dates</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Orders Created</th></tr></thead>
+              <tbody id="createdTopDatesBody"></tbody>
+            </table>
+          </div>
+          <div class="timing-section-sub" style="margin-top:18px;font-weight:600;">Strongest weeks</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Week</th><th>Orders Created</th></tr></thead>
+              <tbody id="createdTopWeeksBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card timing-section">
+          <div class="timing-section-title">Order Confirmation Timing</div>
+          <div class="timing-section-sub">When orders get confirmed</div>
+          <div class="timing-section-sub" style="margin-top:14px;font-weight:600;">By day of week</div>
+          <div class="timing-bar-row timing-bar-row-confirmed" id="confirmedByDayRow"></div>
+          <div class="timing-section-sub" style="margin-top:18px;font-weight:600;">By hour of day</div>
+          <div class="timing-bar-row timing-bar-row-confirmed timing-bar-row-hours" id="confirmedByHourRow"></div>
+          <div class="timing-section-sub" style="margin-top:18px;font-weight:600;">Strongest individual dates</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Orders Confirmed</th></tr></thead>
+              <tbody id="confirmedTopDatesBody"></tbody>
+            </table>
+          </div>
+          <div class="timing-section-sub" style="margin-top:18px;font-weight:600;">Strongest weeks</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Week</th><th>Orders Confirmed</th></tr></thead>
+              <tbody id="confirmedTopWeeksBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/orderTimingDashboard.js"></script>
+</body>
+</html>

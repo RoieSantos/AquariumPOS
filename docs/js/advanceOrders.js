@@ -14,11 +14,18 @@ function formatMoney(value) {
   return Number(value).toFixed(2);
 }
 
+function formatDateTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleString();
+}
+
 function renderOrderRows(orders) {
   const tbody = document.getElementById('orderTableBody');
 
   if (!orders || orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">No advance orders found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="15" class="muted">No advance orders found.</td></tr>';
     return;
   }
 
@@ -35,6 +42,10 @@ function renderOrderRows(orders) {
         <td>${formatMoney(o.net_amount)}</td>
         <td>${formatMoney(o.downpayment)}</td>
         <td>${formatMoney(o.balance)}</td>
+        <td>${o.online_order_id || ''}</td>
+        <td><span class="badge ${o.fully_paid ? 'badge-success' : 'badge-neutral'}">${o.fully_paid ? 'Yes' : 'No'}</span></td>
+        <td>${formatDateTime(o.date_paid)}</td>
+        <td>${o.warehouse || ''}</td>
         <td><a href="advance-order-lines.html?transaction=${encodeURIComponent(o.transaction_no)}">View</a></td>
       </tr>
     `)
@@ -43,7 +54,7 @@ function renderOrderRows(orders) {
 
 async function loadOrders() {
   const tbody = document.getElementById('orderTableBody');
-  tbody.innerHTML = '<tr><td colspan="11" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="15" class="muted">Loading...</td></tr>';
 
   const thisGeneration = ++loadGeneration;
 
@@ -58,7 +69,7 @@ async function loadOrders() {
   if (thisGeneration !== loadGeneration) return; // a newer search/page request superseded this one
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="11" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="15" class="error-text">${error.message}</td></tr>`;
     return;
   }
 

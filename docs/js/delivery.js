@@ -10,7 +10,9 @@ let currentSession = null;
 let currentYear = null;
 let currentMonth = null; // 0-11
 let stopsByDate = {}; // 'YYYY-MM-DD' -> array of stop rows
+let selectedDateKey = null; // last-clicked day cell, for the .selected highlight
 let selectedOrderId = null;
+let assignOrdersByOrderId = new Map(); // last-rendered assign-modal rows, keyed by order_id
 let assignSearchDebounceHandle = null;
 let assignSearch = '';
 let assignPage = 1;
@@ -116,6 +118,7 @@ function renderCalendarGrid(year, month) {
     const classes = ['delivery-day-cell'];
     if (stops.length > 0) classes.push('has-stops');
     if (isToday) classes.push('today');
+    if (key === selectedDateKey) classes.push('selected');
 
     html += `
       <div class="${classes.join(' ')}" data-date="${key}">
@@ -141,6 +144,11 @@ async function renderMonth(year, month) {
 }
 
 function showDayDetail(dateKey) {
+  selectedDateKey = dateKey;
+  document.querySelectorAll('.delivery-day-cell[data-date]').forEach((cell) => {
+    cell.classList.toggle('selected', cell.dataset.date === dateKey);
+  });
+
   const stops = stopsByDate[dateKey] || [];
   const panel = document.getElementById('dayDetailPanel');
   panel.classList.remove('hidden');
@@ -162,12 +170,26 @@ function showDayDetail(dateKey) {
           <td>${s.shipping_address || ''}</td>
           <td>${formatMoney(s.balance)}</td>
           <td>${s.notes || ''}</td>
-          <td><button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button></td>
+          <td>
+            ${s.geocode_status !== 'ok' ? `<button class="btn btn-secondary btn-sm" data-retry-geocode-id="${s.stop_id}" data-retry-geocode-address="${encodeURIComponent(s.shipping_address || '')}" type="button">Retry Map</button>` : ''}
+            <button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button>
+          </td>
         </tr>
       `).join('');
 
   tbody.querySelectorAll('button[data-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => removeStop(btn.dataset.stopId, dateKey));
+  });
+
+  tbody.querySelectorAll('button[data-retry-geocode-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Retrying...';
+      const address = decodeURIComponent(btn.getAttribute('data-retry-geocode-address'));
+      await geocodeAndSaveStop(btn.getAttribute('data-retry-geocode-id'), address);
+      await renderMonth(currentYear, currentMonth);
+      showDayDetail(dateKey);
+    });
   });
 
   renderDayMap(stops);
@@ -226,6 +248,12 @@ async function removeStop(stopId, dateKey) {
 
 function renderAssignOrdersTable(orders) {
   const tbody = document.getElementById('assignOrdersTableBody');
+
+  // Cached here (rather than re-fetched after assignment) because admin_list_deliverable_
+  // online_orders only returns orders NOT YET marked ForDelivery - by the time confirmAssign()
+  // needs this order's shipping_address for geocoding, admin_create_delivery_stop has already
+  // flipped ForDelivery to true, so a fresh lookup would come back empty.
+  assignOrdersByOrderId = new Map((orders || []).map((o) => [o.order_id, o]));
 
   if (!orders || orders.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">No deliverable orders found.</td></tr>';
@@ -381,12 +409,7 @@ async function confirmAssign() {
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);
 
-  const { data: orderRows } = await supabaseClient.rpc('admin_list_deliverable_online_orders', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_search: assignedOrderId
-  });
-  const matchedOrder = (orderRows || []).find((o) => o.order_id === assignedOrderId);
+  const matchedOrder = assignOrdersByOrderId.get(assignedOrderId);
   await geocodeAndSaveStop(stopId, matchedOrder ? matchedOrder.shipping_address : null);
 
   await renderMonth(currentYear, currentMonth);

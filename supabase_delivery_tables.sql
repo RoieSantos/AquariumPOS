@@ -1,6 +1,9 @@
--- Delivery scheduling: a calendar where staff assign Online Orders (ForDelivery = true) to a
--- delivery date on a truck, then view that day's stops on a Google Map (client-side, using the
--- Maps JS API + Geocoding API - see WebPortal/js/delivery.js).
+-- Delivery scheduling: a calendar where staff assign Online Orders to a delivery date on a
+-- truck, then view that day's stops on a Google Map (client-side, using the Maps JS API +
+-- Geocoding API - see WebPortal/js/delivery.js). The order picker looks up orders NOT YET marked
+-- ForDelivery (see admin_list_deliverable_online_orders below) - assigning one to a date is what
+-- flips OnlineOrders."ForDelivery" to true (admin_create_delivery_stop), rather than relying on
+-- whatever ForDelivery value Pancake itself synced in.
 --
 -- NOT related to DeliveryTrackingForm.cs (that's inter-warehouse stock transfer tracking, an
 -- unrelated desktop-only concept reusing the OnlineOrdersForm grid in a different mode) or the
@@ -68,9 +71,14 @@ comment on table public."DeliveryStops" is 'One row per Online Order assigned to
 drop function if exists public.admin_list_deliverable_online_orders(text, text, text);
 drop function if exists public.admin_list_deliverable_online_orders(text, text, text, int, int);
 
--- Orders eligible to be scheduled: ForDelivery = true, not Cancelled. LEFT JOIN DeliveryStops so
--- already-scheduled orders still show up (with their current scheduled_date/stop_id) instead of
--- disappearing from the list - staff may want to reschedule rather than re-search for the order.
+-- Orders eligible to be scheduled: NOT already marked ForDelivery, and status is Confirmed/
+-- Printed/To Ship only - per "lookup all order that is for delivery = false, then once its being
+-- assign can we now do for delivery = true" followed by "only confirmed / printed / To Ship
+-- status can be lookedup". Once an order is assigned (admin_create_delivery_stop flips
+-- ForDelivery to true), it naturally drops out of this list on the next search - it's been
+-- handled. LEFT JOIN DeliveryStops is kept even though a ForDelivery-true order won't match the
+-- where clause above (harmless no-op today) - it only matters if scheduled_date/stop_id ever need
+-- to be surfaced for a row still in this result set.
 --
 -- p_page/p_page_size (portal-wide pagination): total_count is count(*) over(), computed before
 -- LIMIT/OFFSET applies, so the client can compute total pages without a separate count query.
@@ -106,8 +114,8 @@ begin
            count(*) over()
     from public."OnlineOrders" o
     left join public."DeliveryStops" s on s."OrderID" = o."OrderID"
-    where o."ForDelivery" is true
-      and (o."Status" is null or o."Status" not ilike 'Cancelled')
+    where o."ForDelivery" is not true
+      and lower(o."Status") in ('confirmed', 'printed', 'to ship')
       and (
         p_search is null or trim(p_search) = ''
         or o."OrderID" ilike '%' || p_search || '%'
@@ -214,6 +222,11 @@ begin
     raise exception 'This order is already scheduled for that date.';
   end;
 
+  -- Assigning an order to a delivery date is what marks it ForDelivery = true - the order picker
+  -- (admin_list_deliverable_online_orders above) only offers orders that are NOT already flagged,
+  -- so this is what removes it from that pool going forward.
+  update public."OnlineOrders" set "ForDelivery" = true where "OrderID" = p_order_id;
+
   return v_id;
 end;
 $$;
@@ -296,12 +309,23 @@ language plpgsql
 security definer
 set search_path = public, extensions
 as $$
+declare
+  v_order_id text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
   end if;
 
-  delete from public."DeliveryStops" where "StopID" = p_stop_id;
+  delete from public."DeliveryStops" where "StopID" = p_stop_id returning "OrderID" into v_order_id;
+
+  -- Removing the stop hands the order back to the "not yet assigned" pool (admin_list_
+  -- deliverable_online_orders) rather than leaving it permanently flagged ForDelivery = true
+  -- with no way to look it up again. Guarded by "not exists another stop" in case an order is
+  -- ever legitimately scheduled on more than one date (the unique constraint on DeliveryStops is
+  -- per (OrderID, DeliveryDate), not per OrderID alone).
+  if v_order_id is not null and not exists (select 1 from public."DeliveryStops" where "OrderID" = v_order_id) then
+    update public."OnlineOrders" set "ForDelivery" = false where "OrderID" = v_order_id;
+  end if;
 end;
 $$;
 
