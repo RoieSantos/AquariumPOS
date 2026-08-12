@@ -494,8 +494,16 @@ END
 IF COL_LENGTH('dbo.ItemSerialTracking', 'UpdatedBy') IS NULL
 BEGIN
     ALTER TABLE dbo.ItemSerialTracking ADD UpdatedBy NVARCHAR(200) NULL;
-END
+END";
 
+            // Sent as its own round-trip, separate from ensureVariantColumnSql above - a computed
+            // column's expression can get bound against stale pre-ALTER metadata if it's compiled in
+            // the same batch as the ALTER that just added the column(s) it references (seen in the
+            // wild as "Invalid column name 'LastSyncedAtUtc'" even though the preceding IF block in
+            // that same batch had just added it). Running this only after the prior ExecuteNonQuery
+            // has fully returned guarantees LastSyncedAtUtc/UpdatedAtUtc/CreatedAtUtc are already
+            // committed, real metadata by the time this statement is even sent.
+            const string ensureSyncedComputedColumnSql = @"
 IF COL_LENGTH('dbo.ItemSerialTracking', 'SyncedToSupabase') IS NULL
 BEGIN
     -- Computed, not a stored/manually-set flag, so it can never drift out of sync with reality -
@@ -505,8 +513,9 @@ BEGIN
         CASE WHEN LastSyncedAtUtc IS NOT NULL AND LastSyncedAtUtc >= COALESCE(UpdatedAtUtc, CreatedAtUtc)
              THEN CONVERT(BIT, 1) ELSE CONVERT(BIT, 0) END
     );
-END
+END";
 
+            const string ensureStatusAndIndexSql = @"
 IF EXISTS (
     SELECT 1
     FROM sys.columns
@@ -533,6 +542,12 @@ END";
 
             using var ensureVariantCmd = new SqlCommand(ensureVariantColumnSql, conn, tran);
             ensureVariantCmd.ExecuteNonQuery();
+
+            using var ensureSyncedComputedCmd = new SqlCommand(ensureSyncedComputedColumnSql, conn, tran);
+            ensureSyncedComputedCmd.ExecuteNonQuery();
+
+            using var ensureStatusAndIndexCmd = new SqlCommand(ensureStatusAndIndexSql, conn, tran);
+            ensureStatusAndIndexCmd.ExecuteNonQuery();
         }
 
         public static List<AvailableSerialRecord> GetAvailableSerials(string itemCode, string? variantCode = null, IEnumerable<string>? excludedSerialNumbers = null)
@@ -570,7 +585,7 @@ WHERE ItemCode = @ItemCode
   AND (NULLIF(@Location, '') IS NULL OR NULLIF(LTRIM(RTRIM(ISNULL(Location, ''))), '') IS NULL OR Location = @Location)
 ORDER BY RunningSerialNo", conn);
             cmd.Parameters.AddWithValue("@ItemCode", normalizedItemCode);
-                        cmd.Parameters.AddWithValue("@VariantCode", normalizedVariantCode);
+            cmd.Parameters.AddWithValue("@VariantCode", normalizedVariantCode);
             cmd.Parameters.AddWithValue("@Location", currentLocation);
 
             using var rdr = cmd.ExecuteReader();
