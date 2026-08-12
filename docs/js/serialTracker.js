@@ -6,6 +6,9 @@
 let allSerials = [];
 let currentSession = null;
 let isProductionWarehouseUser = true; // unrestricted unless resolveIsProductionWarehouse says otherwise
+let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit control below
+let warehouseOptions = []; // [{ id, name }] loaded once, used by the edit-location dropdown
+let editLocationSerialNo = null;
 
 // Non-production (store) warehouses only see serial activity for their own location - Production
 // staff need the full cross-warehouse picture (that's who runs Stock Counts / ships Transfer
@@ -25,6 +28,90 @@ async function resolveIsProductionWarehouse(session) {
 
   const match = data.find((w) => (w.name || '').trim().toLowerCase() === session.warehouseName.trim().toLowerCase());
   return match ? !!match.is_production_warehouse : true;
+}
+
+// Warehouse list for the Edit Location dropdown - a fixed pick list (rather than free text) so
+// values stay an exact match against Warehouses."Name", the same string the desktop POS writes
+// via GetCurrentSerialTrackingLocation()/ApplyCurrentWarehouseToHeaderRows and now filters on in
+// ProductSerialTrackingForm.GetAvailableSerials. staff_search_warehouses (not admin_list_warehouses)
+// since Serial Admin is a staff-level flag, not necessarily a super user.
+async function loadWarehouseOptionsOnce() {
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    warehouseOptions = [];
+    return;
+  }
+
+  warehouseOptions = (data || []).filter((w) => w.name).map((w) => ({ id: w.id, name: w.name }));
+}
+
+function openEditLocationModal(serialNo, currentLocation) {
+  editLocationSerialNo = serialNo;
+  document.getElementById('editLocationSerialNo').textContent = serialNo;
+  document.getElementById('editLocationError').classList.add('hidden');
+
+  const select = document.getElementById('editLocationWarehouse');
+  const ownWarehouse = (currentSession?.warehouseName || '').trim();
+
+  if (ownWarehouse) {
+    // A Serial Admin tied to a specific store (StaffUsers.WarehouseName) can only tag a serial as
+    // belonging to their OWN warehouse - not reassign it to a different store - so the picker
+    // collapses to that single, locked value instead of the full warehouse list.
+    select.innerHTML = `<option value="${escapeHtml(ownWarehouse)}">${escapeHtml(ownWarehouse)}</option>`;
+    select.value = ownWarehouse;
+    select.disabled = true;
+  } else {
+    // No single WarehouseName on the account ("All warehouses") - nothing to restrict to, so keep
+    // the full picker.
+    const options = warehouseOptions.map((w) => `<option value="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`).join('');
+    select.innerHTML = '<option value="">(Unassigned)</option>' + options;
+    select.value = currentLocation || '';
+    select.disabled = false;
+  }
+
+  document.getElementById('editLocationModal').classList.remove('hidden');
+}
+
+async function saveEditLocation() {
+  const errorEl = document.getElementById('editLocationError');
+  errorEl.classList.add('hidden');
+
+  // Force the own-warehouse value server-side-equivalent even if the (disabled) select were
+  // somehow tampered with client-side - matches openEditLocationModal's restriction rather than
+  // trusting the DOM value alone.
+  const ownWarehouse = (currentSession?.warehouseName || '').trim();
+  const newLocation = ownWarehouse || document.getElementById('editLocationWarehouse').value.trim();
+  const saveBtn = document.getElementById('saveEditLocationBtn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  const { error } = await supabaseClient
+    .from('ItemSerialTracking')
+    .update({ Location: newLocation || null, UpdatedAtUtc: new Date().toISOString(), UpdatedBy: currentSession?.username || null })
+    .eq('SerialNo', editLocationSerialNo);
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = 'Save';
+
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const row = allSerials.find((r) => r.SerialNo === editLocationSerialNo);
+  if (row) {
+    row.Location = newLocation || null;
+    row.UpdatedAtUtc = new Date().toISOString();
+    row.UpdatedBy = currentSession?.username || null;
+  }
+
+  document.getElementById('editLocationModal').classList.add('hidden');
+  renderSerials();
 }
 
 function statusBadgeClass(status) {
@@ -47,6 +134,13 @@ function statusLabel(status) {
     case 'IN_TRANSIT': return 'In Transit';
     default: return status || '';
   }
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleString();
 }
 
 function escapeHtml(value) {
@@ -195,7 +289,7 @@ async function resolveAndOpenSourceDoc(docNo) {
 
 async function loadSerials() {
   const tbody = document.getElementById('serialTableBody');
-  tbody.innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient
     .from('ItemSerialTracking')
@@ -204,7 +298,7 @@ async function loadSerials() {
     .limit(500);
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="6" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -218,7 +312,11 @@ function renderSerials() {
   const statusFilter = document.getElementById('statusFilter').value;
 
   let rows = allSerials;
-  if (!isProductionWarehouseUser && currentSession?.warehouseName) {
+  // Serial Admins see every warehouse's serials regardless of their own production/non-production
+  // status - they need the full cross-store picture to find and correct mistagged serials, even
+  // though editing itself stays locked to their own warehouse (see openEditLocationModal/
+  // saveEditLocation).
+  if (!isProductionWarehouseUser && !isSerialAdmin && currentSession?.warehouseName) {
     const ownWarehouse = currentSession.warehouseName.trim().toLowerCase();
     rows = rows.filter((r) => (r.Location || '').trim().toLowerCase() === ownWarehouse);
   }
@@ -232,22 +330,28 @@ function renderSerials() {
   }
 
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">No serial records found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">No serial records found.</td></tr>';
     return;
   }
 
-  // Location and Status are set by whichever workflow moved the serial (Stock Counts, Transfer
-  // Order shipment tagging, a sale, etc.) - editing them freely here could desync them from that
-  // workflow's own state, so this page is read-only for both, per direct instruction.
+  // Status stays fully read-only here - it's owned by whichever workflow moved the serial (Stock
+  // Counts, Transfer Order shipment tagging, a sale, etc.) and editing it freely here could desync
+  // it from that workflow's own state. Location is the one exception: staff flagged "Serial Admin"
+  // (User Setup) get an Edit control for it, to correct mistagged/legacy (untagged) serials -
+  // everyone else still sees it as plain text.
   tbody.innerHTML = rows
     .map((r) => `
       <tr>
         <td>${escapeHtml(r.SerialNo)}</td>
         <td>${escapeHtml(r.ItemCode)}</td>
         <td>${escapeHtml(r.ItemDescription)}</td>
-        <td>${escapeHtml(r.Location)}</td>
+        <td>${escapeHtml(r.Location)}${isSerialAdmin ? ` <button class="btn btn-secondary btn-sm edit-location-btn" data-serial="${encodeURIComponent(r.SerialNo)}" data-location="${encodeURIComponent(r.Location || '')}" type="button">Edit</button>` : ''}</td>
         <td><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span></td>
         <td>${renderSourceDocCell(r.SourceDocumentNo)}</td>
+        <td>${escapeHtml(r.SoldReceiptNo)}</td>
+        <td>${escapeHtml(r.SoldOnlineOrderId)}</td>
+        <td>${formatDateTime(r.UpdatedAtUtc)}</td>
+        <td>${escapeHtml(r.UpdatedBy)}</td>
       </tr>
     `)
     .join('');
@@ -256,6 +360,12 @@ function renderSerials() {
     link.addEventListener('click', (event) => {
       event.preventDefault();
       resolveAndOpenSourceDoc(decodeURIComponent(link.dataset.docNo));
+    });
+  });
+
+  tbody.querySelectorAll('.edit-location-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openEditLocationModal(decodeURIComponent(btn.dataset.serial), decodeURIComponent(btn.dataset.location));
     });
   });
 }
@@ -267,10 +377,18 @@ function renderSerials() {
   renderTopNav('Serial Tracker');
 
   isProductionWarehouseUser = await resolveIsProductionWarehouse(session);
-  if (!isProductionWarehouseUser && session.warehouseName) {
+  isSerialAdmin = !!session.isSerialAdmin;
+
+  // Serial Admins always see every warehouse (see renderSerials), so the "restricted to your own
+  // warehouse" note would be inaccurate for them even though they're non-production.
+  if (!isProductionWarehouseUser && !isSerialAdmin && session.warehouseName) {
     const note = document.getElementById('warehouseFilterNote');
     note.textContent = `Showing serials at ${session.warehouseName} only.`;
     note.classList.remove('hidden');
+  }
+
+  if (isSerialAdmin) {
+    await loadWarehouseOptionsOnce();
   }
 
   document.getElementById('searchInput').addEventListener('input', renderSerials);
@@ -279,6 +397,10 @@ function renderSerials() {
   document.getElementById('closeViewTransferBtn').addEventListener('click', () =>
     document.getElementById('viewTransferModal').classList.add('hidden')
   );
+  document.getElementById('closeEditLocationBtn').addEventListener('click', () =>
+    document.getElementById('editLocationModal').classList.add('hidden')
+  );
+  document.getElementById('saveEditLocationBtn').addEventListener('click', saveEditLocation);
   document.getElementById('openTransferModuleBtn').addEventListener('click', () => {
     if (!currentViewTransferDocNo) return;
     const page = currentViewTransferIsPosted ? 'posted-transfer-orders.html' : 'transfer-orders.html';

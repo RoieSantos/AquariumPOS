@@ -899,7 +899,8 @@ async function releaseReceivedSerials(docNo, itemNo, variantId, quantity, toWare
     .update({
       Status: 'IN_STOCK',
       Location: toWarehouseName || null,
-      UpdatedAtUtc: new Date().toISOString()
+      UpdatedAtUtc: new Date().toISOString(),
+      UpdatedBy: currentSession?.username || null
     })
     .in('RunningSerialNo', data.map((r) => r.RunningSerialNo));
   if (updateError) {

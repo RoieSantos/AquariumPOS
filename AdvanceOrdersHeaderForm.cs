@@ -490,6 +490,18 @@ namespace AquariumPOS
                     return;
                 }
 
+                // Reaching here always means this order is about to become fully paid (partial
+                // payments were rejected just above), so this is the moment to collect serials for
+                // any serial-tracked lines - per "once the advance order is fully paid, ask for the
+                // serial no.". Runs BEFORE any money/DB state changes below, and returns out of the
+                // whole click handler (blocking the payment entirely) if staff cancels a picker that
+                // had real choices to make - matches "block payment until serials are chosen" rather
+                // than letting the order get marked paid with tracking left incomplete.
+                if (!TryCollectSerialsForFullyPaidOrder(transactionNo, out var serialsToMarkSold, out var serialShortfalls))
+                {
+                    return;
+                }
+
                 try
                 {
                     int nextLine = 0;
@@ -549,6 +561,43 @@ namespace AquariumPOS
 
                             tx.Commit();
                         }
+                    }
+
+                    // Payment is committed at this point - serial tracking is best-effort from here
+                    // on (a failure here shouldn't look like the payment itself failed, since it
+                    // didn't). serialsToMarkSold/serialShortfalls came from TryCollectSerialsForFullyPaidOrder
+                    // above, before payment: real in-stock serials the user picked, and any shortfall
+                    // quantity that had no available serial to pick from and needs a freshly
+                    // auto-generated one instead (same fallback the regular checkout flow uses).
+                    try
+                    {
+                        if (serialsToMarkSold.Count > 0)
+                        {
+                            ProductSerialTrackingForm.MarkSerialsSold(serialsToMarkSold, receiptNo, null);
+                        }
+
+                        if (serialShortfalls.Count > 0)
+                        {
+                            using var serialConn = new SqlConnection(connectionString);
+                            serialConn.Open();
+                            foreach (var shortfall in serialShortfalls)
+                            {
+                                ProductSerialTrackingForm.CreateSoldSerialRecords(
+                                    serialConn,
+                                    null,
+                                    shortfall.ItemCode,
+                                    shortfall.VariantCode,
+                                    shortfall.Description,
+                                    receiptNo,
+                                    null,
+                                    CurrentUser.GetEffectiveUsername("POS_SYSTEM"),
+                                    shortfall.Count);
+                            }
+                        }
+                    }
+                    catch (Exception serialEx)
+                    {
+                        MessageBox.Show(this, $"Order was paid, but serial tracking failed: {serialEx.Message}", "Serial Tracking Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
 
                     // Re-fetch updated values and print receipt
@@ -861,6 +910,315 @@ namespace AquariumPOS
             }
 
             // refresh handled by calling LoadAdvanceOrdersHeader after successful payment above
+        }
+
+        private sealed class SerialTrackedAdvanceOrderLine
+        {
+            public string ItemCode { get; init; } = string.Empty;
+            public string VariantCode { get; init; } = string.Empty;
+            public string Description { get; init; } = string.Empty;
+            public int Quantity { get; init; }
+        }
+
+        // Same serial-tracking rule MainForm's live checkout uses (ShouldRequireAquariumSerialSelection/
+        // IsProductionCategoryCode) - deliberately duplicated locally rather than widening those
+        // MainForm instance methods, since MainForm's version also unconditionally folds in whatever
+        // is sitting in the live salesListView cart via GetSelectedSaleSerialNumbers(), which has
+        // nothing to do with an advance order being paid off here and would be the wrong exclusion
+        // set to reuse.
+        private static bool IsSerialTrackedAdvanceOrderItemCode(string? itemCode, bool isProductionCategory)
+        {
+            string normalizedItemCode = itemCode?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(normalizedItemCode))
+                return false;
+
+            return normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
+                || normalizedItemCode.StartsWith("CUSTOM-", StringComparison.OrdinalIgnoreCase)
+                || normalizedItemCode.StartsWith("CUSTOM_", StringComparison.OrdinalIgnoreCase)
+                || isProductionCategory;
+        }
+
+        // Loads this order's ITEM lines (skips PAYMENT lines) joined to Items/Category to figure out
+        // which ones need a serial picked, and how many units each needs.
+        private List<SerialTrackedAdvanceOrderLine> LoadSerialTrackedLines(string transactionNo)
+        {
+            var lines = new List<SerialTrackedAdvanceOrderLine>();
+
+            using var conn = new SqlConnection(connectionString);
+            conn.Open();
+
+            // AdvanceOrderLines.VariationId may not exist on every install (same defensive check
+            // LoadAdvanceOrderCloudContext already does for the Pancake sync) - fall back to Items'
+            // variationid alone when it's missing.
+            bool advanceOrderLinesHasVariationId;
+            using (var checkVariationCmd = new SqlCommand("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'AdvanceOrderLines' AND COLUMN_NAME = 'VariationId'", conn))
+            {
+                advanceOrderLinesHasVariationId = checkVariationCmd.ExecuteScalar() != null;
+            }
+
+            string variantCodeSql = advanceOrderLinesHasVariationId
+                ? "ISNULL(NULLIF(aol.VariationId, ''), ISNULL(i.variationid, ''))"
+                : "ISNULL(i.variationid, '')";
+
+            using var cmd = new SqlCommand($@"
+SELECT aol.[No.] AS ItemCode, aol.Description, aol.Quantity,
+       {variantCodeSql} AS VariantCode,
+       ISNULL(c.IsProductionCategory, 0) AS IsProductionCategory
+FROM AdvanceOrderLines aol
+LEFT JOIN Items i ON i.Code = aol.[No.]
+LEFT JOIN Category c ON c.Code = i.CategoryCode
+WHERE aol.TransactionNo = @tn AND UPPER(ISNULL(aol.Type, '')) = 'ITEM'
+ORDER BY aol.[LineNo]", conn);
+            cmd.Parameters.AddWithValue("@tn", transactionNo);
+
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string itemCode = rdr["ItemCode"]?.ToString()?.Trim() ?? string.Empty;
+                bool isProductionCategory = rdr["IsProductionCategory"] != DBNull.Value && Convert.ToBoolean(rdr["IsProductionCategory"]);
+                if (!IsSerialTrackedAdvanceOrderItemCode(itemCode, isProductionCategory))
+                    continue;
+
+                int quantity = rdr["Quantity"] != DBNull.Value ? Convert.ToInt32(rdr["Quantity"]) : 0;
+                if (quantity <= 0)
+                    continue;
+
+                lines.Add(new SerialTrackedAdvanceOrderLine
+                {
+                    ItemCode = itemCode,
+                    VariantCode = rdr["VariantCode"]?.ToString()?.Trim() ?? string.Empty,
+                    Description = rdr["Description"]?.ToString()?.Trim() ?? string.Empty,
+                    Quantity = quantity
+                });
+            }
+
+            return lines;
+        }
+
+        // Collects serials for every serial-tracked line on this order, BEFORE any payment/DB state
+        // changes - so cancelling here (a picker with real choices dismissed) cleanly aborts the
+        // whole "Pay In Full" action, per "block payment until serials are chosen". A line with zero
+        // available serials in stock doesn't block, though - matches the exact fallback the live
+        // checkout flow already uses (see MainForm.PromptForAquariumSaleSerials): those units get
+        // added to shortfallLines for CreateSoldSerialRecords to auto-generate after payment commits,
+        // since a build-to-order item can genuinely have no serial registered yet.
+        //
+        // IMPORTANT: ProductSerialTrackingForm.CreateSerialRecords (what actually generates the
+        // shortfall's new serials) silently no-ops at a non-production warehouse - it's gated so only
+        // the facility that physically builds/tags an item can mint new serials for it, but returns
+        // an empty list rather than throwing, so a caller that isn't warehouse-aware would show staff
+        // a false promise ("will be auto-generated") and end up with nothing recorded. Checked here so
+        // the message staff sees is honest about which outcome they're actually going to get.
+        private bool TryCollectSerialsForFullyPaidOrder(
+            string transactionNo,
+            out List<string> serialsToMarkSold,
+            out List<(string ItemCode, string VariantCode, string Description, int Count)> shortfallLines)
+        {
+            serialsToMarkSold = new List<string>();
+            shortfallLines = new List<(string, string, string, int)>();
+
+            // Non-production stores don't ask at all - advance orders are exactly how made-to-order
+            // builds get sold there (never a regular sale), the physical unit typically doesn't exist
+            // yet, and these stores can't tag/create serials anyway (CreateSerialRecords is
+            // production-only), so there'd be nothing to pick and no fallback to fall back to.
+            // Whatever gets built ends up tagged wherever it's actually built. Production warehouses
+            // keep asking exactly as before (real picker, auto-generate on shortfall).
+            bool isProductionWarehouse = IsCurrentWarehouseProduction();
+            if (!isProductionWarehouse)
+                return true;
+
+            var lines = LoadSerialTrackedLines(transactionNo);
+            if (lines.Count == 0)
+                return true;
+
+            var alreadyPicked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var line in lines)
+            {
+                var available = ProductSerialTrackingForm.GetAvailableSerials(line.ItemCode, line.VariantCode, alreadyPicked);
+                int required = line.Quantity;
+                int missing = Math.Max(0, required - available.Count);
+
+                if (missing > 0)
+                {
+                    MessageBox.Show(this,
+                        $"Only {available.Count} serial-tracked unit(s) are available for {line.ItemCode}, but {required} were requested. The remaining {missing} will be auto-generated after payment.",
+                        "Serial Tracking",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+
+                int pickCount = Math.Min(required, available.Count);
+                for (int index = 0; index < pickCount; index++)
+                {
+                    var remainingOptions = available
+                        .Where(option => !alreadyPicked.Contains(option.SerialNo))
+                        .ToList();
+
+                    var chosen = PromptForAdvanceOrderSerial(line.ItemCode, line.VariantCode, line.Description, index + 1, pickCount, remainingOptions);
+                    if (chosen == null)
+                    {
+                        return false;
+                    }
+
+                    alreadyPicked.Add(chosen.SerialNo);
+                    serialsToMarkSold.Add(chosen.SerialNo);
+                }
+
+                if (missing > 0)
+                {
+                    shortfallLines.Add((line.ItemCode, line.VariantCode, line.Description, missing));
+                }
+            }
+
+            return true;
+        }
+
+        private bool IsCurrentWarehouseProduction()
+        {
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                using var cmd = new SqlCommand("SELECT TOP 1 ISNULL(Is_Production_Warehouse, 0) FROM dbo.Warehouses WHERE Current_Warehouse = 1 ORDER BY [ID]", conn);
+                var result = cmd.ExecuteScalar();
+                return result != null && result != DBNull.Value && Convert.ToBoolean(result);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // Same picker UI as MainForm.PromptForAquariumSaleSerial, reproduced locally for the same
+        // reason PromptForAquariumSaleSerials/ShouldRequireAquariumSerialSelection are - a self-
+        // contained dialog is simpler than reusing a MainForm instance method whose only other
+        // caller is coupled to the live sale cart.
+        private ProductSerialTrackingForm.AvailableSerialRecord? PromptForAdvanceOrderSerial(
+            string itemCode,
+            string? variantCode,
+            string? itemDescription,
+            int selectionIndex,
+            int totalSelections,
+            List<ProductSerialTrackingForm.AvailableSerialRecord> availableSerials)
+        {
+            if (availableSerials == null || availableSerials.Count == 0)
+                return null;
+
+            using var dialog = new Form
+            {
+                Text = "Select Item Serial",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false,
+                MaximizeBox = false,
+                ShowInTaskbar = false,
+                Size = new Size(720, 520),
+                BackColor = Color.White
+            };
+
+            var titleLabel = new Label
+            {
+                Text = totalSelections > 1
+                    ? $"Select item {selectionIndex} of {totalSelections}"
+                    : "Select the item to sell",
+                Location = new Point(20, 20),
+                Size = new Size(660, 28),
+                Font = new Font("Arial", 12, FontStyle.Bold),
+                ForeColor = Color.DarkBlue
+            };
+
+            var infoLabel = new Label
+            {
+                Text = string.IsNullOrWhiteSpace(itemDescription)
+                    ? (string.IsNullOrWhiteSpace(variantCode)
+                        ? $"Choose an available serial-tracked item for {itemCode}."
+                        : $"Choose an available serial-tracked item for {itemCode} variant {variantCode}.")
+                    : (string.IsNullOrWhiteSpace(variantCode)
+                        ? $"Choose an available serial-tracked item for {itemDescription} ({itemCode})."
+                        : $"Choose an available serial-tracked item for {itemDescription} ({itemCode} / {variantCode})."),
+                Location = new Point(20, 54),
+                Size = new Size(660, 34),
+                Font = new Font("Arial", 9, FontStyle.Regular),
+                ForeColor = Color.DimGray
+            };
+
+            var listBox = new ListBox
+            {
+                Location = new Point(20, 96),
+                Size = new Size(660, 320),
+                Font = new Font("Arial", 10, FontStyle.Regular),
+                DisplayMember = nameof(ProductSerialTrackingForm.AvailableSerialRecord.DisplayText)
+            };
+
+            foreach (var availableSerial in availableSerials)
+            {
+                listBox.Items.Add(availableSerial);
+            }
+
+            if (listBox.Items.Count > 0)
+            {
+                listBox.SelectedIndex = 0;
+            }
+
+            var okButton = new Button
+            {
+                Text = "Select",
+                Location = new Point(430, 430),
+                Size = new Size(120, 38),
+                BackColor = Color.Green,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+
+            var cancelButton = new Button
+            {
+                Text = "Cancel",
+                Location = new Point(560, 430),
+                Size = new Size(120, 38),
+                BackColor = Color.Gray,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+
+            ProductSerialTrackingForm.AvailableSerialRecord? selectedSerial = null;
+            okButton.Click += (_, _) =>
+            {
+                if (listBox.SelectedItem is not ProductSerialTrackingForm.AvailableSerialRecord choice)
+                {
+                    MessageBox.Show(dialog,
+                        "Select an available serial first.",
+                        "Serial Tracking",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return;
+                }
+
+                selectedSerial = choice;
+                dialog.DialogResult = DialogResult.OK;
+                dialog.Close();
+            };
+
+            cancelButton.Click += (_, _) =>
+            {
+                dialog.DialogResult = DialogResult.Cancel;
+                dialog.Close();
+            };
+
+            listBox.DoubleClick += (_, _) =>
+            {
+                okButton.PerformClick();
+            };
+
+            dialog.AcceptButton = okButton;
+            dialog.CancelButton = cancelButton;
+            dialog.Controls.Add(titleLabel);
+            dialog.Controls.Add(infoLabel);
+            dialog.Controls.Add(listBox);
+            dialog.Controls.Add(okButton);
+            dialog.Controls.Add(cancelButton);
+
+            return dialog.ShowDialog(this) == DialogResult.OK ? selectedSerial : null;
         }
 
         private void LoadAdvanceOrdersHeader(string searchTerm)

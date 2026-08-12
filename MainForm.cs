@@ -15848,6 +15848,25 @@ END", connection);
             string normalizedVariantCode = variantCode?.Trim() ?? string.Empty;
             var availableSerials = ProductSerialTrackingForm.GetAvailableSerials(itemCode, normalizedVariantCode, serialsAlreadyInSale);
 
+            // Non-production stores never mint new serials (CreateSerialRecords is production-only),
+            // so there's no shortfall fallback for them - per "every normal sale needs a serial 1:1;
+            // if there aren't enough, that means there's no stock, and the customer should be routed
+            // to an Advance Order instead." Made-to-order custom builds already only ever go through
+            // Advance Order at non-production stores (never a regular sale there), so this can't block
+            // a build that hasn't been made yet - it only blocks selling more real catalog stock than
+            // is actually on hand and tagged. Production warehouses are unaffected - unchanged below.
+            if (availableSerials.Count < requiredQuantity && !IsCurrentWarehouseProductionForLabels())
+            {
+                MessageBox.Show(this,
+                    string.IsNullOrWhiteSpace(normalizedVariantCode)
+                        ? $"Only {availableSerials.Count} serial-tracked unit(s) are available for {itemCode}, but {requiredQuantity} were requested. This store can't sell more than what's physically in stock and tagged - place an Advance Order for the shortfall instead."
+                        : $"Only {availableSerials.Count} serial-tracked unit(s) are available for {itemCode} variant {normalizedVariantCode}, but {requiredQuantity} were requested. This store can't sell more than what's physically in stock and tagged - place an Advance Order for the shortfall instead.",
+                    "Insufficient Stock",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return null;
+            }
+
             if (availableSerials.Count == 0)
             {
                 return new List<ProductSerialTrackingForm.AvailableSerialRecord>();

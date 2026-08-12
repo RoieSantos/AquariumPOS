@@ -43,7 +43,7 @@ function renderUserRows(users) {
   const tbody = document.getElementById('userTableBody');
 
   if (!users || users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">No staff logins found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">No staff logins found.</td></tr>';
     return;
   }
 
@@ -55,6 +55,7 @@ function renderUserRows(users) {
         <td>${u.warehouse_name || '<span class="muted">All</span>'}</td>
         <td><span class="badge ${u.is_super_user ? 'badge-success' : 'badge-neutral'}">${u.is_super_user ? 'Yes' : 'No'}</span></td>
         <td><span class="badge ${u.is_sales_user ? 'badge-success' : 'badge-neutral'}">${u.is_sales_user ? 'Yes' : 'No'}</span></td>
+        <td><span class="badge ${u.is_serial_admin ? 'badge-success' : 'badge-neutral'}">${u.is_serial_admin ? 'Yes' : 'No'}</span></td>
         <td>${formatMonthlyTarget(u.monthly_sales_target)}</td>
         <td><span class="badge ${u.must_change_password ? 'badge-warning' : 'badge-neutral'}">${u.must_change_password ? 'Required' : 'No'}</span></td>
         <td><span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
@@ -78,7 +79,7 @@ async function loadUsers() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="11" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -101,6 +102,7 @@ function openNewUserModal() {
   populateWarehouseSelect(document.getElementById('newUserWarehouse'), '');
   document.getElementById('newUserSuperUser').checked = false;
   document.getElementById('newUserSalesUser').checked = false;
+  document.getElementById('newUserSerialAdmin').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
   document.getElementById('newUserError').classList.add('hidden');
@@ -117,6 +119,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserPassword').value = '';
   document.getElementById('editUserSuperUser').checked = !!user.is_super_user;
   document.getElementById('editUserSalesUser').checked = !!user.is_sales_user;
+  document.getElementById('editUserSerialAdmin').checked = !!user.is_serial_admin;
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
@@ -134,6 +137,7 @@ async function saveEditUser() {
   const newPassword = document.getElementById('editUserPassword').value;
   const isSuperUser = document.getElementById('editUserSuperUser').checked;
   const isSalesUser = document.getElementById('editUserSalesUser').checked;
+  const isSerialAdmin = document.getElementById('editUserSerialAdmin').checked;
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
@@ -159,7 +163,8 @@ async function saveEditUser() {
     p_new_password: newPassword || null,
     p_is_sales_user: isSalesUser,
     p_monthly_sales_target: monthlyTarget,
-    p_must_change_password: mustChangePassword
+    p_must_change_password: mustChangePassword,
+    p_is_serial_admin: isSerialAdmin
   });
 
   saveBtn.disabled = false;
@@ -186,6 +191,7 @@ async function saveNewUser() {
   const warehouseName = document.getElementById('newUserWarehouse').value;
   const isSuperUser = document.getElementById('newUserSuperUser').checked;
   const isSalesUser = document.getElementById('newUserSalesUser').checked;
+  const isSerialAdmin = document.getElementById('newUserSerialAdmin').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
 
@@ -214,7 +220,8 @@ async function saveNewUser() {
     p_is_super_user: isSuperUser,
     p_is_sales_user: isSalesUser,
     p_monthly_sales_target: monthlyTarget,
-    p_must_change_password: mustChangePassword
+    p_must_change_password: mustChangePassword,
+    p_is_serial_admin: isSerialAdmin
   });
 
   saveBtn.disabled = false;

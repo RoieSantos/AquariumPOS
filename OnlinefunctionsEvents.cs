@@ -3246,7 +3246,7 @@ ORDER BY [Line No.]", conn))
 
             using var http = new HttpClient { Timeout = timeout.Value };
             string requestUrl = endpointUrl
-                + "?select=SerialNo,ItemCode,ItemDescription,VariantCode,Location,Status,SourceDocumentNo,CreatedAtUtc,CreatedBy,UpdatedAtUtc,SoldReceiptNo,SoldOnlineOrderId"
+                + "?select=SerialNo,ItemCode,ItemDescription,VariantCode,Location,Status,SourceDocumentNo,CreatedAtUtc,CreatedBy,UpdatedAtUtc,UpdatedBy,SoldReceiptNo,SoldOnlineOrderId"
                 + "&UpdatedAtUtc=gt." + Uri.EscapeDataString(watermarkFilterValue)
                 + "&order=UpdatedAtUtc.asc&limit=1000";
             using var req = new HttpRequestMessage(HttpMethod.Get, requestUrl);
@@ -3280,6 +3280,7 @@ SET Status = @Status,
     SoldReceiptNo = @SoldReceiptNo,
     SoldOnlineOrderId = @SoldOnlineOrderId,
     UpdatedAtUtc = @UpdatedAtUtc,
+    UpdatedBy = @UpdatedBy,
     LastSyncedAtUtc = @UpdatedAtUtc
 WHERE SerialNo = @SerialNo", conn);
             updateCmd.Parameters.Add("@Status", System.Data.SqlDbType.NVarChar, 255);
@@ -3289,15 +3290,16 @@ WHERE SerialNo = @SerialNo", conn);
             updateCmd.Parameters.Add("@SoldReceiptNo", System.Data.SqlDbType.NVarChar, 100);
             updateCmd.Parameters.Add("@SoldOnlineOrderId", System.Data.SqlDbType.NVarChar, 100);
             updateCmd.Parameters.Add("@UpdatedAtUtc", System.Data.SqlDbType.DateTime2);
+            updateCmd.Parameters.Add("@UpdatedBy", System.Data.SqlDbType.NVarChar, 200);
             updateCmd.Parameters.Add("@SerialNo", System.Data.SqlDbType.NVarChar, 120);
 
             using var insertCmd = new SqlCommand(@"
 INSERT INTO dbo.ItemSerialTracking
     (SerialNo, ItemCode, ItemDescription, VariantCode, Location, Status, SourceDocumentNo,
-     CreatedAtUtc, CreatedBy, UpdatedAtUtc, SoldReceiptNo, SoldOnlineOrderId, LastSyncedAtUtc)
+     CreatedAtUtc, CreatedBy, UpdatedAtUtc, UpdatedBy, SoldReceiptNo, SoldOnlineOrderId, LastSyncedAtUtc)
 VALUES
     (@SerialNo, @ItemCode, @ItemDescription, @VariantCode, @Location, @Status, @SourceDocumentNo,
-     @CreatedAtUtc, @CreatedBy, @UpdatedAtUtc, @SoldReceiptNo, @SoldOnlineOrderId, @UpdatedAtUtc)", conn);
+     @CreatedAtUtc, @CreatedBy, @UpdatedAtUtc, @UpdatedBy, @SoldReceiptNo, @SoldOnlineOrderId, @UpdatedAtUtc)", conn);
             insertCmd.Parameters.Add("@SerialNo", System.Data.SqlDbType.NVarChar, 120);
             insertCmd.Parameters.Add("@ItemCode", System.Data.SqlDbType.NVarChar, 100);
             insertCmd.Parameters.Add("@ItemDescription", System.Data.SqlDbType.NVarChar, 255);
@@ -3308,6 +3310,7 @@ VALUES
             insertCmd.Parameters.Add("@CreatedAtUtc", System.Data.SqlDbType.DateTime2);
             insertCmd.Parameters.Add("@CreatedBy", System.Data.SqlDbType.NVarChar, 100);
             insertCmd.Parameters.Add("@UpdatedAtUtc", System.Data.SqlDbType.DateTime2);
+            insertCmd.Parameters.Add("@UpdatedBy", System.Data.SqlDbType.NVarChar, 200);
             insertCmd.Parameters.Add("@SoldReceiptNo", System.Data.SqlDbType.NVarChar, 100);
             insertCmd.Parameters.Add("@SoldOnlineOrderId", System.Data.SqlDbType.NVarChar, 100);
 
@@ -3342,6 +3345,7 @@ VALUES
                 object variantCode = row.TryGetProperty("VariantCode", out var varProp) && varProp.ValueKind == JsonValueKind.String ? (object)varProp.GetString()! : DBNull.Value;
                 object soldReceiptNo = row.TryGetProperty("SoldReceiptNo", out var soldReceiptProp) && soldReceiptProp.ValueKind == JsonValueKind.String ? (object)soldReceiptProp.GetString()! : DBNull.Value;
                 object soldOnlineOrderId = row.TryGetProperty("SoldOnlineOrderId", out var soldOnlineProp) && soldOnlineProp.ValueKind == JsonValueKind.String ? (object)soldOnlineProp.GetString()! : DBNull.Value;
+                object updatedBy = row.TryGetProperty("UpdatedBy", out var updatedByProp) && updatedByProp.ValueKind == JsonValueKind.String ? (object)updatedByProp.GetString()! : DBNull.Value;
 
                 if (localModifiedObj == null || localModifiedObj == DBNull.Value)
                 {
@@ -3363,6 +3367,7 @@ VALUES
                     insertCmd.Parameters["@CreatedAtUtc"].Value = createdAtUtc;
                     insertCmd.Parameters["@CreatedBy"].Value = string.IsNullOrWhiteSpace(createdBy) ? (object)DBNull.Value : createdBy;
                     insertCmd.Parameters["@UpdatedAtUtc"].Value = supabaseUpdatedAtUtc;
+                    insertCmd.Parameters["@UpdatedBy"].Value = updatedBy;
                     insertCmd.Parameters["@SoldReceiptNo"].Value = soldReceiptNo;
                     insertCmd.Parameters["@SoldOnlineOrderId"].Value = soldOnlineOrderId;
                     appliedCount += insertCmd.ExecuteNonQuery();
@@ -3384,6 +3389,7 @@ VALUES
                 updateCmd.Parameters["@SoldReceiptNo"].Value = soldReceiptNo;
                 updateCmd.Parameters["@SoldOnlineOrderId"].Value = soldOnlineOrderId;
                 updateCmd.Parameters["@UpdatedAtUtc"].Value = supabaseUpdatedAtUtc;
+                updateCmd.Parameters["@UpdatedBy"].Value = updatedBy;
                 updateCmd.Parameters["@SerialNo"].Value = serialNo;
                 appliedCount += updateCmd.ExecuteNonQuery();
             }
@@ -3440,7 +3446,7 @@ END";
             using var cmd = new SqlCommand(@"
 SELECT [RunningSerialNo], [SerialNo], [ItemCode], ISNULL([VariantCode], '') AS [VariantCode],
     [ItemDescription], ISNULL([Location], '') AS [Location], [Status], [SourceDocumentNo], [CreatedAtUtc], [CreatedBy],
-       [UpdatedAtUtc], [SoldReceiptNo], [SoldOnlineOrderId],
+       [UpdatedAtUtc], [UpdatedBy], [SoldReceiptNo], [SoldOnlineOrderId],
        COALESCE([UpdatedAtUtc], [CreatedAtUtc]) AS [ModifiedAtUtc]
 FROM dbo.ItemSerialTracking
 WHERE ISNULL([SerialNo], '') <> ''
@@ -3474,6 +3480,7 @@ ORDER BY [RunningSerialNo]", connection);
                         ["CreatedAtUtc"] = rdr["CreatedAtUtc"] != DBNull.Value ? Convert.ToDateTime(rdr["CreatedAtUtc"], CultureInfo.InvariantCulture).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture) : null,
                         ["CreatedBy"] = rdr["CreatedBy"] != DBNull.Value ? rdr["CreatedBy"]?.ToString() : null,
                         ["UpdatedAtUtc"] = rdr["UpdatedAtUtc"] != DBNull.Value ? Convert.ToDateTime(rdr["UpdatedAtUtc"], CultureInfo.InvariantCulture).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture) : null,
+                        ["UpdatedBy"] = rdr["UpdatedBy"] != DBNull.Value ? rdr["UpdatedBy"]?.ToString() : null,
                         ["SoldReceiptNo"] = rdr["SoldReceiptNo"] != DBNull.Value ? rdr["SoldReceiptNo"]?.ToString() : null,
                         ["SoldOnlineOrderId"] = rdr["SoldOnlineOrderId"] != DBNull.Value ? rdr["SoldOnlineOrderId"]?.ToString() : null
                     }));

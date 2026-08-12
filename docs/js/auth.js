@@ -54,6 +54,7 @@ async function attemptLogin(username, password) {
     warehouseName: result.warehouse_name || null,
     isSuperUser: !!result.is_super_user,
     isSalesUser: !!result.is_sales_user,
+    isSerialAdmin: !!result.is_serial_admin,
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -118,6 +119,7 @@ async function refreshPortalSession(session) {
       warehouseName: result.warehouse_name || null,
       isSuperUser: !!result.is_super_user,
       isSalesUser: !!result.is_sales_user,
+      isSerialAdmin: !!result.is_serial_admin,
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);

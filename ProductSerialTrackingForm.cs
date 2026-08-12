@@ -359,6 +359,8 @@ namespace AquariumPOS
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "SoldOnlineOrderId", HeaderText = "Sold Online Order", FillWeight = 14 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "CreatedBy", HeaderText = "Created By", FillWeight = 10 });
             dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "CreatedAtLocal", HeaderText = "Created At", FillWeight = 14 });
+            dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "UpdatedAtLocal", HeaderText = "Last Update Date", FillWeight = 14 });
+            dgvSerials.Columns.Add(new DataGridViewTextBoxColumn { Name = "UpdatedBy", HeaderText = "Last Updated By", FillWeight = 10 });
             dgvSerials.Columns.Add(new DataGridViewCheckBoxColumn { Name = "SyncedToSupabase", HeaderText = "Synced", FillWeight = 8, ReadOnly = true });
 
             btnClose = new Button
@@ -489,6 +491,11 @@ BEGIN
     ALTER TABLE dbo.ItemSerialTracking ADD LastSyncedAtUtc DATETIME2 NULL;
 END
 
+IF COL_LENGTH('dbo.ItemSerialTracking', 'UpdatedBy') IS NULL
+BEGIN
+    ALTER TABLE dbo.ItemSerialTracking ADD UpdatedBy NVARCHAR(200) NULL;
+END
+
 IF COL_LENGTH('dbo.ItemSerialTracking', 'SyncedToSupabase') IS NULL
 BEGIN
     -- Computed, not a stored/manually-set flag, so it can never drift out of sync with reality -
@@ -542,6 +549,13 @@ END";
             conn.Open();
             EnsureSerialTrackingTable(conn, null);
 
+            // Scope to the current warehouse's Location so a store never offers a serial that's
+            // physically tagged to a different warehouse (serial rows sync in from every store via
+            // Supabase, so without this filter every store's local DB "sees" every other store's stock).
+            // Untagged legacy rows (Location blank/NULL, created before Location tracking existed) stay
+            // visible everywhere rather than becoming invisible at every store.
+            string currentLocation = GetCurrentSerialTrackingLocation();
+
             using var cmd = new SqlCommand(@"
 SELECT RunningSerialNo,
              SerialNo,
@@ -553,9 +567,11 @@ FROM dbo.ItemSerialTracking
 WHERE ItemCode = @ItemCode
     AND (NULLIF(@VariantCode, '') IS NULL OR ISNULL(VariantCode, '') = @VariantCode)
   AND Status = 'IN_STOCK'
+  AND (NULLIF(@Location, '') IS NULL OR NULLIF(LTRIM(RTRIM(ISNULL(Location, ''))), '') IS NULL OR Location = @Location)
 ORDER BY RunningSerialNo", conn);
             cmd.Parameters.AddWithValue("@ItemCode", normalizedItemCode);
                         cmd.Parameters.AddWithValue("@VariantCode", normalizedVariantCode);
+            cmd.Parameters.AddWithValue("@Location", currentLocation);
 
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
@@ -612,17 +628,21 @@ ORDER BY RunningSerialNo", conn);
             conn.Open();
             EnsureSerialTrackingTable(conn, null);
 
+            string updatedBy = CurrentUser.GetEffectiveUsername("SYSTEM");
             using var cmd = new SqlCommand(@"
 UPDATE dbo.ItemSerialTracking
 SET Status = @Status,
-    UpdatedAtUtc = SYSUTCDATETIME()
+    UpdatedAtUtc = SYSUTCDATETIME(),
+    UpdatedBy = @UpdatedBy
 WHERE SerialNo = @SerialNo", conn);
             cmd.Parameters.Add("@Status", SqlDbType.NVarChar, 255);
+            cmd.Parameters.Add("@UpdatedBy", SqlDbType.NVarChar, 200);
             cmd.Parameters.Add("@SerialNo", SqlDbType.NVarChar, 120);
 
             foreach (string serialNo in serials)
             {
                 cmd.Parameters["@Status"].Value = status;
+                cmd.Parameters["@UpdatedBy"].Value = updatedBy;
                 cmd.Parameters["@SerialNo"].Value = serialNo;
                 cmd.ExecuteNonQuery();
             }
@@ -675,18 +695,22 @@ UPDATE dbo.ItemSerialTracking
 SET Status = 'SOLD',
     SoldReceiptNo = COALESCE(NULLIF(@SoldReceiptNo, ''), SoldReceiptNo),
     SoldOnlineOrderId = COALESCE(NULLIF(@SoldOnlineOrderId, ''), SoldOnlineOrderId),
-    UpdatedAtUtc = SYSUTCDATETIME()
+    UpdatedAtUtc = SYSUTCDATETIME(),
+    UpdatedBy = @UpdatedBy
 WHERE SerialNo = @SerialNo
   AND Status <> 'SOLD'", conn);
             cmd.Parameters.Add("@SerialNo", SqlDbType.NVarChar, 120);
             cmd.Parameters.Add("@SoldReceiptNo", SqlDbType.NVarChar, 100);
             cmd.Parameters.Add("@SoldOnlineOrderId", SqlDbType.NVarChar, 100);
+            cmd.Parameters.Add("@UpdatedBy", SqlDbType.NVarChar, 200);
 
+            string updatedBy = CurrentUser.GetEffectiveUsername("SYSTEM");
             foreach (string serialNo in serials)
             {
                 cmd.Parameters["@SerialNo"].Value = serialNo;
                 cmd.Parameters["@SoldReceiptNo"].Value = soldReceiptNo ?? string.Empty;
                 cmd.Parameters["@SoldOnlineOrderId"].Value = soldOnlineOrderId ?? string.Empty;
+                cmd.Parameters["@UpdatedBy"].Value = updatedBy;
                 cmd.ExecuteNonQuery();
             }
         }
@@ -775,6 +799,8 @@ ORDER BY {codeColumn}", conn);
 SELECT RunningSerialNo, SerialNo, ItemCode, ISNULL(VariantCode, '') AS VariantCode, ItemDescription, ISNULL([Location], '') AS [Location], Status,
        SourceDocumentNo, ISNULL(SoldReceiptNo, '') AS SoldReceiptNo, ISNULL(SoldOnlineOrderId, '') AS SoldOnlineOrderId, CreatedBy,
        DATEADD(MINUTE, DATEDIFF(MINUTE, SYSUTCDATETIME(), GETDATE()), CreatedAtUtc) AS CreatedAtLocal,
+       DATEADD(MINUTE, DATEDIFF(MINUTE, SYSUTCDATETIME(), GETDATE()), UpdatedAtUtc) AS UpdatedAtLocal,
+       ISNULL(UpdatedBy, '') AS UpdatedBy,
        SyncedToSupabase
 FROM dbo.ItemSerialTracking
 WHERE (@search = '' OR ItemCode LIKE @likeSearch OR ISNULL(VariantCode, '') LIKE @likeSearch OR ItemDescription LIKE @likeSearch OR ISNULL([Location], '') LIKE @likeSearch OR SerialNo LIKE @likeSearch)
@@ -803,6 +829,8 @@ ORDER BY RunningSerialNo DESC", conn);
                     rdr["SoldOnlineOrderId"],
                     rdr["CreatedBy"],
                     Convert.ToDateTime(rdr["CreatedAtLocal"]).ToString("yyyy-MM-dd HH:mm"),
+                    rdr["UpdatedAtLocal"] != DBNull.Value ? Convert.ToDateTime(rdr["UpdatedAtLocal"]).ToString("yyyy-MM-dd HH:mm") : string.Empty,
+                    rdr["UpdatedBy"],
                     rdr["SyncedToSupabase"] != DBNull.Value && Convert.ToBoolean(rdr["SyncedToSupabase"]));
 
                 total++;
@@ -980,7 +1008,8 @@ END
 
 UPDATE dbo.ItemSerialTracking
 SET SerialNo = @FinalSerialNo,
-    UpdatedAtUtc = SYSUTCDATETIME()
+    UpdatedAtUtc = SYSUTCDATETIME(),
+    UpdatedBy = @CreatedBy
 WHERE RunningSerialNo = @RunningSerialNo;
 
 SELECT @FinalSerialNo;";
@@ -1013,17 +1042,21 @@ SELECT @FinalSerialNo;";
                 using var cmd = new SqlCommand(@"
 UPDATE dbo.ItemSerialTracking
 SET Status = @Status,
-    UpdatedAtUtc = SYSUTCDATETIME()
+    UpdatedAtUtc = SYSUTCDATETIME(),
+    UpdatedBy = @UpdatedBy
 WHERE RunningSerialNo = @RunningSerialNo", conn);
                 cmd.Parameters.Add("@Status", SqlDbType.NVarChar, 255);
+                cmd.Parameters.Add("@UpdatedBy", SqlDbType.NVarChar, 200);
                 cmd.Parameters.Add("@RunningSerialNo", SqlDbType.BigInt);
 
+                string updatedBy = CurrentUser.GetEffectiveUsername("SYSTEM");
                 foreach (var row in selectedRows)
                 {
                     if (row.Cells["RunningSerialNo"].Value == null)
                         continue;
 
                     cmd.Parameters["@Status"].Value = status;
+                    cmd.Parameters["@UpdatedBy"].Value = updatedBy;
                     cmd.Parameters["@RunningSerialNo"].Value = Convert.ToInt64(row.Cells["RunningSerialNo"].Value);
                     cmd.ExecuteNonQuery();
                 }

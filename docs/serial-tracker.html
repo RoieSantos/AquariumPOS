@@ -36,12 +36,47 @@
             <th>Location</th>
             <th>Status</th>
             <th>Source Doc.</th>
+            <th>Sold Receipt</th>
+            <th>Sold Online</th>
+            <th>Last Update Date</th>
+            <th>Last Updated By</th>
           </tr>
         </thead>
         <tbody id="serialTableBody">
-          <tr><td colspan="6" class="muted">Loading...</td></tr>
+          <tr><td colspan="10" class="muted">Loading...</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Edit Location modal - only reachable for staff flagged "Serial Admin" in User Setup
+       (see js/serialTracker.js's isSerialAdmin gate). Location/Status are otherwise read-only
+       on this page since Transfer Orders/Stock Counts/sales own them; this is a manual override
+       for correcting mistagged or legacy (untagged) serials. -->
+  <div id="editLocationModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">Edit Serial Location</h2>
+        <button class="btn btn-secondary btn-sm" id="closeEditLocationBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Serial No.</label>
+          <div id="editLocationSerialNo" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label for="editLocationWarehouse">Location</label>
+          <select id="editLocationWarehouse">
+            <option value="">(Unassigned)</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="editLocationError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveEditLocationBtn" type="button">Save</button>
+      </div>
     </div>
   </div>
 
