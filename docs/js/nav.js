@@ -27,8 +27,11 @@ function renderTopNav(activeLabel) {
 
   if (!isSalesOnlyUser) {
     items.push({ href: 'serial-tracker.html', label: 'Serial Tracker' });
-    items.push({ href: 'inventory-summary.html', label: 'Inventory Summary' });
   }
+
+  // Per "let the sales user see it as well" - unlike Serial Tracker above, Inventory Summary stays
+  // visible to Sales-only users too.
+  items.push({ href: 'inventory-summary.html', label: 'Inventory Summary' });
 
   items.push({ href: 'online-orders.html', label: 'Online Orders' });
   items.push({ href: 'delivery.html', label: 'Delivery' });
