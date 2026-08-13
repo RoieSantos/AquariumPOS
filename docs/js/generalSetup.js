@@ -62,6 +62,7 @@ async function loadCompanyInfo() {
   document.getElementById('companyAddressInput').value = info['Address'] || '';
   document.getElementById('companyContactNoInput').value = info['ContactNo'] || '';
   document.getElementById('companyDtiNoInput').value = info['DtiNo'] || '';
+  document.getElementById('companyTinNoInput').value = info['TinNo'] || '';
 }
 
 // overrides.logoUrl/backgroundUrl are passed right after a fresh upload (uploadCompanyAsset) so
@@ -82,7 +83,8 @@ async function saveCompanyInfo(overrides) {
     p_facebook_url: document.getElementById('companyFacebookInput').value.trim() || null,
     p_address: document.getElementById('companyAddressInput').value.trim() || null,
     p_contact_no: document.getElementById('companyContactNoInput').value.trim() || null,
-    p_dti_no: document.getElementById('companyDtiNoInput').value.trim() || null
+    p_dti_no: document.getElementById('companyDtiNoInput').value.trim() || null,
+    p_tin_no: document.getElementById('companyTinNoInput').value.trim() || null
   });
 
   if (error) {

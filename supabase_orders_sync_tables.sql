@@ -120,6 +120,21 @@ alter table public."OnlineOrders" add column if not exists "ConfirmedAtUtc" time
 alter table public."OnlineOrders" add column if not exists "NotePrint" text;
 alter table public."OnlineOrders" add column if not exists "NotePrintCheckedAt" timestamptz;
 
+-- Pancake's own "shipping_fee" order-level field (see OnlinefunctionsEvents.cs's
+-- shipping_fee = 0 on order creation) - unlike NotePrint, this is a plain financial field that
+-- sits alongside money_to_collect/cod/prepaid/discount on Pancake's LIST endpoint response, so
+-- it's populated directly from the header sync (no extra per-order detail fetch needed) in all
+-- three sync paths: admin_sync_online_orders_from_pancake, cron_sync_online_orders_from_pancake,
+-- and admin_list_online_orders_live.
+alter table public."OnlineOrders" add column if not exists "DeliveryFee" numeric;
+
+-- Receiver phone number, per the Delivery Receipt print layout (see docs/delivery-receipt.html)
+-- which shows it under the receiver's name/address. Pancake's own payload carries this on
+-- shipping_address.phone_number (see OnlinefunctionsEvents.cs's shipping_address object), so
+-- it's extracted the same way as ShippingAddress itself, in all three sync paths (see
+-- supabase_pancake_manual_sync.sql).
+alter table public."OnlineOrders" add column if not exists "ShippingPhone" varchar(50);
+
 create table if not exists public."OnlineOrderLines" (
     "OrderID" varchar(100) not null,
     "LineID" varchar(100) not null,
@@ -259,6 +274,7 @@ returns table(
   created_by text,
   confirmed_by text,
   note_print text,
+  delivery_fee numeric,
   total_count bigint
 )
 language plpgsql
@@ -288,7 +304,7 @@ begin
     select o."OrderID"::text, o."Date", o."Time"::text, o."Status"::text, o."CustomerName"::text, o."LocationID"::text, w."Name"::text,
            o."MoneyToCollect", o."AmountPaid", o."Discount", o."Balance", o."ForDelivery", o."ShippingAddress"::text,
            o."EstimatedDeliveryDate", o."Last_Updated_At", o."SyncedAtUtc", o."GlassThickness"::text,
-           o."CreatedBy"::text, o."ConfirmedBy"::text, o."NotePrint"::text,
+           o."CreatedBy"::text, o."ConfirmedBy"::text, o."NotePrint"::text, o."DeliveryFee",
            count(*) over()
     from public."OnlineOrders" o
     left join public."Warehouses" w on w."ID" = o."LocationID"

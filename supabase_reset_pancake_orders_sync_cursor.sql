@@ -1,0 +1,15 @@
+-- One-off: force the next Pancake Online Orders sync to fully re-walk every order instead of
+-- only what's changed since the last sync, so newly-added HEADER-level fields (DeliveryFee,
+-- ShippingPhone - see supabase_pancake_manual_sync.sql) get backfilled onto orders that were
+-- already synced before those columns existed and haven't been touched in Pancake since.
+--
+-- Safe/cheap to do: DeliveryFee/ShippingPhone come off the order LIST endpoint (no extra
+-- per-order detail HTTP call needed), so a full re-walk is just re-reading the same pages of
+-- headers, not an N+1 detail fetch per order. Takes effect automatically within ~1 minute (the
+-- next tick of cron_sync_online_orders_from_pancake) - no manual "Sync from Pancake" click
+-- needed, though clicking it will also pick this up immediately.
+--
+-- NOT needed for NotePrint/GlassThickness - those are DETAIL-only fields that already self-heal
+-- independently via their own "...CheckedAt is null" backfill loops inside the same cron
+-- function, unaffected by this cursor.
+update public."PancakeSyncState" set "LastSyncUtc" = null where "Entity" = '/orders';

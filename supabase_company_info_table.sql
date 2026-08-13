@@ -27,6 +27,10 @@ create table if not exists public."CompanyInfo" (
 -- (no-op otherwise), same pattern used elsewhere in this codebase (e.g. Warehouses."IsActive").
 alter table public."CompanyInfo" add column if not exists "BackgroundImageUrl" text;
 
+-- TIN No., alongside the existing DTI No. - per the Delivery Receipt print layout (see
+-- docs/delivery-receipt.html), which shows both on the letterhead.
+alter table public."CompanyInfo" add column if not exists "TinNo" varchar(100);
+
 alter table public."CompanyInfo" enable row level security;
 
 drop policy if exists "Public read" on public."CompanyInfo";
@@ -38,6 +42,7 @@ revoke insert, update, delete on public."CompanyInfo" from anon, authenticated;
 
 drop function if exists public.admin_upsert_company_info(text, text, text, text, text, text, text, text);
 drop function if exists public.admin_upsert_company_info(text, text, text, text, text, text, text, text, text);
+drop function if exists public.admin_upsert_company_info(text, text, text, text, text, text, text, text, text, text);
 
 create or replace function public.admin_upsert_company_info(
   p_admin_username text,
@@ -48,7 +53,8 @@ create or replace function public.admin_upsert_company_info(
   p_facebook_url text,
   p_address text,
   p_contact_no text,
-  p_dti_no text
+  p_dti_no text,
+  p_tin_no text
 )
 returns void
 language plpgsql
@@ -61,9 +67,9 @@ begin
   end if;
 
   insert into public."CompanyInfo"
-    ("Id", "LogoUrl", "BackgroundImageUrl", "CompanyName", "FacebookUrl", "Address", "ContactNo", "DtiNo", "UpdatedBy", "UpdatedAtUtc")
+    ("Id", "LogoUrl", "BackgroundImageUrl", "CompanyName", "FacebookUrl", "Address", "ContactNo", "DtiNo", "TinNo", "UpdatedBy", "UpdatedAtUtc")
   values
-    (1, p_logo_url, p_background_image_url, p_company_name, p_facebook_url, p_address, p_contact_no, p_dti_no, p_admin_username, now())
+    (1, p_logo_url, p_background_image_url, p_company_name, p_facebook_url, p_address, p_contact_no, p_dti_no, p_tin_no, p_admin_username, now())
   on conflict ("Id") do update set
     "LogoUrl" = excluded."LogoUrl",
     "BackgroundImageUrl" = excluded."BackgroundImageUrl",
@@ -72,9 +78,10 @@ begin
     "Address" = excluded."Address",
     "ContactNo" = excluded."ContactNo",
     "DtiNo" = excluded."DtiNo",
+    "TinNo" = excluded."TinNo",
     "UpdatedBy" = excluded."UpdatedBy",
     "UpdatedAtUtc" = excluded."UpdatedAtUtc";
 end;
 $$;
 
-grant execute on function public.admin_upsert_company_info(text, text, text, text, text, text, text, text, text) to anon;
+grant execute on function public.admin_upsert_company_info(text, text, text, text, text, text, text, text, text, text) to anon;

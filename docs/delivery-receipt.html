@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Delivery Receipt - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav" class="no-print"></div>
+
+  <div class="page">
+    <div class="toolbar no-print">
+      <a href="delivery.html">&larr; Back to Delivery</a>
+      <button class="btn btn-primary" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="unlockBox" class="hidden no-print">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="loadError" class="error-text hidden"></div>
+
+    <div id="receiptContent" class="hidden">
+      <div class="delivery-receipt">
+        <div class="delivery-receipt-section delivery-receipt-header">
+          <img id="receiptLogo" class="delivery-receipt-logo hidden" alt="Company logo" />
+          <div class="delivery-receipt-company-info">
+            <div id="receiptCompanyName" class="delivery-receipt-company-name"></div>
+            <div id="receiptFacebook" class="delivery-receipt-line"></div>
+            <div id="receiptAddress" class="delivery-receipt-line"></div>
+            <div id="receiptContactNo" class="delivery-receipt-line"></div>
+            <div id="receiptDtiNo" class="delivery-receipt-line"></div>
+            <div id="receiptTinNo" class="delivery-receipt-line"></div>
+          </div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div id="receiptOrderNo" class="delivery-receipt-line"></div>
+          <div id="receiptCreationDate" class="delivery-receipt-line"></div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div id="receiptReceiverName" class="delivery-receipt-line"></div>
+          <div id="receiptReceiverAddress" class="delivery-receipt-line"></div>
+          <div id="receiptReceiverPhone" class="delivery-receipt-line"></div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div class="delivery-receipt-title">DELIVERY RECEIPT</div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Products</th>
+                  <th>Qty</th>
+                </tr>
+              </thead>
+              <tbody id="receiptLinesBody"></tbody>
+            </table>
+          </div>
+          <div id="receiptNote" class="delivery-receipt-note"></div>
+          <div id="receiptDeliveryFee" class="delivery-receipt-fee"></div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <ul class="delivery-receipt-terms">
+            <li>Our team completes Delivery / Installation strictly according to the client's approved specifications. By signing, the client confirms that all items have been inspected, tested, and accepted in proper working condition, and expresses satisfaction with the setup upon turnover.</li>
+            <li>Our team guarantees leak coverage for 10 days, subject to no external force or impact. Any valid concerns will be resolved swiftly and professionally.</li>
+            <li>The receiving party has received and agreed to sign this form.</li>
+            <li>The form are prepared in two copies, each party keeps one copy, and they have equal legal validity.</li>
+          </ul>
+        </div>
+
+        <div class="delivery-receipt-section delivery-receipt-signature-row">
+          <div class="delivery-receipt-signature-left">
+            <div>Delivery Date ________________________</div>
+            <div>Delivery By :</div>
+          </div>
+          <div id="receiptCustomerLine" class="delivery-receipt-signature-right"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/deliveryReceipt.js"></script>
+</body>
+</html>

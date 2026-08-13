@@ -50,7 +50,8 @@ async function renderCompanyLetterhead(containerId) {
     info['FacebookUrl'],
     info['Address'] ? `Address : ${info['Address']}` : '',
     info['ContactNo'] ? `Contact No : ${info['ContactNo']}` : '',
-    info['DtiNo'] ? `DTI No.: ${info['DtiNo']}` : ''
+    info['DtiNo'] ? `DTI No.: ${info['DtiNo']}` : '',
+    info['TinNo'] ? `TIN No.: ${info['TinNo']}` : ''
   ].filter(Boolean);
 
   const logoHtml = info['LogoUrl']

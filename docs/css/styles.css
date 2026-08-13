@@ -1409,6 +1409,91 @@ tr.clickable-row:hover {
   color: var(--neutral, #555);
 }
 
+/* Per-order Delivery Receipt (docs/delivery-receipt.html) - mirrors the Pancake-generated
+   delivery receipt layout: one continuous bordered box, divided into sections by a bottom
+   border on each, rather than the standalone/centered .letterhead used elsewhere. */
+.delivery-receipt {
+  border: 1px solid var(--text-main);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.delivery-receipt-section {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.delivery-receipt-section:last-child {
+  border-bottom: none;
+}
+
+.delivery-receipt-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.delivery-receipt-logo {
+  max-height: 90px;
+  max-width: 110px;
+  flex-shrink: 0;
+}
+
+.delivery-receipt-company-name {
+  font-weight: 700;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.delivery-receipt-line {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.delivery-receipt-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.5px;
+}
+
+.delivery-receipt-note {
+  color: var(--danger);
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.delivery-receipt-fee {
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.delivery-receipt-terms {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.delivery-receipt-terms li {
+  margin-bottom: 8px;
+}
+
+.delivery-receipt-signature-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 40px;
+}
+
+.delivery-receipt-signature-left > div {
+  margin-bottom: 10px;
+}
+
+.delivery-receipt-signature-right {
+  white-space: nowrap;
+}
+
 /* "Production Order" print layout - a larger-font warehouse packing list (see
    transfer-order-print-production.html / js/transferOrderPrintProduction.js), deliberately
    plainer than the customer-facing standard Transfer Order print - no letterhead/signature

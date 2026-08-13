@@ -88,6 +88,8 @@ function orderRowsHtml(orders) {
         <td>${o.confirmed_by || ''}</td>
         <td>${o.created_by || ''}</td>
         <td>${glassBadgeHtml(o)}</td>
+        <td>${o.note_print || ''}</td>
+        <td>${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>
         <td>${o.warehouse_name || o.location_id || ''}</td>
         <td><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span></td>
         <td>${o.estimated_delivery_date || ''}</td>
@@ -119,7 +121,7 @@ async function loadOrders(search, status) {
   if (myGeneration !== loadGeneration) return;
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="13" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="15" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -135,7 +137,7 @@ async function loadOrders(search, status) {
   }
 
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="13" class="muted">No online orders found.</td></tr>'
+    ? '<tr><td colspan="15" class="muted">No online orders found.</td></tr>'
     : orderRowsHtml(rows);
 
   renderPaginationBar(
@@ -213,7 +215,7 @@ async function exportOrdersToExcel() {
       'Order ID', 'Date', 'Time', 'Status', 'Customer', 'Location ID', 'Warehouse',
       'Money To Collect', 'Amount Paid', 'Discount', 'Balance', 'For Delivery',
       'Shipping Address', 'Est. Delivery Date', 'Last Updated', 'Synced At', 'Glass Thickness',
-      'Created By', 'Confirmed By'
+      'Created By', 'Confirmed By', 'Print Note', 'Delivery Fee'
     ];
     const csvLines = [headers.map(escapeCsvValue).join(',')];
     allRows.forEach((o) => {
@@ -236,7 +238,9 @@ async function exportOrdersToExcel() {
         o.synced_at_utc ? new Date(o.synced_at_utc).toLocaleString() : '',
         o.glass_thickness,
         o.created_by,
-        o.confirmed_by
+        o.confirmed_by,
+        o.note_print,
+        o.delivery_fee
       ].map(escapeCsvValue).join(','));
     });
 

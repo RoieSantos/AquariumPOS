@@ -1480,6 +1480,8 @@ declare
   v_balance numeric;
   v_discount_raw text;
   v_discount numeric;
+  v_delivery_fee_raw text;
+  v_delivery_fee numeric;
   v_last_paid_raw text;
   v_last_paid_utc timestamptz;
   v_last_paid_date date;
@@ -1490,6 +1492,7 @@ declare
   v_for_delivery_kind text;
   v_for_delivery boolean;
   v_shipping_address text;
+  v_shipping_phone text;
   v_est_delivery_raw text;
   v_est_delivery_date date;
   v_created_by text;
@@ -1523,6 +1526,10 @@ declare
   v_glass_has_12mm boolean;
   v_glass_has_10mm boolean;
   v_glass_thickness text;
+  -- Pancake's internal print note - only present on the DETAIL response, so extracted alongside
+  -- glass thickness right after the same per-order detail fetch (see the OnlineOrders."NotePrint"
+  -- column comment in supabase_orders_sync_tables.sql).
+  v_note_print text;
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -1652,6 +1659,12 @@ begin
         v_discount_raw := coalesce(v_item ->> 'discount', v_item ->> 'discount_amount', v_item ->> 'discounted_amount');
         v_discount := public.pancake_parse_decimal(v_discount_raw);
 
+        v_delivery_fee_raw := coalesce(
+          v_item -> 'shipping_fee' ->> 'amount', v_item -> 'shipping_fee' ->> 'value',
+          v_item ->> 'shipping_fee', v_item ->> 'shippingFee', v_item ->> 'delivery_fee', v_item ->> 'deliveryFee'
+        );
+        v_delivery_fee := public.pancake_parse_decimal(v_delivery_fee_raw);
+
         v_last_paid_raw := coalesce(v_item ->> 'last_paid_at', v_item ->> 'lastPaidAt', v_item ->> 'last_payment', v_item ->> 'last_paid', v_item ->> 'last_payment_at');
         v_last_paid_utc := public.pancake_try_parse_timestamptz(v_last_paid_raw);
         if v_last_paid_utc is not null then
@@ -1681,6 +1694,11 @@ begin
           v_item ->> 'shipping_address_full', v_item ->> 'shippingAddressFull', v_item ->> 'full_address', v_item ->> 'fullAddress'
         );
 
+        v_shipping_phone := coalesce(
+          v_item -> 'shipping_address' ->> 'phone_number', v_item -> 'shipping_address' ->> 'phoneNumber',
+          v_item ->> 'phone_number', v_item ->> 'bill_phone_number', v_item -> 'customer' ->> 'phone_number', v_item -> 'customer' ->> 'phone'
+        );
+
         v_est_delivery_raw := coalesce(
           v_item -> 'estimate_delivery_date' ->> 'new', v_item ->> 'estimate_delivery_date',
           v_item -> 'estimated_delivery_date' ->> 'new', v_item ->> 'estimated_delivery_date',
@@ -1699,12 +1717,12 @@ begin
 
         insert into public."OnlineOrders" (
           "OrderID", "Date", "Time", "Status", "CustomerName", "Page_ID", "Conversation_ID", "LocationID",
-          "MoneyToCollect", "AmountPaid", "Discount", "Balance", "ForDelivery", "ShippingAddress",
+          "MoneyToCollect", "AmountPaid", "Discount", "DeliveryFee", "Balance", "ForDelivery", "ShippingAddress", "ShippingPhone",
           "EstimatedDeliveryDate", "Last_Updated_At", "Converted_LastUpdated_At", "LastPaid_Date", "LastPaid_Time", "ReceivedAtShop",
           "CreatedBy", "ConfirmedBy", "ConfirmedAtUtc", "SyncedAtUtc"
         ) values (
           v_order_id, v_date, v_time, v_status, v_customer, v_page_id, v_conversation_id, v_location_id,
-          v_money_to_collect, v_amount_paid, v_discount, v_balance, v_for_delivery, v_shipping_address,
+          v_money_to_collect, v_amount_paid, v_discount, v_delivery_fee, v_balance, v_for_delivery, v_shipping_address, v_shipping_phone,
           v_est_delivery_date, v_last_updated_utc, v_converted_last_updated_date, v_last_paid_date, v_last_paid_time, v_received_at_shop,
           v_created_by, v_confirmed_by, v_confirmed_at, now()
         )
@@ -1719,9 +1737,11 @@ begin
           "MoneyToCollect" = excluded."MoneyToCollect",
           "AmountPaid" = excluded."AmountPaid",
           "Discount" = excluded."Discount",
+          "DeliveryFee" = excluded."DeliveryFee",
           "Balance" = excluded."Balance",
           "ForDelivery" = excluded."ForDelivery",
           "ShippingAddress" = excluded."ShippingAddress",
+          "ShippingPhone" = excluded."ShippingPhone",
           "EstimatedDeliveryDate" = excluded."EstimatedDeliveryDate",
           "Last_Updated_At" = excluded."Last_Updated_At",
           "Converted_LastUpdated_At" = excluded."Converted_LastUpdated_At",
@@ -1807,8 +1827,11 @@ begin
             end loop;
 
             v_glass_thickness := case when v_glass_has_12mm then '12mm' when v_glass_has_10mm then '10mm' else null end;
+            v_note_print := nullif(trim(coalesce(v_order_el ->> 'note_print', v_order_el ->> 'notePrint', '')), '');
+
             update public."OnlineOrders"
-              set "GlassThickness" = v_glass_thickness, "GlassThicknessCheckedAt" = now()
+              set "GlassThickness" = v_glass_thickness, "GlassThicknessCheckedAt" = now(),
+                  "NotePrint" = coalesce(v_note_print, "NotePrint"), "NotePrintCheckedAt" = now()
               where "OrderID" = v_order_id;
           end if;
         exception when others then
@@ -1985,6 +2008,8 @@ declare
   v_balance numeric;
   v_discount_raw text;
   v_discount numeric;
+  v_delivery_fee_raw text;
+  v_delivery_fee numeric;
   v_last_paid_raw text;
   v_last_paid_utc timestamptz;
   v_last_paid_date date;
@@ -1996,6 +2021,7 @@ declare
   v_for_delivery_kind text;
   v_for_delivery boolean;
   v_shipping_address text;
+  v_shipping_phone text;
   v_est_delivery_raw text;
   v_est_delivery_date date;
   v_created_by text;
@@ -2006,6 +2032,13 @@ declare
   v_orders_inserted int := 0;
   v_orders_updated int := 0;
   v_max_run_utc timestamptz := now();
+  -- Pancake's internal print note - only present on the DETAIL response, so opportunistically
+  -- extracted from whichever backfill loop below already paid for a detail fetch (glass or
+  -- lines) - see the OnlineOrders."NotePrint" column comment in supabase_orders_sync_tables.sql.
+  -- Both loops' WHERE clauses are widened to also pick up "NotePrintCheckedAt is null" so every
+  -- order eventually gets checked even if it already has GlassThicknessCheckedAt/lines from
+  -- before this column existed.
+  v_note_print text;
 begin
   -- No auth check here - see the header comment above for why (internal, pg_cron-only caller).
 
@@ -2144,6 +2177,12 @@ begin
         v_discount_raw := coalesce(v_item ->> 'discount', v_item ->> 'discount_amount', v_item ->> 'discounted_amount');
         v_discount := public.pancake_parse_decimal(v_discount_raw);
 
+        v_delivery_fee_raw := coalesce(
+          v_item -> 'shipping_fee' ->> 'amount', v_item -> 'shipping_fee' ->> 'value',
+          v_item ->> 'shipping_fee', v_item ->> 'shippingFee', v_item ->> 'delivery_fee', v_item ->> 'deliveryFee'
+        );
+        v_delivery_fee := public.pancake_parse_decimal(v_delivery_fee_raw);
+
         v_last_paid_raw := coalesce(v_item ->> 'last_paid_at', v_item ->> 'lastPaidAt', v_item ->> 'last_payment', v_item ->> 'last_paid', v_item ->> 'last_payment_at');
         v_last_paid_utc := public.pancake_try_parse_timestamptz(v_last_paid_raw);
         if v_last_paid_utc is not null then
@@ -2173,6 +2212,11 @@ begin
           v_item ->> 'shipping_address_full', v_item ->> 'shippingAddressFull', v_item ->> 'full_address', v_item ->> 'fullAddress'
         );
 
+        v_shipping_phone := coalesce(
+          v_item -> 'shipping_address' ->> 'phone_number', v_item -> 'shipping_address' ->> 'phoneNumber',
+          v_item ->> 'phone_number', v_item ->> 'bill_phone_number', v_item -> 'customer' ->> 'phone_number', v_item -> 'customer' ->> 'phone'
+        );
+
         v_est_delivery_raw := coalesce(
           v_item -> 'estimate_delivery_date' ->> 'new', v_item ->> 'estimate_delivery_date',
           v_item -> 'estimated_delivery_date' ->> 'new', v_item ->> 'estimated_delivery_date',
@@ -2191,12 +2235,12 @@ begin
 
         insert into public."OnlineOrders" (
           "OrderID", "Date", "Time", "Status", "CustomerName", "Page_ID", "Conversation_ID", "LocationID",
-          "MoneyToCollect", "AmountPaid", "Discount", "Balance", "ForDelivery", "ShippingAddress",
+          "MoneyToCollect", "AmountPaid", "Discount", "DeliveryFee", "Balance", "ForDelivery", "ShippingAddress", "ShippingPhone",
           "EstimatedDeliveryDate", "Last_Updated_At", "Converted_LastUpdated_At", "LastPaid_Date", "LastPaid_Time", "ReceivedAtShop",
           "CreatedBy", "ConfirmedBy", "ConfirmedAtUtc", "SyncedAtUtc"
         ) values (
           v_order_id, v_date, v_time, v_status, v_customer, v_page_id, v_conversation_id, v_location_id,
-          v_money_to_collect, v_amount_paid, v_discount, v_balance, v_for_delivery, v_shipping_address,
+          v_money_to_collect, v_amount_paid, v_discount, v_delivery_fee, v_balance, v_for_delivery, v_shipping_address, v_shipping_phone,
           v_est_delivery_date, v_last_updated_utc, v_converted_last_updated_date, v_last_paid_date, v_last_paid_time, v_received_at_shop,
           v_created_by, v_confirmed_by, v_confirmed_at, now()
         )
@@ -2211,9 +2255,11 @@ begin
           "MoneyToCollect" = excluded."MoneyToCollect",
           "AmountPaid" = excluded."AmountPaid",
           "Discount" = excluded."Discount",
+          "DeliveryFee" = excluded."DeliveryFee",
           "Balance" = excluded."Balance",
           "ForDelivery" = excluded."ForDelivery",
           "ShippingAddress" = excluded."ShippingAddress",
+          "ShippingPhone" = excluded."ShippingPhone",
           "EstimatedDeliveryDate" = excluded."EstimatedDeliveryDate",
           "Last_Updated_At" = excluded."Last_Updated_At",
           "Converted_LastUpdated_At" = excluded."Converted_LastUpdated_At",
@@ -2272,7 +2318,7 @@ begin
 
     for v_glass_order_id in
       select "OrderID" from public."OnlineOrders"
-      where "GlassThicknessCheckedAt" is null
+      where ("GlassThicknessCheckedAt" is null or "NotePrintCheckedAt" is null)
         and coalesce("ReceivedAtShop", false) is not true
       order by "Last_Updated_At" desc nulls last
       limit v_max_glass_detail_calls
@@ -2314,8 +2360,11 @@ begin
         end loop;
 
         v_glass_thickness := case when v_glass_has_12mm then '12mm' when v_glass_has_10mm then '10mm' else null end;
+        v_note_print := nullif(trim(coalesce(v_glass_order_el ->> 'note_print', v_glass_order_el ->> 'notePrint', '')), '');
+
         update public."OnlineOrders"
-          set "GlassThickness" = v_glass_thickness, "GlassThicknessCheckedAt" = now()
+          set "GlassThickness" = v_glass_thickness, "GlassThicknessCheckedAt" = now(),
+              "NotePrint" = coalesce(v_note_print, "NotePrint"), "NotePrintCheckedAt" = now()
           where "OrderID" = v_glass_order_id;
 
         v_glass_checked := v_glass_checked + 1;
@@ -2334,6 +2383,7 @@ begin
     for v_lines_order_id in
       select o."OrderID" from public."OnlineOrders" o
       where not exists (select 1 from public."OnlineOrderLines" l where l."OrderID" = o."OrderID")
+         or o."NotePrintCheckedAt" is null
       order by o."Last_Updated_At" desc nulls last
       limit v_max_lines_detail_calls
     loop
@@ -2394,6 +2444,11 @@ begin
             null; -- skip malformed line, keep processing the rest
           end;
         end loop;
+
+        v_note_print := nullif(trim(coalesce(v_lines_order_el ->> 'note_print', v_lines_order_el ->> 'notePrint', '')), '');
+        update public."OnlineOrders"
+          set "NotePrint" = coalesce(v_note_print, "NotePrint"), "NotePrintCheckedAt" = now()
+          where "OrderID" = v_lines_order_id;
 
         v_lines_checked := v_lines_checked + 1;
       exception when others then
@@ -2562,11 +2617,14 @@ declare
   v_balance numeric;
   v_discount_raw text;
   v_discount numeric;
+  v_delivery_fee_raw text;
+  v_delivery_fee numeric;
   v_last_updated_raw text;
   v_last_updated_utc timestamptz;
   v_for_delivery_kind text;
   v_for_delivery boolean;
   v_shipping_address text;
+  v_shipping_phone text;
   v_est_delivery_raw text;
   v_est_delivery_date date;
   v_matches_filters boolean;
@@ -2731,6 +2789,12 @@ begin
       v_discount_raw := coalesce(v_item ->> 'discount', v_item ->> 'discount_amount', v_item ->> 'discounted_amount');
       v_discount := public.pancake_parse_decimal(v_discount_raw);
 
+      v_delivery_fee_raw := coalesce(
+        v_item -> 'shipping_fee' ->> 'amount', v_item -> 'shipping_fee' ->> 'value',
+        v_item ->> 'shipping_fee', v_item ->> 'shippingFee', v_item ->> 'delivery_fee', v_item ->> 'deliveryFee'
+      );
+      v_delivery_fee := public.pancake_parse_decimal(v_delivery_fee_raw);
+
       v_last_updated_raw := coalesce(v_item ->> 'updated_at', v_item ->> 'updatedAt', v_item ->> 'last_updated_at', v_item ->> 'lastUpdatedAt');
       v_last_updated_utc := public.pancake_try_parse_timestamptz(v_last_updated_raw);
 
@@ -2746,6 +2810,11 @@ begin
         v_item -> 'shipping_address' ->> 'full_address', v_item -> 'shipping_address' ->> 'fullAddress',
         v_item -> 'shipping_address' ->> 'address', v_item -> 'shipping_address' ->> 'formatted_address', v_item -> 'shipping_address' ->> 'formattedAddress',
         v_item ->> 'shipping_address_full', v_item ->> 'shippingAddressFull', v_item ->> 'full_address', v_item ->> 'fullAddress'
+      );
+
+      v_shipping_phone := coalesce(
+        v_item -> 'shipping_address' ->> 'phone_number', v_item -> 'shipping_address' ->> 'phoneNumber',
+        v_item ->> 'phone_number', v_item ->> 'bill_phone_number', v_item -> 'customer' ->> 'phone_number', v_item -> 'customer' ->> 'phone'
       );
 
       v_est_delivery_raw := coalesce(
@@ -2786,11 +2855,11 @@ begin
       begin
         insert into public."OnlineOrders" (
           "OrderID", "Date", "Time", "Status", "CustomerName", "LocationID",
-          "MoneyToCollect", "AmountPaid", "Discount", "Balance", "ForDelivery", "ShippingAddress",
+          "MoneyToCollect", "AmountPaid", "Discount", "DeliveryFee", "Balance", "ForDelivery", "ShippingAddress", "ShippingPhone",
           "EstimatedDeliveryDate", "Last_Updated_At", "ReceivedAtShop", "CreatedBy", "ConfirmedBy", "ConfirmedAtUtc", "SyncedAtUtc"
         ) values (
           v_order_id, v_date, v_time, v_status, v_customer, v_location_id,
-          v_money_to_collect, v_amount_paid, v_discount, v_balance, v_for_delivery, v_shipping_address,
+          v_money_to_collect, v_amount_paid, v_discount, v_delivery_fee, v_balance, v_for_delivery, v_shipping_address, v_shipping_phone,
           v_est_delivery_date, v_last_updated_utc, v_received_at_shop, v_created_by, v_confirmed_by, v_confirmed_at, now()
         )
         on conflict ("OrderID") do update set
@@ -2802,6 +2871,8 @@ begin
           "MoneyToCollect" = excluded."MoneyToCollect",
           "AmountPaid" = excluded."AmountPaid",
           "Discount" = excluded."Discount",
+          "DeliveryFee" = excluded."DeliveryFee",
+          "ShippingPhone" = excluded."ShippingPhone",
           "Balance" = excluded."Balance",
           "ForDelivery" = excluded."ForDelivery",
           "ShippingAddress" = excluded."ShippingAddress",
