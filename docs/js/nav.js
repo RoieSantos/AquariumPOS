@@ -27,6 +27,7 @@ function renderTopNav(activeLabel) {
 
   if (!isSalesOnlyUser) {
     items.push({ href: 'serial-tracker.html', label: 'Serial Tracker' });
+    items.push({ href: 'inventory-summary.html', label: 'Inventory Summary' });
   }
 
   items.push({ href: 'online-orders.html', label: 'Online Orders' });

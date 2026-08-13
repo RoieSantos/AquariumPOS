@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inventory Summary - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Inventory Summary</h1>
+    <p class="muted">Count of serial-tracked Aquarium / Stand / Sump units, by warehouse. Based on dbo.ItemSerialTracking.</p>
+
+    <div class="toolbar">
+      <label for="statusFilter" class="muted" style="margin:0;">Status</label>
+      <select id="statusFilter" style="max-width:200px;">
+        <option value="IN_STOCK" selected>In Stock</option>
+        <option value="SOLD">Sold</option>
+        <option value="RESERVED">Reserved</option>
+        <option value="IN_TRANSIT">In Transit</option>
+        <option value="">All statuses</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+    </div>
+
+    <div id="summaryLoading" class="muted">Loading...</div>
+    <div id="summaryError" class="error-text hidden"></div>
+
+    <div id="summaryResults" class="hidden">
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🐠</span> Aquarium</div>
+          <div class="stat-value" id="statAquariumTotal">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🪑</span> Stand</div>
+          <div class="stat-value" id="statStandTotal">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🪣</span> Sump</div>
+          <div class="stat-value" id="statSumpTotal">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📦</span> Total</div>
+          <div class="stat-value" id="statGrandTotal">-</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Warehouse / Location</th>
+              <th style="text-align:right;">Aquarium</th>
+              <th style="text-align:right;">Stand</th>
+              <th style="text-align:right;">Sump</th>
+              <th style="text-align:right;">Total</th>
+            </tr>
+          </thead>
+          <tbody id="summaryTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="toolbar" style="margin-top:32px;">
+        <h2 style="margin:0;">By Product</h2>
+        <input type="text" id="productSearchInput" placeholder="Search by item code or description..." style="max-width:280px;" />
+        <label for="categoryFilter" class="muted" style="margin:0;">Category</label>
+        <select id="categoryFilter" style="max-width:200px;">
+          <option value="">All categories</option>
+          <option value="AQUARIUM">Aquarium</option>
+          <option value="STAND">Stand</option>
+          <option value="SUMP">Sump</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item Code</th>
+              <th>Description</th>
+              <th>Category</th>
+              <th>Warehouse / Location</th>
+              <th style="text-align:right;">Count</th>
+            </tr>
+          </thead>
+          <tbody id="itemTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/inventorySummary.js"></script>
+</body>
+</html>

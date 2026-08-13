@@ -9,6 +9,7 @@ let isProductionWarehouseUser = true; // unrestricted unless resolveIsProduction
 let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit control below
 let warehouseOptions = []; // [{ id, name }] loaded once, used by the edit-location dropdown
 let editLocationSerialNo = null;
+let urlLocationFilter = null; // ?location= from an Inventory Summary deep link - see openEditLocationModal's sibling, applyUrlFilters
 
 // Non-production (store) warehouses only see serial activity for their own location - Production
 // staff need the full cross-warehouse picture (that's who runs Stock Counts / ships Transfer
@@ -329,6 +330,10 @@ function renderSerials() {
     const ownWarehouse = currentSession.warehouseName.trim().toLowerCase();
     rows = rows.filter((r) => (r.Location || '').trim().toLowerCase() === ownWarehouse);
   }
+  if (urlLocationFilter) {
+    const targetLocation = urlLocationFilter.toLowerCase();
+    rows = rows.filter((r) => (r.Location || '').trim().toLowerCase() === targetLocation);
+  }
   if (statusFilter) {
     rows = rows.filter((r) => (r.Status || '') === statusFilter);
   }
@@ -434,6 +439,22 @@ async function markInStock(serialNo) {
 
   if (isSerialAdmin) {
     await loadWarehouseOptionsOnce();
+  }
+
+  // Deep link from Inventory Summary's clickable counts (see inventorySummary.js) - pre-fills the
+  // search/status filters and adds a Location filter (which this page otherwise doesn't expose as
+  // its own control) so clicking a count there lands here already narrowed to exactly those units.
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlItem = urlParams.get('item');
+  const urlStatus = urlParams.get('status');
+  const urlLocation = urlParams.get('location');
+  if (urlItem) document.getElementById('searchInput').value = urlItem;
+  if (urlStatus) document.getElementById('statusFilter').value = urlStatus;
+  if (urlLocation) {
+    urlLocationFilter = urlLocation;
+    const note = document.getElementById('warehouseFilterNote');
+    note.innerHTML = `Filtered by location: ${escapeHtml(urlLocation)} (from Inventory Summary) - <a href="serial-tracker.html">Clear</a>`;
+    note.classList.remove('hidden');
   }
 
   document.getElementById('searchInput').addEventListener('input', renderSerials);
