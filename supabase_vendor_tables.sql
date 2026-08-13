@@ -40,6 +40,17 @@ create table if not exists public."Vendors" (
     "UpdatedAtUtc" timestamptz
 );
 
+-- Geocode cache, same pattern/purpose as Warehouses' own geocode cache (supabase_warehouse_
+-- address_geocode.sql): lets a Delivery-Setup-tagged Vendor be plotted as an origin marker on
+-- the Delivery day map. Populated lazily from the Delivery page itself (any active staff) the
+-- first time it's needed, not from Vendor Setup - staleness is detected the same way, by
+-- comparing GeocodedAddress to the current Address.
+alter table public."Vendors" add column if not exists "Latitude" numeric(10, 7);
+alter table public."Vendors" add column if not exists "Longitude" numeric(10, 7);
+alter table public."Vendors" add column if not exists "GeocodeStatus" varchar(20);
+alter table public."Vendors" add column if not exists "GeocodedAddress" varchar(500);
+alter table public."Vendors" add column if not exists "GeocodedAtUtc" timestamptz;
+
 alter table public."Vendors" enable row level security;
 revoke all on public."Vendors" from anon, authenticated;
 
@@ -256,6 +267,168 @@ begin
     where "VendorCode" = p_vendor_code;
 
   return query select true, 'Vendor updated.'::text;
+end;
+$$;
+
+drop function if exists public.admin_bulk_upsert_vendors(text, text, jsonb);
+
+-- Bulk insert/update for Vendor Setup's "Import from Excel" - per "can you export to excel and
+-- import to excel this way I can update / insert using excel". p_vendors is a JSON array of
+-- objects with the same keys admin_list_vendors returns (vendor_code, name, contact_person,
+-- phone, email, address, payment_terms, notes, is_active) - matches what Export to Excel
+-- produces, so a round-tripped export -> edit -> import just works. Upserts on VendorCode
+-- (insert if new, update if it already exists) rather than requiring the caller to know which -
+-- vendorSetup.js parses the CSV client-side and doesn't distinguish either. is_active defaults
+-- true when omitted/blank, same as admin_create_vendor's column default.
+create or replace function public.admin_bulk_upsert_vendors(
+  p_admin_username text,
+  p_admin_password text,
+  p_vendors jsonb
+)
+returns table(inserted_count int, updated_count int, skipped_count int, errors text[])
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_row jsonb;
+  v_code text;
+  v_name text;
+  v_existed boolean;
+  v_inserted int := 0;
+  v_updated int := 0;
+  v_skipped int := 0;
+  v_errors text[] := array[]::text[];
+begin
+  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  if p_vendors is null or jsonb_typeof(p_vendors) <> 'array' then
+    raise exception 'p_vendors must be a JSON array.';
+  end if;
+
+  for v_row in select * from jsonb_array_elements(p_vendors)
+  loop
+    v_code := upper(trim(coalesce(v_row ->> 'vendor_code', '')));
+    v_name := trim(coalesce(v_row ->> 'name', ''));
+
+    if v_code = '' then
+      v_skipped := v_skipped + 1;
+      v_errors := v_errors || 'Skipped a row with no Vendor Code.';
+      continue;
+    end if;
+
+    if v_name = '' then
+      v_skipped := v_skipped + 1;
+      v_errors := v_errors || (v_code || ': skipped, Name is required.');
+      continue;
+    end if;
+
+    select exists(select 1 from public."Vendors" where "VendorCode" = v_code) into v_existed;
+
+    insert into public."Vendors" ("VendorCode", "Name", "ContactPerson", "Phone", "Email", "Address", "PaymentTerms", "Notes", "IsActive")
+    values (
+      v_code, v_name,
+      nullif(trim(coalesce(v_row ->> 'contact_person', '')), ''),
+      nullif(trim(coalesce(v_row ->> 'phone', '')), ''),
+      nullif(trim(coalesce(v_row ->> 'email', '')), ''),
+      nullif(trim(coalesce(v_row ->> 'address', '')), ''),
+      nullif(trim(coalesce(v_row ->> 'payment_terms', '')), ''),
+      nullif(trim(coalesce(v_row ->> 'notes', '')), ''),
+      coalesce((v_row ->> 'is_active')::boolean, true)
+    )
+    on conflict ("VendorCode") do update
+      set "Name" = excluded."Name",
+          "ContactPerson" = excluded."ContactPerson",
+          "Phone" = excluded."Phone",
+          "Email" = excluded."Email",
+          "Address" = excluded."Address",
+          "PaymentTerms" = excluded."PaymentTerms",
+          "Notes" = excluded."Notes",
+          "IsActive" = excluded."IsActive",
+          "UpdatedAtUtc" = now();
+
+    if v_existed then
+      v_updated := v_updated + 1;
+    else
+      v_inserted := v_inserted + 1;
+    end if;
+  end loop;
+
+  return query select v_inserted, v_updated, v_skipped, v_errors;
+end;
+$$;
+
+drop function if exists public.admin_update_vendor_geocode(text, text, text, text, numeric, numeric, text);
+
+-- Persists a client-side geocode result for a vendor's Address - mirrors
+-- admin_update_warehouse_geocode (supabase_warehouse_address_geocode.sql) exactly, including its
+-- trust tier: is_staff_authorized (not is_admin_authorized), because this is called lazily from
+-- the Delivery page itself (any active staff) the first time a fixed-route vendor needs to be
+-- plotted on that day's map, not from the super-user-only Vendor Setup page.
+create or replace function public.admin_update_vendor_geocode(
+  p_admin_username text,
+  p_admin_password text,
+  p_vendor_code text,
+  p_geocoded_address text,
+  p_latitude numeric,
+  p_longitude numeric,
+  p_geocode_status text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  update public."Vendors"
+  set "GeocodedAddress" = p_geocoded_address,
+      "Latitude" = p_latitude,
+      "Longitude" = p_longitude,
+      "GeocodeStatus" = p_geocode_status,
+      "GeocodedAtUtc" = now()
+  where "VendorCode" = p_vendor_code;
+end;
+$$;
+
+drop function if exists public.staff_search_vendors(text, text, text, int);
+
+-- Staff-facing vendor lookup - gated by is_staff_authorized, not is_admin_authorized like
+-- admin_list_vendors (Vendor Setup is super-user only, but the Delivery page - any active staff -
+-- still needs to resolve a fixed-route vendor's Address/geocode to plot it on the day map).
+-- Mirrors staff_search_warehouses: blank p_search returns every active vendor up to the limit.
+create or replace function public.staff_search_vendors(p_admin_username text, p_admin_password text, p_search text default null, p_limit int default 50)
+returns table(
+  vendor_code text,
+  name text,
+  address text,
+  latitude numeric,
+  longitude numeric,
+  geocode_status text,
+  geocoded_address text
+)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_limit int := least(greatest(coalesce(p_limit, 50), 1), 100);
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  return query
+    select "VendorCode"::text, "Name"::text, "Address"::text, "Latitude", "Longitude", "GeocodeStatus"::text, "GeocodedAddress"::text
+    from public."Vendors"
+    where "IsActive" and (p_search is null or trim(p_search) = '' or "Name" ilike '%' || p_search || '%')
+    order by "Name"
+    limit v_limit;
 end;
 $$;
 
@@ -557,6 +730,9 @@ $$;
 grant execute on function public.admin_list_vendors(text, text, text, int, int) to anon;
 grant execute on function public.admin_create_vendor(text, text, text, text, text, text, text, text, text, text) to anon;
 grant execute on function public.admin_update_vendor(text, text, text, text, text, text, text, text, text, text, boolean) to anon;
+grant execute on function public.admin_bulk_upsert_vendors(text, text, jsonb) to anon;
+grant execute on function public.admin_update_vendor_geocode(text, text, text, text, numeric, numeric, text) to anon;
+grant execute on function public.staff_search_vendors(text, text, text, int) to anon;
 grant execute on function public.admin_list_vendor_bills(text, text, text, int, int) to anon;
 grant execute on function public.admin_create_vendor_bill(text, text, text, date, date, text, numeric, text) to anon;
 grant execute on function public.admin_void_vendor_bill(text, text, text) to anon;

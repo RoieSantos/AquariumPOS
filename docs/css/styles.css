@@ -1141,6 +1141,22 @@ tr.clickable-row:hover {
   padding: 4px 0;
 }
 
+.delivery-fixed-route-row {
+  background: var(--panel-bg);
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.delivery-weekday-route {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--primary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .delivery-day-cell {
   min-height: 84px;
   background: var(--panel-bg);
@@ -1168,6 +1184,19 @@ tr.clickable-row:hover {
 .delivery-day-cell.today {
   outline: 2px solid var(--primary);
   outline-offset: -2px;
+}
+
+.delivery-day-cell.no-delivery {
+  background: repeating-linear-gradient(45deg, var(--panel-bg), var(--panel-bg) 8px, var(--panel-border) 8px, var(--panel-border) 9px);
+  opacity: 0.75;
+}
+
+.delivery-day-cell .badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .delivery-day-cell.selected {

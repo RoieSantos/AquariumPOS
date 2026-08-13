@@ -35,7 +35,7 @@ function renderVendorRows(vendors) {
   const tbody = document.getElementById('vendorTableBody');
 
   if (!vendors || vendors.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">No vendors found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">No vendors found.</td></tr>';
     return;
   }
 
@@ -46,6 +46,7 @@ function renderVendorRows(vendors) {
         <td>${v.name || ''}</td>
         <td>${v.contact_person || ''}</td>
         <td>${v.phone || ''}</td>
+        <td>${v.address || ''}</td>
         <td style="text-align:right;">${formatMoney(v.balance)}</td>
         <td><span class="badge ${v.is_active ? 'badge-success' : 'badge-danger'}">${v.is_active ? 'Active' : 'Inactive'}</span></td>
         <td><button class="btn btn-secondary btn-sm" data-manage-code="${v.vendor_code}" type="button">Manage</button></td>
@@ -59,7 +60,7 @@ let currentVendorSearch = '';
 
 async function loadVendors() {
   const tbody = document.getElementById('vendorTableBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_vendors', {
     p_admin_username: currentSession.username,
@@ -70,7 +71,7 @@ async function loadVendors() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -96,6 +97,240 @@ function wireVendorSearch() {
       loadVendors();
     }, 300);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Export to Excel / Import from Excel
+// Plain CSV (not a real .xlsx), same convention as Online Orders' own "Export to Excel"
+// (js/onlineOrders.js) - Excel opens it natively with no extra library/CDN dependency. Import
+// reads that same header layout back in via admin_bulk_upsert_vendors (supabase_vendor_bulk_
+// import.sql), upserting by Vendor Code - per "export to excel and import to excel this way I
+// can update / insert using excel".
+
+function escapeCsvValue(value) {
+  const str = value === null || value === undefined ? '' : String(value);
+  return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+}
+
+// Exports every vendor matching the CURRENT search, not just the page on screen - loops
+// admin_list_vendors at its own max page size (500) until exhausted, same pagination-loop
+// pattern as exportOrdersToExcel.
+async function exportVendorsToExcel() {
+  const btn = document.getElementById('exportExcelBtn');
+  const exportPageSize = 500;
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Exporting...';
+
+  try {
+    const allRows = [];
+    let page = 1;
+    for (;;) {
+      const { data, error } = await supabaseClient.rpc('admin_list_vendors', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_search: currentVendorSearch || null,
+        p_page: page,
+        p_page_size: exportPageSize
+      });
+
+      if (error) {
+        alert('Export failed: ' + error.message);
+        return;
+      }
+
+      allRows.push(...(data || []));
+      if (!data || data.length < exportPageSize) break;
+      page += 1;
+    }
+
+    if (allRows.length === 0) {
+      alert('No vendors to export for the current filters.');
+      return;
+    }
+
+    const headers = [
+      'Vendor Code', 'Name', 'Contact Person', 'Phone', 'Email', 'Address', 'Payment Terms',
+      'Notes', 'Active', 'Total Billed', 'Total Paid', 'Balance', 'Created At', 'Updated At'
+    ];
+    const csvLines = [headers.map(escapeCsvValue).join(',')];
+    allRows.forEach((v) => {
+      csvLines.push([
+        v.vendor_code,
+        v.name,
+        v.contact_person,
+        v.phone,
+        v.email,
+        v.address,
+        v.payment_terms,
+        v.notes,
+        v.is_active ? 'Yes' : 'No',
+        v.total_billed,
+        v.total_paid,
+        v.balance,
+        v.created_at_utc ? new Date(v.created_at_utc).toLocaleString() : '',
+        v.updated_at_utc ? new Date(v.updated_at_utc).toLocaleString() : ''
+      ].map(escapeCsvValue).join(','));
+    });
+
+    const blob = new Blob(['﻿' + csvLines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `vendors-${stamp}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+// Blank starter file for Import from Excel - only the columns admin_bulk_upsert_vendors actually
+// reads (csvRowsToVendorObjects below), unlike the full Export to Excel which also includes
+// read-only computed columns (Total Billed/Paid/Balance, Created/Updated At) that Import ignores
+// and would just be confusing to fill in. One example row shows the expected format - Vendor
+// Code is the upsert key (existing code -> update, new code -> insert), Active is Yes/No.
+function downloadVendorImportTemplate() {
+  const headers = ['Vendor Code', 'Name', 'Contact Person', 'Phone', 'Email', 'Address', 'Payment Terms', 'Notes', 'Active'];
+  const exampleRow = ['V001', 'Sample Vendor Co.', 'Juan Dela Cruz', '09171234567', 'vendor@example.com', '123 Main St, Quezon City', 'Net 30', 'Preferred supplier', 'Yes'];
+
+  const csvLines = [headers.map(escapeCsvValue).join(','), exampleRow.map(escapeCsvValue).join(',')];
+  const blob = new Blob(['﻿' + csvLines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'vendor-import-template.csv';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// RFC4180-ish CSV parser (handles quoted fields containing commas/newlines/escaped "" quotes) -
+// needed because Vendor Notes/Address fields can legitimately contain commas, and a plain
+// split(',')/split('\n') would break on those exactly the way escapeCsvValue above guards
+// against when exporting. No external library - this file already avoids one for export.
+function parseCsv(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip UTF-8 BOM if present
+
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      inQuotes = true;
+    } else if (char === ',') {
+      row.push(field); field = '';
+    } else if (char === '\r') {
+      // ignore - a following \n (CRLF) closes the row on its own
+    } else if (char === '\n') {
+      row.push(field); field = '';
+      rows.push(row); row = [];
+    } else {
+      field += char;
+    }
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+
+  return rows.filter((r) => !(r.length === 1 && r[0].trim() === ''));
+}
+
+// Maps parsed CSV rows to admin_bulk_upsert_vendors' expected object shape by header NAME
+// (case-insensitive), not column position - so a re-ordered or partially-trimmed-down export
+// (e.g. someone deletes the Balance/Created At columns before re-importing) still works, as long
+// as "Vendor Code" and "Name" are present.
+function csvRowsToVendorObjects(rows) {
+  if (rows.length === 0) return [];
+
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (label) => headers.indexOf(label);
+  const idx = {
+    vendor_code: col('vendor code'),
+    name: col('name'),
+    contact_person: col('contact person'),
+    phone: col('phone'),
+    email: col('email'),
+    address: col('address'),
+    payment_terms: col('payment terms'),
+    notes: col('notes'),
+    is_active: col('active')
+  };
+
+  if (idx.vendor_code === -1 || idx.name === -1) {
+    throw new Error('That file must have "Vendor Code" and "Name" columns (matching Export to Excel\'s headers).');
+  }
+
+  const at = (r, i) => (i > -1 ? (r[i] || '').trim() : '');
+
+  return rows.slice(1)
+    .filter((r) => r.some((v) => v.trim() !== ''))
+    .map((r) => ({
+      vendor_code: at(r, idx.vendor_code),
+      name: at(r, idx.name),
+      contact_person: at(r, idx.contact_person),
+      phone: at(r, idx.phone),
+      email: at(r, idx.email),
+      address: at(r, idx.address),
+      payment_terms: at(r, idx.payment_terms),
+      notes: at(r, idx.notes),
+      is_active: idx.is_active === -1 || !/^(no|false|0|inactive)$/i.test(at(r, idx.is_active))
+    }));
+}
+
+async function importVendorsFromExcel(file) {
+  const btn = document.getElementById('importExcelBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+
+  try {
+    const text = await file.text();
+    let vendors;
+    try {
+      vendors = csvRowsToVendorObjects(parseCsv(text));
+    } catch (err) {
+      alert(err.message);
+      return;
+    }
+
+    if (vendors.length === 0) {
+      alert('No vendor rows found in that file.');
+      return;
+    }
+
+    const { data, error } = await supabaseClient.rpc('admin_bulk_upsert_vendors', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_vendors: vendors
+    });
+
+    if (error) {
+      alert('Import failed: ' + error.message);
+      return;
+    }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    const errorNote = result?.errors?.length ? `\n\nSkipped:\n${result.errors.join('\n')}` : '';
+    alert(`Import complete.\nInserted: ${result?.inserted_count ?? 0}\nUpdated: ${result?.updated_count ?? 0}\nSkipped: ${result?.skipped_count ?? 0}${errorNote}`);
+
+    await loadVendors();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +774,17 @@ async function voidPayment(paymentNo) {
   document.getElementById('vendorSetupContent').classList.remove('hidden');
   wireVendorSearch();
   await loadVendors();
+
+  document.getElementById('exportExcelBtn').addEventListener('click', exportVendorsToExcel);
+  document.getElementById('downloadTemplateBtn').addEventListener('click', downloadVendorImportTemplate);
+  document.getElementById('importExcelBtn').addEventListener('click', () => {
+    document.getElementById('importExcelFileInput').click();
+  });
+  document.getElementById('importExcelFileInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = ''; // allow re-selecting the same file next time
+    if (file) await importVendorsFromExcel(file);
+  });
 
   document.getElementById('newVendorBtn').addEventListener('click', openNewVendorModal);
   document.getElementById('closeNewVendorBtn').addEventListener('click', () =>

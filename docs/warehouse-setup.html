@@ -11,7 +11,7 @@
 
   <div class="page">
     <h1>Warehouse Setup</h1>
-    <p class="muted">Warehouses synced from Pancake. Sales Target and Active are local-only and editable here. Production/Stock Warehouse are editable here too, same as the Local POS's Warehouse Setup - but the Local POS's own sync overwrites them on its next run, so edit there if the change needs to stick. Inactive warehouses are hidden from the Transfer Orders From/To Warehouse lookup. Only visible to super users.</p>
+    <p class="muted">Warehouses synced from Pancake. Sales Target, Active, and Address are local-only and editable here. Production/Stock Warehouse are editable here too, same as the Local POS's Warehouse Setup - but the Local POS's own sync overwrites them on its next run, so edit there if the change needs to stick. Inactive warehouses are hidden from the Transfer Orders From/To Warehouse lookup. Address is used to plot the warehouse as an origin marker on the Delivery page's map, for any day whose fixed route (Delivery Setup) tags it. Only visible to super users.</p>
 
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
@@ -42,11 +42,12 @@
               <th>Stock Warehouse</th>
               <th>Active</th>
               <th>Sales Target</th>
+              <th>Address</th>
               <th>Last Synced</th>
             </tr>
           </thead>
           <tbody id="warehouseTableBody">
-            <tr><td colspan="7" class="muted">Loading...</td></tr>
+            <tr><td colspan="8" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>

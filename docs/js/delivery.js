@@ -20,17 +20,25 @@ let assignPageSize = 50;
 let dayMapInstance = null;
 let googleMapsReadyPromise = null;
 let googleMapsApiKey = null; // fetched from PortalSettings (GOOGLE_MAPS_API_KEY) during init()
-
-function formatMoney(value) {
-  if (value === null || value === undefined) return '';
-  return Number(value).toFixed(2);
-}
+let routeScheduleByDayOfWeek = {}; // 0-6 -> {route_name, warehouse_ids, warehouse_names, vendor_codes, vendor_names}, from loadAndRenderRouteSchedule
+let warehouseById = {}; // WarehouseID -> {name, address, latitude, longitude, geocode_status, geocoded_address}, from loadWarehouseLookup
+let vendorByCode = {}; // VendorCode -> {name, address, latitude, longitude, geocode_status, geocoded_address}, from loadVendorLookup
 
 function toDateKey(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+// Store has no delivery truck out on Mondays - mirrored server-side in
+// admin_create_delivery_stop / admin_move_delivery_stop (supabase_delivery_tables.sql) so this
+// stays enforced even if a request bypasses this UI.
+const NO_DELIVERY_DAY_OF_WEEK = 1; // Date.getDay(): 0 = Sunday ... 1 = Monday
+
+function isBlockedDeliveryDateKey(dateKey) {
+  if (!dateKey) return false;
+  return new Date(`${dateKey}T00:00:00`).getDay() === NO_DELIVERY_DAY_OF_WEEK;
 }
 
 // GOOGLE_MAPS_API_KEY lives in public.PortalSettings (edited from general-setup.html), not
@@ -70,6 +78,143 @@ function loadGoogleMapsScript() {
   });
 
   return googleMapsReadyPromise;
+}
+
+// Loaded once at init so the day map can resolve a fixed-route warehouse's Address/coordinates
+// without a round-trip per day click. staff_search_warehouses already powers Delivery Setup's
+// picker and Transfer Orders' From/To Warehouse fields - reused here rather than a new RPC.
+async function loadWarehouseLookup() {
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: null,
+    p_limit: 100
+  });
+
+  if (error) {
+    console.error('staff_search_warehouses failed:', error);
+    return;
+  }
+
+  warehouseById = {};
+  (data || []).forEach((w) => { warehouseById[w.id] = w; });
+}
+
+// Mirrors geocodeAndSaveStop below, but for a Warehouse's Address instead of an order's
+// ShippingAddress - persists via admin_update_warehouse_geocode (supabase_warehouse_address_
+// geocode.sql) and updates the local warehouseById cache in place so the caller can immediately
+// re-check geocode_status/latitude/longitude without re-fetching.
+async function geocodeAndSaveWarehouse(warehouseId, address) {
+  const warehouse = warehouseById[warehouseId];
+  if (!warehouse) return;
+
+  try {
+    await loadGoogleMapsScript();
+    const geocoder = new google.maps.Geocoder();
+    const result = await new Promise((resolve) => {
+      geocoder.geocode({ address }, (results, status) => {
+        resolve(status === 'OK' && results && results[0] ? results[0] : null);
+      });
+    });
+
+    const payload = result
+      ? { p_geocoded_address: address, p_latitude: result.geometry.location.lat(), p_longitude: result.geometry.location.lng(), p_geocode_status: 'ok' }
+      : { p_geocoded_address: address, p_latitude: null, p_longitude: null, p_geocode_status: 'failed' };
+
+    await supabaseClient.rpc('admin_update_warehouse_geocode', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_warehouse_id: warehouseId,
+      ...payload
+    });
+
+    warehouse.geocoded_address = payload.p_geocoded_address;
+    warehouse.latitude = payload.p_latitude;
+    warehouse.longitude = payload.p_longitude;
+    warehouse.geocode_status = payload.p_geocode_status;
+  } catch (err) {
+    console.error('Warehouse geocoding failed:', err);
+  }
+}
+
+// Vendor counterparts of loadWarehouseLookup/geocodeAndSaveWarehouse above - same reasoning,
+// staff_search_vendors/admin_update_vendor_geocode mirror the warehouse RPCs exactly (see
+// supabase_vendor_address_geocode.sql).
+async function loadVendorLookup() {
+  const { data, error } = await supabaseClient.rpc('staff_search_vendors', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: null,
+    p_limit: 100
+  });
+
+  if (error) {
+    console.error('staff_search_vendors failed:', error);
+    return;
+  }
+
+  vendorByCode = {};
+  (data || []).forEach((v) => { vendorByCode[v.vendor_code] = v; });
+}
+
+async function geocodeAndSaveVendor(vendorCode, address) {
+  const vendor = vendorByCode[vendorCode];
+  if (!vendor) return;
+
+  try {
+    await loadGoogleMapsScript();
+    const geocoder = new google.maps.Geocoder();
+    const result = await new Promise((resolve) => {
+      geocoder.geocode({ address }, (results, status) => {
+        resolve(status === 'OK' && results && results[0] ? results[0] : null);
+      });
+    });
+
+    const payload = result
+      ? { p_geocoded_address: address, p_latitude: result.geometry.location.lat(), p_longitude: result.geometry.location.lng(), p_geocode_status: 'ok' }
+      : { p_geocoded_address: address, p_latitude: null, p_longitude: null, p_geocode_status: 'failed' };
+
+    await supabaseClient.rpc('admin_update_vendor_geocode', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_vendor_code: vendorCode,
+      ...payload
+    });
+
+    vendor.geocoded_address = payload.p_geocoded_address;
+    vendor.latitude = payload.p_latitude;
+    vendor.longitude = payload.p_longitude;
+    vendor.geocode_status = payload.p_geocode_status;
+  } catch (err) {
+    console.error('Vendor geocoding failed:', err);
+  }
+}
+
+// Fixed weekly route labels (Delivery Setup, super users only) - purely informational, shown
+// once under the weekday header row. Loaded once at init since the schedule rarely changes
+// mid-session; Delivery Setup itself lives on a separate page.
+async function loadAndRenderRouteSchedule() {
+  const { data, error } = await supabaseClient.rpc('staff_get_delivery_route_schedule', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    console.error('staff_get_delivery_route_schedule failed:', error);
+    return;
+  }
+
+  routeScheduleByDayOfWeek = {};
+  (data || []).forEach((r) => {
+    routeScheduleByDayOfWeek[r.day_of_week] = r;
+
+    const label = document.querySelector(`.delivery-weekday-route[data-day="${r.day_of_week}"]`);
+    if (!label) return;
+    const tags = [...(r.warehouse_names || []), ...(r.vendor_names || [])];
+    const parts = [r.route_name, tags.length ? tags.join(', ') : null].filter(Boolean);
+    label.textContent = parts.length ? parts.join(' - ') : '';
+    if (parts.length) label.title = parts.join(' - ');
+  });
 }
 
 async function loadMonthStops(year, month) {
@@ -115,14 +260,27 @@ function renderCalendarGrid(year, month) {
     const key = toDateKey(cellDate);
     const stops = stopsByDate[key] || [];
     const isToday = key === todayKey;
+    const isNoDelivery = cellDate.getDay() === NO_DELIVERY_DAY_OF_WEEK;
     const classes = ['delivery-day-cell'];
     if (stops.length > 0) classes.push('has-stops');
     if (isToday) classes.push('today');
     if (key === selectedDateKey) classes.push('selected');
+    if (isNoDelivery) classes.push('no-delivery');
+
+    // Per "show the Fixed Route as actual Stop on the calendar so the user can see that it has
+    // fixed route on that date" - every occurrence of that weekday gets a badge, not just the
+    // weekday header column, so it's visible at a glance while browsing the month.
+    const fixedRoute = !isNoDelivery ? routeScheduleByDayOfWeek[cellDate.getDay()] : null;
+    // "add a stop on the date showing how many stops fixed" - count of Warehouses + Vendors
+    // tagged for this weekday, separate from the real-order "X stops" badge below.
+    const fixedCount = fixedRoute ? (fixedRoute.warehouse_names?.length || 0) + (fixedRoute.vendor_names?.length || 0) : 0;
 
     html += `
       <div class="${classes.join(' ')}" data-date="${key}">
         <div class="delivery-day-number">${day}</div>
+        ${isNoDelivery ? '<span class="badge badge-neutral">No Delivery</span>' : ''}
+        ${fixedRoute && fixedRoute.route_name ? `<span class="badge badge-purple" title="Fixed route for this day">${fixedRoute.route_name}</span>` : ''}
+        ${fixedCount > 0 ? `<span class="badge badge-glass" title="${fixedCount} fixed Warehouse/Vendor stop${fixedCount === 1 ? '' : 's'} for this day">${fixedCount} Fixed</span>` : ''}
         ${stops.length > 0 ? `<span class="badge badge-primary">${stops.length} stop${stops.length === 1 ? '' : 's'}</span>` : ''}
       </div>
     `;
@@ -143,6 +301,34 @@ async function renderMonth(year, month) {
   renderCalendarGrid(year, month);
 }
 
+// A synthetic (non-removable) row summarizing that weekday's fixed route (Delivery Setup),
+// shown at the top of the day-detail stops table even on days with zero real orders assigned
+// yet - per "once the delivery setup has been fill in .. i want it to show in the delivery as
+// stops fixed for that date". Not counted toward the calendar's "X stops" badge - that count
+// stays reserved for actual scheduled orders.
+function fixedRouteRowHtml(dateKey) {
+  const dow = new Date(`${dateKey}T00:00:00`).getDay();
+  const route = routeScheduleByDayOfWeek[dow];
+  if (!route || !route.route_name) return '';
+
+  const tags = [
+    ...(route.warehouse_names || []).map((n) => `Warehouse: ${n}`),
+    ...(route.vendor_names || []).map((n) => `Vendor: ${n}`)
+  ];
+
+  return `
+    <tr class="delivery-fixed-route-row">
+      <td>-</td>
+      <td><em>Fixed Route</em></td>
+      <td>${route.route_name}</td>
+      <td><span class="badge badge-neutral">${tags.length} Fixed</span></td>
+      <td colspan="2">${tags.join(', ')}</td>
+      <td class="muted">Set in Delivery Setup</td>
+      <td></td>
+    </tr>
+  `;
+}
+
 function showDayDetail(dateKey) {
   selectedDateKey = dateKey;
   document.querySelectorAll('.delivery-day-cell[data-date]').forEach((cell) => {
@@ -160,22 +346,31 @@ function showDayDetail(dateKey) {
   document.getElementById('dayDetailTitle').textContent = `Stops for ${label}`;
 
   const tbody = document.getElementById('dayStopsTableBody');
-  tbody.innerHTML = stops.length === 0
-    ? '<tr><td colspan="7" class="muted">No stops scheduled for this day.</td></tr>'
-    : stops.map((s) => `
+  const fixedRouteRow = fixedRouteRowHtml(dateKey);
+  tbody.innerHTML = fixedRouteRow + (stops.length === 0
+    ? '<tr><td colspan="8" class="muted">No stops scheduled for this day.</td></tr>'
+    : stops.map((s) => {
+        // Falls back to geocoded_address (a DeliveryStops-only field) when the order itself has
+        // no ShippingAddress on file - that's where a manually-typed address from the "no
+        // address" confirmation prompt in confirmAssign() ends up, since it's never written back
+        // to OnlineOrders.ShippingAddress (a Pancake-synced field).
+        const displayAddress = s.shipping_address || s.geocoded_address || '';
+        return `
         <tr>
           <td>${s.order_id || ''}</td>
           <td>${s.customer_name || ''}</td>
+          <td>${s.route_name || ''}</td>
           <td>${s.status || ''}</td>
-          <td>${s.shipping_address || ''}</td>
-          <td>${formatMoney(s.balance)}</td>
+          <td>${displayAddress}${!s.shipping_address && s.geocoded_address ? ' <span class="muted">(manually entered)</span>' : ''}</td>
+          <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
           <td>
-            ${s.geocode_status !== 'ok' ? `<button class="btn btn-secondary btn-sm" data-retry-geocode-id="${s.stop_id}" data-retry-geocode-address="${encodeURIComponent(s.shipping_address || '')}" type="button">Retry Map</button>` : ''}
-            <button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button>
+            ${s.geocode_status !== 'ok' ? `<button class="btn btn-secondary btn-sm" data-retry-geocode-id="${s.stop_id}" data-retry-geocode-address="${encodeURIComponent(displayAddress)}" type="button">Retry Map</button>` : ''}
+            ${currentSession.isSuperUser ? `<button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button>` : ''}
           </td>
         </tr>
-      `).join('');
+      `;
+      }).join(''));
 
   tbody.querySelectorAll('button[data-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => removeStop(btn.dataset.stopId, dateKey));
@@ -192,10 +387,59 @@ function showDayDetail(dateKey) {
     });
   });
 
-  renderDayMap(stops);
+  renderDayMap(stops, dateKey);
 }
 
-async function renderDayMap(stops) {
+// Resolves the day's fixed-route warehouses (Delivery Setup) to plot as distinct origin markers
+// alongside the order stops - per "put on the Address of the warehouse so it can flow on the
+// delivery address / maps". Geocodes lazily (and caches back via admin_update_warehouse_geocode)
+// the first time a warehouse's Address hasn't been geocoded yet, or has changed since it last
+// was (GeocodedAddress <> Address, same staleness check as order stops).
+async function resolveFixedRouteWarehouseMarkers(dateKey) {
+  const dow = new Date(`${dateKey}T00:00:00`).getDay();
+  const warehouseIds = routeScheduleByDayOfWeek[dow]?.warehouse_ids || [];
+  const markers = [];
+
+  for (const warehouseId of warehouseIds) {
+    const warehouse = warehouseById[warehouseId];
+    if (!warehouse || !warehouse.address) continue;
+
+    if (warehouse.geocode_status !== 'ok' || warehouse.geocoded_address !== warehouse.address) {
+      await geocodeAndSaveWarehouse(warehouseId, warehouse.address);
+    }
+
+    if (warehouse.geocode_status === 'ok' && warehouse.latitude && warehouse.longitude) {
+      markers.push(warehouse);
+    }
+  }
+
+  return markers;
+}
+
+// Vendor counterpart of resolveFixedRouteWarehouseMarkers above - same lazy-geocode-and-cache
+// approach, but reading routeScheduleByDayOfWeek's vendor_codes/vendorByCode instead.
+async function resolveFixedRouteVendorMarkers(dateKey) {
+  const dow = new Date(`${dateKey}T00:00:00`).getDay();
+  const vendorCodes = routeScheduleByDayOfWeek[dow]?.vendor_codes || [];
+  const markers = [];
+
+  for (const vendorCode of vendorCodes) {
+    const vendor = vendorByCode[vendorCode];
+    if (!vendor || !vendor.address) continue;
+
+    if (vendor.geocode_status !== 'ok' || vendor.geocoded_address !== vendor.address) {
+      await geocodeAndSaveVendor(vendorCode, vendor.address);
+    }
+
+    if (vendor.geocode_status === 'ok' && vendor.latitude && vendor.longitude) {
+      markers.push(vendor);
+    }
+  }
+
+  return markers;
+}
+
+async function renderDayMap(stops, dateKey) {
   const mapEl = document.getElementById('dayMap');
 
   try {
@@ -205,9 +449,11 @@ async function renderDayMap(stops) {
     return;
   }
 
-  const plotted = stops.filter((s) => s.geocode_status === 'ok' && s.latitude && s.longitude);
+  const plottedStops = stops.filter((s) => s.geocode_status === 'ok' && s.latitude && s.longitude);
+  const warehouseMarkers = await resolveFixedRouteWarehouseMarkers(dateKey);
+  const vendorMarkers = await resolveFixedRouteVendorMarkers(dateKey);
 
-  if (plotted.length === 0) {
+  if (plottedStops.length === 0 && warehouseMarkers.length === 0 && vendorMarkers.length === 0) {
     mapEl.innerHTML = '<p class="muted" style="padding:12px;">No geocoded locations to show for this day yet.</p>';
     dayMapInstance = null;
     return;
@@ -217,7 +463,30 @@ async function renderDayMap(stops) {
   dayMapInstance = new google.maps.Map(mapEl, { zoom: 12 });
 
   const bounds = new google.maps.LatLngBounds();
-  plotted.forEach((s) => {
+
+  warehouseMarkers.forEach((w) => {
+    const position = { lat: Number(w.latitude), lng: Number(w.longitude) };
+    new google.maps.Marker({
+      position,
+      map: dayMapInstance,
+      title: `Warehouse: ${w.name}`,
+      icon: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png'
+    });
+    bounds.extend(position);
+  });
+
+  vendorMarkers.forEach((v) => {
+    const position = { lat: Number(v.latitude), lng: Number(v.longitude) };
+    new google.maps.Marker({
+      position,
+      map: dayMapInstance,
+      title: `Vendor: ${v.name}`,
+      icon: 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+    });
+    bounds.extend(position);
+  });
+
+  plottedStops.forEach((s) => {
     const position = { lat: Number(s.latitude), lng: Number(s.longitude) };
     new google.maps.Marker({
       position,
@@ -260,13 +529,16 @@ function renderAssignOrdersTable(orders) {
     return;
   }
 
+  // No-address orders are flagged here too (not just at confirmAssign's prompt) so staff can
+  // spot them before picking one, per "in the assign Order to Delivery can you show the address
+  // too".
   tbody.innerHTML = orders.map((o) => `
     <tr>
       <td><input type="radio" name="assignOrderRadio" value="${o.order_id}" /></td>
       <td>${o.order_id || ''}</td>
       <td>${o.customer_name || ''}</td>
       <td>${o.status || ''}</td>
-      <td>${formatMoney(o.balance)}</td>
+      <td>${o.shipping_address ? o.shipping_address : '<span class="muted">No address</span>'}</td>
       <td>${o.scheduled_date || '-'}</td>
     </tr>
   `).join('');
@@ -274,9 +546,28 @@ function renderAssignOrdersTable(orders) {
   tbody.querySelectorAll('input[name="assignOrderRadio"]').forEach((radio) => {
     radio.addEventListener('change', () => {
       selectedOrderId = radio.value;
-      document.getElementById('confirmAssignBtn').disabled = false;
+      updateConfirmAssignButtonState();
     });
   });
+}
+
+// Re-evaluated whenever the selected order or delivery date changes - keeps "Assign to Selected
+// Date" disabled (with an explanation) whenever the chosen date is a Monday, regardless of
+// whether the modal was opened from the toolbar or prefilled from a Monday's day-detail panel.
+function updateConfirmAssignButtonState() {
+  const dateKey = document.getElementById('assignDateInput').value;
+  const errorEl = document.getElementById('assignError');
+  const confirmBtn = document.getElementById('confirmAssignBtn');
+
+  if (isBlockedDeliveryDateKey(dateKey)) {
+    errorEl.textContent = 'Mondays are not available for delivery - pick a different date.';
+    errorEl.classList.remove('hidden');
+    confirmBtn.disabled = true;
+    return;
+  }
+
+  errorEl.classList.add('hidden');
+  confirmBtn.disabled = !selectedOrderId;
 }
 
 async function loadAssignOrders() {
@@ -307,13 +598,13 @@ async function loadAssignOrders() {
 
 function openAssignModal(prefilledDate) {
   selectedOrderId = null;
-  document.getElementById('confirmAssignBtn').disabled = true;
   document.getElementById('assignError').classList.add('hidden');
   document.getElementById('assignSearchInput').value = '';
   assignSearch = '';
   assignPage = 1;
   document.getElementById('assignDateInput').value = prefilledDate || toDateKey(new Date());
   document.getElementById('assignModal').classList.remove('hidden');
+  updateConfirmAssignButtonState();
   loadAssignOrders();
 }
 
@@ -374,6 +665,32 @@ async function geocodeAndSaveStop(stopId, address) {
   }
 }
 
+// Portal-styled replacement for window.confirm()/window.prompt() when the selected order has no
+// shipping address - resolves to the manually-typed address (a string, or null if left blank) if
+// the user clicks Continue, or `undefined` if they cancel. noAddressResolve is a module-level
+// handle so the Cancel/Continue buttons (wired once in wireToolbarAndModal) can settle whichever
+// promise is currently pending.
+let noAddressResolve = null;
+
+function openNoAddressModal(orderId) {
+  document.getElementById('noAddressOrderId').textContent = orderId;
+  document.getElementById('noAddressInput').value = '';
+  document.getElementById('noAddressModal').classList.remove('hidden');
+  document.getElementById('noAddressInput').focus();
+
+  return new Promise((resolve) => { noAddressResolve = resolve; });
+}
+
+function closeNoAddressModal(proceed) {
+  const address = document.getElementById('noAddressInput').value.trim();
+  document.getElementById('noAddressModal').classList.add('hidden');
+
+  if (noAddressResolve) {
+    noAddressResolve(proceed ? (address || null) : undefined);
+    noAddressResolve = null;
+  }
+}
+
 async function confirmAssign() {
   const errorEl = document.getElementById('assignError');
   errorEl.classList.add('hidden');
@@ -383,6 +700,27 @@ async function confirmAssign() {
     errorEl.textContent = 'Pick an order and a delivery date.';
     errorEl.classList.remove('hidden');
     return;
+  }
+
+  if (isBlockedDeliveryDateKey(deliveryDate)) {
+    errorEl.textContent = 'Mondays are not available for delivery - pick a different date.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  // Per "show confirmation if the order ID has no address... if still they want to proceed can
+  // we ask the user to fill in the address manually" - checked BEFORE creating the stop, so
+  // Cancel aborts the whole assignment rather than leaving an unaddressed stop behind. The
+  // manually-typed address (if any) is only used to geocode/plot this stop - it does not write
+  // back to OnlineOrders.ShippingAddress (a Pancake-synced field), so a manual entry here can't
+  // get silently overwritten or drift from what Pancake has on file.
+  const matchedOrder = assignOrdersByOrderId.get(selectedOrderId);
+  let addressForGeocode = matchedOrder ? matchedOrder.shipping_address : null;
+
+  if (!addressForGeocode || !addressForGeocode.trim()) {
+    const manualAddress = await openNoAddressModal(selectedOrderId);
+    if (manualAddress === undefined) return; // cancelled
+    addressForGeocode = manualAddress;
   }
 
   const { data: stopId, error } = await supabaseClient.rpc('admin_create_delivery_stop', {
@@ -400,7 +738,6 @@ async function confirmAssign() {
 
   closeAssignModal();
 
-  const assignedOrderId = selectedOrderId;
   const orderMonth = new Date(`${deliveryDate}T00:00:00`);
   if (orderMonth.getFullYear() !== currentYear || orderMonth.getMonth() !== currentMonth) {
     currentYear = orderMonth.getFullYear();
@@ -409,8 +746,7 @@ async function confirmAssign() {
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);
 
-  const matchedOrder = assignOrdersByOrderId.get(assignedOrderId);
-  await geocodeAndSaveStop(stopId, matchedOrder ? matchedOrder.shipping_address : null);
+  await geocodeAndSaveStop(stopId, addressForGeocode);
 
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);
@@ -448,6 +784,10 @@ function wireToolbarAndModal() {
 
   document.getElementById('closeAssignModalBtn').addEventListener('click', closeAssignModal);
   document.getElementById('confirmAssignBtn').addEventListener('click', confirmAssign);
+  document.getElementById('assignDateInput').addEventListener('change', updateConfirmAssignButtonState);
+
+  document.getElementById('noAddressCloseBtn').addEventListener('click', () => closeNoAddressModal(false));
+  document.getElementById('noAddressContinueBtn').addEventListener('click', () => closeNoAddressModal(true));
 
   document.getElementById('assignSearchInput').addEventListener('input', (e) => {
     const value = e.target.value.trim();
@@ -478,6 +818,9 @@ function wireToolbarAndModal() {
   document.getElementById('setupContent').classList.remove('hidden');
   wireToolbarAndModal();
   await loadGoogleMapsApiKey();
+  await loadWarehouseLookup();
+  await loadVendorLookup();
+  await loadAndRenderRouteSchedule();
 
   const today = new Date();
   currentYear = today.getFullYear();

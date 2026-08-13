@@ -36,13 +36,13 @@
       </div>
 
       <div class="delivery-calendar-grid" id="calendarWeekdayRow">
-        <div class="delivery-weekday-cell">Sun</div>
-        <div class="delivery-weekday-cell">Mon</div>
-        <div class="delivery-weekday-cell">Tue</div>
-        <div class="delivery-weekday-cell">Wed</div>
-        <div class="delivery-weekday-cell">Thu</div>
-        <div class="delivery-weekday-cell">Fri</div>
-        <div class="delivery-weekday-cell">Sat</div>
+        <div class="delivery-weekday-cell">Sun<div class="delivery-weekday-route" data-day="0"></div></div>
+        <div class="delivery-weekday-cell">Mon<div class="delivery-weekday-route" data-day="1"></div></div>
+        <div class="delivery-weekday-cell">Tue<div class="delivery-weekday-route" data-day="2"></div></div>
+        <div class="delivery-weekday-cell">Wed<div class="delivery-weekday-route" data-day="3"></div></div>
+        <div class="delivery-weekday-cell">Thu<div class="delivery-weekday-route" data-day="4"></div></div>
+        <div class="delivery-weekday-cell">Fri<div class="delivery-weekday-route" data-day="5"></div></div>
+        <div class="delivery-weekday-cell">Sat<div class="delivery-weekday-route" data-day="6"></div></div>
       </div>
       <div class="delivery-calendar-grid" id="calendarGrid"></div>
 
@@ -60,9 +60,10 @@
               <tr>
                 <th>Order ID</th>
                 <th>Customer</th>
+                <th>Route</th>
                 <th>Status</th>
                 <th>Address</th>
-                <th>Balance</th>
+                <th>Assigned By</th>
                 <th>Notes</th>
                 <th></th>
               </tr>
@@ -102,7 +103,7 @@
               <th>Order ID</th>
               <th>Customer</th>
               <th>Status</th>
-              <th>Balance</th>
+              <th>Address</th>
               <th>Currently Scheduled</th>
             </tr>
           </thead>
@@ -116,6 +117,32 @@
       <div id="assignError" class="error-text hidden"></div>
       <div style="margin-top:16px; text-align:right;">
         <button class="btn btn-success" id="confirmAssignBtn" type="button" disabled>Assign to Selected Date</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- No-address confirmation - shown from confirmAssign() when the selected order has no
+       shipping address on file. Replaces the old window.confirm()/window.prompt() combo with one
+       modal that both confirms and collects an optional manual address, styled consistently with
+       the rest of the portal instead of the browser's native dialog chrome. -->
+  <div id="noAddressModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">No Delivery Address</h2>
+        <button class="btn btn-secondary btn-sm" id="noAddressCloseBtn" type="button">Cancel</button>
+      </div>
+
+      <p class="muted">Order <strong id="noAddressOrderId"></strong> has no shipping address on file. Enter one below to plot it on the map, or leave it blank to continue without one.</p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="noAddressInput">Delivery Address (optional)</label>
+          <input type="text" id="noAddressInput" placeholder="e.g. 123 Main St, Quezon City" />
+        </div>
+      </div>
+
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="noAddressContinueBtn" type="button">Continue</button>
       </div>
     </div>
   </div>

@@ -165,7 +165,14 @@ namespace AquariumPOS
         public static string AdvanceOrdersSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrders";
         public static string AdvanceOrderLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrderLines";
         public static string TransferHeaderSupabaseApiKey { get; } = "sb_publishable_QWDFggQ9ce9zm65xFEzmHA_rGaOUFQz";
-        public static string TransferHeaderSupabaseAuthorization { get; } = "sb_secret_reOTA1Ggd4VkoHz3au7j4g_gOKYYpAW";
+        // Supabase SECRET key (bypasses Row Level Security - used for privileged desktop -> Supabase
+        // REST calls). Deliberately NOT a literal here - GitHub's push protection blocks any commit
+        // containing a live Supabase secret key, and a hardcoded value would just get re-leaked the
+        // next time this file changes. Set via a Windows environment variable instead (System
+        // Properties -> Environment Variables, on every machine running this app):
+        //   AQUARIUMPOS_SUPABASE_SERVICE_ROLE_KEY = <the current secret key from the Supabase dashboard>
+        public static string TransferHeaderSupabaseAuthorization { get; } =
+            Environment.GetEnvironmentVariable("AQUARIUMPOS_SUPABASE_SERVICE_ROLE_KEY") ?? string.Empty;
         // Categories - pulled the OPPOSITE direction from everything else on this page (Supabase ->
         // desktop, not desktop -> Supabase). The Web Portal's Category Setup screen is the only place
         // staff can toggle "Production Category"/"Exclude In Transfer Orders" (writes to Supabase

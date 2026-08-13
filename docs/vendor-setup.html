@@ -11,7 +11,7 @@
 
   <div class="page">
     <h1>Vendors</h1>
-    <p class="muted">Manage suppliers, tag items to a vendor from Item Setup, and track bills owed and payments made. Only visible to super users.</p>
+    <p class="muted">Manage suppliers, tag items to a vendor from Item Setup, and track bills owed and payments made. Export to Excel downloads a CSV of vendors matching the current search; Import from Excel reads that same CSV format back in and inserts new Vendor Codes / updates existing ones. Download Template gives you a blank starter file with the columns Import expects. Only visible to super users.</p>
 
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
@@ -33,9 +33,13 @@
         <h2 style="margin:0;">Vendors</h2>
         <div style="display:flex; gap:12px; align-items:center;">
           <input type="text" id="vendorSearchInput" placeholder="Search by code, name, or contact..." style="max-width:280px;" />
+          <button class="btn btn-secondary" id="exportExcelBtn" type="button">Export to Excel</button>
+          <button class="btn btn-secondary" id="downloadTemplateBtn" type="button">Download Template</button>
+          <button class="btn btn-secondary" id="importExcelBtn" type="button">Import from Excel</button>
           <button class="btn btn-primary" id="newVendorBtn" type="button">+ New Vendor</button>
         </div>
       </div>
+      <input type="file" id="importExcelFileInput" class="hidden" accept=".csv" />
 
       <div class="table-wrap">
         <table>
@@ -45,13 +49,14 @@
               <th>Name</th>
               <th>Contact</th>
               <th>Phone</th>
+              <th>Address</th>
               <th style="text-align:right;">Balance</th>
               <th>Active</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="vendorTableBody">
-            <tr><td colspan="7" class="muted">Loading...</td></tr>
+            <tr><td colspan="8" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>

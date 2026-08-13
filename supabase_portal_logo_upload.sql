@@ -42,12 +42,16 @@ as $$
 declare
   v_bucket text := 'portal-assets';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := 'sb_secret_reOTA1Ggd4VkoHz3au7j4g_gOKYYpAW';
+  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
   v_sign_url text;
   v_response extensions.http_response;
   v_body jsonb;
   v_token text;
 begin
+  if v_service_role_key is null or trim(v_service_role_key) = '' then
+    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
+  end if;
+
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '15000');
 
   v_sign_url := v_base_url || '/storage/v1/object/upload/sign/' || v_bucket || '/' || p_path;

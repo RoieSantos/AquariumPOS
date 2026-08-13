@@ -115,7 +115,7 @@ as $$
 declare
   v_bucket text := 'online-order-line-attachments';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := 'sb_secret_reOTA1Ggd4VkoHz3au7j4g_gOKYYpAW';
+  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
   v_safe_name text;
   v_path text;
   v_sign_url text;
@@ -125,6 +125,10 @@ declare
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
+  end if;
+
+  if v_service_role_key is null or trim(v_service_role_key) = '' then
+    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   if p_order_id is null or trim(p_order_id) = '' or p_line_id is null or trim(p_line_id) = '' then
@@ -218,12 +222,16 @@ as $$
 declare
   v_bucket text := 'online-order-line-attachments';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := 'sb_secret_reOTA1Ggd4VkoHz3au7j4g_gOKYYpAW';
+  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
   v_storage_path text;
   v_response extensions.http_response;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
+  end if;
+
+  if v_service_role_key is null or trim(v_service_role_key) = '' then
+    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   select "StoragePath" into v_storage_path

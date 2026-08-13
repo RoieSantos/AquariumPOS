@@ -46,6 +46,7 @@ function renderTopNav(activeLabel) {
     items.push({ href: 'expense-entries.html', label: 'Expenses' });
     items.push({ href: 'order-timing-dashboard.html', label: 'Order Timing' });
     items.push({ href: 'vendor-setup.html', label: 'Vendors' });
+    items.push({ href: 'delivery-setup.html', label: 'Delivery Setup' });
     items.push({ href: 'user-setup.html', label: 'User Setup' });
   }
 

@@ -53,8 +53,17 @@ create table if not exists public."DeliveryStops" (
     "GeocodedAtUtc" timestamptz,
     "CreatedBy" varchar(100),
     "CreatedAtUtc" timestamptz not null default now(),
+    "RouteName" varchar(200),
     constraint "UQ_DeliveryStops_Order_Date" unique ("OrderID", "DeliveryDate")
 );
+
+-- DeliveryStops may already exist from before RouteName was added - add it if missing (no-op
+-- otherwise). Snapshot of DeliveryRouteSchedule."RouteName" for that date's day-of-week, taken
+-- at the moment the order is scheduled (or moved to a new date) - see admin_create_delivery_stop
+-- / admin_move_delivery_stop (supabase_delivery_route_schedule.sql) - so "tag the name" onto the
+-- order sticks even if the weekly schedule is edited later. Not synced by Pancake, never touched
+-- outside those two RPCs.
+alter table public."DeliveryStops" add column if not exists "RouteName" varchar(200);
 
 alter table public."DeliveryStops" enable row level security;
 revoke all on public."DeliveryStops" from anon, authenticated;
@@ -72,9 +81,10 @@ drop function if exists public.admin_list_deliverable_online_orders(text, text, 
 drop function if exists public.admin_list_deliverable_online_orders(text, text, text, int, int);
 
 -- Orders eligible to be scheduled: NOT already marked ForDelivery, and status is Confirmed/
--- Printed/To Ship only - per "lookup all order that is for delivery = false, then once its being
--- assign can we now do for delivery = true" followed by "only confirmed / printed / To Ship
--- status can be lookedup". Once an order is assigned (admin_create_delivery_stop flips
+-- Printed/To Ship/Shipped only - per "lookup all order that is for delivery = false, then once
+-- its being assign can we now do for delivery = true" followed by "only confirmed / printed /
+-- To Ship status can be lookedup", later extended to also include Shipped. Once an order is
+-- assigned (admin_create_delivery_stop flips
 -- ForDelivery to true), it naturally drops out of this list on the next search - it's been
 -- handled. LEFT JOIN DeliveryStops is kept even though a ForDelivery-true order won't match the
 -- where clause above (harmless no-op today) - it only matters if scheduled_date/stop_id ever need
@@ -115,7 +125,7 @@ begin
     from public."OnlineOrders" o
     left join public."DeliveryStops" s on s."OrderID" = o."OrderID"
     where o."ForDelivery" is not true
-      and lower(o."Status") in ('confirmed', 'printed', 'to ship')
+      and lower(o."Status") in ('confirmed', 'printed', 'to ship', 'shipped')
       and (
         p_search is null or trim(p_search) = ''
         or o."OrderID" ilike '%' || p_search || '%'
@@ -129,7 +139,8 @@ $$;
 drop function if exists public.admin_list_delivery_stops(text, text, date, date);
 
 -- Powers the calendar - one call per visible month. Joins in the order/truck info the UI needs
--- so it never has to make a second round-trip per stop.
+-- so it never has to make a second round-trip per stop. Widened to also expose CreatedBy
+-- (returned as created_by) so the Stops table can show "Assigned By" instead of Balance.
 create or replace function public.admin_list_delivery_stops(p_admin_username text, p_admin_password text, p_start_date date, p_end_date date)
 returns table(
   stop_id uuid,
@@ -147,7 +158,9 @@ returns table(
   latitude numeric,
   longitude numeric,
   geocode_status text,
-  geocoded_address text
+  geocoded_address text,
+  route_name text,
+  created_by text
 )
 language plpgsql
 security definer
@@ -162,7 +175,8 @@ begin
     select s."StopID", s."DeliveryDate", s."TruckID", t."TruckName"::text, s."StopSequence",
            o."OrderID"::text, o."CustomerName"::text, o."Status"::text, o."ShippingAddress"::text,
            o."MoneyToCollect", o."Balance", s."Notes"::text,
-           s."Latitude", s."Longitude", s."GeocodeStatus"::text, s."GeocodedAddress"::text
+           s."Latitude", s."Longitude", s."GeocodeStatus"::text, s."GeocodedAddress"::text,
+           s."RouteName"::text, s."CreatedBy"::text
     from public."DeliveryStops" s
     join public."OnlineOrders" o on o."OrderID" = s."OrderID"
     join public."DeliveryTrucks" t on t."TruckID" = s."TruckID"
@@ -192,6 +206,7 @@ declare
   v_truck_id uuid;
   v_next_sequence int;
   v_id uuid;
+  v_route_name text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -200,6 +215,18 @@ begin
   if p_order_id is null or trim(p_order_id) = '' or p_delivery_date is null then
     raise exception 'Order ID and delivery date are required.';
   end if;
+
+  -- No delivery truck runs on Mondays - mirrored client-side in delivery.js so staff see this
+  -- before submitting, but enforced here too since this RPC is the actual write path.
+  if extract(dow from p_delivery_date) = 1 then
+    raise exception 'Mondays are not available for delivery.';
+  end if;
+
+  -- Tag the order with that weekday's fixed route (Delivery Setup), snapshotted at scheduling
+  -- time so it stays attached to this order even if the weekly schedule changes later.
+  select "RouteName" into v_route_name
+  from public."DeliveryRouteSchedule"
+  where "DayOfWeek" = extract(dow from p_delivery_date);
 
   v_truck_id := p_truck_id;
   if v_truck_id is null then
@@ -215,8 +242,8 @@ begin
   where "DeliveryDate" = p_delivery_date and "TruckID" = v_truck_id;
 
   begin
-    insert into public."DeliveryStops" ("OrderID", "TruckID", "DeliveryDate", "StopSequence", "Notes", "CreatedBy")
-    values (p_order_id, v_truck_id, p_delivery_date, v_next_sequence, p_notes, p_admin_username)
+    insert into public."DeliveryStops" ("OrderID", "TruckID", "DeliveryDate", "StopSequence", "Notes", "CreatedBy", "RouteName")
+    values (p_order_id, v_truck_id, p_delivery_date, v_next_sequence, p_notes, p_admin_username, v_route_name)
     returning "StopID" into v_id;
   exception when unique_violation then
     raise exception 'This order is already scheduled for that date.';
@@ -277,9 +304,14 @@ as $$
 declare
   v_truck_id uuid;
   v_next_sequence int;
+  v_route_name text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
+  end if;
+
+  if extract(dow from p_new_date) = 1 then
+    raise exception 'Mondays are not available for delivery.';
   end if;
 
   select "TruckID" into v_truck_id from public."DeliveryStops" where "StopID" = p_stop_id;
@@ -291,9 +323,15 @@ begin
   from public."DeliveryStops"
   where "DeliveryDate" = p_new_date and "TruckID" = v_truck_id and "StopID" <> p_stop_id;
 
+  -- Re-snapshot the route tag for the new date's weekday - the old date's route no longer
+  -- applies once the order has moved to a different day.
+  select "RouteName" into v_route_name
+  from public."DeliveryRouteSchedule"
+  where "DayOfWeek" = extract(dow from p_new_date);
+
   begin
     update public."DeliveryStops"
-    set "DeliveryDate" = p_new_date, "StopSequence" = v_next_sequence
+    set "DeliveryDate" = p_new_date, "StopSequence" = v_next_sequence, "RouteName" = v_route_name
     where "StopID" = p_stop_id;
   exception when unique_violation then
     raise exception 'This order is already scheduled for that date.';
@@ -303,6 +341,10 @@ $$;
 
 drop function if exists public.admin_delete_delivery_stop(text, text, uuid);
 
+-- Unlike every other RPC in this file (is_staff_authorized - Delivery is open to all staff),
+-- removing a stop is is_admin_authorized (super users only) - per "if the user is not super user
+-- dont allow removing the stops in the delivery". delivery.js also hides the Remove button
+-- client-side for non-super users, but this is the actual enforcement.
 create or replace function public.admin_delete_delivery_stop(p_admin_username text, p_admin_password text, p_stop_id uuid)
 returns void
 language plpgsql
@@ -312,7 +354,7 @@ as $$
 declare
   v_order_id text;
 begin
-  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
   end if;
 

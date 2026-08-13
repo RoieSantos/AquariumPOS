@@ -103,6 +103,23 @@ alter table public."OnlineOrders" add column if not exists "ConfirmedBy" varchar
 -- existing orders).
 alter table public."OnlineOrders" add column if not exists "ConfirmedAtUtc" timestamptz;
 
+-- Pancake's own internal "print note" (order-level, sent as note_print when this app CREATES an
+-- order via CreateInstoreOnlineOrder/advance-order creation - see OnlinefunctionsEvents.cs,
+-- always null on the way out today) - separate from the customer-facing "note" field. Per "we are
+-- syncing over the online orders into the portal... can we also include that field into the
+-- supabase/portal": only present on Pancake's per-order DETAIL response (not the /orders list
+-- endpoint), so - same "detail endpoint only" asymmetry as GlassThickness above - it's populated
+-- by whichever sync path already pays for a detail fetch: admin_sync_online_orders_from_pancake
+-- (every order, since it needs lines) and cron_sync_online_orders_from_pancake's existing
+-- GlassThickness backfill loop (a capped batch of orders per run, opportunistically extended to
+-- also read note_print off the same already-fetched detail body). admin_list_online_orders_live
+-- (the light live-browse path, list endpoint only) does NOT populate this, matching how it
+-- already skips GlassThickness. NotePrintCheckedAt mirrors GlassThicknessCheckedAt so the cron
+-- backfill loop can tell "never checked" apart from "checked, genuinely blank" and self-heals for
+-- orders that already had GlassThicknessCheckedAt set before this column existed.
+alter table public."OnlineOrders" add column if not exists "NotePrint" text;
+alter table public."OnlineOrders" add column if not exists "NotePrintCheckedAt" timestamptz;
+
 create table if not exists public."OnlineOrderLines" (
     "OrderID" varchar(100) not null,
     "LineID" varchar(100) not null,
@@ -241,6 +258,7 @@ returns table(
   glass_thickness text,
   created_by text,
   confirmed_by text,
+  note_print text,
   total_count bigint
 )
 language plpgsql
@@ -270,7 +288,7 @@ begin
     select o."OrderID"::text, o."Date", o."Time"::text, o."Status"::text, o."CustomerName"::text, o."LocationID"::text, w."Name"::text,
            o."MoneyToCollect", o."AmountPaid", o."Discount", o."Balance", o."ForDelivery", o."ShippingAddress"::text,
            o."EstimatedDeliveryDate", o."Last_Updated_At", o."SyncedAtUtc", o."GlassThickness"::text,
-           o."CreatedBy"::text, o."ConfirmedBy"::text,
+           o."CreatedBy"::text, o."ConfirmedBy"::text, o."NotePrint"::text,
            count(*) over()
     from public."OnlineOrders" o
     left join public."Warehouses" w on w."ID" = o."LocationID"

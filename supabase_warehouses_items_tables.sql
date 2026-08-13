@@ -36,6 +36,22 @@ alter table public."Warehouses" add column if not exists "SalesTarget" numeric(1
 -- warehouse stays visible in staff_search_warehouses until someone explicitly deactivates it.
 alter table public."Warehouses" add column if not exists "IsActive" boolean not null default true;
 
+-- Address + geocode cache, same local-only pattern as SalesTarget/IsActive - only ever set from
+-- Warehouse Setup (Address) and the Delivery page (the geocode columns, lazily). Per "put on the
+-- Address of the warehouse so it can flow on the delivery address/maps" - lets a warehouse be
+-- plotted as an origin marker on the Delivery day map for any date whose fixed route
+-- (DeliveryRouteSchedule, supabase_delivery_route_schedule.sql) tags that warehouse.
+-- GeocodedAddress snapshots the exact address text that was geocoded, same staleness-detection
+-- pattern as DeliveryStops.GeocodedAddress vs OnlineOrders.ShippingAddress (see
+-- supabase_delivery_tables.sql) - GeocodedAddress <> current Address means "re-geocode needed",
+-- checked client-side in delivery.js before trusting the cached Latitude/Longitude.
+alter table public."Warehouses" add column if not exists "Address" varchar(500);
+alter table public."Warehouses" add column if not exists "Latitude" numeric(10, 7);
+alter table public."Warehouses" add column if not exists "Longitude" numeric(10, 7);
+alter table public."Warehouses" add column if not exists "GeocodeStatus" varchar(20);
+alter table public."Warehouses" add column if not exists "GeocodedAddress" varchar(500);
+alter table public."Warehouses" add column if not exists "GeocodedAtUtc" timestamptz;
+
 alter table public."Warehouses" enable row level security;
 
 create table if not exists public."Items" (
@@ -128,6 +144,8 @@ drop function if exists public.admin_list_warehouses(text, text, int, int);
 -- p_page/p_page_size (per portal-wide pagination): total_count is count(*) over() - computed
 -- before LIMIT/OFFSET applies - so the client can compute total pages from one call, no separate
 -- count query needed. Same pattern applied to every admin_list_* RPC in this file.
+-- Widened to also expose Address + geocode status (return columns widening needs the explicit
+-- drop above - Postgres 42P13 "cannot change return type of existing function").
 create or replace function public.admin_list_warehouses(p_admin_username text, p_admin_password text, p_page int default 1, p_page_size int default 50)
 returns table(
   id text,
@@ -137,6 +155,8 @@ returns table(
   is_active boolean,
   sales_target numeric,
   synced_at_utc timestamptz,
+  address text,
+  geocode_status text,
   total_count bigint
 )
 language plpgsql
@@ -153,10 +173,76 @@ begin
 
   return query
     select "ID"::text, "Name"::text, "IsProductionWarehouse", "IsStockWarehouse", "IsActive", "SalesTarget", "SyncedAtUtc",
+           "Address"::text, "GeocodeStatus"::text,
            count(*) over()
     from public."Warehouses"
     order by "Name"
     limit v_page_size offset (v_page - 1) * v_page_size;
+end;
+$$;
+
+drop function if exists public.admin_update_warehouse_address(text, text, text, text);
+
+-- Sets a warehouse's local-only Address (Warehouse Setup's inline editable field) - same pattern
+-- as admin_update_warehouse_sales_target. Does NOT touch the geocode cache columns - staleness
+-- is detected by comparing GeocodedAddress to this Address (see admin_update_warehouse_geocode
+-- and delivery.js), so an address edit here naturally triggers a re-geocode next time Delivery
+-- needs to plot this warehouse, without this function needing to know anything about geocoding.
+create or replace function public.admin_update_warehouse_address(
+  p_admin_username text,
+  p_admin_password text,
+  p_warehouse_id text,
+  p_address text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  update public."Warehouses"
+  set "Address" = nullif(trim(p_address), '')
+  where "ID" = p_warehouse_id;
+end;
+$$;
+
+drop function if exists public.admin_update_warehouse_geocode(text, text, text, text, numeric, numeric, text);
+
+-- Persists a client-side geocode result for a warehouse's Address - mirrors
+-- admin_update_delivery_stop_geocode (supabase_delivery_tables.sql) exactly, including its
+-- trust tier: is_staff_authorized (not is_admin_authorized), because this is called lazily from
+-- the Delivery page itself (any active staff) the first time a fixed-route warehouse needs to be
+-- plotted on that day's map, not from the super-user-only Warehouse Setup page.
+create or replace function public.admin_update_warehouse_geocode(
+  p_admin_username text,
+  p_admin_password text,
+  p_warehouse_id text,
+  p_geocoded_address text,
+  p_latitude numeric,
+  p_longitude numeric,
+  p_geocode_status text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  update public."Warehouses"
+  set "GeocodedAddress" = p_geocoded_address,
+      "Latitude" = p_latitude,
+      "Longitude" = p_longitude,
+      "GeocodeStatus" = p_geocode_status,
+      "GeocodedAtUtc" = now()
+  where "ID" = p_warehouse_id;
 end;
 $$;
 
@@ -531,15 +617,29 @@ $$;
 drop function if exists public.staff_search_warehouses(text, text, text, int);
 
 -- Warehouse lookup for the same staff-facing pickers (Transfer Orders' From/To Warehouse
--- fields) - gated by is_staff_authorized like staff_search_items/staff_search_variants above,
--- not is_admin_authorized like admin_list_warehouses (Transfer Orders is open to all staff).
+-- fields, Delivery Setup's Warehouse multi-select) - gated by is_staff_authorized like
+-- staff_search_items/staff_search_variants above, not is_admin_authorized like
+-- admin_list_warehouses (Transfer Orders/Delivery are open to all staff).
 -- Unlike staff_search_items, a blank p_search returns every warehouse (up to the limit) rather
 -- than nothing - the warehouse list is small, so "click the field, see the full list" is more
 -- useful here than requiring the user to type first.
 -- Only IsActive = true warehouses are returned - Warehouse Setup's Active checkbox is how a
 -- super user keeps closed/retired warehouses out of Transfer Orders without deleting the row.
+-- Widened to also expose Address + the geocode cache (return columns widening needs the
+-- explicit drop above) so the Delivery page can plot a fixed-route warehouse on the day map
+-- without a second round-trip.
 create or replace function public.staff_search_warehouses(p_admin_username text, p_admin_password text, p_search text default null, p_limit int default 50)
-returns table(id text, name text, is_production_warehouse boolean, is_stock_warehouse boolean)
+returns table(
+  id text,
+  name text,
+  is_production_warehouse boolean,
+  is_stock_warehouse boolean,
+  address text,
+  latitude numeric,
+  longitude numeric,
+  geocode_status text,
+  geocoded_address text
+)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -552,7 +652,8 @@ begin
   end if;
 
   return query
-    select "ID"::text, "Name"::text, "IsProductionWarehouse", "IsStockWarehouse"
+    select "ID"::text, "Name"::text, "IsProductionWarehouse", "IsStockWarehouse",
+           "Address"::text, "Latitude", "Longitude", "GeocodeStatus"::text, "GeocodedAddress"::text
     from public."Warehouses"
     where "IsActive" and (p_search is null or trim(p_search) = '' or "Name" ilike '%' || p_search || '%')
     order by "Name"
@@ -645,6 +746,8 @@ revoke all on public."Categories" from anon, authenticated;
 grant execute on function public.admin_list_warehouses(text, text, int, int) to anon;
 grant execute on function public.admin_update_warehouse_sales_target(text, text, text, numeric) to anon;
 grant execute on function public.admin_update_warehouse_flags(text, text, text, boolean, boolean, boolean) to anon;
+grant execute on function public.admin_update_warehouse_address(text, text, text, text) to anon;
+grant execute on function public.admin_update_warehouse_geocode(text, text, text, text, numeric, numeric, text) to anon;
 grant execute on function public.admin_list_items(text, text, text, int, int) to anon;
 grant execute on function public.admin_list_variants(text, text, text, text, int, int) to anon;
 grant execute on function public.admin_count_variants_by_item(text, text) to anon;

@@ -10,7 +10,7 @@ function renderWarehouseRows(warehouses) {
   const tbody = document.getElementById('warehouseTableBody');
 
   if (!warehouses || warehouses.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">No warehouses synced yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">No warehouses synced yet.</td></tr>';
     return;
   }
 
@@ -27,6 +27,11 @@ function renderWarehouseRows(warehouses) {
           <button class="btn btn-secondary btn-sm" data-action="save-sales-target" data-id="${w.id}" type="button">Save</button>
           <span class="sales-target-saved muted hidden" data-id="${w.id}">Saved</span>
         </td>
+        <td>
+          <input type="text" class="address-input" data-id="${w.id}" value="${(w.address ?? '').replace(/"/g, '&quot;')}" placeholder="Street, City..." style="width:220px;" />
+          <button class="btn btn-secondary btn-sm" data-action="save-address" data-id="${w.id}" type="button">Save</button>
+          <span class="address-saved muted hidden" data-id="${w.id}">Saved</span>
+        </td>
         <td>${w.synced_at_utc ? new Date(w.synced_at_utc).toLocaleString() : '<span class="muted">Never</span>'}</td>
       </tr>
     `)
@@ -34,6 +39,9 @@ function renderWarehouseRows(warehouses) {
 
   tbody.querySelectorAll('button[data-action="save-sales-target"]').forEach((btn) => {
     btn.addEventListener('click', () => saveSalesTarget(btn.dataset.id));
+  });
+  tbody.querySelectorAll('button[data-action="save-address"]').forEach((btn) => {
+    btn.addEventListener('click', () => saveAddress(btn.dataset.id));
   });
   // Auto-saves on toggle, same as the Local POS's WarehouseSetupForm checkbox grid
   // (Dgv_CellEndEdit -> SaveWarehouseFlag) - no separate Save button for these two.
@@ -92,9 +100,31 @@ async function saveSalesTarget(warehouseId) {
   setTimeout(() => savedLabel.classList.add('hidden'), 1500);
 }
 
+// Doesn't touch the geocode cache - Delivery lazily re-geocodes the next time this warehouse
+// needs to be plotted, by comparing GeocodedAddress to this new Address (see delivery.js).
+async function saveAddress(warehouseId) {
+  const input = document.querySelector(`.address-input[data-id="${warehouseId}"]`);
+  const savedLabel = document.querySelector(`.address-saved[data-id="${warehouseId}"]`);
+
+  const { error } = await supabaseClient.rpc('admin_update_warehouse_address', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_warehouse_id: warehouseId,
+    p_address: input.value
+  });
+
+  if (error) {
+    window.alert(`Failed to save Address: ${error.message}`);
+    return;
+  }
+
+  savedLabel.classList.remove('hidden');
+  setTimeout(() => savedLabel.classList.add('hidden'), 1500);
+}
+
 async function loadWarehouses() {
   const tbody = document.getElementById('warehouseTableBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_warehouses', {
     p_admin_username: currentSession.username,
@@ -104,7 +134,7 @@ async function loadWarehouses() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
     return;
   }
 

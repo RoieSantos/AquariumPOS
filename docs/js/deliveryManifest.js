@@ -18,13 +18,17 @@ function renderManifestRows(stops) {
     return;
   }
 
+  // Falls back to geocoded_address when the order has no ShippingAddress on file - that's where
+  // a manually-typed address from the "no address" confirmation prompt on the Delivery page
+  // ends up (see delivery.js's confirmAssign), since it's never written back to
+  // OnlineOrders.ShippingAddress (a Pancake-synced field).
   tbody.innerHTML = stops
     .map((s, index) => `
       <tr>
         <td>${index + 1}</td>
         <td>${s.order_id || ''}</td>
         <td>${s.customer_name || ''}</td>
-        <td>${s.shipping_address || ''}</td>
+        <td>${s.shipping_address || s.geocoded_address || ''}</td>
         <td>${formatMoney(s.balance)}</td>
         <td>${s.notes || ''}</td>
       </tr>
@@ -51,11 +55,14 @@ async function loadManifest(dateKey) {
   }
 
   const truckName = (data && data[0] && data[0].truck_name) || 'Delivery Truck';
+  const routeName = data && data[0] && data[0].route_name;
   const label = new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
   });
   document.getElementById('manifestTitle').textContent = `Delivery Manifest - ${truckName}`;
-  document.getElementById('manifestSubtitle').textContent = `${label} - ${(data || []).length} stop${(data || []).length === 1 ? '' : 's'}`;
+  const subtitleParts = [label, `${(data || []).length} stop${(data || []).length === 1 ? '' : 's'}`];
+  if (routeName) subtitleParts.push(routeName);
+  document.getElementById('manifestSubtitle').textContent = subtitleParts.join(' - ');
 
   renderManifestRows(data);
 }
