@@ -42,14 +42,19 @@ as $$
 declare
   v_bucket text := 'portal-assets';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
+  v_service_role_key text;
   v_sign_url text;
   v_response extensions.http_response;
   v_body jsonb;
   v_token text;
 begin
+  select decrypted_secret into v_service_role_key
+  from vault.decrypted_secrets
+  where name = 'supabase_service_role_key'
+  limit 1;
+
   if v_service_role_key is null or trim(v_service_role_key) = '' then
-    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
+    raise exception 'Vault secret "supabase_service_role_key" is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '15000');

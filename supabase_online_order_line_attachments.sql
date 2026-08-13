@@ -115,7 +115,7 @@ as $$
 declare
   v_bucket text := 'online-order-line-attachments';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
+  v_service_role_key text;
   v_safe_name text;
   v_path text;
   v_sign_url text;
@@ -127,8 +127,13 @@ begin
     raise exception 'Not authorized.';
   end if;
 
+  select decrypted_secret into v_service_role_key
+  from vault.decrypted_secrets
+  where name = 'supabase_service_role_key'
+  limit 1;
+
   if v_service_role_key is null or trim(v_service_role_key) = '' then
-    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
+    raise exception 'Vault secret "supabase_service_role_key" is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   if p_order_id is null or trim(p_order_id) = '' or p_line_id is null or trim(p_line_id) = '' then
@@ -222,7 +227,7 @@ as $$
 declare
   v_bucket text := 'online-order-line-attachments';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
+  v_service_role_key text;
   v_storage_path text;
   v_response extensions.http_response;
 begin
@@ -230,8 +235,13 @@ begin
     raise exception 'Not authorized.';
   end if;
 
+  select decrypted_secret into v_service_role_key
+  from vault.decrypted_secrets
+  where name = 'supabase_service_role_key'
+  limit 1;
+
   if v_service_role_key is null or trim(v_service_role_key) = '' then
-    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
+    raise exception 'Vault secret "supabase_service_role_key" is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   select "StoragePath" into v_storage_path

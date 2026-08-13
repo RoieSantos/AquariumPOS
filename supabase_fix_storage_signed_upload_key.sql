@@ -14,10 +14,12 @@
 -- FIX: point these three functions at the newly-generated active secret key. Per GitHub push
 -- protection blocking any commit containing a live Supabase secret key (and a hardcoded literal
 -- just getting re-leaked the next time this file changes anyway), the key is no longer a literal
--- in these functions at all - each reads it via current_setting('app.settings.
--- supabase_service_role_key', true), a database-level setting configured ONCE, manually, outside
--- git (see supabase_configure_service_role_key.sql - a template, never committed with a real
--- value filled in).
+-- in these functions at all - each reads it from Supabase Vault (vault.decrypted_secrets, secret
+-- name 'supabase_service_role_key'), configured ONCE, manually, outside git (see
+-- supabase_configure_service_role_key.sql - a template, never committed with a real value filled
+-- in). A plain ALTER DATABASE ... SET custom-GUC approach was tried first but Supabase's hosted
+-- SQL editor role doesn't have permission to run it ("42501: permission denied to set
+-- parameter") - Vault is the supported mechanism for exactly this on Supabase.
 
 create or replace function public.admin_create_online_order_line_attachment_upload(
   p_admin_username text,
@@ -34,7 +36,7 @@ as $$
 declare
   v_bucket text := 'online-order-line-attachments';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
+  v_service_role_key text;
   v_safe_name text;
   v_path text;
   v_sign_url text;
@@ -46,8 +48,13 @@ begin
     raise exception 'Not authorized.';
   end if;
 
+  select decrypted_secret into v_service_role_key
+  from vault.decrypted_secrets
+  where name = 'supabase_service_role_key'
+  limit 1;
+
   if v_service_role_key is null or trim(v_service_role_key) = '' then
-    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
+    raise exception 'Vault secret "supabase_service_role_key" is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   if p_order_id is null or trim(p_order_id) = '' or p_line_id is null or trim(p_line_id) = '' then
@@ -99,7 +106,7 @@ as $$
 declare
   v_bucket text := 'online-order-line-attachments';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
+  v_service_role_key text;
   v_storage_path text;
   v_response extensions.http_response;
 begin
@@ -107,8 +114,13 @@ begin
     raise exception 'Not authorized.';
   end if;
 
+  select decrypted_secret into v_service_role_key
+  from vault.decrypted_secrets
+  where name = 'supabase_service_role_key'
+  limit 1;
+
   if v_service_role_key is null or trim(v_service_role_key) = '' then
-    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
+    raise exception 'Vault secret "supabase_service_role_key" is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   select "StoragePath" into v_storage_path
@@ -150,14 +162,19 @@ as $$
 declare
   v_bucket text := 'portal-assets';
   v_base_url text := 'https://hymcmesqgpliyyeghpgq.supabase.co';
-  v_service_role_key text := current_setting('app.settings.supabase_service_role_key', true);
+  v_service_role_key text;
   v_sign_url text;
   v_response extensions.http_response;
   v_body jsonb;
   v_token text;
 begin
+  select decrypted_secret into v_service_role_key
+  from vault.decrypted_secrets
+  where name = 'supabase_service_role_key'
+  limit 1;
+
   if v_service_role_key is null or trim(v_service_role_key) = '' then
-    raise exception 'app.settings.supabase_service_role_key is not configured - see supabase_configure_service_role_key.sql.';
+    raise exception 'Vault secret "supabase_service_role_key" is not configured - see supabase_configure_service_role_key.sql.';
   end if;
 
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '15000');
