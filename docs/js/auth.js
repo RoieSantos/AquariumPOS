@@ -90,7 +90,86 @@ async function requireAuth() {
     return null;
   }
 
+  startIdleLogoutTimer();
+
   return refreshed;
+}
+
+// Auto-logout after 15 minutes with no mouse/keyboard/touch activity, warning the user 60s
+// before it happens (with a chance to cancel) rather than logging out silently. Wired up here so
+// every authenticated page gets it automatically via its requireAuth() call above - no per-page
+// setup needed.
+const IDLE_LOGOUT_MS = 15 * 60 * 1000;
+const IDLE_WARNING_MS = 60 * 1000;
+const IDLE_ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+
+let idleTimerStarted = false;
+let idleWarnTimer = null;
+let idleLogoutTimer = null;
+let idleCountdownInterval = null;
+let lastIdleActivityAt = 0;
+
+function clearIdleTimers() {
+  clearTimeout(idleWarnTimer);
+  clearTimeout(idleLogoutTimer);
+  clearInterval(idleCountdownInterval);
+}
+
+function hideIdleWarning() {
+  const modal = document.getElementById('idleWarningModal');
+  if (modal) modal.remove();
+}
+
+function showIdleWarning() {
+  let secondsLeft = Math.round(IDLE_WARNING_MS / 1000);
+
+  const modal = document.createElement('div');
+  modal.id = 'idleWarningModal';
+  modal.className = 'modal-backdrop';
+  modal.innerHTML = `
+    <div class="modal-panel" style="max-width:380px; text-align:center;">
+      <h2 style="margin-top:0;">Still there?</h2>
+      <p class="muted">You've been inactive - for security, you'll be signed out in <strong id="idleCountdown">${secondsLeft}</strong>s.</p>
+      <button class="btn btn-primary" id="idleStayBtn" type="button" style="width:100%;">Stay Signed In</button>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('idleStayBtn').addEventListener('click', resetIdleTimer);
+
+  idleCountdownInterval = setInterval(() => {
+    secondsLeft -= 1;
+    const countdownEl = document.getElementById('idleCountdown');
+    if (countdownEl) countdownEl.textContent = secondsLeft;
+  }, 1000);
+
+  idleLogoutTimer = setTimeout(() => {
+    hideIdleWarning();
+    logout();
+  }, IDLE_WARNING_MS);
+}
+
+function resetIdleTimer() {
+  clearIdleTimers();
+  hideIdleWarning();
+  idleWarnTimer = setTimeout(showIdleWarning, IDLE_LOGOUT_MS - IDLE_WARNING_MS);
+}
+
+// Throttled so a mouse-move burst doesn't churn through clearTimeout/setTimeout on every event.
+function handleIdleActivity() {
+  const now = Date.now();
+  if (now - lastIdleActivityAt < 1000) return;
+  lastIdleActivityAt = now;
+  resetIdleTimer();
+}
+
+function startIdleLogoutTimer() {
+  if (idleTimerStarted) {
+    resetIdleTimer();
+    return;
+  }
+  idleTimerStarted = true;
+  resetIdleTimer();
+  IDLE_ACTIVITY_EVENTS.forEach((evt) => document.addEventListener(evt, handleIdleActivity, { passive: true }));
 }
 
 /**
