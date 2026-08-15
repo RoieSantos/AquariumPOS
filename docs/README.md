@@ -47,6 +47,18 @@ If you ever want the data itself to be genuinely protected (not just the UI), th
 
 This is a static site - no build, no npm install. Just open `index.html` in a browser, or serve the `docs` folder with any static file server (e.g. `npx serve`, IIS, GitHub Pages, etc.). It must be served over `http://` or `https://` (not `file://`) for the Supabase JS client to work reliably.
 
+## Installing as a mobile/desktop app (PWA)
+
+The portal is a installable Progressive Web App - `manifest.json`, `sw.js`, and `js/pwa.js` (registered on every page) are what make that work. Once served over HTTPS (e.g. via GitHub Pages), staff can:
+
+- **Android (Chrome):** open the portal, tap the menu, choose "Install app" / "Add to Home screen".
+- **iPhone/iPad (Safari):** open the portal, tap Share, choose "Add to Home Screen" (Safari doesn't show an automatic install prompt, but this works the same way).
+- **Desktop (Chrome/Edge):** an install icon appears in the address bar.
+
+This gives a home-screen icon and a full-screen app window - it's the same portal, not a separate app, so no extra deployment or app-store submission is needed. `sw.js` intentionally does **not** cache Supabase data (see comment in that file) - only a network-first fallback for static assets - so installed staff always see live inventory/order data, not stale cached data.
+
+The current icons (`docs/icons/`) are generated from the desktop app's `.ico` (`tools/Launcher/RSPETSTOP_POS_classic_final.ico`), upscaled from its largest embedded frame (128x128), so they look slightly soft at 512x512. Swap in a higher-resolution source image there if a crisper icon is wanted later.
+
 ## Security notes
 
 - `js/config.js` only contains the Supabase **publishable/anon key** - safe for client-side use.

@@ -10426,7 +10426,31 @@ END", connection);
             sumpUnitCombo.Items.AddRange(new string[] { "Inches", "CM", "Ft", "MM" });
             sumpUnitCombo.SelectedIndex = unitComboBox.SelectedIndex;
 
-            // (sump-specific Rimless/HighStrip/Tempered options removed; use main tank options)
+            // Sump/filtration box glass thickness - independent from the main tank's glassComboBox.
+            // Sumps are commonly built thinner (e.g. 3mm/6mm) than the display tank, so defaulting
+            // to whatever the main tank uses (as the pricing calc did before this was added) could
+            // silently overcharge or undercharge. Same items/positions convention as sumpUnitCombo.
+            var sumpGlassLabel = new Label
+            {
+                Text = "Sump Glass:",
+                Location = new Point(460, 328),
+                Size = new Size(100, 25),
+                Font = new Font("Arial", 11, FontStyle.Bold),
+                Visible = false
+            };
+            var sumpGlassComboBox = new ComboBox
+            {
+                Location = new Point(570, 326),
+                Size = new Size(100, 28),
+                Font = new Font("Arial", 11),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Visible = false
+            };
+            sumpGlassComboBox.Items.AddRange(new string[] { "3mm", "6mm", "10mm", "12mm" });
+            sumpGlassComboBox.SelectedIndex = 1; // Default to 6mm, same default as the main tank
+
+            // (sump-specific Rimless/HighStrip/Tempered options removed; use main tank options -
+            // only glass Thickness gets its own independent choice, per direct request)
 
             // Keep sump UOM in sync with the main aquarium UOM by default.
             // When the aquarium unit changes, update the sump unit to match.
@@ -10613,6 +10637,7 @@ END", connection);
                     sumpWidthLabel.Visible = sumpWidthBox.Visible = show;
                     sumpHeightLabel.Visible = sumpHeightBox.Visible = show;
                     sumpUnitLabel.Visible = sumpUnitCombo.Visible = show;
+                    sumpGlassLabel.Visible = sumpGlassComboBox.Visible = show;
                     if (show)
                     {
                         // default sump UOM to the main unit selection
@@ -10669,6 +10694,11 @@ END", connection);
                         sumpUnitCombo.BringToFront();
                         sumpUnitLabel.BringToFront();
                     }
+                    if (sumpGlassComboBox.Visible)
+                    {
+                        sumpGlassComboBox.BringToFront();
+                        sumpGlassLabel.BringToFront();
+                    }
 
                 }
                 catch { }
@@ -10702,6 +10732,7 @@ END", connection);
                         try { sumpWidthLabel.Visible = sumpWidthBox.Visible = false; } catch { }
                         try { sumpHeightLabel.Visible = sumpHeightBox.Visible = false; } catch { }
                         try { sumpUnitLabel.Visible = sumpUnitCombo.Visible = false; } catch { }
+                        try { sumpGlassLabel.Visible = sumpGlassComboBox.Visible = false; } catch { }
                         try { pipingCheckBox.Visible = pipingCheckBox.Enabled = false; } catch { }
                         try { overflowBoxCheckBox.Visible = overflowBoxCheckBox.Enabled = false; } catch { }
                         try { filterMediasCheckBox.Visible = filterMediasCheckBox.Enabled = false; } catch { }
@@ -11652,8 +11683,42 @@ END", connection);
                                 double sumpSurfaceArea = (2 * (sLenIn * sHeiIn)) + (2 * (sWidIn * sHeiIn)) + (sLenIn * sWidIn);
                                 double sumpSqFt = sumpSurfaceArea / 144.0;
 
-                                // Use same base price per sq ft (from glass pricing lookup). Apply tempered multiplier if chosen.
-                                decimal sumpFinalPricePerSqFt = pricePerSqFt;
+                                // Sump glass thickness is chosen independently from the main tank
+                                // (sumpGlassComboBox) - sumps are commonly built thinner than the
+                                // display tank, so look up ITS OWN price per sq ft rather than
+                                // reusing the main tank's pricePerSqFt/selectedGlass. Same DB
+                                // lookup + fallback pattern as the main tank's glass pricing above.
+                                string selectedSumpGlass = sumpGlassComboBox.SelectedItem?.ToString() ?? "6mm";
+                                decimal sumpFinalPricePerSqFt = 100.00m; // Default fallback price
+                                try
+                                {
+                                    using (var sumpGlassConnection = new SqlConnection(connectionString))
+                                    {
+                                        sumpGlassConnection.Open();
+                                        var sumpGlassCmd = new SqlCommand("SELECT PricePerSqFt FROM GlassPricingSetup WHERE UOM = 'MM' AND Units = @thickness", sumpGlassConnection);
+                                        sumpGlassCmd.Parameters.AddWithValue("@thickness", selectedSumpGlass.Replace("mm", ""));
+                                        var sumpGlassResult = sumpGlassCmd.ExecuteScalar();
+                                        if (sumpGlassResult != null && sumpGlassResult != DBNull.Value)
+                                        {
+                                            sumpFinalPricePerSqFt = (decimal)sumpGlassResult;
+                                        }
+                                    }
+                                }
+                                catch
+                                {
+                                    // Use fallback pricing if database access fails
+                                    sumpFinalPricePerSqFt = selectedSumpGlass switch
+                                    {
+                                        "3mm" => 85.00m,
+                                        "6mm" => 185.00m,
+                                        "10mm" => 290.00m,
+                                        "12mm" => 330.00m,
+                                        _ => 100.00m
+                                    };
+                                }
+                                // Tempered multiplier is still shared with the main tank (no
+                                // sump-specific Tempered checkbox exists - see comment above
+                                // sumpGlassComboBox's declaration).
                                 if (isTempered) sumpFinalPricePerSqFt *= 2;
 
                                 decimal sumpPrice = (decimal)sumpSqFt * sumpFinalPricePerSqFt;
@@ -12178,6 +12243,7 @@ END", connection);
             };
             optionComboBox.SelectedIndexChanged += selectionChanged;
             glassComboBox.SelectedIndexChanged += selectionChanged;
+            sumpGlassComboBox.SelectedIndexChanged += selectionChanged;
             aquascapeServiceCheckBox.CheckedChanged += selectionChanged;
             standCheckBox.CheckedChanged += selectionChanged;
             aioCheckBox.CheckedChanged += (s, e) =>
@@ -12586,7 +12652,8 @@ END", connection);
                     if (sumpComponentPrice > 0m)
                     {
                         var st = sumpTypeComboBox.SelectedItem?.ToString() ?? "Sump";
-                        components.Add((BuildDetailedSaleDescription($"{st} Glass", sumpSizeDetail, tankSizeDetail), sumpComponentPrice, ""));
+                        string sumpGlassDetail = $"Glass {sumpGlassComboBox.SelectedItem?.ToString() ?? string.Empty}";
+                        components.Add((BuildDetailedSaleDescription($"{st} Glass", sumpSizeDetail, sumpGlassDetail, tankSizeDetail), sumpComponentPrice, ""));
                     }
                     if (filterMediaComponentPrice > 0m)
                     {
@@ -12829,7 +12896,7 @@ END", connection);
                 addToSaleButton, closeButton,
                 pipingCheckBox, overflowBoxCheckBox, filterMediasCheckBox,
                 submersibleLightCheckBox, submersibleLightItemCombo, submersiblePumpCheckBox, submersiblePumpItemCombo,
-                allumTopCoverCheckBox, sumpUnitLabel, sumpUnitCombo
+                allumTopCoverCheckBox, sumpUnitLabel, sumpUnitCombo, sumpGlassLabel, sumpGlassComboBox
             });
 
             // Perform initial right-alignment and keep it aligned on resize.
