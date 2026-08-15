@@ -53,6 +53,12 @@ body.app-has-photo-bg::before {
   z-index: 1;
 }
 
+@media (max-width: 480px) {
+  .page {
+    padding: 14px;
+  }
+}
+
 .centered-page {
   min-height: 100vh;
   display: flex;
@@ -129,6 +135,52 @@ h1, h2, h3 {
 
 .topnav-logout:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+.topnav-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* Below this width the full link list (~20 items) wraps into a wall of text before any page
+   content is visible - see js/nav.js's renderTopNav. Collapse it behind the hamburger toggle
+   instead: links stack full-width in a dropdown that's closed by default. */
+@media (max-width: 860px) {
+  .topnav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .topnav-links {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 2px;
+    margin-top: 10px;
+  }
+
+  .topnav-links.open {
+    display: flex;
+  }
+
+  .topnav-link {
+    padding: 12px 14px;
+    border-radius: 6px;
+  }
+
+  .topnav-logout {
+    margin-top: 6px;
+    text-align: center;
+  }
 }
 
 /* Cards */
@@ -1126,11 +1178,43 @@ tr.clickable-row:hover {
 }
 
 /* Delivery page - month calendar + day-detail map */
+.delivery-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Wrapper the weekday header + calendar grid both sit in (see docs/delivery.html) - lets the
+   7-column grid keep a readable per-day width and scroll sideways on narrow screens instead of
+   squishing every cell down to unreadable. */
+.delivery-calendar-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+}
+
 .delivery-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 6px;
   margin-top: 12px;
+}
+
+@media (max-width: 640px) {
+  .delivery-month-nav {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .delivery-month-nav h2 {
+    min-width: 0 !important;
+    width: 100%;
+    order: -1;
+  }
+
+  .delivery-calendar-grid {
+    min-width: 560px;
+  }
 }
 
 .delivery-weekday-cell {

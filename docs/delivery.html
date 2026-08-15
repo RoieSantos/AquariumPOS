@@ -30,7 +30,7 @@
 
     <div id="setupContent" class="hidden">
       <div class="toolbar">
-        <div style="display:flex; align-items:center; gap:12px;">
+        <div class="delivery-month-nav">
           <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button">&larr; Prev</button>
           <h2 id="calendarMonthLabel" style="margin:0; min-width:180px; text-align:center;"></h2>
           <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button">Next &rarr;</button>
@@ -38,16 +38,18 @@
         <button class="btn btn-primary" id="assignOrderBtn" type="button">+ Assign Order</button>
       </div>
 
-      <div class="delivery-calendar-grid" id="calendarWeekdayRow">
-        <div class="delivery-weekday-cell">Sun<div class="delivery-weekday-route" data-day="0"></div></div>
-        <div class="delivery-weekday-cell">Mon<div class="delivery-weekday-route" data-day="1"></div></div>
-        <div class="delivery-weekday-cell">Tue<div class="delivery-weekday-route" data-day="2"></div></div>
-        <div class="delivery-weekday-cell">Wed<div class="delivery-weekday-route" data-day="3"></div></div>
-        <div class="delivery-weekday-cell">Thu<div class="delivery-weekday-route" data-day="4"></div></div>
-        <div class="delivery-weekday-cell">Fri<div class="delivery-weekday-route" data-day="5"></div></div>
-        <div class="delivery-weekday-cell">Sat<div class="delivery-weekday-route" data-day="6"></div></div>
+      <div class="delivery-calendar-scroll">
+        <div class="delivery-calendar-grid" id="calendarWeekdayRow">
+          <div class="delivery-weekday-cell">Sun<div class="delivery-weekday-route" data-day="0"></div></div>
+          <div class="delivery-weekday-cell">Mon<div class="delivery-weekday-route" data-day="1"></div></div>
+          <div class="delivery-weekday-cell">Tue<div class="delivery-weekday-route" data-day="2"></div></div>
+          <div class="delivery-weekday-cell">Wed<div class="delivery-weekday-route" data-day="3"></div></div>
+          <div class="delivery-weekday-cell">Thu<div class="delivery-weekday-route" data-day="4"></div></div>
+          <div class="delivery-weekday-cell">Fri<div class="delivery-weekday-route" data-day="5"></div></div>
+          <div class="delivery-weekday-cell">Sat<div class="delivery-weekday-route" data-day="6"></div></div>
+        </div>
+        <div class="delivery-calendar-grid" id="calendarGrid"></div>
       </div>
-      <div class="delivery-calendar-grid" id="calendarGrid"></div>
 
       <div id="dayDetailPanel" class="card hidden" style="margin-top:20px;">
         <div class="toolbar">

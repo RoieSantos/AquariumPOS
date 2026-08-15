@@ -60,7 +60,8 @@ function renderTopNav(activeLabel) {
   nav.innerHTML = `
     <div class="topnav-inner">
       <span class="topnav-brand">RS Pet Stop Portal</span>
-      <div class="topnav-links">
+      <button class="topnav-toggle" id="topnavToggle" type="button" aria-label="Menu" aria-expanded="false">&#9776;</button>
+      <div class="topnav-links" id="topnavLinks">
         ${linksHtml}
         <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
       </div>
@@ -68,4 +69,14 @@ function renderTopNav(activeLabel) {
   `;
 
   wireLogoutButton('logoutBtn');
+
+  // Mobile: the link list is a hidden dropdown behind this hamburger button (see the
+  // .topnav-toggle/.topnav-links.open media query in css/styles.css) - hidden entirely on wide
+  // screens where the links already fit inline, so the click handler is harmless either way.
+  const toggle = document.getElementById('topnavToggle');
+  const links = document.getElementById('topnavLinks');
+  toggle.addEventListener('click', () => {
+    const isOpen = links.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  });
 }
