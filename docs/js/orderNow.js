@@ -36,6 +36,30 @@ let filtrationEnabled = false;
 // Step 4 (customer details) is shared by the Standard and Customize flows, so its Back button
 // needs to know which step led there - set right before navigating into step 4.
 let detailsBackTarget = 3;
+// Populated from a ?psid= query param when the customer arrives via a Messenger button whose URL
+// Pancake personalized with the sender's PSID. Kept in sessionStorage too so it survives the
+// wizard's internal navigation/refreshes. Stays null for anyone who reaches the page any other way.
+const PSID_STORAGE_KEY = 'order_now_psid';
+let messengerPsid = sessionStorage.getItem(PSID_STORAGE_KEY) || null;
+
+function captureMessengerPsid() {
+  const params = new URLSearchParams(window.location.search);
+  const psid = params.get('psid');
+  if (psid) {
+    messengerPsid = psid;
+    sessionStorage.setItem(PSID_STORAGE_KEY, psid);
+  }
+  renderPsidDebugBanner();
+}
+
+// TEMPORARY - for testing the Messenger PSID hand-off only. Remove once confirmed working.
+function renderPsidDebugBanner() {
+  const banner = document.getElementById('psidDebugBanner');
+  if (!banner) return;
+  banner.textContent = messengerPsid
+    ? `PSID captured: ${messengerPsid}`
+    : 'PSID captured: none (opened without a ?psid= link)';
+}
 
 function loadCart() {
   try {
@@ -1015,6 +1039,7 @@ async function loadCompanyLogo() {
 }
 
 (function init() {
+  captureMessengerPsid();
   loadCompanyLogo();
   loadCategories();
   renderCart();

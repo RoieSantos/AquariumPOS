@@ -2082,6 +2082,20 @@ tr.clickable-row:hover {
   line-height: 1.4;
 }
 
+/* TEMPORARY - for testing the Messenger PSID hand-off only. Remove once confirmed working. */
+.psid-debug-banner {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff3d6;
+  border: 1px dashed #d9a441;
+  color: #7a5a05;
+  font-size: 12px;
+  font-family: monospace;
+  word-break: break-all;
+  text-align: center;
+}
+
 .confirm-order-note {
   margin: 16px 0 0;
   padding: 10px 14px;
