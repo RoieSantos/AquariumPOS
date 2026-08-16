@@ -565,6 +565,17 @@
     var safetyBanner = document.getElementById('safetyBanner');
     var canvas = document.getElementById('aquariumCanvas');
     var context = canvas.getContext('2d');
+    // Render at devicePixelRatio resolution so the drawing stays crisp on retina/high-DPI
+    // screens - CANVAS_W/CANVAS_H stay the logical coordinate space every draw call below uses;
+    // only the backing pixel buffer grows, then a single ctx.scale corrects for it.
+    var CANVAS_W = canvas.width;
+    var CANVAS_H = canvas.height;
+    (function setupCanvasResolution() {
+      var dpr = window.devicePixelRatio || 1;
+      canvas.width = CANVAS_W * dpr;
+      canvas.height = CANVAS_H * dpr;
+      context.scale(dpr, dpr);
+    })();
     var glassPricingSetupRows = [];
     var lastResult = null;
     var suppressUiSync = false;
@@ -761,22 +772,95 @@
     }
 
     function drawPlaceholder(message) {
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.clearRect(0, 0, CANVAS_W, CANVAS_H);
+      var bg = context.createLinearGradient(0, 0, 0, CANVAS_H);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(1, '#f4f9ff');
+      context.fillStyle = bg;
+      context.fillRect(0, 0, CANVAS_W, CANVAS_H);
       context.strokeStyle = '#d7e0ef';
-      context.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+      context.strokeRect(0.5, 0.5, CANVAS_W - 1, CANVAS_H - 1);
+
+      context.fillStyle = '#9fb4d1';
+      context.font = '28px Segoe UI';
+      context.textAlign = 'center';
+      context.fillText('🐠', CANVAS_W / 2, CANVAS_H / 2 - 6);
       context.fillStyle = '#6a7a93';
       context.font = '13px Segoe UI';
-      context.fillText(message, 20, 28);
+      context.fillText(message, CANVAS_W / 2, CANVAS_H / 2 + 22);
+      context.textAlign = 'left';
+    }
+
+    // Small rounded-rect "chip" label used by the dimension lines below, e.g. Length: 24".
+    function drawDimensionChip(centerX, centerY, text) {
+      context.font = '11px Segoe UI';
+      var textWidth = context.measureText(text).width;
+      var paddingX = 7;
+      var chipWidth = textWidth + paddingX * 2;
+      var chipHeight = 17;
+      var x = centerX - chipWidth / 2;
+      var y = centerY - chipHeight / 2;
+      var radius = 8;
+
+      context.beginPath();
+      context.moveTo(x + radius, y);
+      context.arcTo(x + chipWidth, y, x + chipWidth, y + chipHeight, radius);
+      context.arcTo(x + chipWidth, y + chipHeight, x, y + chipHeight, radius);
+      context.arcTo(x, y + chipHeight, x, y, radius);
+      context.arcTo(x, y, x + chipWidth, y, radius);
+      context.closePath();
+      context.fillStyle = 'rgba(255, 255, 255, 0.94)';
+      context.fill();
+      context.strokeStyle = '#c3d4ec';
+      context.lineWidth = 1;
+      context.stroke();
+
+      context.fillStyle = '#213b64';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(text, centerX, centerY + 0.5);
+      context.textAlign = 'left';
+      context.textBaseline = 'alphabetic';
+    }
+
+    // A technical-drawing-style dimension line: a straight run with small perpendicular ticks at
+    // each end, and a label chip floating at its midpoint (drawn separately, after all lines, so
+    // chips always sit above every line/tick).
+    function drawDimensionLine(x1, y1, x2, y2) {
+      var tickLength = 6;
+      var isHorizontal = Math.abs(y2 - y1) < Math.abs(x2 - x1);
+
+      context.strokeStyle = '#9fb2cc';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.lineTo(x2, y2);
+      context.stroke();
+
+      context.beginPath();
+      if (isHorizontal) {
+        context.moveTo(x1, y1 - tickLength / 2);
+        context.lineTo(x1, y1 + tickLength / 2);
+        context.moveTo(x2, y2 - tickLength / 2);
+        context.lineTo(x2, y2 + tickLength / 2);
+      } else {
+        context.moveTo(x1 - tickLength / 2, y1);
+        context.lineTo(x1 + tickLength / 2, y1);
+        context.moveTo(x2 - tickLength / 2, y2);
+        context.lineTo(x2 + tickLength / 2, y2);
+      }
+      context.stroke();
     }
 
     function drawAquarium(result) {
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.clearRect(0, 0, CANVAS_W, CANVAS_H);
+      var bg = context.createLinearGradient(0, 0, 0, CANVAS_H);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(1, '#f4f9ff');
+      context.fillStyle = bg;
+      context.fillRect(0, 0, CANVAS_W, CANVAS_H);
       context.strokeStyle = '#d7e0ef';
-      context.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+      context.strokeRect(0.5, 0.5, CANVAS_W - 1, CANVAS_H - 1);
 
       if (!result || !result.normalized) {
         drawPlaceholder('Run a calculation to render the aquarium preview.');
@@ -791,9 +875,12 @@
       var showStand = byId('standEnabled').checked;
       var showHighStrip = byId('highStrip').checked;
       var showRimless = byId('rimless').checked;
+      var showCabinet = showStand && byId('standCabinet').checked;
+      var showStainless = showStand && byId('standStainless').checked;
+      var standLayers = showStand ? Math.max(2, Number(byId('standLayers').value) || 2) : 2;
 
-      var baseX = 70;
-      var baseY = 188;
+      var baseX = 86;
+      var baseY = 176;
       var scale = Math.min(5.4, Math.max(2.1, 240 / Math.max(lengthIn, widthIn, heightIn)));
       var frontWidth = lengthIn * scale;
       var frontHeight = heightIn * scale;
@@ -801,30 +888,74 @@
       var frontLeft = baseX;
       var frontTop = baseY - frontHeight;
       var backTop = frontTop - depth * 0.48;
+      var standHeight = 46;
+      var standTop = baseY + 10;
 
-      context.fillStyle = '#dcecff';
+      // Soft contact shadow grounds the tank/stand on the "floor" instead of it floating.
+      context.save();
+      var shadowCenterX = frontLeft + frontWidth / 2 + depth / 2;
+      var shadowY = (showStand ? standTop + standHeight : baseY) + 6;
+      var shadowGrad = context.createRadialGradient(shadowCenterX, shadowY, 4, shadowCenterX, shadowY, frontWidth * 0.62);
+      shadowGrad.addColorStop(0, 'rgba(30, 50, 90, 0.20)');
+      shadowGrad.addColorStop(1, 'rgba(30, 50, 90, 0)');
+      context.fillStyle = shadowGrad;
+      context.beginPath();
+      context.ellipse(shadowCenterX, shadowY, frontWidth * 0.62, 10, 0, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+
+      // Front panel: water/glass gradient (paler at the surface, deeper teal toward the
+      // substrate) plus a soft diagonal highlight streak to read as glass, not a flat color chip.
+      var frontGrad = context.createLinearGradient(0, frontTop, 0, frontTop + frontHeight);
+      frontGrad.addColorStop(0, '#eaf7ff');
+      frontGrad.addColorStop(0.12, '#cdeaf9');
+      frontGrad.addColorStop(1, '#7cc4dd');
+      context.fillStyle = frontGrad;
       context.fillRect(frontLeft, frontTop, frontWidth, frontHeight);
 
+      context.save();
+      context.beginPath();
+      context.rect(frontLeft, frontTop, frontWidth, frontHeight);
+      context.clip();
+      context.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      context.beginPath();
+      context.moveTo(frontLeft + frontWidth * 0.08, frontTop + frontHeight);
+      context.lineTo(frontLeft + frontWidth * 0.28, frontTop);
+      context.lineTo(frontLeft + frontWidth * 0.42, frontTop);
+      context.lineTo(frontLeft + frontWidth * 0.22, frontTop + frontHeight);
+      context.closePath();
+      context.fill();
+      context.restore();
+
+      // Top face (water surface / open rim, viewed at an angle).
       context.beginPath();
       context.moveTo(frontLeft, frontTop);
       context.lineTo(frontLeft + depth, backTop);
       context.lineTo(frontLeft + depth + frontWidth, backTop);
       context.lineTo(frontLeft + frontWidth, frontTop);
       context.closePath();
-      context.fillStyle = '#d3d7d6';
+      var topGrad = context.createLinearGradient(frontLeft, backTop, frontLeft, frontTop);
+      topGrad.addColorStop(0, '#e4eef8');
+      topGrad.addColorStop(1, '#b9cfe4');
+      context.fillStyle = topGrad;
       context.fill();
 
+      // Side panel: same water tone, shaded darker to suggest it's turned away from the light.
       context.beginPath();
       context.moveTo(frontLeft + frontWidth, frontTop);
       context.lineTo(frontLeft + frontWidth + depth, backTop);
       context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight);
       context.lineTo(frontLeft + frontWidth, frontTop + frontHeight);
       context.closePath();
-      context.fillStyle = '#ebf3fb';
+      var sideGrad = context.createLinearGradient(frontLeft + frontWidth, frontTop, frontLeft + frontWidth + depth, frontTop);
+      sideGrad.addColorStop(0, '#a9cbdd');
+      sideGrad.addColorStop(1, '#6fa8bf');
+      context.fillStyle = sideGrad;
       context.fill();
 
-      context.strokeStyle = '#334d68';
-      context.lineWidth = 2;
+      context.strokeStyle = '#2c4a68';
+      context.lineWidth = 1.6;
+      context.lineJoin = 'round';
       context.strokeRect(frontLeft, frontTop, frontWidth, frontHeight);
       context.beginPath();
       context.moveTo(frontLeft, frontTop);
@@ -835,51 +966,118 @@
       context.stroke();
 
       if (showHighStrip) {
-        context.fillStyle = '#b84040';
+        var stripGrad = context.createLinearGradient(0, frontTop + 8, 0, frontTop + 16);
+        stripGrad.addColorStop(0, '#d65b5b');
+        stripGrad.addColorStop(1, '#a83636');
+        context.fillStyle = stripGrad;
         context.fillRect(frontLeft + 6, frontTop + 8, Math.max(24, frontWidth - 12), 8);
       }
 
       if (!showRimless) {
-        context.fillStyle = '#52606f';
+        context.fillStyle = '#45566e';
         context.fillRect(frontLeft - 1, frontTop - 3, frontWidth + 2, 5);
       }
 
       if (showStand) {
-        var standTop = baseY + 8;
-        context.strokeStyle = '#7f5631';
-        context.lineWidth = 4;
-        context.strokeRect(frontLeft + 10, standTop, Math.max(54, frontWidth - 20), 30);
-        context.beginPath();
-        context.moveTo(frontLeft + 28, standTop);
-        context.lineTo(frontLeft + 28, standTop + 30);
-        context.moveTo(frontLeft + frontWidth - 28, standTop);
-        context.lineTo(frontLeft + frontWidth - 28, standTop + 30);
-        context.stroke();
+        var standLeft = frontLeft + 8;
+        var standWidth = Math.max(58, frontWidth - 16);
+        var standGrad = context.createLinearGradient(0, standTop, 0, standTop + standHeight);
+        if (showStainless) {
+          standGrad.addColorStop(0, '#e8edf2');
+          standGrad.addColorStop(0.5, '#c3ccd6');
+          standGrad.addColorStop(1, '#9aa5b1');
+        } else {
+          standGrad.addColorStop(0, '#5c6470');
+          standGrad.addColorStop(1, '#333a44');
+        }
+
+        if (showCabinet) {
+          // Solid cabinet panel between the legs, with a faint center seam for a two-door look.
+          context.fillStyle = standGrad;
+          context.fillRect(standLeft, standTop, standWidth, standHeight);
+          context.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+          context.lineWidth = 1;
+          context.strokeRect(standLeft, standTop, standWidth, standHeight);
+          context.beginPath();
+          context.moveTo(standLeft + standWidth / 2, standTop + 4);
+          context.lineTo(standLeft + standWidth / 2, standTop + standHeight - 4);
+          context.stroke();
+        } else {
+          // Open tubular frame: outer rectangle plus a shelf line per extra layer.
+          context.strokeStyle = showStainless ? '#8b96a3' : '#2f3742';
+          context.lineWidth = 4;
+          context.strokeRect(standLeft, standTop, standWidth, standHeight);
+          context.beginPath();
+          context.moveTo(standLeft + 16, standTop);
+          context.lineTo(standLeft + 16, standTop + standHeight);
+          context.moveTo(standLeft + standWidth - 16, standTop);
+          context.lineTo(standLeft + standWidth - 16, standTop + standHeight);
+          context.stroke();
+
+          context.strokeStyle = 'rgba(47, 55, 66, 0.55)';
+          context.lineWidth = 2;
+          for (var layer = 1; layer < standLayers; layer++) {
+            var shelfY = standTop + (standHeight / standLayers) * layer;
+            context.beginPath();
+            context.moveTo(standLeft + 4, shelfY);
+            context.lineTo(standLeft + standWidth - 4, shelfY);
+            context.stroke();
+          }
+        }
       }
 
       if (showSump) {
         var overhead = byId('sumpType').value === 'Overhead Sump';
-        var sumpTop = overhead ? backTop - 26 : baseY + 24;
+        var sumpTop = overhead ? backTop - 26 : (showStand ? standTop + standHeight + 14 : baseY + 24);
         var sumpHeight = 22;
         var sumpWidth = Math.max(56, frontWidth * 0.55);
         var sumpLeft = frontLeft + ((frontWidth - sumpWidth) / 2);
 
-        context.fillStyle = '#f5fbff';
+        var sumpGrad = context.createLinearGradient(0, sumpTop, 0, sumpTop + sumpHeight);
+        sumpGrad.addColorStop(0, '#f7fcff');
+        sumpGrad.addColorStop(1, '#dcedf7');
+        context.fillStyle = sumpGrad;
         context.strokeStyle = '#507193';
-        context.lineWidth = 2;
+        context.lineWidth = 1.6;
         context.fillRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
         context.strokeRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
+
+        // Baffle chamber dividers, purely decorative - a real sump reads instantly with these.
+        context.strokeStyle = 'rgba(80, 113, 147, 0.45)';
+        context.lineWidth = 1;
         context.beginPath();
-        context.moveTo(frontLeft + frontWidth / 2, overhead ? frontTop : baseY);
-        context.lineTo(frontLeft + frontWidth / 2, overhead ? sumpTop + sumpHeight : sumpTop);
+        context.moveTo(sumpLeft + sumpWidth * 0.34, sumpTop + 3);
+        context.lineTo(sumpLeft + sumpWidth * 0.34, sumpTop + sumpHeight - 3);
+        context.moveTo(sumpLeft + sumpWidth * 0.68, sumpTop + 3);
+        context.lineTo(sumpLeft + sumpWidth * 0.68, sumpTop + sumpHeight - 3);
+        context.stroke();
+
+        // Connecting pipe as a pair of thin parallel lines (a "tube"), not a single stroke.
+        var pipeX = frontLeft + frontWidth / 2;
+        var pipeTopY = overhead ? frontTop : baseY;
+        var pipeBottomY = overhead ? sumpTop + sumpHeight : sumpTop;
+        context.strokeStyle = '#7b8fa6';
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(pipeX - 2, pipeTopY);
+        context.lineTo(pipeX - 2, pipeBottomY);
+        context.moveTo(pipeX + 2, pipeTopY);
+        context.lineTo(pipeX + 2, pipeBottomY);
         context.stroke();
       }
 
-      context.fillStyle = '#213b64';
-      context.font = '12px Segoe UI';
-      context.fillText('Length: ' + round1(lengthIn) + '"', frontLeft + 20, baseY + 18);
-      context.fillText('Height: ' + round1(heightIn) + '"', frontLeft - 48, frontTop + frontHeight / 2);
-      context.fillText('Width: ' + round1(widthIn) + '"', frontLeft + frontWidth + 30, frontTop + frontHeight * 0.58);
+      // Dimension lines (drawn last so their chips float above the whole scene).
+      var lengthLineY = baseY + 24;
+      var heightLineX = frontLeft - 26;
+      var widthLineX2 = frontLeft + frontWidth + depth + 4;
+
+      drawDimensionLine(frontLeft, lengthLineY, frontLeft + frontWidth, lengthLineY);
+      drawDimensionLine(heightLineX, frontTop, heightLineX, frontTop + frontHeight);
+      drawDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
+
+      drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
+      drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(heightIn) + '"');
+      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
     }
 
     function setVisibilityState() {

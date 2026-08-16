@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Now - RS Pet Stop</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+</head>
+<body>
+  <div class="page wizard-page">
+    <div class="wizard-header">
+      <div id="companyLogoBox"></div>
+      <h1>Order Now</h1>
+      <p class="muted">Pick what you need, and we'll get back to you to confirm your order.</p>
+    </div>
+
+    <div class="wizard-progress" id="wizardProgress">
+      <div class="wizard-progress-step" data-step="1"></div>
+      <div class="wizard-progress-step" data-step="2"></div>
+      <div class="wizard-progress-step" data-step="3"></div>
+      <div class="wizard-progress-step" data-step="4"></div>
+    </div>
+
+    <!-- Step 0: order mode picker -->
+    <section class="wizard-step" data-step="0">
+      <h2 class="wizard-step-title">How would you like to order?</h2>
+      <p class="muted">Choose a ready-made item, or design a custom aquarium setup.</p>
+      <div class="category-grid">
+        <div class="category-card" id="modeStandardBtn">
+          <span class="category-icon">🛒</span>
+          Standard<br /><span class="muted" style="font-weight:400; font-size:12px;">Browse categories &amp; items</span>
+        </div>
+        <div class="category-card" id="modeCustomizeBtn">
+          <span class="category-icon">📐</span>
+          Customize<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom aquarium quote</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 1: category picker -->
+    <section class="wizard-step" data-step="1">
+      <button type="button" class="btn btn-secondary btn-sm" id="backToModeBtn">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">What do you want to buy?</h2>
+      <p class="muted">Tap a category to see what's available.</p>
+      <div id="categoryLoadingMsg" class="muted">Loading categories...</div>
+      <div id="categoryErrorMsg" class="error-text hidden"></div>
+      <div class="category-grid" id="categoryGrid"></div>
+    </section>
+
+    <!-- Customize path, step 2: dimensions / unit of measure / glass thickness / sealant -->
+    <section class="wizard-step" data-step="custom-dims">
+      <h2 class="wizard-step-title">Aquarium Dimensions</h2>
+      <p class="muted">Tell us the size and glass specs for your custom aquarium.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="customLength">Length</label>
+          <input type="number" id="customLength" value="24" step="0.01" min="0" />
+        </div>
+        <div class="form-row">
+          <label for="customWidth">Width</label>
+          <input type="number" id="customWidth" value="12" step="0.01" min="0" />
+        </div>
+        <div class="form-row">
+          <label for="customHeight">Height</label>
+          <input type="number" id="customHeight" value="12" step="0.01" min="0" />
+        </div>
+        <div class="form-row">
+          <label for="customUnit">Unit of Measure *</label>
+          <select id="customUnit">
+            <option value="">-- select --</option>
+            <option>Inches</option>
+            <option>CM</option>
+            <option>Ft</option>
+            <option>MM</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="customGlass">Glass Thickness</label>
+          <select id="customGlass">
+            <option>3mm</option>
+            <option selected>6mm</option>
+            <option>10mm</option>
+            <option>12mm</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="customSealant">Sealant Color *</label>
+          <select id="customSealant">
+            <option value="">-- select --</option>
+            <option>Clear</option>
+            <option>Black</option>
+          </select>
+          <div class="field-example-links">
+            <a href="icons/Sample%20clear%20sealant.jpg" target="_blank" rel="noopener" class="option-example-link">(see Clear sample)</a>
+            <a href="icons/Sample%20Black%20Sealant.jpg" target="_blank" rel="noopener" class="option-example-link">(see Black sample)</a>
+          </div>
+        </div>
+      </div>
+      <div id="customDimsErrorMsg" class="error-text hidden"></div>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="customDimsBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="customDimsNextBtn">Next &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Customize path, step 3: add-on options -->
+    <section class="wizard-step" data-step="custom-options">
+      <h2 class="wizard-step-title">Options</h2>
+      <p class="muted">Select any add-ons you'd like for your custom aquarium.</p>
+      <div class="card dims-summary-card" id="customDimsSummary"></div>
+      <div class="aquarium-canvas-wrap">
+        <canvas id="customAquariumCanvas" width="720" height="260"></canvas>
+      </div>
+      <div class="card custom-price-card" id="customPriceEstimate">Calculating price...</div>
+      <div class="checkbox-stack">
+        <div class="checkbox-row">
+          <label class="checkbox-row-label"><input type="checkbox" id="customAio" /> AIO</label>
+          <div class="field-example-links">
+            <a href="icons/Aio%20sample1.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 1)</a>
+            <a href="icons/Aio%20sample%202.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 2)</a>
+            <a href="icons/Aio%20sample%203.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 3)</a>
+          </div>
+        </div>
+        <label class="checkbox-row"><input type="checkbox" id="customLowIron" /> Low Iron</label>
+        <label class="checkbox-row"><input type="checkbox" id="customTempered" /> Tempered Glass</label>
+        <div class="checkbox-row">
+          <label class="checkbox-row-label"><input type="checkbox" id="customRimless" /> Rimless</label>
+          <a href="icons/RimlessandwithRim.jpg" target="_blank" rel="noopener" class="option-example-link">(see example)</a>
+        </div>
+        <label class="checkbox-row"><input type="checkbox" id="customHighStrip" /> High Strip</label>
+        <label class="checkbox-row"><input type="checkbox" id="customAquascape" /> Aquascape Service</label>
+        <label class="checkbox-row"><input type="checkbox" id="customEnclosure" /> Enclosure</label>
+      </div>
+      <div id="customGlassNotice" class="rule-notice hidden"></div>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="customOptionsBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="customOptionsNextBtn">Next &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Customize path checkout/review (reached when the customer says no to the post-Options
+         Filtration prompt) - a receipt-styled summary of the custom aquarium build so far,
+         before collecting contact details and submitting. -->
+    <section class="wizard-step" data-step="custom-checkout">
+      <h2 class="wizard-step-title">Order Summary</h2>
+      <div class="delivery-receipt">
+        <div class="delivery-receipt-section delivery-receipt-header">
+          <img id="checkoutLogo" class="delivery-receipt-logo hidden" alt="Company logo" />
+          <div class="delivery-receipt-company-info">
+            <div id="checkoutCompanyName" class="delivery-receipt-company-name"></div>
+            <div id="checkoutFacebook" class="delivery-receipt-line"></div>
+            <div id="checkoutAddress" class="delivery-receipt-line"></div>
+            <div id="checkoutContactNo" class="delivery-receipt-line"></div>
+            <div id="checkoutDtiNo" class="delivery-receipt-line"></div>
+          </div>
+        </div>
+        <div class="delivery-receipt-section">
+          <div class="delivery-receipt-title">CUSTOM AQUARIUM ORDER SUMMARY</div>
+        </div>
+        <div class="delivery-receipt-section">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Qty</th>
+                  <th style="text-align:right;">Amount</th>
+                </tr>
+              </thead>
+              <tbody id="checkoutLinesBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="delivery-receipt-section" style="text-align:right;">
+          <strong>Estimated Total: <span id="checkoutTotal"></span></strong>
+        </div>
+        <div class="delivery-receipt-section">
+          <p class="muted" style="margin:0;">Prices are estimates - we'll confirm final pricing and availability once you submit your contact details on the next step.</p>
+        </div>
+      </div>
+      <p class="confirm-order-note">By clicking <strong>Confirm Order</strong>, you confirm that the aquarium details and price above are correct. This confirmation will serve as the final basis of your order.</p>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="customCheckoutBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="customCheckoutConfirmBtn">Confirm Order &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Customize path, step 4: filtration (only reached if the customer says yes to the
+         post-Options prompt asking whether they want Filtration added) -->
+    <section class="wizard-step" data-step="custom-filtration">
+      <h2 class="wizard-step-title">Filtration</h2>
+      <p class="muted">More filtration options coming soon.</p>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="customFiltrationBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="customFiltrationNextBtn">Next &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Step 2: item picker for the chosen category -->
+    <section class="wizard-step" data-step="2">
+      <button type="button" class="btn btn-secondary btn-sm" id="backToCategoriesBtn">&larr; Back to Categories</button>
+      <h2 class="wizard-step-title" id="itemStepTitle" style="margin-top:14px;">Items</h2>
+      <div id="itemLoadingMsg" class="muted">Loading items...</div>
+      <div id="itemErrorMsg" class="error-text hidden"></div>
+      <div id="itemEmptyMsg" class="muted hidden">No items available in this category right now.</div>
+      <div class="item-grid" id="itemGrid"></div>
+    </section>
+
+    <!-- Step 3: cart review -->
+    <section class="wizard-step" data-step="3">
+      <h2 class="wizard-step-title">Review Your Order</h2>
+      <div id="cartEmptyMsg" class="muted hidden">Your cart is empty. Go back and add some items first.</div>
+      <div id="cartLinesBox"></div>
+      <div class="cart-total-row hidden" id="cartTotalRow">
+        <span>Estimated Total</span>
+        <span id="cartTotalValue">₱0.00</span>
+      </div>
+      <p class="muted" style="margin-top:10px;">Prices are estimates - we'll confirm final pricing and availability when we contact you.</p>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="cartAddMoreBtn">&larr; Add More Items</button>
+        <button type="button" class="btn btn-primary" id="cartContinueBtn">Continue &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Payment & Release policy - shown right after the customer confirms their order
+         (custom-checkout's Confirm Order button, or the standard cart's Continue button)
+         and before we collect contact details. Shared by both flows. -->
+    <section class="wizard-step" data-step="payment-policy">
+      <div class="payment-policy card">
+        <h3 class="payment-policy-title">🛍️ RSPetstop Payment &amp; Release Policy</h3>
+        <p class="muted" style="margin-top:-6px;">We follow a 50/50 payment structure for all orders, including custom setups and stocked items.</p>
+
+        <h4 class="payment-policy-subhead">💳 Payment Terms</h4>
+        <ul class="payment-policy-list">
+          <li>50% down payment is required to start processing.</li>
+          <li>Remaining 50% must be paid before or upon item release.</li>
+          <li>No item will be released without full payment.</li>
+        </ul>
+
+        <div class="payment-policy-callout">
+          👉 Payments are non-refundable.<br>
+          👉 An Order Confirmation Receipt will be sent to you with your <strong>ORDER ID</strong> that will serve as your receipt. Please take a moment to read and confirm 🙂
+        </div>
+
+        <h4 class="payment-policy-subhead">📦 Order Processing</h4>
+        <ul class="payment-policy-list">
+          <li>Work begins once the down payment is received.</li>
+          <li>Turnaround times vary per order and will be communicated.</li>
+        </ul>
+
+        <h4 class="payment-policy-subhead">⏱ Estimated Production Timeframes</h4>
+        <ul class="payment-policy-list">
+          <li>Standard / Customized sizes (3mm&ndash;6mm): 2&ndash;5 days</li>
+          <li>Thicker glass (10mm or higher): 10&ndash;15 days</li>
+          <li>Low-iron or tempered glass: 15 working days preparation + 5 days fabrication</li>
+        </ul>
+        <p class="muted">✅ Rest assured, once your items are finished, they will be released promptly.</p>
+
+        <h4 class="payment-policy-subhead">💰 Payment Methods Available</h4>
+        <div class="payment-methods-grid">
+          <div class="payment-method-card">
+            <div class="payment-method-name">📱 GCash</div>
+            <div class="payment-method-line">Name: Roie del Bert P. Santos</div>
+            <div class="payment-method-line">Number: 0995-753-4317</div>
+          </div>
+          <div class="payment-method-card">
+            <div class="payment-method-name">🏦 Metrobank</div>
+            <div class="payment-method-line">Acct No.: 3773853016749</div>
+            <div class="payment-method-line">Name: Roie del Bert P. Santos</div>
+          </div>
+          <div class="payment-method-card">
+            <div class="payment-method-name">🏦 BDO</div>
+            <div class="payment-method-line">Acct No.: 012490055360</div>
+            <div class="payment-method-line">Name: Roie del Bert P. Santos</div>
+          </div>
+        </div>
+        <p class="payment-policy-callout">💡 Kindly send proof of payment + your full name after transaction.</p>
+
+        <h4 class="payment-policy-subhead">🚫 Cancellation &amp; Refunds</h4>
+        <p class="muted" style="margin-bottom:0;">Down payments are non-refundable once processing begins.</p>
+      </div>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="paymentPolicyBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="paymentPolicyContinueBtn">I Understand, Continue &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Step 4: customer details -->
+    <section class="wizard-step" data-step="4">
+      <h2 class="wizard-step-title">Your Details</h2>
+      <p class="muted">So we can reach you to confirm your order.</p>
+      <form id="detailsForm">
+        <div class="form-row">
+          <label for="customerName">Full Name *</label>
+          <input type="text" id="customerName" required />
+        </div>
+        <div class="form-row">
+          <label for="customerPhone">Phone Number *</label>
+          <input type="text" id="customerPhone" required inputmode="tel" />
+        </div>
+        <div class="form-row">
+          <label for="customerEmail">Email (optional)</label>
+          <input type="email" id="customerEmail" />
+        </div>
+        <div class="form-row">
+          <label>Pickup or Delivery? *</label>
+          <div class="fulfillment-toggle">
+            <div class="fulfillment-option selected" data-value="Pickup" id="fulfillmentPickup">🏬 Pickup</div>
+            <div class="fulfillment-option" data-value="Delivery" id="fulfillmentDelivery">🚚 Delivery</div>
+          </div>
+        </div>
+        <div class="form-row hidden" id="deliveryAddressRow">
+          <label for="deliveryAddress">Delivery Address *</label>
+          <textarea id="deliveryAddress" rows="2"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="orderNotes">Notes / Special Requests</label>
+          <textarea id="orderNotes" rows="3" placeholder="e.g. tank size, preferred delivery day, anything else we should know"></textarea>
+        </div>
+        <div id="submitErrorMsg" class="error-text hidden"></div>
+        <div class="wizard-nav-buttons">
+          <button type="button" class="btn btn-secondary" id="detailsBackBtn">&larr; Back to Cart</button>
+          <button type="submit" class="btn btn-primary" id="submitOrderBtn">Submit Order Request</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Step 5: confirmation -->
+    <section class="wizard-step" data-step="5">
+      <div class="confirmation-box card">
+        <span class="confirmation-icon">✅</span>
+        <h2>Thank you!</h2>
+        <p class="muted">Your order request has been received. We'll contact you shortly to confirm.</p>
+        <div class="confirmation-order-no" id="confirmationOrderNo"></div>
+        <button type="button" class="btn btn-primary" id="startNewOrderBtn">Start a New Order</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Glass-thickness upgrade confirm (replaces window.confirm() with a touch-friendly modal) -->
+  <div class="modal-backdrop hidden" id="confirmModal">
+    <div class="modal-panel confirm-modal-panel">
+      <span class="confirm-modal-icon">🪟</span>
+      <p id="confirmModalMessage"></p>
+      <div class="confirm-modal-buttons">
+        <button type="button" class="btn btn-primary" id="confirmModalYesBtn"></button>
+        <button type="button" class="btn btn-secondary" id="confirmModalNoBtn"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticky cart bar (steps 1-2 only) -->
+  <div class="cart-bar hidden" id="cartBar">
+    <div>
+      <div class="cart-bar-info" id="cartBarInfo">0 items</div>
+      <div class="cart-bar-sub" id="cartBarSub">Add items to get started</div>
+    </div>
+    <button type="button" class="btn btn-success" id="viewCartBtn">View Cart</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="WebAquariumCalculator/custom-aquarium-calculator.js"></script>
+  <script src="js/orderNow.js"></script>
+</body>
+</html>

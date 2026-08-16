@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Automated Orders - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Automated Orders</h1>
+    <p class="muted">Order requests submitted by customers through the public order form (<a href="order-now.html" target="_blank" rel="noopener">order-now.html</a>).</p>
+
+    <div class="toolbar">
+      <h2 style="margin:0;">Requests</h2>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <input type="text" id="orderSearchInput" placeholder="Search by order no, customer, phone..." style="max-width:280px;" />
+        <select id="statusFilterInput" style="max-width:160px;">
+          <option value="">All Statuses</option>
+          <option value="New">New</option>
+          <option value="Contacted">Contacted</option>
+          <option value="Confirmed">Confirmed</option>
+          <option value="Completed">Completed</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Order No</th>
+            <th>Received</th>
+            <th>Customer</th>
+            <th>Phone</th>
+            <th>Fulfillment</th>
+            <th>Est. Total</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="orderTableBody"></tbody>
+      </table>
+    </div>
+    <div id="orderPaginationBar"></div>
+  </div>
+
+  <!-- Order detail modal -->
+  <div class="modal-backdrop hidden" id="orderModal">
+    <div class="modal-panel">
+      <h2 id="modalOrderNo" style="margin-top:0;"></h2>
+      <div class="form-grid">
+        <div>
+          <label>Customer</label>
+          <div class="muted" id="modalCustomerName"></div>
+        </div>
+        <div>
+          <label>Phone</label>
+          <div class="muted" id="modalCustomerPhone"></div>
+        </div>
+        <div>
+          <label>Email</label>
+          <div class="muted" id="modalCustomerEmail"></div>
+        </div>
+        <div>
+          <label>Fulfillment</label>
+          <div class="muted" id="modalFulfillment"></div>
+        </div>
+      </div>
+      <div class="form-row hidden" id="modalAddressRow">
+        <label>Delivery Address</label>
+        <div class="muted" id="modalAddress"></div>
+      </div>
+      <div class="form-row hidden" id="modalNotesRow">
+        <label>Notes</label>
+        <div class="muted" id="modalNotes"></div>
+      </div>
+
+      <div class="section-divider"></div>
+      <h3>Items</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Price</th>
+              <th>Line Total</th>
+            </tr>
+          </thead>
+          <tbody id="modalLinesBody"></tbody>
+        </table>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="form-row">
+        <label for="modalStatusSelect">Status</label>
+        <select id="modalStatusSelect">
+          <option value="New">New</option>
+          <option value="Contacted">Contacted</option>
+          <option value="Confirmed">Confirmed</option>
+          <option value="Completed">Completed</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+      </div>
+      <div id="modalStatusError" class="error-text hidden"></div>
+
+      <div class="wizard-nav-buttons" style="margin-top:18px;">
+        <button type="button" class="btn btn-secondary" id="modalCloseBtn">Close</button>
+        <button type="button" class="btn btn-primary" id="modalSaveStatusBtn">Save Status</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/automatedOrders.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>
