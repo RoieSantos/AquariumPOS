@@ -1736,40 +1736,136 @@ tr.clickable-row:hover {
 }
 
 /* Public "Order Now" customer wizard (docs/order-now.html / js/orderNow.js) - no login, no
-   #topnav, shared with the rest of the portal only via css variables + .btn/.card/.badge. */
+   #topnav, shared with the rest of the portal only via css variables + .btn/.card/.badge.
+   Visually it's its own "app" - a wrapped wizard-card sitting over a soft gradient backdrop with
+   a faint watermark of the company logo, so it reads as a polished mini storefront rather than a
+   bare form. All overrides of the shared .btn/.card/input rules below are scoped under
+   .wizard-page so the rest of the (staff-facing) portal is untouched. */
+body:has(.wizard-page) {
+  background: radial-gradient(circle at 15% -10%, #e4edfb 0%, transparent 55%),
+    radial-gradient(circle at 100% 0%, #eef6f0 0%, transparent 45%),
+    linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+  min-height: 100vh;
+}
+
+.wizard-watermark {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-repeat: no-repeat;
+  background-position: center 12%;
+  background-size: min(62vw, 460px);
+  opacity: 0.05;
+  filter: grayscale(1);
+  pointer-events: none;
+}
+
 .wizard-page {
-  max-width: 760px;
+  max-width: 620px;
   margin: 0 auto;
-  padding: 24px 16px 100px;
+  padding: 28px 16px 110px;
 }
 
 .wizard-header {
   text-align: center;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .wizard-header .company-logo-img {
   display: block;
-  margin: 0 auto 10px;
+  margin: 0 auto 12px;
+  max-height: 64px;
+  filter: drop-shadow(0 4px 10px rgba(21, 52, 94, 0.12));
+}
+
+.wizard-header h1 {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, var(--primary-strong), var(--primary) 60%, #2f7fd6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  display: inline-block;
+}
+
+.wizard-header p.muted {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+
+.wizard-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  box-shadow: 0 16px 40px rgba(21, 52, 94, 0.1);
+  padding: 26px 22px;
+  position: relative;
+}
+
+@media (max-width: 480px) {
+  .wizard-card {
+    padding: 20px 16px;
+    border-radius: 16px;
+  }
 }
 
 .wizard-progress {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 18px 0 26px;
+  margin: 2px 0 28px;
 }
 
 .wizard-progress-step {
   flex: 1;
-  height: 6px;
-  border-radius: 999px;
+  height: 4px;
   background: var(--panel-border);
+  position: relative;
+}
+
+.wizard-progress-step::before {
+  content: attr(data-step);
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--panel-border);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.wizard-progress-step:first-child {
+  border-top-left-radius: 999px;
+  border-bottom-left-radius: 999px;
+}
+
+.wizard-progress-step:last-child {
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
 }
 
 .wizard-progress-step.done,
 .wizard-progress-step.active {
   background: var(--primary);
+}
+
+.wizard-progress-step.done::before {
+  content: '\2713';
+  background: var(--success);
+}
+
+.wizard-progress-step.active::before {
+  background: var(--primary);
+  transform: translate(-50%, -50%) scale(1.15);
+  box-shadow: 0 0 0 4px rgba(29, 79, 145, 0.18);
 }
 
 .wizard-step {
@@ -1778,10 +1874,90 @@ tr.clickable-row:hover {
 
 .wizard-step.active {
   display: block;
+  animation: wizardStepIn 0.25s ease;
+}
+
+@keyframes wizardStepIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .wizard-step-title {
   margin-bottom: 4px;
+  font-size: 20px;
+}
+
+/* Buttons, scoped to the Order Now page only - bigger touch targets, pill shape, gradient
+   primary. #cartBar/#confirmModal are included even though they're rendered outside .wizard-page
+   (fixed-position overlays, kept as body-level siblings for stacking) so every button on this
+   page reads consistently. */
+.wizard-page .btn,
+#cartBar .btn,
+#confirmModal .btn {
+  padding: 12px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+
+.wizard-page .btn-primary,
+#cartBar .btn-primary,
+#confirmModal .btn-primary {
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
+  box-shadow: 0 8px 18px rgba(21, 52, 94, 0.25);
+}
+
+.wizard-page .btn-primary:hover,
+#cartBar .btn-primary:hover,
+#confirmModal .btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(21, 52, 94, 0.32);
+}
+
+.wizard-page .btn-secondary,
+#confirmModal .btn-secondary {
+  background: #fff;
+  color: var(--text-main);
+  border: 1px solid var(--input-border);
+  box-shadow: none;
+}
+
+.wizard-page .btn-secondary:hover,
+#confirmModal .btn-secondary:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.wizard-page .btn-success,
+#cartBar .btn-success {
+  box-shadow: 0 8px 18px rgba(30, 154, 89, 0.28);
+}
+
+.wizard-page input[type="text"],
+.wizard-page input[type="email"],
+.wizard-page input[type="number"],
+.wizard-page select,
+.wizard-page textarea {
+  padding: 11px 12px;
+  border-radius: 10px;
+  border-color: var(--input-border);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wizard-page input[type="text"]:focus,
+.wizard-page input[type="email"]:focus,
+.wizard-page input[type="number"]:focus,
+.wizard-page select:focus,
+.wizard-page textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(29, 79, 145, 0.15);
+}
+
+.wizard-page label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .category-grid,
@@ -1795,9 +1971,9 @@ tr.clickable-row:hover {
 .category-card {
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: var(--shadow);
-  padding: 22px 14px;
+  padding: 24px 14px;
   text-align: center;
   cursor: pointer;
   font-weight: 700;
@@ -1812,20 +1988,32 @@ tr.clickable-row:hover {
 }
 
 .category-card .category-icon {
-  font-size: 36px;
-  display: block;
-  margin-bottom: 10px;
+  font-size: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #eaf2fd, #dbe8fb);
 }
 
 .item-card {
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: var(--shadow);
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.item-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(21, 52, 94, 0.12);
 }
 
 .item-card-img,
@@ -1891,13 +2079,14 @@ tr.clickable-row:hover {
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   color: #fff;
   padding: 14px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  border-radius: 18px 18px 0 0;
   box-shadow: 0 -8px 24px rgba(21, 52, 94, 0.2);
   z-index: 50;
 }
@@ -1964,7 +2153,7 @@ tr.clickable-row:hover {
 
 .checkbox-stack {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   margin-top: 18px;
 }
 
@@ -1975,12 +2164,23 @@ tr.clickable-row:hover {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-main);
+  background: #fbfcfe;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.checkbox-row:has(input:checked) {
+  border-color: var(--primary);
+  background: #eef4fd;
 }
 
 .checkbox-row input[type="checkbox"] {
   width: 18px;
   height: 18px;
   margin: 0;
+  accent-color: var(--primary);
 }
 
 .checkbox-row-label {
@@ -2024,10 +2224,43 @@ tr.clickable-row:hover {
   color: var(--primary);
 }
 
+.location-toggle {
+  display: grid;
+  gap: 10px;
+}
+
+.location-option {
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.location-option.selected {
+  border-color: var(--primary);
+  background: #e2ecfb;
+}
+
+.location-option-name {
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.location-option.selected .location-option-name {
+  color: var(--primary);
+}
+
+.location-option-address {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .aquarium-canvas-wrap {
   border: 1px solid var(--panel-border);
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  border-radius: 8px;
+  border-radius: 14px;
   overflow: hidden;
   margin-top: 18px;
 }
@@ -2035,7 +2268,11 @@ tr.clickable-row:hover {
 .aquarium-canvas-wrap canvas {
   display: block;
   width: 100%;
-  height: 260px;
+  height: auto;
+  /* Matches the canvas's drawing-buffer width/height attributes (720x260, see
+     setupCustomCanvas()) - keeps the isometric drawing's proportions correct at any container
+     width instead of stretching to a fixed CSS height. */
+  aspect-ratio: 720 / 260;
 }
 
 .custom-price-card {
@@ -2044,6 +2281,9 @@ tr.clickable-row:hover {
   font-size: 24px;
   font-weight: 800;
   color: var(--primary);
+  background: linear-gradient(135deg, #eef5ff, #e4edfb);
+  border-color: #cfe0f7;
+  border-radius: 16px;
 }
 
 .custom-price-card .custom-price-note {
@@ -2057,6 +2297,7 @@ tr.clickable-row:hover {
   margin-bottom: 18px;
   font-size: 16px;
   line-height: 1.9;
+  border-radius: 16px;
 }
 
 .dims-summary-card strong {
@@ -2140,6 +2381,7 @@ tr.clickable-row:hover {
 .confirmation-box {
   text-align: center;
   padding: 30px 16px;
+  border-radius: 16px;
 }
 
 .confirmation-box .confirmation-icon {
@@ -2158,6 +2400,7 @@ tr.clickable-row:hover {
 .payment-policy {
   margin-top: 18px;
   padding: 20px;
+  border-radius: 16px;
 }
 
 .payment-policy-title {

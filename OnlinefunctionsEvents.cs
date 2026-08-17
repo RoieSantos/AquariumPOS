@@ -7202,7 +7202,97 @@ WHEN NOT MATCHED THEN
             return rows.Count;
         }
 
+        /// <summary>
+        /// Pushes the local dbo.OnlineCustomers table (Pancake customer records, incl. FbID/PSID -
+        /// see SyncCustomersAsync above) up to Supabase public."OnlineCustomers", inserting new rows
+        /// or patching existing ones (matched by Id) so re-running the sync is always safe. Only a
+        /// lean, directly-useful subset of columns is sent (not the *Json blobs/RawJson) - this
+        /// table exists so staff can look up which Pancake customer/PSID a Messenger-originated
+        /// order-now.html visit or order belongs to, not as a full customer master mirror.
+        /// </summary>
+        public static MasterDataSyncSummary SyncCustomersToSupabase()
+        {
+            return SyncCustomersToSupabaseAsync().GetAwaiter().GetResult();
+        }
 
+        public static async Task<MasterDataSyncSummary> SyncCustomersToSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            string endpointUrl = GlobalSettings.OnlineCustomersSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+                throw new InvalidOperationException("OnlineCustomersSupabaseEndpoint is not configured.");
+
+            var customerRows = LoadOnlineCustomerRows();
+            int insertedCount = 0;
+            int updatedCount = 0;
+
+            foreach (var customerRow in customerRows)
+            {
+                string payloadJson = JsonSerializer.Serialize(customerRow.Payload);
+                bool exists = await SupabaseRecordExistsAsync(endpointUrl, timeout.Value, ("Id", customerRow.Id)).ConfigureAwait(false);
+                if (exists)
+                {
+                    await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(endpointUrl, ("Id", customerRow.Id)), payloadJson, timeout.Value).ConfigureAwait(false);
+                    updatedCount++;
+                }
+                else
+                {
+                    await PostJsonWithHeadersAsync(endpointUrl, payloadJson, timeout.Value).ConfigureAwait(false);
+                    insertedCount++;
+                }
+            }
+
+            return new MasterDataSyncSummary(customerRows.Count, insertedCount, updatedCount);
+        }
+
+        private static List<(string Id, Dictionary<string, object?> Payload)> LoadOnlineCustomerRows()
+        {
+            var rows = new List<(string Id, Dictionary<string, object?> Payload)>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+
+            using var checkCmd = new SqlCommand("SELECT OBJECT_ID('dbo.OnlineCustomers', 'U')", connection);
+            if (checkCmd.ExecuteScalar() is DBNull or null)
+                return rows;
+
+            const string selectColumns =
+                "[Id], [CustomerID], [ShopID], [Name], [FbID], [PrimaryEmail], [PrimaryPhoneNumber], " +
+                "[PrimaryAddress], [ConversationLink], [OrderCount], [PurchasedAmount], [LastOrderAt], [UpdatedAt], [InsertedAt]";
+            using var cmd = new SqlCommand($"SELECT {selectColumns} FROM dbo.OnlineCustomers", connection);
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string id = rdr["Id"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(id))
+                    continue;
+
+                static object? Col(SqlDataReader r, string name) => r[name] == DBNull.Value ? null : r[name];
+
+                var payload = new Dictionary<string, object?>
+                {
+                    ["Id"] = id,
+                    ["CustomerID"] = Col(rdr, "CustomerID"),
+                    ["ShopID"] = Col(rdr, "ShopID"),
+                    ["Name"] = Col(rdr, "Name"),
+                    ["FbID"] = Col(rdr, "FbID"),
+                    ["PrimaryEmail"] = Col(rdr, "PrimaryEmail"),
+                    ["PrimaryPhoneNumber"] = Col(rdr, "PrimaryPhoneNumber"),
+                    ["PrimaryAddress"] = Col(rdr, "PrimaryAddress"),
+                    ["ConversationLink"] = Col(rdr, "ConversationLink"),
+                    ["OrderCount"] = Col(rdr, "OrderCount"),
+                    ["PurchasedAmount"] = Col(rdr, "PurchasedAmount"),
+                    ["LastOrderAt"] = rdr["LastOrderAt"] == DBNull.Value ? null : Convert.ToDateTime(rdr["LastOrderAt"]).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture),
+                    ["UpdatedAt"] = rdr["UpdatedAt"] == DBNull.Value ? null : Convert.ToDateTime(rdr["UpdatedAt"]).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture),
+                    ["InsertedAt"] = rdr["InsertedAt"] == DBNull.Value ? null : Convert.ToDateTime(rdr["InsertedAt"]).ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture),
+                    ["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture)
+                };
+
+                rows.Add((id, payload));
+            }
+
+            return rows;
+        }
 
         /// <summary>
         /// Sync product variations from the upstream API and update local Items.VariationId.

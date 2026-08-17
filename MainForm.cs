@@ -1185,6 +1185,13 @@ INSERT INTO CardProcessingFeeLog (
                 try { await OnlinefunctionsEvents.SyncOnlineOrdersToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
                 try { await OnlinefunctionsEvents.SyncAdvanceOrdersToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
 
+                // Customers (incl. FbID/PSID) - pull the latest from Pancake into dbo.OnlineCustomers
+                // first, then push that up to Supabase public."OnlineCustomers", same two-step
+                // pattern as Warehouses/Items above (was previously only triggered by the manual
+                // "Sync Customers" button - see RunManualCustomerSyncAsync).
+                try { await OnlinefunctionsEvents.SyncCustomersAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+                try { await OnlinefunctionsEvents.SyncCustomersToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
                 // Opposite direction from everything else above (Supabase -> desktop) - the Web
                 // Portal's Category Setup screen is the only place "Production Category" can be
                 // toggled, so this is what makes that reach Stock Counts' own local filter.

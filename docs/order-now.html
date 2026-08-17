@@ -9,6 +9,10 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 </head>
 <body>
+  <!-- Faint, oversized company logo behind the whole page - purely decorative, set via JS in
+       loadCompanyLogo() once CompanyInfo.LogoUrl is fetched. Sits behind .wizard-page (z-index 1). -->
+  <div class="wizard-watermark" id="watermarkBg" aria-hidden="true"></div>
+
   <div class="page wizard-page">
     <div class="wizard-header">
       <div id="companyLogoBox"></div>
@@ -19,14 +23,15 @@
     <!-- TEMPORARY - for testing the Messenger PSID hand-off only. Remove once confirmed working. -->
     <div id="psidDebugBanner" class="psid-debug-banner"></div>
 
-    <div class="wizard-progress" id="wizardProgress">
-      <div class="wizard-progress-step" data-step="1"></div>
-      <div class="wizard-progress-step" data-step="2"></div>
-      <div class="wizard-progress-step" data-step="3"></div>
-      <div class="wizard-progress-step" data-step="4"></div>
-    </div>
+    <div class="wizard-card">
+      <div class="wizard-progress" id="wizardProgress">
+        <div class="wizard-progress-step" data-step="1"></div>
+        <div class="wizard-progress-step" data-step="2"></div>
+        <div class="wizard-progress-step" data-step="3"></div>
+        <div class="wizard-progress-step" data-step="4"></div>
+      </div>
 
-    <!-- Step 0: order mode picker -->
+      <!-- Step 0: order mode picker -->
     <section class="wizard-step" data-step="0">
       <h2 class="wizard-step-title">How would you like to order?</h2>
       <p class="muted">Choose a ready-made item, or design a custom aquarium setup.</p>
@@ -300,12 +305,25 @@
           <input type="text" id="customerName" required />
         </div>
         <div class="form-row">
-          <label for="customerPhone">Phone Number *</label>
-          <input type="text" id="customerPhone" required inputmode="tel" />
+          <label for="customerPhone">Phone Number * (e.g. 09171234567)</label>
+          <input type="text" id="customerPhone" required inputmode="tel" placeholder="09171234567" />
         </div>
         <div class="form-row">
           <label for="customerEmail">Email (optional)</label>
           <input type="email" id="customerEmail" />
+        </div>
+        <div class="form-row">
+          <label>Which branch? *</label>
+          <div class="location-toggle">
+            <div class="location-option selected" data-value="Amaya" id="locationAmaya">
+              <div class="location-option-name">📍 Amaya</div>
+              <div class="location-option-address">Antero Soriano Highway, Amaya Dos, Tanza, Cavite<br />Pin Location: RSPetStop Amaya</div>
+            </div>
+            <div class="location-option" data-value="GMA" id="locationGma">
+              <div class="location-option-name">📍 GMA</div>
+              <div class="location-option-address">Blk 2 Lot 53 Brgy. Granados, General Mariano Alvarez, Cavite<br />Pin Location: RSPetStop GMA</div>
+            </div>
+          </div>
         </div>
         <div class="form-row">
           <label>Pickup or Delivery? *</label>
@@ -340,6 +358,7 @@
         <button type="button" class="btn btn-primary" id="startNewOrderBtn">Start a New Order</button>
       </div>
     </section>
+    </div>
   </div>
 
   <!-- Glass-thickness upgrade confirm (replaces window.confirm() with a touch-friendly modal) -->

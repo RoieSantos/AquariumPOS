@@ -42,6 +42,7 @@
             <th>Fulfillment</th>
             <th>Est. Total</th>
             <th>Status</th>
+            <th>Pancake</th>
             <th></th>
           </tr>
         </thead>
@@ -72,6 +73,10 @@
           <label>Fulfillment</label>
           <div class="muted" id="modalFulfillment"></div>
         </div>
+        <div>
+          <label>Branch</label>
+          <div class="muted" id="modalLocation"></div>
+        </div>
       </div>
       <div class="form-row hidden" id="modalAddressRow">
         <label>Delivery Address</label>
@@ -80,6 +85,14 @@
       <div class="form-row hidden" id="modalNotesRow">
         <label>Notes</label>
         <div class="muted" id="modalNotes"></div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="form-row">
+        <label>Pancake Order</label>
+        <div id="modalPancakeStatus"></div>
+        <div class="error-text hidden" id="modalPancakeError" style="margin-top:6px;"></div>
+        <button type="button" class="btn btn-secondary btn-sm hidden" id="modalRetryPancakeBtn" style="margin-top:8px;">Retry Push to Pancake</button>
       </div>
 
       <div class="section-divider"></div>

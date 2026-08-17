@@ -164,6 +164,12 @@ namespace AquariumPOS
         public static string OnlineOrderLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/OnlineOrderLines";
         public static string AdvanceOrdersSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrders";
         public static string AdvanceOrderLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrderLines";
+        // Online Customers (Pancake customer/PSID records, mirrored from dbo.OnlineCustomers - see
+        // OnlinefunctionsEvents.SyncCustomersAsync/SyncCustomersToSupabaseAsync) - same one-way
+        // desktop -> Supabase pattern as everything else on this page. Not exposed to the Web
+        // Portal's anon key (see supabase_online_customers_table.sql) - customer PII/PSIDs, staff
+        // only, once a staff-facing lookup RPC is added.
+        public static string OnlineCustomersSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/OnlineCustomers";
         public static string TransferHeaderSupabaseApiKey { get; } = "sb_publishable_QWDFggQ9ce9zm65xFEzmHA_rGaOUFQz";
         // Supabase SECRET key (bypasses Row Level Security - used for privileged desktop -> Supabase
         // REST calls). Deliberately NOT a literal here - GitHub's push protection blocks any commit

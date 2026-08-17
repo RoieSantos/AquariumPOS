@@ -19,6 +19,17 @@ const STATUS_BADGE_CLASS = {
   Cancelled: 'badge-danger'
 };
 
+const PANCAKE_BADGE_CLASS = {
+  Synced: 'badge-success',
+  Failed: 'badge-danger',
+  Pending: 'badge-neutral'
+};
+
+function pancakeBadgeHtml(status) {
+  const cls = PANCAKE_BADGE_CLASS[status] || 'badge-neutral';
+  return `<span class="badge ${cls}">${status || 'Pending'}</span>`;
+}
+
 function formatMoney(value) {
   return '₱' + Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -39,6 +50,7 @@ function orderRowsHtml(orders) {
         <td>${o.fulfillment_type || ''}</td>
         <td>${formatMoney(o.estimated_total)}</td>
         <td>${statusBadgeHtml(o.status)}</td>
+        <td>${pancakeBadgeHtml(o.pancake_sync_status)}</td>
         <td><button type="button" class="btn btn-secondary btn-sm" data-view="${o.order_no}">View</button></td>
       </tr>
     `)
@@ -63,12 +75,12 @@ async function loadOrders(search, status) {
   if (myGeneration !== loadGeneration) return;
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
   tbody.innerHTML = (data || []).length === 0
-    ? '<tr><td colspan="8" class="muted">No automated order requests found.</td></tr>'
+    ? '<tr><td colspan="9" class="muted">No automated order requests found.</td></tr>'
     : orderRowsHtml(data);
 
   tbody.querySelectorAll('[data-view]').forEach((btn) => {
@@ -128,6 +140,9 @@ async function openOrderModal(orderNo) {
   document.getElementById('modalCustomerPhone').textContent = order.customer_phone || '';
   document.getElementById('modalCustomerEmail').textContent = order.customer_email || '-';
   document.getElementById('modalFulfillment').textContent = order.fulfillment_type || '';
+  document.getElementById('modalLocation').textContent = order.location || '-';
+
+  renderPancakeStatus(order);
 
   const addressRow = document.getElementById('modalAddressRow');
   addressRow.classList.toggle('hidden', order.fulfillment_type !== 'Delivery');
@@ -149,6 +164,56 @@ async function openOrderModal(orderNo) {
       </tr>
     `)
     .join('');
+}
+
+function renderPancakeStatus(order) {
+  const statusBox = document.getElementById('modalPancakeStatus');
+  const errorBox = document.getElementById('modalPancakeError');
+  const retryBtn = document.getElementById('modalRetryPancakeBtn');
+
+  const orderIdText = order.pancake_order_id ? ` <span class="muted">(Pancake order id: ${order.pancake_order_id})</span>` : '';
+  statusBox.innerHTML = pancakeBadgeHtml(order.pancake_sync_status) + orderIdText;
+
+  if (order.pancake_sync_status === 'Failed' && order.pancake_sync_error) {
+    errorBox.textContent = order.pancake_sync_error;
+    errorBox.classList.remove('hidden');
+  } else {
+    errorBox.classList.add('hidden');
+  }
+
+  // Retrying a 'Synced' order would create a SECOND order in Pancake (no idempotency key to
+  // upsert against server-side) - only offer it once a push has actually failed.
+  retryBtn.classList.toggle('hidden', order.pancake_sync_status !== 'Failed');
+}
+
+async function retryPancakePush() {
+  if (!currentOrderNo) return;
+  const retryBtn = document.getElementById('modalRetryPancakeBtn');
+  retryBtn.disabled = true;
+  retryBtn.textContent = 'Retrying...';
+
+  const { data, error } = await supabaseClient.rpc('admin_retry_automated_order_pancake_push', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: currentOrderNo
+  });
+
+  retryBtn.disabled = false;
+  retryBtn.textContent = 'Retry Push to Pancake';
+
+  if (error || !data || data.length === 0) {
+    const errorBox = document.getElementById('modalPancakeError');
+    errorBox.textContent = error?.message || 'Retry failed.';
+    errorBox.classList.remove('hidden');
+    return;
+  }
+
+  renderPancakeStatus({
+    pancake_sync_status: data[0].pancake_sync_status,
+    pancake_sync_error: data[0].pancake_sync_error,
+    pancake_order_id: data[0].pancake_order_id
+  });
+  loadOrders(document.getElementById('orderSearchInput').value, document.getElementById('statusFilterInput').value);
 }
 
 function closeOrderModal() {
@@ -208,6 +273,7 @@ function wireOrderFilters() {
   wireOrderFilters();
   document.getElementById('modalCloseBtn').addEventListener('click', closeOrderModal);
   document.getElementById('modalSaveStatusBtn').addEventListener('click', saveOrderStatus);
+  document.getElementById('modalRetryPancakeBtn').addEventListener('click', retryPancakePush);
   document.getElementById('orderModal').addEventListener('click', (event) => {
     if (event.target.id === 'orderModal') closeOrderModal();
   });

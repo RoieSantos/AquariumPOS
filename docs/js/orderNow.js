@@ -26,6 +26,7 @@ let currentCategoryCode = null;
 let currentCategoryLabel = null;
 let currentStep = 1;
 let selectedFulfillment = 'Pickup';
+let selectedLocation = 'Amaya';
 // Glass thickness snapshotted the moment Low Iron/Rimless gets ticked, so unticking either can
 // restore whatever the customer had chosen before that option forced an upgrade.
 let glassBeforeLowIron = null;
@@ -940,6 +941,20 @@ async function enforceGlassThicknessRules() {
   renderCustomDimsSummary();
 }
 
+function wireLocationToggle() {
+  const amayaOpt = document.getElementById('locationAmaya');
+  const gmaOpt = document.getElementById('locationGma');
+
+  function select(value) {
+    selectedLocation = value;
+    amayaOpt.classList.toggle('selected', value === 'Amaya');
+    gmaOpt.classList.toggle('selected', value === 'GMA');
+  }
+
+  amayaOpt.addEventListener('click', () => select('Amaya'));
+  gmaOpt.addEventListener('click', () => select('GMA'));
+}
+
 function wireFulfillmentToggle() {
   const pickupOpt = document.getElementById('fulfillmentPickup');
   const deliveryOpt = document.getElementById('fulfillmentDelivery');
@@ -956,6 +971,14 @@ function wireFulfillmentToggle() {
   deliveryOpt.addEventListener('click', () => select('Delivery'));
 }
 
+// Accepts PH mobile numbers in local (09171234567), country-code (639171234567) or
+// +-prefixed (+639171234567) form - anything else (e.g. "test") is rejected before it ever
+// reaches submit_automated_order, which enforces this same pattern server-side as the real gate.
+function isValidPhMobileNumber(raw) {
+  const digits = (raw || '').replace(/\D/g, '');
+  return /^(09\d{9}|639\d{9})$/.test(digits);
+}
+
 async function submitOrder(event) {
   event.preventDefault();
   const errorMsg = document.getElementById('submitErrorMsg');
@@ -969,6 +992,11 @@ async function submitOrder(event) {
 
   if (!name || !phone) {
     errorMsg.textContent = 'Please fill in your name and phone number.';
+    errorMsg.classList.remove('hidden');
+    return;
+  }
+  if (!isValidPhMobileNumber(phone)) {
+    errorMsg.textContent = 'Please enter a valid mobile number, e.g. 09171234567.';
     errorMsg.classList.remove('hidden');
     return;
   }
@@ -994,6 +1022,8 @@ async function submitOrder(event) {
     p_fulfillment_type: selectedFulfillment,
     p_delivery_address: selectedFulfillment === 'Delivery' ? address : null,
     p_notes: notes || null,
+    p_location: selectedLocation,
+    p_psid: messengerPsid,
     p_lines: cart.map((line) => ({
       category_code: line.categoryCode,
       item_code: line.itemCode,
@@ -1025,6 +1055,9 @@ function resetWizard() {
   selectedFulfillment = 'Pickup';
   document.getElementById('fulfillmentPickup').classList.add('selected');
   document.getElementById('fulfillmentDelivery').classList.remove('selected');
+  selectedLocation = 'Amaya';
+  document.getElementById('locationAmaya').classList.add('selected');
+  document.getElementById('locationGma').classList.remove('selected');
   document.getElementById('deliveryAddressRow').classList.add('hidden');
   goToStep(1);
 }
@@ -1035,6 +1068,8 @@ async function loadCompanyLogo() {
   const box = document.getElementById('companyLogoBox');
   if (info['LogoUrl']) {
     box.innerHTML = `<img src="${info['LogoUrl']}" alt="${info['CompanyName'] || 'Company logo'}" class="company-logo-img" />`;
+    const watermark = document.getElementById('watermarkBg');
+    if (watermark) watermark.style.backgroundImage = `url(${info['LogoUrl']})`;
   }
 }
 
@@ -1043,6 +1078,7 @@ async function loadCompanyLogo() {
   loadCompanyLogo();
   loadCategories();
   renderCart();
+  wireLocationToggle();
   wireFulfillmentToggle();
   setupCustomCanvas();
   goToStep(0);
