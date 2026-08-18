@@ -120,6 +120,38 @@ revoke all on public."OnlineCustomers" from anon, authenticated;
 
 grant execute on function public.admin_list_online_customers(text, text, text, text, int, int) to anon;
 
+-- Public (anon, no login) PSID-only lookup - lets order-now.html auto-fill Step 4's
+-- name/phone/email fields for a customer who arrived via a Messenger-personalized link, instead
+-- of making them retype details Pancake already has on file (see js/orderNow.js's
+-- prefillCustomerDetailsFromPsid()). Deliberately narrower than admin_list_online_customers: no
+-- staff auth (this page has none to check), so it returns ONLY name/phone/email - never
+-- CustomerID/order history/purchased amount/address - and only for an EXACT PSID match (no
+-- search-by-name/phone, which would let anon browse the customer list).
+--
+-- SECURITY NOTE: this trusts whatever psid value the caller passes, same as every other place in
+-- this feature already treats a customer's own PSID as their identifier (it's handed to them
+-- by Pancake, embedded in a link only they receive) - a real Facebook PSID is a long
+-- platform-assigned number, not something practical to guess/enumerate. Kept to name/phone/email
+-- only so even a guessed PSID exposes the least useful set of PII possible.
+drop function if exists public.public_lookup_customer_by_psid(text);
+
+create or replace function public.public_lookup_customer_by_psid(p_psid text)
+returns table(name text, phone text, email text)
+language sql
+security definer
+set search_path = public, extensions
+stable
+as $$
+  select c."Name"::text, c."PrimaryPhoneNumber"::text, c."PrimaryEmail"::text
+  from public."OnlineCustomers" c
+  where p_psid is not null and trim(p_psid) <> ''
+    and (c."FbID" = p_psid or c."FbID" = '195716644410829_' || p_psid)
+  order by c."SyncedAtUtc" desc nulls last
+  limit 1;
+$$;
+
+grant execute on function public.public_lookup_customer_by_psid(text) to anon;
+
 -- ============================================================================
 -- Cron sync, direct Pancake -> Supabase, independent of the desktop POS app -
 -- per "should customer/PSID syncing happen entirely on the Supabase side,

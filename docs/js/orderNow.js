@@ -62,6 +62,27 @@ function renderPsidDebugBanner() {
     : 'PSID captured: none (opened without a ?psid= link)';
 }
 
+// Auto-fills Step 4's name/phone/email from the customer's existing Pancake record (matched by
+// PSID) so someone who arrived via a Messenger link doesn't have to retype details Pancake
+// already has - see public_lookup_customer_by_psid() in supabase_online_customers_table.sql.
+// Only fills fields that are still blank, so it never clobbers something the customer already
+// typed (e.g. if the lookup resolves after they started filling the form in manually).
+async function prefillCustomerDetailsFromPsid() {
+  if (!messengerPsid) return;
+
+  const { data, error } = await supabaseClient.rpc('public_lookup_customer_by_psid', { p_psid: messengerPsid });
+  if (error || !data || data.length === 0) return;
+
+  const match = data[0];
+  const nameInput = document.getElementById('customerName');
+  const phoneInput = document.getElementById('customerPhone');
+  const emailInput = document.getElementById('customerEmail');
+
+  if (nameInput && !nameInput.value.trim() && match.name) nameInput.value = match.name;
+  if (phoneInput && !phoneInput.value.trim() && match.phone) phoneInput.value = match.phone;
+  if (emailInput && !emailInput.value.trim() && match.email) emailInput.value = match.email;
+}
+
 function loadCart() {
   try {
     const raw = sessionStorage.getItem(CART_STORAGE_KEY);
@@ -824,6 +845,21 @@ function convertToInches(value, unit) {
   return num;
 }
 
+// Finds the thinnest glass tier (starting from whatever's currently selected, upward) that
+// validateGlassSafety actually considers safe for these dimensions - a single tier bump isn't
+// always enough (e.g. a very large tank flagged at 6mm may still be unsafe at 10mm and need
+// 12mm), so this walks the chart forward instead of guessing one step ahead. Returns null if
+// even 12mm (the thickest option offered) still isn't enough.
+function findSafeGlassTier(lengthIn, widthIn, heightIn, startingGlass) {
+  const tiers = ['3mm', '6mm', '10mm', '12mm'];
+  const startIdx = Math.max(tiers.indexOf(startingGlass), 0);
+  for (let i = startIdx; i < tiers.length; i += 1) {
+    const check = window.CustomAquariumCalculator.validateGlassSafety(lengthIn, widthIn, heightIn, tiers[i], true, false);
+    if (check.isSafe) return tiers[i];
+  }
+  return null;
+}
+
 // Mirrors the glass-thickness safety rules from the standalone custom aquarium calculator
 // (WebAquariumCalculator/index.html's enforceOptionRules) - re-applied here because the wizard
 // now collects dimensions/glass (step 2) and options (step 3) as separate steps instead of one
@@ -1042,7 +1078,14 @@ async function submitOrder(event) {
     return;
   }
 
-  document.getElementById('confirmationOrderNo').textContent = data;
+  // submit_automated_order now returns a row (order_no, pancake_order_id, pancake_sync_status) -
+  // show the real Pancake order id when the sync went through, since that's the number Pancake
+  // (and any staff working there) will actually recognize. Falls back to our internal OrderNo
+  // whenever there's no Pancake id yet (sync still pending/failed) - the request is always
+  // recorded either way, so the customer still gets something to reference.
+  const result = (data && data[0]) || {};
+  document.getElementById('confirmationOrderNo').textContent =
+    (result.pancake_sync_status === 'Synced' && result.pancake_order_id) || result.order_no;
   cart = [];
   saveCart();
   goToStep(5);
@@ -1075,6 +1118,7 @@ async function loadCompanyLogo() {
 
 (function init() {
   captureMessengerPsid();
+  prefillCustomerDetailsFromPsid();
   loadCompanyLogo();
   loadCategories();
   renderCart();
@@ -1089,7 +1133,7 @@ async function loadCompanyLogo() {
   document.getElementById('backToCategoriesBtn').addEventListener('click', () => goToStep(1));
 
   document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep(0));
-  document.getElementById('customDimsNextBtn').addEventListener('click', () => {
+  document.getElementById('customDimsNextBtn').addEventListener('click', async () => {
     const errorMsg = document.getElementById('customDimsErrorMsg');
     if (!document.getElementById('customUnit').value) {
       errorMsg.textContent = 'Please select a unit of measure.';
@@ -1101,7 +1145,52 @@ async function loadCompanyLogo() {
       errorMsg.classList.remove('hidden');
       return;
     }
-    errorMsg.classList.add('hidden');
+
+    // Glass-thickness-vs-dimension safety check, using the same chart as the standalone
+    // calculator (WebAquariumCalculator/custom-aquarium-calculator.js's validateGlassSafety) -
+    // runs right here on raw Length/Width/Height/Glass Thickness, before AIO/Low Iron/Rimless
+    // even exist (those are chosen on the next step, where enforceGlassThicknessRules applies
+    // their own option-specific rules instead). isTempered is passed as true so the chart's
+    // general "tempered is mandatory at 36in+" branch doesn't false-block here - that part is
+    // already auto-enforced on the Options step regardless of what's picked on this one.
+    const unit = document.getElementById('customUnit').value;
+    const glassSelect = document.getElementById('customGlass');
+    const lengthIn = convertToInches(document.getElementById('customLength').value, unit);
+    const widthIn = convertToInches(document.getElementById('customWidth').value, unit);
+    const heightIn = convertToInches(document.getElementById('customHeight').value, unit);
+    const safety = window.CustomAquariumCalculator.validateGlassSafety(
+      lengthIn, widthIn, heightIn, glassSelect.value, true, false
+    );
+
+    if (!safety.isSafe) {
+      const suggestedGlass = safety.autoChangeTo || findSafeGlassTier(lengthIn, widthIn, heightIn, glassSelect.value);
+
+      if (!suggestedGlass) {
+        // Already at the thickest option (12mm) and still flagged unsafe - nothing left to
+        // upgrade to, so just block with the reason instead of offering a confirm modal.
+        errorMsg.textContent = safety.message;
+        errorMsg.classList.remove('hidden');
+        return;
+      }
+
+      const upgrade = await showConfirmModal(
+        `${safety.message} Would you like to upgrade to ${suggestedGlass} glass? (Price change may vary)`,
+        'Yes, Upgrade Glass',
+        'No, Keep Current'
+      );
+
+      if (upgrade) {
+        glassSelect.value = suggestedGlass;
+        errorMsg.classList.add('hidden');
+      } else {
+        errorMsg.textContent = safety.message;
+        errorMsg.classList.remove('hidden');
+        return;
+      }
+    } else {
+      errorMsg.classList.add('hidden');
+    }
+
     renderCustomDimsSummary();
     enforceGlassThicknessRules().then(updateCustomPriceEstimate);
     goToStep('custom-options');

@@ -51,8 +51,9 @@ revoke all on public."AutomatedOrderLines" from anon, authenticated;
 -- "Location" is which physical branch/warehouse fulfills the order (customer-selected in
 -- Step 4 - Amaya or GMA), used to resolve Pancake's warehouse_id by name. "Psid" is the
 -- customer's Facebook PSID if they arrived via a Messenger-personalized order-now.html link
--- (see docs/js/orderNow.js's captureMessengerPsid()) - passed as customer.fb_id so Pancake
--- attaches the order to that existing conversation. PancakeOrderId/PancakeSyncStatus/
+-- (see docs/js/orderNow.js's captureMessengerPsid()) - used to derive conversation_id
+-- ("{page_id}_{psid}") and to look up the matching customer_id from OnlineCustomers, so Pancake
+-- attaches the order directly to that existing conversation/customer. PancakeOrderId/PancakeSyncStatus/
 -- PancakeSyncError track whether/how the automatic Pancake push went - a failure there never
 -- blocks the customer's request from being recorded (see the nested exception handler below).
 alter table public."AutomatedOrders" add column if not exists "Location" varchar(20);
@@ -60,6 +61,14 @@ alter table public."AutomatedOrders" add column if not exists "Psid" varchar(255
 alter table public."AutomatedOrders" add column if not exists "PancakeOrderId" varchar(100);
 alter table public."AutomatedOrders" add column if not exists "PancakeSyncStatus" varchar(20) not null default 'Pending';
 alter table public."AutomatedOrders" add column if not exists "PancakeSyncError" text;
+-- Exact JSON body sent on the most recent push attempt - kept so a failed push can be diffed
+-- byte-for-byte against a request that succeeds elsewhere (e.g. pasted into Postman), rather than
+-- against a payload re-rendered after the fact.
+alter table public."AutomatedOrders" add column if not exists "PancakeLastPayload" text;
+-- Set at the START of every push attempt (success or failure) - lets a Retry click be verified
+-- with certainty (query this right after clicking Retry; if it isn't "just now", the click never
+-- actually reached the server, e.g. a stale cached page still pointing at an old RPC signature).
+alter table public."AutomatedOrders" add column if not exists "PancakeLastAttemptAtUtc" timestamptz;
 
 comment on table public."AutomatedOrders" is 'Customer-submitted order requests from the public order wizard (order-now.html) - a lead/request queue staff action manually, separate from the Pancake-synced OnlineOrders table.';
 comment on table public."AutomatedOrderLines" is 'Line items for an AutomatedOrders request. Price/ItemName are snapshotted at submission time so the request stays accurate even if Items catalog prices change later.';
@@ -155,7 +164,8 @@ declare
   v_line_count int;
   v_items_json jsonb;
   v_matched_count int;
-  v_customer_json jsonb;
+  v_customer_id text;
+  v_conversation_id text;
   v_shipping_json jsonb;
   v_payload jsonb;
   v_url text;
@@ -168,6 +178,11 @@ begin
   if not found then
     raise exception 'AutomatedOrders row % not found.', p_order_no;
   end if;
+
+  -- Stamped unconditionally, before anything that could fail, so it's visible proof this
+  -- function actually ran for this OrderNo just now - independent of whether the push itself
+  -- succeeds or fails.
+  update public."AutomatedOrders" set "PancakeLastAttemptAtUtc" = now() where "OrderNo" = p_order_no;
 
   begin
     perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '20000');
@@ -217,7 +232,12 @@ begin
             'id', i."VariationId",
             'product_id', i."ProductId",
             'name', l."ItemName",
-            'retail_price', l."Price"
+            -- l."Price" is numeric(18,4), which Postgres always renders with all 4 decimal
+            -- places when serialized to JSON (e.g. 103980.0000) even for a whole-peso amount.
+            -- Confirmed live: Pancake's order API 422s on that decimal-formatted form with an
+            -- empty {"message":""} - the desktop POS app's already-working CreateInstoreOnlineOrder
+            -- avoids this exact pitfall by explicitly rounding to a whole number before sending.
+            'retail_price', round(l."Price")::int
           )
         )
       ),
@@ -237,10 +257,23 @@ begin
       raise exception '% of % order lines matched a known Pancake product - refusing a partial push.', v_matched_count, v_line_count;
     end if;
 
-    v_customer_json := jsonb_build_object(
-      'name', v_order."CustomerName",
-      'page_id', v_page_id
-    ) || case when v_order."Psid" is not null then jsonb_build_object('fb_id', v_order."Psid") else '{}'::jsonb end;
+    -- Attach this order to the customer's existing Pancake/Messenger conversation: Pancake's
+    -- conversation_id is "{page_id}_{psid}" (standard Facebook Messenger thread id shape), and
+    -- customer_id is that customer's real Pancake CustomerID, looked up here from OnlineCustomers
+    -- (synced from Pancake by FbID - see cron_sync_online_customers_from_pancake). Matches FbID
+    -- against EITHER the raw Psid or the combined "{page_id}_{psid}" form, since it's unconfirmed
+    -- which shape Pancake actually stores as a customer's fb_id. Both stay null (omitted from the
+    -- payload below) when there's no Psid at all, or no OnlineCustomers row has synced for it yet
+    -- (e.g. a brand new customer) - the order still gets created, just without conversation/
+    -- customer linkage.
+    if v_order."Psid" is not null then
+      v_conversation_id := v_page_id || '_' || v_order."Psid";
+
+      select "CustomerID" into v_customer_id
+      from public."OnlineCustomers"
+      where "FbID" = v_order."Psid" or "FbID" = v_conversation_id
+      limit 1;
+    end if;
 
     v_shipping_json := case when v_order."FulfillmentType" = 'Delivery' then
       jsonb_build_object(
@@ -257,7 +290,7 @@ begin
       'bill_full_name', v_order."CustomerName",
       'bill_phone_number', v_order."CustomerPhone",
       'bill_email', v_order."CustomerEmail",
-      'customer', v_customer_json,
+      'page_id', v_page_id,
       'items', v_items_json,
       'note', 'Web order ' || p_order_no
         || coalesce(E'\n' || v_lines_note, '')
@@ -265,13 +298,45 @@ begin
       'is_free_shipping', false,
       'shipping_fee', 0,
       'status', 0
-    ) || case when v_shipping_json is not null then jsonb_build_object('shipping_address', v_shipping_json) else '{}'::jsonb end;
+    )
+      || case when v_customer_id is not null then jsonb_build_object('customer_id', v_customer_id) else '{}'::jsonb end
+      || case when v_conversation_id is not null then jsonb_build_object('conversation_id', v_conversation_id) else '{}'::jsonb end
+      || case when v_shipping_json is not null then jsonb_build_object('shipping_address', v_shipping_json) else '{}'::jsonb end;
 
     v_url := v_base_url || '/shops/' || v_shop_id || '/orders?api_key=' || v_api_key;
-    v_response := extensions.http_post(v_url, v_payload::text, 'application/json');
+
+    -- Header set deliberately mimics Postman's rather than libcurl's defaults, to close the two
+    -- real client-level differences between our failing server-side call and the succeeding
+    -- Postman one:
+    --   * "Expect:" (empty) SUPPRESSES libcurl's automatic Expect: 100-continue, which it adds
+    --     unprompted for any POST body over 1024 bytes - our payload crosses that threshold once
+    --     the per-line detail note is included. Postman never sends it. If Pancake's nginx/app
+    --     mishandles the 100-continue handshake it can act on an empty body, which would explain
+    --     a validation rejection whose message is blank.
+    --   * User-Agent, because libcurl's default ("libcurl/x.y.z") is a common thing for APIs and
+    --     WAFs to treat differently from a normal client's.
+    -- Accept is declared explicitly too (extensions.http_post sends none at all).
+    perform extensions.http_set_curlopt('CURLOPT_USERAGENT', 'RSPetStopPortal/1.0');
+
+    select * into v_response from extensions.http((
+      'POST',
+      v_url,
+      array[
+        extensions.http_header('Accept', 'application/json'),
+        extensions.http_header('Expect', '')
+      ],
+      'application/json',
+      v_payload::text
+    )::extensions.http_request);
 
     if v_response.status < 200 or v_response.status >= 300 then
-      raise exception 'Pancake order creation failed (HTTP %): %', v_response.status, left(v_response.content, 500);
+      -- Pancake's error body is often unhelpfully empty ({"message":"","success":false}) - the
+      -- response headers sometimes carry more (rate-limit / WAF / request-id info) that the body
+      -- alone doesn't show, so surface those too when debugging a failure.
+      raise exception 'Pancake order creation failed (HTTP %): % | Headers: %',
+        v_response.status,
+        left(v_response.content, 300),
+        left(coalesce((select string_agg(h.field || '=' || h.value, ' | ') from unnest(v_response.headers) h), '(none)'), 400);
     end if;
 
     v_pancake_body := v_response.content::jsonb;
@@ -284,12 +349,17 @@ begin
     update public."AutomatedOrders"
     set "PancakeOrderId" = v_pancake_order_id,
         "PancakeSyncStatus" = 'Synced',
-        "PancakeSyncError" = null
+        "PancakeSyncError" = null,
+        "PancakeLastPayload" = v_payload::text
     where "OrderNo" = p_order_no;
   exception when others then
+    -- v_payload is a PL/pgSQL variable, so it survives this block's subtransaction rollback -
+    -- recording it here (rather than before the http call) is what makes the sent body available
+    -- for diffing precisely in the failure case we care about.
     update public."AutomatedOrders"
     set "PancakeSyncStatus" = 'Failed',
-        "PancakeSyncError" = left(sqlerrm, 1000)
+        "PancakeSyncError" = left(sqlerrm, 1000),
+        "PancakeLastPayload" = v_payload::text
     where "OrderNo" = p_order_no;
   end;
 end;
@@ -330,7 +400,7 @@ create or replace function public.submit_automated_order(
   p_psid text,
   p_lines jsonb
 )
-returns text
+returns table(order_no text, pancake_order_id text, pancake_sync_status text)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -405,7 +475,14 @@ begin
 
   perform public._push_automated_order_to_pancake(v_order_no);
 
-  return v_order_no;
+  -- _push_automated_order_to_pancake always resolves to Synced/Failed on this same row before
+  -- returning (it's called synchronously, not fired off in the background), so PancakeOrderId is
+  -- already whatever it's going to be by this point - the confirmation screen (js/orderNow.js)
+  -- uses it in place of the internal OrderNo when available, falling back to OrderNo otherwise.
+  return query
+    select o."OrderNo"::text, o."PancakeOrderId"::text, o."PancakeSyncStatus"::text
+    from public."AutomatedOrders" o
+    where o."OrderNo" = v_order_no;
 end;
 $$;
 
@@ -443,6 +520,7 @@ returns table(
   pancake_order_id text,
   pancake_sync_status text,
   pancake_sync_error text,
+  pancake_last_payload text,
   total_count bigint
 )
 language plpgsql
@@ -462,6 +540,7 @@ begin
            o."FulfillmentType"::text, o."DeliveryAddress"::text, o."Notes"::text, o."Status"::text,
            o."EstimatedTotal", o."CreatedAtUtc", o."UpdatedBy"::text, o."UpdatedAtUtc",
            o."Location"::text, o."Psid"::text, o."PancakeOrderId"::text, o."PancakeSyncStatus"::text, o."PancakeSyncError"::text,
+           o."PancakeLastPayload"::text,
            count(*) over()
     from public."AutomatedOrders" o
     where (p_status is null or trim(p_status) = '' or o."Status" ilike p_status)
@@ -506,7 +585,7 @@ $$;
 drop function if exists public.admin_retry_automated_order_pancake_push(text, text, text);
 
 create or replace function public.admin_retry_automated_order_pancake_push(p_admin_username text, p_admin_password text, p_order_no text)
-returns table(pancake_sync_status text, pancake_sync_error text, pancake_order_id text)
+returns table(pancake_sync_status text, pancake_sync_error text, pancake_order_id text, pancake_last_payload text)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -519,7 +598,7 @@ begin
   perform public._push_automated_order_to_pancake(p_order_no);
 
   return query
-    select o."PancakeSyncStatus"::text, o."PancakeSyncError"::text, o."PancakeOrderId"::text
+    select o."PancakeSyncStatus"::text, o."PancakeSyncError"::text, o."PancakeOrderId"::text, o."PancakeLastPayload"::text
     from public."AutomatedOrders" o
     where o."OrderNo" = p_order_no;
 end;

@@ -10,6 +10,9 @@ let loadGeneration = 0;
 let currentPage = 1;
 let currentPageSize = 50;
 let currentOrderNo = null;
+// Verbatim request body from the open order's most recent Pancake push attempt - see
+// renderPancakeStatus / viewPancakePayload.
+let lastSentPayload = null;
 
 const STATUS_BADGE_CLASS = {
   New: 'badge-primary',
@@ -107,6 +110,8 @@ async function openOrderModal(orderNo) {
   currentOrderNo = orderNo;
   const modal = document.getElementById('orderModal');
   document.getElementById('modalStatusError').classList.add('hidden');
+  document.getElementById('modalPayloadBox').classList.add('hidden');
+  document.getElementById('modalPayloadError').classList.add('hidden');
   modal.classList.remove('hidden');
   document.getElementById('modalOrderNo').textContent = 'Loading...';
   document.getElementById('modalLinesBody').innerHTML = '';
@@ -171,6 +176,8 @@ function renderPancakeStatus(order) {
   const errorBox = document.getElementById('modalPancakeError');
   const retryBtn = document.getElementById('modalRetryPancakeBtn');
 
+  lastSentPayload = order.pancake_last_payload || null;
+
   const orderIdText = order.pancake_order_id ? ` <span class="muted">(Pancake order id: ${order.pancake_order_id})</span>` : '';
   statusBox.innerHTML = pancakeBadgeHtml(order.pancake_sync_status) + orderIdText;
 
@@ -211,9 +218,46 @@ async function retryPancakePush() {
   renderPancakeStatus({
     pancake_sync_status: data[0].pancake_sync_status,
     pancake_sync_error: data[0].pancake_sync_error,
-    pancake_order_id: data[0].pancake_order_id
+    pancake_order_id: data[0].pancake_order_id,
+    pancake_last_payload: data[0].pancake_last_payload
   });
   loadOrders(document.getElementById('orderSearchInput').value, document.getElementById('statusFilterInput').value);
+}
+
+async function viewPancakePayload() {
+  if (!currentOrderNo) return;
+  const viewBtn = document.getElementById('modalViewPayloadBtn');
+  const box = document.getElementById('modalPayloadBox');
+  const urlEl = document.getElementById('modalPayloadUrl');
+  const jsonEl = document.getElementById('modalPayloadJson');
+  const errorBox = document.getElementById('modalPayloadError');
+
+  errorBox.classList.add('hidden');
+  viewBtn.disabled = true;
+  viewBtn.textContent = 'Loading...';
+
+  const { data, error } = await supabaseClient.rpc('admin_debug_automated_order_pancake_payload', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: currentOrderNo
+  });
+
+  viewBtn.disabled = false;
+  viewBtn.textContent = 'View Endpoint & Payload';
+
+  if (error || !data || data.length === 0) {
+    errorBox.textContent = error?.message || 'Could not load payload.';
+    errorBox.classList.remove('hidden');
+    return;
+  }
+
+  urlEl.textContent = data[0].url || '';
+  // Prefer the body actually sent on the last attempt (AutomatedOrders."PancakeLastPayload",
+  // captured verbatim inside the push function) over the dry-run rebuild - copying a re-rendered
+  // payload into Postman has repeatedly "matched" by eye while the real request still failed, so
+  // what's shown here needs to be the true bytes, unreformatted.
+  jsonEl.textContent = lastSentPayload || JSON.stringify(data[0].payload, null, 2);
+  box.classList.remove('hidden');
 }
 
 function closeOrderModal() {
@@ -274,6 +318,7 @@ function wireOrderFilters() {
   document.getElementById('modalCloseBtn').addEventListener('click', closeOrderModal);
   document.getElementById('modalSaveStatusBtn').addEventListener('click', saveOrderStatus);
   document.getElementById('modalRetryPancakeBtn').addEventListener('click', retryPancakePush);
+  document.getElementById('modalViewPayloadBtn').addEventListener('click', viewPancakePayload);
   document.getElementById('orderModal').addEventListener('click', (event) => {
     if (event.target.id === 'orderModal') closeOrderModal();
   });

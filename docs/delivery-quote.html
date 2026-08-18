@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Delivery Quote - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Delivery Quote</h1>
+    <p class="muted">Pick a From and To location to estimate driving distance and delivery price, Lalamove-style.</p>
+
+    <!-- Not authorized (unused - Delivery Quote is open to all staff; kept for markup parity with other pages) -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div id="pricingNotConfigured" class="hidden">
+        <p class="error-text">Delivery pricing isn't configured yet. Ask a super user to set <strong>DELIVERY_BASE_FEE</strong> and <strong>DELIVERY_RATE_PER_KM</strong> in General Setup (marked "Visible to all staff").</p>
+      </div>
+
+      <div class="card">
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="fromWarehouseSelect">From</label>
+            <select id="fromWarehouseSelect">
+              <option value="">Loading warehouses...</option>
+              <option value="__other__">Other address...</option>
+            </select>
+          </div>
+          <div class="form-row hidden" id="fromOtherRow">
+            <label for="fromOtherInput">From Address</label>
+            <input type="text" id="fromOtherInput" placeholder="e.g. 123 Main St, Quezon City" />
+          </div>
+          <div class="form-row">
+            <label for="toAddressInput">To (Delivery Address)</label>
+            <input type="text" id="toAddressInput" placeholder="e.g. 456 Sample Ave, Makati City" />
+          </div>
+        </div>
+
+        <div id="quoteError" class="error-text hidden"></div>
+
+        <div style="margin-top:16px;">
+          <button class="btn btn-primary" id="getQuoteBtn" type="button">Get Quote</button>
+        </div>
+
+        <div id="quoteMap" class="hidden"></div>
+      </div>
+
+      <div id="quoteResult" class="hidden">
+        <div class="stat-card-grid">
+          <div class="stat-card">
+            <div class="stat-label">Distance</div>
+            <div class="stat-value" id="resultDistance">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Drive Time</div>
+            <div class="stat-value" id="resultDuration">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Toll Road</div>
+            <div class="stat-value" id="resultTollUsed">-</div>
+          </div>
+          <div class="stat-card stat-confirmed">
+            <div class="stat-label">Delivery Price</div>
+            <div class="stat-value" id="resultPrice">-</div>
+          </div>
+        </div>
+        <p class="muted" id="resultBreakdown"></p>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/deliveryQuote.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

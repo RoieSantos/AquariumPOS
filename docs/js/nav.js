@@ -36,6 +36,7 @@ function renderTopNav(activeLabel) {
   items.push({ href: 'online-orders.html', label: 'Online Orders' });
   items.push({ href: 'automated-orders.html', label: 'Automated Orders' });
   items.push({ href: 'delivery.html', label: 'Delivery' });
+  items.push({ href: 'delivery-quote.html', label: 'Delivery Quote' });
 
   if (session?.isSuperUser) {
     items.push({ href: 'general-setup.html', label: 'General Setup' });
