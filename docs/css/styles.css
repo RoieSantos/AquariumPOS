@@ -2489,9 +2489,21 @@ body:has(.wizard-page) {
   margin-top: 4px;
 }
 
+/* Calls out Glass Thickness specifically (per direct request) in the Aquarium summary card
+   (#customAquariumSummary) - same amber tone as .rule-notice, since thickness is the field most
+   tied to the glass-safety rules shown just below it. */
+.dims-summary-glass-badge {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #7a5a05;
+  background: #fff3d6;
+}
+
 /* Stand summary specifically (per direct request) - two columns for the whole detail list, not
    just the decluttered options at the bottom, unlike the shared .dims-summary-card layout the
-   Aquarium flow's #customDimsSummary still uses. */
+   Aquarium flow's #customAquariumSummary still uses. */
 #customStandSummary {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -151,10 +151,14 @@
       <div class="category-grid" id="categoryGrid"></div>
     </section>
 
-    <!-- Customize path, step 2: dimensions / unit of measure / glass thickness / sealant -->
+    <!-- Customize path, step 2: dimensions / unit of measure / glass thickness / sealant / add-on
+         options - merged into one step (previously two: Dimensions then Options) since both fit
+         on one screen fine and there's no real reason to force a click between them. -->
     <section class="wizard-step" data-step="custom-dims">
-      <h2 class="wizard-step-title">Aquarium Dimensions</h2>
-      <p class="muted">Tell us the size and glass specs for your custom aquarium.</p>
+      <button type="button" class="btn btn-secondary btn-sm" id="customDimsBackBtnTop">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Aquarium Dimensions</h2>
+      <p class="muted">Tell us the size, glass specs, and any add-ons for your custom aquarium.</p>
+      <div class="card dims-summary-card" id="customAquariumSummary"></div>
       <div class="aquarium-canvas-wrap">
         <canvas id="customAquariumCanvasDims" width="720" height="260"></canvas>
       </div>
@@ -217,8 +221,31 @@
           </div>
         </div>
       </div>
+      <div class="form-group">
+        <h3 class="form-group-title">Options</h3>
+        <div class="checkbox-stack">
+          <div class="checkbox-row">
+            <label class="checkbox-row-label"><input type="checkbox" id="customAio" /> AIO</label>
+            <div class="field-example-links">
+              <a href="icons/Aio%20sample1.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 1)</a>
+              <a href="icons/Aio%20sample%202.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 2)</a>
+              <a href="icons/Aio%20sample%203.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 3)</a>
+            </div>
+          </div>
+          <label class="checkbox-row"><input type="checkbox" id="customLowIron" /> Low Iron</label>
+          <label class="checkbox-row"><input type="checkbox" id="customTempered" /> Tempered Glass</label>
+          <div class="checkbox-row">
+            <label class="checkbox-row-label"><input type="checkbox" id="customRimless" /> Rimless</label>
+            <a href="icons/RimlessandwithRim.jpg" target="_blank" rel="noopener" class="option-example-link">(see example)</a>
+          </div>
+          <label class="checkbox-row"><input type="checkbox" id="customHighStrip" /> High Strip</label>
+          <label class="checkbox-row"><input type="checkbox" id="customAquascape" /> Aquascape Service</label>
+          <label class="checkbox-row"><input type="checkbox" id="customEnclosure" /> Enclosure</label>
+        </div>
+      </div>
       <div class="rule-notice" id="customHeightVarianceNote">Please take note that the final height of the aquarium may vary depending on the size of the rubber matting / bottom glass and brace thickness (if any). This is standard across all tank makers.</div>
       <div id="customDimsGlassNotice" class="rule-notice hidden"></div>
+      <div id="customGlassNotice" class="rule-notice hidden"></div>
       <div id="customDimsErrorMsg" class="error-text hidden"></div>
       <div class="wizard-nav-buttons">
         <button type="button" class="btn btn-secondary" id="customDimsBackBtn">&larr; Back</button>
@@ -230,7 +257,8 @@
          aquarium involved) - mirrors the desktop app's Stand Price Calculator fields/pricing
          (StandPriceCalculatorForm.cs) so quotes match what staff would compute in-store. -->
     <section class="wizard-step" data-step="custom-stand">
-      <h2 class="wizard-step-title">Stand Dimensions</h2>
+      <button type="button" class="btn btn-secondary btn-sm" id="customStandBackBtnTop">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Stand Dimensions</h2>
       <p class="muted">Tell us the size and build specs for your custom stand.</p>
       <div class="card dims-summary-card" id="customStandSummary"></div>
       <div class="aquarium-canvas-wrap">
@@ -316,47 +344,12 @@
       </div>
     </section>
 
-    <!-- Customize path, step 3: add-on options -->
-    <section class="wizard-step" data-step="custom-options">
-      <h2 class="wizard-step-title">Options</h2>
-      <p class="muted">Select any add-ons you'd like for your custom aquarium.</p>
-      <div class="card dims-summary-card" id="customDimsSummary"></div>
-      <div class="aquarium-canvas-wrap">
-        <canvas id="customAquariumCanvas" width="720" height="260"></canvas>
-      </div>
-      <div class="card custom-price-card" id="customPriceEstimate">Calculating price...</div>
-      <p class="muted custom-price-disclaimer">Prices for customized aquariums may differ from standard tank prices.</p>
-      <div class="checkbox-stack">
-        <div class="checkbox-row">
-          <label class="checkbox-row-label"><input type="checkbox" id="customAio" /> AIO</label>
-          <div class="field-example-links">
-            <a href="icons/Aio%20sample1.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 1)</a>
-            <a href="icons/Aio%20sample%202.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 2)</a>
-            <a href="icons/Aio%20sample%203.jpg" target="_blank" rel="noopener" class="option-example-link">(sample 3)</a>
-          </div>
-        </div>
-        <label class="checkbox-row"><input type="checkbox" id="customLowIron" /> Low Iron</label>
-        <label class="checkbox-row"><input type="checkbox" id="customTempered" /> Tempered Glass</label>
-        <div class="checkbox-row">
-          <label class="checkbox-row-label"><input type="checkbox" id="customRimless" /> Rimless</label>
-          <a href="icons/RimlessandwithRim.jpg" target="_blank" rel="noopener" class="option-example-link">(see example)</a>
-        </div>
-        <label class="checkbox-row"><input type="checkbox" id="customHighStrip" /> High Strip</label>
-        <label class="checkbox-row"><input type="checkbox" id="customAquascape" /> Aquascape Service</label>
-        <label class="checkbox-row"><input type="checkbox" id="customEnclosure" /> Enclosure</label>
-      </div>
-      <div id="customGlassNotice" class="rule-notice hidden"></div>
-      <div class="wizard-nav-buttons">
-        <button type="button" class="btn btn-secondary" id="customOptionsBackBtn">&larr; Back</button>
-        <button type="button" class="btn btn-primary" id="customOptionsNextBtn">Next &rarr;</button>
-      </div>
-    </section>
-
     <!-- Customize path checkout/review (reached when the customer says no to the post-Options
          Filtration prompt) - a receipt-styled summary of the custom aquarium build so far,
          before collecting contact details and submitting. -->
     <section class="wizard-step" data-step="custom-checkout">
-      <h2 class="wizard-step-title">Order Summary</h2>
+      <button type="button" class="btn btn-secondary btn-sm" id="customCheckoutBackBtnTop">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Order Summary</h2>
       <div class="delivery-receipt">
         <div class="delivery-receipt-section delivery-receipt-header">
           <img id="checkoutLogo" class="delivery-receipt-logo hidden" alt="Company logo" />
@@ -403,7 +396,8 @@
     <!-- Customize path - shown right after confirming a Custom Aquarium build, before contact
          details, offering to add a matching Stand and/or Filtration on top of it. -->
     <section class="wizard-step" data-step="custom-add-more">
-      <h2 class="wizard-step-title">Would you like to add more products?</h2>
+      <button type="button" class="btn btn-secondary btn-sm" id="addMoreBackBtnTop">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Would you like to add more products?</h2>
       <p class="muted">Your custom aquarium has been added to your order. Add a matching stand or filtration system too?</p>
       <div class="category-grid">
         <div class="category-card" id="addMoreStandBtn">
@@ -424,7 +418,8 @@
     <!-- Customize path, step 4: filtration (only reached if the customer says yes to the
          post-Options prompt asking whether they want Filtration added) -->
     <section class="wizard-step" data-step="custom-filtration">
-      <h2 class="wizard-step-title">Filtration</h2>
+      <button type="button" class="btn btn-secondary btn-sm" id="customFiltrationBackBtnTop">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Filtration</h2>
       <p class="muted">Tell us about the filtration sump you'd like for your custom aquarium.</p>
       <div class="form-grid">
         <div class="form-row">
@@ -453,10 +448,7 @@
         <label class="checkbox-row"><input type="checkbox" id="sumpOverflowBox" /> Overflow Box</label>
         <label class="checkbox-row"><input type="checkbox" id="sumpFilterMedias" /> Filter Medias</label>
         <label class="checkbox-row"><input type="checkbox" id="sumpAllumTopCover" /> Allum Top Cover</label>
-        <label class="checkbox-row"><input type="checkbox" id="sumpSubmersibleLight" /> Submersible Light</label>
-        <label class="checkbox-row"><input type="checkbox" id="sumpSubmersiblePump" /> Submersible Pump</label>
       </div>
-      <p class="muted" style="margin-top:10px;">Light/Pump pricing will be confirmed with you separately once we know your preferred model.</p>
       <div class="card custom-price-card" id="customPriceEstimateFiltration">Calculating price...</div>
       <p class="muted custom-price-disclaimer">Prices for customized aquariums may differ from standard tank prices.</p>
       <div class="wizard-nav-buttons">
@@ -469,7 +461,8 @@
          picker, no aquarium involved) - own Unit/Glass Thickness fields since the embedded
          Filtration step above borrows those from the aquarium flow it's attached to. -->
     <section class="wizard-step" data-step="custom-filtration-standalone">
-      <h2 class="wizard-step-title">Filtration / Sump</h2>
+      <button type="button" class="btn btn-secondary btn-sm" id="customStandaloneFiltrationBackBtnTop">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Filtration / Sump</h2>
       <p class="muted">Tell us about the filtration sump you'd like built.</p>
       <div class="card custom-price-card" id="customPriceEstimateStandaloneFiltration">Enter your sump details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized filtration/sump builds may differ from standard prices.</p>
@@ -531,10 +524,7 @@
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpOverflowBox" /> Overflow Box</label>
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpFilterMedias" /> Filter Medias</label>
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpAllumTopCover" /> Allum Top Cover</label>
-        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpSubmersibleLight" /> Submersible Light</label>
-        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpSubmersiblePump" /> Submersible Pump</label>
       </div>
-      <p class="muted" style="margin-top:10px;">Light/Pump pricing will be confirmed with you separately once we know your preferred model.</p>
       <div id="customStandaloneFiltrationErrorMsg" class="error-text hidden"></div>
       <div class="wizard-nav-buttons">
         <button type="button" class="btn btn-secondary" id="customStandaloneFiltrationBackBtn">&larr; Back</button>
@@ -722,15 +712,43 @@
        the customer can check/adjust what they've added without walking through the wizard. -->
   <div class="modal-backdrop hidden" id="cartViewModal">
     <div class="modal-panel">
-      <h2 style="margin-top:0;">Your Cart</h2>
       <div id="cartViewEmptyMsg" class="muted hidden">Your cart is empty.</div>
-      <div id="cartViewLinesBox"></div>
-      <div class="cart-total-row hidden" id="cartViewTotalRow">
-        <span>Total</span>
-        <span id="cartViewTotalValue"></span>
+      <div id="cartViewReport" class="delivery-receipt hidden">
+        <div class="delivery-receipt-section delivery-receipt-header">
+          <img id="cartViewLogo" class="delivery-receipt-logo hidden" alt="Company logo" />
+          <div class="delivery-receipt-company-info">
+            <div id="cartViewCompanyName" class="delivery-receipt-company-name"></div>
+            <div id="cartViewFacebook" class="delivery-receipt-line"></div>
+            <div id="cartViewAddress" class="delivery-receipt-line"></div>
+            <div id="cartViewContactNo" class="delivery-receipt-line"></div>
+            <div id="cartViewDtiNo" class="delivery-receipt-line"></div>
+          </div>
+        </div>
+        <div class="delivery-receipt-section">
+          <div class="delivery-receipt-title">YOUR CART</div>
+        </div>
+        <div class="delivery-receipt-section">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Qty</th>
+                  <th style="text-align:right;">Amount</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="cartViewLinesBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="delivery-receipt-section" style="text-align:right;">
+          <strong>Total: <span id="cartViewTotalValue"></span></strong>
+        </div>
       </div>
-      <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
         <button type="button" class="btn btn-secondary" id="cartViewCloseBtn">Close</button>
+        <button type="button" class="btn btn-primary" id="cartViewProceedBtn">Proceed to Checkout &rarr;</button>
       </div>
     </div>
   </div>

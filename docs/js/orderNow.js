@@ -140,41 +140,59 @@ function updateViewCartLink() {
 }
 
 // Cart viewer modal - reachable from the "View Cart" link regardless of which step the customer
-// is on, unlike Step 3's cart review which is only reached by walking the Standard flow. Unlike
-// that read-mostly review (Remove only), this also lets quantity be adjusted in place.
-function renderCartViewModal() {
+// is on, unlike Step 3's cart review which is only reached by walking the Standard flow. Styled
+// as the same receipt-style report shown on the Order Summary/checkout screens (company
+// letterhead + Product/Qty/Amount table, see renderCustomCheckout) rather than a plain list, but
+// keeps this view's own quantity +/- and Remove controls the checkout report doesn't have.
+async function renderCartViewModal() {
   const emptyMsg = document.getElementById('cartViewEmptyMsg');
-  const linesBox = document.getElementById('cartViewLinesBox');
-  const totalRow = document.getElementById('cartViewTotalRow');
+  const report = document.getElementById('cartViewReport');
+  const proceedBtn = document.getElementById('cartViewProceedBtn');
 
   if (cart.length === 0) {
     emptyMsg.classList.remove('hidden');
-    linesBox.innerHTML = '';
-    totalRow.classList.add('hidden');
+    report.classList.add('hidden');
+    proceedBtn.disabled = true;
     return;
   }
 
   emptyMsg.classList.add('hidden');
-  totalRow.classList.remove('hidden');
+  report.classList.remove('hidden');
+  proceedBtn.disabled = false;
 
-  linesBox.innerHTML = cart
+  const info = await fetchCompanyInfo();
+  const logo = document.getElementById('cartViewLogo');
+  if (info && info['LogoUrl']) {
+    logo.src = info['LogoUrl'];
+    logo.classList.remove('hidden');
+  } else {
+    logo.classList.add('hidden');
+  }
+  document.getElementById('cartViewCompanyName').textContent = (info && info['CompanyName']) || '';
+  document.getElementById('cartViewFacebook').textContent = (info && info['FacebookUrl']) || '';
+  document.getElementById('cartViewAddress').textContent = info && info['Address'] ? `Address : ${info['Address']}` : '';
+  document.getElementById('cartViewContactNo').textContent = info && info['ContactNo'] ? `Contact No : ${info['ContactNo']}` : '';
+  document.getElementById('cartViewDtiNo').textContent = info && info['DtiNo'] ? `DTI No.: ${info['DtiNo']}` : '';
+
+  const linesBody = document.getElementById('cartViewLinesBody');
+  linesBody.innerHTML = cart
     .map((line, idx) => `
-      <div class="cart-line-row">
-        <div>
-          <div class="cart-line-name">${line.itemName}</div>
-          <div class="cart-line-meta">${formatMoney(line.price)} each - ${formatMoney(line.quantity * line.price)}</div>
-        </div>
-        <div class="cart-line-qty-controls">
-          <button type="button" class="cart-qty-btn" data-idx="${idx}" data-delta="-1">&minus;</button>
-          <span class="cart-qty-value">${line.quantity}</span>
-          <button type="button" class="cart-qty-btn" data-idx="${idx}" data-delta="1">+</button>
-        </div>
-        <button type="button" class="cart-line-remove" data-idx="${idx}">Remove</button>
-      </div>
+      <tr>
+        <td>${line.itemName}</td>
+        <td>
+          <div class="cart-line-qty-controls">
+            <button type="button" class="cart-qty-btn" data-idx="${idx}" data-delta="-1">&minus;</button>
+            <span class="cart-qty-value">${line.quantity}</span>
+            <button type="button" class="cart-qty-btn" data-idx="${idx}" data-delta="1">+</button>
+          </div>
+        </td>
+        <td style="text-align:right;">${formatMoney(line.quantity * line.price)}</td>
+        <td style="text-align:right;"><button type="button" class="cart-line-remove" data-idx="${idx}">Remove</button></td>
+      </tr>
     `)
     .join('');
 
-  linesBox.querySelectorAll('.cart-qty-btn').forEach((btn) => {
+  linesBody.querySelectorAll('.cart-qty-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const idx = Number(btn.dataset.idx);
       const delta = Number(btn.dataset.delta);
@@ -186,7 +204,7 @@ function renderCartViewModal() {
     });
   });
 
-  linesBox.querySelectorAll('.cart-line-remove').forEach((btn) => {
+  linesBody.querySelectorAll('.cart-line-remove').forEach((btn) => {
     btn.addEventListener('click', () => {
       cart.splice(Number(btn.dataset.idx), 1);
       saveCart();
@@ -199,9 +217,9 @@ function renderCartViewModal() {
   document.getElementById('cartViewTotalValue').textContent = formatMoney(cartTotal());
 }
 
-function openCartViewModal() {
-  renderCartViewModal();
+async function openCartViewModal() {
   document.getElementById('cartViewModal').classList.remove('hidden');
+  await renderCartViewModal();
 }
 
 function closeCartViewModal() {
@@ -429,43 +447,6 @@ function renderCart() {
 
 // ---- Step 4: customer details ----
 
-// Shows the Dimensions step's values (Dimension/Unit/Glass Thickness/Sealant Color) at the top
-// of the Options step, so the customer isn't picking add-ons blind to what they already specified.
-function renderCustomDimsSummary() {
-  const length = document.getElementById('customLength').value || '?';
-  const width = document.getElementById('customWidth').value || '?';
-  const height = document.getElementById('customHeight').value || '?';
-  const unit = document.getElementById('customUnit').value;
-  const glass = document.getElementById('customGlass').value;
-  const sealant = document.getElementById('customSealant').value || 'Not specified';
-  const rimless = document.getElementById('customRimless').checked ? 'Rimless' : 'With Rim';
-
-  // Only options actually turned on are listed here - an option left at "No" adds nothing the
-  // customer doesn't already know from the checkbox below, so skipping it keeps this summary short.
-  const options = [
-    ['AIO', document.getElementById('customAio').checked],
-    ['Low Iron', document.getElementById('customLowIron').checked],
-    ['Tempered Glass', document.getElementById('customTempered').checked],
-    ['High Strip', document.getElementById('customHighStrip').checked],
-    ['Aquascape Service', document.getElementById('customAquascape').checked],
-    ['Enclosure', document.getElementById('customEnclosure').checked],
-    ['Filtration', filtrationEnabled]
-  ];
-  const optionsHtml = options
-    .filter(([, checked]) => checked)
-    .map(([label]) => `<div><strong>${label}:</strong> Yes</div>`)
-    .join('');
-
-  document.getElementById('customDimsSummary').innerHTML = `
-    <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
-    <div><strong>Unit of Measure:</strong> ${unit}</div>
-    <div><strong>Glass Thickness:</strong> ${glass}</div>
-    <div><strong>Sealant Color:</strong> ${sealant}</div>
-    <div><strong>Edge:</strong> ${rimless}</div>
-    ${optionsHtml ? `<div class="dims-summary-options-grid">${optionsHtml}</div>` : ''}
-  `;
-}
-
 // Touch-friendly replacement for window.confirm() - native browser confirm dialogs render as a
 // tiny, inconsistent OS popup on mobile that's easy to mis-tap. This uses the same modal-backdrop/
 // modal-panel pattern as the rest of the portal, with big stacked buttons sized for a thumb.
@@ -540,10 +521,6 @@ function buildCustomPayload() {
       overflowBox: document.getElementById('sumpOverflowBox').checked,
       filterMedias: document.getElementById('sumpFilterMedias').checked,
       allumTopCover: document.getElementById('sumpAllumTopCover').checked
-      // lightPrice/pumpPrice deliberately omitted - picking a specific light/pump model+price is
-      // an inventory lookup only staff tooling does (WebAquariumCalculator/index.html), so
-      // Submersible Light/Pump here are captured as plain interest checkboxes (see
-      // buildCustomAquariumSpecText) and priced later by staff instead of guessed at here.
     },
     stand: { enabled: false },
     stickerBackground: { enabled: false },
@@ -632,7 +609,6 @@ function registerCustomCanvas(canvasId) {
 function setupCustomCanvas() {
   customCanvases = [];
   registerCustomCanvas('customAquariumCanvasDims');
-  registerCustomCanvas('customAquariumCanvas');
   drawCustomPlaceholder('Enter your aquarium details to see a preview.');
 }
 
@@ -1272,14 +1248,56 @@ function drawCustomStandOnActiveCanvas(result) {
   drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
 }
 
+// Live summary of every Aquarium field picked so far - "declutter" pattern, only listing options
+// actually turned on - same as renderCustomStandSummary() on the Stand flow. Re-renders on every
+// field change via updateCustomPriceEstimate() below, since Dimensions/Options/Filtration all
+// live on the same screen (or the Filtration step right after) with no natural "moving on" point.
+function renderCustomAquariumSummary() {
+  const summaryEl = document.getElementById('customAquariumSummary');
+  if (!summaryEl) return;
+
+  const length = document.getElementById('customLength').value || '?';
+  const width = document.getElementById('customWidth').value || '?';
+  const height = document.getElementById('customHeight').value || '?';
+  const unit = document.getElementById('customUnit').value || 'Not specified';
+  const glass = document.getElementById('customGlass').value;
+  const sealant = document.getElementById('customSealant').value || 'Not specified';
+  const rimless = document.getElementById('customRimless').checked ? 'Rimless' : 'With Rim';
+
+  // Only options actually turned on are listed here - an option left at "No" adds nothing the
+  // customer doesn't already know from the checkbox below, so skipping it keeps this summary short.
+  const options = [
+    ['AIO', document.getElementById('customAio').checked],
+    ['Low Iron', document.getElementById('customLowIron').checked],
+    ['Tempered Glass', document.getElementById('customTempered').checked],
+    ['High Strip', document.getElementById('customHighStrip').checked],
+    ['Aquascape Service', document.getElementById('customAquascape').checked],
+    ['Enclosure', document.getElementById('customEnclosure').checked],
+    ['Filtration', filtrationEnabled]
+  ];
+  const optionsHtml = options
+    .filter(([, checked]) => checked)
+    .map(([label]) => `<div><strong>${label}:</strong> Yes</div>`)
+    .join('');
+
+  summaryEl.innerHTML = `
+    <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
+    <div><strong>Unit of Measure:</strong> ${unit}</div>
+    <div><strong>Glass Thickness:</strong> <span class="dims-summary-glass-badge">${glass}</span></div>
+    <div><strong>Sealant Color:</strong> ${sealant}</div>
+    <div><strong>Edge:</strong> ${rimless}</div>
+    ${optionsHtml ? `<div class="dims-summary-options-grid">${optionsHtml}</div>` : ''}
+  `;
+}
+
 // Shown on the Dimensions, Options, and (when reached) Filtration steps, same as the canvas
 // preview - so the customer sees a running price as soon as they enter dimensions, and it keeps
 // including whatever sump specs they've entered once Filtration is reached.
 async function updateCustomPriceEstimate() {
   const dimsBox = document.getElementById('customPriceEstimateDims');
-  const optionsBox = document.getElementById('customPriceEstimate');
   const filtrationBox = document.getElementById('customPriceEstimateFiltration');
-  const boxes = [dimsBox, optionsBox, filtrationBox].filter(Boolean);
+  const boxes = [dimsBox, filtrationBox].filter(Boolean);
+  renderCustomAquariumSummary();
 
   // Nothing computes until a real unit is picked - buildCustomPayload would otherwise silently
   // assume Inches, showing a price/preview for dimensions the customer hasn't actually confirmed
@@ -1300,18 +1318,9 @@ async function updateCustomPriceEstimate() {
     return;
   }
 
-  // Light/Pump aren't priced here (see buildCustomPayload) since picking a specific model+price
-  // is a staff-only inventory lookup - flag that they're still to be confirmed whenever the
-  // customer expressed interest in either.
-  const wantsLightOrPump = filtrationEnabled && (
-    document.getElementById('sumpSubmersibleLight').checked || document.getElementById('sumpSubmersiblePump').checked
-  );
-  const sumpNote = wantsLightOrPump
-    ? '<div class="custom-price-note">+ Submersible Light/Pump pricing still needed - we\'ll confirm final pricing with you.</div>'
-    : '';
   // All three steps show the computed gallon volume right under the price, so the customer has a
   // sense of tank size at every point in the custom-aquarium flow.
-  const priceHtml = `Estimated Price: ${formatMoney(result.totalPrice)}${sumpNote}<div class="custom-price-gallons-badge">${result.gallons} gallons</div>`;
+  const priceHtml = `Estimated Price: ${formatMoney(result.totalPrice)}<div class="custom-price-gallons-badge">${result.gallons} gallons</div>`;
   boxes.forEach((box) => { box.innerHTML = priceHtml; });
 }
 
@@ -1327,6 +1336,8 @@ function buildCustomAquariumSpecText() {
   const sealant = document.getElementById('customSealant').value;
   const edge = document.getElementById('customRimless').checked ? 'Rimless' : 'With Rim';
 
+  // Filtration is deliberately NOT listed here - when enabled it gets its own separate cart line
+  // (see buildEmbeddedFiltrationCartLine) instead of being folded into this one's name/price.
   const opts = [];
   if (document.getElementById('customAio').checked) opts.push('AIO');
   if (document.getElementById('customLowIron').checked) opts.push('Low Iron');
@@ -1334,7 +1345,6 @@ function buildCustomAquariumSpecText() {
   if (document.getElementById('customHighStrip').checked) opts.push('High Strip');
   if (document.getElementById('customAquascape').checked) opts.push('Aquascape Service');
   if (document.getElementById('customEnclosure').checked) opts.push('Enclosure');
-  if (filtrationEnabled) opts.push(`Filtration (${buildFiltrationSpecText()})`);
 
   const optsText = opts.length ? `, ${opts.join(', ')}` : '';
   return `${length} x ${width} x ${height} ${unit}, ${glass} glass, ${sealant} sealant, ${edge}${optsText}`;
@@ -1355,8 +1365,6 @@ function buildFiltrationSpecText() {
   if (document.getElementById('sumpOverflowBox').checked) extras.push('Overflow Box');
   if (document.getElementById('sumpFilterMedias').checked) extras.push('Filter Medias');
   if (document.getElementById('sumpAllumTopCover').checked) extras.push('Allum Top Cover');
-  if (document.getElementById('sumpSubmersibleLight').checked) extras.push('Submersible Light - price TBC');
-  if (document.getElementById('sumpSubmersiblePump').checked) extras.push('Submersible Pump - price TBC');
 
   const extrasText = extras.length ? `, ${extras.join(', ')}` : '';
   return `${sumpType} ${sumpLength} x ${sumpWidth} x ${sumpHeight} ${unit}${extrasText}`;
@@ -1368,15 +1376,56 @@ function customAquariumQty() {
   return Math.max(1, Math.round(Number(document.getElementById('customQty').value) || 1));
 }
 
-// Builds the single cart line representing the whole custom aquarium build, so it flows through
-// the existing Standard-flow cart/details/submit pipeline (submitOrder() already just reads
-// whatever's in `cart`) instead of needing a separate submission path.
+// When Filtration is added onto a Custom Aquarium, splits calculateCustomAquarium()'s single
+// combined totalPrice into an aquarium portion and a filtration portion, so each can show as its
+// own cart line/order line (per direct request) instead of one merged line. Uses the sump-specific
+// components calculateCustomAquarium already isolates (sumpGlass/filterMedia/overflowBox/light/
+// pump/piping/allumTopCover) as the filtration side, and whatever's left of totalPrice as the
+// aquarium side - the two always add back up to exactly totalPrice, even though a multiplier that
+// applies to the combined total before this split (e.g. Low Iron, Enclosure) ends up attributed
+// entirely to the aquarium side rather than proportioned across both. Good enough for an estimate
+// (the checkout screen already says final pricing gets confirmed with the customer).
+function splitCustomAquariumFiltrationPrice(result) {
+  if (!result || !result.ok) return { aquariumPrice: 0, filtrationPrice: 0 };
+  const c = result.components || {};
+  const filtrationPrice = Math.round((
+    (c.sumpGlass || 0) + (c.filterMedia || 0) + (c.overflowBox || 0) +
+    (c.light || 0) + (c.pump || 0) + (c.piping || 0) + (c.allumTopCover || 0)
+  ) * 100) / 100;
+  const aquariumPrice = Math.round((result.totalPrice - filtrationPrice) * 100) / 100;
+  return { aquariumPrice, filtrationPrice };
+}
+
+// Builds the cart line for the aquarium itself, so it flows through the existing Standard-flow
+// cart/details/submit pipeline (submitOrder() already just reads whatever's in `cart`) instead of
+// needing a separate submission path. When Filtration is also enabled, its price/name are carried
+// by a separate line (see buildEmbeddedFiltrationCartLine) rather than folded into this one.
 function buildCustomAquariumCartLine(result) {
+  const price = result && result.ok
+    ? (filtrationEnabled ? splitCustomAquariumFiltrationPrice(result).aquariumPrice : result.totalPrice)
+    : 0;
   return {
     categoryCode: 'CUSTOM-AQUARIUM',
     itemCode: null,
     itemName: `Custom Aquarium - ${buildCustomAquariumSpecText()}`,
-    price: result && result.ok ? result.totalPrice : 0,
+    price,
+    quantity: customAquariumQty()
+  };
+}
+
+// Companion line to buildCustomAquariumCartLine when Filtration was added onto the aquarium -
+// same CategoryCode ('CUSTOM-FILTRATION') the standalone Customize > Filtration flow's own cart
+// line uses, so it matches the same Pancake catalog item (see
+// supabase_diagnose_custom_stand_filtration_items.sql) - the two flows are treated as "at most one
+// filtration per order" either way, consistent with how Aquarium/Stand/Filtration already each
+// replace their own prior line on every re-confirm.
+function buildEmbeddedFiltrationCartLine(result) {
+  const { filtrationPrice } = splitCustomAquariumFiltrationPrice(result);
+  return {
+    categoryCode: 'CUSTOM-FILTRATION',
+    itemCode: null,
+    itemName: `Filtration/Sump (for Custom Aquarium) - ${buildFiltrationSpecText()}`,
+    price: filtrationPrice,
     quantity: customAquariumQty()
   };
 }
@@ -1439,10 +1488,8 @@ function updateStandTubularAvailability() {
   btn15.classList.toggle('option-disabled', check15.tubular !== '1.5x1.5');
 }
 
-// Live summary of every Stand field, same "declutter - only list options actually turned on"
-// pattern as renderCustomDimsSummary() on the Aquarium flow's Options step. Unlike that one
-// (rendered once, on arrival at a separate Options step), this re-renders on every field change
-// since the Stand flow is a single step - there's no natural "moving on" moment to render it at.
+// Live summary of every Stand field - "declutter" pattern, only listing options actually turned
+// on - re-renders on every field change since the Stand flow is a single step.
 function renderCustomStandSummary() {
   const length = document.getElementById('standLength').value || '?';
   const width = document.getElementById('standWidth').value || '?';
@@ -1669,12 +1716,7 @@ async function updateStandaloneFiltrationPriceEstimate() {
     return;
   }
 
-  const wantsLightOrPump = document.getElementById('standaloneSumpSubmersibleLight').checked
-    || document.getElementById('standaloneSumpSubmersiblePump').checked;
-  const note = wantsLightOrPump
-    ? '<div class="custom-price-note">+ Submersible Light/Pump pricing still needed - we\'ll confirm final pricing with you.</div>'
-    : '';
-  box.innerHTML = `Estimated Price: ${formatMoney(result.totalPrice)}${note}`;
+  box.innerHTML = `Estimated Price: ${formatMoney(result.totalPrice)}`;
 }
 
 function buildStandaloneFiltrationSpecText() {
@@ -1690,8 +1732,6 @@ function buildStandaloneFiltrationSpecText() {
   if (document.getElementById('standaloneSumpOverflowBox').checked) extras.push('Overflow Box');
   if (document.getElementById('standaloneSumpFilterMedias').checked) extras.push('Filter Medias');
   if (document.getElementById('standaloneSumpAllumTopCover').checked) extras.push('Allum Top Cover');
-  if (document.getElementById('standaloneSumpSubmersibleLight').checked) extras.push('Submersible Light - price TBC');
-  if (document.getElementById('standaloneSumpSubmersiblePump').checked) extras.push('Submersible Pump - price TBC');
   const extrasText = extras.length ? `, ${extras.join(', ')}` : '';
 
   return `${sumpType} ${length} x ${width} x ${height} ${unit}, ${glass} glass${extrasText}`;
@@ -1715,7 +1755,7 @@ function resetStandaloneFiltrationBuilder() {
   document.getElementById('standaloneSumpLength').value = '18';
   document.getElementById('standaloneSumpWidth').value = '18';
   document.getElementById('standaloneSumpHeight').value = '18';
-  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover', 'standaloneSumpSubmersibleLight', 'standaloneSumpSubmersiblePump']
+  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
     .forEach((id) => { document.getElementById(id).checked = false; });
 
   const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
@@ -1764,43 +1804,51 @@ async function renderCustomCheckout() {
   document.getElementById('checkoutDtiNo').textContent = info && info['DtiNo'] ? `DTI No.: ${info['DtiNo']}` : '';
 
   let result;
-  let productLabel;
-  let qty;
+  let rows; // [{ label, qty, amount }] - more than one entry when Aquarium+Filtration are split
   let titleText;
 
   if (customBuilderType === 'stand') {
     // No glass-pricing lookup involved in Stand pricing (tubular rate table only), unlike the
     // other two branches below.
     result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
-    productLabel = `Custom Stand - ${buildCustomStandSpecText()}`;
-    qty = customStandQty();
+    const qty = customStandQty();
+    rows = [{ label: `Custom Stand - ${buildCustomStandSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
     titleText = 'CUSTOM STAND ORDER SUMMARY';
   } else if (customBuilderType === 'filtration') {
     await ensureGlassPricingLoaded();
     result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
-    productLabel = `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`;
-    qty = standaloneFiltrationQty();
+    const qty = standaloneFiltrationQty();
+    rows = [{ label: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
     titleText = 'CUSTOM FILTRATION ORDER SUMMARY';
   } else {
     await ensureGlassPricingLoaded();
     result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
-    productLabel = `Custom Aquarium - ${buildCustomAquariumSpecText()}`;
-    qty = customAquariumQty();
+    const qty = customAquariumQty();
+    if (result.ok && filtrationEnabled) {
+      const split = splitCustomAquariumFiltrationPrice(result);
+      rows = [
+        { label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: split.aquariumPrice * qty },
+        { label: `Filtration/Sump (for Custom Aquarium) - ${buildFiltrationSpecText()}`, qty, amount: split.filtrationPrice * qty }
+      ];
+    } else {
+      rows = [{ label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
+    }
     titleText = 'CUSTOM AQUARIUM ORDER SUMMARY';
   }
 
   document.getElementById('checkoutTitle').textContent = titleText;
 
-  const lineTotal = result.ok ? result.totalPrice * qty : 0;
-  const amountText = result.ok ? formatMoney(lineTotal) : '-';
-  document.getElementById('checkoutLinesBody').innerHTML = `
-    <tr>
-      <td>${productLabel}</td>
-      <td>${qty}</td>
-      <td style="text-align:right;">${amountText}</td>
-    </tr>
-  `;
-  document.getElementById('checkoutTotal').textContent = result.ok ? formatMoney(lineTotal) : (result.error || 'Please review your details.');
+  const grandTotal = result.ok ? rows.reduce((sum, row) => sum + row.amount, 0) : 0;
+  document.getElementById('checkoutLinesBody').innerHTML = result.ok
+    ? rows.map((row) => `
+      <tr>
+        <td>${row.label}</td>
+        <td>${row.qty}</td>
+        <td style="text-align:right;">${formatMoney(row.amount)}</td>
+      </tr>
+    `).join('')
+    : '';
+  document.getElementById('checkoutTotal').textContent = result.ok ? formatMoney(grandTotal) : (result.error || 'Please review your details.');
 
   return result;
 }
@@ -1994,8 +2042,6 @@ async function enforceGlassThicknessRules() {
   } else {
     notice.classList.add('hidden');
   }
-
-  renderCustomDimsSummary();
 }
 
 function wireLocationToggle() {
@@ -2143,7 +2189,7 @@ function resetCustomAquariumBuilder() {
   document.getElementById('sumpLength').value = '18';
   document.getElementById('sumpWidth').value = '18';
   document.getElementById('sumpHeight').value = '18';
-  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover', 'sumpSubmersibleLight', 'sumpSubmersiblePump']
+  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover']
     .forEach((id) => { document.getElementById(id).checked = false; });
 
   filtrationEnabled = false;
@@ -2155,13 +2201,13 @@ function resetCustomAquariumBuilder() {
     el.textContent = '';
     el.classList.add('hidden');
   });
-  document.getElementById('customDimsSummary').innerHTML = '';
 
   drawCustomPlaceholder('Enter your aquarium details to see a preview.');
-  ['customPriceEstimateDims', 'customPriceEstimate', 'customPriceEstimateFiltration'].forEach((id) => {
+  ['customPriceEstimateDims', 'customPriceEstimateFiltration'].forEach((id) => {
     const box = document.getElementById(id);
     if (box) box.textContent = 'Enter your aquarium details to see a price estimate.';
   });
+  renderCustomAquariumSummary();
 }
 
 function resetWizard() {
@@ -2675,7 +2721,7 @@ async function runDeliveryEstimateLalamove(from, to) {
     : '-';
 
   document.getElementById('deliveryEstimateBreakdown').textContent =
-    `Lalamove ${quote.isSandbox ? 'test/SANDBOX price (not real pricing yet)' : 'quote'} - ${quote.serviceType}, from ${from.label} to your address.`;
+    `Lalamove quote - ${quote.serviceType}, from ${from.label} to your address.`;
 }
 
 async function runDeliveryEstimate() {
@@ -2847,6 +2893,7 @@ async function runDeliveryEstimate() {
   });
 
   document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep('customize-choice'));
+  document.getElementById('customDimsBackBtnTop').addEventListener('click', () => document.getElementById('customDimsBackBtn').click());
   document.getElementById('customDimsNextBtn').addEventListener('click', async () => {
     const errorMsg = document.getElementById('customDimsErrorMsg');
     if (!document.getElementById('customUnit').value) {
@@ -2874,11 +2921,10 @@ async function runDeliveryEstimate() {
 
     // Glass-thickness-vs-dimension safety check, using the same chart as the standalone
     // calculator (WebAquariumCalculator/custom-aquarium-calculator.js's validateGlassSafety) -
-    // runs right here on raw Length/Width/Height/Glass Thickness, before AIO/Low Iron/Rimless
-    // even exist (those are chosen on the next step, where enforceGlassThicknessRules applies
-    // their own option-specific rules instead). isTempered is passed as true so the chart's
-    // general "tempered is mandatory at 36in+" branch doesn't false-block here - that part is
-    // already auto-enforced on the Options step regardless of what's picked on this one.
+    // runs right here on raw Length/Width/Height/Glass Thickness, checked separately from the
+    // AIO/Low Iron/Rimless option-specific rules enforceGlassThicknessRules applies below.
+    // isTempered is passed as true so the chart's general "tempered is mandatory at 36in+" branch
+    // doesn't false-block here - that part is already auto-enforced regardless of what's picked.
     const unit = document.getElementById('customUnit').value;
     const glassSelect = document.getElementById('customGlass');
     const lengthIn = convertToInches(document.getElementById('customLength').value, unit);
@@ -2917,12 +2963,9 @@ async function runDeliveryEstimate() {
       errorMsg.classList.add('hidden');
     }
 
-    renderCustomDimsSummary();
-    enforceGlassThicknessRules().then(updateCustomPriceEstimate);
-    goToStep('custom-options');
-  });
-  document.getElementById('customOptionsBackBtn').addEventListener('click', () => goToStep('custom-dims'));
-  document.getElementById('customOptionsNextBtn').addEventListener('click', async () => {
+    await enforceGlassThicknessRules();
+    await updateCustomPriceEstimate();
+
     filtrationEnabled = await showConfirmModal(
       'Would you like to add Filtration to your custom aquarium?',
       'Yes, Add Filtration',
@@ -2941,7 +2984,8 @@ async function runDeliveryEstimate() {
     }
   });
 
-  document.getElementById('customFiltrationBackBtn').addEventListener('click', () => goToStep('custom-options'));
+  document.getElementById('customFiltrationBackBtn').addEventListener('click', () => goToStep('custom-dims'));
+  document.getElementById('customFiltrationBackBtnTop').addEventListener('click', () => document.getElementById('customFiltrationBackBtn').click());
   document.getElementById('customFiltrationNextBtn').addEventListener('click', async () => {
     await renderCustomCheckout();
     goToStep('custom-checkout');
@@ -2954,7 +2998,7 @@ async function runDeliveryEstimate() {
   ['sumpLength', 'sumpWidth', 'sumpHeight'].forEach((id) => {
     document.getElementById(id).addEventListener('input', () => updateCustomPriceEstimate());
   });
-  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover', 'sumpSubmersibleLight', 'sumpSubmersiblePump']
+  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover']
     .forEach((id) => document.getElementById(id).addEventListener('change', () => updateCustomPriceEstimate()));
 
   // ---- Stand sub-flow navigation/wiring ----
@@ -2974,6 +3018,7 @@ async function runDeliveryEstimate() {
     document.getElementById(id).addEventListener('change', () => updateCustomStandPriceEstimate());
   });
   document.getElementById('customStandBackBtn').addEventListener('click', () => goToStep(standBackTarget));
+  document.getElementById('customStandBackBtnTop').addEventListener('click', () => document.getElementById('customStandBackBtn').click());
   document.getElementById('customStandNextBtn').addEventListener('click', async () => {
     const errorMsg = document.getElementById('customStandErrorMsg');
     if (!document.getElementById('standUnit').value) {
@@ -3005,9 +3050,10 @@ async function runDeliveryEstimate() {
     document.getElementById(id).addEventListener('input', () => updateStandaloneFiltrationPriceEstimate());
   });
   document.getElementById('standaloneFiltrationGlass').addEventListener('change', () => updateStandaloneFiltrationPriceEstimate());
-  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover', 'standaloneSumpSubmersibleLight', 'standaloneSumpSubmersiblePump']
+  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
     .forEach((id) => document.getElementById(id).addEventListener('change', () => updateStandaloneFiltrationPriceEstimate()));
   document.getElementById('customStandaloneFiltrationBackBtn').addEventListener('click', () => goToStep(filtrationStandaloneBackTarget));
+  document.getElementById('customStandaloneFiltrationBackBtnTop').addEventListener('click', () => document.getElementById('customStandaloneFiltrationBackBtn').click());
   document.getElementById('customStandaloneFiltrationNextBtn').addEventListener('click', async () => {
     const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
     if (!document.getElementById('standaloneFiltrationUnit').value) {
@@ -3029,17 +3075,18 @@ async function runDeliveryEstimate() {
 
   // Goes back to wherever checkout was actually reached from - branches by which Customize
   // sub-flow (Aquarium/Stand/Filtration) built the pending line (see customBuilderType). For
-  // Aquarium: Filtration when the customer opted into it, Options directly when they skipped it
-  // (mirrors customOptionsNextBtn's own branch).
+  // Aquarium: Filtration when the customer opted into it, Dimensions/Options directly when they
+  // skipped it (mirrors customDimsNextBtn's own branch).
   document.getElementById('customCheckoutBackBtn').addEventListener('click', () => {
     if (customBuilderType === 'stand') {
       goToStep('custom-stand');
     } else if (customBuilderType === 'filtration') {
       goToStep('custom-filtration-standalone');
     } else {
-      goToStep(filtrationEnabled ? 'custom-filtration' : 'custom-options');
+      goToStep(filtrationEnabled ? 'custom-filtration' : 'custom-dims');
     }
   });
+  document.getElementById('customCheckoutBackBtnTop').addEventListener('click', () => document.getElementById('customCheckoutBackBtn').click());
   document.getElementById('customCheckoutConfirmBtn').addEventListener('click', () => {
     if (customBuilderType === 'stand') {
       const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
@@ -3057,8 +3104,14 @@ async function runDeliveryEstimate() {
       goToStep(4);
     } else {
       const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
-      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-AQUARIUM');
+      // Also drops any prior CUSTOM-FILTRATION line (from an earlier confirm of this same build,
+      // or from the standalone Filtration flow) before conditionally re-adding it below - keeps
+      // "at most one filtration line per order" true regardless of which flow last touched it.
+      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-AQUARIUM' && line.categoryCode !== 'CUSTOM-FILTRATION');
       cart.push(buildCustomAquariumCartLine(result));
+      if (filtrationEnabled) {
+        cart.push(buildEmbeddedFiltrationCartLine(result));
+      }
       saveCart();
       // Unlike Stand/Filtration (which go straight to contact details), a just-confirmed
       // Aquarium build offers to add a matching Stand/Filtration on top of it first.
@@ -3068,6 +3121,7 @@ async function runDeliveryEstimate() {
 
   // ---- "Add more products?" prompt (shown right after confirming a Custom Aquarium) ----
   document.getElementById('addMoreBackBtn').addEventListener('click', () => goToStep('custom-checkout'));
+  document.getElementById('addMoreBackBtnTop').addEventListener('click', () => document.getElementById('addMoreBackBtn').click());
   document.getElementById('addMoreNoBtn').addEventListener('click', () => {
     detailsBackTarget = 'custom-checkout';
     goToStep(4);
@@ -3096,7 +3150,6 @@ async function runDeliveryEstimate() {
       if (!event.target.checked && glassBeforeLowIron) {
         document.getElementById('customGlass').value = glassBeforeLowIron;
         glassBeforeLowIron = null;
-        renderCustomDimsSummary();
       }
       updateCustomPriceEstimate();
     });
@@ -3110,7 +3163,6 @@ async function runDeliveryEstimate() {
       if (!event.target.checked && glassBeforeRimless) {
         document.getElementById('customGlass').value = glassBeforeRimless;
         glassBeforeRimless = null;
-        renderCustomDimsSummary();
       }
       updateCustomPriceEstimate();
     });
@@ -3141,4 +3193,13 @@ async function runDeliveryEstimate() {
     openCartViewModal();
   });
   document.getElementById('cartViewCloseBtn').addEventListener('click', closeCartViewModal);
+  document.getElementById('cartViewProceedBtn').addEventListener('click', () => {
+    if (cart.length === 0) return;
+    closeCartViewModal();
+    // Cart can hold a mix of Standard + Customize items depending on how the customer got here,
+    // so there's no single natural "back" screen - Step 3's cart review already handles that same
+    // mixed case, so Back from Details lands there too, same as cartContinueBtn's own target.
+    detailsBackTarget = 3;
+    goToStep(4);
+  });
 })();
