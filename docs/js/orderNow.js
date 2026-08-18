@@ -17,7 +17,8 @@ const CATEGORY_ICONS = {
   STAND: '🪑',
   FILTRATION: '🌀',
   SUMP: '🪣',
-  FISH: '🐟'
+  FISH: '🐟',
+  SET: '🎁'
 };
 const DEFAULT_CATEGORY_ICON = '🛒';
 
@@ -34,9 +35,23 @@ let glassBeforeRimless = null;
 // Set by the confirm prompt shown when leaving the Options step - Filtration no longer has its
 // own checkbox on that step, so this is the single source of truth for whether it's enabled.
 let filtrationEnabled = false;
+// Which Customize sub-flow (customize-choice: Aquarium/Stand/Filtration) built the line currently
+// staged for the shared "custom-checkout" (Order Summary) screen - lets that one screen serve all
+// three instead of needing a separate checkout page per sub-flow.
+let customBuilderType = 'aquarium';
 // Step 4 (customer details) is shared by the Standard and Customize flows, so its Back button
 // needs to know which step led there - set right before navigating into step 4.
 let detailsBackTarget = 3;
+// Estimate Delivery is reachable both from the Step 0 mode picker (no order in progress yet) and
+// from Step 4's "Estimate the delivery fee" link (already deep into an order) - this tracks which
+// one so its Back button returns to the right place, and so the Start an Order button (only
+// meaningful from the mode-picker entry, since Step 4 already has an order going) can be hidden
+// when it isn't.
+let deliveryEstimateReturnStep = 0;
+// TEMPORARY - the internal OrderNo of the most recently submitted order, used only by the
+// confirmation step's debug "Test Send Confirmation Message" button. Remove alongside that button
+// once the automatic Messenger confirmation send is confirmed working.
+let lastSubmittedOrderNo = null;
 // Populated from a ?psid= query param when the customer arrives via a Messenger button whose URL
 // Pancake personalized with the sender's PSID. Kept in sessionStorage too so it survives the
 // wizard's internal navigation/refreshes. Stays null for anyone who reaches the page any other way.
@@ -50,16 +65,6 @@ function captureMessengerPsid() {
     messengerPsid = psid;
     sessionStorage.setItem(PSID_STORAGE_KEY, psid);
   }
-  renderPsidDebugBanner();
-}
-
-// TEMPORARY - for testing the Messenger PSID hand-off only. Remove once confirmed working.
-function renderPsidDebugBanner() {
-  const banner = document.getElementById('psidDebugBanner');
-  if (!banner) return;
-  banner.textContent = messengerPsid
-    ? `PSID captured: ${messengerPsid}`
-    : 'PSID captured: none (opened without a ?psid= link)';
 }
 
 // Auto-fills Step 4's name/phone/email from the customer's existing Pancake record (matched by
@@ -122,18 +127,18 @@ function updateCartBar() {
   document.getElementById('cartBarSub').textContent = 'Tap to review your order';
 }
 
-// Step 0 (Standard/Customize picker) and every "custom-*" step (the Customize path's own
-// sub-steps) sit outside the linear 1-4 order flow the progress dots represent, so the whole bar
-// hides on those.
+// Step 0 (Standard/Customize/Estimate Delivery picker), every "custom-*" step (the Customize
+// path's own sub-steps), and the standalone "delivery-estimate" step all sit outside the linear
+// 1-4 order flow the progress dots represent, so the whole bar hides on those.
 function updateProgress() {
   const progressBar = document.getElementById('wizardProgress');
-  if (currentStep === 0 || String(currentStep).indexOf('custom') === 0) {
+  if (currentStep === 0 || currentStep === 'delivery-estimate' || String(currentStep).indexOf('custom') === 0) {
     progressBar.classList.add('hidden');
     return;
   }
   progressBar.classList.remove('hidden');
 
-  const displayStep = currentStep === 'payment-policy' ? 4 : Math.min(Number(currentStep), 4);
+  const displayStep = Math.min(Number(currentStep), 4);
   document.querySelectorAll('.wizard-progress-step').forEach((el) => {
     const stepNum = Number(el.dataset.step);
     el.classList.toggle('done', stepNum < displayStep);
@@ -167,13 +172,19 @@ async function loadCategories() {
     return;
   }
 
-  if (!data || data.length === 0) {
+  // Standard flow only offers pre-built Sets right now - per direct request, every other
+  // category (Aquarium/Stand/Filtration/Sump/Fish sold separately) is hidden here even though
+  // public_list_order_categories() still returns all of them, so the Customize flow (which has
+  // its own separate step-by-step Aquarium/Filtration builder, unaffected by this) keeps working.
+  const setCategories = data.filter((cat) => String(cat.code).toUpperCase() === 'SET');
+
+  if (!setCategories || setCategories.length === 0) {
     errorMsg.textContent = 'No categories are available to order right now. Please check back later.';
     errorMsg.classList.remove('hidden');
     return;
   }
 
-  grid.innerHTML = data
+  grid.innerHTML = setCategories
     .map((cat) => `
       <div class="category-card" data-code="${cat.code}" data-label="${cat.description}">
         <span class="category-icon">${CATEGORY_ICONS[String(cat.code).toUpperCase()] || DEFAULT_CATEGORY_ICON}</span>
@@ -348,13 +359,21 @@ function renderCustomDimsSummary() {
   const sealant = document.getElementById('customSealant').value || 'Not specified';
   const rimless = document.getElementById('customRimless').checked ? 'Rimless' : 'With Rim';
 
-  const yesNo = (checked) => (checked ? 'Yes' : 'No');
-  const aio = document.getElementById('customAio').checked;
-  const lowIron = document.getElementById('customLowIron').checked;
-  const tempered = document.getElementById('customTempered').checked;
-  const highStrip = document.getElementById('customHighStrip').checked;
-  const aquascape = document.getElementById('customAquascape').checked;
-  const enclosure = document.getElementById('customEnclosure').checked;
+  // Only options actually turned on are listed here - an option left at "No" adds nothing the
+  // customer doesn't already know from the checkbox below, so skipping it keeps this summary short.
+  const options = [
+    ['AIO', document.getElementById('customAio').checked],
+    ['Low Iron', document.getElementById('customLowIron').checked],
+    ['Tempered Glass', document.getElementById('customTempered').checked],
+    ['High Strip', document.getElementById('customHighStrip').checked],
+    ['Aquascape Service', document.getElementById('customAquascape').checked],
+    ['Enclosure', document.getElementById('customEnclosure').checked],
+    ['Filtration', filtrationEnabled]
+  ];
+  const optionsHtml = options
+    .filter(([, checked]) => checked)
+    .map(([label]) => `<div><strong>${label}:</strong> Yes</div>`)
+    .join('');
 
   document.getElementById('customDimsSummary').innerHTML = `
     <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
@@ -362,15 +381,7 @@ function renderCustomDimsSummary() {
     <div><strong>Glass Thickness:</strong> ${glass}</div>
     <div><strong>Sealant Color:</strong> ${sealant}</div>
     <div><strong>Edge:</strong> ${rimless}</div>
-    <div class="dims-summary-options-grid">
-      <div><strong>AIO:</strong> ${yesNo(aio)}</div>
-      <div><strong>Low Iron:</strong> ${yesNo(lowIron)}</div>
-      <div><strong>Tempered Glass:</strong> ${yesNo(tempered)}</div>
-      <div><strong>High Strip:</strong> ${yesNo(highStrip)}</div>
-      <div><strong>Aquascape Service:</strong> ${yesNo(aquascape)}</div>
-      <div><strong>Enclosure:</strong> ${yesNo(enclosure)}</div>
-      <div><strong>Filtration:</strong> ${yesNo(filtrationEnabled)}</div>
-    </div>
+    ${optionsHtml ? `<div class="dims-summary-options-grid">${optionsHtml}</div>` : ''}
   `;
 }
 
@@ -419,10 +430,8 @@ function ensureGlassPricingLoaded() {
 }
 
 // Builds the payload calculateCustomAquarium() expects, from whatever the customer has filled in
-// across the Dimensions (step 2) and Options (step 3) steps so far. Sump/stand/sticker sizing
-// isn't collected yet (no step for it), so filtrationSump is passed with 0 dimensions - the
-// calculator only adds a sump cost once length/width/height are all > 0, so this correctly
-// contributes $0 rather than guessing a size the customer never specified.
+// across the Dimensions, Options, and (when the post-Options prompt was answered "yes") Filtration
+// steps. Stand/sticker sizing still isn't collected (no step for it) so those stay disabled.
 function buildCustomPayload() {
   const unit = document.getElementById('customUnit').value || 'Inches';
   return {
@@ -441,11 +450,19 @@ function buildCustomPayload() {
     enclosure: document.getElementById('customEnclosure').checked,
     filtrationSump: {
       enabled: filtrationEnabled,
-      type: 'Undersump',
-      length: 0,
-      width: 0,
-      height: 0,
-      unit: unit
+      type: document.getElementById('sumpType').value,
+      length: document.getElementById('sumpLength').value,
+      width: document.getElementById('sumpWidth').value,
+      height: document.getElementById('sumpHeight').value,
+      unit: unit,
+      piping: document.getElementById('sumpPiping').checked,
+      overflowBox: document.getElementById('sumpOverflowBox').checked,
+      filterMedias: document.getElementById('sumpFilterMedias').checked,
+      allumTopCover: document.getElementById('sumpAllumTopCover').checked
+      // lightPrice/pumpPrice deliberately omitted - picking a specific light/pump model+price is
+      // an inventory lookup only staff tooling does (WebAquariumCalculator/index.html), so
+      // Submersible Light/Pump here are captured as plain interest checkboxes (see
+      // buildCustomAquariumSpecText) and priced later by staff instead of guessed at here.
     },
     stand: { enabled: false },
     stickerBackground: { enabled: false },
@@ -453,6 +470,34 @@ function buildCustomPayload() {
     glassPricingSetupRows: glassPricingSetupRows,
     glassPricingUom: 'MM'
   };
+}
+
+// Inverse of convertToInches() - used to re-fill the sump dimension fields in the aquarium's own
+// unit of measure when Sump Type changes (see applySumpTypeDefaults), mirroring
+// WebAquariumCalculator/index.html's convertInchesToSelectedUnit.
+function convertFromInches(valueInInches, unit) {
+  const num = Number(valueInInches) || 0;
+  if (unit === 'CM') return num * 2.54;
+  if (unit === 'MM') return num * 25.4;
+  if (unit === 'Ft') return num / 12;
+  return num;
+}
+
+// Mirrors WebAquariumCalculator/index.html's own Sump Type default-fill: Undersump defaults to an
+// 18in cube, Overhead Sump defaults to a 6in-tall sump running the same length as the aquarium
+// (since it sits on top, along the back). Runs when Sump Type changes and once when the customer
+// first reaches the Filtration step, so it's never left at a 0-size sump they never touched.
+function applySumpTypeDefaults() {
+  const sumpType = document.getElementById('sumpType').value;
+  const unit = document.getElementById('customUnit').value || 'Inches';
+  const side = round1(convertFromInches(sumpType === 'Undersump' ? 18 : 6, unit));
+  document.getElementById('sumpWidth').value = side;
+  document.getElementById('sumpHeight').value = side;
+  if (sumpType === 'Overhead Sump') {
+    document.getElementById('sumpLength').value = document.getElementById('customLength').value;
+  } else {
+    document.getElementById('sumpLength').value = side;
+  }
 }
 
 // Aquarium sketch on the Options step - a trimmed-down port of the isometric canvas drawing in
@@ -464,24 +509,47 @@ let customCanvasCtx = null;
 let CUSTOM_CANVAS_W = 0;
 let CUSTOM_CANVAS_H = 0;
 
+// The same live preview is shown on both the Dimensions step (customAquariumCanvasDims) and the
+// Options step (customAquariumCanvas), so redraws happen on every registered canvas in this list
+// rather than a single one. Each entry is {ctx, w, h}; the draw* functions below still read/write
+// the module-level customCanvasCtx/CUSTOM_CANVAS_W/CUSTOM_CANVAS_H globals, which the loops in
+// drawCustomPlaceholder()/drawCustomAquarium() point at each canvas in turn before drawing it.
+let customCanvases = [];
+
 function round1(value) {
   return Math.round((Number(value) || 0) * 10) / 10;
 }
 
-function setupCustomCanvas() {
-  const canvas = document.getElementById('customAquariumCanvas');
+function registerCustomCanvas(canvasId) {
+  const canvas = document.getElementById(canvasId);
   if (!canvas) return;
-  customCanvasCtx = canvas.getContext('2d');
-  CUSTOM_CANVAS_W = canvas.width;
-  CUSTOM_CANVAS_H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = CUSTOM_CANVAS_W * dpr;
-  canvas.height = CUSTOM_CANVAS_H * dpr;
-  customCanvasCtx.scale(dpr, dpr);
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  customCanvases.push({ ctx, w, h });
+}
+
+function setupCustomCanvas() {
+  customCanvases = [];
+  registerCustomCanvas('customAquariumCanvasDims');
+  registerCustomCanvas('customAquariumCanvas');
   drawCustomPlaceholder('Enter your aquarium details to see a preview.');
 }
 
 function drawCustomPlaceholder(message) {
+  customCanvases.forEach(({ ctx, w, h }) => {
+    customCanvasCtx = ctx;
+    CUSTOM_CANVAS_W = w;
+    CUSTOM_CANVAS_H = h;
+    drawCustomPlaceholderOnActiveCanvas(message);
+  });
+}
+
+function drawCustomPlaceholderOnActiveCanvas(message) {
   const ctx = customCanvasCtx;
   if (!ctx) return;
   ctx.clearRect(0, 0, CUSTOM_CANVAS_W, CUSTOM_CANVAS_H);
@@ -505,11 +573,11 @@ function drawCustomPlaceholder(message) {
 
 function drawCustomDimensionChip(centerX, centerY, text) {
   const ctx = customCanvasCtx;
-  ctx.font = '11px Segoe UI';
+  ctx.font = 'bold 17px Segoe UI';
   const textWidth = ctx.measureText(text).width;
-  const paddingX = 7;
+  const paddingX = 9;
   const chipWidth = textWidth + paddingX * 2;
-  const chipHeight = 17;
+  const chipHeight = 27;
   const x = centerX - chipWidth / 2;
   const y = centerY - chipHeight / 2;
   const radius = 8;
@@ -563,8 +631,18 @@ function drawCustomDimensionLine(x1, y1, x2, y2) {
 }
 
 // result: the return value of calculateCustomAquarium() - drawn straight from its normalized
-// dimensions/sump so the sketch always matches whatever price was just computed.
+// dimensions/sump so the sketch always matches whatever price was just computed. Draws to every
+// registered canvas (see customCanvases above).
 function drawCustomAquarium(result) {
+  customCanvases.forEach(({ ctx, w, h }) => {
+    customCanvasCtx = ctx;
+    CUSTOM_CANVAS_W = w;
+    CUSTOM_CANVAS_H = h;
+    drawCustomAquariumOnActiveCanvas(result);
+  });
+}
+
+function drawCustomAquariumOnActiveCanvas(result) {
   const ctx = customCanvasCtx;
   if (!ctx) return;
 
@@ -578,7 +656,7 @@ function drawCustomAquarium(result) {
   ctx.strokeRect(0.5, 0.5, CUSTOM_CANVAS_W - 1, CUSTOM_CANVAS_H - 1);
 
   if (!result || !result.ok || !result.normalized) {
-    drawCustomPlaceholder(result && result.error ? result.error : 'Enter your aquarium details to see a preview.');
+    drawCustomPlaceholderOnActiveCanvas(result && result.error ? result.error : 'Enter your aquarium details to see a preview.');
     return;
   }
 
@@ -747,21 +825,47 @@ function drawCustomAquarium(result) {
   drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
 }
 
+// Shown on the Dimensions, Options, and (when reached) Filtration steps, same as the canvas
+// preview - so the customer sees a running price as soon as they enter dimensions, and it keeps
+// including whatever sump specs they've entered once Filtration is reached.
 async function updateCustomPriceEstimate() {
-  const box = document.getElementById('customPriceEstimate');
+  const dimsBox = document.getElementById('customPriceEstimateDims');
+  const optionsBox = document.getElementById('customPriceEstimate');
+  const filtrationBox = document.getElementById('customPriceEstimateFiltration');
+  const boxes = [dimsBox, optionsBox, filtrationBox].filter(Boolean);
+
+  // Nothing computes until a real unit is picked - buildCustomPayload would otherwise silently
+  // assume Inches, showing a price/preview for dimensions the customer hasn't actually confirmed
+  // the unit of yet.
+  if (!document.getElementById('customUnit').value) {
+    const notConfigured = { ok: false, error: 'Select a unit of measure to see a price estimate.' };
+    drawCustomAquarium(notConfigured);
+    boxes.forEach((box) => { box.textContent = notConfigured.error; });
+    return;
+  }
+
   await ensureGlassPricingLoaded();
 
   const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
   drawCustomAquarium(result);
   if (!result.ok) {
-    box.textContent = result.error || 'Enter valid dimensions to see a price estimate.';
+    boxes.forEach((box) => { box.textContent = result.error || 'Enter valid dimensions to see a price estimate.'; });
     return;
   }
 
-  const sumpNote = filtrationEnabled
-    ? '<div class="custom-price-note">+ Filtration Sump sizing still needed - we\'ll confirm final pricing with you.</div>'
+  // Light/Pump aren't priced here (see buildCustomPayload) since picking a specific model+price
+  // is a staff-only inventory lookup - flag that they're still to be confirmed whenever the
+  // customer expressed interest in either.
+  const wantsLightOrPump = filtrationEnabled && (
+    document.getElementById('sumpSubmersibleLight').checked || document.getElementById('sumpSubmersiblePump').checked
+  );
+  const sumpNote = wantsLightOrPump
+    ? '<div class="custom-price-note">+ Submersible Light/Pump pricing still needed - we\'ll confirm final pricing with you.</div>'
     : '';
-  box.innerHTML = `Estimated Price: ${formatMoney(result.totalPrice)}${sumpNote}`;
+  // All three steps show the computed gallon volume right under the price, so the customer has a
+  // sense of tank size at every point in the custom-aquarium flow.
+  const priceHtml = `Estimated Price: ${formatMoney(result.totalPrice)}${sumpNote}<div class="custom-price-gallons-badge">${result.gallons} gallons</div>`;
+  boxes.forEach((box) => { box.innerHTML = priceHtml; });
 }
 
 // Plain-text spec line describing everything picked across the Dimensions/Options steps, used
@@ -783,10 +887,38 @@ function buildCustomAquariumSpecText() {
   if (document.getElementById('customHighStrip').checked) opts.push('High Strip');
   if (document.getElementById('customAquascape').checked) opts.push('Aquascape Service');
   if (document.getElementById('customEnclosure').checked) opts.push('Enclosure');
-  if (filtrationEnabled) opts.push('Filtration');
+  if (filtrationEnabled) opts.push(`Filtration (${buildFiltrationSpecText()})`);
 
   const optsText = opts.length ? `, ${opts.join(', ')}` : '';
   return `${length} x ${width} x ${height} ${unit}, ${glass} glass, ${sealant} sealant, ${edge}${optsText}`;
+}
+
+// Spells out the sump build so staff can see exactly what was requested without re-opening the
+// order in the wizard - same reasoning as buildCustomAquariumSpecText() above, just for the
+// Filtration step's own fields.
+function buildFiltrationSpecText() {
+  const sumpType = document.getElementById('sumpType').value;
+  const sumpLength = document.getElementById('sumpLength').value;
+  const sumpWidth = document.getElementById('sumpWidth').value;
+  const sumpHeight = document.getElementById('sumpHeight').value;
+  const unit = document.getElementById('customUnit').value;
+
+  const extras = [];
+  if (document.getElementById('sumpPiping').checked) extras.push('Piping');
+  if (document.getElementById('sumpOverflowBox').checked) extras.push('Overflow Box');
+  if (document.getElementById('sumpFilterMedias').checked) extras.push('Filter Medias');
+  if (document.getElementById('sumpAllumTopCover').checked) extras.push('Allum Top Cover');
+  if (document.getElementById('sumpSubmersibleLight').checked) extras.push('Submersible Light - price TBC');
+  if (document.getElementById('sumpSubmersiblePump').checked) extras.push('Submersible Pump - price TBC');
+
+  const extrasText = extras.length ? `, ${extras.join(', ')}` : '';
+  return `${sumpType} ${sumpLength} x ${sumpWidth} x ${sumpHeight} ${unit}${extrasText}`;
+}
+
+// price stays the PER-UNIT price (result.totalPrice - what one build of this spec costs); qty is
+// multiplied in by the cart/checkout rendering, same as every Standard-flow line already does.
+function customAquariumQty() {
+  return Math.max(1, Math.round(Number(document.getElementById('customQty').value) || 1));
 }
 
 // Builds the single cart line representing the whole custom aquarium build, so it flows through
@@ -798,18 +930,239 @@ function buildCustomAquariumCartLine(result) {
     itemCode: null,
     itemName: `Custom Aquarium - ${buildCustomAquariumSpecText()}`,
     price: result && result.ok ? result.totalPrice : 0,
-    quantity: 1
+    quantity: customAquariumQty()
   };
+}
+
+// ---- Customize > Stand sub-flow (standalone, no aquarium involved) ----
+
+// Tracks which Tubular size is selected on the Stand step, same pattern as
+// deliveryEstimateMethod/selectDeliveryEstimateMethod - the toggle buttons just reflect this.
+let selectedStandTubular = '1x1';
+
+function customStandQty() {
+  return Math.max(1, Math.round(Number(document.getElementById('standQty').value) || 1));
+}
+
+function buildCustomStandPayload() {
+  const unit = document.getElementById('standUnit').value || 'Inches';
+  const sumpHolder = document.getElementById('standSumpHolder').checked;
+  return {
+    length: document.getElementById('standLength').value,
+    width: document.getElementById('standWidth').value,
+    height: document.getElementById('standHeight').value,
+    unit: unit,
+    layers: document.getElementById('standLayers').value,
+    tubular: selectedStandTubular,
+    stainless: document.getElementById('standStainless').checked,
+    cabinet: document.getElementById('standCabinet').checked,
+    sumpHolder: sumpHolder,
+    sumpWidth: sumpHolder ? document.getElementById('standSumpWidth').value : 0
+  };
+}
+
+function selectStandTubular(value) {
+  selectedStandTubular = value;
+  document.getElementById('standTubular1x1').classList.toggle('selected', value === '1x1');
+  document.getElementById('standTubular1_5x1_5').classList.toggle('selected', value === '1.5x1.5');
+  document.getElementById('standTubular2x2').classList.toggle('selected', value === '2x2');
+}
+
+// Live price + tubular-safety notice for the Stand step - mirrors applyCustomDimsGlassSafety's
+// "auto-adjust and explain why" pattern, just driven by calculateStandaloneStand's own notice
+// (it already runs enforceStandTubularSafety internally) instead of a separate check.
+function updateCustomStandPriceEstimate() {
+  const box = document.getElementById('customPriceEstimateStand');
+  const notice = document.getElementById('customStandNotice');
+
+  if (!document.getElementById('standUnit').value) {
+    box.textContent = 'Select a unit of measure to see a price estimate.';
+    notice.classList.add('hidden');
+    return;
+  }
+
+  const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
+  if (!result.ok) {
+    box.textContent = result.error || 'Enter valid dimensions to see a price estimate.';
+    notice.classList.add('hidden');
+    return;
+  }
+
+  if (result.normalized.tubular !== selectedStandTubular) {
+    selectStandTubular(result.normalized.tubular);
+  }
+  if (result.notice) {
+    notice.textContent = `${result.notice.title}: ${result.notice.message}`;
+    notice.classList.remove('hidden');
+  } else {
+    notice.classList.add('hidden');
+  }
+
+  box.textContent = `Estimated Price: ${formatMoney(result.totalPrice)}`;
+}
+
+function buildCustomStandSpecText() {
+  const length = document.getElementById('standLength').value;
+  const width = document.getElementById('standWidth').value;
+  const height = document.getElementById('standHeight').value;
+  const unit = document.getElementById('standUnit').value;
+  const layers = document.getElementById('standLayers').value;
+
+  const opts = [];
+  if (document.getElementById('standStainless').checked) opts.push('Stainless');
+  if (document.getElementById('standCabinet').checked) opts.push('Cabinet');
+  if (document.getElementById('standSumpHolder').checked) {
+    opts.push(`Sump Holder (W-${document.getElementById('standSumpWidth').value} ${unit})`);
+  }
+  const optsText = opts.length ? `, ${opts.join(', ')}` : '';
+
+  return `${length} x ${width} x ${height} ${unit}, ${layers} Layer, Tubular ${selectedStandTubular}${optsText}`;
+}
+
+function buildCustomStandCartLine(result) {
+  return {
+    categoryCode: 'CUSTOM-STAND',
+    itemCode: null,
+    itemName: `Custom Stand - ${buildCustomStandSpecText()}`,
+    price: result && result.ok ? result.totalPrice : 0,
+    quantity: customStandQty()
+  };
+}
+
+// Puts the Stand step back to its just-loaded defaults, same reasoning as
+// resetCustomAquariumBuilder - opening it should always feel like starting fresh.
+function resetCustomStandBuilder() {
+  document.getElementById('standLength').value = '0';
+  document.getElementById('standWidth').value = '0';
+  document.getElementById('standHeight').value = '0';
+  document.getElementById('standQty').value = '1';
+  document.getElementById('standUnit').value = '';
+  document.getElementById('standLayers').value = '2';
+  selectStandTubular('1x1');
+  document.getElementById('standStainless').checked = false;
+  document.getElementById('standCabinet').checked = false;
+  document.getElementById('standSumpHolder').checked = false;
+  document.getElementById('standSumpWidth').value = '0';
+  document.getElementById('standSumpWidthRow').classList.add('hidden');
+
+  ['customStandErrorMsg', 'customStandNotice'].forEach((id) => {
+    const el = document.getElementById(id);
+    el.textContent = '';
+    el.classList.add('hidden');
+  });
+  document.getElementById('customPriceEstimateStand').textContent = 'Enter your stand details to see a price estimate.';
+}
+
+// ---- Customize > Filtration sub-flow (standalone, no aquarium involved) ----
+
+function standaloneFiltrationQty() {
+  return Math.max(1, Math.round(Number(document.getElementById('standaloneFiltrationQty').value) || 1));
+}
+
+function buildStandaloneFiltrationPayload() {
+  const unit = document.getElementById('standaloneFiltrationUnit').value || 'Inches';
+  return {
+    length: document.getElementById('standaloneSumpLength').value,
+    width: document.getElementById('standaloneSumpWidth').value,
+    height: document.getElementById('standaloneSumpHeight').value,
+    unit: unit,
+    sumpType: document.getElementById('standaloneSumpType').value,
+    glassThickness: document.getElementById('standaloneFiltrationGlass').value,
+    piping: document.getElementById('standaloneSumpPiping').checked,
+    overflowBox: document.getElementById('standaloneSumpOverflowBox').checked,
+    filterMedias: document.getElementById('standaloneSumpFilterMedias').checked,
+    allumTopCover: document.getElementById('standaloneSumpAllumTopCover').checked,
+    glassPricingSetupRows: glassPricingSetupRows,
+    glassPricingUom: 'MM'
+  };
+}
+
+// Mirrors applySumpTypeDefaults() but with no aquarium to derive an Overhead Sump length from -
+// defaults to the same 18in-cube starting point regardless of sump type here.
+function applyStandaloneSumpTypeDefaults() {
+  const unit = document.getElementById('standaloneFiltrationUnit').value || 'Inches';
+  const side = round1(convertFromInches(18, unit));
+  document.getElementById('standaloneSumpLength').value = side;
+  document.getElementById('standaloneSumpWidth').value = side;
+  document.getElementById('standaloneSumpHeight').value = side;
+}
+
+async function updateStandaloneFiltrationPriceEstimate() {
+  const box = document.getElementById('customPriceEstimateStandaloneFiltration');
+
+  if (!document.getElementById('standaloneFiltrationUnit').value) {
+    box.textContent = 'Select a unit of measure to see a price estimate.';
+    return;
+  }
+
+  await ensureGlassPricingLoaded();
+  const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
+  if (!result.ok) {
+    box.textContent = result.error || 'Enter valid dimensions to see a price estimate.';
+    return;
+  }
+
+  const wantsLightOrPump = document.getElementById('standaloneSumpSubmersibleLight').checked
+    || document.getElementById('standaloneSumpSubmersiblePump').checked;
+  const note = wantsLightOrPump
+    ? '<div class="custom-price-note">+ Submersible Light/Pump pricing still needed - we\'ll confirm final pricing with you.</div>'
+    : '';
+  box.innerHTML = `Estimated Price: ${formatMoney(result.totalPrice)}${note}`;
+}
+
+function buildStandaloneFiltrationSpecText() {
+  const sumpType = document.getElementById('standaloneSumpType').value;
+  const length = document.getElementById('standaloneSumpLength').value;
+  const width = document.getElementById('standaloneSumpWidth').value;
+  const height = document.getElementById('standaloneSumpHeight').value;
+  const unit = document.getElementById('standaloneFiltrationUnit').value;
+  const glass = document.getElementById('standaloneFiltrationGlass').value;
+
+  const extras = [];
+  if (document.getElementById('standaloneSumpPiping').checked) extras.push('Piping');
+  if (document.getElementById('standaloneSumpOverflowBox').checked) extras.push('Overflow Box');
+  if (document.getElementById('standaloneSumpFilterMedias').checked) extras.push('Filter Medias');
+  if (document.getElementById('standaloneSumpAllumTopCover').checked) extras.push('Allum Top Cover');
+  if (document.getElementById('standaloneSumpSubmersibleLight').checked) extras.push('Submersible Light - price TBC');
+  if (document.getElementById('standaloneSumpSubmersiblePump').checked) extras.push('Submersible Pump - price TBC');
+  const extrasText = extras.length ? `, ${extras.join(', ')}` : '';
+
+  return `${sumpType} ${length} x ${width} x ${height} ${unit}, ${glass} glass${extrasText}`;
+}
+
+function buildStandaloneFiltrationCartLine(result) {
+  return {
+    categoryCode: 'CUSTOM-FILTRATION',
+    itemCode: null,
+    itemName: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`,
+    price: result && result.ok ? result.totalPrice : 0,
+    quantity: standaloneFiltrationQty()
+  };
+}
+
+function resetStandaloneFiltrationBuilder() {
+  document.getElementById('standaloneFiltrationQty').value = '1';
+  document.getElementById('standaloneFiltrationUnit').value = '';
+  document.getElementById('standaloneSumpType').value = 'Undersump';
+  document.getElementById('standaloneFiltrationGlass').value = '6mm';
+  document.getElementById('standaloneSumpLength').value = '18';
+  document.getElementById('standaloneSumpWidth').value = '18';
+  document.getElementById('standaloneSumpHeight').value = '18';
+  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover', 'standaloneSumpSubmersibleLight', 'standaloneSumpSubmersiblePump']
+    .forEach((id) => { document.getElementById(id).checked = false; });
+
+  const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
+  errorMsg.textContent = '';
+  errorMsg.classList.add('hidden');
+  document.getElementById('customPriceEstimateStandaloneFiltration').textContent = 'Enter your sump details to see a price estimate.';
 }
 
 // Populates the receipt-styled checkout/review page (step "custom-checkout") with the company
 // letterhead (same fields the Delivery Receipt page shows, via companyBranding.js) and a single
-// product row summarizing the aquarium build. Returns the current calculateCustomAquarium()
-// result so the Continue handler can build the cart line from the same numbers being displayed.
+// product row summarizing whichever Customize sub-flow (Aquarium/Stand/Filtration, tracked by
+// customBuilderType) the customer just built. Returns the current calculator result so the
+// Confirm handler can build the cart line from the same numbers being displayed.
 async function renderCustomCheckout() {
-  await ensureGlassPricingLoaded();
-  const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
-
   const info = await fetchCompanyInfo();
   const logo = document.getElementById('checkoutLogo');
   if (info && info['LogoUrl']) {
@@ -824,15 +1177,44 @@ async function renderCustomCheckout() {
   document.getElementById('checkoutContactNo').textContent = info && info['ContactNo'] ? `Contact No : ${info['ContactNo']}` : '';
   document.getElementById('checkoutDtiNo').textContent = info && info['DtiNo'] ? `DTI No.: ${info['DtiNo']}` : '';
 
-  const amountText = result.ok ? formatMoney(result.totalPrice) : '-';
+  let result;
+  let productLabel;
+  let qty;
+  let titleText;
+
+  if (customBuilderType === 'stand') {
+    // No glass-pricing lookup involved in Stand pricing (tubular rate table only), unlike the
+    // other two branches below.
+    result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
+    productLabel = `Custom Stand - ${buildCustomStandSpecText()}`;
+    qty = customStandQty();
+    titleText = 'CUSTOM STAND ORDER SUMMARY';
+  } else if (customBuilderType === 'filtration') {
+    await ensureGlassPricingLoaded();
+    result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
+    productLabel = `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`;
+    qty = standaloneFiltrationQty();
+    titleText = 'CUSTOM FILTRATION ORDER SUMMARY';
+  } else {
+    await ensureGlassPricingLoaded();
+    result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
+    productLabel = `Custom Aquarium - ${buildCustomAquariumSpecText()}`;
+    qty = customAquariumQty();
+    titleText = 'CUSTOM AQUARIUM ORDER SUMMARY';
+  }
+
+  document.getElementById('checkoutTitle').textContent = titleText;
+
+  const lineTotal = result.ok ? result.totalPrice * qty : 0;
+  const amountText = result.ok ? formatMoney(lineTotal) : '-';
   document.getElementById('checkoutLinesBody').innerHTML = `
     <tr>
-      <td>Custom Aquarium - ${buildCustomAquariumSpecText()}</td>
-      <td>1</td>
+      <td>${productLabel}</td>
+      <td>${qty}</td>
       <td style="text-align:right;">${amountText}</td>
     </tr>
   `;
-  document.getElementById('checkoutTotal').textContent = result.ok ? formatMoney(result.totalPrice) : (result.error || 'Please review your dimensions.');
+  document.getElementById('checkoutTotal').textContent = result.ok ? formatMoney(lineTotal) : (result.error || 'Please review your details.');
 
   return result;
 }
@@ -858,6 +1240,59 @@ function findSafeGlassTier(lengthIn, widthIn, heightIn, startingGlass) {
     if (check.isSafe) return tiers[i];
   }
   return null;
+}
+
+// Live safety check for the Dimensions step - auto-bumps the Glass Thickness dropdown upward
+// whenever the current selection isn't safe for the entered L/W/H (never downgrades it), and
+// explains why via customDimsGlassNotice. Runs on every dimension/unit/glass edit (see the
+// customLength/customWidth/customHeight/customUnit/customGlass listeners below) so the customer
+// already sees the right thickness and price before ever reaching customDimsNextBtn's own
+// safety check, which mirrors this same validateGlassSafety/findSafeGlassTier pair as a fallback.
+function applyCustomDimsGlassSafety() {
+  const notice = document.getElementById('customDimsGlassNotice');
+  const glassSelect = document.getElementById('customGlass');
+  const unit = document.getElementById('customUnit').value;
+
+  // Without a real unit there's no way to safely convert L/W/H to inches for the safety chart -
+  // convertToInches would otherwise silently assume Inches, which could wrongly leave an unsafe
+  // glass thickness selected (or bump it unnecessarily) before the customer has even said what
+  // unit they're using.
+  if (!unit) {
+    notice.classList.add('hidden');
+    return;
+  }
+
+  const lengthIn = convertToInches(document.getElementById('customLength').value, unit);
+  const widthIn = convertToInches(document.getElementById('customWidth').value, unit);
+  const heightIn = convertToInches(document.getElementById('customHeight').value, unit);
+
+  if (!lengthIn || !widthIn || !heightIn) {
+    notice.classList.add('hidden');
+    return;
+  }
+
+  // isTempered is passed as true, same as customDimsNextBtn's own check further down - Tempered
+  // Glass isn't collected until the Options step, so this shouldn't false-block on the 36in+ rule.
+  const safety = window.CustomAquariumCalculator.validateGlassSafety(
+    lengthIn, widthIn, heightIn, glassSelect.value, true, false
+  );
+
+  if (safety.isSafe) {
+    notice.classList.add('hidden');
+    return;
+  }
+
+  const suggestedGlass = safety.autoChangeTo || findSafeGlassTier(lengthIn, widthIn, heightIn, glassSelect.value);
+  if (suggestedGlass) {
+    glassSelect.value = suggestedGlass;
+    notice.textContent = `Glass thickness was automatically increased to ${suggestedGlass} for these dimensions.`;
+    notice.classList.remove('hidden');
+  } else {
+    // Already at 12mm (the thickest option) and still flagged unsafe - nothing left to auto-fix,
+    // so just explain why instead of silently leaving an unsafe thickness selected.
+    notice.textContent = safety.message;
+    notice.classList.remove('hidden');
+  }
 }
 
 // Mirrors the glass-thickness safety rules from the standalone custom aquarium calculator
@@ -1078,17 +1513,127 @@ async function submitOrder(event) {
     return;
   }
 
-  // submit_automated_order now returns a row (order_no, pancake_order_id, pancake_sync_status) -
-  // show the real Pancake order id when the sync went through, since that's the number Pancake
-  // (and any staff working there) will actually recognize. Falls back to our internal OrderNo
-  // whenever there's no Pancake id yet (sync still pending/failed) - the request is always
-  // recorded either way, so the customer still gets something to reference.
+  // submit_automated_order returns a row (order_no, pancake_order_id, pancake_sync_status). Order
+  // ID (our internal AO-##### number) always shows - it's assigned before the Pancake push even
+  // runs, so it exists regardless of whether that push succeeded. Online Order ID (Pancake's own
+  // number) only shows alongside it once the sync actually went through - showing both instead of
+  // picking one avoids the confusion of a customer only ever seeing AO-##### when Pancake sync
+  // failed/is pending, with no way to tell that's what happened.
   const result = (data && data[0]) || {};
-  document.getElementById('confirmationOrderNo').textContent =
-    (result.pancake_sync_status === 'Synced' && result.pancake_order_id) || result.order_no;
+  document.getElementById('confirmationOrderNo').textContent = result.order_no;
+  lastSubmittedOrderNo = result.order_no || null;
+
+  const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
+  const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
+  if (result.pancake_sync_status === 'Synced' && result.pancake_order_id) {
+    onlineOrderNoBox.textContent = '#' + result.pancake_order_id;
+    onlineOrderNoBox.classList.remove('hidden');
+    onlineOrderNoLabel.classList.remove('hidden');
+  } else {
+    onlineOrderNoBox.classList.add('hidden');
+    onlineOrderNoLabel.classList.add('hidden');
+  }
+  document.getElementById('debugSendConfirmationOutput').classList.add('hidden');
   cart = [];
   saveCart();
   goToStep(5);
+}
+
+// TEMPORARY - debug button handler, see debug_send_order_confirmation_message() in
+// supabase_automated_orders_tables.sql. Calls the exact same message-send path as the automatic
+// one but returns the full endpoint/payload/response instead of only a status column, so a
+// failure can be diagnosed directly from this page. Remove alongside that function once the
+// automatic send is confirmed working.
+async function debugSendConfirmationMessage() {
+  const btn = document.getElementById('debugSendConfirmationBtn');
+  const out = document.getElementById('debugSendConfirmationOutput');
+
+  if (!lastSubmittedOrderNo) {
+    out.textContent = 'No order was just submitted in this session - nothing to test.';
+    out.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  out.classList.add('hidden');
+
+  const { data, error } = await supabaseClient.rpc('debug_send_order_confirmation_message', {
+    p_order_no: lastSubmittedOrderNo
+  });
+
+  btn.disabled = false;
+  btn.textContent = '🛠️ Test Send Confirmation Message (Debug)';
+
+  if (error) {
+    out.textContent = 'RPC call itself failed:\n' + error.message;
+    out.classList.remove('hidden');
+    return;
+  }
+
+  const result = (data && data[0]) || {};
+  out.textContent = [
+    'Order: ' + lastSubmittedOrderNo,
+    'Result: ' + (result.ok ? 'SUCCESS' : 'FAILED'),
+    'HTTP Status: ' + (result.http_status ?? '(request did not complete)'),
+    '',
+    'Vault key fingerprint (compare against the real key - length + first/last 10 chars only):',
+    result.key_fingerprint || '(not set in Vault)',
+    '',
+    'Endpoint:',
+    result.endpoint || '(not built - see error below)',
+    '',
+    'Payload sent:',
+    result.payload || '(none)',
+    '',
+    'Response body from Pancake:',
+    result.response_body || '(none)',
+    '',
+    'Error:',
+    result.error_message || '(none)'
+  ].join('\n');
+  out.classList.remove('hidden');
+}
+
+// Puts the whole Customize flow back to its just-loaded defaults - per direct request, opening
+// the Dimensions step should always feel like starting fresh, not resuming whatever was left over
+// from a previous visit (e.g. after confirming one custom aquarium and starting a second, or
+// backing out to the mode picker and re-entering Customize).
+function resetCustomAquariumBuilder() {
+  document.getElementById('customLength').value = '0';
+  document.getElementById('customWidth').value = '0';
+  document.getElementById('customHeight').value = '0';
+  document.getElementById('customQty').value = '1';
+  document.getElementById('customUnit').value = '';
+  document.getElementById('customGlass').value = '6mm';
+  document.getElementById('customSealant').value = '';
+
+  ['customAio', 'customLowIron', 'customTempered', 'customRimless', 'customHighStrip', 'customAquascape', 'customEnclosure']
+    .forEach((id) => { document.getElementById(id).checked = false; document.getElementById(id).disabled = false; });
+
+  document.getElementById('sumpType').value = 'Undersump';
+  document.getElementById('sumpLength').value = '18';
+  document.getElementById('sumpWidth').value = '18';
+  document.getElementById('sumpHeight').value = '18';
+  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover', 'sumpSubmersibleLight', 'sumpSubmersiblePump']
+    .forEach((id) => { document.getElementById(id).checked = false; });
+
+  filtrationEnabled = false;
+  glassBeforeLowIron = null;
+  glassBeforeRimless = null;
+
+  ['customDimsErrorMsg', 'customDimsGlassNotice', 'customGlassNotice'].forEach((id) => {
+    const el = document.getElementById(id);
+    el.textContent = '';
+    el.classList.add('hidden');
+  });
+  document.getElementById('customDimsSummary').innerHTML = '';
+
+  drawCustomPlaceholder('Enter your aquarium details to see a preview.');
+  ['customPriceEstimateDims', 'customPriceEstimate', 'customPriceEstimateFiltration'].forEach((id) => {
+    const box = document.getElementById(id);
+    if (box) box.textContent = 'Enter your aquarium details to see a price estimate.';
+  });
 }
 
 function resetWizard() {
@@ -1105,6 +1650,20 @@ function resetWizard() {
   goToStep(1);
 }
 
+// Closes the tab/window this wizard is running in - only works when the browser actually opened
+// it via script (e.g. a Messenger-personalized link opened as a new tab); browsers block
+// script-closing a tab the visitor navigated to directly, so window.close() silently does
+// nothing in that case rather than erroring - fall back to a plain message telling them it's
+// safe to close the tab themselves.
+function exitOrderNow() {
+  window.close();
+  setTimeout(() => {
+    if (!document.hidden) {
+      window.alert('You can now safely close this tab.');
+    }
+  }, 300);
+}
+
 async function loadCompanyLogo() {
   const info = await fetchCompanyInfo();
   if (!info) return;
@@ -1113,6 +1672,511 @@ async function loadCompanyLogo() {
     box.innerHTML = `<img src="${info['LogoUrl']}" alt="${info['CompanyName'] || 'Company logo'}" class="company-logo-img" />`;
     const watermark = document.getElementById('watermarkBg');
     if (watermark) watermark.style.backgroundImage = `url(${info['LogoUrl']})`;
+  }
+}
+
+// ---- "Estimate Delivery" mode: self-service delivery price estimate, no login/order required.
+// Mirrors js/deliveryQuote.js's staff-only in-house pricing path (base fee + rate/km + toll -
+// see runInHouseQuote there) but sourced from public_get_delivery_quote_settings() (see
+// supabase_public_delivery_estimate.sql) since a customer here has no staff username/password to
+// call the staff-gated admin_get_public_portal_setting/staff_search_warehouses RPCs with.
+// Deliberately lighter than the staff tool: fixed branch addresses (same two shown in Step 4's
+// "Which branch?" picker, geocoded on demand rather than read from a saved Warehouse Lat/Lng), a
+// non-draggable map (just a visual confirmation, not a fine-tuning tool), and no Lalamove option.
+
+const DELIVERY_ESTIMATE_ORIGINS = {
+  Amaya: 'Antero Soriano Highway, Amaya Dos, Tanza, Cavite',
+  GMA: 'Blk 2 Lot 53 Brgy. Granados, General Mariano Alvarez, Cavite'
+};
+
+let deliveryEstimateSettingsPromise = null;
+let deliveryEstimateGoogleMapsApiKey = null;
+let deliveryEstimateBaseFee = null;
+let deliveryEstimateRatePerKm = null;
+let deliveryEstimateTollFee = 0;
+let deliveryEstimateGoogleMapsReadyPromise = null;
+const deliveryEstimateOriginGeocodeCache = {}; // origin key -> {lat, lng} (each fixed address only needs geocoding once)
+let resolvedDeliveryEstimateDestination = null; // {lat, lng, address} from Places Autocomplete
+let deliveryEstimateMapInstance = null;
+let deliveryEstimateFromMarker = null;
+let deliveryEstimateToMarker = null;
+
+// 'inhouse' (base fee + rate/km + toll) or 'lalamove' (real Lalamove Quotation API price, via the
+// same delivery-lalamove-quote proxy the staff Delivery Quote page uses) - per direct request to
+// let the customer pick between the two, same choice deliveryQuote.js's deliveryMethodSelect
+// already offers staff. Booking is intentionally NOT offered here (unlike the staff page) - this
+// mode is quote-only, no login/order required.
+let deliveryEstimateMethod = 'inhouse';
+let deliveryEstimateVehicleTypes = []; // [{key, description}] from delivery-lalamove-vehicle-types
+let deliveryEstimateVehicleTypesLoaded = false;
+
+// Lazy-loaded once, the first time the customer opens this mode - avoids the extra round trip/
+// Google Maps script load for anyone who never touches it, same "only pay for what's used" reasoning
+// as loadLalamoveVehicleTypes in deliveryQuote.js.
+function loadDeliveryEstimateSettings() {
+  if (deliveryEstimateSettingsPromise) return deliveryEstimateSettingsPromise;
+
+  deliveryEstimateSettingsPromise = supabaseClient.rpc('public_get_delivery_quote_settings').then(({ data, error }) => {
+    if (error) {
+      console.error('public_get_delivery_quote_settings failed:', error);
+      return;
+    }
+    const byKey = {};
+    (data || []).forEach((row) => { byKey[row.setting_key] = row.setting_value; });
+    deliveryEstimateGoogleMapsApiKey = byKey.GOOGLE_MAPS_API_KEY || null;
+    deliveryEstimateBaseFee = byKey.DELIVERY_BASE_FEE != null && byKey.DELIVERY_BASE_FEE !== '' ? Number(byKey.DELIVERY_BASE_FEE) : null;
+    deliveryEstimateRatePerKm = byKey.DELIVERY_RATE_PER_KM != null && byKey.DELIVERY_RATE_PER_KM !== '' ? Number(byKey.DELIVERY_RATE_PER_KM) : null;
+    deliveryEstimateTollFee = byKey.DELIVERY_TOLL_FEE != null && byKey.DELIVERY_TOLL_FEE !== '' ? Number(byKey.DELIVERY_TOLL_FEE) : 0;
+  });
+
+  return deliveryEstimateSettingsPromise;
+}
+
+function loadDeliveryEstimateGoogleMapsScript() {
+  if (deliveryEstimateGoogleMapsReadyPromise) return deliveryEstimateGoogleMapsReadyPromise;
+
+  deliveryEstimateGoogleMapsReadyPromise = loadDeliveryEstimateSettings().then(() => new Promise((resolve, reject) => {
+    if (!deliveryEstimateGoogleMapsApiKey) {
+      reject(new Error('Delivery estimate is not available right now - please contact us directly for a delivery quote.'));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(deliveryEstimateGoogleMapsApiKey)}&libraries=places`;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load the map. Check your connection and try again.'));
+    document.head.appendChild(script);
+  }));
+
+  return deliveryEstimateGoogleMapsReadyPromise;
+}
+
+function deliveryEstimateGeocode(address) {
+  return loadDeliveryEstimateGoogleMapsScript().then(() => {
+    const geocoder = new google.maps.Geocoder();
+    return new Promise((resolve) => {
+      geocoder.geocode({ address }, (results, status) => {
+        resolve(status === 'OK' && results && results[0] ? results[0].geometry.location : null);
+      });
+    });
+  });
+}
+
+async function resolveDeliveryEstimateOrigin(originKey) {
+  if (deliveryEstimateOriginGeocodeCache[originKey]) return deliveryEstimateOriginGeocodeCache[originKey];
+
+  const address = DELIVERY_ESTIMATE_ORIGINS[originKey];
+  const location = await deliveryEstimateGeocode(address);
+  if (!location) throw new Error(`Could not find the ${originKey} branch on the map - please contact us directly for a delivery quote.`);
+
+  const resolved = { lat: location.lat(), lng: location.lng(), label: `${originKey} branch` };
+  deliveryEstimateOriginGeocodeCache[originKey] = resolved;
+  return resolved;
+}
+
+async function resolveDeliveryEstimateDestination() {
+  const input = document.getElementById('deliveryEstimateDestInput');
+  const address = input.value.trim();
+  if (!address) throw new Error('Enter your delivery address.');
+
+  // Reuse the Places Autocomplete pick's coordinates if the text hasn't been edited since -
+  // same "skip a redundant Geocoder call" reasoning as deliveryQuote.js's resolveFromLocation.
+  if (resolvedDeliveryEstimateDestination && resolvedDeliveryEstimateDestination.address === address) {
+    return { lat: resolvedDeliveryEstimateDestination.lat, lng: resolvedDeliveryEstimateDestination.lng, label: address };
+  }
+
+  const location = await deliveryEstimateGeocode(address);
+  if (!location) throw new Error(`Could not find "${address}" on the map. Try a more specific address.`);
+  return { lat: location.lat(), lng: location.lng(), label: address };
+}
+
+function getDeliveryEstimateDrivingDistance(origin, destination) {
+  return loadDeliveryEstimateGoogleMapsScript().then(() => {
+    const service = new google.maps.DistanceMatrixService();
+    return new Promise((resolve, reject) => {
+      service.getDistanceMatrix({
+        origins: [origin],
+        destinations: [destination],
+        travelMode: 'DRIVING',
+        unitSystem: google.maps.UnitSystem.METRIC
+      }, (response, status) => {
+        if (status !== 'OK') {
+          reject(new Error(`Could not calculate driving distance (${status}).`));
+          return;
+        }
+        const element = response?.rows?.[0]?.elements?.[0];
+        if (!element || element.status !== 'OK') {
+          reject(new Error('No driving route found to that address.'));
+          return;
+        }
+        resolve({ distanceMeters: element.distance.value, distanceText: element.distance.text, durationText: element.duration.text });
+      });
+    });
+  });
+}
+
+// Same route-shape toll heuristic as deliveryQuote.js's routeUsesTolls - compares the default
+// route against a forced no-tolls route; a distance/duration difference means the default route
+// used a toll road.
+function deliveryEstimateRouteUsesTolls(origin, destination) {
+  return loadDeliveryEstimateGoogleMapsScript().then(() => {
+    const directionsService = new google.maps.DirectionsService();
+    const requestRoute = (avoidTolls) => new Promise((resolve, reject) => {
+      directionsService.route({ origin, destination, travelMode: google.maps.TravelMode.DRIVING, avoidTolls }, (result, status) => {
+        if (status !== 'OK' || !result.routes || !result.routes[0]) {
+          reject(new Error(`Could not check for toll roads (${status}).`));
+          return;
+        }
+        resolve(result.routes[0]);
+      });
+    });
+
+    return Promise.all([requestRoute(false), requestRoute(true)]).then(([normalRoute, noTollRoute]) => {
+      const normalLeg = normalRoute.legs[0];
+      const noTollLeg = noTollRoute.legs[0];
+      return normalLeg.distance.value !== noTollLeg.distance.value || normalLeg.duration.value !== noTollLeg.duration.value;
+    });
+  });
+}
+
+async function fetchDeliveryEstimateTollPrice(origin, destination) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-toll-price`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+      'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ origin, destination })
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error || `Toll price lookup failed (${response.status}).`);
+  }
+  return response.json();
+}
+
+// Same fallback ladder as deliveryQuote.js's resolveTollFee: a real Google per-route price first,
+// then the configured flat DELIVERY_TOLL_FEE applied only when the route-shape heuristic detects
+// an actual toll road, defaulting to applying it if that heuristic itself fails.
+async function resolveDeliveryEstimateTollFee(origin, destination) {
+  try {
+    const googleToll = await fetchDeliveryEstimateTollPrice(origin, destination);
+    if (googleToll.hasTollInfo && googleToll.estimatedPrice > 0) {
+      return { amount: googleToll.estimatedPrice, detected: true, source: 'google' };
+    }
+  } catch (err) {
+    console.warn('Google toll price lookup unavailable, falling back to configured toll fee:', err);
+  }
+
+  if (!(deliveryEstimateTollFee > 0)) return { amount: 0, detected: null, source: 'none' };
+
+  try {
+    const usesToll = await deliveryEstimateRouteUsesTolls(origin, destination);
+    return { amount: usesToll ? deliveryEstimateTollFee : 0, detected: usesToll, source: 'flat' };
+  } catch (err) {
+    console.error('Could not detect toll road usage, defaulting to applying the configured toll fee:', err);
+    return { amount: deliveryEstimateTollFee, detected: null, source: 'flat' };
+  }
+}
+
+async function ensureDeliveryEstimateMap() {
+  await loadDeliveryEstimateGoogleMapsScript();
+  if (deliveryEstimateMapInstance) return deliveryEstimateMapInstance;
+  const mapEl = document.getElementById('deliveryEstimateMap');
+  mapEl.classList.remove('hidden');
+  deliveryEstimateMapInstance = new google.maps.Map(mapEl, { center: { lat: 12.8797, lng: 121.7740 }, zoom: 6 });
+  return deliveryEstimateMapInstance;
+}
+
+function refitDeliveryEstimateMap() {
+  if (!deliveryEstimateMapInstance) return;
+
+  if (deliveryEstimateFromMarker && deliveryEstimateToMarker) {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(deliveryEstimateFromMarker.getPosition());
+    bounds.extend(deliveryEstimateToMarker.getPosition());
+    deliveryEstimateMapInstance.fitBounds(bounds);
+  } else if (deliveryEstimateFromMarker) {
+    deliveryEstimateMapInstance.setCenter(deliveryEstimateFromMarker.getPosition());
+    deliveryEstimateMapInstance.setZoom(14);
+  }
+}
+
+function deliveryEstimateReverseGeocode(lat, lng) {
+  return loadDeliveryEstimateGoogleMapsScript().then(() => {
+    const geocoder = new google.maps.Geocoder();
+    return new Promise((resolve) => {
+      geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        resolve(status === 'OK' && results && results[0] ? results[0].formatted_address : null);
+      });
+    });
+  });
+}
+
+// Dragging the origin pin corrects that branch's pinned location for this session (rather than
+// introducing a separate "Other address" origin, which doesn't apply here - orders only ever ship
+// from an actual branch) - same reverse-geocode-then-re-quote pattern as deliveryQuote.js's
+// handleFromMarkerDragEnd, per "let the user drag the pin point same on our web portal delivery
+// quote... same experience".
+async function handleDeliveryEstimateFromMarkerDragEnd(latLng) {
+  const lat = latLng.lat();
+  const lng = latLng.lng();
+  const address = (await deliveryEstimateReverseGeocode(lat, lng)) || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+  const originKey = document.getElementById('deliveryEstimateOriginSelect').value;
+  const resolved = { lat, lng, label: `${originKey} branch (adjusted)` };
+  deliveryEstimateOriginGeocodeCache[originKey] = resolved;
+  if (deliveryEstimateFromMarker) deliveryEstimateFromMarker.setTitle(`From: ${address}`);
+
+  runDeliveryEstimate();
+}
+
+async function handleDeliveryEstimateToMarkerDragEnd(latLng) {
+  const lat = latLng.lat();
+  const lng = latLng.lng();
+  const address = (await deliveryEstimateReverseGeocode(lat, lng)) || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+  resolvedDeliveryEstimateDestination = { lat, lng, address };
+  document.getElementById('deliveryEstimateDestInput').value = address;
+  if (deliveryEstimateToMarker) deliveryEstimateToMarker.setTitle(`To: ${address}`);
+
+  runDeliveryEstimate();
+}
+
+// Split into separate From/To setters (rather than one combined "render both" call) so the
+// origin branch can be plotted immediately on opening this mode - per "show the map already upon
+// loading, same functionality [as] delivery [Quote]" - instead of waiting for a destination to be
+// entered. Draggable, same as deliveryQuote.js's staff map (see handleDeliveryEstimateFromMarkerDragEnd/
+// handleDeliveryEstimateToMarkerDragEnd above) - lets the customer nudge a slightly-off geocode
+// result themselves instead of being stuck with whatever Google guessed.
+async function setDeliveryEstimateFromMarker(loc) {
+  await ensureDeliveryEstimateMap();
+  if (deliveryEstimateFromMarker) deliveryEstimateFromMarker.setMap(null);
+
+  deliveryEstimateFromMarker = new google.maps.Marker({
+    position: { lat: loc.lat, lng: loc.lng },
+    map: deliveryEstimateMapInstance,
+    title: `From: ${loc.label}`,
+    icon: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png',
+    draggable: true
+  });
+  deliveryEstimateFromMarker.addListener('dragend', () => handleDeliveryEstimateFromMarkerDragEnd(deliveryEstimateFromMarker.getPosition()));
+  refitDeliveryEstimateMap();
+}
+
+async function setDeliveryEstimateToMarker(loc) {
+  await ensureDeliveryEstimateMap();
+  if (deliveryEstimateToMarker) deliveryEstimateToMarker.setMap(null);
+
+  deliveryEstimateToMarker = new google.maps.Marker({
+    position: { lat: loc.lat, lng: loc.lng },
+    map: deliveryEstimateMapInstance,
+    title: `To: ${loc.label}`,
+    draggable: true
+  });
+  deliveryEstimateToMarker.addListener('dragend', () => handleDeliveryEstimateToMarkerDragEnd(deliveryEstimateToMarker.getPosition()));
+  refitDeliveryEstimateMap();
+}
+
+// Shows the currently-selected origin branch on the map right away - mirrors deliveryQuote.js's
+// "show the map directly upon open Delivery Quote" behavior. Best-effort: a geocoding hiccup here
+// shouldn't block the customer from still typing an address and clicking Get Estimate, so failures
+// are just logged, same as deliveryQuote.js's own init()-time preview.
+async function showDeliveryEstimateOriginPreview() {
+  const originKey = document.getElementById('deliveryEstimateOriginSelect').value;
+  try {
+    await loadDeliveryEstimateSettings();
+    const from = await resolveDeliveryEstimateOrigin(originKey);
+    await setDeliveryEstimateFromMarker(from);
+  } catch (err) {
+    console.error('Could not resolve origin branch for map preview:', err);
+    await ensureDeliveryEstimateMap();
+  }
+}
+
+function wireDeliveryEstimatePlacesAutocomplete() {
+  const input = document.getElementById('deliveryEstimateDestInput');
+  loadDeliveryEstimateGoogleMapsScript().then(() => {
+    const autocomplete = new google.maps.places.Autocomplete(input, {
+      fields: ['geometry'],
+      componentRestrictions: { country: 'ph' }
+    });
+    autocomplete.addListener('place_changed', () => {
+      const place = autocomplete.getPlace();
+      if (!place.geometry || !place.geometry.location) return;
+      const loc = {
+        lat: place.geometry.location.lat(),
+        lng: place.geometry.location.lng(),
+        address: input.value.trim()
+      };
+      resolvedDeliveryEstimateDestination = loc;
+
+      // Per "once the delivery address is filled in, auto estimate - the map pin should move
+      // too", same "picking a suggestion is itself a strong enough signal to price it
+      // immediately" reasoning as deliveryQuote.js's toAddressInput Autocomplete handler. Moves
+      // the pin right away rather than waiting for runDeliveryEstimate's own marker update, so
+      // there's instant feedback even while the estimate itself is still in flight.
+      setDeliveryEstimateToMarker({ ...loc, label: loc.address });
+      runDeliveryEstimate();
+    });
+  }).catch((err) => console.error('Failed to initialize address suggestions:', err));
+
+  // Typing invalidates any previously picked suggestion, same as deliveryQuote.js's toAddressInput -
+  // otherwise an edited-but-not-re-picked address would silently keep quoting the old coordinates.
+  input.addEventListener('input', () => { resolvedDeliveryEstimateDestination = null; });
+}
+
+function formatDeliveryEstimateCurrency(amount) {
+  return '₱' + Number(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Calls the delivery-lalamove-vehicle-types Supabase Edge Function - same proxy deliveryQuote.js
+// uses, already anon-callable with no staff login required. Lazy-loaded once, the first time the
+// customer switches to Lalamove.
+async function loadDeliveryEstimateVehicleTypes() {
+  const select = document.getElementById('deliveryEstimateVehicleTypeSelect');
+  if (deliveryEstimateVehicleTypesLoaded) return;
+  deliveryEstimateVehicleTypesLoaded = true;
+
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-lalamove-vehicle-types`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      }
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `Failed to load vehicle types (${response.status}).`);
+
+    deliveryEstimateVehicleTypes = body.vehicleTypes || [];
+    if (deliveryEstimateVehicleTypes.length === 0) throw new Error('No vehicle types available for this account/market.');
+
+    select.innerHTML = deliveryEstimateVehicleTypes.map((v) => `<option value="${v.key}" title="${v.description}">${v.key}</option>`).join('');
+    const motorcycleOption = deliveryEstimateVehicleTypes.find((v) => v.key === 'MOTORCYCLE');
+    if (motorcycleOption) select.value = motorcycleOption.key;
+  } catch (err) {
+    console.error('Could not load Lalamove vehicle types:', err);
+    select.innerHTML = `<option value="">Failed to load - ${err.message}</option>`;
+  }
+}
+
+// Calls the delivery-lalamove-quote Supabase Edge Function - same signing proxy deliveryQuote.js
+// uses in front of Lalamove's Quotation API, already anon-callable with no staff login required.
+async function fetchDeliveryEstimateLalamoveQuote(origin, destination, serviceType) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-lalamove-quote`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+      'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ origin, destination, serviceType })
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error || `Lalamove quote failed (${response.status}).`);
+  return body;
+}
+
+// In-house pricing path (base fee + rate/km + toll) - split out of runDeliveryEstimate so it can
+// sit alongside runDeliveryEstimateLalamove below, same split as deliveryQuote.js's
+// runInHouseQuote/runLalamoveQuote.
+async function runDeliveryEstimateInHouse(from, to) {
+  if (deliveryEstimateBaseFee == null || deliveryEstimateRatePerKm == null) {
+    throw new Error('Delivery pricing isn\'t configured yet - please contact us directly for a delivery quote.');
+  }
+
+  const origin = { lat: from.lat, lng: from.lng };
+  const destination = { lat: to.lat, lng: to.lng };
+
+  const [{ distanceMeters, distanceText, durationText }, toll] = await Promise.all([
+    getDeliveryEstimateDrivingDistance(origin, destination),
+    resolveDeliveryEstimateTollFee(origin, destination)
+  ]);
+
+  const distanceKm = distanceMeters / 1000;
+  const price = deliveryEstimateBaseFee + deliveryEstimateRatePerKm * distanceKm + toll.amount;
+
+  document.getElementById('deliveryEstimateDistance').textContent = distanceText;
+  document.getElementById('deliveryEstimateDuration').textContent = durationText;
+  document.getElementById('deliveryEstimatePrice').textContent = formatDeliveryEstimateCurrency(price);
+
+  let tollPart = '';
+  if (toll.amount > 0) {
+    tollPart = ` + ${formatDeliveryEstimateCurrency(toll.amount)} toll fee`;
+  } else if (toll.detected === false) {
+    tollPart = ' (no toll road detected on this route)';
+  }
+  document.getElementById('deliveryEstimateBreakdown').textContent =
+    `${formatDeliveryEstimateCurrency(deliveryEstimateBaseFee)} base fee + ${formatDeliveryEstimateCurrency(deliveryEstimateRatePerKm)}/km x ${distanceKm.toFixed(2)} km${tollPart}, from ${from.label} to your address.`;
+}
+
+// Lalamove pricing path - calls their real Quotation API (via the signing proxy) instead of the
+// in-house formula. Quote-only: unlike deliveryQuote.js, there is no Book Delivery here - this
+// mode never asks for sender/recipient contact details, so nothing here is bookable as-is.
+async function runDeliveryEstimateLalamove(from, to) {
+  const serviceType = document.getElementById('deliveryEstimateVehicleTypeSelect').value || undefined;
+  const quote = await fetchDeliveryEstimateLalamoveQuote(
+    { lat: from.lat, lng: from.lng, address: from.label },
+    { lat: to.lat, lng: to.lng, address: to.label },
+    serviceType
+  );
+
+  const distanceKm = quote.distanceMeters != null ? quote.distanceMeters / 1000 : null;
+
+  document.getElementById('deliveryEstimateDistance').textContent = distanceKm != null ? `${distanceKm.toFixed(2)} km` : '-';
+  document.getElementById('deliveryEstimateDuration').textContent = 'N/A (Lalamove)';
+  document.getElementById('deliveryEstimatePrice').textContent = quote.total != null
+    ? formatDeliveryEstimateCurrency(quote.total)
+    : '-';
+
+  document.getElementById('deliveryEstimateBreakdown').textContent =
+    `Lalamove ${quote.isSandbox ? 'test/SANDBOX price (not real pricing yet)' : 'quote'} - ${quote.serviceType}, from ${from.label} to your address.`;
+}
+
+async function runDeliveryEstimate() {
+  const errorEl = document.getElementById('deliveryEstimateError');
+  const loadingEl = document.getElementById('deliveryEstimateLoading');
+  const resultEl = document.getElementById('deliveryEstimateResult');
+  const getBtn = document.getElementById('deliveryEstimateGetBtn');
+  errorEl.classList.add('hidden');
+  resultEl.classList.add('hidden');
+
+  const originKey = document.getElementById('deliveryEstimateOriginSelect').value;
+  if (!originKey) {
+    errorEl.textContent = 'Pick which branch you\'re ordering from.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  getBtn.disabled = true;
+  loadingEl.classList.remove('hidden');
+
+  try {
+    await loadDeliveryEstimateSettings();
+
+    const [from, to] = await Promise.all([
+      resolveDeliveryEstimateOrigin(originKey),
+      resolveDeliveryEstimateDestination()
+    ]);
+
+    if (deliveryEstimateMethod === 'lalamove') {
+      await runDeliveryEstimateLalamove(from, to);
+    } else {
+      await runDeliveryEstimateInHouse(from, to);
+    }
+
+    resultEl.classList.remove('hidden');
+    await setDeliveryEstimateFromMarker(from);
+    await setDeliveryEstimateToMarker(to);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  } finally {
+    getBtn.disabled = false;
+    loadingEl.classList.add('hidden');
   }
 }
 
@@ -1125,14 +2189,115 @@ async function loadCompanyLogo() {
   wireLocationToggle();
   wireFulfillmentToggle();
   setupCustomCanvas();
+  // Clones the Payment & Release policy (see paymentPolicyTemplate) into both order-summary
+  // screens - Step 3 (Standard flow cart review) and custom-checkout (Customize flow) - so it's
+  // no longer a separate wizard step the customer has to click through.
+  const policyTemplate = document.getElementById('paymentPolicyTemplate');
+  document.getElementById('cartPaymentPolicyBox').appendChild(policyTemplate.content.cloneNode(true));
+  document.getElementById('checkoutPaymentPolicyBox').appendChild(policyTemplate.content.cloneNode(true));
   goToStep(0);
 
   document.getElementById('modeStandardBtn').addEventListener('click', () => goToStep(1));
-  document.getElementById('modeCustomizeBtn').addEventListener('click', () => goToStep('custom-dims'));
+  document.getElementById('modeCustomizeBtn').addEventListener('click', () => goToStep('customize-choice'));
+  document.getElementById('customizeChoiceBackBtn').addEventListener('click', () => goToStep(0));
+  document.getElementById('customizeChoiceAquariumBtn').addEventListener('click', () => {
+    customBuilderType = 'aquarium';
+    resetCustomAquariumBuilder();
+    goToStep('custom-dims');
+  });
+  document.getElementById('customizeChoiceStandBtn').addEventListener('click', () => {
+    customBuilderType = 'stand';
+    resetCustomStandBuilder();
+    goToStep('custom-stand');
+  });
+  document.getElementById('customizeChoiceFiltrationBtn').addEventListener('click', () => {
+    customBuilderType = 'filtration';
+    resetStandaloneFiltrationBuilder();
+    goToStep('custom-filtration-standalone');
+  });
+  document.getElementById('modeDeliveryBtn').addEventListener('click', () => {
+    deliveryEstimateReturnStep = 0;
+    document.getElementById('deliveryEstimateStartOrderBtn').classList.remove('hidden');
+    goToStep('delivery-estimate');
+    // Show the map immediately on open, per "show the map already upon loading, same
+    // functionality [as] delivery [Quote]" - plots the default-selected origin branch right away
+    // rather than waiting for Get Estimate.
+    showDeliveryEstimateOriginPreview();
+  });
   document.getElementById('backToModeBtn').addEventListener('click', () => goToStep(0));
   document.getElementById('backToCategoriesBtn').addEventListener('click', () => goToStep(1));
 
-  document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep(0));
+  // "Not sure of the delivery fee? Estimate it here" link on Step 4 - lets the customer check the
+  // fee without abandoning the order already in progress. Carries over whatever they've already
+  // filled in (branch, delivery address) and returns to Step 4 (not the mode picker) on Back.
+  // Start an Order is hidden here since starting a new order would abandon the one they're on.
+  document.getElementById('detailsEstimateDeliveryLink').addEventListener('click', (event) => {
+    event.preventDefault();
+    deliveryEstimateReturnStep = 4;
+    document.getElementById('deliveryEstimateStartOrderBtn').classList.add('hidden');
+    document.getElementById('deliveryEstimateOriginSelect').value = selectedLocation;
+    const address = document.getElementById('deliveryAddress').value.trim();
+    if (address) document.getElementById('deliveryEstimateDestInput').value = address;
+    goToStep('delivery-estimate');
+    showDeliveryEstimateOriginPreview();
+  });
+
+  document.getElementById('deliveryEstimateBackBtn').addEventListener('click', () => goToStep(deliveryEstimateReturnStep));
+  document.getElementById('deliveryEstimateGetBtn').addEventListener('click', runDeliveryEstimate);
+  document.getElementById('deliveryEstimateStartOrderBtn').addEventListener('click', () => goToStep(1));
+  // Picking a different branch is itself a request to re-preview that location on the map.
+  document.getElementById('deliveryEstimateOriginSelect').addEventListener('change', showDeliveryEstimateOriginPreview);
+  wireDeliveryEstimatePlacesAutocomplete();
+
+  // RSPetStop Delivery vs Lalamove toggle - same two-option touch UI as the Pickup/Delivery
+  // fulfillment toggle already used in Step 4, per direct request to let the customer choose.
+  const deliveryEstimateMethodInhouseBtn = document.getElementById('deliveryEstimateMethodInhouse');
+  const deliveryEstimateMethodLalamoveBtn = document.getElementById('deliveryEstimateMethodLalamove');
+  const deliveryEstimateVehicleTypeRow = document.getElementById('deliveryEstimateVehicleTypeRow');
+  const deliveryEstimateInhouseNote = document.getElementById('deliveryEstimateInhouseNote');
+  const deliveryEstimateLalamoveDisclaimer = document.getElementById('deliveryEstimateLalamoveDisclaimer');
+
+  async function selectDeliveryEstimateMethod(method) {
+    deliveryEstimateMethod = method;
+    deliveryEstimateMethodInhouseBtn.classList.toggle('selected', method === 'inhouse');
+    deliveryEstimateMethodLalamoveBtn.classList.toggle('selected', method === 'lalamove');
+    deliveryEstimateVehicleTypeRow.classList.toggle('hidden', method !== 'lalamove');
+    deliveryEstimateInhouseNote.classList.toggle('hidden', method !== 'inhouse');
+    deliveryEstimateLalamoveDisclaimer.classList.toggle('hidden', method !== 'lalamove');
+    if (method === 'lalamove') await loadDeliveryEstimateVehicleTypes();
+
+    // Per "if we switch from RSPetStop Delivery and Lalamove please auto compute estimate" - only
+    // once a delivery address has actually been entered, same guard runDeliveryEstimate's own
+    // validation would otherwise raise as an error on an empty first visit to this mode. Awaiting
+    // loadDeliveryEstimateVehicleTypes above first means a switch to Lalamove re-quotes with the
+    // real default vehicle type already selected, not a blank one.
+    const destInput = document.getElementById('deliveryEstimateDestInput');
+    if (destInput.value.trim()) {
+      runDeliveryEstimate();
+    }
+  }
+
+  deliveryEstimateMethodInhouseBtn.addEventListener('click', () => selectDeliveryEstimateMethod('inhouse'));
+  deliveryEstimateMethodLalamoveBtn.addEventListener('click', () => selectDeliveryEstimateMethod('lalamove'));
+
+  // Live-updates the aquarium preview canvas + glass-thickness safety check on the Dimensions
+  // step itself as the customer types, same as the Options step's canvas already does via
+  // updateCustomPriceEstimate() -> drawCustomAquarium(). applyCustomDimsGlassSafety() runs first
+  // so a corrected glass thickness is reflected in the price/preview right after it.
+  ['customLength', 'customWidth', 'customHeight'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => {
+      applyCustomDimsGlassSafety();
+      updateCustomPriceEstimate();
+    });
+  });
+  ['customUnit', 'customGlass'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', () => {
+      applyCustomDimsGlassSafety();
+      updateCustomPriceEstimate();
+    });
+  });
+
+  document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep('customize-choice'));
   document.getElementById('customDimsNextBtn').addEventListener('click', async () => {
     const errorMsg = document.getElementById('customDimsErrorMsg');
     if (!document.getElementById('customUnit').value) {
@@ -1142,6 +2307,18 @@ async function loadCompanyLogo() {
     }
     if (!document.getElementById('customSealant').value) {
       errorMsg.textContent = 'Please select a sealant color.';
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+    // Length/Width/Height default to 0 (not a real size), so this can't be skipped by clicking
+    // Next without touching them - the glass safety check just below would otherwise pass
+    // trivially at 0x0x0 and let a customer through to Options with no real dimensions at all.
+    if (
+      !(Number(document.getElementById('customLength').value) > 0) ||
+      !(Number(document.getElementById('customWidth').value) > 0) ||
+      !(Number(document.getElementById('customHeight').value) > 0)
+    ) {
+      errorMsg.textContent = 'Please enter valid positive dimensions for your aquarium.';
       errorMsg.classList.remove('hidden');
       return;
     }
@@ -1203,6 +2380,11 @@ async function loadCompanyLogo() {
       'No, Skip'
     );
     if (filtrationEnabled) {
+      // First visit to this build only - fills in the Undersump/Overhead Sump default dimensions
+      // (see applySumpTypeDefaults) so the customer never sees a 0-size sump, then reflects that
+      // in the price shown as soon as the step appears.
+      applySumpTypeDefaults();
+      await updateCustomPriceEstimate();
       goToStep('custom-filtration');
     } else {
       await renderCustomCheckout();
@@ -1211,17 +2393,120 @@ async function loadCompanyLogo() {
   });
 
   document.getElementById('customFiltrationBackBtn').addEventListener('click', () => goToStep('custom-options'));
-  // Next step after Filtration isn't defined yet - placeholder until it is.
-  document.getElementById('customFiltrationNextBtn').addEventListener('click', () => alert('More steps coming soon.'));
+  document.getElementById('customFiltrationNextBtn').addEventListener('click', async () => {
+    await renderCustomCheckout();
+    goToStep('custom-checkout');
+  });
 
-  document.getElementById('customCheckoutBackBtn').addEventListener('click', () => goToStep('custom-options'));
+  document.getElementById('sumpType').addEventListener('change', () => {
+    applySumpTypeDefaults();
+    updateCustomPriceEstimate();
+  });
+  ['sumpLength', 'sumpWidth', 'sumpHeight'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => updateCustomPriceEstimate());
+  });
+  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover', 'sumpSubmersibleLight', 'sumpSubmersiblePump']
+    .forEach((id) => document.getElementById(id).addEventListener('change', () => updateCustomPriceEstimate()));
+
+  // ---- Stand sub-flow navigation/wiring ----
+  document.getElementById('standTubular1x1').addEventListener('click', () => { selectStandTubular('1x1'); updateCustomStandPriceEstimate(); });
+  document.getElementById('standTubular1_5x1_5').addEventListener('click', () => { selectStandTubular('1.5x1.5'); updateCustomStandPriceEstimate(); });
+  document.getElementById('standTubular2x2').addEventListener('click', () => { selectStandTubular('2x2'); updateCustomStandPriceEstimate(); });
+  document.getElementById('standSumpHolder').addEventListener('change', (event) => {
+    document.getElementById('standSumpWidthRow').classList.toggle('hidden', !event.target.checked);
+    updateCustomStandPriceEstimate();
+  });
+  ['standLength', 'standWidth', 'standHeight', 'standLayers', 'standSumpWidth'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => updateCustomStandPriceEstimate());
+  });
+  document.getElementById('standUnit').addEventListener('change', () => updateCustomStandPriceEstimate());
+  ['standStainless', 'standCabinet'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', () => updateCustomStandPriceEstimate());
+  });
+  document.getElementById('customStandBackBtn').addEventListener('click', () => goToStep('customize-choice'));
+  document.getElementById('customStandNextBtn').addEventListener('click', async () => {
+    const errorMsg = document.getElementById('customStandErrorMsg');
+    if (!document.getElementById('standUnit').value) {
+      errorMsg.textContent = 'Please select a unit of measure.';
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+    const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
+    if (!result.ok) {
+      errorMsg.textContent = result.error;
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+    errorMsg.classList.add('hidden');
+    await renderCustomCheckout();
+    goToStep('custom-checkout');
+  });
+
+  // ---- Standalone Filtration sub-flow navigation/wiring ----
+  document.getElementById('standaloneSumpType').addEventListener('change', () => {
+    applyStandaloneSumpTypeDefaults();
+    updateStandaloneFiltrationPriceEstimate();
+  });
+  document.getElementById('standaloneFiltrationUnit').addEventListener('change', () => {
+    applyStandaloneSumpTypeDefaults();
+    updateStandaloneFiltrationPriceEstimate();
+  });
+  ['standaloneSumpLength', 'standaloneSumpWidth', 'standaloneSumpHeight'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => updateStandaloneFiltrationPriceEstimate());
+  });
+  document.getElementById('standaloneFiltrationGlass').addEventListener('change', () => updateStandaloneFiltrationPriceEstimate());
+  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover', 'standaloneSumpSubmersibleLight', 'standaloneSumpSubmersiblePump']
+    .forEach((id) => document.getElementById(id).addEventListener('change', () => updateStandaloneFiltrationPriceEstimate()));
+  document.getElementById('customStandaloneFiltrationBackBtn').addEventListener('click', () => goToStep('customize-choice'));
+  document.getElementById('customStandaloneFiltrationNextBtn').addEventListener('click', async () => {
+    const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
+    if (!document.getElementById('standaloneFiltrationUnit').value) {
+      errorMsg.textContent = 'Please select a unit of measure.';
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+    await ensureGlassPricingLoaded();
+    const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
+    if (!result.ok) {
+      errorMsg.textContent = result.error;
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+    errorMsg.classList.add('hidden');
+    await renderCustomCheckout();
+    goToStep('custom-checkout');
+  });
+
+  // Goes back to wherever checkout was actually reached from - branches by which Customize
+  // sub-flow (Aquarium/Stand/Filtration) built the pending line (see customBuilderType). For
+  // Aquarium: Filtration when the customer opted into it, Options directly when they skipped it
+  // (mirrors customOptionsNextBtn's own branch).
+  document.getElementById('customCheckoutBackBtn').addEventListener('click', () => {
+    if (customBuilderType === 'stand') {
+      goToStep('custom-stand');
+    } else if (customBuilderType === 'filtration') {
+      goToStep('custom-filtration-standalone');
+    } else {
+      goToStep(filtrationEnabled ? 'custom-filtration' : 'custom-options');
+    }
+  });
   document.getElementById('customCheckoutConfirmBtn').addEventListener('click', () => {
-    const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
-    cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-AQUARIUM');
-    cart.push(buildCustomAquariumCartLine(result));
+    if (customBuilderType === 'stand') {
+      const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
+      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-STAND');
+      cart.push(buildCustomStandCartLine(result));
+    } else if (customBuilderType === 'filtration') {
+      const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
+      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-FILTRATION');
+      cart.push(buildStandaloneFiltrationCartLine(result));
+    } else {
+      const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
+      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-AQUARIUM');
+      cart.push(buildCustomAquariumCartLine(result));
+    }
     saveCart();
     detailsBackTarget = 'custom-checkout';
-    goToStep('payment-policy');
+    goToStep(4);
   });
 
   document.getElementById('customLowIron').addEventListener('change', (event) => {
@@ -1262,14 +2547,17 @@ async function loadCompanyLogo() {
   document.getElementById('cartAddMoreBtn').addEventListener('click', () => goToStep(currentCategoryCode ? 2 : 1));
   document.getElementById('cartContinueBtn').addEventListener('click', () => {
     detailsBackTarget = 3;
-    goToStep('payment-policy');
+    goToStep(4);
   });
-  document.getElementById('paymentPolicyBackBtn').addEventListener('click', () => {
+  // Payment & Release policy is no longer its own step (merged into Step 3 / Order Summary, see
+  // paymentPolicyTemplate) - Back from Details returns straight to whichever summary screen led
+  // here, same targets detailsBackTarget already tracked for the old payment-policy step.
+  document.getElementById('detailsBackBtn').addEventListener('click', () => {
     if (detailsBackTarget === 3) renderCart();
     goToStep(detailsBackTarget);
   });
-  document.getElementById('paymentPolicyContinueBtn').addEventListener('click', () => goToStep(4));
-  document.getElementById('detailsBackBtn').addEventListener('click', () => goToStep('payment-policy'));
   document.getElementById('detailsForm').addEventListener('submit', submitOrder);
   document.getElementById('startNewOrderBtn').addEventListener('click', resetWizard);
+  document.getElementById('exitOrderNowBtn').addEventListener('click', exitOrderNow);
+  document.getElementById('debugSendConfirmationBtn').addEventListener('click', debugSendConfirmationMessage);
 })();

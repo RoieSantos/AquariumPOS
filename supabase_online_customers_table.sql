@@ -182,7 +182,7 @@ set search_path = public, extensions
 as $$
 declare
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_page_size int := least(greatest(coalesce(p_page_size, 200), 1), 1000);
   v_max_pages int := least(greatest(coalesce(p_max_pages, 200), 1), 500);

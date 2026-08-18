@@ -20,9 +20,6 @@
       <p class="muted">Pick what you need, and we'll get back to you to confirm your order.</p>
     </div>
 
-    <!-- TEMPORARY - for testing the Messenger PSID hand-off only. Remove once confirmed working. -->
-    <div id="psidDebugBanner" class="psid-debug-banner"></div>
-
     <div class="wizard-card">
       <div class="wizard-progress" id="wizardProgress">
         <div class="wizard-progress-step" data-step="1"></div>
@@ -42,8 +39,97 @@
         </div>
         <div class="category-card" id="modeCustomizeBtn">
           <span class="category-icon">📐</span>
-          Customize<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom aquarium quote</span>
+          Customize<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom aquarium, stand, or filtration setup</span>
         </div>
+        <div class="category-card" id="modeDeliveryBtn">
+          <span class="category-icon">🚚</span>
+          Estimate Delivery<br /><span class="muted" style="font-weight:400; font-size:12px;">Get a delivery price estimate</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Customize sub-choice: what to build a custom quote for -->
+    <section class="wizard-step" data-step="customize-choice">
+      <button type="button" class="btn btn-secondary btn-sm" id="customizeChoiceBackBtn">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">What would you like to customize?</h2>
+      <p class="muted">Choose what you'd like us to build a quote for.</p>
+      <div class="category-grid">
+        <div class="category-card" id="customizeChoiceAquariumBtn">
+          <span class="category-icon">🐠</span>
+          Aquarium<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom aquarium quote</span>
+        </div>
+        <div class="category-card" id="customizeChoiceStandBtn">
+          <span class="category-icon">🪑</span>
+          Stand<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom stand quote</span>
+        </div>
+        <div class="category-card" id="customizeChoiceFiltrationBtn">
+          <span class="category-icon">🌀</span>
+          Filtration<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom filtration/sump quote</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Estimate Delivery path - self-service delivery price estimate, no login/order required.
+         Mirrors the staff-only Delivery Quote page's in-house pricing formula (base fee + rate/km
+         + toll), just asking for a branch (origin) + the customer's own delivery address
+         (destination) - see js/orderNow.js's runDeliveryEstimate. -->
+    <section class="wizard-step" data-step="delivery-estimate">
+      <button type="button" class="btn btn-secondary btn-sm" id="deliveryEstimateBackBtn">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Estimate Delivery</h2>
+      <p class="muted">Pick the branch you're ordering from and where you'd like it delivered - we'll estimate the price.</p>
+
+      <div class="form-row">
+        <label>Delivery Method *</label>
+        <div class="fulfillment-toggle">
+          <div class="fulfillment-option selected" data-value="inhouse" id="deliveryEstimateMethodInhouse">🚚 RSPetStop Delivery</div>
+          <div class="fulfillment-option" data-value="lalamove" id="deliveryEstimateMethodLalamove">📦 Lalamove</div>
+        </div>
+      </div>
+      <div class="form-row hidden" id="deliveryEstimateVehicleTypeRow">
+        <label for="deliveryEstimateVehicleTypeSelect">Vehicle Type</label>
+        <select id="deliveryEstimateVehicleTypeSelect">
+          <option value="">Loading vehicle types...</option>
+        </select>
+      </div>
+      <div class="rule-notice-positive" id="deliveryEstimateInhouseNote">✅ With RSPetStop Delivery, you're fully covered - any damage to your order in transit is on us, not you. Delivery day/time will be scheduled and confirmed with you in advance.</div>
+      <div class="rule-notice hidden" id="deliveryEstimateLalamoveDisclaimer">Note: price may vary depending on day of delivery, weather, tolls, and other delivery factors. RSPetStop has no accountability for Lalamove deliveries - this is only an estimated/projected price. You may talk to Lalamove directly if you have further questions.</div>
+
+      <div class="form-row">
+        <label for="deliveryEstimateOriginSelect">Order From *</label>
+        <select id="deliveryEstimateOriginSelect">
+          <option value="Amaya">📍 Amaya - Antero Soriano Highway, Amaya Dos, Tanza, Cavite</option>
+          <option value="GMA">📍 GMA - Blk 2 Lot 53 Brgy. Granados, General Mariano Alvarez, Cavite</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="deliveryEstimateDestInput">Delivery Address *</label>
+        <input type="text" id="deliveryEstimateDestInput" placeholder="Start typing your address..." autocomplete="off" />
+      </div>
+
+      <div id="deliveryEstimateMap" class="hidden"></div>
+
+      <button type="button" class="btn btn-primary" id="deliveryEstimateGetBtn" style="width:100%; margin-top:14px;">Get Estimate</button>
+      <div id="deliveryEstimateError" class="error-text hidden" style="margin-top:8px;"></div>
+      <div id="deliveryEstimateLoading" class="muted hidden" style="margin-top:8px;">Calculating...</div>
+
+      <div class="card hidden" id="deliveryEstimateResult" style="margin-top:16px;">
+        <div class="stat-card-grid">
+          <div class="stat-card">
+            <div class="stat-label">Distance</div>
+            <div class="stat-value" id="deliveryEstimateDistance" style="font-size:18px;">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Drive Time</div>
+            <div class="stat-value" id="deliveryEstimateDuration" style="font-size:18px;">-</div>
+          </div>
+          <div class="stat-card stat-confirmed">
+            <div class="stat-label">Estimated Delivery Fee</div>
+            <div class="stat-value" id="deliveryEstimatePrice">-</div>
+          </div>
+        </div>
+        <p class="muted" id="deliveryEstimateBreakdown" style="margin-top:10px;"></p>
+        <p class="muted" style="margin-top:10px;">This is an estimate only - your final delivery fee will be confirmed when you place your order.</p>
+        <button type="button" class="btn btn-success" id="deliveryEstimateStartOrderBtn" style="width:100%; margin-top:6px;">🛒 Start an Order</button>
       </div>
     </section>
 
@@ -61,55 +147,147 @@
     <section class="wizard-step" data-step="custom-dims">
       <h2 class="wizard-step-title">Aquarium Dimensions</h2>
       <p class="muted">Tell us the size and glass specs for your custom aquarium.</p>
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="customLength">Length</label>
-          <input type="number" id="customLength" value="24" step="0.01" min="0" />
-        </div>
-        <div class="form-row">
-          <label for="customWidth">Width</label>
-          <input type="number" id="customWidth" value="12" step="0.01" min="0" />
-        </div>
-        <div class="form-row">
-          <label for="customHeight">Height</label>
-          <input type="number" id="customHeight" value="12" step="0.01" min="0" />
-        </div>
-        <div class="form-row">
-          <label for="customUnit">Unit of Measure *</label>
-          <select id="customUnit">
-            <option value="">-- select --</option>
-            <option>Inches</option>
-            <option>CM</option>
-            <option>Ft</option>
-            <option>MM</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="customGlass">Glass Thickness</label>
-          <select id="customGlass">
-            <option>3mm</option>
-            <option selected>6mm</option>
-            <option>10mm</option>
-            <option>12mm</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="customSealant">Sealant Color *</label>
-          <select id="customSealant">
-            <option value="">-- select --</option>
-            <option>Clear</option>
-            <option>Black</option>
-          </select>
-          <div class="field-example-links">
-            <a href="icons/Sample%20clear%20sealant.jpg" target="_blank" rel="noopener" class="option-example-link">(see Clear sample)</a>
-            <a href="icons/Sample%20Black%20Sealant.jpg" target="_blank" rel="noopener" class="option-example-link">(see Black sample)</a>
+      <div class="aquarium-canvas-wrap">
+        <canvas id="customAquariumCanvasDims" width="720" height="260"></canvas>
+      </div>
+      <div class="card custom-price-card" id="customPriceEstimateDims">Enter your aquarium details to see a price estimate.</div>
+      <p class="muted custom-price-disclaimer">Prices for customized aquariums may differ from standard tank prices.</p>
+      <div class="form-group">
+        <h3 class="form-group-title">Dimensions</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="customLength">Length</label>
+            <input type="number" id="customLength" value="0" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="customWidth">Width</label>
+            <input type="number" id="customWidth" value="0" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="customHeight">Height</label>
+            <input type="number" id="customHeight" value="0" step="0.01" min="0" />
           </div>
         </div>
       </div>
+      <div class="form-group">
+        <h3 class="form-group-title">Preference</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="customQty">Quantity</label>
+            <input type="number" id="customQty" value="1" step="1" min="1" />
+          </div>
+          <div class="form-row">
+            <label for="customUnit">Unit of Measure *</label>
+            <select id="customUnit">
+              <option value="">-- select --</option>
+              <option>Inches</option>
+              <option>CM</option>
+              <option>Ft</option>
+              <option>MM</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="customGlass">Glass Thickness</label>
+            <select id="customGlass">
+              <option>3mm</option>
+              <option selected>6mm</option>
+              <option>10mm</option>
+              <option>12mm</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="customSealant">Sealant Color *</label>
+            <select id="customSealant">
+              <option value="">-- select --</option>
+              <option>Clear</option>
+              <option>Black</option>
+            </select>
+            <div class="field-example-links">
+              <a href="icons/Sample%20clear%20sealant.jpg" target="_blank" rel="noopener" class="option-example-link">(see Clear sample)</a>
+              <a href="icons/Sample%20Black%20Sealant.jpg" target="_blank" rel="noopener" class="option-example-link">(see Black sample)</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="customDimsGlassNotice" class="rule-notice hidden"></div>
       <div id="customDimsErrorMsg" class="error-text hidden"></div>
       <div class="wizard-nav-buttons">
         <button type="button" class="btn btn-secondary" id="customDimsBackBtn">&larr; Back</button>
         <button type="button" class="btn btn-primary" id="customDimsNextBtn">Next &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Customize path, Stand sub-flow (reached directly from the customize-choice picker, no
+         aquarium involved) - mirrors the desktop app's Stand Price Calculator fields/pricing
+         (StandPriceCalculatorForm.cs) so quotes match what staff would compute in-store. -->
+    <section class="wizard-step" data-step="custom-stand">
+      <h2 class="wizard-step-title">Stand Dimensions</h2>
+      <p class="muted">Tell us the size and build specs for your custom stand.</p>
+      <div class="card custom-price-card" id="customPriceEstimateStand">Enter your stand details to see a price estimate.</div>
+      <p class="muted custom-price-disclaimer">Prices for customized stands may differ from standard stand prices.</p>
+      <div class="form-group">
+        <h3 class="form-group-title">Dimensions</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="standLength">Length</label>
+            <input type="number" id="standLength" value="0" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="standWidth">Width</label>
+            <input type="number" id="standWidth" value="0" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="standHeight">Height</label>
+            <input type="number" id="standHeight" value="0" step="0.01" min="0" />
+            <div class="muted" style="font-size:12px; margin-top:4px;">Auto-filled based on layers - you can override it.</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <h3 class="form-group-title">Preference</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="standQty">Quantity</label>
+            <input type="number" id="standQty" value="1" step="1" min="1" />
+          </div>
+          <div class="form-row">
+            <label for="standUnit">Unit of Measure *</label>
+            <select id="standUnit">
+              <option value="">-- select --</option>
+              <option>Inches</option>
+              <option>CM</option>
+              <option>Ft</option>
+              <option>MM</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="standLayers">No. of Layers</label>
+            <input type="number" id="standLayers" value="2" step="1" min="2" />
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <h3 class="form-group-title">Tubular</h3>
+        <div class="fulfillment-toggle">
+          <div class="fulfillment-option selected" data-value="1x1" id="standTubular1x1">1 x 1</div>
+          <div class="fulfillment-option" data-value="1.5x1.5" id="standTubular1_5x1_5">1 1/2 x 1 1/2</div>
+          <div class="fulfillment-option" data-value="2x2" id="standTubular2x2">2 x 2</div>
+        </div>
+      </div>
+      <div class="checkbox-stack">
+        <label class="checkbox-row"><input type="checkbox" id="standStainless" /> Stainless</label>
+        <label class="checkbox-row"><input type="checkbox" id="standCabinet" /> Cabinet</label>
+        <label class="checkbox-row"><input type="checkbox" id="standSumpHolder" /> Sump Holder</label>
+      </div>
+      <div class="form-row hidden" id="standSumpWidthRow">
+        <label for="standSumpWidth">Sump Width</label>
+        <input type="number" id="standSumpWidth" value="0" step="0.01" min="0" />
+      </div>
+      <div id="customStandNotice" class="rule-notice hidden"></div>
+      <div id="customStandErrorMsg" class="error-text hidden"></div>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="customStandBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="customStandNextBtn">Next &rarr;</button>
       </div>
     </section>
 
@@ -122,6 +300,7 @@
         <canvas id="customAquariumCanvas" width="720" height="260"></canvas>
       </div>
       <div class="card custom-price-card" id="customPriceEstimate">Calculating price...</div>
+      <p class="muted custom-price-disclaimer">Prices for customized aquariums may differ from standard tank prices.</p>
       <div class="checkbox-stack">
         <div class="checkbox-row">
           <label class="checkbox-row-label"><input type="checkbox" id="customAio" /> AIO</label>
@@ -165,7 +344,7 @@
           </div>
         </div>
         <div class="delivery-receipt-section">
-          <div class="delivery-receipt-title">CUSTOM AQUARIUM ORDER SUMMARY</div>
+          <div class="delivery-receipt-title" id="checkoutTitle">CUSTOM AQUARIUM ORDER SUMMARY</div>
         </div>
         <div class="delivery-receipt-section">
           <div class="table-wrap">
@@ -188,7 +367,8 @@
           <p class="muted" style="margin:0;">Prices are estimates - we'll confirm final pricing and availability once you submit your contact details on the next step.</p>
         </div>
       </div>
-      <p class="confirm-order-note">By clicking <strong>Confirm Order</strong>, you confirm that the aquarium details and price above are correct. This confirmation will serve as the final basis of your order.</p>
+      <div id="checkoutPaymentPolicyBox"></div>
+      <p class="confirm-order-note">By clicking <strong>Confirm Order</strong>, you confirm that the details and price above are correct, and acknowledge the payment &amp; release policy above. This confirmation will serve as the final basis of your order.</p>
       <div class="wizard-nav-buttons">
         <button type="button" class="btn btn-secondary" id="customCheckoutBackBtn">&larr; Back</button>
         <button type="button" class="btn btn-primary" id="customCheckoutConfirmBtn">Confirm Order &rarr;</button>
@@ -199,10 +379,119 @@
          post-Options prompt asking whether they want Filtration added) -->
     <section class="wizard-step" data-step="custom-filtration">
       <h2 class="wizard-step-title">Filtration</h2>
-      <p class="muted">More filtration options coming soon.</p>
+      <p class="muted">Tell us about the filtration sump you'd like for your custom aquarium.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="sumpType">Sump Type</label>
+          <select id="sumpType">
+            <option>Undersump</option>
+            <option>Overhead Sump</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="sumpLength">Sump Length</label>
+          <input type="number" id="sumpLength" value="18" step="0.01" min="0" />
+        </div>
+        <div class="form-row">
+          <label for="sumpWidth">Sump Width</label>
+          <input type="number" id="sumpWidth" value="18" step="0.01" min="0" />
+        </div>
+        <div class="form-row">
+          <label for="sumpHeight">Sump Height</label>
+          <input type="number" id="sumpHeight" value="18" step="0.01" min="0" />
+        </div>
+      </div>
+      <p class="muted" style="margin-top:-8px;">Sump dimensions use the same unit of measure as your aquarium.</p>
+      <div class="checkbox-stack">
+        <label class="checkbox-row"><input type="checkbox" id="sumpPiping" /> Set of Piping</label>
+        <label class="checkbox-row"><input type="checkbox" id="sumpOverflowBox" /> Overflow Box</label>
+        <label class="checkbox-row"><input type="checkbox" id="sumpFilterMedias" /> Filter Medias</label>
+        <label class="checkbox-row"><input type="checkbox" id="sumpAllumTopCover" /> Allum Top Cover</label>
+        <label class="checkbox-row"><input type="checkbox" id="sumpSubmersibleLight" /> Submersible Light</label>
+        <label class="checkbox-row"><input type="checkbox" id="sumpSubmersiblePump" /> Submersible Pump</label>
+      </div>
+      <p class="muted" style="margin-top:10px;">Light/Pump pricing will be confirmed with you separately once we know your preferred model.</p>
+      <div class="card custom-price-card" id="customPriceEstimateFiltration">Calculating price...</div>
+      <p class="muted custom-price-disclaimer">Prices for customized aquariums may differ from standard tank prices.</p>
       <div class="wizard-nav-buttons">
         <button type="button" class="btn btn-secondary" id="customFiltrationBackBtn">&larr; Back</button>
         <button type="button" class="btn btn-primary" id="customFiltrationNextBtn">Next &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Customize path, standalone Filtration sub-flow (reached directly from the customize-choice
+         picker, no aquarium involved) - own Unit/Glass Thickness fields since the embedded
+         Filtration step above borrows those from the aquarium flow it's attached to. -->
+    <section class="wizard-step" data-step="custom-filtration-standalone">
+      <h2 class="wizard-step-title">Filtration / Sump</h2>
+      <p class="muted">Tell us about the filtration sump you'd like built.</p>
+      <div class="card custom-price-card" id="customPriceEstimateStandaloneFiltration">Enter your sump details to see a price estimate.</div>
+      <p class="muted custom-price-disclaimer">Prices for customized filtration/sump builds may differ from standard prices.</p>
+      <div class="form-group">
+        <h3 class="form-group-title">Dimensions</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="standaloneSumpLength">Sump Length</label>
+            <input type="number" id="standaloneSumpLength" value="18" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="standaloneSumpWidth">Sump Width</label>
+            <input type="number" id="standaloneSumpWidth" value="18" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="standaloneSumpHeight">Sump Height</label>
+            <input type="number" id="standaloneSumpHeight" value="18" step="0.01" min="0" />
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <h3 class="form-group-title">Preference</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="standaloneFiltrationQty">Quantity</label>
+            <input type="number" id="standaloneFiltrationQty" value="1" step="1" min="1" />
+          </div>
+          <div class="form-row">
+            <label for="standaloneFiltrationUnit">Unit of Measure *</label>
+            <select id="standaloneFiltrationUnit">
+              <option value="">-- select --</option>
+              <option>Inches</option>
+              <option>CM</option>
+              <option>Ft</option>
+              <option>MM</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="standaloneSumpType">Sump Type</label>
+            <select id="standaloneSumpType">
+              <option>Undersump</option>
+              <option>Overhead Sump</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="standaloneFiltrationGlass">Glass Thickness</label>
+            <select id="standaloneFiltrationGlass">
+              <option>3mm</option>
+              <option selected>6mm</option>
+              <option>10mm</option>
+              <option>12mm</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="checkbox-stack">
+        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpPiping" /> Set of Piping</label>
+        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpOverflowBox" /> Overflow Box</label>
+        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpFilterMedias" /> Filter Medias</label>
+        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpAllumTopCover" /> Allum Top Cover</label>
+        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpSubmersibleLight" /> Submersible Light</label>
+        <label class="checkbox-row"><input type="checkbox" id="standaloneSumpSubmersiblePump" /> Submersible Pump</label>
+      </div>
+      <p class="muted" style="margin-top:10px;">Light/Pump pricing will be confirmed with you separately once we know your preferred model.</p>
+      <div id="customStandaloneFiltrationErrorMsg" class="error-text hidden"></div>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="customStandaloneFiltrationBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="customStandaloneFiltrationNextBtn">Next &rarr;</button>
       </div>
     </section>
 
@@ -226,16 +515,20 @@
         <span id="cartTotalValue">₱0.00</span>
       </div>
       <p class="muted" style="margin-top:10px;">Prices are estimates - we'll confirm final pricing and availability when we contact you.</p>
+      <div id="cartPaymentPolicyBox"></div>
+      <p class="confirm-order-note">By clicking <strong>Continue</strong>, you acknowledge the payment &amp; release policy above.</p>
       <div class="wizard-nav-buttons">
         <button type="button" class="btn btn-secondary" id="cartAddMoreBtn">&larr; Add More Items</button>
         <button type="button" class="btn btn-primary" id="cartContinueBtn">Continue &rarr;</button>
       </div>
     </section>
 
-    <!-- Payment & Release policy - shown right after the customer confirms their order
-         (custom-checkout's Confirm Order button, or the standard cart's Continue button)
-         and before we collect contact details. Shared by both flows. -->
-    <section class="wizard-step" data-step="payment-policy">
+    <!-- Payment & Release policy - reusable content only (no longer its own wizard step, per
+         direct request to save a step: "merge the policy and the order summary"). Cloned into
+         #cartPaymentPolicyBox (Step 3) and #checkoutPaymentPolicyBox (custom-checkout) at init -
+         see the init() IIFE in js/orderNow.js - so both order-summary screens show it directly
+         above their own Continue/Confirm Order button instead of routing through a separate step. -->
+    <template id="paymentPolicyTemplate">
       <div class="payment-policy card">
         <h3 class="payment-policy-title">🛍️ RSPetstop Payment &amp; Release Policy</h3>
         <p class="muted" style="margin-top:-6px;">We follow a 50/50 payment structure for all orders, including custom setups and stocked items.</p>
@@ -289,11 +582,7 @@
         <h4 class="payment-policy-subhead">🚫 Cancellation &amp; Refunds</h4>
         <p class="muted" style="margin-bottom:0;">Down payments are non-refundable once processing begins.</p>
       </div>
-      <div class="wizard-nav-buttons">
-        <button type="button" class="btn btn-secondary" id="paymentPolicyBackBtn">&larr; Back</button>
-        <button type="button" class="btn btn-primary" id="paymentPolicyContinueBtn">I Understand, Continue &rarr;</button>
-      </div>
-    </section>
+    </template>
 
     <!-- Step 4: customer details -->
     <section class="wizard-step" data-step="4">
@@ -335,6 +624,7 @@
         <div class="form-row hidden" id="deliveryAddressRow">
           <label for="deliveryAddress">Delivery Address *</label>
           <textarea id="deliveryAddress" rows="2"></textarea>
+          <a href="#" id="detailsEstimateDeliveryLink" class="option-example-link" style="display:inline-block; margin-top:6px;">Not sure of the delivery fee? Estimate it here</a>
         </div>
         <div class="form-row">
           <label for="orderNotes">Notes / Special Requests</label>
@@ -342,7 +632,7 @@
         </div>
         <div id="submitErrorMsg" class="error-text hidden"></div>
         <div class="wizard-nav-buttons">
-          <button type="button" class="btn btn-secondary" id="detailsBackBtn">&larr; Back to Cart</button>
+          <button type="button" class="btn btn-secondary" id="detailsBackBtn">&larr; Back</button>
           <button type="submit" class="btn btn-primary" id="submitOrderBtn">Submit Order Request</button>
         </div>
       </form>
@@ -354,8 +644,24 @@
         <span class="confirmation-icon">✅</span>
         <h2>Thank you!</h2>
         <p class="muted">Your order request has been received. We'll contact you shortly to confirm.</p>
-        <div class="confirmation-order-no" id="confirmationOrderNo"></div>
-        <button type="button" class="btn btn-primary" id="startNewOrderBtn">Start a New Order</button>
+        <div style="margin-bottom:14px;">
+          <div class="confirmation-order-no" id="confirmationOrderNo"></div>
+          <div class="muted" style="margin-top:-8px; font-size:12px;">Order ID</div>
+          <div class="confirmation-order-no hidden" id="confirmationOnlineOrderNo" style="font-size:16px; margin:8px 0 0;"></div>
+          <div class="muted hidden" id="confirmationOnlineOrderNoLabel" style="margin-top:-6px; font-size:12px;">Online Order ID</div>
+        </div>
+        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary" id="startNewOrderBtn">Start a New Order</button>
+          <button type="button" class="btn btn-secondary" id="exitOrderNowBtn">Exit</button>
+        </div>
+
+        <!-- TEMPORARY - debugging the Messenger confirmation message, see
+             debug_send_order_confirmation_message() in supabase_automated_orders_tables.sql.
+             Remove this whole block once the automatic send is confirmed working. -->
+        <div style="margin-top:18px; padding-top:14px; border-top:1px dashed var(--panel-border);">
+          <button type="button" class="btn btn-secondary btn-sm" id="debugSendConfirmationBtn">🛠️ Test Send Confirmation Message (Debug)</button>
+          <pre id="debugSendConfirmationOutput" class="hidden" style="text-align:left; white-space:pre-wrap; word-break:break-word; font-size:12px; background:#0b1220; color:#d7e6fb; padding:10px; border-radius:8px; margin-top:10px; max-height:320px; overflow:auto;"></pre>
+        </div>
       </div>
     </section>
     </div>

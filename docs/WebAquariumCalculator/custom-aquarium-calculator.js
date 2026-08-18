@@ -249,6 +249,149 @@
     };
   }
 
+  // Standalone Stand build - same pricing engine as the Stand add-on above
+  // (computeStandRetailPrice/getStandHeightInches/enforceStandTubularSafety), just driven by the
+  // stand's OWN Length/Width rather than an aquarium's footprint, for the Customize > Stand flow
+  // (no aquarium involved, so no glass thickness to feed the extra glass-based tubular rule -
+  // passing undefined for it below is deliberate, see enforceStandTubularSafety's glassMm check).
+  function calculateStandaloneStand(input) {
+    var options = input || {};
+    var unit = options.unit || 'Inches';
+    var lengthInches = toInches(options.length, unit);
+    var widthInches = toInches(options.width, unit);
+    var layers = Math.max(2, Math.round(Number(options.layers) || 2));
+    var stainless = Boolean(options.stainless);
+    var cabinet = Boolean(options.cabinet);
+    var sumpHolder = Boolean(options.sumpHolder);
+
+    if (!(lengthInches > 0) || !(widthInches > 0)) {
+      return { ok: false, error: 'Please enter valid positive Length and Width.' };
+    }
+
+    var tubularSafety = enforceStandTubularSafety(lengthInches, widthInches, undefined, options.tubular || '1x1');
+    var tubular = tubularSafety.tubular;
+    var standHeightInches = getStandHeightInches(layers, tubular);
+    // Height is auto-computed from layers/tubular by default (matches the desktop app), but the
+    // customer can override it - only used when explicitly provided and positive.
+    var heightInches = Number(options.height) > 0 ? toInches(options.height, unit) : standHeightInches;
+
+    var sumpWidthInches = 0;
+    if (sumpHolder) {
+      sumpWidthInches = toInches(options.sumpWidth, unit);
+      if (!(sumpWidthInches > 0)) {
+        return { ok: false, error: 'Please enter a Sump Width greater than 0, or uncheck Sump Holder.' };
+      }
+    }
+
+    var computed = computeStandRetailPrice(
+      inchesToFeet(lengthInches),
+      inchesToFeet(widthInches),
+      inchesToFeet(heightInches),
+      layers,
+      tubular,
+      stainless,
+      inchesToFeet(sumpWidthInches)
+    );
+
+    return {
+      ok: true,
+      totalPrice: computed.price,
+      breakdown: computed.breakdown,
+      normalized: {
+        unit: unit,
+        lengthInches: round2(lengthInches),
+        widthInches: round2(widthInches),
+        heightInches: round2(heightInches),
+        layers: layers,
+        tubular: tubular,
+        stainless: stainless,
+        cabinet: cabinet,
+        sumpHolder: sumpHolder,
+        sumpWidthInches: round2(sumpWidthInches)
+      },
+      notice: tubularSafety.notice
+    };
+  }
+
+  // Standalone Filtration/Sump build - the sump pricing math the Aquarium+Filtration combo already
+  // uses (glass panels, filter media, overflow box, piping, allum top cover) reads its glass rate
+  // and "effective width" off the aquarium it's attached to; here there is no aquarium, so this
+  // takes its own Glass Thickness and prices the allum top cover to the sump's own footprint
+  // instead of "aquarium width minus sump width".
+  function calculateStandaloneFiltration(input) {
+    var options = input || {};
+    var unit = options.unit || 'Inches';
+    var sumpType = String(options.sumpType || 'Undersump');
+    var lengthInches = toInches(options.length, unit);
+    var widthInches = toInches(options.width, unit);
+    var heightInches = toInches(options.height, unit);
+
+    if (!(lengthInches > 0) || !(widthInches > 0) || !(heightInches > 0)) {
+      return { ok: false, error: 'Please enter valid positive dimensions for your sump.' };
+    }
+
+    var glass = normalizeGlass(options.glassThickness || '6mm');
+    var glassPrices = Object.assign(
+      {},
+      buildGlassPriceLookup(options.glassPricingSetupRows, options.glassPricingUom || 'MM'),
+      options.glassPricesPerSqFt
+    );
+    var basePricePerSqFt = Number(glassPrices[glass]) || 100;
+
+    var components = { sumpGlass: 0, filterMedia: 0, overflowBox: 0, piping: 0, allumTopCover: 0 };
+    var normalizedExtra = {};
+
+    var sumpAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
+    components.sumpGlass = round2(sumpAreaSqFt * basePricePerSqFt);
+
+    if (options.filterMedias) {
+      var volumeCuFt = (lengthInches / 12) * (widthInches / 12) * (heightInches / 12);
+      var liters = volumeCuFt * 28.316;
+      var fillRatio = String(sumpType).toLowerCase() === 'overhead sump' ? 0.18 : 0.04;
+      var mediaKg = Math.round(liters * fillRatio);
+      components.filterMedia = round2(mediaKg * 300);
+      normalizedExtra.filterMediaKg = mediaKg;
+    }
+
+    if (options.overflowBox) {
+      components.overflowBox = 1900;
+    }
+
+    var subtotal = components.sumpGlass + components.filterMedia + components.overflowBox;
+    if (subtotal >= 1000) {
+      subtotal = roundNearest10(subtotal);
+    }
+
+    if (options.piping) {
+      components.piping = String(sumpType).toLowerCase() === 'overhead sump' ? 450 : 2200;
+    }
+
+    if (options.allumTopCover) {
+      var coverAreaSqFt = (lengthInches / 12) * (widthInches / 12);
+      components.allumTopCover = ceilNearest10(coverAreaSqFt * 500);
+    }
+
+    var totalPrice = subtotal + components.piping + components.allumTopCover;
+
+    return {
+      ok: true,
+      totalPrice: round2(totalPrice),
+      components: components,
+      normalized: Object.assign({
+        unit: unit,
+        sumpType: sumpType,
+        lengthInches: round2(lengthInches),
+        widthInches: round2(widthInches),
+        heightInches: round2(heightInches),
+        glassThickness: glass,
+        piping: Boolean(options.piping),
+        overflowBox: Boolean(options.overflowBox),
+        filterMedias: Boolean(options.filterMedias),
+        allumTopCover: Boolean(options.allumTopCover)
+      }, normalizedExtra)
+    };
+  }
+
   function getRequiredGlassFromMessage(message) {
     var text = String(message || '').toLowerCase();
     if (text.indexOf('12mm') >= 0) return '12mm';
@@ -705,7 +848,10 @@
     buildGlassPriceLookup: buildGlassPriceLookup,
     calculateCustomAquarium: calculateCustomAquarium,
     validateGlassSafety: validateGlassSafety,
-    toInches: toInches
+    toInches: toInches,
+    calculateStandaloneStand: calculateStandaloneStand,
+    calculateStandaloneFiltration: calculateStandaloneFiltration,
+    enforceStandTubularSafety: enforceStandTubularSafety
   };
 
   if (typeof module !== 'undefined' && module.exports) {

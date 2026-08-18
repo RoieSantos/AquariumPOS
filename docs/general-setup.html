@@ -155,6 +155,38 @@
       <div class="section-divider"></div>
 
       <div class="toolbar">
+        <h2 style="margin:0;">Secure API Keys</h2>
+      </div>
+      <p class="muted">Stored encrypted in Supabase Vault, separate from the plain Settings table below. Once saved, the value is never shown or sent back to this page again - only whether it's configured and when it was last updated.</p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="pancakeApiKeyInput">Pancake Cloud API Key</label>
+          <input type="password" id="pancakeApiKeyInput" placeholder="Paste new key to set/rotate..." autocomplete="off" />
+          <span class="muted" id="pancakeApiKeyStatus" style="font-size:12px; display:block; margin-top:4px;">Loading status...</span>
+        </div>
+      </div>
+      <div id="pancakeApiKeyError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="savePancakeApiKeyBtn" type="button">Save to Vault</button>
+      </div>
+
+      <div class="form-grid" style="margin-top:16px;">
+        <div class="form-row">
+          <label for="pancakePublicApiKeyInput">Pancake Messenger API Key (page_access_token)</label>
+          <input type="password" id="pancakePublicApiKeyInput" placeholder="Paste new key to set/rotate..." autocomplete="off" />
+          <span class="muted" id="pancakePublicApiKeyStatus" style="font-size:12px; display:block; margin-top:4px;">Loading status...</span>
+          <span class="muted" style="font-size:12px; display:block; margin-top:2px;">Used to send the automatic order-confirmation Messenger message. Same value as the desktop app's GlobalSettings.PublicApiKey.</span>
+        </div>
+      </div>
+      <div id="pancakePublicApiKeyError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="savePancakePublicApiKeyBtn" type="button">Save to Vault</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
         <h2 id="formTitle" style="margin:0;">Add Setting</h2>
       </div>
 

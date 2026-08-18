@@ -77,7 +77,7 @@ begin
   -- Raise the http extension's own per-request curl timeout from its 5s default to 30s.
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '30000');
 
-  v_url := 'https://pos.pages.fm/api/v1/shops/1328301944/warehouses?api_key=e611861d2fc84607bfbbe1428a432447';
+  v_url := 'https://pos.pages.fm/api/v1/shops/1328301944/warehouses?api_key=' || public._pancake_api_key();
   v_response := extensions.http_get(v_url);
 
   if v_response.status < 200 or v_response.status >= 300 then
@@ -142,8 +142,8 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  v_products_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products?api_key=e611861d2fc84607bfbbe1428a432447';
-  v_variations_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products/variations?api_key=e611861d2fc84607bfbbe1428a432447';
+  v_products_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products?api_key=' || public._pancake_api_key();
+  v_variations_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products/variations?api_key=' || public._pancake_api_key();
   v_page int;
   v_max_pages int := 500;
   v_page_size int := 200;
@@ -671,7 +671,7 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  v_products_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products?api_key=e611861d2fc84607bfbbe1428a432447';
+  v_products_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products?api_key=' || public._pancake_api_key();
   v_page_size int := least(greatest(coalesce(p_page_size, 100), 1), 200);
   v_page int := greatest(coalesce(p_page, 1), 1);
   v_response extensions.http_response;
@@ -873,8 +873,8 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  v_products_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products?api_key=e611861d2fc84607bfbbe1428a432447';
-  v_variations_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products/variations?api_key=e611861d2fc84607bfbbe1428a432447';
+  v_products_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products?api_key=' || public._pancake_api_key();
+  v_variations_url text := 'https://pos.pages.fm/api/v1/shops/1328301944/products/variations?api_key=' || public._pancake_api_key();
   v_page int;
   v_max_pages int := least(greatest(coalesce(p_max_pages, 500), 1), 500);
   v_page_size int := least(greatest(coalesce(p_page_size, 200), 1), 200);
@@ -1445,7 +1445,7 @@ set search_path = public, extensions
 as $$
 declare
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_page_size int := least(greatest(coalesce(p_page_size, 100), 1), 200);
   v_max_pages int := least(greatest(coalesce(p_max_pages, 5), 1), 50);
@@ -1931,7 +1931,7 @@ set search_path = public, extensions
 as $$
 declare
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_page_size int := least(greatest(coalesce(p_page_size, 100), 1), 200);
   -- Raised from 20/50 to 100/300 (per "fix 2"): the shop's order backlog exceeds 2,000 rows
@@ -2582,7 +2582,7 @@ set search_path = public, extensions
 as $$
 declare
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_page_size int := least(greatest(coalesce(p_page_size, 100), 1), 200);
   v_page int := greatest(coalesce(p_page, 1), 1);
@@ -2981,7 +2981,7 @@ set search_path = public, extensions
 as $$
 declare
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_detail_url text;
   v_response extensions.http_response;

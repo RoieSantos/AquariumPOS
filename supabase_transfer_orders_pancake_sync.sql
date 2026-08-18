@@ -96,7 +96,7 @@ as $$
 declare
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_page int := 1;
   v_max_pages int := 5;
   v_response extensions.http_response;
@@ -210,7 +210,7 @@ as $$
 declare
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_event_no bigint;
   v_note text;
   v_resolved_items jsonb := '[]'::jsonb;
@@ -378,7 +378,7 @@ as $$
 declare
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_row record;
   v_endpoint text;
   v_payload jsonb;
@@ -484,7 +484,7 @@ as $$
 declare
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_row record;
   v_note text;
   v_payload jsonb;

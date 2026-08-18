@@ -322,6 +322,19 @@ textarea {
   gap: 14px;
 }
 
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
 /* Buttons */
 .btn {
   display: inline-block;
@@ -431,6 +444,16 @@ tr.clickable-row:hover {
 .badge-primary { background: #e2ecfb; color: var(--primary); }
 .badge-purple { background: #ece5fa; color: #7b5bc9; }
 .badge-glass { background: #dcf1fb; color: #146b96; }
+
+.pancake-order-id-link {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  text-decoration: none;
+}
+.pancake-order-id-link:hover { text-decoration: underline; }
 
 /* Status count summary bar (Online Orders page) */
 .status-summary-bar {
@@ -1322,6 +1345,14 @@ tr.clickable-row:hover {
   overflow: hidden;
 }
 
+#deliveryEstimateMap {
+  height: 220px;
+  margin-top: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
 /* Item Setup - table + side factbox layout (js/itemSetup.js) */
 .item-setup-layout {
   display: flex;
@@ -2086,9 +2117,10 @@ body:has(.wizard-page) {
 }
 
 .qty-stepper input {
-  width: 44px;
+  width: 64px;
   text-align: center;
   padding: 6px 4px;
+  font-size: 15px;
 }
 
 .cart-bar {
@@ -2310,6 +2342,26 @@ body:has(.wizard-page) {
   color: var(--text-muted);
 }
 
+.custom-price-gallons-badge {
+  display: block;
+  margin: 8px auto 0;
+  width: fit-content;
+  padding: 3px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--success);
+  background: #d7f5e3;
+  border-radius: 999px;
+}
+
+.custom-price-disclaimer {
+  margin-top: -12px;
+  margin-bottom: 18px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--danger);
+}
+
 .dims-summary-card {
   margin-bottom: 18px;
   font-size: 16px;
@@ -2340,18 +2392,18 @@ body:has(.wizard-page) {
   line-height: 1.4;
 }
 
-/* TEMPORARY - for testing the Messenger PSID hand-off only. Remove once confirmed working. */
-.psid-debug-banner {
-  margin: 0 0 14px;
-  padding: 8px 12px;
+/* Positive/reassuring variant of .rule-notice (e.g. RSPetStop Delivery's accountability note) -
+   same shape, green-toned instead of caution-yellow. */
+.rule-notice-positive {
+  margin-top: 14px;
+  padding: 10px 14px;
   border-radius: 8px;
-  background: #fff3d6;
-  border: 1px dashed #d9a441;
-  color: #7a5a05;
-  font-size: 12px;
-  font-family: monospace;
-  word-break: break-all;
-  text-align: center;
+  background: #e3f7ea;
+  border: 1px solid #b7e6c9;
+  color: #17693f;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .confirm-order-note {

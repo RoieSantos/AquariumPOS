@@ -30,7 +30,7 @@ set search_path = public, extensions
 as $$
 declare
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_limit int := least(greatest(coalesce(p_limit, 25), 1), 100);
   v_order_id text;

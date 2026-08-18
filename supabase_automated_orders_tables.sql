@@ -59,6 +59,12 @@ revoke all on public."AutomatedOrderLines" from anon, authenticated;
 alter table public."AutomatedOrders" add column if not exists "Location" varchar(20);
 alter table public."AutomatedOrders" add column if not exists "Psid" varchar(255);
 alter table public."AutomatedOrders" add column if not exists "PancakeOrderId" varchar(100);
+-- Real "View in Pancake" link, taken verbatim from Pancake's own order-creation response
+-- ("order_link" field) rather than guessed/constructed client-side - confirmed live that
+-- PancakeOrderId (e.g. "74398") is Pancake's own short internal id, NOT the long numeric id
+-- ("450373031050704") that order_link actually points at, so building a URL by hand from
+-- PancakeOrderId alone was pointing at the wrong order id shape entirely, regardless of domain.
+alter table public."AutomatedOrders" add column if not exists "PancakeOrderLink" text;
 alter table public."AutomatedOrders" add column if not exists "PancakeSyncStatus" varchar(20) not null default 'Pending';
 alter table public."AutomatedOrders" add column if not exists "PancakeSyncError" text;
 -- Exact JSON body sent on the most recent push attempt - kept so a failed push can be diffed
@@ -69,6 +75,16 @@ alter table public."AutomatedOrders" add column if not exists "PancakeLastPayloa
 -- with certainty (query this right after clicking Retry; if it isn't "just now", the click never
 -- actually reached the server, e.g. a stale cached page still pointing at an old RPC signature).
 alter table public."AutomatedOrders" add column if not exists "PancakeLastAttemptAtUtc" timestamptz;
+
+-- Added for the automatic order-confirmation Messenger message (see _send_order_confirmation_message
+-- below): 'Pending' until submit_automated_order's post-insert send attempt resolves it to 'Sent'
+-- (message posted to the customer's Messenger conversation), 'Skipped' (no Psid on this order - the
+-- customer didn't arrive via a Messenger-personalized link, so there's no conversation to message),
+-- or 'Failed' (Pancake's message-send API rejected/errored - see ConfirmationMessageError). A
+-- failure here never blocks or rolls back the order itself, same guarantee as PancakeSyncStatus.
+alter table public."AutomatedOrders" add column if not exists "ConfirmationMessageStatus" varchar(20) not null default 'Pending';
+alter table public."AutomatedOrders" add column if not exists "ConfirmationMessageError" text;
+alter table public."AutomatedOrders" add column if not exists "ConfirmationMessageSentAtUtc" timestamptz;
 
 comment on table public."AutomatedOrders" is 'Customer-submitted order requests from the public order wizard (order-now.html) - a lead/request queue staff action manually, separate from the Pancake-synced OnlineOrders table.';
 comment on table public."AutomatedOrderLines" is 'Line items for an AutomatedOrders request. Price/ItemName are snapshotted at submission time so the request stays accurate even if Items catalog prices change later.';
@@ -156,7 +172,7 @@ as $$
 declare
   v_order public."AutomatedOrders"%rowtype;
   v_shop_id text := '1328301944';
-  v_api_key text := 'e611861d2fc84607bfbbe1428a432447';
+  v_api_key text := public._pancake_api_key();
   v_page_id text := '195716644410829';
   v_base_url text := 'https://pos.pages.fm/api/v1';
   v_location text;
@@ -172,7 +188,15 @@ declare
   v_response extensions.http_response;
   v_pancake_body jsonb;
   v_pancake_order_id text;
+  v_pancake_order_link text;
   v_lines_note text;
+  -- Auto-retry: most failures here are transient (Pancake rate-limit/timeout blips) rather than
+  -- a genuinely broken order, and staff previously had to notice a 'Failed' badge and click
+  -- "Retry Push to Pancake" by hand for exactly that case - confirmed live: a manual retry turned
+  -- a 'Failed' order straight into 'Synced' with no other change. Now attempted automatically,
+  -- right here, before ever surfacing 'Failed' to staff.
+  v_attempt int;
+  v_max_attempts constant int := 3;
 begin
   select * into v_order from public."AutomatedOrders" where "OrderNo" = p_order_no;
   if not found then
@@ -184,6 +208,7 @@ begin
   -- succeeds or fails.
   update public."AutomatedOrders" set "PancakeLastAttemptAtUtc" = now() where "OrderNo" = p_order_no;
 
+  for v_attempt in 1..v_max_attempts loop
   begin
     perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '20000');
 
@@ -345,28 +370,283 @@ begin
       nullif(v_pancake_body -> 'data' ->> 'id', ''),
       nullif(v_pancake_body ->> 'order_id', '')
     );
+    -- Same field Pancake's GET /orders/{id} response returns (confirmed live via Postman) - the
+    -- create response is the same order object shape, so it's read here too rather than issuing
+    -- a second GET just to fetch it.
+    v_pancake_order_link := coalesce(
+      nullif(v_pancake_body ->> 'order_link', ''),
+      nullif(v_pancake_body -> 'data' ->> 'order_link', '')
+    );
 
     update public."AutomatedOrders"
     set "PancakeOrderId" = v_pancake_order_id,
+        "PancakeOrderLink" = v_pancake_order_link,
         "PancakeSyncStatus" = 'Synced',
         "PancakeSyncError" = null,
         "PancakeLastPayload" = v_payload::text
     where "OrderNo" = p_order_no;
+
+    -- Success - no more attempts needed.
+    exit;
   exception when others then
     -- v_payload is a PL/pgSQL variable, so it survives this block's subtransaction rollback -
     -- recording it here (rather than before the http call) is what makes the sent body available
-    -- for diffing precisely in the failure case we care about.
+    -- for diffing precisely in the failure case we care about. Left as 'Failed' after every
+    -- attempt (including ones about to be retried) so a caller reading mid-loop, or a request
+    -- that never reaches another attempt because Postgres itself gets interrupted, still sees an
+    -- accurate status rather than a stale 'Pending'.
     update public."AutomatedOrders"
     set "PancakeSyncStatus" = 'Failed',
-        "PancakeSyncError" = left(sqlerrm, 1000),
+        "PancakeSyncError" = left(sqlerrm, 1000)
+          || case when v_attempt < v_max_attempts then format(' (attempt %s/%s, retrying...)', v_attempt, v_max_attempts) else format(' (attempt %s/%s)', v_attempt, v_max_attempts) end,
         "PancakeLastPayload" = v_payload::text
     where "OrderNo" = p_order_no;
+
+    -- Short backoff before the next attempt - long enough to ride out a momentary blip, short
+    -- enough that the customer submitting the order (this runs synchronously inside
+    -- submit_automated_order) isn't stuck waiting long even in the worst case of 3 full attempts.
+    if v_attempt < v_max_attempts then
+      perform pg_sleep(1.5);
+    end if;
   end;
+  end loop;
 end;
 $$;
 
 -- No grant to anon - only called from submit_automated_order and
 -- admin_retry_automated_order_pancake_push below, each of which handles its own authorization.
+
+-- ---------------------------------------------------------------------------
+-- Order-confirmation Messenger message - sends the customer a summary of what they just ordered,
+-- via Pancake's public conversations API. This is a DIFFERENT API/credential than the order-sync
+-- push above: that one creates an order in Pancake's shop backend (pos.pages.fm/api/v1, api_key
+-- auth); this one posts into an existing Messenger conversation (pages.fm/api/public_api/v1,
+-- page_access_token auth) - mirrors the desktop POS app's already-working
+-- IntegrationEvents.SendMessageToCustomer (same URL shape, same {"action":"reply_inbox","message":
+-- ...} body). Called from submit_automated_order right after the Pancake order push, using the
+-- SAME conversation_id derivation ("{page_id}_{psid}") that push already uses to attach the order
+-- to a conversation - no extra OnlineCustomers lookup needed for this.
+--
+-- Only sends when the order has a Psid (i.e. the customer arrived via a Messenger-personalized
+-- order-now.html link - see js/orderNow.js's captureMessengerPsid()); everyone else's order is
+-- still recorded normally, just with ConfirmationMessageStatus = 'Skipped'. Never raises - a
+-- failure here must never block or roll back the order itself, same contract as
+-- _push_automated_order_to_pancake above.
+-- ---------------------------------------------------------------------------
+
+drop function if exists public._build_order_confirmation_message(text);
+
+-- Shared by _send_order_confirmation_message (the real, silent send) and
+-- debug_send_order_confirmation_message (the diagnostic version below) so both ever send exactly
+-- the same text - no separate "test message" template to drift out of sync with the real one.
+create or replace function public._build_order_confirmation_message(p_order_no text)
+returns text
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_order public."AutomatedOrders"%rowtype;
+  v_lines_text text;
+begin
+  select * into v_order from public."AutomatedOrders" where "OrderNo" = p_order_no;
+  if not found then
+    raise exception 'AutomatedOrders row % not found.', p_order_no;
+  end if;
+
+  -- One bullet line per item, e.g. "🔹 Custom Aquarium - 24 x 12 x 12 Inches... x1 — ₱936.00" -
+  -- ₱ and en-PH-style thousands separators match how the rest of the app formats money
+  -- (js/orderNow.js's formatMoney), so this reads the same as the price shown in the wizard.
+  select string_agg('🔹 ' || l."ItemName" || ' x' || l."Quantity" || ' — ₱' || to_char(l."Price" * l."Quantity", 'FM999,999,990.00'), E'\n' order by l."EntryNo")
+  into v_lines_text
+  from public."AutomatedOrderLines" l
+  where l."OrderNo" = p_order_no;
+
+  return
+    '🐠 Order Received - RS Pet Stop!' || E'\n\n' ||
+    'Hi ' || v_order."CustomerName" || ', thank you for your order! Here''s a summary:' || E'\n\n' ||
+    '📋 Automated Order No: ' || p_order_no
+      || coalesce(E'\n' || '     Online Order ID: #' || v_order."PancakeOrderId", '') || E'\n\n' ||
+    '🛒 Items' || E'\n' || coalesce(v_lines_text, '(no items)') || E'\n\n' ||
+    '💰 Estimated Total: ₱' || to_char(v_order."EstimatedTotal", 'FM999,999,990.00') || E'\n\n' ||
+    case
+      when v_order."FulfillmentType" = 'Delivery' then '🚚 Delivery to: ' || coalesce(v_order."DeliveryAddress", '(address on file)')
+      else '🏬 Pickup at: ' || coalesce(v_order."Location", 'our branch')
+    end
+      || coalesce(E'\n\n' || '📝 Notes: ' || nullif(trim(v_order."Notes"), ''), '') || E'\n\n' ||
+    'We''ll reach out shortly to confirm details and payment.' || E'\n' ||
+    'Thank you for choosing RS Pet Stop! 🐟';
+end;
+$$;
+
+-- No grant to anon - internal helper only, called from the two functions below.
+
+drop function if exists public._send_order_confirmation_message(text);
+
+create or replace function public._send_order_confirmation_message(p_order_no text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_order public."AutomatedOrders"%rowtype;
+  v_page_id text := '195716644410829';
+  v_public_api_key text := public._pancake_public_api_key();
+  v_base_url text := 'https://pages.fm/api/public_api/v1';
+  v_conversation_id text;
+  v_payload jsonb;
+  v_url text;
+  v_response extensions.http_response;
+begin
+  select * into v_order from public."AutomatedOrders" where "OrderNo" = p_order_no;
+  if not found then
+    raise exception 'AutomatedOrders row % not found.', p_order_no;
+  end if;
+
+  if v_order."Psid" is null then
+    update public."AutomatedOrders"
+    set "ConfirmationMessageStatus" = 'Skipped', "ConfirmationMessageError" = 'No Psid on this order - customer did not arrive via a Messenger-personalized link.'
+    where "OrderNo" = p_order_no;
+    return;
+  end if;
+
+  begin
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '20000');
+
+    v_conversation_id := v_page_id || '_' || v_order."Psid";
+    v_payload := jsonb_build_object('action', 'reply_inbox', 'message', public._build_order_confirmation_message(p_order_no));
+    v_url := v_base_url || '/pages/' || v_page_id || '/conversations/' || v_conversation_id || '/messages?page_access_token=' || v_public_api_key;
+
+    select * into v_response from extensions.http((
+      'POST',
+      v_url,
+      array[
+        extensions.http_header('Accept', 'application/json'),
+        extensions.http_header('Expect', '')
+      ],
+      'application/json',
+      v_payload::text
+    )::extensions.http_request);
+
+    if v_response.status < 200 or v_response.status >= 300 then
+      raise exception 'Pancake message send failed (HTTP %): %', v_response.status, left(v_response.content, 300);
+    end if;
+
+    update public."AutomatedOrders"
+    set "ConfirmationMessageStatus" = 'Sent', "ConfirmationMessageError" = null, "ConfirmationMessageSentAtUtc" = now()
+    where "OrderNo" = p_order_no;
+  exception when others then
+    update public."AutomatedOrders"
+    set "ConfirmationMessageStatus" = 'Failed', "ConfirmationMessageError" = left(sqlerrm, 1000)
+    where "OrderNo" = p_order_no;
+  end;
+end;
+$$;
+
+-- No grant to anon - only called from submit_automated_order below, which needs none (public by
+-- design).
+
+-- ---------------------------------------------------------------------------
+-- TEMPORARY debug tool - lets you manually resend an order's confirmation message from the
+-- order-now.html confirmation screen and see EXACTLY what happened: the endpoint hit (with the
+-- page_access_token redacted - never returned, even here), the JSON payload sent, and Pancake's
+-- raw HTTP status/response body (or the exception message, if the request itself never completed).
+-- _send_order_confirmation_message above only ever writes a short status/error to
+-- AutomatedOrders - this is the version that surfaces everything needed to debug a failure without
+-- digging through Supabase logs. Deliberately reachable from anon with no staff-auth gate so the
+-- test button can call it directly, same trust posture as the existing PSID debug banner
+-- (docs/order-now.html) - remove this function + the matching button once the real send is
+-- confirmed working. It can only ever resend to the conversation the GIVEN order's own Psid
+-- already resolves to (no caller-supplied psid/message), so it can't be used to message anyone
+-- else's conversation or send arbitrary text.
+-- ---------------------------------------------------------------------------
+
+drop function if exists public.debug_send_order_confirmation_message(text);
+
+create or replace function public.debug_send_order_confirmation_message(p_order_no text)
+returns table(ok boolean, http_status int, endpoint text, payload text, response_body text, error_message text, key_fingerprint text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_order public."AutomatedOrders"%rowtype;
+  v_page_id text := '195716644410829';
+  v_public_api_key text := public._pancake_public_api_key();
+  v_base_url text := 'https://pages.fm/api/public_api/v1';
+  v_conversation_id text;
+  v_message text;
+  v_payload jsonb;
+  v_url text;
+  v_url_redacted text;
+  v_response extensions.http_response;
+  -- Single set of output locals, filled in by whichever branch below applies, with exactly ONE
+  -- return query at the very end - avoids the "structure of query does not match function result
+  -- type" error a first version of this function hit, which turned out to come from one of
+  -- several scattered `return query select ...` statements rather than from Pancake/auth at all.
+  v_ok boolean := false;
+  v_http_status int := null;
+  v_endpoint text := null;
+  v_payload_text text := null;
+  v_response_body text := null;
+  v_error_message text := null;
+  -- Never the full key - just enough (length + first/last few chars) to compare the Vault copy
+  -- against the real value by eye, to catch a truncated/whitespace-corrupted paste into General
+  -- Setup without ever displaying the usable secret itself.
+  v_key_fingerprint text := null;
+begin
+  select * into v_order from public."AutomatedOrders" where "OrderNo" = p_order_no;
+  if v_public_api_key is not null and trim(v_public_api_key) <> '' then
+    v_key_fingerprint := left(v_public_api_key, 10) || '...(' || length(v_public_api_key) || ' chars)...' || right(v_public_api_key, 10);
+  end if;
+
+  if not found then
+    v_error_message := 'Order ' || p_order_no || ' not found.';
+  elsif v_order."Psid" is null then
+    v_error_message := 'This order has no Psid - it wasn''t placed via a Messenger-personalized link, so there is no conversation to message.';
+  elsif v_public_api_key is null or trim(v_public_api_key) = '' then
+    v_error_message := 'PANCAKE_PUBLIC_API_KEY is not set in Vault yet - set it in General Setup > Secure API Keys first.';
+  else
+    v_conversation_id := v_page_id || '_' || v_order."Psid";
+    v_message := public._build_order_confirmation_message(p_order_no);
+    v_payload := jsonb_build_object('action', 'reply_inbox', 'message', v_message);
+    v_url := v_base_url || '/pages/' || v_page_id || '/conversations/' || v_conversation_id || '/messages?page_access_token=' || v_public_api_key;
+    v_endpoint := v_base_url || '/pages/' || v_page_id || '/conversations/' || v_conversation_id || '/messages?page_access_token=***REDACTED***';
+    v_payload_text := v_payload::text;
+
+    begin
+      perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '20000');
+
+      select * into v_response from extensions.http((
+        'POST',
+        v_url,
+        array[
+          extensions.http_header('Accept', 'application/json'),
+          extensions.http_header('Expect', '')
+        ],
+        'application/json',
+        v_payload::text
+      )::extensions.http_request);
+
+      v_http_status := v_response.status::int;
+      v_response_body := v_response.content::text;
+
+      if v_response.status >= 200 and v_response.status < 300 then
+        v_ok := true;
+      else
+        v_error_message := 'Non-2xx response from Pancake.';
+      end if;
+    exception when others then
+      v_error_message := sqlerrm;
+    end;
+  end if;
+
+  return query select v_ok, v_http_status, v_endpoint, v_payload_text, v_response_body, v_error_message, v_key_fingerprint;
+end;
+$$;
+
+grant execute on function public.debug_send_order_confirmation_message(text) to anon;
 
 drop function if exists public.submit_automated_order(text, text, text, text, text, text, jsonb);
 drop function if exists public.submit_automated_order(text, text, text, text, text, text, text, text, jsonb);
@@ -474,6 +754,10 @@ begin
   update public."AutomatedOrders" set "EstimatedTotal" = v_total where "OrderNo" = v_order_no;
 
   perform public._push_automated_order_to_pancake(v_order_no);
+  -- Runs after the Pancake push (not before) so the confirmation message can include the real
+  -- Pancake order number when the push succeeded. Same never-raises contract as the push itself -
+  -- see _send_order_confirmation_message's own comment above.
+  perform public._send_order_confirmation_message(v_order_no);
 
   -- _push_automated_order_to_pancake always resolves to Synced/Failed on this same row before
   -- returning (it's called synchronously, not fired off in the background), so PancakeOrderId is
@@ -518,9 +802,13 @@ returns table(
   location text,
   psid text,
   pancake_order_id text,
+  pancake_order_link text,
   pancake_sync_status text,
   pancake_sync_error text,
   pancake_last_payload text,
+  confirmation_message_status text,
+  confirmation_message_error text,
+  confirmation_message_sent_at_utc timestamptz,
   total_count bigint
 )
 language plpgsql
@@ -539,8 +827,9 @@ begin
     select o."OrderNo"::text, o."CustomerName"::text, o."CustomerPhone"::text, o."CustomerEmail"::text,
            o."FulfillmentType"::text, o."DeliveryAddress"::text, o."Notes"::text, o."Status"::text,
            o."EstimatedTotal", o."CreatedAtUtc", o."UpdatedBy"::text, o."UpdatedAtUtc",
-           o."Location"::text, o."Psid"::text, o."PancakeOrderId"::text, o."PancakeSyncStatus"::text, o."PancakeSyncError"::text,
+           o."Location"::text, o."Psid"::text, o."PancakeOrderId"::text, o."PancakeOrderLink"::text, o."PancakeSyncStatus"::text, o."PancakeSyncError"::text,
            o."PancakeLastPayload"::text,
+           o."ConfirmationMessageStatus"::text, o."ConfirmationMessageError"::text, o."ConfirmationMessageSentAtUtc",
            count(*) over()
     from public."AutomatedOrders" o
     where (p_status is null or trim(p_status) = '' or o."Status" ilike p_status)
@@ -585,7 +874,7 @@ $$;
 drop function if exists public.admin_retry_automated_order_pancake_push(text, text, text);
 
 create or replace function public.admin_retry_automated_order_pancake_push(p_admin_username text, p_admin_password text, p_order_no text)
-returns table(pancake_sync_status text, pancake_sync_error text, pancake_order_id text, pancake_last_payload text)
+returns table(pancake_sync_status text, pancake_sync_error text, pancake_order_id text, pancake_order_link text, pancake_last_payload text)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -598,7 +887,33 @@ begin
   perform public._push_automated_order_to_pancake(p_order_no);
 
   return query
-    select o."PancakeSyncStatus"::text, o."PancakeSyncError"::text, o."PancakeOrderId"::text, o."PancakeLastPayload"::text
+    select o."PancakeSyncStatus"::text, o."PancakeSyncError"::text, o."PancakeOrderId"::text, o."PancakeOrderLink"::text, o."PancakeLastPayload"::text
+    from public."AutomatedOrders" o
+    where o."OrderNo" = p_order_no;
+end;
+$$;
+
+-- Staff "Resend Confirmation Message" button - same idea as the Retry Push button above, but for
+-- the customer-facing Messenger confirmation. Safe to click any number of times (Pancake's
+-- reply_inbox action just posts another message, no dedupe/idempotency concern like order creation
+-- has), so unlike the Pancake retry button this doesn't need to be gated to only 'Failed' rows.
+drop function if exists public.admin_resend_automated_order_confirmation(text, text, text);
+
+create or replace function public.admin_resend_automated_order_confirmation(p_admin_username text, p_admin_password text, p_order_no text)
+returns table(confirmation_message_status text, confirmation_message_error text, confirmation_message_sent_at_utc timestamptz)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  perform public._send_order_confirmation_message(p_order_no);
+
+  return query
+    select o."ConfirmationMessageStatus"::text, o."ConfirmationMessageError"::text, o."ConfirmationMessageSentAtUtc"
     from public."AutomatedOrders" o
     where o."OrderNo" = p_order_no;
 end;
@@ -633,4 +948,5 @@ grant execute on function public.submit_automated_order(text, text, text, text, 
 grant execute on function public.admin_list_automated_orders(text, text, text, text, int, int) to anon;
 grant execute on function public.admin_list_automated_order_lines(text, text, text) to anon;
 grant execute on function public.admin_retry_automated_order_pancake_push(text, text, text) to anon;
+grant execute on function public.admin_resend_automated_order_confirmation(text, text, text) to anon;
 grant execute on function public.admin_update_automated_order_status(text, text, text, text) to anon;

@@ -1,10 +1,15 @@
-// General Setup page logic (super users only). Three separate things live here:
+// General Setup page logic (super users only). Four separate things live here:
 //   - Company Info / Letterhead (public.CompanyInfo, see supabase_company_info_table.sql) - logo
 //     + name/Facebook/address/contact/DTI no., shown on printable pages and the Login page/
 //     Dashboard (js/companyBranding.js).
 //   - No. Series (public.NoSeries/NoSeriesLine, see supabase_no_series_tables.sql) - running-
 //     number formats (Prefix/Padding/Starting No.) used to generate document numbers, e.g. the
 //     Transfer Order Document No. (staff_next_transfer_no delegates to these).
+//   - Secure API Keys (Supabase Vault, see supabase_secure_pancake_credentials.sql) - write-only:
+//     admin_set_pancake_api_key never returns the value, admin_get_pancake_api_key_status only
+//     ever returns whether it's set and when. Deliberately separate from the plain Settings table
+//     below, which DOES send its raw values to the browser (see loadSettings/renderSettingsRows) -
+//     fine for things meant to be public like GOOGLE_MAPS_API_KEY, wrong for a real secret.
 //   - Generic key/value settings (public.PortalSettings, e.g. GOOGLE_MAPS_API_KEY).
 // No password re-entry prompt - super user status alone is enough, same trust model as
 // Online Orders/Expenses (reuses the password captured at login, session.password, see
@@ -315,6 +320,147 @@ async function saveNoSeries() {
   await loadNoSeries();
 }
 
+// ---- Secure API Keys (Supabase Vault) ----
+// Deliberately the opposite shape of the plain Settings section below: status only ever reports
+// whether a key is configured and when it was last set, never the key itself - see
+// supabase_secure_pancake_credentials.sql's admin_get_pancake_api_key_status/admin_set_pancake_api_key.
+
+async function loadPancakeApiKeyStatus() {
+  const statusEl = document.getElementById('pancakeApiKeyStatus');
+  statusEl.textContent = 'Loading status...';
+
+  const { data, error } = await supabaseClient.rpc('admin_get_pancake_api_key_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    statusEl.textContent = `Could not load status - ${error.message}`;
+    return;
+  }
+
+  const result = (data && data[0]) || {};
+  statusEl.textContent = result.is_configured
+    ? `Configured - last set ${new Date(result.updated_at_utc).toLocaleString()}`
+    : 'Not configured yet.';
+}
+
+async function savePancakeApiKey() {
+  const errorEl = document.getElementById('pancakeApiKeyError');
+  const input = document.getElementById('pancakeApiKeyInput');
+  const saveBtn = document.getElementById('savePancakeApiKeyBtn');
+  errorEl.classList.add('hidden');
+
+  const newKey = input.value.trim();
+  if (!newKey) {
+    errorEl.textContent = 'Paste the new key before saving.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  if (!window.confirm('Save this as the new Pancake API key? Every Supabase function that talks to Pancake will use it immediately - make sure it\'s already active in Pancake\'s Partner Portal first.')) {
+    return;
+  }
+
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('admin_set_pancake_api_key', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_new_key: newKey
+    });
+
+    if (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    // Clear the typed value right away - nothing should linger in the DOM/memory once it's saved.
+    input.value = '';
+    await loadPancakeApiKeyStatus();
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+// PANCAKE_PUBLIC_API_KEY - the page_access_token used to send the automatic order-confirmation
+// Messenger message (supabase_automated_orders_tables.sql's _send_order_confirmation_message).
+// Same write-only/status-only shape as the Pancake Cloud API Key above - see
+// supabase_secure_pancake_credentials.sql's admin_get_pancake_public_api_key_status/
+// admin_set_pancake_public_api_key.
+
+async function loadPancakePublicApiKeyStatus() {
+  const statusEl = document.getElementById('pancakePublicApiKeyStatus');
+  statusEl.textContent = 'Loading status...';
+
+  const { data, error } = await supabaseClient.rpc('admin_get_pancake_public_api_key_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    statusEl.textContent = `Could not load status - ${error.message}`;
+    return;
+  }
+
+  const result = (data && data[0]) || {};
+  statusEl.textContent = result.is_configured
+    ? `Configured - last set ${new Date(result.updated_at_utc).toLocaleString()}`
+    : 'Not configured yet.';
+}
+
+async function savePancakePublicApiKey() {
+  const errorEl = document.getElementById('pancakePublicApiKeyError');
+  const input = document.getElementById('pancakePublicApiKeyInput');
+  const saveBtn = document.getElementById('savePancakePublicApiKeyBtn');
+  errorEl.classList.add('hidden');
+
+  const newKey = input.value.trim();
+  if (!newKey) {
+    errorEl.textContent = 'Paste the new key before saving.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  // This key is a JWT (header.payload.signature, e.g. matching the desktop app's
+  // GlobalSettings.PublicApiKey) - real-world mistake already hit once: pasting only up to the
+  // first "." saved just the 36-char header segment, which Pancake then rejected with
+  // "Invalid access_token" even though the request/endpoint were otherwise correct. A valid JWT
+  // always has exactly 2 dots and is well over 100 characters, so catch a truncated paste here
+  // instead of silently saving a fragment.
+  const dotCount = (newKey.match(/\./g) || []).length;
+  if (dotCount !== 2 || newKey.length < 100) {
+    errorEl.textContent = `That doesn't look like a complete JWT (expected header.payload.signature, ~150+ characters with 2 dots - got ${newKey.length} characters and ${dotCount} dot${dotCount === 1 ? '' : 's'}). Make sure you copied the ENTIRE token, not just part of it, then try again.`;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  if (!window.confirm('Save this as the new Pancake Messenger API key? The automatic order-confirmation message will use it immediately.')) {
+    return;
+  }
+
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('admin_set_pancake_public_api_key', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_new_key: newKey
+    });
+
+    if (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    input.value = '';
+    await loadPancakePublicApiKeyStatus();
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
 function maskValue(value) {
   if (!value) return '<span class="muted">(empty)</span>';
   if (value.length <= 4) return '&bull;'.repeat(value.length);
@@ -518,9 +664,13 @@ async function deleteSetting(key) {
   document.getElementById('saveCompanyInfoBtn').addEventListener('click', () => saveCompanyInfo());
   document.getElementById('saveNoSeriesBtn').addEventListener('click', saveNoSeries);
   document.getElementById('cancelNoSeriesEditBtn').addEventListener('click', resetNoSeriesForm);
+  document.getElementById('savePancakeApiKeyBtn').addEventListener('click', savePancakeApiKey);
+  document.getElementById('savePancakePublicApiKeyBtn').addEventListener('click', savePancakePublicApiKey);
   populateNoSeriesCodeOptions();
 
   await loadCompanyInfo();
   await loadNoSeries();
+  await loadPancakeApiKeyStatus();
+  await loadPancakePublicApiKeyStatus();
   await loadSettings();
 })();

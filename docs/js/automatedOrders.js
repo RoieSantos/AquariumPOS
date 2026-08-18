@@ -33,6 +33,21 @@ function pancakeBadgeHtml(status) {
   return `<span class="badge ${cls}">${status || 'Pending'}</span>`;
 }
 
+// Sync-status badge plus, whenever Pancake actually returned an order_link (only true once
+// PancakeSyncStatus reaches 'Synced'), a visible "#id" link under it straight to the order in
+// Pancake's own dashboard. The link is the real "order_link" field from Pancake's own order-
+// creation response (stored verbatim as PancakeOrderId/PancakeOrderLink by
+// _push_automated_order_to_pancake) - NOT constructed client-side, since PancakeOrderId
+// (Pancake's short internal id, e.g. "74398") turned out not to be the id order_link actually
+// uses (a much longer numeric id) - confirmed live via Postman. A badge alone doesn't read as
+// clickable, so the order id is shown as an explicit link rather than only wrapping the badge.
+function pancakeBadgeWithLinkHtml(status, pancakeOrderId, pancakeOrderLink) {
+  const badge = pancakeBadgeHtml(status);
+  if (!pancakeOrderId || !pancakeOrderLink) return badge;
+  const link = `<a href="${pancakeOrderLink}" target="_blank" rel="noopener" class="pancake-order-id-link" title="Open this order in Pancake">#${pancakeOrderId} &#8599;</a>`;
+  return `${badge}<br>${link}`;
+}
+
 function formatMoney(value) {
   return '₱' + Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -53,7 +68,7 @@ function orderRowsHtml(orders) {
         <td>${o.fulfillment_type || ''}</td>
         <td>${formatMoney(o.estimated_total)}</td>
         <td>${statusBadgeHtml(o.status)}</td>
-        <td>${pancakeBadgeHtml(o.pancake_sync_status)}</td>
+        <td>${pancakeBadgeWithLinkHtml(o.pancake_sync_status, o.pancake_order_id, o.pancake_order_link)}</td>
         <td><button type="button" class="btn btn-secondary btn-sm" data-view="${o.order_no}">View</button></td>
       </tr>
     `)
@@ -91,7 +106,9 @@ async function loadOrders(search, status) {
   });
   tbody.querySelectorAll('tr.clickable-row').forEach((row) => {
     row.addEventListener('click', (event) => {
-      if (event.target.closest('button')) return;
+      // Ignore the Pancake order-id link too, same as the View button - otherwise clicking it
+      // would both open Pancake in a new tab AND pop the order detail modal in this one.
+      if (event.target.closest('button, a')) return;
       openOrderModal(row.dataset.orderNo);
     });
   });
@@ -178,7 +195,9 @@ function renderPancakeStatus(order) {
 
   lastSentPayload = order.pancake_last_payload || null;
 
-  const orderIdText = order.pancake_order_id ? ` <span class="muted">(Pancake order id: ${order.pancake_order_id})</span>` : '';
+  const orderIdText = (order.pancake_order_id && order.pancake_order_link)
+    ? ` <a href="${order.pancake_order_link}" target="_blank" rel="noopener">Pancake order id: ${order.pancake_order_id} &#8599;</a>`
+    : '';
   statusBox.innerHTML = pancakeBadgeHtml(order.pancake_sync_status) + orderIdText;
 
   if (order.pancake_sync_status === 'Failed' && order.pancake_sync_error) {
@@ -219,6 +238,7 @@ async function retryPancakePush() {
     pancake_sync_status: data[0].pancake_sync_status,
     pancake_sync_error: data[0].pancake_sync_error,
     pancake_order_id: data[0].pancake_order_id,
+    pancake_order_link: data[0].pancake_order_link,
     pancake_last_payload: data[0].pancake_last_payload
   });
   loadOrders(document.getElementById('orderSearchInput').value, document.getElementById('statusFilterInput').value);
