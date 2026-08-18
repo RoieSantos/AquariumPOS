@@ -19,6 +19,12 @@
     '2x2': 95
   };
 
+  // Default footing (short leg stub below the lowest shelf, resting on the floor) added at every
+  // corner of a standalone Stand build - per direct request, referencing a real tubular stand
+  // photo where the bottom frame sits slightly above the ground on these stubs rather than
+  // directly on the floor.
+  var STAND_FOOTING_INCHES = 3;
+
   function round2(value) {
     return Math.round((Number(value) || 0) * 100) / 100;
   }
@@ -274,6 +280,12 @@
     // Height is auto-computed from layers/tubular by default (matches the desktop app), but the
     // customer can override it - only used when explicitly provided and positive.
     var heightInches = Number(options.height) > 0 ? toInches(options.height, unit) : standHeightInches;
+    // Footing (short leg stub below the bottom shelf) is always entered in inches directly - see
+    // the "Footing (inches)" field - defaults to STAND_FOOTING_INCHES when left blank/invalid, and
+    // can never go negative.
+    var footingInches = options.footingInches !== undefined && options.footingInches !== null && options.footingInches !== ''
+      ? Math.max(0, Number(options.footingInches) || 0)
+      : STAND_FOOTING_INCHES;
 
     var sumpWidthInches = 0;
     if (sumpHolder) {
@@ -283,6 +295,9 @@
       }
     }
 
+    // Height entered by the customer is the TOTAL floor-to-top height (footing already included
+    // in it, per direct request), so it's fed to the pricing formula as-is - uprights (and the
+    // sump-holder's own support legs) already run this full length, no need to add footing again.
     var computed = computeStandRetailPrice(
       inchesToFeet(lengthInches),
       inchesToFeet(widthInches),
@@ -302,6 +317,7 @@
         lengthInches: round2(lengthInches),
         widthInches: round2(widthInches),
         heightInches: round2(heightInches),
+        footingInches: round2(footingInches),
         layers: layers,
         tubular: tubular,
         stainless: stainless,

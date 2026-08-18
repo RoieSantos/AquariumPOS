@@ -39,6 +39,11 @@ let filtrationEnabled = false;
 // staged for the shared "custom-checkout" (Order Summary) screen - lets that one screen serve all
 // three instead of needing a separate checkout page per sub-flow.
 let customBuilderType = 'aquarium';
+// The Stand/Filtration sub-flows are reachable both directly from the customize-choice picker and
+// from the post-Aquarium-checkout "add more products?" prompt - these track which one so each
+// step's own Back button returns to the right place instead of always assuming direct entry.
+let standBackTarget = 'customize-choice';
+let filtrationStandaloneBackTarget = 'customize-choice';
 // Step 4 (customer details) is shared by the Standard and Customize flows, so its Back button
 // needs to know which step led there - set right before navigating into step 4.
 let detailsBackTarget = 3;
@@ -48,10 +53,6 @@ let detailsBackTarget = 3;
 // meaningful from the mode-picker entry, since Step 4 already has an order going) can be hidden
 // when it isn't.
 let deliveryEstimateReturnStep = 0;
-// TEMPORARY - the internal OrderNo of the most recently submitted order, used only by the
-// confirmation step's debug "Test Send Confirmation Message" button. Remove alongside that button
-// once the automatic Messenger confirmation send is confirmed working.
-let lastSubmittedOrderNo = null;
 // Populated from a ?psid= query param when the customer arrives via a Messenger button whose URL
 // Pancake personalized with the sender's PSID. Kept in sessionStorage too so it survives the
 // wizard's internal navigation/refreshes. Stays null for anyone who reaches the page any other way.
@@ -99,6 +100,7 @@ function loadCart() {
 
 function saveCart() {
   sessionStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+  updateViewCartLink();
 }
 
 function cartItemCount() {
@@ -125,6 +127,85 @@ function updateCartBar() {
   bar.classList.toggle('hidden', !showBar);
   document.getElementById('cartBarInfo').textContent = `${cartItemCount()} item${cartItemCount() === 1 ? '' : 's'} - ${formatMoney(cartTotal())}`;
   document.getElementById('cartBarSub').textContent = 'Tap to review your order';
+}
+
+// "View Cart" link under the page header - shows the running item count so it's clear at a
+// glance whether there's anything to look at, from any step (not just Standard's steps 1-2 like
+// the sticky cart bar above).
+function updateViewCartLink() {
+  const link = document.getElementById('viewCartLink');
+  if (!link) return;
+  const count = cartItemCount();
+  link.textContent = count > 0 ? `🛒 View Cart (${count})` : '🛒 View Cart';
+}
+
+// Cart viewer modal - reachable from the "View Cart" link regardless of which step the customer
+// is on, unlike Step 3's cart review which is only reached by walking the Standard flow. Unlike
+// that read-mostly review (Remove only), this also lets quantity be adjusted in place.
+function renderCartViewModal() {
+  const emptyMsg = document.getElementById('cartViewEmptyMsg');
+  const linesBox = document.getElementById('cartViewLinesBox');
+  const totalRow = document.getElementById('cartViewTotalRow');
+
+  if (cart.length === 0) {
+    emptyMsg.classList.remove('hidden');
+    linesBox.innerHTML = '';
+    totalRow.classList.add('hidden');
+    return;
+  }
+
+  emptyMsg.classList.add('hidden');
+  totalRow.classList.remove('hidden');
+
+  linesBox.innerHTML = cart
+    .map((line, idx) => `
+      <div class="cart-line-row">
+        <div>
+          <div class="cart-line-name">${line.itemName}</div>
+          <div class="cart-line-meta">${formatMoney(line.price)} each - ${formatMoney(line.quantity * line.price)}</div>
+        </div>
+        <div class="cart-line-qty-controls">
+          <button type="button" class="cart-qty-btn" data-idx="${idx}" data-delta="-1">&minus;</button>
+          <span class="cart-qty-value">${line.quantity}</span>
+          <button type="button" class="cart-qty-btn" data-idx="${idx}" data-delta="1">+</button>
+        </div>
+        <button type="button" class="cart-line-remove" data-idx="${idx}">Remove</button>
+      </div>
+    `)
+    .join('');
+
+  linesBox.querySelectorAll('.cart-qty-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.idx);
+      const delta = Number(btn.dataset.delta);
+      cart[idx].quantity = Math.max(1, cart[idx].quantity + delta);
+      saveCart();
+      renderCartViewModal();
+      renderCart();
+      updateCartBar();
+    });
+  });
+
+  linesBox.querySelectorAll('.cart-line-remove').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      cart.splice(Number(btn.dataset.idx), 1);
+      saveCart();
+      renderCartViewModal();
+      renderCart();
+      updateCartBar();
+    });
+  });
+
+  document.getElementById('cartViewTotalValue').textContent = formatMoney(cartTotal());
+}
+
+function openCartViewModal() {
+  renderCartViewModal();
+  document.getElementById('cartViewModal').classList.remove('hidden');
+}
+
+function closeCartViewModal() {
+  document.getElementById('cartViewModal').classList.add('hidden');
 }
 
 // Step 0 (Standard/Customize/Estimate Delivery picker), every "custom-*" step (the Customize
@@ -520,6 +601,21 @@ function round1(value) {
   return Math.round((Number(value) || 0) * 10) / 10;
 }
 
+const STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
+
+// Shared with the Stand canvas sketch's "Gap" arrows/captions so the Order Summary shows the same
+// number - see the sketch's own comment for why: a middle rail borders TWO gaps at once, so the
+// total material used by all `layers` rails is spread evenly across all (layers - 1) gaps rather
+// than charging each gap the full thickness of both its rails.
+function computeStandGapInches(totalHeightIn, footingIn, layers, tubular) {
+  if (!(layers > 1)) return null;
+  const heightIn = Math.max(0, (Number(totalHeightIn) || 0) - (Number(footingIn) || 0));
+  const thicknessIn = STAND_TUBULAR_THICKNESS_IN[tubular] || 1;
+  const spacingIn = heightIn / (layers - 1);
+  const gapReductionIn = (layers * thicknessIn) / (layers - 1);
+  return Math.max(0, spacingIn - gapReductionIn);
+}
+
 function registerCustomCanvas(canvasId) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
@@ -628,6 +724,32 @@ function drawCustomDimensionLine(x1, y1, x2, y2) {
     ctx.lineTo(x2 + tickLength / 2, y2);
   }
   ctx.stroke();
+}
+
+// Dashed red double-headed arrow marking the clear vertical opening between two adjacent shelves
+// (Customize > Stand preview) - mirrors the reference photo's red "Gap" arrow.
+function drawCustomStandGapArrow(x, yTop, yBottom) {
+  const ctx = customCanvasCtx;
+  const headLen = 6;
+
+  ctx.strokeStyle = '#e2483f';
+  ctx.fillStyle = '#e2483f';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(x, yTop);
+  ctx.lineTo(x, yBottom);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  [[yTop, 1], [yBottom, -1]].forEach(([y, dir]) => {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - headLen * 0.55, y + headLen * dir);
+    ctx.lineTo(x + headLen * 0.55, y + headLen * dir);
+    ctx.closePath();
+    ctx.fill();
+  });
 }
 
 // result: the return value of calculateCustomAquarium() - drawn straight from its normalized
@@ -825,6 +947,331 @@ function drawCustomAquariumOnActiveCanvas(result) {
   drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
 }
 
+// ---- Stand (tubular) preview canvas ----
+// Separate registry from customCanvases above - both live in the Customize flow but must never
+// draw onto each other's canvas. Renders a simplified isometric wireframe (uprights + one
+// horizontal frame per layer/shelf) rather than a solid box, so a Stand sketch reads as a tubular
+// frame rather than glass - reuses the same dimension-chip/line helpers as the aquarium sketch
+// (and its module-level customCanvasCtx/CUSTOM_CANVAS_W/H pointer) for visual consistency.
+let standCanvases = [];
+
+function registerStandCanvas(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  standCanvases.push({ ctx, w, h });
+}
+
+function setupStandCanvas() {
+  standCanvases = [];
+  registerStandCanvas('customStandCanvas');
+  drawStandPlaceholder('Enter your stand details to see a preview.');
+}
+
+function drawStandPlaceholder(message) {
+  standCanvases.forEach(({ ctx, w, h }) => {
+    customCanvasCtx = ctx;
+    CUSTOM_CANVAS_W = w;
+    CUSTOM_CANVAS_H = h;
+    drawCustomPlaceholderOnActiveCanvas(message);
+  });
+}
+
+// result: the return value of calculateStandaloneStand() - drawn from its normalized
+// dimensions/layers so the sketch always matches whatever price was just computed.
+function drawCustomStand(result) {
+  standCanvases.forEach(({ ctx, w, h }) => {
+    customCanvasCtx = ctx;
+    CUSTOM_CANVAS_W = w;
+    CUSTOM_CANVAS_H = h;
+    drawCustomStandOnActiveCanvas(result);
+  });
+}
+
+function drawCustomStandOnActiveCanvas(result) {
+  const ctx = customCanvasCtx;
+  if (!ctx) return;
+
+  ctx.clearRect(0, 0, CUSTOM_CANVAS_W, CUSTOM_CANVAS_H);
+  const bg = ctx.createLinearGradient(0, 0, 0, CUSTOM_CANVAS_H);
+  bg.addColorStop(0, '#ffffff');
+  bg.addColorStop(1, '#f4f9ff');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, CUSTOM_CANVAS_W, CUSTOM_CANVAS_H);
+  ctx.strokeStyle = '#d7e0ef';
+  ctx.strokeRect(0.5, 0.5, CUSTOM_CANVAS_W - 1, CUSTOM_CANVAS_H - 1);
+
+  if (!result || !result.ok || !result.normalized) {
+    drawCustomPlaceholderOnActiveCanvas(result && result.error ? result.error : 'Enter your stand details to see a preview.');
+    return;
+  }
+
+  const dims = result.normalized;
+  const lengthIn = Math.max(1, Number(dims.lengthInches) || 1);
+  const widthIn = Math.max(1, Number(dims.widthInches) || 1);
+  // The Height the customer enters is the TOTAL floor-to-top height (footing already included in
+  // it), so the shelf frame span (used for shelf spacing/gap math and to position each layer on
+  // the sketch) is derived by subtracting footing back out, not by adding footing on top.
+  const totalHeightIn = Math.max(1, Number(dims.heightInches) || 1);
+  const footingIn = Math.max(0, Number(dims.footingInches) || 0);
+  const heightIn = Math.max(0, totalHeightIn - footingIn);
+  const layers = Math.max(2, Math.round(Number(dims.layers) || 2));
+
+  // Same isometric bounding-box math as the aquarium sketch, so both flows scale/center the same
+  // way inside whatever canvas size is actually available. Uses the FULL height (frame span +
+  // footing) so the whole stand, feet included, fits on the canvas. Extra room is reserved above
+  // when a sump holder is shown, since that now draws as its own small supported frame sitting on
+  // top of the stand (per direct request) rather than below it.
+  const marginLeft = 66;
+  const marginRight = 56;
+  const marginTop = dims.sumpHolder ? 58 : 34;
+  const marginBottom = 52;
+  const availableWidth = Math.max(80, CUSTOM_CANVAS_W - marginLeft - marginRight);
+  const availableHeight = Math.max(80, CUSTOM_CANVAS_H - marginTop - marginBottom);
+
+  const widthBoundScale = availableWidth / (lengthIn + widthIn * 0.38);
+  const heightBoundScale = availableHeight / (totalHeightIn + widthIn * 0.38 * 0.48);
+  const scale = Math.min(Math.max(1.5, Math.min(widthBoundScale, heightBoundScale)), 14);
+
+  const frontWidth = lengthIn * scale;
+  const frontHeight = totalHeightIn * scale;
+  const frameSpan = heightIn * scale;
+  const footingPx = footingIn * scale;
+  const depth = Math.max(24, widthIn * scale * 0.38);
+  const totalWidth = frontWidth + depth;
+  const frontLeft = marginLeft + Math.max(0, (availableWidth - totalWidth) / 2);
+  const baseY = CUSTOM_CANVAS_H - marginBottom;
+  const frontTop = baseY - frontHeight;
+  const backTop = frontTop - depth * 0.48;
+  const backLeft = frontLeft + depth;
+  const backBaseY = baseY - depth * 0.48;
+  // Where the bottom-most shelf actually sits - above the true floor by the footing amount, so
+  // the legs continue below it down to the floor as short foot stubs (matching the reference
+  // photo's stand, whose bottom shelf sits slightly clear of the ground).
+  const shelfBaseY = baseY - footingPx;
+
+  // Tubular metal look - thin strokes instead of the aquarium's glass-panel fills, so this reads
+  // as a frame rather than a solid box.
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  ctx.strokeStyle = '#6b7686';
+  ctx.lineWidth = 3;
+  [
+    [frontLeft, frontTop, frontLeft, baseY],
+    [frontLeft + frontWidth, frontTop, frontLeft + frontWidth, baseY],
+    [backLeft, backTop, backLeft, backBaseY],
+    [backLeft + frontWidth, backTop, backLeft + frontWidth, backBaseY]
+  ].forEach(([x1, y1, x2, y2]) => {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  });
+
+  // One horizontal frame (isometric parallelogram outline) per layer/shelf, evenly spaced from
+  // the ground up to the top of the stand - the topmost is drawn darker to read as the main deck.
+  // Each frame also gets its own cross brace(s) - same "one brace per 3ft of length" the pricing
+  // math already charges for (see computeStandRetailPrice's bracesPerFrame), so the sketch matches
+  // a real tubular stand's look (crossbar reinforcing each shelf, as in a real welded frame).
+  const bracesPerFrame = Math.max(1, Math.ceil(lengthIn / 36));
+  ctx.lineWidth = 2.4;
+  for (let i = 0; i < layers; i += 1) {
+    const t = layers === 1 ? 0 : i / (layers - 1);
+    const y = shelfBaseY - t * frameSpan;
+    const backY = y - depth * 0.48;
+    ctx.strokeStyle = i === layers - 1 ? '#45566e' : '#8a94a3';
+    ctx.beginPath();
+    ctx.moveTo(frontLeft, y);
+    ctx.lineTo(frontLeft + frontWidth, y);
+    ctx.lineTo(backLeft + frontWidth, backY);
+    ctx.lineTo(backLeft, backY);
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.lineWidth = 1.6;
+    for (let b = 1; b <= bracesPerFrame; b += 1) {
+      const bt = b / (bracesPerFrame + 1);
+      ctx.beginPath();
+      ctx.moveTo(frontLeft + bt * frontWidth, y);
+      ctx.lineTo(backLeft + bt * frontWidth, backY);
+      ctx.stroke();
+    }
+    ctx.lineWidth = 2.4;
+  }
+
+  // Vertical clear-space arrow between each pair of adjacent shelves - see computeStandGapInches
+  // (shared with the Order Summary's own "Gap per layer" line, so both always agree).
+  const tubularThicknessIn = STAND_TUBULAR_THICKNESS_IN[dims.tubular] || 1;
+  if (layers > 1) {
+    const gapReductionIn = (layers * tubularThicknessIn) / (layers - 1);
+    const gapIn = computeStandGapInches(totalHeightIn, footingIn, layers, dims.tubular);
+    const gapX = frontLeft + frontWidth * 0.68;
+    const halfReductionPx = (gapReductionIn / 2) * scale;
+    for (let i = 0; i < layers - 1; i += 1) {
+      const yLower = shelfBaseY - (i / (layers - 1)) * frameSpan;
+      const yUpper = shelfBaseY - ((i + 1) / (layers - 1)) * frameSpan;
+      const arrowBottom = yLower - halfReductionPx;
+      const arrowTop = yUpper + halfReductionPx;
+      if (arrowBottom - arrowTop > 10) {
+        drawCustomStandGapArrow(gapX, arrowTop, arrowBottom);
+      }
+      ctx.fillStyle = '#c23b31';
+      ctx.font = 'bold 13px Segoe UI';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Gap: ' + round1(gapIn) + '"', gapX + 9, (yLower + yUpper) / 2);
+      ctx.textBaseline = 'alphabetic';
+    }
+  }
+
+  // Pointer callout naming the tubular's own cross-section thickness - a single label at the left
+  // edge feeding a vertical spine with one short tick pointing at EVERY layer's front rail (not
+  // just the top deck), since the tubular size is the same stock for every shelf in the stand.
+  const tubularSizeLabelMap = { '1x1': '1"×1"', '1.5x1.5': '1½"×1½"', '2x2': '2"×2"' };
+  const tubularSizeLabel = (tubularSizeLabelMap[dims.tubular] || (round1(tubularThicknessIn) + '"')) + ' tube';
+  {
+    // Spine sits just outside the frame (left of the uprights, right of the H dimension line at
+    // frontLeft - 26) so it never crosses either.
+    const spineX = frontLeft - 10;
+    const layerYs = [];
+    for (let i = 0; i < layers; i += 1) {
+      const t = layers === 1 ? 0 : i / (layers - 1);
+      layerYs.push(shelfBaseY - t * frameSpan);
+    }
+    const topY = Math.min.apply(null, layerYs);
+    const bottomY = Math.max.apply(null, layerYs);
+    const labelX = 8;
+    const labelY = Math.max(11, topY - 14);
+
+    ctx.strokeStyle = '#45566e';
+    ctx.lineWidth = 1;
+    ctx.font = 'bold 12px Segoe UI';
+    const textWidth = ctx.measureText(tubularSizeLabel).width;
+
+    ctx.beginPath();
+    ctx.moveTo(labelX + textWidth + 4, labelY);
+    ctx.lineTo(spineX, topY);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(spineX, topY);
+    ctx.lineTo(spineX, bottomY);
+    ctx.stroke();
+
+    layerYs.forEach((y) => {
+      ctx.beginPath();
+      ctx.moveTo(spineX, y);
+      ctx.lineTo(frontLeft, y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#45566e';
+      ctx.beginPath();
+      ctx.ellipse(frontLeft, y, 2.4, 2.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(tubularSizeLabel, labelX, labelY);
+  }
+
+  // Small foot caps where the legs meet the floor, matching a real welded stand's feet.
+  ctx.fillStyle = '#45566e';
+  [[frontLeft, baseY], [frontLeft + frontWidth, baseY]].forEach(([fx, fy]) => {
+    ctx.beginPath();
+    ctx.ellipse(fx, fy, 5, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Footing callout - labels the short leg-stub segment between the bottom shelf and the floor,
+  // since it's now a customer-adjustable field (standFooting) in its own right, not just folded
+  // silently into the overall Height figure.
+  if (footingPx > 0.5) {
+    ctx.strokeStyle = '#8a94a3';
+    ctx.setLineDash([2, 2]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(frontLeft + frontWidth + 3, shelfBaseY);
+    ctx.lineTo(frontLeft + frontWidth + 3, baseY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#45566e';
+    ctx.font = 'bold 14px Segoe UI';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(round1(footingIn) + '" footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // Sump holder - drawn as its own small supported tubular frame (outline + 2 legs, matching the
+  // "u=2" support-leg count computeStandRetailPrice's sump-holder math already prices), sitting
+  // on top of the main stand rather than below it, per direct request. Legs bridge the small gap
+  // down to the stand's own top rail. Compartment dividers use the same bracesPerFrame count as
+  // the main frame's own braces.
+  if (dims.sumpHolder) {
+    const sumpGap = 8;
+    const sumpBottom = frontTop - sumpGap;
+    const sumpHeight = 14;
+    const sumpTop = sumpBottom - sumpHeight;
+    const sumpWidth = Math.max(48, frontWidth * 0.4);
+    const sumpLeft = frontLeft + ((frontWidth - sumpWidth) / 2);
+    const sumpRight = sumpLeft + sumpWidth;
+
+    ctx.strokeStyle = '#507193';
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
+
+    ctx.lineWidth = 1;
+    for (let b = 1; b <= bracesPerFrame; b += 1) {
+      const bx = sumpLeft + (b / (bracesPerFrame + 1)) * sumpWidth;
+      ctx.beginPath();
+      ctx.moveTo(bx, sumpTop + 2);
+      ctx.lineTo(bx, sumpBottom - 2);
+      ctx.stroke();
+    }
+
+    ctx.lineWidth = 1.6;
+    [[sumpLeft + 4, sumpBottom], [sumpRight - 4, sumpBottom]].forEach(([lx, ly]) => {
+      ctx.beginPath();
+      ctx.moveTo(lx, ly);
+      ctx.lineTo(lx, frontTop);
+      ctx.stroke();
+    });
+
+    // Caption naming the sump holder and its width, per direct request - placed beside the frame
+    // so it never collides with the H dimension line/chip on the left.
+    const sumpWidthInVal = round1(Number(dims.sumpWidthInches) || 0);
+    ctx.fillStyle = '#45566e';
+    ctx.font = 'bold 14px Segoe UI';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Sump holder with ${sumpWidthInVal}" width`, sumpRight + 9, (sumpTop + sumpBottom) / 2);
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  const lengthLineY = baseY + 24;
+  const heightLineX = frontLeft - 26;
+  const widthLineX2 = backLeft + frontWidth + 4;
+
+  drawCustomDimensionLine(frontLeft, lengthLineY, frontLeft + frontWidth, lengthLineY);
+  drawCustomDimensionLine(heightLineX, frontTop, heightLineX, baseY);
+  drawCustomDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
+
+  // Height label shows the full floor-to-top measurement (frame span + footing) since that's what
+  // the H dimension line above actually spans (frontTop to the true floor at baseY).
+  drawCustomDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
+  drawCustomDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
+  drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+}
+
 // Shown on the Dimensions, Options, and (when reached) Filtration steps, same as the canvas
 // preview - so the customer sees a running price as soon as they enter dimensions, and it keeps
 // including whatever sump specs they've entered once Filtration is reached.
@@ -957,7 +1404,8 @@ function buildCustomStandPayload() {
     stainless: document.getElementById('standStainless').checked,
     cabinet: document.getElementById('standCabinet').checked,
     sumpHolder: sumpHolder,
-    sumpWidth: sumpHolder ? document.getElementById('standSumpWidth').value : 0
+    sumpWidth: sumpHolder ? document.getElementById('standSumpWidth').value : 0,
+    footingInches: document.getElementById('standFooting').value
   };
 }
 
@@ -968,20 +1416,114 @@ function selectStandTubular(value) {
   document.getElementById('standTubular2x2').classList.toggle('selected', value === '2x2');
 }
 
+// Fades out (and blocks clicking) whichever Tubular options the current Length/Width would
+// immediately force away from anyway (see enforceStandTubularSafety's two dimension-based rules)
+// - per direct request, so it's visually obvious 1x1/1 1/2x1 1/2 aren't real choices right now
+// instead of letting the customer pick one and having it silently snap back on the next update.
+function updateStandTubularAvailability() {
+  const btn1x1 = document.getElementById('standTubular1x1');
+  const btn15 = document.getElementById('standTubular1_5x1_5');
+  const unit = document.getElementById('standUnit').value;
+  const lengthIn = unit ? convertToInches(document.getElementById('standLength').value, unit) : 0;
+  const widthIn = unit ? convertToInches(document.getElementById('standWidth').value, unit) : 0;
+
+  if (!lengthIn || !widthIn) {
+    btn1x1.classList.remove('option-disabled');
+    btn15.classList.remove('option-disabled');
+    return;
+  }
+
+  const check1x1 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, undefined, '1x1');
+  const check15 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, undefined, '1.5x1.5');
+  btn1x1.classList.toggle('option-disabled', check1x1.tubular !== '1x1');
+  btn15.classList.toggle('option-disabled', check15.tubular !== '1.5x1.5');
+}
+
+// Live summary of every Stand field, same "declutter - only list options actually turned on"
+// pattern as renderCustomDimsSummary() on the Aquarium flow's Options step. Unlike that one
+// (rendered once, on arrival at a separate Options step), this re-renders on every field change
+// since the Stand flow is a single step - there's no natural "moving on" moment to render it at.
+function renderCustomStandSummary() {
+  const length = document.getElementById('standLength').value || '?';
+  const width = document.getElementById('standWidth').value || '?';
+  const height = document.getElementById('standHeight').value || '?';
+  const unit = document.getElementById('standUnit').value || 'Not specified';
+  const qty = document.getElementById('standQty').value || '1';
+  const layers = document.getElementById('standLayers').value || '2';
+  const footing = document.getElementById('standFooting').value || '0';
+
+  const options = [
+    ['Stainless', document.getElementById('standStainless').checked],
+    ['Cabinet', document.getElementById('standCabinet').checked],
+    ['Sump Holder', document.getElementById('standSumpHolder').checked]
+  ];
+  const optionsHtml = options
+    .filter(([, checked]) => checked)
+    .map(([label]) => {
+      if (label === 'Sump Holder') {
+        return `<div><strong>Sump Holder:</strong> Yes (W-${document.getElementById('standSumpWidth').value} ${unit})</div>`;
+      }
+      return `<div><strong>${label}:</strong> Yes</div>`;
+    })
+    .join('');
+
+  // Height/Footing are entered in whatever unit is picked (except Footing, always inches) - convert
+  // to real inches, same as calculateStandaloneStand does, so the gap shown here always matches the
+  // canvas sketch's own "Gap" arrows/captions.
+  const layersNum = Math.round(Number(layers)) || 2;
+  const heightInchesForGap = unit && window.CustomAquariumCalculator
+    ? window.CustomAquariumCalculator.toInches(height, unit)
+    : Number(height) || 0;
+  const gapIn = window.CustomAquariumCalculator
+    ? computeStandGapInches(heightInchesForGap, Number(footing) || 0, layersNum, selectedStandTubular)
+    : null;
+  const gapHtml = gapIn !== null ? `<div><strong>Gap per layer:</strong> ${round1(gapIn)}in</div>` : '';
+
+  document.getElementById('customStandSummary').innerHTML = `
+    <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
+    <div><strong>Unit of Measure:</strong> ${unit}</div>
+    <div><strong>Quantity:</strong> ${qty}</div>
+    <div><strong>Layers:</strong> ${layers}</div>
+    ${gapHtml}
+    <div><strong>Footing:</strong> ${footing}in</div>
+    <div><strong>Tubular:</strong> ${selectedStandTubular}</div>
+    ${optionsHtml ? `<div class="dims-summary-options-grid">${optionsHtml}</div>` : ''}
+  `;
+}
+
+// Warns when Footing reaches 10in or above - per direct request, a footing that tall starts
+// undermining the stand's own stability rather than just lifting it clear of the floor.
+function updateStandFootingNotice() {
+  const notice = document.getElementById('customStandFootingNotice');
+  const footingIn = Number(document.getElementById('standFooting').value) || 0;
+  if (footingIn >= 10) {
+    notice.textContent = 'Please note: the higher the footing, the more unstable the stand becomes.';
+    notice.classList.remove('hidden');
+  } else {
+    notice.classList.add('hidden');
+  }
+}
+
 // Live price + tubular-safety notice for the Stand step - mirrors applyCustomDimsGlassSafety's
 // "auto-adjust and explain why" pattern, just driven by calculateStandaloneStand's own notice
 // (it already runs enforceStandTubularSafety internally) instead of a separate check.
 function updateCustomStandPriceEstimate() {
   const box = document.getElementById('customPriceEstimateStand');
   const notice = document.getElementById('customStandNotice');
+  renderCustomStandSummary();
+  updateStandFootingNotice();
 
   if (!document.getElementById('standUnit').value) {
     box.textContent = 'Select a unit of measure to see a price estimate.';
     notice.classList.add('hidden');
+    drawStandPlaceholder('Select a unit of measure to see a preview.');
+    updateStandTubularAvailability();
     return;
   }
 
+  updateStandTubularAvailability();
   const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
+  drawCustomStand(result);
   if (!result.ok) {
     box.textContent = result.error || 'Enter valid dimensions to see a price estimate.';
     notice.classList.add('hidden');
@@ -1008,7 +1550,7 @@ function buildCustomStandSpecText() {
   const unit = document.getElementById('standUnit').value;
   const layers = document.getElementById('standLayers').value;
 
-  const opts = [];
+  const opts = [`${document.getElementById('standFooting').value}in footing`];
   if (document.getElementById('standStainless').checked) opts.push('Stainless');
   if (document.getElementById('standCabinet').checked) opts.push('Cabinet');
   if (document.getElementById('standSumpHolder').checked) {
@@ -1035,22 +1577,47 @@ function resetCustomStandBuilder() {
   document.getElementById('standLength').value = '0';
   document.getElementById('standWidth').value = '0';
   document.getElementById('standHeight').value = '0';
+  document.getElementById('standFooting').value = '3';
   document.getElementById('standQty').value = '1';
   document.getElementById('standUnit').value = '';
   document.getElementById('standLayers').value = '2';
   selectStandTubular('1x1');
+  document.getElementById('standTubular1x1').classList.remove('option-disabled');
+  document.getElementById('standTubular1_5x1_5').classList.remove('option-disabled');
   document.getElementById('standStainless').checked = false;
   document.getElementById('standCabinet').checked = false;
   document.getElementById('standSumpHolder').checked = false;
   document.getElementById('standSumpWidth').value = '0';
   document.getElementById('standSumpWidthRow').classList.add('hidden');
 
-  ['customStandErrorMsg', 'customStandNotice'].forEach((id) => {
+  ['customStandErrorMsg', 'customStandNotice', 'customStandFootingNotice', 'standAquariumAwarenessNote'].forEach((id) => {
     const el = document.getElementById(id);
     el.textContent = '';
     el.classList.add('hidden');
   });
   document.getElementById('customPriceEstimateStand').textContent = 'Enter your stand details to see a price estimate.';
+  drawStandPlaceholder('Enter your stand details to see a preview.');
+  renderCustomStandSummary();
+}
+
+// Reached from the post-Aquarium-checkout "Add Stand" prompt - carries the just-confirmed
+// aquarium's own Length/Width/Unit over as the stand's starting footprint (a stand has to match
+// the tank it's holding), leaving everything else at its normal reset defaults. The customer can
+// still edit Length/Width afterward if they want a different footprint.
+function prefillStandFromAquarium() {
+  resetCustomStandBuilder();
+  const length = document.getElementById('customLength').value;
+  const width = document.getElementById('customWidth').value;
+  const unit = document.getElementById('customUnit').value;
+  document.getElementById('standLength').value = length;
+  document.getElementById('standWidth').value = width;
+  document.getElementById('standUnit').value = unit;
+
+  const note = document.getElementById('standAquariumAwarenessNote');
+  note.textContent = `Using this aquarium's footprint: ${length} x ${width} ${unit}. You can adjust Length/Width if you'd like a different fit.`;
+  note.classList.remove('hidden');
+
+  updateCustomStandPriceEstimate();
 }
 
 // ---- Customize > Filtration sub-flow (standalone, no aquarium involved) ----
@@ -1155,6 +1722,25 @@ function resetStandaloneFiltrationBuilder() {
   errorMsg.textContent = '';
   errorMsg.classList.add('hidden');
   document.getElementById('customPriceEstimateStandaloneFiltration').textContent = 'Enter your sump details to see a price estimate.';
+
+  const awarenessNote = document.getElementById('filtrationAquariumAwarenessNote');
+  awarenessNote.textContent = '';
+  awarenessNote.classList.add('hidden');
+}
+
+// Reached from the post-Aquarium-checkout "Add Filtration" prompt - a sump's dimensions are
+// usually smaller than (and independent of) the tank it filters, so unlike the Stand prompt this
+// doesn't prefill any fields, just surfaces the aquarium's own measurements as a reference while
+// the customer sizes the sump.
+function showFiltrationAquariumAwarenessNote() {
+  const length = document.getElementById('customLength').value;
+  const width = document.getElementById('customWidth').value;
+  const height = document.getElementById('customHeight').value;
+  const unit = document.getElementById('customUnit').value;
+
+  const note = document.getElementById('filtrationAquariumAwarenessNote');
+  note.textContent = `For reference, this aquarium is ${length} x ${width} x ${height} ${unit}.`;
+  note.classList.remove('hidden');
 }
 
 // Populates the receipt-styled checkout/review page (step "custom-checkout") with the company
@@ -1521,7 +2107,6 @@ async function submitOrder(event) {
   // failed/is pending, with no way to tell that's what happened.
   const result = (data && data[0]) || {};
   document.getElementById('confirmationOrderNo').textContent = result.order_no;
-  lastSubmittedOrderNo = result.order_no || null;
 
   const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
   const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
@@ -1533,66 +2118,9 @@ async function submitOrder(event) {
     onlineOrderNoBox.classList.add('hidden');
     onlineOrderNoLabel.classList.add('hidden');
   }
-  document.getElementById('debugSendConfirmationOutput').classList.add('hidden');
   cart = [];
   saveCart();
   goToStep(5);
-}
-
-// TEMPORARY - debug button handler, see debug_send_order_confirmation_message() in
-// supabase_automated_orders_tables.sql. Calls the exact same message-send path as the automatic
-// one but returns the full endpoint/payload/response instead of only a status column, so a
-// failure can be diagnosed directly from this page. Remove alongside that function once the
-// automatic send is confirmed working.
-async function debugSendConfirmationMessage() {
-  const btn = document.getElementById('debugSendConfirmationBtn');
-  const out = document.getElementById('debugSendConfirmationOutput');
-
-  if (!lastSubmittedOrderNo) {
-    out.textContent = 'No order was just submitted in this session - nothing to test.';
-    out.classList.remove('hidden');
-    return;
-  }
-
-  btn.disabled = true;
-  btn.textContent = 'Sending...';
-  out.classList.add('hidden');
-
-  const { data, error } = await supabaseClient.rpc('debug_send_order_confirmation_message', {
-    p_order_no: lastSubmittedOrderNo
-  });
-
-  btn.disabled = false;
-  btn.textContent = '🛠️ Test Send Confirmation Message (Debug)';
-
-  if (error) {
-    out.textContent = 'RPC call itself failed:\n' + error.message;
-    out.classList.remove('hidden');
-    return;
-  }
-
-  const result = (data && data[0]) || {};
-  out.textContent = [
-    'Order: ' + lastSubmittedOrderNo,
-    'Result: ' + (result.ok ? 'SUCCESS' : 'FAILED'),
-    'HTTP Status: ' + (result.http_status ?? '(request did not complete)'),
-    '',
-    'Vault key fingerprint (compare against the real key - length + first/last 10 chars only):',
-    result.key_fingerprint || '(not set in Vault)',
-    '',
-    'Endpoint:',
-    result.endpoint || '(not built - see error below)',
-    '',
-    'Payload sent:',
-    result.payload || '(none)',
-    '',
-    'Response body from Pancake:',
-    result.response_body || '(none)',
-    '',
-    'Error:',
-    result.error_message || '(none)'
-  ].join('\n');
-  out.classList.remove('hidden');
 }
 
 // Puts the whole Customize flow back to its just-loaded defaults - per direct request, opening
@@ -1662,6 +2190,20 @@ function exitOrderNow() {
       window.alert('You can now safely close this tab.');
     }
   }, 300);
+}
+
+// Brief transitional loading state shown right after clicking Customize on the mode picker -
+// purely for delight (there's no real work happening), per direct request for some animation and
+// a "grab your tape measure" message before landing on the Aquarium/Stand/Filtration sub-choice.
+function showCustomizeLoading(durationMs = 1300) {
+  const overlay = document.getElementById('customizeLoadingOverlay');
+  overlay.classList.remove('hidden');
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      overlay.classList.add('hidden');
+      resolve();
+    }, durationMs);
+  });
 }
 
 async function loadCompanyLogo() {
@@ -2186,9 +2728,11 @@ async function runDeliveryEstimate() {
   loadCompanyLogo();
   loadCategories();
   renderCart();
+  updateViewCartLink();
   wireLocationToggle();
   wireFulfillmentToggle();
   setupCustomCanvas();
+  setupStandCanvas();
   // Clones the Payment & Release policy (see paymentPolicyTemplate) into both order-summary
   // screens - Step 3 (Standard flow cart review) and custom-checkout (Customize flow) - so it's
   // no longer a separate wizard step the customer has to click through.
@@ -2198,7 +2742,10 @@ async function runDeliveryEstimate() {
   goToStep(0);
 
   document.getElementById('modeStandardBtn').addEventListener('click', () => goToStep(1));
-  document.getElementById('modeCustomizeBtn').addEventListener('click', () => goToStep('customize-choice'));
+  document.getElementById('modeCustomizeBtn').addEventListener('click', async () => {
+    await showCustomizeLoading();
+    goToStep('customize-choice');
+  });
   document.getElementById('customizeChoiceBackBtn').addEventListener('click', () => goToStep(0));
   document.getElementById('customizeChoiceAquariumBtn').addEventListener('click', () => {
     customBuilderType = 'aquarium';
@@ -2207,11 +2754,13 @@ async function runDeliveryEstimate() {
   });
   document.getElementById('customizeChoiceStandBtn').addEventListener('click', () => {
     customBuilderType = 'stand';
+    standBackTarget = 'customize-choice';
     resetCustomStandBuilder();
     goToStep('custom-stand');
   });
   document.getElementById('customizeChoiceFiltrationBtn').addEventListener('click', () => {
     customBuilderType = 'filtration';
+    filtrationStandaloneBackTarget = 'customize-choice';
     resetStandaloneFiltrationBuilder();
     goToStep('custom-filtration-standalone');
   });
@@ -2416,14 +2965,15 @@ async function runDeliveryEstimate() {
     document.getElementById('standSumpWidthRow').classList.toggle('hidden', !event.target.checked);
     updateCustomStandPriceEstimate();
   });
-  ['standLength', 'standWidth', 'standHeight', 'standLayers', 'standSumpWidth'].forEach((id) => {
+  ['standLength', 'standWidth', 'standHeight', 'standLayers', 'standSumpWidth', 'standFooting'].forEach((id) => {
     document.getElementById(id).addEventListener('input', () => updateCustomStandPriceEstimate());
   });
+  document.getElementById('standQty').addEventListener('input', () => renderCustomStandSummary());
   document.getElementById('standUnit').addEventListener('change', () => updateCustomStandPriceEstimate());
   ['standStainless', 'standCabinet'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => updateCustomStandPriceEstimate());
   });
-  document.getElementById('customStandBackBtn').addEventListener('click', () => goToStep('customize-choice'));
+  document.getElementById('customStandBackBtn').addEventListener('click', () => goToStep(standBackTarget));
   document.getElementById('customStandNextBtn').addEventListener('click', async () => {
     const errorMsg = document.getElementById('customStandErrorMsg');
     if (!document.getElementById('standUnit').value) {
@@ -2457,7 +3007,7 @@ async function runDeliveryEstimate() {
   document.getElementById('standaloneFiltrationGlass').addEventListener('change', () => updateStandaloneFiltrationPriceEstimate());
   ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover', 'standaloneSumpSubmersibleLight', 'standaloneSumpSubmersiblePump']
     .forEach((id) => document.getElementById(id).addEventListener('change', () => updateStandaloneFiltrationPriceEstimate()));
-  document.getElementById('customStandaloneFiltrationBackBtn').addEventListener('click', () => goToStep('customize-choice'));
+  document.getElementById('customStandaloneFiltrationBackBtn').addEventListener('click', () => goToStep(filtrationStandaloneBackTarget));
   document.getElementById('customStandaloneFiltrationNextBtn').addEventListener('click', async () => {
     const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
     if (!document.getElementById('standaloneFiltrationUnit').value) {
@@ -2495,18 +3045,45 @@ async function runDeliveryEstimate() {
       const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
       cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-STAND');
       cart.push(buildCustomStandCartLine(result));
+      saveCart();
+      detailsBackTarget = 'custom-checkout';
+      goToStep(4);
     } else if (customBuilderType === 'filtration') {
       const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
       cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-FILTRATION');
       cart.push(buildStandaloneFiltrationCartLine(result));
+      saveCart();
+      detailsBackTarget = 'custom-checkout';
+      goToStep(4);
     } else {
       const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
       cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-AQUARIUM');
       cart.push(buildCustomAquariumCartLine(result));
+      saveCart();
+      // Unlike Stand/Filtration (which go straight to contact details), a just-confirmed
+      // Aquarium build offers to add a matching Stand/Filtration on top of it first.
+      goToStep('custom-add-more');
     }
-    saveCart();
+  });
+
+  // ---- "Add more products?" prompt (shown right after confirming a Custom Aquarium) ----
+  document.getElementById('addMoreBackBtn').addEventListener('click', () => goToStep('custom-checkout'));
+  document.getElementById('addMoreNoBtn').addEventListener('click', () => {
     detailsBackTarget = 'custom-checkout';
     goToStep(4);
+  });
+  document.getElementById('addMoreStandBtn').addEventListener('click', () => {
+    customBuilderType = 'stand';
+    standBackTarget = 'custom-add-more';
+    prefillStandFromAquarium();
+    goToStep('custom-stand');
+  });
+  document.getElementById('addMoreFiltrationBtn').addEventListener('click', () => {
+    customBuilderType = 'filtration';
+    filtrationStandaloneBackTarget = 'custom-add-more';
+    resetStandaloneFiltrationBuilder();
+    showFiltrationAquariumAwarenessNote();
+    goToStep('custom-filtration-standalone');
   });
 
   document.getElementById('customLowIron').addEventListener('change', (event) => {
@@ -2559,5 +3136,9 @@ async function runDeliveryEstimate() {
   document.getElementById('detailsForm').addEventListener('submit', submitOrder);
   document.getElementById('startNewOrderBtn').addEventListener('click', resetWizard);
   document.getElementById('exitOrderNowBtn').addEventListener('click', exitOrderNow);
-  document.getElementById('debugSendConfirmationBtn').addEventListener('click', debugSendConfirmationMessage);
+  document.getElementById('viewCartLink').addEventListener('click', (event) => {
+    event.preventDefault();
+    openCartViewModal();
+  });
+  document.getElementById('cartViewCloseBtn').addEventListener('click', closeCartViewModal);
 })();

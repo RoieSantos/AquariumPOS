@@ -1930,6 +1930,58 @@ body:has(.wizard-page) {
   to { opacity: 1; transform: translateY(0); }
 }
 
+.customize-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--panel-bg);
+  border-radius: 20px;
+  text-align: center;
+  padding: 30px;
+  animation: customizeLoadingFadeIn 0.2s ease;
+}
+
+.customize-loading-icon {
+  font-size: 44px;
+  animation: customizeLoadingBounce 1.1s ease-in-out infinite;
+}
+
+.customize-loading-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 4px solid #d7e0ef;
+  border-top-color: var(--primary);
+  animation: customizeLoadingSpin 0.8s linear infinite;
+}
+
+.customize-loading-text {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+  max-width: 320px;
+}
+
+@keyframes customizeLoadingFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes customizeLoadingSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes customizeLoadingBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
 .wizard-step-title {
   margin-bottom: 4px;
   font-size: 20px;
@@ -2045,6 +2097,14 @@ body:has(.wizard-page) {
   margin: 0 auto 12px;
   border-radius: 50%;
   background: linear-gradient(135deg, #eaf2fd, #dbe8fb);
+  overflow: hidden;
+}
+
+.category-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 .item-card {
@@ -2183,6 +2243,49 @@ body:has(.wizard-page) {
   padding: 4px 6px;
 }
 
+.view-cart-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.view-cart-link:hover {
+  text-decoration: underline;
+}
+
+.cart-line-qty-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cart-qty-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  background: #fff;
+  color: var(--primary);
+  font-weight: 800;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cart-qty-btn:hover {
+  background: #eef5ff;
+}
+
+.cart-qty-value {
+  min-width: 18px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+}
+
 .cart-total-row {
   display: flex;
   justify-content: space-between;
@@ -2271,6 +2374,12 @@ body:has(.wizard-page) {
   border-color: var(--primary);
   background: #e2ecfb;
   color: var(--primary);
+}
+
+.fulfillment-option.option-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .location-toggle {
@@ -2378,6 +2487,19 @@ body:has(.wizard-page) {
   grid-template-columns: 1fr 1fr;
   gap: 0 16px;
   margin-top: 4px;
+}
+
+/* Stand summary specifically (per direct request) - two columns for the whole detail list, not
+   just the decluttered options at the bottom, unlike the shared .dims-summary-card layout the
+   Aquarium flow's #customDimsSummary still uses. */
+#customStandSummary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+
+#customStandSummary .dims-summary-options-grid {
+  grid-column: 1 / -1;
 }
 
 .rule-notice {

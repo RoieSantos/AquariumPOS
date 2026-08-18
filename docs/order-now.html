@@ -18,9 +18,17 @@
       <div id="companyLogoBox"></div>
       <h1>Order Now</h1>
       <p class="muted">Pick what you need, and we'll get back to you to confirm your order.</p>
+      <a href="#" class="view-cart-link" id="viewCartLink">🛒 View Cart</a>
     </div>
 
     <div class="wizard-card">
+      <!-- Brief transitional loading state shown right after clicking Customize, purely for
+           delight - see showCustomizeLoading() in js/orderNow.js. -->
+      <div class="customize-loading-overlay hidden" id="customizeLoadingOverlay">
+        <div class="customize-loading-icon">📏</div>
+        <div class="customize-loading-spinner"></div>
+        <p class="customize-loading-text">Grab your tape measure - we're going to start building!</p>
+      </div>
       <div class="wizard-progress" id="wizardProgress">
         <div class="wizard-progress-step" data-step="1"></div>
         <div class="wizard-progress-step" data-step="2"></div>
@@ -55,15 +63,15 @@
       <p class="muted">Choose what you'd like us to build a quote for.</p>
       <div class="category-grid">
         <div class="category-card" id="customizeChoiceAquariumBtn">
-          <span class="category-icon">🐠</span>
+          <span class="category-icon"><img src="icons/Aquarium%20icon.jpg" alt="Aquarium" class="category-icon-img" /></span>
           Aquarium<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom aquarium quote</span>
         </div>
         <div class="category-card" id="customizeChoiceStandBtn">
-          <span class="category-icon">🪑</span>
+          <span class="category-icon"><img src="icons/Dual%20Stand.jpg" alt="Stand" class="category-icon-img" /></span>
           Stand<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom stand quote</span>
         </div>
         <div class="category-card" id="customizeChoiceFiltrationBtn">
-          <span class="category-icon">🌀</span>
+          <span class="category-icon"><img src="icons/Sump.jpg" alt="Filtration" class="category-icon-img" /></span>
           Filtration<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom filtration/sump quote</span>
         </div>
       </div>
@@ -209,6 +217,7 @@
           </div>
         </div>
       </div>
+      <div class="rule-notice" id="customHeightVarianceNote">Please take note that the final height of the aquarium may vary depending on the size of the rubber matting / bottom glass and brace thickness (if any). This is standard across all tank makers.</div>
       <div id="customDimsGlassNotice" class="rule-notice hidden"></div>
       <div id="customDimsErrorMsg" class="error-text hidden"></div>
       <div class="wizard-nav-buttons">
@@ -223,8 +232,13 @@
     <section class="wizard-step" data-step="custom-stand">
       <h2 class="wizard-step-title">Stand Dimensions</h2>
       <p class="muted">Tell us the size and build specs for your custom stand.</p>
+      <div class="card dims-summary-card" id="customStandSummary"></div>
+      <div class="aquarium-canvas-wrap">
+        <canvas id="customStandCanvas" width="720" height="260"></canvas>
+      </div>
       <div class="card custom-price-card" id="customPriceEstimateStand">Enter your stand details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized stands may differ from standard stand prices.</p>
+      <div id="standAquariumAwarenessNote" class="rule-notice hidden"></div>
       <div class="form-group">
         <h3 class="form-group-title">Dimensions</h3>
         <div class="form-grid">
@@ -241,7 +255,13 @@
             <input type="number" id="standHeight" value="0" step="0.01" min="0" />
             <div class="muted" style="font-size:12px; margin-top:4px;">Auto-filled based on layers - you can override it.</div>
           </div>
+          <div class="form-row">
+            <label for="standFooting">Footing (inches)</label>
+            <input type="number" id="standFooting" value="3" step="0.5" min="0" />
+            <div class="muted" style="font-size:12px; margin-top:4px;">Short leg stub below the bottom shelf, resting on the floor.</div>
+          </div>
         </div>
+        <div id="customStandFootingNotice" class="rule-notice hidden"></div>
       </div>
       <div class="form-group">
         <h3 class="form-group-title">Preference</h3>
@@ -276,8 +296,13 @@
       </div>
       <div class="checkbox-stack">
         <label class="checkbox-row"><input type="checkbox" id="standStainless" /> Stainless</label>
-        <label class="checkbox-row"><input type="checkbox" id="standCabinet" /> Cabinet</label>
-        <label class="checkbox-row"><input type="checkbox" id="standSumpHolder" /> Sump Holder</label>
+        <!-- Hidden for now per direct request - checkbox stays in the DOM (still unchecked/false)
+             so nothing downstream (payload/spec text/summary) needs to change to re-show it later. -->
+        <label class="checkbox-row hidden"><input type="checkbox" id="standCabinet" /> Cabinet</label>
+        <div class="checkbox-row">
+          <label class="checkbox-row-label"><input type="checkbox" id="standSumpHolder" /> Sump Holder</label>
+          <a href="icons/ImageSumpHolder.jpg" target="_blank" rel="noopener" class="option-example-link">(see example)</a>
+        </div>
       </div>
       <div class="form-row hidden" id="standSumpWidthRow">
         <label for="standSumpWidth">Sump Width</label>
@@ -375,6 +400,27 @@
       </div>
     </section>
 
+    <!-- Customize path - shown right after confirming a Custom Aquarium build, before contact
+         details, offering to add a matching Stand and/or Filtration on top of it. -->
+    <section class="wizard-step" data-step="custom-add-more">
+      <h2 class="wizard-step-title">Would you like to add more products?</h2>
+      <p class="muted">Your custom aquarium has been added to your order. Add a matching stand or filtration system too?</p>
+      <div class="category-grid">
+        <div class="category-card" id="addMoreStandBtn">
+          <span class="category-icon"><img src="icons/Dual%20Stand.jpg" alt="Stand" class="category-icon-img" /></span>
+          Yes, Add Stand<br /><span class="muted" style="font-weight:400; font-size:12px;">Built to fit this aquarium's footprint</span>
+        </div>
+        <div class="category-card" id="addMoreFiltrationBtn">
+          <span class="category-icon"><img src="icons/Sump.jpg" alt="Filtration" class="category-icon-img" /></span>
+          Yes, Add Filtration<br /><span class="muted" style="font-weight:400; font-size:12px;">We'll show your aquarium's measurements for reference</span>
+        </div>
+      </div>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="addMoreBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="addMoreNoBtn">No, Continue to Checkout &rarr;</button>
+      </div>
+    </section>
+
     <!-- Customize path, step 4: filtration (only reached if the customer says yes to the
          post-Options prompt asking whether they want Filtration added) -->
     <section class="wizard-step" data-step="custom-filtration">
@@ -427,6 +473,7 @@
       <p class="muted">Tell us about the filtration sump you'd like built.</p>
       <div class="card custom-price-card" id="customPriceEstimateStandaloneFiltration">Enter your sump details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized filtration/sump builds may differ from standard prices.</p>
+      <div id="filtrationAquariumAwarenessNote" class="rule-notice hidden"></div>
       <div class="form-group">
         <h3 class="form-group-title">Dimensions</h3>
         <div class="form-grid">
@@ -654,14 +701,6 @@
           <button type="button" class="btn btn-primary" id="startNewOrderBtn">Start a New Order</button>
           <button type="button" class="btn btn-secondary" id="exitOrderNowBtn">Exit</button>
         </div>
-
-        <!-- TEMPORARY - debugging the Messenger confirmation message, see
-             debug_send_order_confirmation_message() in supabase_automated_orders_tables.sql.
-             Remove this whole block once the automatic send is confirmed working. -->
-        <div style="margin-top:18px; padding-top:14px; border-top:1px dashed var(--panel-border);">
-          <button type="button" class="btn btn-secondary btn-sm" id="debugSendConfirmationBtn">🛠️ Test Send Confirmation Message (Debug)</button>
-          <pre id="debugSendConfirmationOutput" class="hidden" style="text-align:left; white-space:pre-wrap; word-break:break-word; font-size:12px; background:#0b1220; color:#d7e6fb; padding:10px; border-radius:8px; margin-top:10px; max-height:320px; overflow:auto;"></pre>
-        </div>
       </div>
     </section>
     </div>
@@ -675,6 +714,23 @@
       <div class="confirm-modal-buttons">
         <button type="button" class="btn btn-primary" id="confirmModalYesBtn"></button>
         <button type="button" class="btn btn-secondary" id="confirmModalNoBtn"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cart viewer - reachable from the "View Cart" link under the page header, from any step, so
+       the customer can check/adjust what they've added without walking through the wizard. -->
+  <div class="modal-backdrop hidden" id="cartViewModal">
+    <div class="modal-panel">
+      <h2 style="margin-top:0;">Your Cart</h2>
+      <div id="cartViewEmptyMsg" class="muted hidden">Your cart is empty.</div>
+      <div id="cartViewLinesBox"></div>
+      <div class="cart-total-row hidden" id="cartViewTotalRow">
+        <span>Total</span>
+        <span id="cartViewTotalValue"></span>
+      </div>
+      <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+        <button type="button" class="btn btn-secondary" id="cartViewCloseBtn">Close</button>
       </div>
     </div>
   </div>

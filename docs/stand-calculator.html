@@ -9,20 +9,40 @@
   <meta name="theme-color" content="#1d4f91" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <style>
+    .calculator-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
     .calculator-frame-wrap {
       background: #fff;
       border: 1px solid var(--panel-border);
       border-radius: 8px;
       box-shadow: var(--shadow);
       overflow: hidden;
-      margin-top: 16px;
     }
-    #calculatorFrame {
+    .calculator-frame-wrap h2 {
+      margin: 0;
+      padding: 10px 14px;
+      font-size: 14px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .calculator-frame-wrap iframe {
       width: 100%;
-      height: calc(100vh - 220px);
+      height: calc(100vh - 260px);
       min-height: 640px;
       border: none;
       display: block;
+    }
+    @media (max-width: 1100px) {
+      .calculator-grid {
+        grid-template-columns: 1fr;
+      }
+      .calculator-frame-wrap iframe {
+        height: 900px;
+        min-height: 0;
+      }
     }
   </style>
 </head>
@@ -32,11 +52,18 @@
   <div class="page">
     <h1>Custom Calculator</h1>
     <p class="muted">
-      Client-side calculator only - nothing here is saved to the database.
-      This reuses the existing custom aquarium calculator.
+      Client-side calculators only - nothing here is saved to the database.
+      These reuse the existing custom aquarium/stand calculators.
     </p>
-    <div class="calculator-frame-wrap">
-      <iframe id="calculatorFrame" src="WebAquariumCalculator/index.html" title="Custom Aquarium Calculator"></iframe>
+    <div class="calculator-grid">
+      <div class="calculator-frame-wrap">
+        <h2>Aquarium</h2>
+        <iframe src="WebAquariumCalculator/index.html" title="Custom Aquarium Calculator"></iframe>
+      </div>
+      <div class="calculator-frame-wrap">
+        <h2>Stand</h2>
+        <iframe src="WebAquariumCalculator/stand.html" title="Custom Stand Calculator"></iframe>
+      </div>
     </div>
   </div>
 

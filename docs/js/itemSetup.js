@@ -117,6 +117,40 @@ async function saveFactboxVendor() {
   savedEl.classList.remove('hidden');
 }
 
+// "Hide from Order Now SET" toggle (factbox) - per "add a field to not show in the SET" request,
+// see supabase_item_hide_from_set.sql. Saves immediately on check/uncheck (no separate Save
+// button - a single checkbox doesn't need the confirm-before-save step the Vendor picker has).
+async function saveFactboxHideFromSet() {
+  if (!openFactboxCode) return;
+
+  const savedEl = document.getElementById('factboxHideFromSetSaved');
+  const checkbox = document.getElementById('factboxHideFromSetCheckbox');
+  savedEl.classList.add('hidden');
+  checkbox.disabled = true;
+
+  const { error } = await supabaseClient.rpc('admin_set_item_hide_from_set', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: openFactboxCode,
+    p_hide_from_set: checkbox.checked
+  });
+
+  checkbox.disabled = false;
+
+  if (error) {
+    window.alert(error.message);
+    checkbox.checked = !checkbox.checked; // revert the optimistic UI change
+    return;
+  }
+
+  const item = itemsByCode.get(openFactboxCode);
+  if (item) {
+    item.hide_from_set = checkbox.checked;
+  }
+
+  savedEl.classList.remove('hidden');
+}
+
 function itemRowsHtml(items) {
   return items
     .map((i) => {
@@ -245,6 +279,9 @@ async function openFactbox(code) {
   document.getElementById('factboxVendorSaved').classList.add('hidden');
   populateFactboxVendorSelect(item.vendor_code);
 
+  document.getElementById('factboxHideFromSetSaved').classList.add('hidden');
+  document.getElementById('factboxHideFromSetCheckbox').checked = Boolean(item.hide_from_set);
+
   const variantsSection = document.getElementById('factboxVariants');
   variantsSection.innerHTML = '<p class="muted">Loading variants...</p>';
 
@@ -283,6 +320,7 @@ function wireFactbox() {
 
   document.getElementById('factboxCloseBtn').addEventListener('click', closeFactbox);
   document.getElementById('factboxVendorSaveBtn').addEventListener('click', saveFactboxVendor);
+  document.getElementById('factboxHideFromSetCheckbox').addEventListener('change', saveFactboxHideFromSet);
 }
 
 (async function init() {

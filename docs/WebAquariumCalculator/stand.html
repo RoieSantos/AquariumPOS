@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSPETSTOP Custom Stand Calculator WEB version</title>
+  <style>
+    :root {
+      --page-bg: #f4f7fb;
+      --panel-bg: #ffffff;
+      --panel-border: #d7e0ef;
+      --text-main: #1b355e;
+      --text-muted: #61738f;
+      --input-border: #c7d3e6;
+      --primary: #1d4f91;
+      --primary-strong: #173f74;
+      --success: #1e9a59;
+      --neutral: #7b8596;
+      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+      color: var(--text-main);
+    }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .title {
+      margin: 0 0 16px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .field,
+    .checkbox-row {
+      margin-bottom: 10px;
+    }
+
+    .field label,
+    .group-label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #253f66;
+    }
+
+    input,
+    select {
+      width: 100%;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      padding: 7px 10px;
+      font-size: 12px;
+      background: #fff;
+      color: #19345d;
+    }
+
+    input:focus,
+    select:focus {
+      outline: 2px solid rgba(29, 79, 145, 0.14);
+      border-color: #87a8d8;
+    }
+
+    .checkbox-stack {
+      display: grid;
+      gap: 6px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #213a61;
+    }
+
+    .checkbox-row input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+    }
+
+    .tubular-toggle {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .tubular-option {
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      padding: 7px 4px;
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
+      color: #253f66;
+      background: #fff;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tubular-option.selected {
+      border-color: var(--primary);
+      background: #eaf2fd;
+      color: var(--primary);
+    }
+
+    .tubular-option.option-disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 16px 0 14px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 4px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      transition: transform 120ms ease, background 120ms ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: var(--primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-strong);
+    }
+
+    .btn-neutral {
+      background: var(--neutral);
+    }
+
+    .summary {
+      min-width: 280px;
+    }
+
+    .summary-line {
+      font-size: 13px;
+      line-height: 1.4;
+      color: #20395f;
+    }
+
+    .summary-line strong {
+      color: #132d52;
+    }
+
+    .summary-small {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .status-banner {
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: #eef5ff;
+      color: #1f3f6a;
+      font-size: 12px;
+      line-height: 1.4;
+      box-shadow: var(--shadow);
+    }
+
+    .status-banner.hidden {
+      display: none;
+    }
+
+    .status-banner.warning {
+      background: #fff7e8;
+      border-color: #e9cb89;
+      color: #785212;
+    }
+
+    .status-banner.error {
+      background: #fff0f0;
+      border-color: #e0a8a8;
+      color: #8a2626;
+    }
+
+    .drawing-card,
+    details {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+    }
+
+    .drawing-card {
+      padding: 10px 12px 14px;
+    }
+
+    .canvas-wrap {
+      border: 1px solid var(--panel-border);
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      min-height: 260px;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 260px;
+    }
+
+    details {
+      margin-top: 14px;
+      padding: 10px 12px;
+    }
+
+    details summary {
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    pre {
+      margin: 10px 0 0;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #29486f;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 900px) {
+      .card-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        padding: 14px;
+      }
+
+      .card-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .actions-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="title">RSPETSTOP Custom Stand Calculator WEB version</h1>
+
+    <div class="card-grid">
+      <section class="card">
+        <h2>Dimensions</h2>
+
+        <div class="field">
+          <label for="length">Length</label>
+          <input id="length" type="number" value="24" step="0.01">
+        </div>
+
+        <div class="field">
+          <label for="width">Width</label>
+          <input id="width" type="number" value="12" step="0.01">
+        </div>
+
+        <div class="field">
+          <label for="height">Height (total, floor to top)</label>
+          <input id="height" type="number" value="0" step="0.01">
+        </div>
+
+        <div class="field">
+          <label for="footing">Footing (inches)</label>
+          <input id="footing" type="number" value="3" step="0.5" min="0">
+        </div>
+
+        <div class="field">
+          <label for="unit">Unit of Measure</label>
+          <select id="unit">
+            <option>Inches</option>
+            <option>CM</option>
+            <option>Ft</option>
+            <option>MM</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="layers">Layers</label>
+          <input id="layers" type="number" value="2" min="2" step="1">
+        </div>
+
+        <div class="field">
+          <label for="qty">Quantity</label>
+          <input id="qty" type="number" value="1" min="1" step="1">
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Tubular</h2>
+        <div class="tubular-toggle">
+          <div class="tubular-option selected" data-value="1x1" id="tubular1x1">1 x 1</div>
+          <div class="tubular-option" data-value="1.5x1.5" id="tubular1_5x1_5">1 1/2 x 1 1/2</div>
+          <div class="tubular-option" data-value="2x2" id="tubular2x2">2 x 2</div>
+        </div>
+
+        <div class="checkbox-stack" style="margin-top: 14px;">
+          <label class="checkbox-row"><input id="stainless" type="checkbox">Stainless</label>
+          <label class="checkbox-row"><input id="cabinet" type="checkbox">Cabinet</label>
+          <label class="checkbox-row"><input id="sumpHolder" type="checkbox">Sump Holder</label>
+        </div>
+
+        <div id="sumpWidthWrap" class="field hidden">
+          <label for="sumpWidth">Sump Holder Width</label>
+          <input id="sumpWidth" type="number" value="0" min="0" step="0.01">
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Summary</h2>
+        <div id="gapLine" class="summary-line">Gap per layer: -</div>
+        <div id="tubularLine" class="summary-small" style="margin-top: 6px;">Tubular: 1 x 1</div>
+        <div id="dimsLine" class="summary-small" style="margin-top: 4px;">Dimensions (in): -</div>
+      </section>
+    </div>
+
+    <div class="actions-row">
+      <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
+      <button id="closeButton" class="btn btn-neutral" type="button">Reset</button>
+
+      <div class="summary">
+        <div id="priceLine" class="summary-line"><strong>Price:</strong> waiting for calculation</div>
+      </div>
+    </div>
+
+    <div id="safetyBanner" class="status-banner hidden"></div>
+
+    <section class="drawing-card">
+      <h2>Stand Drawing</h2>
+      <div class="canvas-wrap">
+        <canvas id="standCanvas" width="720" height="260"></canvas>
+      </div>
+      <details>
+        <summary>Price breakdown</summary>
+        <pre id="breakdownPre">Run a calculation to see the breakdown.</pre>
+      </details>
+    </section>
+
+  </div>
+
+  <script src="./custom-aquarium-calculator.js"></script>
+  <script>
+    var calculateButton = document.getElementById('calculate');
+    var closeButton = document.getElementById('closeButton');
+    var priceLine = document.getElementById('priceLine');
+    var gapLine = document.getElementById('gapLine');
+    var tubularLine = document.getElementById('tubularLine');
+    var dimsLine = document.getElementById('dimsLine');
+    var safetyBanner = document.getElementById('safetyBanner');
+    var breakdownPre = document.getElementById('breakdownPre');
+    var canvas = document.getElementById('standCanvas');
+    var context = canvas.getContext('2d');
+    var CANVAS_W = canvas.width;
+    var CANVAS_H = canvas.height;
+    (function setupCanvasResolution() {
+      var dpr = window.devicePixelRatio || 1;
+      canvas.width = CANVAS_W * dpr;
+      canvas.height = CANVAS_H * dpr;
+      context.scale(dpr, dpr);
+    })();
+
+    var selectedTubular = '1x1';
+    var lastResult = null;
+
+    function byId(id) {
+      return document.getElementById(id);
+    }
+
+    function round1(value) {
+      return Math.round((Number(value) || 0) * 10) / 10;
+    }
+
+    var STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
+
+    // Mirrors computeStandGapInches in docs/js/orderNow.js - kept in sync there since both show
+    // the same "Gap per layer" figure for a stand built with the same inputs. A middle rail
+    // borders TWO gaps at once, so the total material used by all `layers` rails is spread evenly
+    // across all (layers - 1) gaps rather than charging each gap the full thickness of both rails.
+    function computeStandGapInches(totalHeightIn, footingIn, layers, tubular) {
+      if (!(layers > 1)) return null;
+      var heightIn = Math.max(0, (Number(totalHeightIn) || 0) - (Number(footingIn) || 0));
+      var thicknessIn = STAND_TUBULAR_THICKNESS_IN[tubular] || 1;
+      var spacingIn = heightIn / (layers - 1);
+      var gapReductionIn = (layers * thicknessIn) / (layers - 1);
+      return Math.max(0, spacingIn - gapReductionIn);
+    }
+
+    function convertToInches(value, unit) {
+      var num = Number(value) || 0;
+      if (unit === 'CM') return num / 2.54;
+      if (unit === 'MM') return num / 25.4;
+      if (unit === 'Ft') return num * 12;
+      return num;
+    }
+
+    function selectTubular(value) {
+      selectedTubular = value;
+      byId('tubular1x1').classList.toggle('selected', value === '1x1');
+      byId('tubular1_5x1_5').classList.toggle('selected', value === '1.5x1.5');
+      byId('tubular2x2').classList.toggle('selected', value === '2x2');
+    }
+
+    // Fades out (and blocks clicking) whichever Tubular options the current Length/Width would
+    // immediately force away from anyway (see enforceStandTubularSafety's two dimension-based
+    // rules) - so it's visually obvious 1x1/1 1/2x1 1/2 aren't real choices right now instead of
+    // letting staff pick one and having it silently snap back on the next calculation.
+    function updateTubularAvailability() {
+      var btn1x1 = byId('tubular1x1');
+      var btn15 = byId('tubular1_5x1_5');
+      var unit = byId('unit').value;
+      var lengthIn = unit ? convertToInches(byId('length').value, unit) : 0;
+      var widthIn = unit ? convertToInches(byId('width').value, unit) : 0;
+
+      if (!lengthIn || !widthIn) {
+        btn1x1.classList.remove('option-disabled');
+        btn15.classList.remove('option-disabled');
+        return;
+      }
+
+      var check1x1 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, undefined, '1x1');
+      var check15 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, undefined, '1.5x1.5');
+      btn1x1.classList.toggle('option-disabled', check1x1.tubular !== '1x1');
+      btn15.classList.toggle('option-disabled', check15.tubular !== '1.5x1.5');
+    }
+
+    function setVisibilityState() {
+      byId('sumpWidthWrap').classList.toggle('hidden', !byId('sumpHolder').checked);
+    }
+
+    function drawPlaceholder(message) {
+      context.clearRect(0, 0, CANVAS_W, CANVAS_H);
+      var bg = context.createLinearGradient(0, 0, 0, CANVAS_H);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(1, '#f4f9ff');
+      context.fillStyle = bg;
+      context.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      context.strokeStyle = '#d7e0ef';
+      context.strokeRect(0.5, 0.5, CANVAS_W - 1, CANVAS_H - 1);
+
+      context.fillStyle = '#9fb4d1';
+      context.font = '28px Segoe UI';
+      context.textAlign = 'center';
+      context.fillText('🪑', CANVAS_W / 2, CANVAS_H / 2 - 6);
+      context.fillStyle = '#6a7a93';
+      context.font = '13px Segoe UI';
+      context.fillText(message, CANVAS_W / 2, CANVAS_H / 2 + 22);
+      context.textAlign = 'left';
+    }
+
+    function drawDimensionChip(centerX, centerY, text) {
+      context.font = '11px Segoe UI';
+      var textWidth = context.measureText(text).width;
+      var paddingX = 7;
+      var chipWidth = textWidth + paddingX * 2;
+      var chipHeight = 17;
+      var x = centerX - chipWidth / 2;
+      var y = centerY - chipHeight / 2;
+      var radius = 8;
+
+      context.beginPath();
+      context.moveTo(x + radius, y);
+      context.arcTo(x + chipWidth, y, x + chipWidth, y + chipHeight, radius);
+      context.arcTo(x + chipWidth, y + chipHeight, x, y + chipHeight, radius);
+      context.arcTo(x, y + chipHeight, x, y, radius);
+      context.arcTo(x, y, x + chipWidth, y, radius);
+      context.closePath();
+      context.fillStyle = 'rgba(255, 255, 255, 0.94)';
+      context.fill();
+      context.strokeStyle = '#c3d4ec';
+      context.lineWidth = 1;
+      context.stroke();
+
+      context.fillStyle = '#213b64';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(text, centerX, centerY + 0.5);
+      context.textAlign = 'left';
+      context.textBaseline = 'alphabetic';
+    }
+
+    function drawDimensionLine(x1, y1, x2, y2) {
+      var tickLength = 6;
+      var isHorizontal = Math.abs(y2 - y1) < Math.abs(x2 - x1);
+
+      context.strokeStyle = '#9fb2cc';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.lineTo(x2, y2);
+      context.stroke();
+
+      context.beginPath();
+      if (isHorizontal) {
+        context.moveTo(x1, y1 - tickLength / 2);
+        context.lineTo(x1, y1 + tickLength / 2);
+        context.moveTo(x2, y2 - tickLength / 2);
+        context.lineTo(x2, y2 + tickLength / 2);
+      } else {
+        context.moveTo(x1 - tickLength / 2, y1);
+        context.lineTo(x1 + tickLength / 2, y1);
+        context.moveTo(x2 - tickLength / 2, y2);
+        context.lineTo(x2 + tickLength / 2, y2);
+      }
+      context.stroke();
+    }
+
+    function drawGapArrow(x, yTop, yBottom) {
+      var headLen = 6;
+
+      context.strokeStyle = '#e2483f';
+      context.fillStyle = '#e2483f';
+      context.lineWidth = 2;
+      context.setLineDash([4, 3]);
+      context.beginPath();
+      context.moveTo(x, yTop);
+      context.lineTo(x, yBottom);
+      context.stroke();
+      context.setLineDash([]);
+
+      [[yTop, 1], [yBottom, -1]].forEach(function (pair) {
+        var y = pair[0];
+        var dir = pair[1];
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(x - headLen * 0.55, y + headLen * dir);
+        context.lineTo(x + headLen * 0.55, y + headLen * dir);
+        context.closePath();
+        context.fill();
+      });
+    }
+
+    // Ported straight from drawCustomStandOnActiveCanvas in docs/js/orderNow.js (Order Now's
+    // Customize > Stand preview) so staff see the exact same sketch/measurements customers do -
+    // same isometric frame, per-layer Gap arrows, tubular-thickness pointer, footing callout, and
+    // sump holder drawn above the stand.
+    function drawStand(result) {
+      context.clearRect(0, 0, CANVAS_W, CANVAS_H);
+      var bg = context.createLinearGradient(0, 0, 0, CANVAS_H);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(1, '#f4f9ff');
+      context.fillStyle = bg;
+      context.fillRect(0, 0, CANVAS_W, CANVAS_H);
+      context.strokeStyle = '#d7e0ef';
+      context.strokeRect(0.5, 0.5, CANVAS_W - 1, CANVAS_H - 1);
+
+      if (!result || !result.ok || !result.normalized) {
+        drawPlaceholder(result && result.error ? result.error : 'Enter stand details to see a preview.');
+        return;
+      }
+
+      var dims = result.normalized;
+      var lengthIn = Math.max(1, Number(dims.lengthInches) || 1);
+      var widthIn = Math.max(1, Number(dims.widthInches) || 1);
+      var totalHeightIn = Math.max(1, Number(dims.heightInches) || 1);
+      var footingIn = Math.max(0, Number(dims.footingInches) || 0);
+      var heightIn = Math.max(0, totalHeightIn - footingIn);
+      var layers = Math.max(2, Math.round(Number(dims.layers) || 2));
+
+      var marginLeft = 66;
+      var marginRight = 56;
+      var marginTop = dims.sumpHolder ? 58 : 34;
+      var marginBottom = 52;
+      var availableWidth = Math.max(80, CANVAS_W - marginLeft - marginRight);
+      var availableHeight = Math.max(80, CANVAS_H - marginTop - marginBottom);
+
+      var widthBoundScale = availableWidth / (lengthIn + widthIn * 0.38);
+      var heightBoundScale = availableHeight / (totalHeightIn + widthIn * 0.38 * 0.48);
+      var scale = Math.min(Math.max(1.5, Math.min(widthBoundScale, heightBoundScale)), 14);
+
+      var frontWidth = lengthIn * scale;
+      var frontHeight = totalHeightIn * scale;
+      var frameSpan = heightIn * scale;
+      var footingPx = footingIn * scale;
+      var depth = Math.max(24, widthIn * scale * 0.38);
+      var totalWidth = frontWidth + depth;
+      var frontLeft = marginLeft + Math.max(0, (availableWidth - totalWidth) / 2);
+      var baseY = CANVAS_H - marginBottom;
+      var frontTop = baseY - frontHeight;
+      var backTop = frontTop - depth * 0.48;
+      var backLeft = frontLeft + depth;
+      var backBaseY = baseY - depth * 0.48;
+      var shelfBaseY = baseY - footingPx;
+
+      context.lineJoin = 'round';
+      context.lineCap = 'round';
+
+      context.strokeStyle = '#6b7686';
+      context.lineWidth = 3;
+      [
+        [frontLeft, frontTop, frontLeft, baseY],
+        [frontLeft + frontWidth, frontTop, frontLeft + frontWidth, baseY],
+        [backLeft, backTop, backLeft, backBaseY],
+        [backLeft + frontWidth, backTop, backLeft + frontWidth, backBaseY]
+      ].forEach(function (line) {
+        context.beginPath();
+        context.moveTo(line[0], line[1]);
+        context.lineTo(line[2], line[3]);
+        context.stroke();
+      });
+
+      var bracesPerFrame = Math.max(1, Math.ceil(lengthIn / 36));
+      context.lineWidth = 2.4;
+      for (var i = 0; i < layers; i += 1) {
+        var t = layers === 1 ? 0 : i / (layers - 1);
+        var y = shelfBaseY - t * frameSpan;
+        var backY = y - depth * 0.48;
+        context.strokeStyle = i === layers - 1 ? '#45566e' : '#8a94a3';
+        context.beginPath();
+        context.moveTo(frontLeft, y);
+        context.lineTo(frontLeft + frontWidth, y);
+        context.lineTo(backLeft + frontWidth, backY);
+        context.lineTo(backLeft, backY);
+        context.closePath();
+        context.stroke();
+
+        context.lineWidth = 1.6;
+        for (var b = 1; b <= bracesPerFrame; b += 1) {
+          var bt = b / (bracesPerFrame + 1);
+          context.beginPath();
+          context.moveTo(frontLeft + bt * frontWidth, y);
+          context.lineTo(backLeft + bt * frontWidth, backY);
+          context.stroke();
+        }
+        context.lineWidth = 2.4;
+      }
+
+      var tubularThicknessIn = STAND_TUBULAR_THICKNESS_IN[dims.tubular] || 1;
+      if (layers > 1) {
+        var gapReductionIn = (layers * tubularThicknessIn) / (layers - 1);
+        var gapIn = computeStandGapInches(totalHeightIn, footingIn, layers, dims.tubular);
+        var gapX = frontLeft + frontWidth * 0.68;
+        var halfReductionPx = (gapReductionIn / 2) * scale;
+        for (var g = 0; g < layers - 1; g += 1) {
+          var yLower = shelfBaseY - (g / (layers - 1)) * frameSpan;
+          var yUpper = shelfBaseY - ((g + 1) / (layers - 1)) * frameSpan;
+          var arrowBottom = yLower - halfReductionPx;
+          var arrowTop = yUpper + halfReductionPx;
+          if (arrowBottom - arrowTop > 10) {
+            drawGapArrow(gapX, arrowTop, arrowBottom);
+          }
+          context.fillStyle = '#c23b31';
+          context.font = 'bold 13px Segoe UI';
+          context.textAlign = 'left';
+          context.textBaseline = 'middle';
+          context.fillText('Gap: ' + round1(gapIn) + '"', gapX + 9, (yLower + yUpper) / 2);
+          context.textBaseline = 'alphabetic';
+        }
+      }
+
+      var tubularSizeLabelMap = { '1x1': '1"×1"', '1.5x1.5': '1½"×1½"', '2x2': '2"×2"' };
+      var tubularSizeLabel = (tubularSizeLabelMap[dims.tubular] || (round1(tubularThicknessIn) + '"')) + ' tube';
+      (function drawTubularPointer() {
+        var spineX = frontLeft - 10;
+        var layerYs = [];
+        for (var li = 0; li < layers; li += 1) {
+          var lt = layers === 1 ? 0 : li / (layers - 1);
+          layerYs.push(shelfBaseY - lt * frameSpan);
+        }
+        var topY = Math.min.apply(null, layerYs);
+        var bottomY = Math.max.apply(null, layerYs);
+        var labelX = 8;
+        var labelY = Math.max(11, topY - 14);
+
+        context.strokeStyle = '#45566e';
+        context.lineWidth = 1;
+        context.font = 'bold 12px Segoe UI';
+        var textWidth = context.measureText(tubularSizeLabel).width;
+
+        context.beginPath();
+        context.moveTo(labelX + textWidth + 4, labelY);
+        context.lineTo(spineX, topY);
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(spineX, topY);
+        context.lineTo(spineX, bottomY);
+        context.stroke();
+
+        layerYs.forEach(function (ly) {
+          context.beginPath();
+          context.moveTo(spineX, ly);
+          context.lineTo(frontLeft, ly);
+          context.stroke();
+
+          context.fillStyle = '#45566e';
+          context.beginPath();
+          context.ellipse(frontLeft, ly, 2.4, 2.4, 0, 0, Math.PI * 2);
+          context.fill();
+        });
+
+        context.textAlign = 'left';
+        context.textBaseline = 'alphabetic';
+        context.fillText(tubularSizeLabel, labelX, labelY);
+      })();
+
+      context.fillStyle = '#45566e';
+      [[frontLeft, baseY], [frontLeft + frontWidth, baseY]].forEach(function (foot) {
+        context.beginPath();
+        context.ellipse(foot[0], foot[1], 5, 2.4, 0, 0, Math.PI * 2);
+        context.fill();
+      });
+
+      if (footingPx > 0.5) {
+        context.strokeStyle = '#8a94a3';
+        context.setLineDash([2, 2]);
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(frontLeft + frontWidth + 3, shelfBaseY);
+        context.lineTo(frontLeft + frontWidth + 3, baseY);
+        context.stroke();
+        context.setLineDash([]);
+
+        context.fillStyle = '#45566e';
+        context.font = 'bold 14px Segoe UI';
+        context.textAlign = 'left';
+        context.textBaseline = 'middle';
+        context.fillText(round1(footingIn) + '" footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
+        context.textBaseline = 'alphabetic';
+      }
+
+      if (dims.sumpHolder) {
+        var sumpGap = 8;
+        var sumpBottom = frontTop - sumpGap;
+        var sumpHeight = 14;
+        var sumpTop = sumpBottom - sumpHeight;
+        var sumpWidth = Math.max(48, frontWidth * 0.4);
+        var sumpLeft = frontLeft + ((frontWidth - sumpWidth) / 2);
+        var sumpRight = sumpLeft + sumpWidth;
+
+        context.strokeStyle = '#507193';
+        context.lineWidth = 1.6;
+        context.strokeRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
+
+        context.lineWidth = 1;
+        for (var sb = 1; sb <= bracesPerFrame; sb += 1) {
+          var sbx = sumpLeft + (sb / (bracesPerFrame + 1)) * sumpWidth;
+          context.beginPath();
+          context.moveTo(sbx, sumpTop + 2);
+          context.lineTo(sbx, sumpBottom - 2);
+          context.stroke();
+        }
+
+        context.lineWidth = 1.6;
+        [[sumpLeft + 4, sumpBottom], [sumpRight - 4, sumpBottom]].forEach(function (leg) {
+          context.beginPath();
+          context.moveTo(leg[0], leg[1]);
+          context.lineTo(leg[0], frontTop);
+          context.stroke();
+        });
+
+        var sumpWidthInVal = round1(Number(dims.sumpWidthInches) || 0);
+        context.fillStyle = '#45566e';
+        context.font = 'bold 14px Segoe UI';
+        context.textAlign = 'left';
+        context.textBaseline = 'middle';
+        context.fillText('Sump holder with ' + sumpWidthInVal + '" width', sumpRight + 9, (sumpTop + sumpBottom) / 2);
+        context.textBaseline = 'alphabetic';
+      }
+
+      var lengthLineY = baseY + 24;
+      var heightLineX = frontLeft - 26;
+      var widthLineX2 = backLeft + frontWidth + 4;
+
+      drawDimensionLine(frontLeft, lengthLineY, frontLeft + frontWidth, lengthLineY);
+      drawDimensionLine(heightLineX, frontTop, heightLineX, baseY);
+      drawDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
+
+      drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
+      drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
+      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+    }
+
+    function buildPayload() {
+      var sumpChecked = byId('sumpHolder').checked;
+      return {
+        length: byId('length').value,
+        width: byId('width').value,
+        height: byId('height').value,
+        unit: byId('unit').value,
+        layers: byId('layers').value,
+        tubular: selectedTubular,
+        stainless: byId('stainless').checked,
+        cabinet: byId('cabinet').checked,
+        sumpHolder: sumpChecked,
+        sumpWidth: sumpChecked ? byId('sumpWidth').value : 0,
+        footingInches: byId('footing').value
+      };
+    }
+
+    function renderSafetyBanner(result) {
+      safetyBanner.className = 'status-banner hidden';
+      safetyBanner.textContent = '';
+
+      if (!result) {
+        return;
+      }
+
+      if (!result.ok) {
+        safetyBanner.className = 'status-banner error';
+        safetyBanner.textContent = result.error || 'Enter valid dimensions.';
+        return;
+      }
+
+      var messages = [];
+      if (result.notice && result.notice.message) {
+        messages.push(String(result.notice.title || '') + ': ' + String(result.notice.message).replace(/\s+/g, ' ').trim());
+      }
+
+      var footingIn = Number(byId('footing').value) || 0;
+      if (footingIn >= 10) {
+        messages.push('Please note: the higher the footing, the more unstable the stand becomes.');
+      }
+
+      if (messages.length === 0) {
+        return;
+      }
+
+      safetyBanner.className = 'status-banner warning';
+      safetyBanner.textContent = messages.join(' ');
+    }
+
+    function calculateStand(showAlerts) {
+      setVisibilityState();
+      updateTubularAvailability();
+
+      if (!byId('unit').value) {
+        priceLine.innerHTML = '<strong>Price:</strong> select a unit of measure';
+        drawPlaceholder('Select a unit of measure to see a preview.');
+        return;
+      }
+
+      var result = window.CustomAquariumCalculator.calculateStandaloneStand(buildPayload());
+      lastResult = result;
+      drawStand(result);
+      renderSafetyBanner(result);
+
+      if (!result.ok) {
+        priceLine.innerHTML = '<strong>Price:</strong> ' + (result.error || 'check inputs');
+        gapLine.textContent = 'Gap per layer: -';
+        dimsLine.textContent = 'Dimensions (in): -';
+        breakdownPre.textContent = 'Run a calculation to see the breakdown.';
+        return;
+      }
+
+      if (result.normalized.tubular !== selectedTubular) {
+        selectTubular(result.normalized.tubular);
+      }
+
+      var qty = Math.max(1, Math.round(Number(byId('qty').value) || 1));
+      var total = result.totalPrice * qty;
+      priceLine.innerHTML = '<strong>Price:</strong> ' + total.toFixed(2) + (qty > 1 ? ' (' + result.totalPrice.toFixed(2) + ' x ' + qty + ')' : '');
+
+      var layers = Math.max(2, Math.round(Number(result.normalized.layers) || 2));
+      var gapIn = computeStandGapInches(result.normalized.heightInches, result.normalized.footingInches, layers, result.normalized.tubular);
+      gapLine.textContent = 'Gap per layer: ' + (gapIn === null ? '-' : round1(gapIn) + 'in');
+      tubularLine.textContent = 'Tubular: ' + result.normalized.tubular;
+      dimsLine.textContent = 'Dimensions (in): L: ' + result.normalized.lengthInches.toFixed(1) + ' x W: ' + result.normalized.widthInches.toFixed(1) + ' x H: ' + result.normalized.heightInches.toFixed(1) + ' (footing ' + result.normalized.footingInches.toFixed(1) + 'in)';
+      breakdownPre.textContent = (result.breakdown || []).join('\n') || 'No breakdown available.';
+    }
+
+    function attachHandlers() {
+      ['tubular1x1', 'tubular1_5x1_5', 'tubular2x2'].forEach(function (id) {
+        byId(id).addEventListener('click', function () {
+          selectTubular(byId(id).dataset.value);
+          calculateStand(true);
+        });
+      });
+
+      ['length', 'width', 'height', 'footing', 'unit', 'layers', 'qty', 'stainless', 'cabinet', 'sumpHolder', 'sumpWidth']
+        .forEach(function (id) {
+          var el = byId(id);
+          var eventName = el.tagName === 'INPUT' && el.type === 'number' ? 'input' : 'change';
+          el.addEventListener(eventName, function () {
+            calculateStand(true);
+          });
+        });
+
+      calculateButton.addEventListener('click', function () {
+        calculateStand(true);
+      });
+
+      closeButton.addEventListener('click', function () {
+        window.location.reload();
+      });
+    }
+
+    selectTubular('1x1');
+    attachHandlers();
+    setVisibilityState();
+    drawPlaceholder('Enter stand details to see a preview.');
+  </script>
+</body>
+</html>
