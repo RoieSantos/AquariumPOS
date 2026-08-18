@@ -480,6 +480,285 @@ function formatCurrency(amount) {
   return '₱' + Number(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+let lalamoveVehicleTypes = []; // [{key, description}] from delivery-lalamove-vehicle-types
+let lalamoveVehicleTypesLoaded = false;
+
+// Calls the delivery-lalamove-vehicle-types Supabase Edge Function (supabase/functions/delivery-
+// lalamove-vehicle-types), which proxies Lalamove's Get City Info endpoint - per "i think there
+// are vehicle type in lalamove right?", this replaces the earlier hardcoded TRUCK330 guess with
+// the account's actual configured service types. Lazy-loaded (only once, on first switch to
+// Lalamove mode) rather than on every page load, since it's a Lalamove API call that isn't needed
+// for the in-house pricing path most users will stay on.
+async function loadLalamoveVehicleTypes() {
+  const select = document.getElementById('lalamoveVehicleTypeSelect');
+  if (lalamoveVehicleTypesLoaded) return;
+  lalamoveVehicleTypesLoaded = true;
+
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-lalamove-vehicle-types`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      }
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `Failed to load vehicle types (${response.status}).`);
+
+    lalamoveVehicleTypes = body.vehicleTypes || [];
+    if (lalamoveVehicleTypes.length === 0) throw new Error('Lalamove returned no vehicle types for this account/market.');
+
+    // Just the key (e.g. "TRUCK550"), not Lalamove's longer description text - keeps the dropdown
+    // scannable; the description is still available as a title tooltip on hover.
+    select.innerHTML = lalamoveVehicleTypes.map((v) => `<option value="${v.key}" title="${v.description}">${v.key}</option>`).join('');
+    // Defaults to MOTORCYCLE when the account actually offers it - falls through to whatever the
+    // <select> lands on naturally (its first option) if not, rather than erroring.
+    const motorcycleOption = lalamoveVehicleTypes.find((v) => v.key === 'MOTORCYCLE');
+    if (motorcycleOption) select.value = motorcycleOption.key;
+  } catch (err) {
+    console.error('Could not load Lalamove vehicle types:', err);
+    select.innerHTML = `<option value="">Failed to load - ${err.message}</option>`;
+  }
+}
+
+// Calls the delivery-lalamove-quote Supabase Edge Function (supabase/functions/delivery-
+// lalamove-quote) - a signing proxy in front of Lalamove's Quotation API, since the required HMAC
+// secret can never live in browser JS. Throws on failure the same way fetchGoogleTollPrice does;
+// runLalamoveQuote below is what catches that and shows it to the user.
+async function fetchLalamoveQuote(origin, destination, serviceType) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-lalamove-quote`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+      'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ origin, destination, serviceType })
+  });
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error || `Lalamove quote failed (${response.status}).`);
+  }
+  return body; // { quotationId, expiresAt, serviceType, total, currency, priceBreakdown, distanceMeters, isSandbox }
+}
+
+// In-house pricing path (existing base fee + rate/km + toll behavior), split out of getQuote so
+// it can sit alongside runLalamoveQuote below - see wireForm's deliveryMethodSelect handling for
+// how the two are chosen between.
+async function runInHouseQuote(from, to) {
+  if (deliveryBaseFee == null || deliveryRatePerKm == null) {
+    throw new Error('Delivery pricing isn\'t configured yet - set DELIVERY_BASE_FEE and DELIVERY_RATE_PER_KM in General Setup.');
+  }
+
+  const origin = { lat: from.lat, lng: from.lng };
+  const destination = { lat: to.lat, lng: to.lng };
+
+  const [{ distanceMeters, distanceText, durationText }, toll] = await Promise.all([
+    getDrivingDistance(origin, destination),
+    resolveTollFee(origin, destination)
+  ]);
+
+  const distanceKm = distanceMeters / 1000;
+  const price = deliveryBaseFee + deliveryRatePerKm * distanceKm + toll.amount;
+
+  document.getElementById('resultDistance').textContent = distanceText;
+  document.getElementById('resultDuration').textContent = durationText;
+  document.getElementById('resultTollUsed').textContent = toll.detected === null ? 'Unknown' : (toll.detected ? 'Yes' : 'No');
+  document.getElementById('resultPrice').textContent = formatCurrency(price);
+
+  let tollPart = '';
+  if (toll.amount > 0) {
+    const sourceNote = toll.source === 'google'
+      ? ' (Google toll estimate)'
+      : (toll.detected === null ? ' (couldn\'t verify route, applied by default)' : '');
+    tollPart = ` + ${formatCurrency(toll.amount)} toll fee${sourceNote}`;
+  } else if (toll.detected === false) {
+    tollPart = ' (no toll road detected on this route)';
+  }
+  document.getElementById('resultBreakdown').textContent =
+    `${formatCurrency(deliveryBaseFee)} base fee + ${formatCurrency(deliveryRatePerKm)}/km x ${distanceKm.toFixed(2)} km${tollPart}, from ${from.label} to ${to.label}.`;
+}
+
+let lastLalamoveQuote = null; // {quotationId, expiresAt, stops: [{stopId}, {stopId}], isSandbox} - needed to book
+let lastBookedOrder = null; // {orderId, ...} from a successful bookLalamoveDelivery, for cancelOrder
+
+// Lalamove pricing path - calls their real Quotation API (via the signing proxy) instead of the
+// in-house formula. Reuses the same stat-card slots as the in-house path with different meanings
+// (Drive Time/Toll Road don't map cleanly onto what Lalamove's quotation response returns), rather
+// than adding separate result markup for each mode.
+async function runLalamoveQuote(from, to) {
+  const serviceType = document.getElementById('lalamoveVehicleTypeSelect').value || undefined;
+  const quote = await fetchLalamoveQuote(
+    { lat: from.lat, lng: from.lng, address: from.label },
+    { lat: to.lat, lng: to.lng, address: to.label },
+    serviceType
+  );
+  lastLalamoveQuote = quote;
+
+  const distanceKm = quote.distanceMeters != null ? quote.distanceMeters / 1000 : null;
+
+  document.getElementById('resultDistance').textContent = distanceKm != null ? `${distanceKm.toFixed(2)} km` : '-';
+  document.getElementById('resultDuration').textContent = 'N/A (Lalamove)';
+  document.getElementById('resultTollUsed').textContent = 'Included in price';
+  document.getElementById('resultPrice').textContent = quote.total != null
+    ? `${quote.currency || '₱'} ${Number(quote.total).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '-';
+
+  const expiry = quote.expiresAt ? ` Valid until ${new Date(quote.expiresAt).toLocaleTimeString()}.` : '';
+  document.getElementById('resultBreakdown').textContent =
+    `Lalamove ${quote.isSandbox ? 'SANDBOX (test data, not a real price)' : 'quote'} - ${quote.serviceType}, from ${from.label} to ${to.label}.${expiry}`;
+
+  // Only offer booking when the quote actually carries what a booking needs (a quotationId plus
+  // both stops' stopIds) - defensive in case Lalamove's response shape ever changes.
+  const canBook = !!(quote.quotationId && quote.stops?.length === 2 && quote.stops[0]?.stopId && quote.stops[1]?.stopId);
+  // Booking dispatches a real driver and charges the Lalamove wallet (see bookLalamoveDelivery's
+  // header comment) - restricted to super users, per direct request. Non-super users still get
+  // quotes normally; they just never see a Book button, with a note explaining why in its place.
+  const isSuperUser = !!currentSession?.isSuperUser;
+  document.getElementById('bookDeliverySection').classList.toggle('hidden', !canBook || !isSuperUser);
+  document.getElementById('bookDeliveryRestrictedNote').classList.toggle('hidden', !canBook || isSuperUser);
+  const bookBtn = document.getElementById('bookDeliveryBtn');
+  bookBtn.disabled = false;
+  bookBtn.textContent = 'Book Delivery';
+}
+
+// Calls the delivery-lalamove-place-order Supabase Edge Function (supabase/functions/delivery-
+// lalamove-place-order) - signs and forwards a real (or in sandbox, realistic-test) booking
+// request. Per "the user has the capability to book it" - gated behind a confirm() prompt since
+// this is a dispatch action, not just a lookup, and unlike quoting can't be silently retried
+// without consequence once LALAMOVE_ENV is production.
+async function bookLalamoveDelivery() {
+  const errorEl = document.getElementById('bookDeliveryError');
+  const bookBtn = document.getElementById('bookDeliveryBtn');
+  errorEl.classList.add('hidden');
+
+  // Belt-and-suspenders alongside runLalamoveQuote's isSuperUser check that hides this button in
+  // the first place - guards a stale/already-rendered button (e.g. a super user's session getting
+  // demoted mid-page without a refresh) from still being able to dispatch a real booking.
+  if (!currentSession?.isSuperUser) {
+    errorEl.textContent = 'Only super users can book deliveries.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  if (!lastLalamoveQuote) {
+    errorEl.textContent = 'Get a Lalamove quote first.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  if (lastLalamoveQuote.expiresAt && new Date(lastLalamoveQuote.expiresAt).getTime() < Date.now()) {
+    errorEl.textContent = 'This quote has expired (Lalamove quotes are valid ~5 minutes) - click Get Quote again before booking.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const senderName = document.getElementById('lalamoveSenderNameInput').value.trim();
+  const senderPhone = document.getElementById('lalamoveSenderPhoneInput').value.trim();
+  const recipientName = document.getElementById('lalamoveRecipientNameInput').value.trim();
+  const recipientPhone = document.getElementById('lalamoveRecipientPhoneInput').value.trim();
+
+  if (!senderName || !senderPhone || !recipientName || !recipientPhone) {
+    errorEl.textContent = 'Fill in Sender Name/Phone and Recipient Name/Phone before booking.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const confirmed = window.confirm(
+    lastLalamoveQuote.isSandbox
+      ? 'Book this delivery in Lalamove\'s SANDBOX environment? This creates a test order, not a real one.'
+      : 'Book this delivery via Lalamove? This dispatches a real driver and charges your Lalamove wallet.'
+  );
+  if (!confirmed) return;
+
+  bookBtn.disabled = true;
+  bookBtn.textContent = 'Booking...';
+
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-lalamove-place-order`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        quotationId: lastLalamoveQuote.quotationId,
+        sender: { stopId: lastLalamoveQuote.stops[0].stopId, name: senderName, phone: senderPhone },
+        recipient: { stopId: lastLalamoveQuote.stops[1].stopId, name: recipientName, phone: recipientPhone }
+      })
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `Booking failed (${response.status}).`);
+
+    lastBookedOrder = body;
+    document.getElementById('bookedOrderId').textContent = body.orderId || '-';
+    document.getElementById('bookedStatus').textContent = body.status || '-';
+    document.getElementById('bookedTotal').textContent = body.total != null
+      ? `${body.currency || '₱'} ${Number(body.total).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : '-';
+    const shareLinkEl = document.getElementById('bookedShareLink');
+    if (body.shareLink) {
+      shareLinkEl.href = body.shareLink;
+      shareLinkEl.classList.remove('hidden');
+    } else {
+      shareLinkEl.classList.add('hidden');
+    }
+    document.getElementById('bookDeliveryResult').classList.remove('hidden');
+    document.getElementById('cancelOrderError').classList.add('hidden');
+
+    // A quotationId is spent once used - block re-booking the same quote to avoid an accidental
+    // double order; a fresh Get Quote is required (which re-enables this via runLalamoveQuote).
+    bookBtn.disabled = true;
+    bookBtn.textContent = 'Booked';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+    bookBtn.disabled = false;
+    bookBtn.textContent = 'Book Delivery';
+  }
+}
+
+async function cancelBookedOrder() {
+  const errorEl = document.getElementById('cancelOrderError');
+  const cancelBtn = document.getElementById('cancelOrderBtn');
+  errorEl.classList.add('hidden');
+
+  if (!lastBookedOrder?.orderId) return;
+
+  const confirmed = window.confirm('Cancel this Lalamove order? This only works while a driver hasn\'t been assigned yet (or within ~5 minutes of assignment).');
+  if (!confirmed) return;
+
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'Cancelling...';
+
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-lalamove-cancel-order`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ orderId: lastBookedOrder.orderId })
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `Cancellation failed (${response.status}).`);
+
+    document.getElementById('bookedStatus').textContent = 'CANCELLED';
+    cancelBtn.textContent = 'Cancelled';
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = 'Cancel Order';
+  }
+}
+
 async function getQuote() {
   const errorEl = document.getElementById('quoteError');
   const resultEl = document.getElementById('quoteResult');
@@ -487,11 +766,14 @@ async function getQuote() {
   errorEl.classList.add('hidden');
   resultEl.classList.add('hidden');
 
-  if (deliveryBaseFee == null || deliveryRatePerKm == null) {
-    errorEl.textContent = 'Delivery pricing isn\'t configured yet - set DELIVERY_BASE_FEE and DELIVERY_RATE_PER_KM in General Setup.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
+  // A fresh quote invalidates any earlier Lalamove quotationId/booking context - clear it so a
+  // stale "Book Delivery"/"Cancel Order" state can't linger under a new quote.
+  lastLalamoveQuote = null;
+  lastBookedOrder = null;
+  document.getElementById('bookDeliverySection').classList.add('hidden');
+  document.getElementById('bookDeliveryResult').classList.add('hidden');
+
+  const method = document.getElementById('deliveryMethodSelect').value;
 
   const toAddress = document.getElementById('toAddressInput').value.trim();
   if (!toAddress) {
@@ -518,32 +800,11 @@ async function getQuote() {
     }
     await setToMarker(to);
 
-    const origin = { lat: from.lat, lng: from.lng };
-    const destination = { lat: to.lat, lng: to.lng };
-
-    const [{ distanceMeters, distanceText, durationText }, toll] = await Promise.all([
-      getDrivingDistance(origin, destination),
-      resolveTollFee(origin, destination)
-    ]);
-
-    const distanceKm = distanceMeters / 1000;
-    const price = deliveryBaseFee + deliveryRatePerKm * distanceKm + toll.amount;
-
-    document.getElementById('resultDistance').textContent = distanceText;
-    document.getElementById('resultDuration').textContent = durationText;
-    document.getElementById('resultTollUsed').textContent = toll.detected === null ? 'Unknown' : (toll.detected ? 'Yes' : 'No');
-    document.getElementById('resultPrice').textContent = formatCurrency(price);
-    let tollPart = '';
-    if (toll.amount > 0) {
-      const sourceNote = toll.source === 'google'
-        ? ' (Google toll estimate)'
-        : (toll.detected === null ? ' (couldn\'t verify route, applied by default)' : '');
-      tollPart = ` + ${formatCurrency(toll.amount)} toll fee${sourceNote}`;
-    } else if (toll.detected === false) {
-      tollPart = ' (no toll road detected on this route)';
+    if (method === 'lalamove') {
+      await runLalamoveQuote(from, to);
+    } else {
+      await runInHouseQuote(from, to);
     }
-    document.getElementById('resultBreakdown').textContent =
-      `${formatCurrency(deliveryBaseFee)} base fee + ${formatCurrency(deliveryRatePerKm)}/km x ${distanceKm.toFixed(2)} km${tollPart}, from ${from.label} to ${toAddress}.`;
     resultEl.classList.remove('hidden');
   } catch (err) {
     errorEl.textContent = err.message;
@@ -558,6 +819,30 @@ function wireForm() {
   const fromSelect = document.getElementById('fromWarehouseSelect');
   const fromOtherInput = document.getElementById('fromOtherInput');
   const toAddressInput = document.getElementById('toAddressInput');
+  const deliveryMethodSelect = document.getElementById('deliveryMethodSelect');
+
+  const lalamoveOnlyRowIds = [
+    'lalamoveVehicleTypeRow', 'lalamoveSenderNameRow', 'lalamoveSenderPhoneRow',
+    'lalamoveRecipientNameRow', 'lalamoveRecipientPhoneRow'
+  ];
+
+  deliveryMethodSelect.addEventListener('change', (e) => {
+    const isLalamove = e.target.value === 'lalamove';
+    document.getElementById('lalamoveSandboxNote').classList.toggle('hidden', !isLalamove);
+    lalamoveOnlyRowIds.forEach((id) => document.getElementById(id).classList.toggle('hidden', !isLalamove));
+    if (isLalamove) loadLalamoveVehicleTypes();
+  });
+
+  document.getElementById('bookDeliveryBtn').addEventListener('click', bookLalamoveDelivery);
+  document.getElementById('cancelOrderBtn').addEventListener('click', cancelBookedOrder);
+
+  // Picking a different vehicle type is itself a request for a new price, same reasoning as
+  // auto-quoting on a To-address Autocomplete pick - only fires on a genuine user selection
+  // (programmatic select.value assignment, e.g. loadLalamoveVehicleTypes' MOTORCYCLE default,
+  // does not dispatch a 'change' event).
+  document.getElementById('lalamoveVehicleTypeSelect').addEventListener('change', () => {
+    getQuote();
+  });
 
   fromSelect.addEventListener('change', async (e) => {
     const isOther = e.target.value === '__other__';

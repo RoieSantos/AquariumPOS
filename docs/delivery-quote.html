@@ -34,6 +34,35 @@
       <div class="card">
         <div class="form-grid">
           <div class="form-row">
+            <label for="deliveryMethodSelect">Delivery Method</label>
+            <select id="deliveryMethodSelect">
+              <option value="inhouse">In-House Delivery</option>
+              <option value="lalamove">Lalamove (Sandbox)</option>
+            </select>
+          </div>
+          <div class="form-row hidden" id="lalamoveVehicleTypeRow">
+            <label for="lalamoveVehicleTypeSelect">Vehicle Type</label>
+            <select id="lalamoveVehicleTypeSelect">
+              <option value="">Loading vehicle types...</option>
+            </select>
+          </div>
+          <div class="form-row hidden" id="lalamoveSenderNameRow">
+            <label for="lalamoveSenderNameInput">Sender Name</label>
+            <input type="text" id="lalamoveSenderNameInput" placeholder="e.g. RS Pet Stop - Amaya" />
+          </div>
+          <div class="form-row hidden" id="lalamoveSenderPhoneRow">
+            <label for="lalamoveSenderPhoneInput">Sender Phone</label>
+            <input type="tel" id="lalamoveSenderPhoneInput" placeholder="e.g. 09171234567" />
+          </div>
+          <div class="form-row hidden" id="lalamoveRecipientNameRow">
+            <label for="lalamoveRecipientNameInput">Recipient Name</label>
+            <input type="text" id="lalamoveRecipientNameInput" placeholder="Customer name" />
+          </div>
+          <div class="form-row hidden" id="lalamoveRecipientPhoneRow">
+            <label for="lalamoveRecipientPhoneInput">Recipient Phone</label>
+            <input type="tel" id="lalamoveRecipientPhoneInput" placeholder="e.g. 09171234567" />
+          </div>
+          <div class="form-row">
             <label for="fromWarehouseSelect">From</label>
             <select id="fromWarehouseSelect">
               <option value="">Loading warehouses...</option>
@@ -49,6 +78,8 @@
             <input type="text" id="toAddressInput" placeholder="e.g. 456 Sample Ave, Makati City" />
           </div>
         </div>
+
+        <p class="muted hidden" id="lalamoveSandboxNote">Sandbox mode - this calls Lalamove's test environment, not real pricing. Not usable for real customer quotes yet.</p>
 
         <div id="quoteError" class="error-text hidden"></div>
 
@@ -79,6 +110,33 @@
           </div>
         </div>
         <p class="muted" id="resultBreakdown"></p>
+
+        <div id="bookDeliverySection" class="hidden" style="margin-top:16px;">
+          <button class="btn btn-success" id="bookDeliveryBtn" type="button">Book Delivery</button>
+          <div id="bookDeliveryError" class="error-text hidden" style="margin-top:8px;"></div>
+        </div>
+        <p class="muted hidden" id="bookDeliveryRestrictedNote" style="margin-top:16px;">Booking a delivery is restricted to super users - ask one to book this quote.</p>
+
+        <div id="bookDeliveryResult" class="card hidden" style="margin-top:16px;">
+          <h3 style="margin-top:0;">Booking Confirmed</h3>
+          <div class="stat-card-grid">
+            <div class="stat-card">
+              <div class="stat-label">Order ID</div>
+              <div class="stat-value" id="bookedOrderId" style="font-size:18px;">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Status</div>
+              <div class="stat-value" id="bookedStatus" style="font-size:18px;">-</div>
+            </div>
+            <div class="stat-card stat-confirmed">
+              <div class="stat-label">Total</div>
+              <div class="stat-value" id="bookedTotal">-</div>
+            </div>
+          </div>
+          <p><a id="bookedShareLink" href="#" target="_blank" rel="noopener" class="hidden">Track this order on Lalamove &rarr;</a></p>
+          <button class="btn btn-danger btn-sm" id="cancelOrderBtn" type="button">Cancel Order</button>
+          <div id="cancelOrderError" class="error-text hidden" style="margin-top:8px;"></div>
+        </div>
       </div>
     </div>
   </div>

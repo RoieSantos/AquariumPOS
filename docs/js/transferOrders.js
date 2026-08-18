@@ -321,7 +321,7 @@ function updateManageActionButtons(status, lines) {
 function renderManageLines(lines, status) {
   const body = document.getElementById('viewLinesBody');
   if (!lines || lines.length === 0) {
-    body.innerHTML = '<tr><td colspan="9" class="muted">No line items.</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" class="muted">No line items.</td></tr>';
     return;
   }
 
@@ -385,6 +385,7 @@ function renderManageLines(lines, status) {
           <td>${l['Item No.'] || ''}</td>
           <td>${l['Variant Name'] || ''}</td>
           <td>${l['Description'] || ''}</td>
+          <td class="pancake-stock-cell muted" data-pancake-stock-line-no="${l['Line No.']}">&hellip;</td>
           <td>${qtyToTransfer}</td>
           <td>${qtyToShipCell}</td>
           <td>${serialsCell}</td>
@@ -550,7 +551,7 @@ async function openManageModal(docNo) {
   document.getElementById('viewLinesTitle').textContent = `Transfer Order ${docNo}`;
   document.getElementById('viewLinesError').classList.add('hidden');
   const body = document.getElementById('viewLinesBody');
-  body.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
   document.getElementById('viewLinesModal').classList.remove('hidden');
 
   const { data: headerRows, error: headerError } = await supabaseClient
@@ -560,7 +561,7 @@ async function openManageModal(docNo) {
     .limit(1);
 
   if (headerError || !headerRows || headerRows.length === 0) {
-    body.innerHTML = `<tr><td colspan="9" class="error-text">${headerError?.message || 'Transfer order not found.'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" class="error-text">${headerError?.message || 'Transfer order not found.'}</td></tr>`;
     return;
   }
 
@@ -575,7 +576,7 @@ async function openManageModal(docNo) {
     .order('"Line No."', { ascending: true });
 
   if (error) {
-    body.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -603,7 +604,7 @@ async function openManageModal(docNo) {
 
   renderManageLines(lines, status);
   updateManageActionButtons(status, lines);
-  await loadPancakeSyncStatus(docNo);
+  await Promise.all([loadPancakeSyncStatus(docNo), loadPancakeStockForLines(docNo)]);
 }
 
 // Pancake Sync panel (Manage modal) - one row per Ship action that attempted a Pancake push (see
@@ -683,6 +684,53 @@ async function retryPancakeShipment(docNo, shipmentEventNo) {
   }
 
   await loadPancakeSyncStatus(docNo);
+}
+
+// "Available (Pancake)" column (Manage modal) - live remain_quantity at this order's From
+// Warehouse for each line, read straight from Pancake Cloud via GET /products/{id} (see
+// supabase_transfer_line_pancake_stock.sql's header comment for why that endpoint over a
+// per-variation one). Runs after renderManageLines has already put a per-line placeholder cell
+// in the DOM (data-pancake-stock-line-no), so this only ever fills those in - it never blocks or
+// replaces the rest of the line render, and a slow/failed Pancake call just leaves the affected
+// cells showing their error/unknown state instead of hanging the whole modal.
+async function loadPancakeStockForLines(docNo) {
+  const cells = document.querySelectorAll('#viewLinesBody [data-pancake-stock-line-no]');
+  if (cells.length === 0) return;
+
+  const { data, error } = await supabaseClient.rpc('staff_get_transfer_line_pancake_stock', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_document_no: docNo
+  });
+
+  if (error) {
+    console.error('staff_get_transfer_line_pancake_stock failed:', error);
+    cells.forEach((cell) => {
+      cell.textContent = '?';
+      cell.title = describeSupabaseError(error, 'Failed to load Pancake stock.');
+    });
+    return;
+  }
+
+  const byLineNo = new Map((data || []).map((row) => [String(row.line_no), row]));
+  cells.forEach((cell) => {
+    const row = byLineNo.get(cell.dataset.pancakeStockLineNo);
+    if (!row) {
+      cell.textContent = '?';
+      return;
+    }
+    if (row.fetch_error) {
+      cell.textContent = '?';
+      cell.title = row.fetch_error;
+    } else if (row.remain_quantity === null || row.remain_quantity === undefined) {
+      cell.textContent = '?';
+      cell.title = 'Not linked to a Pancake product, or no stock data returned for this warehouse.';
+    } else {
+      cell.textContent = row.remain_quantity;
+      cell.classList.remove('muted');
+      cell.title = '';
+    }
+  });
 }
 
 async function shipTransferOrder(docNo) {
