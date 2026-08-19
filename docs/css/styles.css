@@ -1232,6 +1232,12 @@ tr.clickable-row:hover {
   margin-top: 12px;
 }
 
+/* Delivery calendar on real phone widths - the desktop grid (above) relied on sideways scrolling
+   at min-width:560px, which meant reading the month meant scrolling both the page AND the grid.
+   Mobile calendar apps solve this by keeping 7 columns fluid to the screen width and swapping full
+   event text for small dots (see .delivery-day-cell .badge below) - the day cell itself is still
+   tappable for the full stop list via the existing day-detail panel, so no information is lost,
+   just deferred one tap. */
 @media (max-width: 640px) {
   .delivery-month-nav {
     flex-wrap: wrap;
@@ -1244,8 +1250,64 @@ tr.clickable-row:hover {
     order: -1;
   }
 
+  #assignOrderBtn {
+    display: block;
+    width: 100%;
+    padding: 12px 16px;
+  }
+
   .delivery-calendar-grid {
-    min-width: 560px;
+    min-width: 0;
+    gap: 3px;
+  }
+
+  .delivery-weekday-cell {
+    font-size: 10px;
+    padding: 2px 0;
+  }
+
+  /* Fixed-route labels ("Route Name - Warehouse X, Warehouse Y") never fit a ~45px-wide mobile
+     column - the same info still surfaces per-day as a purple dot (below) and in full in the
+     fixed-route row of the day-detail table (js/delivery.js's fixedRouteRowHtml). */
+  .delivery-weekday-route {
+    display: none;
+  }
+
+  .delivery-day-cell {
+    min-height: 46px;
+    padding: 4px;
+    border-radius: 6px;
+  }
+
+  .delivery-day-number {
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+
+  /* Text badges collapse to small colored dots - still distinguishable by color (neutral/purple/
+     glass) and tappable for the real detail, without needing to fit readable text into a cell a
+     few dozen pixels wide. The stop-count badge (badge-primary) is the one number worth reading
+     at a glance, so it keeps its text instead of becoming a blank dot. */
+  .delivery-day-cell .badge {
+    width: 7px;
+    height: 7px;
+    min-width: 0;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0;
+    line-height: 0;
+    margin: 0 2px 2px 0;
+    vertical-align: middle;
+  }
+
+  .delivery-day-cell .badge-primary {
+    width: auto;
+    height: auto;
+    min-width: 0;
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 9px;
+    line-height: 1.4;
   }
 }
 
@@ -2796,6 +2858,10 @@ body:has(.wizard-page) {
 
   .notification-item .notification-message {
     justify-content: center;
+  }
+
+  #dayMap {
+    height: 240px;
   }
 }
 
