@@ -310,7 +310,24 @@ begin
     left join public."Warehouses" w on w."ID" = o."LocationID"
     where (case when p_walkin_only then o."ReceivedAtShop" is true else o."ReceivedAtShop" is not true end)
       and (p_period is distinct from 'month' or (o."Date" >= v_month_start and o."Date" < v_month_end))
-      and (p_period is distinct from 'today' or o."Date" = v_today)
+      and (
+        p_period is distinct from 'today'
+        or (
+          -- Widens "today" to the same ConfirmedAtUtc-based rule used by
+          -- admin_get_sales_by_confirmed_by's daily_sales AND admin_get_online_order_financial_
+          -- summary's today_online_sales - i.e. whenever this list is scoped to online orders
+          -- (p_walkin_only false, the default) or to a specific staff member's Daily drill-down
+          -- (p_confirmed_by set - always online-only anyway, per that function's own join). The
+          -- Today's Walk-In Sales card (p_walkin_only true, no p_confirmed_by) keeps the plain
+          -- Date = today behavior its own total is still computed with, so that figure and its
+          -- drill-down list still always match.
+          case
+            when (p_confirmed_by is not null and trim(p_confirmed_by) <> '') or not p_walkin_only
+              then coalesce((o."ConfirmedAtUtc" at time zone 'Asia/Manila')::date, o."Date") = v_today
+            else o."Date" = v_today
+          end
+        )
+      )
       and (p_period is distinct from 'prevmonth' or (o."Date" >= v_prev_month_start and o."Date" < v_month_start))
       and (p_confirmed_by is null or trim(p_confirmed_by) = '' or lower(trim(o."ConfirmedBy")) = lower(trim(p_confirmed_by)))
       and (
@@ -449,6 +466,15 @@ $$;
 -- and exclusion rules as the month_* / walkin_*_month figures above, just scoped to today's
 -- Asia/Manila business date instead of the whole month.
 --
+-- today_online_sales/today_online_order_count specifically key off "ConfirmedAtUtc" (falling
+-- back to "Date" when still null) rather than plain "Date" - per "so in the daily report of
+-- sales.. Today's online sales can we do the same thing" as the per-staff Daily figure in
+-- admin_get_sales_by_confirmed_by (see that function's own comment for the full reasoning: "Date"
+-- is when the order was PLACED, not when it was actually confirmed, so an order placed on an
+-- earlier day but confirmed today belongs in today's sales). today_walkin_sales is untouched -
+-- walk-in orders are received/paid in-store immediately, not confirmed later like online orders,
+-- so "Date" already reflects the sale.
+--
 -- previous_month_walkin_sales / previous_month_walkin_order_count: per "show daily sales and
 -- previous month (Walk-in)" - same walk-in split/exclusion rules as walkin_sales_month above,
 -- scoped to the full calendar month immediately before the current one (same Asia/Manila
@@ -513,12 +539,12 @@ begin
           and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
       )::int as walkin_order_count,
       coalesce(sum(o."MoneyToCollect") filter (
-        where o."Date" = v_today
+        where coalesce((o."ConfirmedAtUtc" at time zone 'Asia/Manila')::date, o."Date") = v_today
           and o."ReceivedAtShop" is not true
           and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
       ), 0)::numeric as today_online_sales,
       count(*) filter (
-        where o."Date" = v_today
+        where coalesce((o."ConfirmedAtUtc" at time zone 'Asia/Manila')::date, o."Date") = v_today
           and o."ReceivedAtShop" is not true
           and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
       )::int as today_online_order_count,
@@ -570,6 +596,24 @@ $$;
 -- supabase_staff_users_table.sql) - the % accomplished itself is left for the client to compute
 -- (monthly_sales / monthly_sales_target) so the dashboard can render it live, same convention
 -- as the site-wide Monthly Sales Target card (updateSalesTargetTile in js/dashboard.js).
+--
+-- daily_sales/daily_order_count: per "under the sales user Daily can you add printed/toship/
+-- shipped status as long as its today's date it will fall on the Daily sales", refined by "can we
+-- grab the confirmation date from pancake... I think its the time when the order has been
+-- changed status = 1 (confirmed)". "Date" is the order's PLACED date (from Pancake's inserted_at/
+-- created_at), not when a Sales User actually confirmed it - an order placed on one day can sit
+-- unconfirmed and get confirmed (and later printed/shipped) days afterward, so gating Daily
+-- purely on "Date" = today both undercounts (a same-day confirmation of an older order never
+-- shows) and doesn't track the actual sales action being measured here. "ConfirmedAtUtc" (see the
+-- alter table above) is the real status=1 timestamp pulled straight from Pancake's status_history
+-- via pancake_extract_created_confirmed_by() (supabase_pancake_manual_sync.sql) - using its
+-- Asia/Manila calendar date is the correct "did this Sales User confirm this order today" signal,
+-- and since it doesn't change when the order later moves to Printed/To Ship/Shipped, those orders
+-- stay correctly attributed to the day they were actually confirmed rather than the day they
+-- happened to ship. Falls back to "Date" only when ConfirmedAtUtc is still null (older orders
+-- synced before this column existed / not yet backfilled - see admin_backfill_order_confirmed_at
+-- in supabase_order_confirmation_timing_rpc.sql), so nothing silently drops out of Daily while
+-- the backfill is catching up.
 drop function if exists public.admin_get_sales_by_confirmed_by(text, text);
 
 create or replace function public.admin_get_sales_by_confirmed_by(p_admin_username text, p_admin_password text)
@@ -605,8 +649,12 @@ begin
   return query
     select
       su."DisplayName"::text,
-      coalesce(sum(o."MoneyToCollect") filter (where o."Date" = v_today), 0)::numeric as daily_sales,
-      count(*) filter (where o."Date" = v_today)::int as daily_order_count,
+      coalesce(sum(o."MoneyToCollect") filter (
+        where coalesce((o."ConfirmedAtUtc" at time zone 'Asia/Manila')::date, o."Date") = v_today
+      ), 0)::numeric as daily_sales,
+      count(*) filter (
+        where coalesce((o."ConfirmedAtUtc" at time zone 'Asia/Manila')::date, o."Date") = v_today
+      )::int as daily_order_count,
       coalesce(sum(o."MoneyToCollect") filter (where o."Date" >= v_month_start and o."Date" < v_month_end), 0)::numeric as monthly_sales,
       count(*) filter (where o."Date" >= v_month_start and o."Date" < v_month_end)::int as monthly_order_count,
       coalesce(sum(o."MoneyToCollect") filter (where o."Date" >= v_prev_month_start and o."Date" < v_month_start), 0)::numeric as previous_month_sales,

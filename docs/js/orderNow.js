@@ -567,6 +567,17 @@ let customCanvasCtx = null;
 let CUSTOM_CANVAS_W = 0;
 let CUSTOM_CANVAS_H = 0;
 
+// Lets the customer drag (or click the Rotate button) to flip the aquarium sketch and see the
+// other side, per "is it possible that the user can drag and rotate the aquarium image?". It's a
+// horizontal mirror of the same isometric drawing rather than a true 3D rotation (there's no 3D
+// model to rotate) - cheap to do reliably and still gives the "look at it from the other side"
+// effect. customAquariumMirrored is the toggled state; currentDrawMirrored is read by
+// drawCustomDimensionChip (shared with the Stand sketch) so only the aquarium's own chip text
+// counter-flips back to readable while everything else mirrors normally.
+let customAquariumMirrored = false;
+let currentDrawMirrored = false;
+let lastCustomAquariumResult = null;
+
 // The same live preview is shown on both the Dimensions step (customAquariumCanvasDims) and the
 // Options step (customAquariumCanvas), so redraws happen on every registered canvas in this list
 // rather than a single one. Each entry is {ctx, w, h}; the draw* functions below still read/write
@@ -610,6 +621,49 @@ function setupCustomCanvas() {
   customCanvases = [];
   registerCustomCanvas('customAquariumCanvasDims');
   drawCustomPlaceholder('Enter your aquarium details to see a preview.');
+}
+
+function toggleCustomAquariumView() {
+  customAquariumMirrored = !customAquariumMirrored;
+  drawCustomAquarium(lastCustomAquariumResult);
+}
+
+// Lets a drag across the canvas act as "rotate" (mirror-flip) - one flip per drag gesture, past a
+// small threshold so an accidental click/tap doesn't feel jumpy. The Rotate button next to the
+// canvas does the same toggle for anyone who doesn't realize dragging works.
+function wireCustomAquariumRotate() {
+  const canvas = document.getElementById('customAquariumCanvasDims');
+  const rotateBtn = document.getElementById('customAquariumRotateBtn');
+  if (!canvas || !rotateBtn) return;
+
+  rotateBtn.addEventListener('click', () => toggleCustomAquariumView());
+
+  let dragging = false;
+  let startX = 0;
+  let flippedThisDrag = false;
+
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    flippedThisDrag = false;
+    startX = e.clientX;
+    canvas.style.cursor = 'grabbing';
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging || flippedThisDrag) return;
+    if (Math.abs(e.clientX - startX) > 30) {
+      flippedThisDrag = true;
+      toggleCustomAquariumView();
+    }
+  });
+
+  const endDrag = () => {
+    dragging = false;
+    canvas.style.cursor = 'grab';
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointerleave', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
 }
 
 function drawCustomPlaceholder(message) {
@@ -667,10 +721,20 @@ function drawCustomDimensionChip(centerX, centerY, text) {
   ctx.lineWidth = 1;
   ctx.stroke();
 
+  ctx.save();
+  if (currentDrawMirrored) {
+    // The chip background above already mirrored correctly along with the rest of the drawing
+    // (it's symmetric geometry), but glyphs drawn under a horizontal mirror render backwards -
+    // so undo just the mirror, locally, for the text itself.
+    ctx.translate(centerX, centerY);
+    ctx.scale(-1, 1);
+    ctx.translate(-centerX, -centerY);
+  }
   ctx.fillStyle = '#213b64';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, centerX, centerY + 0.5);
+  ctx.restore();
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 }
@@ -732,6 +796,7 @@ function drawCustomStandGapArrow(x, yTop, yBottom) {
 // dimensions/sump so the sketch always matches whatever price was just computed. Draws to every
 // registered canvas (see customCanvases above).
 function drawCustomAquarium(result) {
+  lastCustomAquariumResult = result;
   customCanvases.forEach(({ ctx, w, h }) => {
     customCanvasCtx = ctx;
     CUSTOM_CANVAS_W = w;
@@ -756,6 +821,15 @@ function drawCustomAquariumOnActiveCanvas(result) {
   if (!result || !result.ok || !result.normalized) {
     drawCustomPlaceholderOnActiveCanvas(result && result.error ? result.error : 'Enter your aquarium details to see a preview.');
     return;
+  }
+
+  ctx.save();
+  if (customAquariumMirrored) {
+    currentDrawMirrored = true;
+    ctx.translate(CUSTOM_CANVAS_W, 0);
+    ctx.scale(-1, 1);
+  } else {
+    currentDrawMirrored = false;
   }
 
   const dims = result.normalized;
@@ -921,6 +995,9 @@ function drawCustomAquariumOnActiveCanvas(result) {
   drawCustomDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
   drawCustomDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(heightIn) + '"');
   drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+
+  ctx.restore();
+  currentDrawMirrored = false;
 }
 
 // ---- Stand (tubular) preview canvas ----
@@ -2174,6 +2251,7 @@ async function submitOrder(event) {
 // from a previous visit (e.g. after confirming one custom aquarium and starting a second, or
 // backing out to the mode picker and re-entering Customize).
 function resetCustomAquariumBuilder() {
+  customAquariumMirrored = false;
   document.getElementById('customLength').value = '0';
   document.getElementById('customWidth').value = '0';
   document.getElementById('customHeight').value = '0';
@@ -2778,6 +2856,7 @@ async function runDeliveryEstimate() {
   wireLocationToggle();
   wireFulfillmentToggle();
   setupCustomCanvas();
+  wireCustomAquariumRotate();
   setupStandCanvas();
   // Clones the Payment & Release policy (see paymentPolicyTemplate) into both order-summary
   // screens - Step 3 (Standard flow cart review) and custom-checkout (Customize flow) - so it's

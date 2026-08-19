@@ -400,6 +400,8 @@ async function loadNotifications(session) {
     document.getElementById('welcomeText').textContent = "Here's what's happening with your online orders today.";
   }
 
+  wirePushNotificationButton(session);
+
   // Per "Sales User dont need to see transfer orders and other related notification for
   // transfers - Remove Serial Tracker/Reports/Customer Aquarium" - a Sales User who is NOT also
   // a super user gets a trimmed-down nav-card grid (Custom Stand/Online Orders stay, since

@@ -10,6 +10,7 @@ let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit
 let warehouseOptions = []; // [{ id, name }] loaded once, used by the edit-location dropdown
 let editLocationSerialNo = null;
 let urlLocationFilter = null; // ?location= from an Inventory Summary deep link - see openEditLocationModal's sibling, applyUrlFilters
+let serialSearchDebounceHandle = null;
 
 // Non-production (store) warehouses only see serial activity for their own location - Production
 // staff need the full cross-warehouse picture (that's who runs Stock Counts / ships Transfer
@@ -297,22 +298,53 @@ async function resolveAndOpenSourceDoc(docNo) {
   renderTransferLines(lineRows || []);
 }
 
+// Was a plain `.select('*').order('CreatedAtUtc', {desc}).limit(500)` - the 500 most RECENTLY
+// CREATED rows across the WHOLE table, filtered client-side afterward. Once the table grew past
+// 500 rows, an older batch of serials (e.g. a warehouse's whole AQ-001 stock) could fall outside
+// that window and become invisible to every search/filter here, even though Inventory Summary's
+// server-side aggregate (no such cap) still counted them correctly - see "why does Amaya have 38
+// stocks in Inventory Summary but 0 in Serial Tracker". staff_search_item_serial_tracking
+// (supabase_serial_tracker_search_rpc.sql) filters server-side FIRST, then limits, so a search
+// always finds a matching row regardless of table size.
 async function loadSerials() {
   const tbody = document.getElementById('serialTableBody');
   tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
 
-  const { data, error } = await supabaseClient
-    .from('ItemSerialTracking')
-    .select('*')
-    .order('CreatedAtUtc', { ascending: false })
-    .limit(500);
+  const search = document.getElementById('searchInput').value.trim();
+  const status = document.getElementById('statusFilter').value;
+  // Same own-warehouse restriction renderSerials used to apply client-side (Serial Admins are
+  // exempt - they need the full cross-store picture).
+  const ownWarehouseRestrict = (!isProductionWarehouseUser && !isSerialAdmin && currentSession?.warehouseName)
+    ? currentSession.warehouseName
+    : null;
+
+  const { data, error } = await supabaseClient.rpc('staff_search_item_serial_tracking', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: search || null,
+    p_status: status || null,
+    p_location_restrict: ownWarehouseRestrict,
+    p_location_filter: urlLocationFilter || null
+  });
 
   if (error) {
     tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
-  allSerials = data || [];
+  allSerials = (data || []).map((r) => ({
+    SerialNo: r.serial_no,
+    ItemCode: r.item_code,
+    ItemDescription: r.item_description,
+    Location: r.location,
+    Status: r.status,
+    SourceDocumentNo: r.source_document_no,
+    SoldReceiptNo: r.sold_receipt_no,
+    SoldOnlineOrderId: r.sold_online_order_id,
+    CreatedAtUtc: r.created_at_utc,
+    UpdatedAtUtc: r.updated_at_utc,
+    UpdatedBy: r.updated_by
+  }));
   renderSerials();
 }
 
@@ -350,27 +382,40 @@ function renderSerials() {
 
   // Status stays otherwise read-only here - it's owned by whichever workflow moved the serial
   // (Stock Counts, Transfer Order shipment tagging, a sale, etc.) and editing it freely could
-  // desync it from that workflow's own state. Serial Admins get one narrow, targeted exception -
-  // a "Mark In Stock" action to restore a mistakenly SOLD/RETURNED/IN_TRANSIT serial back to
-  // IN_STOCK - not a general status editor. Location's own Edit control is the other exception,
-  // same admin gate. Mark In Stock only shows when the serial's current Location already matches
-  // the admin's own warehouse - marking a serial physically tagged to a DIFFERENT store as
-  // in-stock here would falsely claim that unit is on hand locally.
+  // desync it from that workflow's own state. Serial Admins get two narrow, targeted exceptions -
+  // "Mark In Stock" to restore a mistakenly SOLD/RETURNED/IN_TRANSIT serial back to IN_STOCK, and
+  // "Mark Sold" for the reverse (a sale that happened without going through the normal POS/online
+  // flow, e.g. a walk-in the desktop sync hasn't caught up on yet) - neither is a general status
+  // editor, and "Mark Sold" here deliberately leaves SoldReceiptNo/SoldOnlineOrderId blank since
+  // there's no real receipt/order behind a manual override. Location's own Edit control is the
+  // other exception, same admin gate. Both Mark buttons only show when the serial's current
+  // Location already matches the admin's own warehouse - acting on a serial physically tagged to
+  // a DIFFERENT store here would misrepresent stock that isn't actually on hand locally.
   tbody.innerHTML = rows
-    .map((r) => `
+    .map((r) => {
+      const canAct = isSerialAdmin && isOwnWarehouseLocation(r.Location);
+      const statusUpper = (r.Status || '').toUpperCase();
+      const markInStockBtn = canAct && statusUpper !== 'IN_STOCK'
+        ? ` <button class="btn btn-secondary btn-sm mark-in-stock-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark In Stock</button>`
+        : '';
+      const markSoldBtn = canAct && statusUpper === 'IN_STOCK'
+        ? ` <button class="btn btn-secondary btn-sm mark-sold-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark Sold</button>`
+        : '';
+      return `
       <tr>
         <td>${escapeHtml(r.SerialNo)}</td>
         <td>${escapeHtml(r.ItemCode)}</td>
         <td>${escapeHtml(r.ItemDescription)}</td>
         <td>${escapeHtml(r.Location)}${isSerialAdmin ? ` <button class="btn btn-secondary btn-sm edit-location-btn" data-serial="${encodeURIComponent(r.SerialNo)}" data-location="${encodeURIComponent(r.Location || '')}" type="button">Edit</button>` : ''}</td>
-        <td><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span>${isSerialAdmin && (r.Status || '').toUpperCase() !== 'IN_STOCK' && isOwnWarehouseLocation(r.Location) ? ` <button class="btn btn-secondary btn-sm mark-in-stock-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark In Stock</button>` : ''}</td>
+        <td><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span>${markInStockBtn}${markSoldBtn}</td>
         <td>${renderSourceDocCell(r.SourceDocumentNo)}</td>
         <td>${escapeHtml(r.SoldReceiptNo)}</td>
         <td>${escapeHtml(r.SoldOnlineOrderId)}</td>
         <td>${formatDateTime(r.UpdatedAtUtc)}</td>
         <td>${escapeHtml(r.UpdatedBy)}</td>
       </tr>
-    `)
+    `;
+    })
     .join('');
 
   tbody.querySelectorAll('.source-doc-link').forEach((link) => {
@@ -388,6 +433,10 @@ function renderSerials() {
 
   tbody.querySelectorAll('.mark-in-stock-btn').forEach((btn) => {
     btn.addEventListener('click', () => markInStock(decodeURIComponent(btn.dataset.serial)));
+  });
+
+  tbody.querySelectorAll('.mark-sold-btn').forEach((btn) => {
+    btn.addEventListener('click', () => markSold(decodeURIComponent(btn.dataset.serial)));
   });
 }
 
@@ -415,6 +464,37 @@ async function markInStock(serialNo) {
   }
 
   row.Status = 'IN_STOCK';
+  row.UpdatedAtUtc = new Date().toISOString();
+  row.UpdatedBy = currentSession?.username || null;
+  renderSerials();
+}
+
+// Reverse of markInStock() - manually flips a serial to SOLD without a linked receipt/online
+// order (SoldReceiptNo/SoldOnlineOrderId stay whatever they already were), for a sale that
+// happened outside the normal POS/online flow. Only offered from IN_STOCK (see renderSerials) so
+// this can't be used to relabel a serial that's already SOLD/IN_TRANSIT/etc - use Mark In Stock
+// first to undo a mistake, then Mark Sold, rather than jumping straight status to status.
+async function markSold(serialNo) {
+  const row = allSerials.find((r) => r.SerialNo === serialNo);
+  if (!row || !isOwnWarehouseLocation(row.Location)) {
+    alert('This serial is tagged to a different warehouse - it can only be marked Sold from its own location.');
+    renderSerials();
+    return;
+  }
+
+  if (!confirm(`Mark ${serialNo} as SOLD? This does not link a receipt or online order - only use this for a sale that didn't go through the normal flow.`)) return;
+
+  const { error } = await supabaseClient
+    .from('ItemSerialTracking')
+    .update({ Status: 'SOLD', UpdatedAtUtc: new Date().toISOString(), UpdatedBy: currentSession?.username || null })
+    .eq('SerialNo', serialNo);
+
+  if (error) {
+    alert(`Failed to update status: ${error.message}`);
+    return;
+  }
+
+  row.Status = 'SOLD';
   row.UpdatedAtUtc = new Date().toISOString();
   row.UpdatedBy = currentSession?.username || null;
   renderSerials();
@@ -457,8 +537,13 @@ async function markInStock(serialNo) {
     note.classList.remove('hidden');
   }
 
-  document.getElementById('searchInput').addEventListener('input', renderSerials);
-  document.getElementById('statusFilter').addEventListener('change', renderSerials);
+  // Debounced re-fetch (not just a local re-render) - search/status now filter server-side, via
+  // loadSerials(), so typing a search term can find rows outside whatever page loaded initially.
+  document.getElementById('searchInput').addEventListener('input', () => {
+    clearTimeout(serialSearchDebounceHandle);
+    serialSearchDebounceHandle = setTimeout(loadSerials, 300);
+  });
+  document.getElementById('statusFilter').addEventListener('change', loadSerials);
   document.getElementById('refreshBtn').addEventListener('click', loadSerials);
   document.getElementById('closeViewTransferBtn').addEventListener('click', () =>
     document.getElementById('viewTransferModal').classList.add('hidden')

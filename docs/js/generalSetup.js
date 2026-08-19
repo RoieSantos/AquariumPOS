@@ -461,6 +461,144 @@ async function savePancakePublicApiKey() {
   }
 }
 
+// TELEGRAM_BOT_TOKEN - sends a Telegram message when an online order gets confirmed (see
+// supabase_telegram_notifications.sql's trigger on OnlineOrders). Same write-only/status-only
+// shape as the Pancake keys above. The other half of setup - TELEGRAM_CHAT_ID - isn't a secret,
+// so it's just a normal row in the plain Settings table further down this page, not handled here.
+
+async function loadTelegramBotTokenStatus() {
+  const statusEl = document.getElementById('telegramBotTokenStatus');
+  statusEl.textContent = 'Loading status...';
+
+  const { data, error } = await supabaseClient.rpc('admin_get_telegram_bot_token_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    statusEl.textContent = `Could not load status - ${error.message}`;
+    return;
+  }
+
+  const result = (data && data[0]) || {};
+  statusEl.textContent = result.is_configured
+    ? `Configured - last set ${new Date(result.updated_at_utc).toLocaleString()}`
+    : 'Not configured yet.';
+}
+
+async function saveTelegramBotToken() {
+  const errorEl = document.getElementById('telegramBotTokenError');
+  const input = document.getElementById('telegramBotTokenInput');
+  const saveBtn = document.getElementById('saveTelegramBotTokenBtn');
+  errorEl.classList.add('hidden');
+
+  const newToken = input.value.trim();
+  if (!newToken) {
+    errorEl.textContent = 'Paste the new bot token before saving.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('admin_set_telegram_bot_token', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_new_token: newToken
+    });
+
+    if (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    input.value = '';
+    await loadTelegramBotTokenStatus();
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+async function testTelegramNotification() {
+  const resultEl = document.getElementById('telegramTestResult');
+  const testBtn = document.getElementById('testTelegramNotificationBtn');
+  resultEl.classList.remove('hidden');
+  resultEl.textContent = 'Sending...';
+  testBtn.disabled = true;
+
+  try {
+    const { data, error } = await supabaseClient.rpc('admin_test_telegram_notification', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password
+    });
+
+    if (error) {
+      resultEl.textContent = `Failed: ${error.message}`;
+      return;
+    }
+
+    const result = (data && data[0]) || {};
+    resultEl.textContent = result.ok
+      ? 'Sent - check your Telegram chat.'
+      : `Failed (HTTP ${result.http_status ?? 'n/a'}): ${result.response_body || 'no response'}`;
+  } finally {
+    testBtn.disabled = false;
+  }
+}
+
+// Web Push - shows how many devices are subscribed (admin_list_push_subscriptions) and offers a
+// test send (admin_test_web_push) - see supabase_web_push_subscriptions.sql /
+// supabase_web_push_order_confirmed_trigger.sql. Enabling/disabling itself happens per-device from
+// the Dashboard's "Enable Order Notifications" button (js/pushNotifications.js), not here.
+
+async function loadWebPushSubscriberCount() {
+  const el = document.getElementById('webPushSubscriberCount');
+  el.textContent = 'Loading...';
+
+  const { data, error } = await supabaseClient.rpc('admin_list_push_subscriptions', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    el.textContent = `Could not load status - ${error.message}`;
+    return;
+  }
+
+  const count = (data || []).length;
+  el.textContent = count === 0
+    ? 'No devices subscribed yet.'
+    : `${count} device${count === 1 ? '' : 's'} subscribed.`;
+}
+
+async function testWebPush() {
+  const resultEl = document.getElementById('webPushTestResult');
+  const testBtn = document.getElementById('testWebPushBtn');
+  resultEl.classList.remove('hidden');
+  resultEl.textContent = 'Sending...';
+  testBtn.disabled = true;
+
+  try {
+    const { data, error } = await supabaseClient.rpc('admin_test_web_push', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password
+    });
+
+    if (error) {
+      resultEl.textContent = `Failed: ${error.message}`;
+      return;
+    }
+
+    const result = (data && data[0]) || {};
+    resultEl.textContent = result.ok
+      ? 'Sent - check the subscribed device(s).'
+      : `Failed (HTTP ${result.http_status ?? 'n/a'}): ${result.response_body || 'no response'}`;
+  } finally {
+    testBtn.disabled = false;
+  }
+}
+
 function maskValue(value) {
   if (!value) return '<span class="muted">(empty)</span>';
   if (value.length <= 4) return '&bull;'.repeat(value.length);
@@ -666,11 +804,16 @@ async function deleteSetting(key) {
   document.getElementById('cancelNoSeriesEditBtn').addEventListener('click', resetNoSeriesForm);
   document.getElementById('savePancakeApiKeyBtn').addEventListener('click', savePancakeApiKey);
   document.getElementById('savePancakePublicApiKeyBtn').addEventListener('click', savePancakePublicApiKey);
+  document.getElementById('saveTelegramBotTokenBtn').addEventListener('click', saveTelegramBotToken);
+  document.getElementById('testTelegramNotificationBtn').addEventListener('click', testTelegramNotification);
+  document.getElementById('testWebPushBtn').addEventListener('click', testWebPush);
   populateNoSeriesCodeOptions();
 
   await loadCompanyInfo();
   await loadNoSeries();
   await loadPancakeApiKeyStatus();
   await loadPancakePublicApiKeyStatus();
+  await loadTelegramBotTokenStatus();
+  await loadWebPushSubscriberCount();
   await loadSettings();
 })();

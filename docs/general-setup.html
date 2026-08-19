@@ -184,6 +184,33 @@
         <button class="btn btn-success" id="savePancakePublicApiKeyBtn" type="button">Save to Vault</button>
       </div>
 
+      <div class="form-grid" style="margin-top:16px;">
+        <div class="form-row">
+          <label for="telegramBotTokenInput">Telegram Bot Token</label>
+          <input type="password" id="telegramBotTokenInput" placeholder="Paste new bot token to set/rotate..." autocomplete="off" />
+          <span class="muted" id="telegramBotTokenStatus" style="font-size:12px; display:block; margin-top:4px;">Loading status...</span>
+          <span class="muted" style="font-size:12px; display:block; margin-top:2px;">Sends a Telegram message when an online order is confirmed. Get a token from @BotFather on Telegram, then also set a TELEGRAM_CHAT_ID row in Settings below - see supabase_telegram_notifications.sql for the full setup steps.</span>
+        </div>
+      </div>
+      <div id="telegramBotTokenError" class="error-text hidden"></div>
+      <div style="margin-top:8px; display:flex; gap:8px;">
+        <button class="btn btn-success" id="saveTelegramBotTokenBtn" type="button">Save to Vault</button>
+        <button class="btn btn-secondary" id="testTelegramNotificationBtn" type="button">Send Test Notification</button>
+      </div>
+      <div id="telegramTestResult" class="muted hidden" style="font-size:12px; margin-top:6px;"></div>
+
+      <div class="form-grid" style="margin-top:16px;">
+        <div class="form-row">
+          <label>Web Push (Portal PWA)</label>
+          <span class="muted" id="webPushSubscriberCount" style="font-size:12px;">Loading...</span>
+          <span class="muted" style="font-size:12px; display:block; margin-top:2px;">Sends order-confirmed notifications from the Portal itself instead of Telegram. Setup (VAPID keys, Edge Function deploy) is done outside this page - see supabase_web_push_order_confirmed_trigger.sql. Staff enable it themselves from the "Enable Order Notifications" button on the Dashboard.</span>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-secondary" id="testWebPushBtn" type="button">Send Test Push</button>
+      </div>
+      <div id="webPushTestResult" class="muted hidden" style="font-size:12px; margin-top:6px;"></div>
+
       <div class="section-divider"></div>
 
       <div class="toolbar">

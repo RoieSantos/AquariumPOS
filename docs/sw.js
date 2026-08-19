@@ -34,3 +34,45 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(request))
   );
 });
+
+// Web Push - see docs/js/pushNotifications.js for the subscribe flow and
+// supabase/functions/send-web-push for what actually sends the push message this receives.
+// Payload shape is { title, body, url } (set by send-web-push's notificationPayload).
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+
+  const title = data.title || 'RS Pet Stop Portal';
+  const options = {
+    body: data.body || '',
+    icon: 'icons/apple-touch-icon.png',
+    badge: 'icons/apple-touch-icon.png',
+    data: { url: data.url || 'dashboard.html' }
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Focuses an already-open portal tab if there is one, otherwise opens a new one - same "don't
+// pile up duplicate tabs" behavior as most notification-driven apps.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data && event.notification.data.url ? event.notification.data.url : 'dashboard.html';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url.includes(targetUrl) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+    })
+  );
+});
