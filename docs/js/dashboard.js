@@ -13,6 +13,31 @@
 // captured at login (session.password, see auth.js) the same way the Online Orders page
 // does, so no re-unlock prompt is needed here either.
 
+// Light/Dark buttons that call js/theme.js's setPortalTheme - the theme itself is applied on
+// every portal page by theme.js at load time (from localStorage), these two buttons are just the
+// only UI that ever changes the saved choice, per "have like a dark motif and light motif button
+// on the dashboard .. this will be apply across all pages".
+function wireThemeToggle() {
+  const group = document.getElementById('themeToggleGroup');
+  if (!group) return;
+
+  const refreshActiveState = () => {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    group.querySelectorAll('.theme-toggle-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.themeChoice === current);
+    });
+  };
+
+  group.addEventListener('click', (e) => {
+    const btn = e.target.closest('.theme-toggle-btn');
+    if (!btn) return;
+    setPortalTheme(btn.dataset.themeChoice);
+    refreshActiveState();
+  });
+
+  refreshActiveState();
+}
+
 function setStatValue(elementId, value) {
   const el = document.getElementById(elementId);
   if (el) el.textContent = value === null || value === undefined ? '0' : String(value);
@@ -393,6 +418,7 @@ async function loadNotifications(session) {
   if (!session) return;
   renderTopNav('Dashboard');
   await applyAppBackground();
+  wireThemeToggle();
 
   const displayName = session.displayName || session.username;
   if (displayName) {

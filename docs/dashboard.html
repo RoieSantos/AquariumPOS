@@ -1,10 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css" />
+  <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
@@ -15,6 +16,14 @@
   <div class="page">
     <h1 id="welcomeHeading">Welcome back,</h1>
     <p class="muted" id="welcomeText">Welcome.</p>
+
+    <!-- Site-wide light/dark theme toggle - see js/theme.js (applies the saved choice on every
+         portal page) and js/dashboard.js's wireThemeToggle (these are the only two buttons that
+         actually set it). -->
+    <div class="theme-toggle-group" id="themeToggleGroup">
+      <button type="button" class="theme-toggle-btn" id="themeLightBtn" data-theme-choice="light">☀ Light</button>
+      <button type="button" class="theme-toggle-btn" id="themeDarkBtn" data-theme-choice="dark">🌙 Dark</button>
+    </div>
 
     <!-- Delivery Team accounts land here instead of the full dashboard below (see
          js/dashboard.js's init() and js/auth.js's requireAuth() - dashboard.html is allowed for

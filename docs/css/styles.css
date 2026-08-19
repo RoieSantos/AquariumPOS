@@ -1,5 +1,6 @@
 :root {
   --page-bg: #f4f7fb;
+  --page-bg-top: #f8fbff;
   --panel-bg: #ffffff;
   --panel-border: #d7e0ef;
   --text-main: #1b355e;
@@ -13,6 +14,74 @@
   --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
 }
 
+/* Site-wide dark theme (js/theme.js sets data-theme="dark"/"light" on <html>, toggled from
+   Dashboard - see .theme-toggle-group below). --primary/--primary-strong are deliberately left
+   unchanged - the top nav is already a dark navy blue in the light theme, so it reads fine as-is
+   in dark mode too and doesn't need its own override. Badge colors (.badge-success etc.) are also
+   left as their light pastel values on purpose - they still read fine against a dark panel, the
+   same way GitHub/most dark-mode UIs keep colored status pills light. */
+:root[data-theme="dark"] {
+  --page-bg: #0b1220;
+  --page-bg-top: #0d1524;
+  --panel-bg: #111a2c;
+  --panel-border: #22314b;
+  --text-main: #e6f1ff;
+  --text-muted: #8a9bbd;
+  --input-border: #2c3c58;
+  --success: #2ecc82;
+  --danger: #e2695a;
+  --neutral: #8a9bbd;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="dark"] input[type="text"],
+:root[data-theme="dark"] input[type="email"],
+:root[data-theme="dark"] input[type="password"],
+:root[data-theme="dark"] input[type="number"],
+:root[data-theme="dark"] input[type="date"],
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] table,
+:root[data-theme="dark"] .modal-panel {
+  background: var(--panel-bg);
+}
+
+:root[data-theme="dark"] th {
+  background: #16213a;
+}
+
+:root[data-theme="dark"] tr.clickable-row:hover {
+  background: #16213a;
+}
+
+/* Theme toggle (Dashboard only - see docs/dashboard.html/js/dashboard.js's wireThemeToggle). */
+.theme-toggle-group {
+  display: inline-flex;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.theme-toggle-btn {
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  border: none;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.theme-toggle-btn + .theme-toggle-btn {
+  border-left: 1px solid var(--panel-border);
+}
+
+.theme-toggle-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -20,7 +89,7 @@
 body {
   margin: 0;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+  background: linear-gradient(180deg, var(--page-bg-top) 0%, var(--page-bg) 100%);
   color: var(--text-main);
 }
 
@@ -3094,5 +3163,38 @@ body:has(.wizard-page) {
   .table-wrap {
     border: none;
     overflow: visible;
+  }
+
+  /* Printed output should always be light regardless of the on-screen theme - a dark-mode print
+     would otherwise come out with navy card/table/input backgrounds and near-white text on the
+     forced-white body above (unreadable). Resets every dark-theme token back to its light value;
+     same :root[data-theme="dark"] selector as the definition itself (css/styles.css, near the
+     top) so this wins on specificity ties by simply appearing later in the file, while print
+     media scoping keeps it from affecting the on-screen dark theme at all. */
+  :root[data-theme="dark"] {
+    --page-bg: #f4f7fb;
+    --page-bg-top: #f8fbff;
+    --panel-bg: #ffffff;
+    --panel-border: #d7e0ef;
+    --text-main: #1b355e;
+    --text-muted: #61738f;
+    --input-border: #c7d3e6;
+    --success: #1e9a59;
+    --danger: #c0392b;
+    --neutral: #7b8596;
+    --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+  }
+
+  table,
+  input,
+  select,
+  textarea,
+  .modal-panel {
+    background: #fff;
+  }
+
+  th,
+  tr.clickable-row:hover {
+    background: #eef3fb;
   }
 }
