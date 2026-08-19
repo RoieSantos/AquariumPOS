@@ -2695,6 +2695,110 @@ body:has(.wizard-page) {
   }
 }
 
+/* Dashboard mobile pass - per "can you make the UI experience quality good or very user
+   friendly" on a phone. The existing auto-fit grids (.finance-card-grid/.stat-card-grid/
+   .staff-sales-grid) already collapse to a single column on real phone widths on their own
+   (minmax() math), so this is everything ELSE that needed a deliberate mobile treatment: big
+   numbers that could wrap awkwardly, a 3-column mini-grid that only stacked below 420px (too
+   narrow to cover most phones), comfortably-sized tap targets instead of desktop-scaled ones, and
+   the nav-card grid - the biggest single change, from a tall single column of large centered
+   tiles (lots of scrolling for ~15 links) to a compact icon+text list row, the way a native app's
+   menu screen reads. .nav-card-text is a markup-only wrapper (dashboard.html) that's invisible to
+   the existing desktop layout (divs still just stack top-to-bottom by default) and only becomes a
+   flex column here. */
+@media (max-width: 640px) {
+  .finance-card .finance-value {
+    font-size: 26px;
+  }
+
+  .finance-card {
+    padding: 18px 18px;
+  }
+
+  .stat-card .stat-value {
+    font-size: 26px;
+  }
+
+  .staff-sales-stats {
+    grid-template-columns: 1fr;
+  }
+
+  #pushNotifyBtn {
+    display: block;
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .nav-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    text-align: left;
+    padding: 14px 16px;
+  }
+
+  .nav-card:hover {
+    transform: none;
+  }
+
+  .nav-card .icon {
+    font-size: 26px;
+    margin-bottom: 0;
+    flex-shrink: 0;
+  }
+
+  .nav-card-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .nav-card-text .muted {
+    font-size: 12px;
+  }
+
+  .modal-backdrop {
+    padding: 16px;
+    align-items: center;
+  }
+
+  .modal-panel {
+    padding: 18px;
+  }
+
+  #pushNotifyPromptModal .toolbar > h2 {
+    font-size: 16px;
+  }
+
+  .push-prompt-actions {
+    flex-direction: column-reverse;
+  }
+
+  #pushNotifyPromptModal .btn {
+    width: 100%;
+    text-align: center;
+    padding: 12px 16px;
+  }
+
+  .notification-item {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+    gap: 10px;
+  }
+
+  .notification-item .notification-message {
+    justify-content: center;
+  }
+}
+
 /* Printable pages (Delivery Manifest) - hide nav/buttons, reset the page background to plain
    white so it doesn't waste ink/toner on the gradient body background used on-screen. */
 @media print {
