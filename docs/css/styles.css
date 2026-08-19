@@ -1462,6 +1462,84 @@ tr.clickable-row:hover {
   margin-top: 6px;
 }
 
+/* Driver Route View "tech" motif - per the fintech-app-style mockup shared for the Delivery Team
+   screen specifically (not a site-wide re-theme - every other page keeps the portal's normal
+   light theme). Own local variables so nothing here leaks into/depends on the shared --primary/
+   --panel-bg tokens used everywhere else. The dark map style that makes google.maps match this is
+   in js/delivery.js's DRIVER_MAP_DARK_STYLE, applied only when renderDayMap's mapElId is
+   'driverRouteMap'. */
+#driverRouteView {
+  --tech-bg: #0b1220;
+  --tech-panel: #111a2c;
+  --tech-border: #22314b;
+  --tech-accent: #22d3ee;
+  --tech-accent-2: #14b8a6;
+  --tech-text: #e6f1ff;
+  --tech-text-muted: #7c8aa5;
+
+  background: var(--tech-bg);
+  color: var(--tech-text);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 20px 40px rgba(3, 8, 16, 0.35);
+}
+
+#driverRouteView h2 {
+  color: var(--tech-accent);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+#driverRouteView .btn-secondary {
+  background: transparent;
+  border: 1px solid var(--tech-accent-2);
+  color: var(--tech-accent-2);
+}
+
+#driverRouteView .btn-secondary:hover {
+  background: rgba(20, 184, 166, 0.12);
+}
+
+#driverRouteView #driverRouteMap {
+  border: 1px solid var(--tech-border);
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.1);
+}
+
+#driverRouteView .muted {
+  color: var(--tech-text-muted);
+}
+
+#driverRouteView .driver-stop-card {
+  background: var(--tech-panel);
+  border: 1px solid var(--tech-border);
+  border-left: 3px solid var(--tech-accent-2);
+  box-shadow: 0 8px 20px rgba(3, 8, 16, 0.3);
+}
+
+#driverRouteView .driver-stop-order-id {
+  color: var(--tech-accent);
+  font-family: 'Consolas', 'Courier New', monospace;
+  letter-spacing: 0.4px;
+}
+
+#driverRouteView .driver-stop-customer {
+  color: var(--tech-text);
+}
+
+#driverRouteView .driver-stop-address,
+#driverRouteView .driver-stop-route,
+#driverRouteView .driver-stop-notes {
+  color: var(--tech-text-muted);
+}
+
+#driverRouteView .badge {
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--tech-accent);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+}
+
 #deliveryEstimateMap {
   height: 220px;
   margin-top: 14px;

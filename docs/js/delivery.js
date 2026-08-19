@@ -328,9 +328,9 @@ async function renderDriverRouteView(dateKey) {
             ${s.status ? `<span class="badge badge-primary">${s.status}</span>` : ''}
           </div>
           <div class="driver-stop-customer">${s.customer_name || ''}</div>
-          <div class="driver-stop-address">${displayAddress || '<span class="muted">No address on file</span>'}</div>
-          ${s.route_name ? `<div class="driver-stop-route muted">Route: ${s.route_name}</div>` : ''}
-          ${s.notes ? `<div class="driver-stop-notes muted">Notes: ${s.notes}</div>` : ''}
+          <div class="driver-stop-address">&#128205; ${displayAddress || '<span class="muted">No address on file</span>'}</div>
+          ${s.route_name ? `<div class="driver-stop-route muted">&#128666; Route: ${s.route_name}</div>` : ''}
+          ${s.notes ? `<div class="driver-stop-notes muted">&#128221; ${s.notes}</div>` : ''}
         </div>
       `;
     }).join('');
@@ -502,10 +502,28 @@ async function resolveFixedRouteVendorMarkers(dateKey) {
   return markers;
 }
 
+// Dark map style matching the Driver Route View's "tech" motif (#driverRouteView in
+// css/styles.css) - applied only to the driverRouteMap element below, never to the admin
+// calendar's dayMap, which stays on the default light Google Maps look.
+const DRIVER_MAP_DARK_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#0b1220' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0b1220' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#7c8aa5' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#22314b' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#111a2c' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#4a5a78' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e2a42' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#111a2c' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#28405c' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#111a2c' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#060b14' }] }
+];
+
 // mapElId defaults to the admin day-detail panel's map ('dayMap'); the Driver Route View passes
 // 'driverRouteMap' to reuse this same marker/bounds logic for its single-day map.
 async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   const mapEl = document.getElementById(mapElId);
+  const isDriverMap = mapElId === 'driverRouteMap';
 
   try {
     await loadGoogleMapsScript();
@@ -525,7 +543,10 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   }
 
   mapEl.innerHTML = '';
-  dayMapInstance = new google.maps.Map(mapEl, { zoom: 12 });
+  dayMapInstance = new google.maps.Map(mapEl, {
+    zoom: 12,
+    ...(isDriverMap ? { styles: DRIVER_MAP_DARK_STYLE } : {})
+  });
 
   const bounds = new google.maps.LatLngBounds();
 
@@ -556,7 +577,10 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
     new google.maps.Marker({
       position,
       map: dayMapInstance,
-      title: `${s.order_id} - ${s.customer_name || ''}`
+      title: `${s.order_id} - ${s.customer_name || ''}`,
+      // Cyan pin on the driver map to match the tech motif's accent color - default red pin on
+      // the admin calendar's map stays untouched.
+      icon: isDriverMap ? 'https://maps.google.com/mapfiles/ms/icons/ltblue-dot.png' : undefined
     });
     bounds.extend(position);
   });
