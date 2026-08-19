@@ -200,6 +200,26 @@
       color: var(--text-muted);
     }
 
+    .price-value {
+      font-size: 22px;
+      font-weight: 800;
+      color: #d1332b;
+    }
+
+    .summary-details {
+      font-size: 12px;
+      line-height: 1.7;
+      color: #20395f;
+    }
+
+    .summary-details div {
+      margin-bottom: 2px;
+    }
+
+    .summary-details strong {
+      color: #132d52;
+    }
+
     .status-banner {
       margin: 0 0 14px;
       padding: 10px 12px;
@@ -371,9 +391,7 @@
 
       <section class="card">
         <h2>Summary</h2>
-        <div id="gapLine" class="summary-line">Gap per layer: -</div>
-        <div id="tubularLine" class="summary-small" style="margin-top: 6px;">Tubular: 1 x 1</div>
-        <div id="dimsLine" class="summary-small" style="margin-top: 4px;">Dimensions (in): -</div>
+        <div id="summaryDetails" class="summary-details">Enter stand details to see a summary.</div>
       </section>
     </div>
 
@@ -382,7 +400,7 @@
       <button id="closeButton" class="btn btn-neutral" type="button">Reset</button>
 
       <div class="summary">
-        <div id="priceLine" class="summary-line"><strong>Price:</strong> waiting for calculation</div>
+        <div id="priceLine" class="summary-line"><strong>Price:</strong> <span id="priceValue" class="price-value">waiting for calculation</span></div>
       </div>
     </div>
 
@@ -406,9 +424,8 @@
     var calculateButton = document.getElementById('calculate');
     var closeButton = document.getElementById('closeButton');
     var priceLine = document.getElementById('priceLine');
-    var gapLine = document.getElementById('gapLine');
-    var tubularLine = document.getElementById('tubularLine');
-    var dimsLine = document.getElementById('dimsLine');
+    var priceValue = document.getElementById('priceValue');
+    var summaryDetails = document.getElementById('summaryDetails');
     var safetyBanner = document.getElementById('safetyBanner');
     var breakdownPre = document.getElementById('breakdownPre');
     var canvas = document.getElementById('standCanvas');
@@ -882,12 +899,46 @@
       safetyBanner.textContent = messages.join(' ');
     }
 
+    var TUBULAR_LABEL_MAP = { '1x1': '1" x 1"', '1.5x1.5': '1 1/2" x 1 1/2"', '2x2': '2" x 2"' };
+
+    // Mirrors the "put all the details selected" ask - every input that affects price/drawing
+    // gets its own line here so staff can see the full spec at a glance without re-checking
+    // the form fields above.
+    function renderSummaryDetails(result) {
+      if (!result || !result.ok) {
+        summaryDetails.innerHTML = 'Enter stand details to see a summary.';
+        return;
+      }
+
+      var n = result.normalized;
+      var layers = Math.max(2, Math.round(Number(n.layers) || 2));
+      var gapIn = computeStandGapInches(n.heightInches, n.footingInches, layers, n.tubular);
+      var qty = Math.max(1, Math.round(Number(byId('qty').value) || 1));
+
+      var rows = [
+        ['Dimensions (in)', 'L: ' + n.lengthInches.toFixed(1) + ' x W: ' + n.widthInches.toFixed(1) + ' x H: ' + n.heightInches.toFixed(1)],
+        ['Unit of Measure', byId('unit').value],
+        ['Footing', round1(n.footingInches) + '"'],
+        ['Layers', String(layers)],
+        ['Gap per layer', gapIn === null ? '-' : round1(gapIn) + '"'],
+        ['Tubular', TUBULAR_LABEL_MAP[n.tubular] || n.tubular],
+        ['Quantity', String(qty)]
+      ];
+      rows.push(['Stainless', byId('stainless').checked ? 'Yes' : 'No']);
+      rows.push(['Cabinet', byId('cabinet').checked ? 'Yes' : 'No']);
+      rows.push(['Sump Holder', byId('sumpHolder').checked ? ('Yes, ' + round1(Number(byId('sumpWidth').value) || 0) + '" width') : 'No']);
+
+      summaryDetails.innerHTML = rows.map(function (r) {
+        return '<div><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
+      }).join('');
+    }
+
     function calculateStand(showAlerts) {
       setVisibilityState();
       updateTubularAvailability();
 
       if (!byId('unit').value) {
-        priceLine.innerHTML = '<strong>Price:</strong> select a unit of measure';
+        priceValue.textContent = 'select a unit of measure';
         drawPlaceholder('Select a unit of measure to see a preview.');
         return;
       }
@@ -896,11 +947,10 @@
       lastResult = result;
       drawStand(result);
       renderSafetyBanner(result);
+      renderSummaryDetails(result);
 
       if (!result.ok) {
-        priceLine.innerHTML = '<strong>Price:</strong> ' + (result.error || 'check inputs');
-        gapLine.textContent = 'Gap per layer: -';
-        dimsLine.textContent = 'Dimensions (in): -';
+        priceValue.textContent = result.error || 'check inputs';
         breakdownPre.textContent = 'Run a calculation to see the breakdown.';
         return;
       }
@@ -911,13 +961,8 @@
 
       var qty = Math.max(1, Math.round(Number(byId('qty').value) || 1));
       var total = result.totalPrice * qty;
-      priceLine.innerHTML = '<strong>Price:</strong> ' + total.toFixed(2) + (qty > 1 ? ' (' + result.totalPrice.toFixed(2) + ' x ' + qty + ')' : '');
+      priceValue.textContent = total.toFixed(2) + (qty > 1 ? ' (' + result.totalPrice.toFixed(2) + ' x ' + qty + ')' : '');
 
-      var layers = Math.max(2, Math.round(Number(result.normalized.layers) || 2));
-      var gapIn = computeStandGapInches(result.normalized.heightInches, result.normalized.footingInches, layers, result.normalized.tubular);
-      gapLine.textContent = 'Gap per layer: ' + (gapIn === null ? '-' : round1(gapIn) + 'in');
-      tubularLine.textContent = 'Tubular: ' + result.normalized.tubular;
-      dimsLine.textContent = 'Dimensions (in): L: ' + result.normalized.lengthInches.toFixed(1) + ' x W: ' + result.normalized.widthInches.toFixed(1) + ' x H: ' + result.normalized.heightInches.toFixed(1) + ' (footing ' + result.normalized.footingInches.toFixed(1) + 'in)';
       breakdownPre.textContent = (result.breakdown || []).join('\n') || 'No breakdown available.';
     }
 

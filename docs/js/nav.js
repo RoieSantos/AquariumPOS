@@ -23,7 +23,7 @@ function renderTopNav(activeLabel) {
     items.push({ href: 'customer-aquarium.html', label: 'Customer Aquarium' });
   }
 
-  items.push({ href: 'stand-calculator.html', label: 'Custom Calculator' });
+  items.push({ href: 'stand-calculator.html', label: 'Custom Stand' });
 
   if (!isSalesOnlyUser) {
     items.push({ href: 'serial-tracker.html', label: 'Serial Tracker' });

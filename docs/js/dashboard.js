@@ -402,7 +402,7 @@ async function loadNotifications(session) {
 
   // Per "Sales User dont need to see transfer orders and other related notification for
   // transfers - Remove Serial Tracker/Reports/Customer Aquarium" - a Sales User who is NOT also
-  // a super user gets a trimmed-down nav-card grid (Custom Calculator/Online Orders stay, since
+  // a super user gets a trimmed-down nav-card grid (Custom Stand/Online Orders stay, since
   // those weren't named) and no Transfer Order notifications (loadNotifications below is 100%
   // transfer-order content, so it's skipped outright for this group). A super user who also
   // happens to be flagged Sales User keeps full access - this only narrows the sales-only role.

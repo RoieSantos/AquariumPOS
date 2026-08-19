@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Custom Calculator - RS Pet Stop Portal</title>
+  <title>Custom Stand - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -11,7 +11,7 @@
   <style>
     .calculator-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr;
       gap: 16px;
       margin-top: 16px;
     }
@@ -50,16 +50,12 @@
   <div id="topnav"></div>
 
   <div class="page">
-    <h1>Custom Calculator</h1>
+    <h1>Custom Stand</h1>
     <p class="muted">
-      Client-side calculators only - nothing here is saved to the database.
-      These reuse the existing custom aquarium/stand calculators.
+      Client-side calculator only - nothing here is saved to the database.
+      This reuses the existing custom stand calculator.
     </p>
     <div class="calculator-grid">
-      <div class="calculator-frame-wrap">
-        <h2>Aquarium</h2>
-        <iframe src="WebAquariumCalculator/index.html" title="Custom Aquarium Calculator"></iframe>
-      </div>
       <div class="calculator-frame-wrap">
         <h2>Stand</h2>
         <iframe src="WebAquariumCalculator/stand.html" title="Custom Stand Calculator"></iframe>
@@ -76,7 +72,7 @@
     (async function () {
       const session = await requireAuth();
       if (!session) return;
-      renderTopNav('Custom Calculator');
+      renderTopNav('Custom Stand');
     })();
   </script>
   <script src="js/pwa.js"></script>
