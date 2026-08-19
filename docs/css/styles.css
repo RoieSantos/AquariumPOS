@@ -1509,15 +1509,27 @@ tr.clickable-row:hover {
   margin-bottom: 6px;
 }
 
+/* Per "make the whole button of order ID clickable" - previously just underlined text (a real
+   <button>, but with padding:0 its clickable box was only as big as the text itself, a poor touch
+   target on a phone). Now a proper padded pill so the whole visible button is one obvious tap
+   target, at least 40px tall (close to the ~44px touch-target guideline). */
 .driver-stop-order-id {
-  background: none;
-  border: none;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  background: rgba(29, 79, 145, 0.08);
+  border: 1px solid rgba(29, 79, 145, 0.25);
+  border-radius: 8px;
+  padding: 8px 14px;
   font: inherit;
   font-weight: 700;
   color: var(--primary);
   cursor: pointer;
-  text-decoration: underline;
+  text-decoration: none;
+}
+
+.driver-stop-order-id:active {
+  background: rgba(29, 79, 145, 0.16);
 }
 
 .driver-stop-customer {
@@ -1594,9 +1606,15 @@ tr.clickable-row:hover {
 }
 
 #driverRouteView .driver-stop-order-id {
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.35);
   color: var(--tech-accent);
   font-family: 'Consolas', 'Courier New', monospace;
   letter-spacing: 0.4px;
+}
+
+#driverRouteView .driver-stop-order-id:active {
+  background: rgba(34, 211, 238, 0.22);
 }
 
 #driverRouteView .driver-stop-customer {
