@@ -230,6 +230,23 @@
     </div>
   </div>
 
+  <!-- Shown once per browser tab session, on login, to anyone whose device isn't already
+       subscribed to order-confirmed push notifications - see maybeShowPushLoginPrompt in
+       js/pushNotifications.js. -->
+  <div id="pushNotifyPromptModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">🔔 Get notified of confirmed orders?</h2>
+      </div>
+      <p class="muted">Turn on notifications to get an alert on this device the moment an online order is confirmed - straight from the Portal, no separate app needed.</p>
+      <div id="pushNotifyPromptError" class="error-text hidden"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button class="btn btn-secondary" id="pushNotifyPromptDismissBtn" type="button">Not Now</button>
+        <button class="btn btn-primary" id="pushNotifyPromptEnableBtn" type="button">Enable Notifications</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>

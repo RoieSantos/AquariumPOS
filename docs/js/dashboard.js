@@ -401,6 +401,7 @@ async function loadNotifications(session) {
   }
 
   wirePushNotificationButton(session);
+  maybeShowPushLoginPrompt(session);
 
   // Per "Sales User dont need to see transfer orders and other related notification for
   // transfers - Remove Serial Tracker/Reports/Customer Aquarium" - a Sales User who is NOT also

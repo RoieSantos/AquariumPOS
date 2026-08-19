@@ -72,8 +72,22 @@ async function disablePushNotifications(session) {
   });
 }
 
-// Wires a single toggle button (id: pushNotifyBtn) to reflect and control subscription state.
-// Safe to call even where the button doesn't exist on the page (no-ops).
+// Shared by wirePushNotificationButton (the persistent Dashboard button) and the login prompt
+// modal below, so both stay in sync no matter which one the user actually acted on.
+async function updatePushNotifyButtonUI() {
+  const btn = document.getElementById('pushNotifyBtn');
+  if (!btn) return false;
+
+  const subscription = await getExistingPushSubscription();
+  const isSubscribed = !!subscription && Notification.permission === 'granted';
+  btn.textContent = isSubscribed ? '🔔 Order Notifications: On (tap to turn off)' : '🔕 Enable Order Notifications';
+  btn.classList.toggle('btn-success', isSubscribed);
+  btn.classList.toggle('btn-secondary', !isSubscribed);
+  return isSubscribed;
+}
+
+// Wires the persistent toggle button (id: pushNotifyBtn) to reflect and control subscription
+// state. Safe to call even where the button doesn't exist on the page (no-ops).
 async function wirePushNotificationButton(session) {
   const btn = document.getElementById('pushNotifyBtn');
   if (!btn) return;
@@ -84,16 +98,7 @@ async function wirePushNotificationButton(session) {
     return;
   }
 
-  async function refreshButtonState() {
-    const subscription = await getExistingPushSubscription();
-    const isSubscribed = !!subscription && Notification.permission === 'granted';
-    btn.textContent = isSubscribed ? '🔔 Order Notifications: On (tap to turn off)' : '🔕 Enable Order Notifications';
-    btn.classList.toggle('btn-success', isSubscribed);
-    btn.classList.toggle('btn-secondary', !isSubscribed);
-    return isSubscribed;
-  }
-
-  let isSubscribed = await refreshButtonState();
+  let isSubscribed = await updatePushNotifyButtonUI();
 
   btn.addEventListener('click', async () => {
     btn.disabled = true;
@@ -103,11 +108,56 @@ async function wirePushNotificationButton(session) {
       } else {
         await enablePushNotifications(session);
       }
-      isSubscribed = await refreshButtonState();
+      isSubscribed = await updatePushNotifyButtonUI();
     } catch (err) {
       alert(err.message || 'Something went wrong.');
     } finally {
       btn.disabled = false;
     }
+  });
+}
+
+// Login prompt (id: pushNotifyPromptModal) - per "please show a popup message after they login
+// asking to enable the notifications" - shown once per browser tab session (sessionStorage guard,
+// so navigating around the Dashboard repeatedly doesn't nag on every visit) whenever the current
+// device isn't already subscribed. Skipped entirely if permission was already explicitly denied -
+// the browser will silently refuse to re-prompt at that point anyway (no native dialog appears),
+// so showing our own popup would just be a dead end with no way to actually act on it beyond
+// walking the user through their browser's own site-settings screen.
+const PUSH_PROMPT_SESSION_KEY = 'pushPromptShownThisSession';
+
+async function maybeShowPushLoginPrompt(session) {
+  const modal = document.getElementById('pushNotifyPromptModal');
+  if (!modal || !pushNotificationsSupported()) return;
+  if (Notification.permission === 'denied') return;
+  if (sessionStorage.getItem(PUSH_PROMPT_SESSION_KEY)) return;
+
+  const subscription = await getExistingPushSubscription();
+  if (subscription && Notification.permission === 'granted') return;
+
+  sessionStorage.setItem(PUSH_PROMPT_SESSION_KEY, '1');
+  modal.classList.remove('hidden');
+
+  const enableBtn = document.getElementById('pushNotifyPromptEnableBtn');
+  const dismissBtn = document.getElementById('pushNotifyPromptDismissBtn');
+  const errorEl = document.getElementById('pushNotifyPromptError');
+
+  enableBtn.addEventListener('click', async () => {
+    enableBtn.disabled = true;
+    errorEl.classList.add('hidden');
+    try {
+      await enablePushNotifications(session);
+      await updatePushNotifyButtonUI();
+      modal.classList.add('hidden');
+    } catch (err) {
+      errorEl.textContent = err.message || 'Something went wrong.';
+      errorEl.classList.remove('hidden');
+    } finally {
+      enableBtn.disabled = false;
+    }
+  });
+
+  dismissBtn.addEventListener('click', () => {
+    modal.classList.add('hidden');
   });
 }
