@@ -1441,8 +1441,14 @@ tr.clickable-row:hover {
 }
 
 .driver-stop-order-id {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
   font-weight: 700;
   color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .driver-stop-customer {
@@ -1538,6 +1544,77 @@ tr.clickable-row:hover {
   background: rgba(34, 211, 238, 0.12);
   color: var(--tech-accent);
   border: 1px solid rgba(34, 211, 238, 0.35);
+}
+
+/* Driver order detail modal - opened from a stop card, so it keeps the same dark/teal motif even
+   though .modal-backdrop/.modal-panel normally render on the portal's default light theme. */
+.driver-detail-panel {
+  background: #111a2c;
+  color: #e6f1ff;
+  max-width: 480px;
+}
+
+.driver-detail-panel h2 {
+  color: #22d3ee;
+}
+
+.driver-detail-panel .btn-secondary {
+  background: transparent;
+  border: 1px solid #14b8a6;
+  color: #14b8a6;
+}
+
+.driver-detail-row {
+  margin-bottom: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.driver-detail-row .muted {
+  color: #7c8aa5;
+}
+
+.driver-detail-products-heading {
+  color: #22d3ee;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 16px 0 8px;
+}
+
+.driver-detail-products {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.driver-detail-products li {
+  background: #0b1220;
+  border: 1px solid #22314b;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.driver-detail-product-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.driver-detail-product-note {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.driver-detail-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 #deliveryEstimateMap {

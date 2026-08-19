@@ -324,7 +324,7 @@ async function renderDriverRouteView(dateKey) {
       return `
         <div class="driver-stop-card">
           <div class="driver-stop-card-header">
-            <span class="driver-stop-order-id">${s.order_id || ''}</span>
+            <button type="button" class="driver-stop-order-id" data-stop-id="${s.stop_id}">${s.order_id || ''}</button>
             ${s.status ? `<span class="badge badge-primary">${s.status}</span>` : ''}
           </div>
           <div class="driver-stop-customer">${s.customer_name || ''}</div>
@@ -355,6 +355,97 @@ async function changeDriverDay(deltaDays) {
 function wireDriverRouteNav() {
   document.getElementById('driverPrevDayBtn').addEventListener('click', () => changeDriverDay(-1));
   document.getElementById('driverNextDayBtn').addEventListener('click', () => changeDriverDay(1));
+
+  document.getElementById('driverStopCards').addEventListener('click', (e) => {
+    const btn = e.target.closest('.driver-stop-order-id');
+    if (btn) openDriverOrderDetail(btn.dataset.stopId);
+  });
+
+  document.getElementById('driverOrderDetailCloseBtn').addEventListener('click', closeDriverOrderDetail);
+}
+
+// Per "can the driver see the details without the price" - reuses admin_get_delivery_receipt
+// (built for the Print Manifest/Print stop receipt flow, supabase_delivery_receipt.sql, extended
+// by supabase_delivery_receipt_line_details.sql to also return each line's line_id/line_note),
+// keyed by stop_id rather than order_id since that's what a DeliveryStops row is identified by.
+// It already omits per-line price/unit cost entirely (Description/Quantity/Note only) - the only
+// money field it returns is delivery_fee, which is deliberately left unrendered below so nothing
+// price-related reaches the driver's screen. Attachments reuse the existing
+// admin_list_online_order_line_attachments RPC (same one Online Order Lines uses), matched to
+// each line via line_id.
+function isDriverAttachmentImage(fileName) {
+  return /\.(png|jpe?g|gif|webp)$/i.test(fileName || '');
+}
+
+function driverAttachmentsHtml(attachments) {
+  if (!attachments || attachments.length === 0) return '';
+  return `<div class="driver-detail-attachments">${attachments.map((a) => {
+    const label = a.file_name || 'attachment';
+    return isDriverAttachmentImage(label)
+      ? `<a href="${a.public_url}" target="_blank" rel="noopener" title="${label}"><img src="${a.public_url}" class="attachment-thumb" alt="${label}" /></a>`
+      : `<a href="${a.public_url}" target="_blank" rel="noopener" class="attachment-file-chip">&#128206; ${label}</a>`;
+  }).join('')}</div>`;
+}
+
+async function openDriverOrderDetail(stopId) {
+  const modal = document.getElementById('driverOrderDetailModal');
+  const body = document.getElementById('driverOrderDetailBody');
+  document.getElementById('driverOrderDetailTitle').textContent = 'Order Details';
+  body.innerHTML = '<p class="muted">Loading...</p>';
+  modal.classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('admin_get_delivery_receipt', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_stop_id: stopId
+  });
+
+  if (error || !data || data.length === 0) {
+    body.innerHTML = `<p class="error-text">${error ? error.message : 'Could not load order details.'}</p>`;
+    return;
+  }
+
+  const header = data[0];
+  const lines = data.filter((l) => l.line_no !== null);
+
+  document.getElementById('driverOrderDetailTitle').textContent = `Order ${header.order_id || ''}`;
+
+  const attachmentsByLineId = {};
+  if (header.order_id) {
+    const { data: attachmentRows } = await supabaseClient.rpc('admin_list_online_order_line_attachments', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: header.order_id
+    });
+    (attachmentRows || []).forEach((a) => {
+      if (!attachmentsByLineId[a.line_id]) attachmentsByLineId[a.line_id] = [];
+      attachmentsByLineId[a.line_id].push(a);
+    });
+  }
+
+  body.innerHTML = `
+    <div class="driver-detail-row"><strong>Customer:</strong> ${header.customer_name || ''}</div>
+    <div class="driver-detail-row"><strong>Phone:</strong> ${header.shipping_phone || '<span class="muted">Not on file</span>'}</div>
+    <div class="driver-detail-row"><strong>Address:</strong> ${header.shipping_address || '<span class="muted">Not on file</span>'}</div>
+    ${header.note_print ? `<div class="driver-detail-row"><strong>Notes:</strong> ${header.note_print}</div>` : ''}
+    <h3 class="driver-detail-products-heading">Products</h3>
+    ${lines.length === 0
+      ? '<p class="muted">No line items found.</p>'
+      : `<ul class="driver-detail-products">${lines.map((l) => `
+          <li>
+            <div class="driver-detail-product-row">
+              <span>${l.line_description || ''}</span>
+              <span class="muted">&times; ${l.line_quantity ?? ''}</span>
+            </div>
+            ${l.line_note ? `<div class="driver-detail-product-note muted">Note: ${l.line_note}</div>` : ''}
+            ${driverAttachmentsHtml(attachmentsByLineId[l.line_id])}
+          </li>
+        `).join('')}</ul>`}
+  `;
+}
+
+function closeDriverOrderDetail() {
+  document.getElementById('driverOrderDetailModal').classList.add('hidden');
 }
 
 // A synthetic (non-removable) row summarizing that weekday's fixed route (Delivery Setup),
