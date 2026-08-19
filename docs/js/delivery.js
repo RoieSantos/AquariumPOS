@@ -18,6 +18,7 @@ let assignSearch = '';
 let assignPage = 1;
 let assignPageSize = 50;
 let dayMapInstance = null;
+let driverDate = null; // 'YYYY-MM-DD' currently viewed in the Driver Route View (Delivery Team only)
 let googleMapsReadyPromise = null;
 let googleMapsApiKey = null; // fetched from PortalSettings (GOOGLE_MAPS_API_KEY) during init()
 let routeScheduleByDayOfWeek = {}; // 0-6 -> {route_name, warehouse_ids, warehouse_names, vendor_codes, vendor_names}, from loadAndRenderRouteSchedule
@@ -301,6 +302,61 @@ async function renderMonth(year, month) {
   renderCalendarGrid(year, month);
 }
 
+// Driver Route View (Delivery Team only) - a single day's stops as cards, plus its route map
+// (renderDayMap reused with the driverRouteMap element id). stopsByDate must already cover this
+// date's month - see changeDriverDay/init below, which call loadMonthStops before this.
+async function renderDriverRouteView(dateKey) {
+  driverDate = dateKey;
+
+  document.getElementById('driverRouteDateLabel').textContent = new Date(`${dateKey}T00:00:00`)
+    .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const stops = stopsByDate[dateKey] || [];
+  const cardsEl = document.getElementById('driverStopCards');
+
+  if (isBlockedDeliveryDateKey(dateKey)) {
+    cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No deliveries today - the store truck does not run on Mondays.</p>';
+  } else if (stops.length === 0) {
+    cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No stops scheduled for this day.</p>';
+  } else {
+    cardsEl.innerHTML = stops.map((s) => {
+      const displayAddress = s.shipping_address || s.geocoded_address || '';
+      return `
+        <div class="driver-stop-card">
+          <div class="driver-stop-card-header">
+            <span class="driver-stop-order-id">${s.order_id || ''}</span>
+            ${s.status ? `<span class="badge badge-primary">${s.status}</span>` : ''}
+          </div>
+          <div class="driver-stop-customer">${s.customer_name || ''}</div>
+          <div class="driver-stop-address">${displayAddress || '<span class="muted">No address on file</span>'}</div>
+          ${s.route_name ? `<div class="driver-stop-route muted">Route: ${s.route_name}</div>` : ''}
+          ${s.notes ? `<div class="driver-stop-notes muted">Notes: ${s.notes}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  await renderDayMap(stops, dateKey, 'driverRouteMap');
+}
+
+async function changeDriverDay(deltaDays) {
+  const next = new Date(`${driverDate}T00:00:00`);
+  next.setDate(next.getDate() + deltaDays);
+
+  if (next.getFullYear() !== currentYear || next.getMonth() !== currentMonth) {
+    currentYear = next.getFullYear();
+    currentMonth = next.getMonth();
+    await loadMonthStops(currentYear, currentMonth);
+  }
+
+  await renderDriverRouteView(toDateKey(next));
+}
+
+function wireDriverRouteNav() {
+  document.getElementById('driverPrevDayBtn').addEventListener('click', () => changeDriverDay(-1));
+  document.getElementById('driverNextDayBtn').addEventListener('click', () => changeDriverDay(1));
+}
+
 // A synthetic (non-removable) row summarizing that weekday's fixed route (Delivery Setup),
 // shown at the top of the day-detail stops table even on days with zero real orders assigned
 // yet - per "once the delivery setup has been fill in .. i want it to show in the delivery as
@@ -365,7 +421,7 @@ function showDayDetail(dateKey) {
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
           <td>
-            ${!currentSession.isDeliveryTeam ? `<button class="btn btn-secondary btn-sm" data-print-stop-id="${s.stop_id}" type="button">Print</button>` : ''}
+            <button class="btn btn-secondary btn-sm" data-print-stop-id="${s.stop_id}" type="button">Print</button>
             ${s.geocode_status !== 'ok' ? `<button class="btn btn-secondary btn-sm" data-retry-geocode-id="${s.stop_id}" data-retry-geocode-address="${encodeURIComponent(displayAddress)}" type="button">Retry Map</button>` : ''}
             ${currentSession.isSuperUser ? `<button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button>` : ''}
           </td>
@@ -446,8 +502,10 @@ async function resolveFixedRouteVendorMarkers(dateKey) {
   return markers;
 }
 
-async function renderDayMap(stops, dateKey) {
-  const mapEl = document.getElementById('dayMap');
+// mapElId defaults to the admin day-detail panel's map ('dayMap'); the Driver Route View passes
+// 'driverRouteMap' to reuse this same marker/bounds logic for its single-day map.
+async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
+  const mapEl = document.getElementById(mapElId);
 
   try {
     await loadGoogleMapsScript();
@@ -502,6 +560,19 @@ async function renderDayMap(stops, dateKey) {
     });
     bounds.extend(position);
   });
+
+  // Per "the driver can view the per day route" - a straight-line path connecting the day's
+  // stops in list order, not real driving directions (would need the separately-billed Directions
+  // API) - just enough to read as "today's route" the way a delivery app's route line does.
+  if (plottedStops.length > 1) {
+    new google.maps.Polyline({
+      path: plottedStops.map((s) => ({ lat: Number(s.latitude), lng: Number(s.longitude) })),
+      map: dayMapInstance,
+      strokeColor: '#1d4f91',
+      strokeOpacity: 0.8,
+      strokeWeight: 3
+    });
+  }
 
   dayMapInstance.fitBounds(bounds);
 }
@@ -824,17 +895,6 @@ function wireToolbarAndModal() {
 
   document.getElementById('setupContent').classList.remove('hidden');
 
-  // Per "if user is delivery team they cannot assign order / they cannot do print" - Delivery
-  // Team can still browse the calendar and see stop details, just not create new stops or print
-  // (per-stop Print buttons are hidden per-row in showDayDetail above instead, since they're
-  // rendered dynamically). Client-side only, same trust tier as the rest of this page's role
-  // gating (e.g. the Remove button's isSuperUser check above) - not enforced RPC-side.
-  if (session.isDeliveryTeam) {
-    document.getElementById('assignOrderBtn').classList.add('hidden');
-    document.getElementById('printManifestBtn').classList.add('hidden');
-  }
-
-  wireToolbarAndModal();
   await loadGoogleMapsApiKey();
   await loadWarehouseLookup();
   await loadVendorLookup();
@@ -843,5 +903,23 @@ function wireToolbarAndModal() {
   const today = new Date();
   currentYear = today.getFullYear();
   currentMonth = today.getMonth();
+
+  // Per "if user is delivery team they cannot assign order / they cannot do print" - rather than
+  // hiding buttons inside the full admin calendar, Delivery Team gets its own single-day Driver
+  // Route View entirely (map + stop cards, no month grid, no Assign/Print) - see
+  // renderDriverRouteView above. The admin calendar (#calendarView) never renders for this group,
+  // so there's no assign/print control to gate in the first place. Client-side only, same trust
+  // tier as the rest of this page's role gating (e.g. the Remove button's isSuperUser check
+  // below) - not enforced RPC-side.
+  if (session.isDeliveryTeam) {
+    document.getElementById('driverRouteView').classList.remove('hidden');
+    document.getElementById('calendarView').classList.add('hidden');
+    wireDriverRouteNav();
+    await loadMonthStops(currentYear, currentMonth);
+    await renderDriverRouteView(toDateKey(today));
+    return;
+  }
+
+  wireToolbarAndModal();
   await renderMonth(currentYear, currentMonth);
 })();

@@ -30,54 +30,75 @@
 
     <div id="setupContent" class="hidden">
       <p><a href="dashboard.html">&larr; Back to Dashboard</a></p>
-      <div class="toolbar">
-        <div class="delivery-month-nav">
-          <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button">&larr; Prev</button>
-          <h2 id="calendarMonthLabel" style="margin:0; min-width:180px; text-align:center;"></h2>
-          <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button">Next &rarr;</button>
-        </div>
-        <button class="btn btn-primary" id="assignOrderBtn" type="button">+ Assign Order</button>
-      </div>
 
-      <div class="delivery-calendar-scroll">
-        <div class="delivery-calendar-grid" id="calendarWeekdayRow">
-          <div class="delivery-weekday-cell">Sun<div class="delivery-weekday-route" data-day="0"></div></div>
-          <div class="delivery-weekday-cell">Mon<div class="delivery-weekday-route" data-day="1"></div></div>
-          <div class="delivery-weekday-cell">Tue<div class="delivery-weekday-route" data-day="2"></div></div>
-          <div class="delivery-weekday-cell">Wed<div class="delivery-weekday-route" data-day="3"></div></div>
-          <div class="delivery-weekday-cell">Thu<div class="delivery-weekday-route" data-day="4"></div></div>
-          <div class="delivery-weekday-cell">Fri<div class="delivery-weekday-route" data-day="5"></div></div>
-          <div class="delivery-weekday-cell">Sat<div class="delivery-weekday-route" data-day="6"></div></div>
-        </div>
-        <div class="delivery-calendar-grid" id="calendarGrid"></div>
-      </div>
-
-      <div id="dayDetailPanel" class="card hidden" style="margin-top:20px;">
+      <!-- Driver Route View - Delivery Team accounts only (see js/delivery.js's init()). A
+           single day's route (map) and stops (cards) at a time, with Prev/Next Day nav instead
+           of a full month calendar - a driver only ever needs "today's route", not to browse
+           other days or assign/print. Mirrors the "map on top, orders below" layout of a
+           reference food-delivery app's "Delivering..." screen. -->
+      <div id="driverRouteView" class="hidden">
         <div class="toolbar">
-          <h3 id="dayDetailTitle" style="margin:0;"></h3>
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-secondary btn-sm" id="printManifestBtn" type="button">Print Manifest</button>
-            <button class="btn btn-secondary btn-sm" id="closeDayDetailBtn" type="button">Close</button>
+          <button class="btn btn-secondary btn-sm" id="driverPrevDayBtn" type="button">&larr; Prev Day</button>
+          <h2 id="driverRouteDateLabel" style="margin:0; text-align:center;"></h2>
+          <button class="btn btn-secondary btn-sm" id="driverNextDayBtn" type="button">Next Day &rarr;</button>
+        </div>
+
+        <div id="driverRouteMap"></div>
+
+        <div id="driverStopCards" class="driver-stop-cards"></div>
+      </div>
+
+      <!-- Calendar View - everyone else (admins/staff who assign/print/browse other days). -->
+      <div id="calendarView">
+        <div class="toolbar">
+          <div class="delivery-month-nav">
+            <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button">&larr; Prev</button>
+            <h2 id="calendarMonthLabel" style="margin:0; min-width:180px; text-align:center;"></h2>
+            <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button">Next &rarr;</button>
           </div>
+          <button class="btn btn-primary" id="assignOrderBtn" type="button">+ Assign Order</button>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Customer</th>
-                <th>Route</th>
-                <th>Status</th>
-                <th>Address</th>
-                <th>Assigned By</th>
-                <th>Notes</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="dayStopsTableBody"></tbody>
-          </table>
+
+        <div class="delivery-calendar-scroll">
+          <div class="delivery-calendar-grid" id="calendarWeekdayRow">
+            <div class="delivery-weekday-cell">Sun<div class="delivery-weekday-route" data-day="0"></div></div>
+            <div class="delivery-weekday-cell">Mon<div class="delivery-weekday-route" data-day="1"></div></div>
+            <div class="delivery-weekday-cell">Tue<div class="delivery-weekday-route" data-day="2"></div></div>
+            <div class="delivery-weekday-cell">Wed<div class="delivery-weekday-route" data-day="3"></div></div>
+            <div class="delivery-weekday-cell">Thu<div class="delivery-weekday-route" data-day="4"></div></div>
+            <div class="delivery-weekday-cell">Fri<div class="delivery-weekday-route" data-day="5"></div></div>
+            <div class="delivery-weekday-cell">Sat<div class="delivery-weekday-route" data-day="6"></div></div>
+          </div>
+          <div class="delivery-calendar-grid" id="calendarGrid"></div>
         </div>
-        <div id="dayMap"></div>
+
+        <div id="dayDetailPanel" class="card hidden" style="margin-top:20px;">
+          <div class="toolbar">
+            <h3 id="dayDetailTitle" style="margin:0;"></h3>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-secondary btn-sm" id="printManifestBtn" type="button">Print Manifest</button>
+              <button class="btn btn-secondary btn-sm" id="closeDayDetailBtn" type="button">Close</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order ID</th>
+                  <th>Customer</th>
+                  <th>Route</th>
+                  <th>Status</th>
+                  <th>Address</th>
+                  <th>Assigned By</th>
+                  <th>Notes</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="dayStopsTableBody"></tbody>
+            </table>
+          </div>
+          <div id="dayMap"></div>
+        </div>
       </div>
     </div>
   </div>

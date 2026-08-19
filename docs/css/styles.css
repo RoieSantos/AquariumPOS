@@ -1407,6 +1407,61 @@ tr.clickable-row:hover {
   overflow: hidden;
 }
 
+/* Driver Route View (Delivery Team only, docs/delivery.html's #driverRouteView) - single day's
+   route map + stop cards, see js/delivery.js's renderDriverRouteView. */
+#driverRouteMap {
+  height: 280px;
+  margin-top: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.driver-stop-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.driver-stop-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
+
+.driver-stop-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.driver-stop-order-id {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.driver-stop-customer {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.driver-stop-address {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.driver-stop-route,
+.driver-stop-notes {
+  font-size: 12px;
+  margin-top: 6px;
+}
+
 #deliveryEstimateMap {
   height: 220px;
   margin-top: 14px;
