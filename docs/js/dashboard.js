@@ -400,6 +400,18 @@ async function loadNotifications(session) {
     document.getElementById('welcomeText').textContent = "Here's what's happening with your online orders today.";
   }
 
+  // Per "if the user is delivery team can you atleast show a button first, the delivery button,
+  // on the dashboard" - js/auth.js's requireAuth() now allows dashboard.html for Delivery Team
+  // accounts (previously it was hard-redirected straight to delivery.html with no stop here), but
+  // only to show this one link - the real dashboard content (finance cards, nav-card grid, etc.)
+  // stays hidden and none of its data gets loaded.
+  if (session.isDeliveryTeam) {
+    document.getElementById('welcomeText').textContent = "Here's your shortcut to Delivery.";
+    document.getElementById('deliveryTeamLanding').classList.remove('hidden');
+    document.getElementById('dashboardMainContent').classList.add('hidden');
+    return;
+  }
+
   wirePushNotificationButton(session);
   maybeShowPushLoginPrompt(session);
 

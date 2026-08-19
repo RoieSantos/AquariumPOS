@@ -16,6 +16,17 @@
     <h1 id="welcomeHeading">Welcome back,</h1>
     <p class="muted" id="welcomeText">Welcome.</p>
 
+    <!-- Delivery Team accounts land here instead of the full dashboard below (see
+         js/dashboard.js's init() and js/auth.js's requireAuth() - dashboard.html is allowed for
+         them, but only to show this one link out to the page they're actually allowed to use).
+         "the Delivery button" mentioned in chat = deliveryTeamGoToDeliveryBtn below. -->
+    <div class="hidden" id="deliveryTeamLanding" style="text-align:center; padding:60px 20px;">
+      <div style="font-size:48px; margin-bottom:12px;">🚚</div>
+      <p class="muted" style="margin-bottom:20px;">Your account is set up for Delivery only.</p>
+      <a class="btn btn-primary" id="deliveryTeamGoToDeliveryBtn" href="delivery.html" style="font-size:16px; padding:14px 28px;">Go to Delivery</a>
+    </div>
+
+    <div id="dashboardMainContent">
     <button class="btn btn-secondary btn-sm" id="pushNotifyBtn" type="button" style="margin-bottom:14px;">🔕 Enable Order Notifications</button>
 
     <div class="notification-center hidden" id="notificationCenter"></div>
@@ -255,6 +266,7 @@
           <div class="muted">Create new staff logins (super users only)</div>
         </div>
       </a>
+    </div>
     </div>
   </div>
 

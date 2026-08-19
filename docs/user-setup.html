@@ -47,6 +47,7 @@
               <th>Super User</th>
               <th>Sales User</th>
               <th>Serial Admin</th>
+              <th>Delivery Team</th>
               <th>Monthly Sales Target</th>
               <th>Change PW</th>
               <th>Active</th>
@@ -56,7 +57,7 @@
             </tr>
           </thead>
           <tbody id="userTableBody">
-            <tr><td colspan="12" class="muted">Loading...</td></tr>
+            <tr><td colspan="13" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -107,6 +108,12 @@
           <label for="newUserSerialAdmin" style="display:flex; align-items:center; gap:8px;">
             <input type="checkbox" id="newUserSerialAdmin" style="width:auto;" />
             <span>Serial Admin (can edit serial locations in Serial Tracker)</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label for="newUserDeliveryTeam" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="newUserDeliveryTeam" style="width:auto;" />
+            <span>Delivery Team (locked to the Delivery calendar only - no other page)</span>
           </label>
         </div>
         <div class="form-row">
@@ -171,6 +178,12 @@
           <label for="editUserSerialAdmin" style="display:flex; align-items:center; gap:8px;">
             <input type="checkbox" id="editUserSerialAdmin" style="width:auto;" />
             <span>Serial Admin (can edit serial locations in Serial Tracker)</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label for="editUserDeliveryTeam" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="editUserDeliveryTeam" style="width:auto;" />
+            <span>Delivery Team (locked to the Delivery calendar only - no other page)</span>
           </label>
         </div>
         <div class="form-row">

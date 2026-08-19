@@ -6,6 +6,26 @@ function renderTopNav(activeLabel) {
 
   const session = getPortalSession();
 
+  // Per "if the user is on Delivery team they can only see the Delivery calendar that is all" -
+  // js/auth.js's requireAuth() only allows dashboard.html (shows just a "Go to Delivery" link,
+  // see js/dashboard.js) and delivery.html itself for this group, so showing the full link list
+  // here would just be a wall of dead-end links. Short-circuit to a minimal nav instead -
+  // Dashboard + Delivery + Logout, nothing else, no hamburger collapse needed for so few items.
+  if (session?.isDeliveryTeam) {
+    nav.innerHTML = `
+      <div class="topnav-inner">
+        <span class="topnav-brand">RS Pet Stop Portal</span>
+        <div class="topnav-links" id="topnavLinks">
+          <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
+          <a class="topnav-link${activeLabel === 'Delivery' ? ' active' : ''}" href="delivery.html">Delivery</a>
+          <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
+        </div>
+      </div>
+    `;
+    wireLogoutButton('logoutBtn');
+    return;
+  }
+
   // Per "Sales User dont need to see transfer orders and other related notification for
   // transfers - Remove Serial Tracker/Reports/Customer Aquarium" - a Sales User who is NOT also
   // a super user gets a trimmed top nav too, same set dropped as the dashboard's nav-card grid

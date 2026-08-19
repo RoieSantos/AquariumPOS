@@ -55,6 +55,7 @@ async function attemptLogin(username, password) {
     isSuperUser: !!result.is_super_user,
     isSalesUser: !!result.is_sales_user,
     isSerialAdmin: !!result.is_serial_admin,
+    isDeliveryTeam: !!result.is_delivery_team,
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -66,6 +67,16 @@ async function attemptLogin(username, password) {
 // login succeeds, so requireAuth never actually runs on it, but excluding it here too avoids a
 // redirect loop if that ever changes).
 const PASSWORD_CHANGE_EXEMPT_PAGES = ['change-password.html', 'index.html'];
+
+// Per "if the user is on Delivery team they can only see the Delivery calendar that is all" -
+// a Delivery Team account is confined to these pages, regardless of any other flag it might also
+// carry. change-password.html/index.html stay reachable for the same reason they're exempt from
+// the password-change gate above (this check runs after that one, so a Delivery Team account that
+// also must change its password reaches change-password.html first anyway). dashboard.html is
+// allowed too, but only shows a single "Go to Delivery" link there (#deliveryTeamGoToDeliveryBtn,
+// see dashboard.html/js/dashboard.js) instead of the real dashboard content - per "can you atleast
+// show a button first, the delivery button, on the dashboard" rather than a silent hard redirect.
+const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-password.html', 'index.html'];
 
 function currentPageFileName() {
   return (window.location.pathname.split('/').pop() || '').toLowerCase();
@@ -87,6 +98,14 @@ async function requireAuth() {
   // straight to another page instead of going through index.html.
   if (refreshed.mustChangePassword && !PASSWORD_CHANGE_EXEMPT_PAGES.includes(currentPageFileName())) {
     window.location.href = 'change-password.html';
+    return null;
+  }
+
+  // Same "enforced on every page load, not just at login" reasoning as the password-change gate
+  // above - catches an admin flipping the flag on mid-session, and can't be bypassed by
+  // bookmarking/typing a different URL directly.
+  if (refreshed.isDeliveryTeam && !DELIVERY_TEAM_ALLOWED_PAGES.includes(currentPageFileName())) {
+    window.location.href = 'delivery.html';
     return null;
   }
 
@@ -199,6 +218,7 @@ async function refreshPortalSession(session) {
       isSuperUser: !!result.is_super_user,
       isSalesUser: !!result.is_sales_user,
       isSerialAdmin: !!result.is_serial_admin,
+      isDeliveryTeam: !!result.is_delivery_team,
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);
