@@ -365,7 +365,7 @@ function showDayDetail(dateKey) {
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
           <td>
-            <button class="btn btn-secondary btn-sm" data-print-stop-id="${s.stop_id}" type="button">Print</button>
+            ${!currentSession.isDeliveryTeam ? `<button class="btn btn-secondary btn-sm" data-print-stop-id="${s.stop_id}" type="button">Print</button>` : ''}
             ${s.geocode_status !== 'ok' ? `<button class="btn btn-secondary btn-sm" data-retry-geocode-id="${s.stop_id}" data-retry-geocode-address="${encodeURIComponent(displayAddress)}" type="button">Retry Map</button>` : ''}
             ${currentSession.isSuperUser ? `<button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button>` : ''}
           </td>
@@ -823,6 +823,17 @@ function wireToolbarAndModal() {
   }
 
   document.getElementById('setupContent').classList.remove('hidden');
+
+  // Per "if user is delivery team they cannot assign order / they cannot do print" - Delivery
+  // Team can still browse the calendar and see stop details, just not create new stops or print
+  // (per-stop Print buttons are hidden per-row in showDayDetail above instead, since they're
+  // rendered dynamically). Client-side only, same trust tier as the rest of this page's role
+  // gating (e.g. the Remove button's isSuperUser check above) - not enforced RPC-side.
+  if (session.isDeliveryTeam) {
+    document.getElementById('assignOrderBtn').classList.add('hidden');
+    document.getElementById('printManifestBtn').classList.add('hidden');
+  }
+
   wireToolbarAndModal();
   await loadGoogleMapsApiKey();
   await loadWarehouseLookup();
