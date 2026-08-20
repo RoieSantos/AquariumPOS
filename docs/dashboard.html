@@ -36,7 +36,10 @@
     </div>
 
     <div id="dashboardMainContent">
-    <button class="btn btn-secondary btn-sm" id="pushNotifyBtn" type="button" style="margin-bottom:14px;">🔕 Enable Order Notifications</button>
+    <!-- Hidden per request - the push-notification opt-in flow (js/pushNotifications.js) is
+         still wired up and still reachable via the login prompt modal below, this just removes
+         the manual toggle button from the Dashboard itself. -->
+    <button class="btn btn-secondary btn-sm hidden" id="pushNotifyBtn" type="button" style="margin-bottom:14px;">🔕 Enable Order Notifications</button>
 
     <div class="notification-center hidden" id="notificationCenter"></div>
 
@@ -210,6 +213,20 @@
         <div class="nav-card-text">
           <div class="title">Custom Stand</div>
           <div class="muted">Aquarium stand pricing calculator</div>
+        </div>
+      </a>
+      <a class="nav-card" href="aquarium-calculator.html">
+        <div class="icon">🐠</div>
+        <div class="nav-card-text">
+          <div class="title">Aquarium Calculator</div>
+          <div class="muted">Quote a complete set/aquarium build</div>
+        </div>
+      </a>
+      <a class="nav-card" href="sticker-calculator.html">
+        <div class="icon">🏷️</div>
+        <div class="nav-card-text">
+          <div class="title">Custom Stickers</div>
+          <div class="muted">Plain/Tiles/Rubber/Glass/Acrylic sticker pricing</div>
         </div>
       </a>
       <a class="nav-card" id="serialTrackerCard" href="serial-tracker.html">

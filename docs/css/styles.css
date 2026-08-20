@@ -2401,6 +2401,10 @@ body:has(.wizard-page) {
   border-radius: 10px;
   border-color: var(--input-border);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  /* iOS Safari auto-zooms the whole page on focusing any input under 16px - the shared portal
+     base rule is 14px (fine for staff on desktop), which made every field in this customer-facing
+     mobile wizard trigger that zoom. */
+  font-size: 16px;
 }
 
 .wizard-page input[type="text"]:focus,
@@ -2524,8 +2528,8 @@ body:has(.wizard-page) {
 }
 
 .qty-stepper button {
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
   border-radius: 6px;
   border: 1px solid var(--input-border);
   background: #fff;
@@ -2550,6 +2554,10 @@ body:has(.wizard-page) {
   background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   color: #fff;
   padding: 14px 20px;
+  /* Notch/home-indicator iPhones reserve a gesture area at the bottom of the screen - without
+     this, the bar's bottom edge (and its buttons) sit flush against it. max() keeps the normal
+     14px padding on devices with no inset at all. */
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2622,8 +2630,8 @@ body:has(.wizard-page) {
 }
 
 .cart-qty-btn {
-  width: 26px;
-  height: 26px;
+  width: 36px;
+  height: 36px;
   border-radius: 6px;
   border: 1px solid var(--panel-border);
   background: #fff;
@@ -2796,12 +2804,15 @@ body:has(.wizard-page) {
   position: absolute;
   top: 10px;
   right: 10px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.9);
   color: var(--primary);
   font-size: 12px;
   font-weight: 600;
-  padding: 5px 10px;
+  padding: 8px 14px;
   border-radius: 999px;
   cursor: pointer;
 }
@@ -3051,6 +3062,18 @@ body:has(.wizard-page) {
     flex-direction: column;
     align-items: stretch;
     text-align: center;
+  }
+
+  /* Fixed two-column option/spec grids get cramped once .wizard-card's own padding (16px on this
+     width, see the earlier @media (max-width: 480px) block) eats into the ~360-390px phone
+     viewport - one column reads far better than wrapped/truncated two-up labels. */
+  .dims-summary-options-grid,
+  #customStandSummary {
+    grid-template-columns: 1fr;
+  }
+
+  .delivery-receipt-section {
+    padding: 14px 12px;
   }
 }
 

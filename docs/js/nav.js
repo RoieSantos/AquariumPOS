@@ -44,6 +44,8 @@ function renderTopNav(activeLabel) {
   }
 
   items.push({ href: 'stand-calculator.html', label: 'Custom Stand' });
+  items.push({ href: 'aquarium-calculator.html', label: 'Aquarium Calculator' });
+  items.push({ href: 'sticker-calculator.html', label: 'Custom Stickers' });
 
   if (!isSalesOnlyUser) {
     items.push({ href: 'serial-tracker.html', label: 'Serial Tracker' });

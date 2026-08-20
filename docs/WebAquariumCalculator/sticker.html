@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSPETSTOP Custom Sticker Calculator WEB version</title>
+  <style>
+    :root {
+      --page-bg: #f4f7fb;
+      --panel-bg: #ffffff;
+      --panel-border: #d7e0ef;
+      --text-main: #1b355e;
+      --text-muted: #61738f;
+      --input-border: #c7d3e6;
+      --primary: #1d4f91;
+      --primary-strong: #173f74;
+      --success: #1e9a59;
+      --neutral: #7b8596;
+      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+      color: var(--text-main);
+    }
+
+    .page {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .title {
+      margin: 0 0 16px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .field,
+    .checkbox-row {
+      margin-bottom: 10px;
+    }
+
+    .field label,
+    .group-label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #253f66;
+    }
+
+    input,
+    select {
+      width: 100%;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      padding: 7px 10px;
+      font-size: 12px;
+      background: #fff;
+      color: #19345d;
+    }
+
+    input:focus,
+    select:focus {
+      outline: 2px solid rgba(29, 79, 145, 0.14);
+      border-color: #87a8d8;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #213a61;
+    }
+
+    .checkbox-row input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 16px 0 14px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 4px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      transition: transform 120ms ease, background 120ms ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: var(--primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-strong);
+    }
+
+    .btn-neutral {
+      background: var(--neutral);
+    }
+
+    .summary {
+      min-width: 280px;
+    }
+
+    .summary-line {
+      font-size: 13px;
+      line-height: 1.4;
+      color: #20395f;
+    }
+
+    .summary-line strong {
+      color: #132d52;
+    }
+
+    .price-value {
+      font-size: 22px;
+      font-weight: 800;
+      color: #d1332b;
+    }
+
+    .summary-details {
+      font-size: 12px;
+      line-height: 1.7;
+      color: #20395f;
+    }
+
+    .summary-details div {
+      margin-bottom: 2px;
+    }
+
+    .summary-details strong {
+      color: #132d52;
+    }
+
+    .status-banner {
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: #fff0f0;
+      color: #8a2626;
+      font-size: 12px;
+      line-height: 1.4;
+      box-shadow: var(--shadow);
+    }
+
+    .status-banner.hidden {
+      display: none;
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        padding: 14px;
+      }
+
+      .card-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .actions-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="title">RSPETSTOP Custom Sticker Calculator WEB version</h1>
+
+    <div class="card-grid">
+      <section class="card">
+        <h2>Sticker Details</h2>
+
+        <div class="field">
+          <label for="type">Type</label>
+          <select id="type">
+            <option>Tiles Sticker</option>
+            <option>Plain Sticker</option>
+            <option>Rubber Matting</option>
+            <option>Glass</option>
+            <option>Acrylic</option>
+            <option>Allum TopCover</option>
+          </select>
+        </div>
+
+        <div id="thicknessWrap" class="field hidden">
+          <label for="thickness">Thickness</label>
+          <select id="thickness">
+            <option>3mm</option>
+            <option selected>6mm</option>
+            <option>10mm</option>
+            <option>12mm</option>
+          </select>
+        </div>
+
+        <div id="repairWrap" class="checkbox-row hidden">
+          <input id="repair" type="checkbox">
+          <label for="repair" style="margin:0;">Repair (2.5x price)</label>
+        </div>
+
+        <div class="field">
+          <label for="length">Length</label>
+          <input id="length" type="number" value="24" step="0.01" min="0">
+        </div>
+
+        <div class="field">
+          <label for="width">Width</label>
+          <input id="width" type="number" value="12" step="0.01" min="0">
+        </div>
+
+        <div class="field">
+          <label for="unit">Unit of Measure</label>
+          <select id="unit">
+            <option>Inches</option>
+            <option>CM</option>
+            <option>Ft</option>
+            <option>MM</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="qty">Quantity</label>
+          <input id="qty" type="number" value="1" min="1" step="1">
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Summary</h2>
+        <div id="summaryDetails" class="summary-details">Enter sticker details to see a summary.</div>
+      </section>
+    </div>
+
+    <div class="actions-row">
+      <button id="calculate" class="btn btn-primary" type="button">Calculate Price</button>
+      <button id="closeButton" class="btn btn-neutral" type="button">Reset</button>
+
+      <div class="summary">
+        <div id="priceLine" class="summary-line"><strong>Price:</strong> <span id="priceValue" class="price-value">waiting for calculation</span></div>
+      </div>
+    </div>
+
+    <div id="errorBanner" class="status-banner hidden"></div>
+  </div>
+
+  <script>
+    // Mirrors ShowCustomStickersDialog in MainForm.cs (the desktop POS app's "CUSTOM STICKERS"
+    // action button) and its pricing constants in GlobalSettings.cs, so a quote given here matches
+    // what the desktop app would charge for the same inputs - same per-sq-ft rates, same
+    // thickness-based overrides for Rubber Matting/Glass, same Glass Repair 2.5x multiplier, same
+    // round-up-to-nearest-10 final price. Quantity is a web-only addition (the desktop dialog
+    // always adds exactly 1 line to the sale, letting staff adjust quantity afterward there) -
+    // added here for convenience, same as the Custom Stand web calculator's Quantity field.
+    var PRICE_PER_SQFT = {
+      'Tiles Sticker': 90,
+      'Plain Sticker': 70,
+      'Acrylic': 135,
+      'Allum TopCover': 500
+    };
+
+    var RUBBER_PRICE_PER_SQFT = { '3mm': 26, '6mm': 32, '10mm': 45, '12mm': 60 };
+    var RUBBER_BASE_PRICE_PER_SQFT = 85;
+
+    var GLASS_PRICE_PER_SQFT = { '3mm': 70, '6mm': 185, '10mm': 290, '12mm': 330 };
+    var GLASS_BASE_PRICE_PER_SQFT = 120;
+
+    function byId(id) {
+      return document.getElementById(id);
+    }
+
+    var calculateButton = byId('calculate');
+    var closeButton = byId('closeButton');
+    var priceValue = byId('priceValue');
+    var summaryDetails = byId('summaryDetails');
+    var errorBanner = byId('errorBanner');
+
+    function convertToFeet(value, unit) {
+      var num = Number(value) || 0;
+      if (unit === 'CM') return num / 30.48;
+      if (unit === 'MM') return num / 304.8;
+      if (unit === 'Ft') return num;
+      return num / 12; // Inches
+    }
+
+    function pricePerSqFtFor(type, thickness) {
+      if (type === 'Rubber Matting') return RUBBER_PRICE_PER_SQFT[thickness] || RUBBER_BASE_PRICE_PER_SQFT;
+      if (type === 'Glass') return GLASS_PRICE_PER_SQFT[thickness] || GLASS_BASE_PRICE_PER_SQFT;
+      return PRICE_PER_SQFT[type] || PRICE_PER_SQFT['Plain Sticker'];
+    }
+
+    function calculateSticker() {
+      var length = Number(byId('length').value);
+      var width = Number(byId('width').value);
+
+      if (!(length > 0) || !(width > 0)) {
+        return { ok: false, error: 'Please enter valid positive numbers for length and width.' };
+      }
+
+      var unit = byId('unit').value;
+      var type = byId('type').value;
+      var thickness = byId('thickness').value;
+      var isRepairEligible = type === 'Glass';
+      var isRepair = isRepairEligible && byId('repair').checked;
+      var qty = Math.max(1, Math.round(Number(byId('qty').value) || 1));
+
+      var lengthFt = convertToFeet(length, unit);
+      var widthFt = convertToFeet(width, unit);
+      var areaSqFt = lengthFt * widthFt;
+
+      var pricePerSqFt = pricePerSqFtFor(type, thickness);
+      var estimatedPrice = areaSqFt * pricePerSqFt;
+      if (isRepair) estimatedPrice *= 2.5;
+
+      var unitPrice = Math.ceil(estimatedPrice / 10) * 10;
+
+      return {
+        ok: true,
+        areaSqFt: areaSqFt,
+        unitPrice: unitPrice,
+        totalPrice: unitPrice * qty,
+        qty: qty,
+        type: type,
+        thickness: thickness,
+        hasThickness: type === 'Rubber Matting' || type === 'Glass',
+        isRepair: isRepair,
+        length: length,
+        width: width,
+        unit: unit
+      };
+    }
+
+    function renderSummaryDetails(result) {
+      if (!result || !result.ok) {
+        summaryDetails.innerHTML = 'Enter sticker details to see a summary.';
+        return;
+      }
+
+      var rows = [
+        ['Type', result.type + (result.isRepair ? ' (Repair)' : '')],
+        ['Dimensions', result.length + ' x ' + result.width + ' ' + result.unit],
+        ['Area', result.areaSqFt.toFixed(2) + ' sq ft'],
+        ['Quantity', String(result.qty)]
+      ];
+      if (result.hasThickness) {
+        rows.splice(1, 0, ['Thickness', result.thickness]);
+      }
+
+      summaryDetails.innerHTML = rows.map(function (r) {
+        return '<div><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
+      }).join('');
+    }
+
+    function setVisibilityState() {
+      var type = byId('type').value;
+      var showThickness = type === 'Rubber Matting' || type === 'Glass';
+      byId('thicknessWrap').classList.toggle('hidden', !showThickness);
+
+      var showRepair = type === 'Glass';
+      byId('repairWrap').classList.toggle('hidden', !showRepair);
+      if (!showRepair) byId('repair').checked = false;
+    }
+
+    function runCalculation() {
+      setVisibilityState();
+
+      var result = calculateSticker();
+
+      if (!result.ok) {
+        errorBanner.textContent = result.error;
+        errorBanner.classList.remove('hidden');
+        priceValue.textContent = 'check inputs';
+        renderSummaryDetails(null);
+        return;
+      }
+
+      errorBanner.classList.add('hidden');
+      renderSummaryDetails(result);
+      priceValue.textContent = result.totalPrice.toFixed(2) + (result.qty > 1 ? ' (' + result.unitPrice.toFixed(2) + ' x ' + result.qty + ')' : '');
+    }
+
+    function attachHandlers() {
+      byId('type').addEventListener('change', runCalculation);
+      ['length', 'width', 'unit', 'thickness', 'qty'].forEach(function (id) {
+        var el = byId(id);
+        var eventName = el.tagName === 'INPUT' ? 'input' : 'change';
+        el.addEventListener(eventName, runCalculation);
+      });
+      byId('repair').addEventListener('change', runCalculation);
+
+      calculateButton.addEventListener('click', runCalculation);
+      closeButton.addEventListener('click', function () {
+        window.location.reload();
+      });
+    }
+
+    setVisibilityState();
+    attachHandlers();
+  </script>
+</body>
+</html>
