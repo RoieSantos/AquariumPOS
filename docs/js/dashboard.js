@@ -438,6 +438,15 @@ async function loadNotifications(session) {
     return;
   }
 
+  // Same pattern as Delivery Team above, for "Online Order Staff" - real dashboard content stays
+  // hidden and none of its data gets loaded.
+  if (session.isOnlineOrderStaff) {
+    document.getElementById('welcomeText').textContent = "Here's your shortcut to Online Orders.";
+    document.getElementById('onlineOrderStaffLanding').classList.remove('hidden');
+    document.getElementById('dashboardMainContent').classList.add('hidden');
+    return;
+  }
+
   wirePushNotificationButton(session);
   maybeShowPushLoginPrompt(session);
 

@@ -75,11 +75,11 @@ function renderLineRows(lines) {
         <td>${l.item_code || l.product_display_id || ''}</td>
         <td>${l.description || ''}</td>
         <td>${l.quantity ?? ''}</td>
-        <td>${formatMoney(l.unit_cost)}</td>
-        <td>${formatMoney(l.price)}</td>
-        <td>${formatMoney(l.discount)}</td>
-        <td>${formatMoney(l.gross_amount)}</td>
-        <td>${formatMoney(l.net_amount)}</td>
+        <td class="price-col">${formatMoney(l.unit_cost)}</td>
+        <td class="price-col">${formatMoney(l.price)}</td>
+        <td class="price-col">${formatMoney(l.discount)}</td>
+        <td class="price-col">${formatMoney(l.gross_amount)}</td>
+        <td class="price-col">${formatMoney(l.net_amount)}</td>
         <td>${l.note || ''}</td>
         <td>${attachmentCellHtml(l.line_id)}</td>
       </tr>
@@ -327,6 +327,9 @@ async function loadOrderDetail() {
   if (!session) return;
   currentSession = session;
   renderTopNav('Online Orders');
+
+  // Per "they dont need to see price" - see css/styles.css's body.hide-price-columns rule.
+  document.body.classList.toggle('hide-price-columns', !!session.isOnlineOrderStaff);
 
   const params = new URLSearchParams(window.location.search);
   orderId = params.get('order');

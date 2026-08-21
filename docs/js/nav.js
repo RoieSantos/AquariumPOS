@@ -26,6 +26,24 @@ function renderTopNav(activeLabel) {
     return;
   }
 
+  // Same reasoning as Delivery Team above, for "Online Order Staff" - js/auth.js's requireAuth()
+  // only allows dashboard.html (shows just a "Go to Online Orders" link, see js/dashboard.js),
+  // online-orders.html, and online-order-lines.html (the "View" drill-down) for this group.
+  if (session?.isOnlineOrderStaff) {
+    nav.innerHTML = `
+      <div class="topnav-inner">
+        <span class="topnav-brand">RS Pet Stop Portal</span>
+        <div class="topnav-links" id="topnavLinks">
+          <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
+          <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">Online Orders</a>
+          <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
+        </div>
+      </div>
+    `;
+    wireLogoutButton('logoutBtn');
+    return;
+  }
+
   // Per "Sales User dont need to see transfer orders and other related notification for
   // transfers - Remove Serial Tracker/Reports/Customer Aquarium" - a Sales User who is NOT also
   // a super user gets a trimmed top nav too, same set dropped as the dashboard's nav-card grid

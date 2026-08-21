@@ -38,6 +38,14 @@
       <a class="btn btn-primary" id="deliveryTeamGoToDeliveryBtn" href="delivery.html" style="font-size:16px; padding:14px 28px;">Go to Delivery</a>
     </div>
 
+    <!-- Online Order Staff accounts land here instead of the full dashboard below - same pattern
+         as deliveryTeamLanding above (see js/dashboard.js's init() and js/auth.js's requireAuth()). -->
+    <div class="hidden" id="onlineOrderStaffLanding" style="text-align:center; padding:60px 20px;">
+      <div style="font-size:48px; margin-bottom:12px;">📦</div>
+      <p class="muted" style="margin-bottom:20px;">Your account is set up for Online Orders only.</p>
+      <a class="btn btn-primary" id="onlineOrderStaffGoToOrdersBtn" href="online-orders.html" style="font-size:16px; padding:14px 28px;">Go to Online Orders</a>
+    </div>
+
     <div id="dashboardMainContent">
     <!-- Hidden per request - the push-notification opt-in flow (js/pushNotifications.js) is
          still wired up and still reachable via the login prompt modal below, this just removes

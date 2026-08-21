@@ -56,6 +56,7 @@ async function attemptLogin(username, password) {
     isSalesUser: !!result.is_sales_user,
     isSerialAdmin: !!result.is_serial_admin,
     isDeliveryTeam: !!result.is_delivery_team,
+    isOnlineOrderStaff: !!result.is_online_order_staff,
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -77,6 +78,14 @@ const PASSWORD_CHANGE_EXEMPT_PAGES = ['change-password.html', 'index.html'];
 // see dashboard.html/js/dashboard.js) instead of the real dashboard content - per "can you atleast
 // show a button first, the delivery button, on the dashboard" rather than a silent hard redirect.
 const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-password.html', 'index.html'];
+
+// Same exclusive-lockdown shape as Delivery Team above, per "create me a field in the user setup
+// 'Online Order Staff' - when this is tick the user will only see Orders Printed that to be Ship."
+// online-order-lines.html is included too since every row's "View" link on Online Orders leads
+// there - locking it out would break the one workflow this role exists for. dashboard.html is
+// allowed but only shows a "Go to Online Orders" link (#onlineOrderStaffGoToOrdersBtn, see
+// dashboard.html/js/dashboard.js), same pattern as Delivery Team's dashboard landing.
+const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-lines.html', 'dashboard.html', 'change-password.html', 'index.html'];
 
 function currentPageFileName() {
   return (window.location.pathname.split('/').pop() || '').toLowerCase();
@@ -106,6 +115,11 @@ async function requireAuth() {
   // bookmarking/typing a different URL directly.
   if (refreshed.isDeliveryTeam && !DELIVERY_TEAM_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'delivery.html';
+    return null;
+  }
+
+  if (refreshed.isOnlineOrderStaff && !ONLINE_ORDER_STAFF_ALLOWED_PAGES.includes(currentPageFileName())) {
+    window.location.href = 'online-orders.html';
     return null;
   }
 
@@ -219,6 +233,7 @@ async function refreshPortalSession(session) {
       isSalesUser: !!result.is_sales_user,
       isSerialAdmin: !!result.is_serial_admin,
       isDeliveryTeam: !!result.is_delivery_team,
+      isOnlineOrderStaff: !!result.is_online_order_staff,
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);

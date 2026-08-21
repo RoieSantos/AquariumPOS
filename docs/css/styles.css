@@ -1219,6 +1219,13 @@ tr.clickable-row:hover {
   display: none !important;
 }
 
+/* Online Order Lines - hides Unit Cost/Price/Discount/Gross/Net Amount columns for Online Order
+   Staff accounts (js/onlineOrderLines.js toggles this on <body>), per "they dont need to see
+   price". */
+body.hide-price-columns .price-col {
+  display: none !important;
+}
+
 .line-items-table input,
 .line-items-table select {
   padding: 6px 8px;

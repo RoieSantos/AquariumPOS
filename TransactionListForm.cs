@@ -29,6 +29,7 @@ namespace AquariumPOS
         private Button? btnPrintJobOrder;
         private Button? btnReturnExchange;
     private Button? btnPayCommission;
+    private Button? btnRetryFailed;
         private TextBox? txtSearch;
         private Label? lblSearch;
         private DateTimePicker? dtpFromDate;
@@ -82,6 +83,8 @@ namespace AquariumPOS
             // Add Status column to TransactionHeader if it doesn't exist
             AddStatusColumnIfNotExists();
             AddStatusColumnToTransPaymentEntryIfNotExists();
+            AddSentToOnlineColumnIfNotExists();
+            AddItemLedgerEntrySentToOnlineColumnIfNotExists();
             LoadTransactions();
             // If caller provided an initial receipt number, pre-fill search and apply an exact filter
             try
@@ -180,6 +183,84 @@ namespace AquariumPOS
             catch
             {
                 // Non-blocking - older DBs may not allow this; pay-commission can still proceed without storing paid status on payment lines.
+            }
+        }
+
+        // Per "in the transaction list, can we see the transaction that did not go through [to
+        // Pancake]" - TransactionHeader.SentToOnline already exists and is set by
+        // OnlinefunctionsEvents (MarkReceiptSentToOnline/SendFailedTransactionToCloud), but nothing
+        // ever displayed it here. Same defensive "add the column if some older install doesn't have
+        // it yet" pattern as AddStatusColumnIfNotExists above, since SentToOnline was added to this
+        // table ad-hoc (not part of CreateTransactionHeaderTable's original CREATE TABLE).
+        private void AddSentToOnlineColumnIfNotExists()
+        {
+            try
+            {
+                string connectionString = GlobalSettings.ConnectionString;
+                using (SqlConnection connection = new SqlConnection(connectionString))
+                {
+                    connection.Open();
+
+                    string checkColumnQuery = @"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                                              WHERE TABLE_NAME = 'TransactionHeader' AND COLUMN_NAME = 'SentToOnline'";
+                    SqlCommand checkCmd = new SqlCommand(checkColumnQuery, connection);
+                    int columnExists = (int)checkCmd.ExecuteScalar();
+
+                    if (columnExists == 0)
+                    {
+                        string addColumnQuery = "ALTER TABLE TransactionHeader ADD SentToOnline BIT NOT NULL CONSTRAINT DF_TransactionHeader_SentToOnline DEFAULT 0";
+                        SqlCommand addCmd = new SqlCommand(addColumnQuery, connection);
+                        addCmd.ExecuteNonQuery();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error adding SentToOnline column: {ex.Message}", "Database Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // Per "add that feature into item history too, cause sometimes the header did push but the
+        // lines did not" - TransactionHeader.SentToOnline (added above) only reflects the RECEIPT-
+        // level push; ItemLedgerEntry has its own independent SentToOnline per line (set by
+        // OnlinefunctionsEvents whenever that specific line's stock movement reaches Pancake - see
+        // e.g. the ItemLedgerEntry update at OnlinefunctionsEvents.cs:2413), so a header can succeed
+        // while individual lines still fail. Same "ensure the column exists" pattern as
+        // AddSentToOnlineColumnIfNotExists above - called once at form Load rather than per Item
+        // History dialog open.
+        private void AddItemLedgerEntrySentToOnlineColumnIfNotExists()
+        {
+            try
+            {
+                string connectionString = GlobalSettings.ConnectionString;
+                using (SqlConnection connection = new SqlConnection(connectionString))
+                {
+                    connection.Open();
+
+                    string checkTableQuery = @"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+                                              WHERE TABLE_NAME = 'ItemLedgerEntry'";
+                    SqlCommand checkTableCmd = new SqlCommand(checkTableQuery, connection);
+                    int tableExists = (int)checkTableCmd.ExecuteScalar();
+                    if (tableExists == 0) return;
+
+                    string checkColumnQuery = @"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                                              WHERE TABLE_NAME = 'ItemLedgerEntry' AND COLUMN_NAME = 'SentToOnline'";
+                    SqlCommand checkCmd = new SqlCommand(checkColumnQuery, connection);
+                    int columnExists = (int)checkCmd.ExecuteScalar();
+
+                    if (columnExists == 0)
+                    {
+                        string addColumnQuery = "ALTER TABLE ItemLedgerEntry ADD SentToOnline BIT NOT NULL CONSTRAINT DF_ItemLedgerEntry_SentToOnline DEFAULT 0";
+                        SqlCommand addCmd = new SqlCommand(addColumnQuery, connection);
+                        addCmd.ExecuteNonQuery();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error adding ItemLedgerEntry.SentToOnline column: {ex.Message}", "Database Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -323,6 +404,20 @@ namespace AquariumPOS
             btnReturnExchange.Click += BtnReturnExchange_Click;
             btnReturnExchange.Location = new Point(726, 10);
             bottomPanel.Controls.Add(btnReturnExchange);
+
+            // Per "in the transaction list, can we see the transaction that did not go through" -
+            // manual trigger for the same retry OnlineOrdersForm's Sync button already runs
+            // (OnlinefunctionsEvents.SendFailedTransactionToCloud), so staff don't have to leave
+            // this screen to retry what the new "Sent to Online" column just made visible.
+            btnRetryFailed = new Button();
+            btnRetryFailed.Text = "Retry Failed";
+            btnRetryFailed.Size = new Size(130, 40);
+            btnRetryFailed.BackColor = Color.Teal;
+            btnRetryFailed.ForeColor = Color.White;
+            btnRetryFailed.Font = new Font("Arial", 10, FontStyle.Bold);
+            btnRetryFailed.Click += BtnRetryFailed_Click;
+            btnRetryFailed.Location = new Point(896, 10);
+            bottomPanel.Controls.Add(btnRetryFailed);
 
             btnClose = new Button();
             btnClose.Text = "Close";
@@ -1273,6 +1368,7 @@ namespace AquariumPOS
                         emptyTable.Columns.Add("Description", typeof(string));
                         emptyTable.Columns.Add("ExpenseCategory", typeof(string));
                         emptyTable.Columns.Add("Status", typeof(string));
+                        emptyTable.Columns.Add("SentToOnline", typeof(string));
 
                         dgvTransactions.DataSource = emptyTable;
                         FormatGridColumns();
@@ -1285,32 +1381,45 @@ namespace AquariumPOS
                     SqlCommand statusCmd = new SqlCommand(statusColumnQuery, connection);
                     int statusColumnExists = (int)statusCmd.ExecuteScalar();
 
-                    string expenseCategoryColumnQuery = @"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS 
+                    string expenseCategoryColumnQuery = @"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
                                                WHERE TABLE_NAME = 'TransactionHeader' AND COLUMN_NAME = 'ExpenseCategory'";
                     SqlCommand expenseCategoryCmd = new SqlCommand(expenseCategoryColumnQuery, connection);
                     int expenseCategoryColumnExists = (int)expenseCategoryCmd.ExecuteScalar();
 
-                    string query = @"SELECT 
-                                        StoreNo, 
-                                        POSTerminalNo, 
-                                        TransactionNo, 
-                                        ReceiptNo, 
-                                        Type, 
-                                        Quantity, 
-                                        Price, 
-                                        Discount, 
-                                        GrossAmount, 
-                                        NetAmount, 
-                                        Date, 
-                                        CASE 
+                    // Per "can we see the transaction that did not go through [to Pancake]" -
+                    // SentToOnline is set by OnlinefunctionsEvents whenever a receipt successfully
+                    // pushes to the cloud (see MarkReceiptSentToOnline/SendFailedTransactionToCloud);
+                    // 0/NULL means it hasn't (yet). Same defensive existence check as
+                    // Status/ExpenseCategory above.
+                    string sentToOnlineColumnQuery = @"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                                               WHERE TABLE_NAME = 'TransactionHeader' AND COLUMN_NAME = 'SentToOnline'";
+                    SqlCommand sentToOnlineCmd = new SqlCommand(sentToOnlineColumnQuery, connection);
+                    int sentToOnlineColumnExists = (int)sentToOnlineCmd.ExecuteScalar();
+
+                    string query = @"SELECT
+                                        StoreNo,
+                                        POSTerminalNo,
+                                        TransactionNo,
+                                        ReceiptNo,
+                                        Type,
+                                        Quantity,
+                                        Price,
+                                        Discount,
+                                        GrossAmount,
+                                        NetAmount,
+                                        Date,
+                                        CASE
                                             WHEN Time IS NULL THEN ''
                                             ELSE FORMAT(CAST(Time AS datetime), 'h:mm:ss tt')
-                                        END AS Time, 
-                                        UserID, 
+                                        END AS Time,
+                                        UserID,
                                         Description" +
                                     (expenseCategoryColumnExists > 0 ? ", ISNULL(ExpenseCategory, '') AS ExpenseCategory" : ", '' AS ExpenseCategory") +
                                     (statusColumnExists > 0 ? ", ISNULL(Status, 'ACTIVE') AS Status" : ", 'ACTIVE' AS Status") +
-                                    @" FROM TransactionHeader 
+                                    (sentToOnlineColumnExists > 0
+                                        ? ", CASE WHEN ISNULL(SentToOnline, 0) = 1 THEN 'Yes' ELSE 'No' END AS SentToOnline"
+                                        : ", 'No' AS SentToOnline") +
+                                    @" FROM TransactionHeader
                                     ORDER BY TransactionNo DESC";
 
                     SqlDataAdapter adapter = new SqlDataAdapter(query, connection);
@@ -1485,6 +1594,33 @@ namespace AquariumPOS
                     {
                         row.DefaultCellStyle.BackColor = Color.LightPink;
                         row.DefaultCellStyle.ForeColor = Color.DarkRed;
+                    }
+                }
+            }
+
+            if (dgvTransactions.Columns.Contains("SentToOnline"))
+            {
+                dgvTransactions.Columns["SentToOnline"].HeaderText = "Sent to Online";
+                dgvTransactions.Columns["SentToOnline"].Width = 110;
+                dgvTransactions.Columns["SentToOnline"].MinimumWidth = 100;
+                dgvTransactions.Columns["SentToOnline"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+                // Bring it right before Status so both sync-related columns sit together.
+                try { dgvTransactions.Columns["SentToOnline"].DisplayIndex = Math.Max(0, dgvTransactions.Columns.Count - 2); } catch { }
+
+                // Per-cell (not whole-row) coloring so this doesn't fight with the REVERSED
+                // row-coloring above - a reversed transaction that also failed to send should
+                // still show both signals independently.
+                foreach (DataGridViewRow row in dgvTransactions.Rows)
+                {
+                    if (row.Cells["SentToOnline"].Value?.ToString() == "No")
+                    {
+                        row.Cells["SentToOnline"].Style.BackColor = Color.MistyRose;
+                        row.Cells["SentToOnline"].Style.ForeColor = Color.DarkRed;
+                        row.Cells["SentToOnline"].Style.Font = new Font(dgvTransactions.Font, FontStyle.Bold);
+                    }
+                    else
+                    {
+                        row.Cells["SentToOnline"].Style.ForeColor = Color.DarkGreen;
                     }
                 }
             }
@@ -2056,16 +2192,17 @@ namespace AquariumPOS
 
                     if (tableExists > 0)
                     {
-                        string query = @"SELECT 
+                        string query = @"SELECT
                                             ILE.ItemCode,
                                             ISNULL(I.Description, 'Item not found') as 'Item Description',
                                             ILE.Description as 'Line Description',
                                             ILE.DocumentType as 'Document Type',
                                             ILE.DocumentNo as 'Document No',
-                                            ILE.Quantity,                                        
+                                            ILE.Quantity,
                                             ILE.Price as Price,
                                             ILE.UserID as 'Transaction User',
-                                            ILE.EntryDate as 'Entry Date'
+                                            ILE.EntryDate as 'Entry Date',
+                                            CASE WHEN ISNULL(ILE.SentToOnline, 0) = 1 THEN 'Yes' ELSE 'No' END as 'Sent to Online'
                                         FROM ItemLedgerEntry ILE
                                         LEFT JOIN Items I ON ILE.ItemCode = I.Code
                                         WHERE ILE.DocumentNo = @receiptNo OR ILE.DocumentNo = @reversalReceiptNo
@@ -2102,6 +2239,11 @@ namespace AquariumPOS
                             dgvItemHistory.Columns["Entry Date"].DefaultCellStyle.Format = "yyyy-MM-dd HH:mm:ss";
                         }
 
+                        if (dgvItemHistory.Columns.Contains("Sent to Online"))
+                        {
+                            dgvItemHistory.Columns["Sent to Online"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+                        }
+
                         // Color-code rows based on document type
                         foreach (DataGridViewRow row in dgvItemHistory.Rows)
                         {
@@ -2113,6 +2255,23 @@ namespace AquariumPOS
                             else if (docType == "REVERSAL")
                             {
                                 row.DefaultCellStyle.BackColor = Color.LightCoral;
+                            }
+
+                            // Per-cell (not whole-row) so this doesn't get overridden by the
+                            // doc-type row coloring just above - a SALES line that failed to send
+                            // should still show the red "No" flag on top of its usual light blue row.
+                            if (dgvItemHistory.Columns.Contains("Sent to Online"))
+                            {
+                                if (row.Cells["Sent to Online"].Value?.ToString() == "No")
+                                {
+                                    row.Cells["Sent to Online"].Style.BackColor = Color.MistyRose;
+                                    row.Cells["Sent to Online"].Style.ForeColor = Color.DarkRed;
+                                    row.Cells["Sent to Online"].Style.Font = new Font(dgvItemHistory.Font, FontStyle.Bold);
+                                }
+                                else
+                                {
+                                    row.Cells["Sent to Online"].Style.ForeColor = Color.DarkGreen;
+                                }
                             }
                         }
                     }
@@ -2181,6 +2340,42 @@ namespace AquariumPOS
         private void BtnRefresh_Click(object? sender, EventArgs e)
         {
             LoadTransactions();
+        }
+
+        // Same retry OnlineOrdersForm's Sync button and the network-reconnect handler already run
+        // in the background (OnlinefunctionsEvents.SendFailedTransactionToCloud) - exposed here too
+        // so staff can act on what the "Sent to Online" column just showed them without leaving
+        // this screen. Runs on a background thread since it makes real HTTP calls per receipt.
+        private async void BtnRetryFailed_Click(object? sender, EventArgs e)
+        {
+            if (btnRetryFailed == null) return;
+
+            btnRetryFailed.Enabled = false;
+            string originalText = btnRetryFailed.Text;
+            btnRetryFailed.Text = "Retrying...";
+
+            try
+            {
+                int sent = await System.Threading.Tasks.Task.Run(() => OnlinefunctionsEvents.SendFailedTransactionToCloud());
+
+                MessageBox.Show(
+                    sent > 0
+                        ? $"Resent {sent} transaction(s) to the cloud."
+                        : "No transactions needed retrying - everything is already sent, or the remaining ones failed again (see the Sent to Online column).",
+                    "Retry Failed Transactions",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Retry failed: {ex.Message}", "Retry Failed Transactions", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnRetryFailed.Enabled = true;
+                btnRetryFailed.Text = originalText;
+                LoadTransactions();
+            }
         }
 
         private void BtnClose_Click(object? sender, EventArgs e)

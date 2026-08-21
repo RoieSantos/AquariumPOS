@@ -52,6 +52,7 @@
               <th>Sales User</th>
               <th>Serial Admin</th>
               <th>Delivery Team</th>
+              <th>Online Order Staff</th>
               <th>Monthly Sales Target</th>
               <th>Change PW</th>
               <th>Active</th>
@@ -61,7 +62,7 @@
             </tr>
           </thead>
           <tbody id="userTableBody">
-            <tr><td colspan="13" class="muted">Loading...</td></tr>
+            <tr><td colspan="14" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -118,6 +119,12 @@
           <label for="newUserDeliveryTeam" style="display:flex; align-items:center; gap:8px;">
             <input type="checkbox" id="newUserDeliveryTeam" style="width:auto;" />
             <span>Delivery Team (locked to the Delivery calendar only - no other page)</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label for="newUserOnlineOrderStaff" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="newUserOnlineOrderStaff" style="width:auto;" />
+            <span>Online Order Staff (locked to Online Orders only - sees Printed orders only, can mark To Ship and photo-notify customers)</span>
           </label>
         </div>
         <div class="form-row">
@@ -188,6 +195,12 @@
           <label for="editUserDeliveryTeam" style="display:flex; align-items:center; gap:8px;">
             <input type="checkbox" id="editUserDeliveryTeam" style="width:auto;" />
             <span>Delivery Team (locked to the Delivery calendar only - no other page)</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label for="editUserOnlineOrderStaff" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="editUserOnlineOrderStaff" style="width:auto;" />
+            <span>Online Order Staff (locked to Online Orders only - sees Printed orders only, can mark To Ship and photo-notify customers)</span>
           </label>
         </div>
         <div class="form-row">

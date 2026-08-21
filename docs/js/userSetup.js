@@ -43,7 +43,7 @@ function renderUserRows(users) {
   const tbody = document.getElementById('userTableBody');
 
   if (!users || users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="13" class="muted">No staff logins found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="muted">No staff logins found.</td></tr>';
     return;
   }
 
@@ -57,6 +57,7 @@ function renderUserRows(users) {
         <td><span class="badge ${u.is_sales_user ? 'badge-success' : 'badge-neutral'}">${u.is_sales_user ? 'Yes' : 'No'}</span></td>
         <td><span class="badge ${u.is_serial_admin ? 'badge-success' : 'badge-neutral'}">${u.is_serial_admin ? 'Yes' : 'No'}</span></td>
         <td><span class="badge ${u.is_delivery_team ? 'badge-success' : 'badge-neutral'}">${u.is_delivery_team ? 'Yes' : 'No'}</span></td>
+        <td><span class="badge ${u.is_online_order_staff ? 'badge-success' : 'badge-neutral'}">${u.is_online_order_staff ? 'Yes' : 'No'}</span></td>
         <td>${formatMonthlyTarget(u.monthly_sales_target)}</td>
         <td><span class="badge ${u.must_change_password ? 'badge-warning' : 'badge-neutral'}">${u.must_change_password ? 'Required' : 'No'}</span></td>
         <td><span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
@@ -70,7 +71,7 @@ function renderUserRows(users) {
 
 async function loadUsers() {
   const tbody = document.getElementById('userTableBody');
-  tbody.innerHTML = '<tr><td colspan="13" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="14" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_staff_users', {
     p_admin_username: currentSession.username,
@@ -80,7 +81,7 @@ async function loadUsers() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="13" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -105,6 +106,7 @@ function openNewUserModal() {
   document.getElementById('newUserSalesUser').checked = false;
   document.getElementById('newUserSerialAdmin').checked = false;
   document.getElementById('newUserDeliveryTeam').checked = false;
+  document.getElementById('newUserOnlineOrderStaff').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
   document.getElementById('newUserError').classList.add('hidden');
@@ -123,6 +125,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserSalesUser').checked = !!user.is_sales_user;
   document.getElementById('editUserSerialAdmin').checked = !!user.is_serial_admin;
   document.getElementById('editUserDeliveryTeam').checked = !!user.is_delivery_team;
+  document.getElementById('editUserOnlineOrderStaff').checked = !!user.is_online_order_staff;
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
@@ -142,6 +145,7 @@ async function saveEditUser() {
   const isSalesUser = document.getElementById('editUserSalesUser').checked;
   const isSerialAdmin = document.getElementById('editUserSerialAdmin').checked;
   const isDeliveryTeam = document.getElementById('editUserDeliveryTeam').checked;
+  const isOnlineOrderStaff = document.getElementById('editUserOnlineOrderStaff').checked;
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
@@ -169,7 +173,8 @@ async function saveEditUser() {
     p_monthly_sales_target: monthlyTarget,
     p_must_change_password: mustChangePassword,
     p_is_serial_admin: isSerialAdmin,
-    p_is_delivery_team: isDeliveryTeam
+    p_is_delivery_team: isDeliveryTeam,
+    p_is_online_order_staff: isOnlineOrderStaff
   });
 
   saveBtn.disabled = false;
@@ -198,6 +203,7 @@ async function saveNewUser() {
   const isSalesUser = document.getElementById('newUserSalesUser').checked;
   const isSerialAdmin = document.getElementById('newUserSerialAdmin').checked;
   const isDeliveryTeam = document.getElementById('newUserDeliveryTeam').checked;
+  const isOnlineOrderStaff = document.getElementById('newUserOnlineOrderStaff').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
 
@@ -228,7 +234,8 @@ async function saveNewUser() {
     p_monthly_sales_target: monthlyTarget,
     p_must_change_password: mustChangePassword,
     p_is_serial_admin: isSerialAdmin,
-    p_is_delivery_team: isDeliveryTeam
+    p_is_delivery_team: isDeliveryTeam,
+    p_is_online_order_staff: isOnlineOrderStaff
   });
 
   saveBtn.disabled = false;

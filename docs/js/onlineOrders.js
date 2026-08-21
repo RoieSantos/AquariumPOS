@@ -36,6 +36,15 @@ let currentScope = null;
 let outstandingOnly = false;
 let currentConfirmedBy = null;
 
+// Per "if the user is a online order staff They can only see Confirmed / Printed / To Ship" -
+// applied as an exact-match IN-list server-side (see admin_list_online_orders' p_status_in in
+// supabase_online_order_staff_status_scope.sql), not just a client-side hide, so the restriction
+// holds even against a direct RPC call. "Please be aware that they dont need to see price" -
+// hidePriceColumns strips the Delivery Fee column here (see orderRowsHtml) and every price column
+// on the Online Order Lines drill-down (js/onlineOrderLines.js).
+const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed', 'Printed', 'To Ship'];
+let hidePriceColumns = false;
+
 // Warehouse-scoped staff (StaffUsers.WarehouseName set) only see orders for their own
 // warehouse - same convention as Transfer Orders (js/transferOrders.js). Orders with no
 // resolved warehouse_name (e.g. LocationID didn't match any synced Warehouses row) are
@@ -128,7 +137,7 @@ function orderRowsHtml(orders) {
         <td>${o.created_by || ''}</td>
         <td>${glassBadgeHtml(o)}</td>
         <td>${o.note_print || ''}</td>
-        <td>${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>
+        ${hidePriceColumns ? '' : `<td>${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.warehouse_name || o.location_id || ''}</td>
         <td><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span></td>
         <td>${o.estimated_delivery_date || ''}</td>
@@ -279,7 +288,8 @@ async function loadOrders(search, status) {
     p_walkin_only: currentScope === 'walkin',
     p_page: currentPage,
     p_page_size: currentPageSize,
-    p_confirmed_by: currentConfirmedBy
+    p_confirmed_by: currentConfirmedBy,
+    p_status_in: currentSession.isOnlineOrderStaff ? ONLINE_ORDER_STAFF_STATUS_SCOPE : null
   });
 
   if (myGeneration !== loadGeneration) return;
@@ -500,14 +510,30 @@ function wireOrderFilters() {
   // (see dashboard.html's finance-card hrefs / staffStatLinkHtml in js/dashboard.js / the
   // module-level comment on currentPeriod above).
   const urlParams = new URLSearchParams(window.location.search);
-  const statusParam = urlParams.get('status') || '';
   const periodParam = urlParams.get('period') || '';
   const scopeParam = urlParams.get('scope') || '';
   const filterParam = urlParams.get('filter') || '';
   const confirmedByParam = urlParams.get('confirmedBy') || '';
 
+  // Per "if the user is a online order staff They can only see Confirmed / Printed / To Ship" -
+  // hard-locked server-side via p_status_in (see loadOrders/ONLINE_ORDER_STAFF_STATUS_SCOPE
+  // above), not just a default they can clear/change (ignores any ?status= deep link too). The
+  // text here is just a display label for the disabled box - loadOrders always sends the real
+  // 3-status list for this role regardless of what this string says. The status filter box and
+  // status-summary pills are disabled rather than hidden so it's still visible/obvious why
+  // nothing else shows up.
+  const statusParam = session.isOnlineOrderStaff ? ONLINE_ORDER_STAFF_STATUS_SCOPE.join(', ') : (urlParams.get('status') || '');
+
   if (statusParam) {
     document.getElementById('statusFilterInput').value = statusParam;
+  }
+  if (session.isOnlineOrderStaff) {
+    hidePriceColumns = true;
+    document.getElementById('deliveryFeeHeader').classList.add('hidden');
+    const statusInput = document.getElementById('statusFilterInput');
+    statusInput.disabled = true;
+    statusInput.title = 'Your account only shows Confirmed, Printed, and To Ship orders.';
+    document.getElementById('statusSummaryBar').classList.add('hidden');
   }
   updateStatusPillActiveState();
 
@@ -543,8 +569,10 @@ function wireOrderFilters() {
 
   // The status summary bar/pills only ever count non-walk-in orders (see
   // admin_get_online_order_status_summary) - hide it entirely rather than show misleading
-  // counts when viewing a walk-in-scoped deep link.
-  const showStatusSummary = currentScope !== 'walkin';
+  // counts when viewing a walk-in-scoped deep link. Stays hidden for Online Order Staff
+  // regardless (already hidden above) - a summary across every status isn't useful when this
+  // account can only ever see Printed orders anyway.
+  const showStatusSummary = currentScope !== 'walkin' && !session.isOnlineOrderStaff;
   document.getElementById('statusSummaryBar').classList.toggle('hidden', !showStatusSummary);
 
   const loaders = [loadOrders('', statusParam)];
