@@ -1197,6 +1197,13 @@ INSERT INTO CardProcessingFeeLog (
                 // toggled, so this is what makes that reach Stock Counts' own local filter.
                 try { await OnlinefunctionsEvents.SyncCategoryProductionFlagsFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
 
+                // Also Supabase -> desktop - Glass/Stand-Tubular/Sticker pricing, centralized so the
+                // Web Portal's Pricing Setup page is the one place staff edit these now instead of
+                // separately here and on the two web calculators (see
+                // supabase_pricing_setup_tables.sql). Being offline just means this tick no-ops and
+                // the terminal keeps quoting whatever it last successfully synced - never blocks a sale.
+                try { await OnlinefunctionsEvents.SyncPricingFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
                 // Also Supabase -> desktop, but two-way (last-writer-wins) rather than single-owner
                 // like Categories above - the Portal's Transfer Order Ship flow tags serials
                 // IN_TRANSIT directly in Supabase (see staff_claim_serials_for_transfer_shipment),

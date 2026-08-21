@@ -870,12 +870,19 @@ namespace AquariumPOS
             // Step 5: wastage factor
             decimal adjustedFt = subtotalFt * 1.22m;
 
-            // Step 6: retail rate lookup
+            // Step 6: retail rate lookup - checks the Supabase-synced cache first (see
+            // OnlinefunctionsEvents.PricingCache / SyncTubularPricingFromSupabaseAsync, itself
+            // pre-populated with these same hardcoded values so a terminal that's never
+            // successfully synced still prices correctly), falling back to the local
+            // TubularRetailRates dictionary below if the cache is somehow missing the key.
             decimal ratePerFt = 0m;
             try
             {
                 var key = tubular ?? "1x1";
-                if (!TubularRetailRates.TryGetValue(key, out ratePerFt)) ratePerFt = TubularRetailRates["1x1"];
+                if (!OnlinefunctionsEvents.PricingCache.TubularRatesPerFt.TryGetValue(key, out ratePerFt))
+                {
+                    if (!TubularRetailRates.TryGetValue(key, out ratePerFt)) ratePerFt = TubularRetailRates["1x1"];
+                }
             }
             catch { ratePerFt = 80.0m; }
 

@@ -11,6 +11,12 @@
 // line items load. Uploads go through a signed-upload-URL minted server-side (staff
 // credentials re-verified first) rather than a direct anon-key write - see that SQL file's
 // header comment for the full flow.
+//
+// STATUS PHOTOS: a separate, order-level (not per-line) gallery of photos captured on the
+// "To Ship" button on the Online Orders list page (js/onlineOrders.js) - see
+// public."OnlineOrderStatusPhotos" / supabase_online_order_status_photo.sql. Only kept for
+// 30 days (cron_cleanup_old_online_order_status_photos), so an empty gallery here doesn't
+// necessarily mean no photo was ever sent for this order.
 let currentSession = null;
 let orderId = null;
 let currentLines = [];
@@ -236,6 +242,64 @@ function wireAttachmentControls() {
   });
 }
 
+// "Photos Sent With Status Updates" gallery - photos captured on the "To Ship" button
+// (js/onlineOrders.js) via public."OnlineOrderStatusPhotos" (see
+// supabase_online_order_status_photo.sql). Order-level, not per-line, and unrelated to the
+// per-line attachments above - hidden entirely when this order has none.
+function statusPhotoCardHtml(p) {
+  const takenAt = p.uploaded_at_utc ? new Date(p.uploaded_at_utc).toLocaleString() : '';
+  const sentLabel = p.sent_to_customer ? 'Sent to customer' : 'Not sent to customer';
+  const sentClass = p.sent_to_customer ? '' : 'error-text';
+  const title = escapeHtml(p.send_error || '');
+  return `
+    <div class="status-photo-card" data-photo-id="${p.photo_id}">
+      <a href="${p.public_url}" target="_blank" rel="noopener">
+        <img src="${p.public_url}" class="status-photo-thumb" alt="Status update photo" />
+      </a>
+      <button type="button" class="status-photo-remove-btn" data-photo-id="${p.photo_id}" title="Remove photo">&times;</button>
+      <div class="status-photo-meta">
+        <div>${escapeHtml(p.status || '')} - ${takenAt}</div>
+        <div class="${sentClass}" title="${title}">${sentLabel}</div>
+        <div class="muted">by ${escapeHtml(p.uploaded_by || '')}</div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadStatusPhotos() {
+  const { data, error } = await supabaseClient.rpc('admin_list_online_order_status_photos', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+
+  const section = document.getElementById('statusPhotosSection');
+  if (error || !data || data.length === 0) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  document.getElementById('statusPhotosList').innerHTML = data.map(statusPhotoCardHtml).join('');
+  section.classList.remove('hidden');
+}
+
+async function handleRemoveStatusPhoto(photoId) {
+  if (!confirm('Remove this photo? This cannot be undone.')) return;
+
+  const { error } = await supabaseClient.rpc('admin_delete_online_order_status_photo', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_photo_id: photoId
+  });
+
+  if (error) {
+    alert(`Could not remove photo: ${error.message}`);
+    return;
+  }
+
+  await loadStatusPhotos();
+}
+
 async function loadOrderDetail() {
   const { data, error } = await supabaseClient.rpc('admin_get_online_order_detail_live', {
     p_admin_username: currentSession.username,
@@ -255,7 +319,7 @@ async function loadOrderDetail() {
   currentLines = (data || []).filter((l) => l.line_id);
   renderOrderSummary(data);
   renderGlassFlag(currentLines);
-  await loadAttachments();
+  await Promise.all([loadAttachments(), loadStatusPhotos()]);
 }
 
 (async function init() {
@@ -283,5 +347,9 @@ async function loadOrderDetail() {
   }
 
   wireAttachmentControls();
+  document.getElementById('statusPhotosList').addEventListener('click', (event) => {
+    const removeBtn = event.target.closest('.status-photo-remove-btn');
+    if (removeBtn) handleRemoveStatusPhoto(removeBtn.dataset.photoId);
+  });
   await loadOrderDetail();
 })();

@@ -101,6 +101,40 @@ async function saveCompanyInfo(overrides) {
   await loadCompanyInfo();
 }
 
+// Promotion banner shown on Order Now - public."PromotionSettings" (see
+// supabase_promotion_setting.sql), same single-row shape/access model as CompanyInfo above.
+async function loadPromotionSetting() {
+  const { data, error } = await supabaseClient
+    .from('PromotionSettings')
+    .select('*')
+    .eq('"Id"', 1)
+    .limit(1);
+
+  const info = !error && data && data[0];
+  document.getElementById('promoTextInput').value = (info && info['PromoText']) || '';
+  document.getElementById('promoActiveInput').checked = !!(info && info['IsActive']);
+}
+
+async function savePromotionSetting() {
+  const errorEl = document.getElementById('promoError');
+  errorEl.classList.add('hidden');
+
+  const { error } = await supabaseClient.rpc('admin_upsert_promotion_setting', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_promo_text: document.getElementById('promoTextInput').value.trim() || null,
+    p_is_active: document.getElementById('promoActiveInput').checked
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  await loadPromotionSetting();
+}
+
 // Shared upload flow for both the logo and the Login page background image - only the RPC name,
 // which CompanyInfo field the result overrides, and which UI elements to update differ.
 async function uploadCompanyAsset({ fileInputId, uploadBtnId, uploadBtnLabel, rpcName, overrideKey, assetLabel }) {
@@ -800,6 +834,7 @@ async function deleteSetting(key) {
   document.getElementById('uploadLogoBtn').addEventListener('click', handleUploadLogo);
   document.getElementById('uploadBackgroundBtn').addEventListener('click', handleUploadBackground);
   document.getElementById('saveCompanyInfoBtn').addEventListener('click', () => saveCompanyInfo());
+  document.getElementById('savePromoBtn').addEventListener('click', savePromotionSetting);
   document.getElementById('saveNoSeriesBtn').addEventListener('click', saveNoSeries);
   document.getElementById('cancelNoSeriesEditBtn').addEventListener('click', resetNoSeriesForm);
   document.getElementById('savePancakeApiKeyBtn').addEventListener('click', savePancakeApiKey);
@@ -810,6 +845,7 @@ async function deleteSetting(key) {
   populateNoSeriesCodeOptions();
 
   await loadCompanyInfo();
+  await loadPromotionSetting();
   await loadNoSeries();
   await loadPancakeApiKeyStatus();
   await loadPancakePublicApiKeyStatus();

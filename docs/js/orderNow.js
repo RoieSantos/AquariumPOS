@@ -23,8 +23,17 @@ const CATEGORY_ICONS = {
 const DEFAULT_CATEGORY_ICON = '🛒';
 
 let cart = loadCart();
-let currentCategoryCode = null;
+// The real underlying Categories.Code value(s) behind the currently-open tile - normally just one,
+// but a tile can represent more than one when loadCategories() merged duplicate-cased categories
+// (e.g. "Aquarium"/"AQUARIUM") together, see loadCategories/loadItems below.
+let currentCategoryCodes = [];
 let currentCategoryLabel = null;
+// The currently-loaded category's items, kept around so the details modal (openItemDetail) can
+// look up a clicked item's full description/stock/images by code without re-fetching.
+let currentCategoryItems = [];
+// Which item the details modal is currently showing - null when closed. Its own Add to Order
+// button reads quantity from the modal's own qty-stepper, not the card's.
+let currentDetailItem = null;
 let currentStep = 1;
 let selectedFulfillment = 'Pickup';
 let selectedLocation = 'Amaya';
@@ -35,15 +44,28 @@ let glassBeforeRimless = null;
 // Set by the confirm prompt shown when leaving the Options step - Filtration no longer has its
 // own checkbox on that step, so this is the single source of truth for whether it's enabled.
 let filtrationEnabled = false;
-// Which Customize sub-flow (customize-choice: Aquarium/Stand/Filtration) built the line currently
-// staged for the shared "custom-checkout" (Order Summary) screen - lets that one screen serve all
-// three instead of needing a separate checkout page per sub-flow.
+// Which Customize tab (Aquarium/Stand/Filtration/Stickers) built the line currently staged for
+// the shared "custom-checkout" (Order Summary) screen - lets that one screen
+// serve all four instead of needing a separate checkout page per sub-flow.
 let customBuilderType = 'aquarium';
-// The Stand/Filtration sub-flows are reachable both directly from the customize-choice picker and
-// from the post-Aquarium-checkout "add more products?" prompt - these track which one so each
-// step's own Back button returns to the right place instead of always assuming direct entry.
-let standBackTarget = 'customize-choice';
-let filtrationStandaloneBackTarget = 'customize-choice';
+// The Stand/Filtration/Stickers sub-flows are reachable both from the Customize tab bar and from
+// the post-Aquarium-checkout "add more products?" prompt - these track which one so each tab's own
+// Back button returns to the right place instead of always assuming direct entry. (Stickers is
+// currently only reachable directly - there's no "add more" prompt for it - but this still tracks
+// it for consistency with the other two.)
+let standBackTarget = 'customize-tabs';
+let filtrationStandaloneBackTarget = 'customize-tabs';
+let stickerStandaloneBackTarget = 'customize-tabs';
+// Which Customize tab (aquarium/stand/filtration/stickers) is currently showing - see
+// switchCustomizeTab/applyCustomizeTabVisibility below. Independent of currentStep/goToStep on
+// purpose: switching tabs, or navigating away to custom-checkout and back, must never reset
+// whatever the customer already typed into the OTHER tabs (per "so they can see the stand /
+// aquarium / filtration only in one page" - each tab's fields just stay in the DOM, hidden).
+let activeCustomizeTab = 'aquarium';
+// Once the customer has been asked (via the Stand tab's own footprint prompt below) whether a
+// stand they're building is for their Customize > Aquarium tab, don't ask again this session -
+// avoids re-prompting every time they hop between tabs.
+let standAquariumPromptAsked = false;
 // Step 4 (customer details) is shared by the Standard and Customize flows, so its Back button
 // needs to know which step led there - set right before navigating into step 4.
 let detailsBackTarget = 3;
@@ -245,11 +267,36 @@ function updateProgress() {
   });
 }
 
+// Per-tab visibility for the Customize tab bar (docs/order-now.html's data-step="customize-tabs"
+// section) - the four builder sections (data-step="custom-dims" etc.) carry class
+// "customize-tab-panel" and are excluded from goToStep's normal one-section-at-a-time toggle
+// below, so they can each independently stay in the DOM (and keep their entered values) while
+// only the currently-selected one is actually visible.
+function applyCustomizeTabVisibility() {
+  const showingTabs = currentStep === 'customize-tabs';
+  document.querySelectorAll('.customize-tab-panel').forEach((el) => {
+    el.classList.toggle('active', showingTabs && el.dataset.tabPanel === activeCustomizeTab);
+  });
+  document.querySelectorAll('.customize-tab-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tab === activeCustomizeTab);
+  });
+}
+
+function switchCustomizeTab(tab) {
+  activeCustomizeTab = tab;
+  applyCustomizeTabVisibility();
+  if (tab === 'stand') {
+    updateStandAdviseFromAquariumVisibility();
+  }
+}
+
 function goToStep(step) {
   currentStep = step;
   document.querySelectorAll('.wizard-step').forEach((el) => {
+    if (el.classList.contains('customize-tab-panel')) return;
     el.classList.toggle('active', el.dataset.step === String(step));
   });
+  applyCustomizeTabVisibility();
   updateProgress();
   updateCartBar();
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -271,43 +318,66 @@ async function loadCategories() {
     return;
   }
 
-  // Standard flow only offers pre-built Sets right now - per direct request, every other
-  // category (Aquarium/Stand/Filtration/Sump/Fish sold separately) is hidden here even though
+  // Standard flow offers pre-built Sets, Aquariums, and Stands - per direct request, every other
+  // category (Filtration/Sump/Fish sold separately) stays hidden here even though
   // public_list_order_categories() still returns all of them, so the Customize flow (which has
-  // its own separate step-by-step Aquarium/Filtration builder, unaffected by this) keeps working.
-  const setCategories = data.filter((cat) => String(cat.code).toUpperCase() === 'SET');
+  // its own separate step-by-step Aquarium/Stand builder, unaffected by this) keeps working.
+  const STANDARD_FLOW_CATEGORY_CODES = ['SET', 'AQUARIUM', 'STAND'];
+  const standardCategoriesRaw = data.filter((cat) => STANDARD_FLOW_CATEGORY_CODES.includes(String(cat.code).toUpperCase()));
 
-  if (!setCategories || setCategories.length === 0) {
+  if (!standardCategoriesRaw || standardCategoriesRaw.length === 0) {
     errorMsg.textContent = 'No categories are available to order right now. Please check back later.';
     errorMsg.classList.remove('hidden');
     return;
   }
 
-  grid.innerHTML = setCategories
+  // Merge categories that only differ by code casing (e.g. "Aquarium" vs "AQUARIUM" - same
+  // category, just inconsistent casing in the source data) into a single tile here on Order Now
+  // only - Category Setup/the desktop app still show them as separate rows, nothing in the
+  // database changes. Items get pooled from every underlying code once the merged tile is opened
+  // (see loadItems), and each item keeps its own real code when added to cart (see the
+  // data-action="add"/itemDetailAddBtn handlers below) so order submission is unaffected.
+  const mergedByKey = new Map();
+  standardCategoriesRaw.forEach((cat) => {
+    const key = String(cat.code).toUpperCase();
+    const existing = mergedByKey.get(key);
+    if (!existing) {
+      mergedByKey.set(key, { key, codes: [cat.code], description: cat.description });
+    } else {
+      existing.codes.push(cat.code);
+      // Prefer a normally-cased label ("Aquarium") over an ALL CAPS duplicate for display.
+      if (existing.description === existing.description.toUpperCase() && cat.description !== String(cat.description).toUpperCase()) {
+        existing.description = cat.description;
+      }
+    }
+  });
+  const standardCategories = Array.from(mergedByKey.values());
+
+  grid.innerHTML = standardCategories
     .map((cat) => `
-      <div class="category-card" data-code="${cat.code}" data-label="${cat.description}">
-        <span class="category-icon">${CATEGORY_ICONS[String(cat.code).toUpperCase()] || DEFAULT_CATEGORY_ICON}</span>
+      <div class="category-card" data-codes="${cat.codes.join('|')}" data-label="${cat.description}">
+        <span class="category-icon">${CATEGORY_ICONS[cat.key] || DEFAULT_CATEGORY_ICON}</span>
         ${cat.description}
       </div>
     `)
     .join('');
 
   grid.querySelectorAll('.category-card').forEach((card) => {
-    card.addEventListener('click', () => openCategory(card.dataset.code, card.dataset.label));
+    card.addEventListener('click', () => openCategory(card.dataset.codes.split('|'), card.dataset.label));
   });
 }
 
 // ---- Step 2: items within a category ----
 
-async function openCategory(code, label) {
-  currentCategoryCode = code;
+async function openCategory(codes, label) {
+  currentCategoryCodes = Array.isArray(codes) ? codes : [codes];
   currentCategoryLabel = label;
   document.getElementById('itemStepTitle').textContent = label;
   goToStep(2);
-  await loadItems(code);
+  await loadItems(currentCategoryCodes);
 }
 
-async function loadItems(code) {
+async function loadItems(codes) {
   const loadingMsg = document.getElementById('itemLoadingMsg');
   const errorMsg = document.getElementById('itemErrorMsg');
   const emptyMsg = document.getElementById('itemEmptyMsg');
@@ -318,19 +388,34 @@ async function loadItems(code) {
   emptyMsg.classList.add('hidden');
   grid.innerHTML = '';
 
-  const { data, error } = await supabaseClient.rpc('public_list_order_items', { p_category_code: code });
+  const codeList = Array.isArray(codes) ? codes : [codes];
+  const results = await Promise.all(
+    codeList.map((code) => supabaseClient.rpc('public_list_order_items', { p_category_code: code }))
+  );
   loadingMsg.classList.add('hidden');
 
-  if (error) {
-    errorMsg.textContent = 'Could not load items: ' + error.message;
+  const failed = results.find((r) => r.error);
+  if (failed) {
+    errorMsg.textContent = 'Could not load items: ' + failed.error.message;
     errorMsg.classList.remove('hidden');
     return;
   }
 
-  if (!data || data.length === 0) {
+  // Tag each item with the real underlying category code it came from, so adding it to cart still
+  // records that exact code (not a merged placeholder) even when this tile pooled items from more
+  // than one duplicate-cased category - see loadCategories.
+  const data = [];
+  results.forEach((result, i) => {
+    (result.data || []).forEach((item) => data.push(Object.assign({}, item, { _sourceCategoryCode: codeList[i] })));
+  });
+
+  if (data.length === 0) {
+    currentCategoryItems = [];
     emptyMsg.classList.remove('hidden');
     return;
   }
+
+  currentCategoryItems = data;
 
   grid.innerHTML = data
     .map((item) => {
@@ -346,10 +431,12 @@ async function loadItems(code) {
 
       return `
         <div class="item-card" data-code="${item.code}" data-name="${item.name}" data-price="${item.price}">
-          ${imgHtml}
-          <div class="item-card-name">${item.name}</div>
-          <div class="item-card-price">${formatMoney(item.price)}</div>
-          ${stockHtml}
+          <div class="item-card-tap-area" data-action="details">
+            ${imgHtml}
+            <div class="item-card-name">${item.name}</div>
+            <div class="item-card-price">${formatMoney(item.price)}</div>
+            ${stockHtml}
+          </div>
           <div class="qty-stepper">
             <button type="button" data-action="dec">-</button>
             <input type="number" min="1" value="1" data-qty />
@@ -370,8 +457,9 @@ async function loadItems(code) {
       qtyInput.value = Number(qtyInput.value) + 1;
     });
     card.querySelector('[data-action="add"]').addEventListener('click', () => {
+      const sourceItem = currentCategoryItems.find((i) => String(i.code) === card.dataset.code);
       addToCart({
-        categoryCode: currentCategoryCode,
+        categoryCode: (sourceItem && sourceItem._sourceCategoryCode) || currentCategoryCodes[0],
         itemCode: card.dataset.code,
         itemName: card.dataset.name,
         price: Number(card.dataset.price),
@@ -380,7 +468,46 @@ async function loadItems(code) {
       qtyInput.value = 1;
       flashAdded(card);
     });
+    // Tapping the image/name/price area opens the full details modal (description of what's
+    // included, bigger photo) - looked up from currentCategoryItems by code rather than stuffed
+    // into data-* attributes, since a Set's description can be long/contain characters that don't
+    // survive an HTML attribute round-trip cleanly.
+    card.querySelector('[data-action="details"]').addEventListener('click', () => {
+      const item = currentCategoryItems.find((i) => String(i.code) === card.dataset.code);
+      if (item) openItemDetail(item);
+    });
   });
+}
+
+// ---- Item details modal (steps 2's item-grid) ----
+
+function openItemDetail(item) {
+  currentDetailItem = item;
+  const imgUrl = firstImageUrl(item.images);
+  document.getElementById('itemDetailImageWrap').innerHTML = imgUrl
+    ? `<img src="${imgUrl}" alt="${item.name}" onerror="this.outerHTML='<div class=&quot;item-card-img-placeholder&quot;>${DEFAULT_CATEGORY_ICON}</div>'" />`
+    : `<div class="item-card-img-placeholder">${DEFAULT_CATEGORY_ICON}</div>`;
+  document.getElementById('itemDetailName').textContent = item.name;
+  document.getElementById('itemDetailPrice').textContent = formatMoney(item.price);
+
+  const stockEl = document.getElementById('itemDetailStock');
+  if (item.quantity_in_stock === null || item.quantity_in_stock === undefined) {
+    stockEl.textContent = '';
+  } else {
+    stockEl.textContent = item.quantity_in_stock > 0 ? 'In stock' : 'Currently out of stock - request anyway';
+  }
+
+  const description = (item.description || '').trim();
+  document.getElementById('itemDetailDescriptionLabel').classList.toggle('hidden', !description);
+  document.getElementById('itemDetailDescription').textContent = description || 'No additional details for this item.';
+
+  document.getElementById('itemDetailQtyInput').value = 1;
+  document.getElementById('itemDetailModal').classList.remove('hidden');
+}
+
+function closeItemDetail() {
+  currentDetailItem = null;
+  document.getElementById('itemDetailModal').classList.add('hidden');
 }
 
 function flashAdded(card) {
@@ -475,20 +602,36 @@ function showConfirmModal(message, confirmLabel, cancelLabel) {
   });
 }
 
-// Glass price-per-sqft rows (same source WebAquariumCalculator/index.html uses) - loaded once
-// and reused for every price recalculation. custom-aquarium-calculator.js already has built-in
-// fallback prices if this fetch fails, so a missing/broken file degrades gracefully rather than
-// blocking the estimate entirely.
+// Glass/Tubular/Sticker pricing rows, centralized in Supabase (see
+// supabase_pricing_setup_tables.sql) so a price edited from the portal's Pricing Setup page shows
+// up here, in the staff Portal calculators, and (once the desktop app is updated to read the same
+// tables) Local too - one number per price tier instead of three copies that can drift apart.
+// Loaded once and reused for every price recalculation on this page. custom-aquarium-calculator.js
+// already has built-in hardcoded fallback prices if these fetches fail, so being offline/Supabase
+// being unreachable degrades gracefully rather than blocking the estimate entirely.
 let glassPricingSetupRows = [];
-let glassPricingLoadPromise = null;
+let tubularPricingSetupRows = [];
+let stickerPricingSetupRows = [];
+let pricingSetupLoadPromise = null;
 
 function ensureGlassPricingLoaded() {
-  if (glassPricingLoadPromise) return glassPricingLoadPromise;
-  glassPricingLoadPromise = fetch('WebAquariumCalculator/glass-pricing.json', { cache: 'no-store' })
-    .then((response) => (response.ok ? response.json() : []))
-    .then((rows) => { glassPricingSetupRows = Array.isArray(rows) ? rows : []; })
-    .catch(() => { glassPricingSetupRows = []; });
-  return glassPricingLoadPromise;
+  if (pricingSetupLoadPromise) return pricingSetupLoadPromise;
+  pricingSetupLoadPromise = Promise.all([
+    supabaseClient.rpc('public_get_glass_pricing'),
+    supabaseClient.rpc('public_get_tubular_pricing'),
+    supabaseClient.rpc('public_get_sticker_pricing')
+  ])
+    .then(([glassResult, tubularResult, stickerResult]) => {
+      glassPricingSetupRows = Array.isArray(glassResult.data) ? glassResult.data : [];
+      tubularPricingSetupRows = Array.isArray(tubularResult.data) ? tubularResult.data : [];
+      stickerPricingSetupRows = Array.isArray(stickerResult.data) ? stickerResult.data : [];
+    })
+    .catch(() => {
+      glassPricingSetupRows = [];
+      tubularPricingSetupRows = [];
+      stickerPricingSetupRows = [];
+    });
+  return pricingSetupLoadPromise;
 }
 
 // Builds the payload calculateCustomAquarium() expects, from whatever the customer has filled in
@@ -526,7 +669,9 @@ function buildCustomPayload() {
     stickerBackground: { enabled: false },
     stickerBottom: { enabled: false },
     glassPricingSetupRows: glassPricingSetupRows,
-    glassPricingUom: 'MM'
+    glassPricingUom: 'MM',
+    tubularPricingSetupRows: tubularPricingSetupRows,
+    stickerPricingSetupRows: stickerPricingSetupRows
   };
 }
 
@@ -1084,7 +1229,9 @@ function drawCustomStandOnActiveCanvas(result) {
   const marginLeft = 66;
   const marginRight = 56;
   const marginTop = dims.sumpHolder ? 58 : 34;
-  const marginBottom = 52;
+  // Extra room below the usual Length line, for the second "Built Length (incl. end posts)"
+  // dimension line/chip added underneath it.
+  const marginBottom = 80;
   const availableWidth = Math.max(80, CUSTOM_CANVAS_W - marginLeft - marginRight);
   const availableHeight = Math.max(80, CUSTOM_CANVAS_H - marginTop - marginBottom);
 
@@ -1323,6 +1470,43 @@ function drawCustomStandOnActiveCanvas(result) {
   drawCustomDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
   drawCustomDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
   drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+
+  // Second dimension line below the plain Length line, marking the TRUE built length once the two
+  // end tubular posts are accounted for (dual stand = one post at each end of the Length run) - see
+  // computeStandBuiltLengthInches / the matching "Built Length" row in the summary card. Dashed
+  // tick-downs from each leg corner show exactly how much extra each post adds, so the viewer isn't
+  // left guessing where the extra length comes from.
+  const postPx = tubularThicknessIn * scale;
+  const builtLengthLineY = lengthLineY + 26;
+  const builtLeftX = frontLeft - postPx;
+  const builtRightX = frontLeft + frontWidth + postPx;
+  const builtLengthIn = window.CustomAquariumCalculator.computeStandBuiltLengthInches(lengthIn, dims.tubular);
+
+  ctx.strokeStyle = '#c23b31';
+  ctx.setLineDash([2, 2]);
+  ctx.lineWidth = 1;
+  [frontLeft, frontLeft + frontWidth].forEach((x) => {
+    ctx.beginPath();
+    ctx.moveTo(x, baseY + 3);
+    ctx.lineTo(x, builtLengthLineY);
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = '#c23b31';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(builtLeftX, builtLengthLineY);
+  ctx.lineTo(builtRightX, builtLengthLineY);
+  ctx.stroke();
+  [builtLeftX, builtRightX].forEach((x) => {
+    ctx.beginPath();
+    ctx.moveTo(x, builtLengthLineY - 4);
+    ctx.lineTo(x, builtLengthLineY + 4);
+    ctx.stroke();
+  });
+
+  drawCustomDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + round1(builtLengthIn) + '"');
 }
 
 // Live summary of every Aquarium field picked so far - "declutter" pattern, only listing options
@@ -1531,7 +1715,8 @@ function buildCustomStandPayload() {
     cabinet: document.getElementById('standCabinet').checked,
     sumpHolder: sumpHolder,
     sumpWidth: sumpHolder ? document.getElementById('standSumpWidth').value : 0,
-    footingInches: document.getElementById('standFooting').value
+    footingInches: document.getElementById('standFooting').value,
+    tubularPricingSetupRows: tubularPricingSetupRows
   };
 }
 
@@ -1603,8 +1788,20 @@ function renderCustomStandSummary() {
     : null;
   const gapHtml = gapIn !== null ? `<div><strong>Gap per layer:</strong> ${round1(gapIn)}in</div>` : '';
 
+  // Dual stand = one tubular post at each end of the Length run, so the frame actually built is
+  // longer than the footprint Length by 2x the tubular's own thickness - shown here for the
+  // customer's awareness only, the price estimate below still prices off the entered footprint.
+  let builtLengthHtml = '';
+  if (window.CustomAquariumCalculator && unit !== 'Not specified' && Number(length) > 0) {
+    const lengthInches = window.CustomAquariumCalculator.toInches(length, unit);
+    const builtLengthInches = window.CustomAquariumCalculator.computeStandBuiltLengthInches(lengthInches, selectedStandTubular);
+    const builtLengthDisplay = round1(convertFromInches(builtLengthInches, unit));
+    builtLengthHtml = `<div><strong>Built Length (incl. end posts):</strong> ${builtLengthDisplay} ${unit}</div>`;
+  }
+
   document.getElementById('customStandSummary').innerHTML = `
     <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
+    ${builtLengthHtml}
     <div><strong>Unit of Measure:</strong> ${unit}</div>
     <div><strong>Quantity:</strong> ${qty}</div>
     <div><strong>Layers:</strong> ${layers}</div>
@@ -1631,7 +1828,7 @@ function updateStandFootingNotice() {
 // Live price + tubular-safety notice for the Stand step - mirrors applyCustomDimsGlassSafety's
 // "auto-adjust and explain why" pattern, just driven by calculateStandaloneStand's own notice
 // (it already runs enforceStandTubularSafety internally) instead of a separate check.
-function updateCustomStandPriceEstimate() {
+async function updateCustomStandPriceEstimate() {
   const box = document.getElementById('customPriceEstimateStand');
   const notice = document.getElementById('customStandNotice');
   renderCustomStandSummary();
@@ -1646,6 +1843,7 @@ function updateCustomStandPriceEstimate() {
   }
 
   updateStandTubularAvailability();
+  await ensureGlassPricingLoaded();
   const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
   drawCustomStand(result);
   if (!result.ok) {
@@ -1744,6 +1942,54 @@ function prefillStandFromAquarium() {
   updateCustomStandPriceEstimate();
 }
 
+// Shared by maybeOfferStandPrefillFromAquarium (the one-time popup) and
+// updateStandAdviseFromAquariumVisibility (the always-available link) - both need to know whether
+// the Aquarium tab actually has a real footprint to offer.
+function isAquariumTabFilled() {
+  const length = document.getElementById('customLength').value;
+  const width = document.getElementById('customWidth').value;
+  const height = document.getElementById('customHeight').value;
+  const unit = document.getElementById('customUnit').value;
+  return Number(length) > 0 && Number(width) > 0 && Number(height) > 0 && Boolean(unit);
+}
+
+// Reached when the customer clicks straight into the Stand tab (as opposed to the post-checkout
+// "Add Stand" prompt, which already knows the answer is yes). If the Aquarium tab has real
+// dimensions filled in and the Stand tab hasn't been touched yet, ask whether this stand is for
+// that same aquarium - if so, carry the footprint over the same way prefillStandFromAquarium()
+// does for the post-checkout flow. Only asks once per session (see standAquariumPromptAsked) so
+// tab-hopping doesn't repeatedly interrupt the customer.
+async function maybeOfferStandPrefillFromAquarium() {
+  if (standAquariumPromptAsked) return;
+  if (!isAquariumTabFilled()) return;
+
+  const standUntouched = !(Number(document.getElementById('standLength').value) > 0);
+  if (!standUntouched) return;
+
+  const length = document.getElementById('customLength').value;
+  const width = document.getElementById('customWidth').value;
+  const height = document.getElementById('customHeight').value;
+  const unit = document.getElementById('customUnit').value;
+
+  standAquariumPromptAsked = true;
+  const wantsPrefill = await showConfirmModal(
+    `Are you getting a stand for the aquarium you're customizing (${length} x ${width} x ${height} ${unit})?`,
+    'Yes, Use Its Footprint',
+    'No, I\'ll Enter My Own'
+  );
+  if (wantsPrefill) {
+    prefillStandFromAquarium();
+  }
+}
+
+// Always-available "Advise stand dimension base on aquarium" link shown above the Stand tab's
+// Dimensions fields whenever the Aquarium tab has a real footprint filled in - unlike the one-time
+// popup above, the customer can click this anytime (e.g. after editing the aquarium's size, or
+// after having said "No" to the popup) to pull the footprint over.
+function updateStandAdviseFromAquariumVisibility() {
+  document.getElementById('standAdviseFromAquariumRow').classList.toggle('hidden', !isAquariumTabFilled());
+}
+
 // ---- Customize > Filtration sub-flow (standalone, no aquarium involved) ----
 
 function standaloneFiltrationQty() {
@@ -1764,7 +2010,8 @@ function buildStandaloneFiltrationPayload() {
     filterMedias: document.getElementById('standaloneSumpFilterMedias').checked,
     allumTopCover: document.getElementById('standaloneSumpAllumTopCover').checked,
     glassPricingSetupRows: glassPricingSetupRows,
-    glassPricingUom: 'MM'
+    glassPricingUom: 'MM',
+    stickerPricingSetupRows: stickerPricingSetupRows
   };
 }
 
@@ -1845,6 +2092,126 @@ function resetStandaloneFiltrationBuilder() {
   awarenessNote.classList.add('hidden');
 }
 
+// Standalone Custom Accessories/Stickers sub-flow (own tab in the Customize tab bar, no aquarium
+// involved) - mirrors ShowCustomStickersDialog in MainForm.cs (the desktop POS app's "CUSTOM
+// STICKERS" action button), via the shared window.CustomAquariumCalculator.calculateStandaloneSticker
+// (custom-aquarium-calculator.js) so this quotes identically to both the desktop app and
+// docs/sticker-calculator.html.
+function standaloneStickerQty() {
+  return Math.max(1, Math.round(Number(document.getElementById('standaloneStickerQty').value) || 1));
+}
+
+function buildStandaloneStickerPayload() {
+  return {
+    length: document.getElementById('standaloneStickerLength').value,
+    width: document.getElementById('standaloneStickerWidth').value,
+    unit: document.getElementById('standaloneStickerUnit').value,
+    type: document.getElementById('standaloneStickerType').value,
+    thickness: document.getElementById('standaloneStickerThickness').value,
+    repair: document.getElementById('standaloneStickerRepair').checked,
+    stickerPricingSetupRows: stickerPricingSetupRows,
+    glassPricingSetupRows: glassPricingSetupRows,
+    glassPricingUom: 'MM'
+  };
+}
+
+async function updateStandaloneStickerPriceEstimate() {
+  const box = document.getElementById('customPriceEstimateStandaloneSticker');
+
+  if (!document.getElementById('standaloneStickerUnit').value) {
+    box.textContent = 'Select a unit of measure to see a price estimate.';
+    return;
+  }
+
+  await ensureGlassPricingLoaded();
+
+  const result = window.CustomAquariumCalculator.calculateStandaloneSticker(buildStandaloneStickerPayload());
+  if (!result.ok) {
+    box.textContent = result.error || 'Enter valid dimensions to see a price estimate.';
+    return;
+  }
+
+  box.innerHTML = `Estimated Price: ${formatMoney(result.totalPrice)}`;
+}
+
+function buildStandaloneStickerSpecText() {
+  const type = document.getElementById('standaloneStickerType').value;
+  const thickness = document.getElementById('standaloneStickerThickness').value;
+  const length = document.getElementById('standaloneStickerLength').value;
+  const width = document.getElementById('standaloneStickerWidth').value;
+  const unit = document.getElementById('standaloneStickerUnit').value;
+  const hasThickness = type === 'Rubber Matting' || type === 'Glass';
+  const isRepair = type === 'Glass' && document.getElementById('standaloneStickerRepair').checked;
+
+  return `${type}${isRepair ? ' REPAIR' : ''}${hasThickness ? ` (${thickness})` : ''} ${length}${unit} x ${width}${unit}`;
+}
+
+function buildStandaloneStickerCartLine(result) {
+  return {
+    categoryCode: 'CUSTOM-STICKER',
+    itemCode: null,
+    itemName: `Custom Accessory/Sticker - ${buildStandaloneStickerSpecText()}`,
+    price: result && result.ok ? result.totalPrice : 0,
+    quantity: standaloneStickerQty()
+  };
+}
+
+// One reference photo per Type, per "add an image of the custom accessories so the user will have
+// a reference" - files don't exist yet (no real product photos to source), so
+// updateStandaloneStickerTypeImage below hides the <img> via onerror until someone drops a real
+// file at each of these paths into docs/icons/. Filenames are deliberately plain/predictable so
+// adding a photo later never needs a code change - just drop the file in with this exact name.
+const standaloneStickerTypeImageMap = {
+  'Tiles Sticker': 'icons/sticker-tiles.jpg',
+  'Plain Sticker': 'icons/sticker-plain.jpg',
+  'Rubber Matting': 'icons/sticker-rubber-matting.jpg',
+  'Glass': 'icons/sticker-glass.jpg',
+  'Acrylic': 'icons/sticker-acrylic.jpg',
+  'Allum TopCover': 'icons/sticker-allum-topcover.jpg'
+};
+
+function updateStandaloneStickerTypeImage() {
+  const type = document.getElementById('standaloneStickerType').value;
+  const img = document.getElementById('standaloneStickerTypeImage');
+  const path = standaloneStickerTypeImageMap[type];
+
+  img.classList.add('hidden');
+  if (!path) return;
+
+  img.onerror = () => img.classList.add('hidden');
+  img.onload = () => img.classList.remove('hidden');
+  img.alt = `${type} reference photo`;
+  img.src = path;
+}
+
+function setStandaloneStickerVisibilityState() {
+  const type = document.getElementById('standaloneStickerType').value;
+  const hasThickness = type === 'Rubber Matting' || type === 'Glass';
+  document.getElementById('standaloneStickerThicknessWrap').classList.toggle('hidden', !hasThickness);
+
+  const showRepair = type === 'Glass';
+  document.getElementById('standaloneStickerRepairWrap').classList.toggle('hidden', !showRepair);
+  if (!showRepair) document.getElementById('standaloneStickerRepair').checked = false;
+
+  updateStandaloneStickerTypeImage();
+}
+
+function resetStandaloneStickerBuilder() {
+  document.getElementById('standaloneStickerQty').value = '1';
+  document.getElementById('standaloneStickerUnit').value = '';
+  document.getElementById('standaloneStickerType').value = 'Tiles Sticker';
+  document.getElementById('standaloneStickerThickness').value = '6mm';
+  document.getElementById('standaloneStickerLength').value = '24';
+  document.getElementById('standaloneStickerWidth').value = '12';
+  document.getElementById('standaloneStickerRepair').checked = false;
+  setStandaloneStickerVisibilityState();
+
+  const errorMsg = document.getElementById('customStandaloneStickerErrorMsg');
+  errorMsg.textContent = '';
+  errorMsg.classList.add('hidden');
+  document.getElementById('customPriceEstimateStandaloneSticker').textContent = 'Enter your sticker details to see a price estimate.';
+}
+
 // Reached from the post-Aquarium-checkout "Add Filtration" prompt - a sump's dimensions are
 // usually smaller than (and independent of) the tank it filters, so unlike the Stand prompt this
 // doesn't prefill any fields, just surfaces the aquarium's own measurements as a reference while
@@ -1884,21 +2251,28 @@ async function renderCustomCheckout() {
   let rows; // [{ label, qty, amount }] - more than one entry when Aquarium+Filtration are split
   let titleText;
 
+  // All four Customize builders can now depend on centralized pricing (Aquarium/Filtration on
+  // GlassPricingSetup, Stand on TubularPricingSetup, Stickers on both StickerPricingSetup and
+  // GlassPricingSetup for its "Glass" type) - one shared await up front instead of repeating it
+  // per branch below.
+  await ensureGlassPricingLoaded();
+
   if (customBuilderType === 'stand') {
-    // No glass-pricing lookup involved in Stand pricing (tubular rate table only), unlike the
-    // other two branches below.
     result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
     const qty = customStandQty();
     rows = [{ label: `Custom Stand - ${buildCustomStandSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
     titleText = 'CUSTOM STAND ORDER SUMMARY';
   } else if (customBuilderType === 'filtration') {
-    await ensureGlassPricingLoaded();
     result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
     const qty = standaloneFiltrationQty();
     rows = [{ label: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
     titleText = 'CUSTOM FILTRATION ORDER SUMMARY';
+  } else if (customBuilderType === 'stickers') {
+    result = window.CustomAquariumCalculator.calculateStandaloneSticker(buildStandaloneStickerPayload());
+    const qty = standaloneStickerQty();
+    rows = [{ label: `Custom Accessory/Sticker - ${buildStandaloneStickerSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
+    titleText = 'CUSTOM ACCESSORIES/STICKERS ORDER SUMMARY';
   } else {
-    await ensureGlassPricingLoaded();
     result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
     const qty = customAquariumQty();
     if (result.ok && filtrationEnabled) {
@@ -2228,22 +2602,63 @@ async function submitOrder(event) {
   // number) only shows alongside it once the sync actually went through - showing both instead of
   // picking one avoids the confusion of a customer only ever seeing AO-##### when Pancake sync
   // failed/is pending, with no way to tell that's what happened.
+  //
+  // submit_automated_order no longer pushes to Pancake itself (see
+  // supabase_automated_order_async_pancake_sync.sql) - it always comes back with
+  // pancake_sync_status 'Pending' now, so the confirmation screen shows immediately with just the
+  // order number, and pollAutomatedOrderPancakeStatus below fills in the Pancake number a moment
+  // later once the background sync (fired right after, not awaited) actually lands.
   const result = (data && data[0]) || {};
   document.getElementById('confirmationOrderNo').textContent = result.order_no;
 
   const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
   const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
-  if (result.pancake_sync_status === 'Synced' && result.pancake_order_id) {
-    onlineOrderNoBox.textContent = '#' + result.pancake_order_id;
-    onlineOrderNoBox.classList.remove('hidden');
-    onlineOrderNoLabel.classList.remove('hidden');
-  } else {
-    onlineOrderNoBox.classList.add('hidden');
-    onlineOrderNoLabel.classList.add('hidden');
+  onlineOrderNoBox.classList.add('hidden');
+  onlineOrderNoLabel.classList.add('hidden');
+
+  if (result.order_no) {
+    // Deliberately not awaited - this is what keeps order submission fast regardless of Pancake's
+    // own latency. Runs in the background while the customer is already looking at their
+    // confirmation screen; pollAutomatedOrderPancakeStatus below picks up the result once it lands.
+    supabaseClient.rpc('public_sync_automated_order_to_pancake', { p_order_no: result.order_no }).catch(() => {});
+    pollAutomatedOrderPancakeStatus(result.order_no);
   }
+
   cart = [];
   saveCart();
   goToStep(5);
+}
+
+// Briefly polls for the background Pancake sync (kicked off just above) to land, so the
+// confirmation screen can reveal the real Pancake order number without the customer ever having to
+// wait on it up front. 5 tries, 1.5s apart (~7.5s total) - generous for the normal case, and if it
+// genuinely doesn't land in that window the screen just quietly stays as-is; the order itself is
+// already confirmed either way, and the pg_cron safety net still catches it within a minute.
+async function pollAutomatedOrderPancakeStatus(orderNo, attempt) {
+  attempt = attempt || 0;
+  if (attempt >= 5) return;
+
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  // The customer may have already left the confirmation step (e.g. started a new order) - stop
+  // polling rather than surprise them with an unrelated screen update.
+  if (document.getElementById('confirmationOrderNo').textContent !== orderNo) return;
+
+  const { data, error } = await supabaseClient.rpc('public_get_automated_order_status', { p_order_no: orderNo });
+  const status = !error && data && data[0];
+
+  if (status && status.pancake_sync_status === 'Synced' && status.pancake_order_id) {
+    const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
+    const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
+    onlineOrderNoBox.textContent = '#' + status.pancake_order_id;
+    onlineOrderNoBox.classList.remove('hidden');
+    onlineOrderNoLabel.classList.remove('hidden');
+    return;
+  }
+
+  if (status && status.pancake_sync_status === 'Failed') return;
+
+  await pollAutomatedOrderPancakeStatus(orderNo, attempt + 1);
 }
 
 // Puts the whole Customize flow back to its just-loaded defaults - per direct request, opening
@@ -2339,6 +2754,30 @@ async function loadCompanyLogo() {
     const watermark = document.getElementById('watermarkBg');
     if (watermark) watermark.style.backgroundImage = `url(${info['LogoUrl']})`;
   }
+}
+
+// Ongoing promo banner - public.PromotionSettings (see supabase_promotion_setting.sql), edited
+// from General Setup. Public read (RLS grants anon SELECT directly, no RPC needed) since Order Now
+// runs with no login/session at all.
+async function loadPromotionBanner() {
+  const banner = document.getElementById('promoBanner');
+  if (!banner) return;
+
+  const { data, error } = await supabaseClient
+    .from('PromotionSettings')
+    .select('*')
+    .eq('"Id"', 1)
+    .limit(1);
+
+  const info = !error && data && data[0];
+  const promoText = info && info['IsActive'] ? (info['PromoText'] || '').trim() : '';
+  if (!promoText) {
+    banner.classList.add('hidden');
+    return;
+  }
+
+  banner.textContent = promoText;
+  banner.classList.remove('hidden');
 }
 
 // ---- "Estimate Delivery" mode: self-service delivery price estimate, no login/order required.
@@ -2850,6 +3289,7 @@ async function runDeliveryEstimate() {
   captureMessengerPsid();
   prefillCustomerDetailsFromPsid();
   loadCompanyLogo();
+  loadPromotionBanner();
   loadCategories();
   renderCart();
   updateViewCartLink();
@@ -2864,30 +3304,36 @@ async function runDeliveryEstimate() {
   const policyTemplate = document.getElementById('paymentPolicyTemplate');
   document.getElementById('cartPaymentPolicyBox').appendChild(policyTemplate.content.cloneNode(true));
   document.getElementById('checkoutPaymentPolicyBox').appendChild(policyTemplate.content.cloneNode(true));
+
+  // One-time initial reset for all four Customize tabs (price estimate boxes, safety banners,
+  // canvas placeholders) so their derived UI matches the fields' HTML defaults from the very first
+  // paint - previously each ran only once, right when the customer entered that flow from the
+  // customize-choice picker; now all four tabs exist on the page at once (see the "so they can see
+  // the stand / aquarium / filtration only in one page" tab bar below), so there's no later
+  // "entry" moment to hook this into.
+  resetCustomAquariumBuilder();
+  resetCustomStandBuilder();
+  resetStandaloneFiltrationBuilder();
+  resetStandaloneStickerBuilder();
   goToStep(0);
 
   document.getElementById('modeStandardBtn').addEventListener('click', () => goToStep(1));
   document.getElementById('modeCustomizeBtn').addEventListener('click', async () => {
     await showCustomizeLoading();
-    goToStep('customize-choice');
+    goToStep('customize-tabs');
   });
-  document.getElementById('customizeChoiceBackBtn').addEventListener('click', () => goToStep(0));
-  document.getElementById('customizeChoiceAquariumBtn').addEventListener('click', () => {
-    customBuilderType = 'aquarium';
-    resetCustomAquariumBuilder();
-    goToStep('custom-dims');
+  document.getElementById('customizeTabsBackBtn').addEventListener('click', () => goToStep(0));
+  document.querySelectorAll('.customize-tab-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      switchCustomizeTab(btn.dataset.tab);
+      if (btn.dataset.tab === 'stand') {
+        await maybeOfferStandPrefillFromAquarium();
+      }
+    });
   });
-  document.getElementById('customizeChoiceStandBtn').addEventListener('click', () => {
-    customBuilderType = 'stand';
-    standBackTarget = 'customize-choice';
-    resetCustomStandBuilder();
-    goToStep('custom-stand');
-  });
-  document.getElementById('customizeChoiceFiltrationBtn').addEventListener('click', () => {
-    customBuilderType = 'filtration';
-    filtrationStandaloneBackTarget = 'customize-choice';
-    resetStandaloneFiltrationBuilder();
-    goToStep('custom-filtration-standalone');
+  document.getElementById('standAdviseFromAquariumLink').addEventListener('click', (event) => {
+    event.preventDefault();
+    prefillStandFromAquarium();
   });
   document.getElementById('modeDeliveryBtn').addEventListener('click', () => {
     deliveryEstimateReturnStep = 0;
@@ -2964,16 +3410,23 @@ async function runDeliveryEstimate() {
       updateCustomPriceEstimate();
     });
   });
+  // Re-runs the option-specific rules (enforceGlassThicknessRules) here too, not just on the
+  // Options checkboxes' own change handlers below - per direct request: if the customer already
+  // ticked Rimless (or AIO/Low Iron) and then comes back and manually picks a thinner Glass
+  // Thickness (or changes Unit, which changes the gallons the Rimless rule is based on), that
+  // combination needs to be re-validated, not just whatever combination existed at the moment the
+  // checkbox was first ticked. applyCustomDimsGlassSafety() (the general dimension-vs-glass chart)
+  // still runs first, same order as before.
   ['customUnit', 'customGlass'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => {
       applyCustomDimsGlassSafety();
-      updateCustomPriceEstimate();
+      enforceGlassThicknessRules().then(updateCustomPriceEstimate);
     });
   });
 
-  document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep('customize-choice'));
-  document.getElementById('customDimsBackBtnTop').addEventListener('click', () => document.getElementById('customDimsBackBtn').click());
+  document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep('customize-tabs'));
   document.getElementById('customDimsNextBtn').addEventListener('click', async () => {
+    customBuilderType = 'aquarium';
     const errorMsg = document.getElementById('customDimsErrorMsg');
     if (!document.getElementById('customUnit').value) {
       errorMsg.textContent = 'Please select a unit of measure.';
@@ -3063,7 +3516,10 @@ async function runDeliveryEstimate() {
     }
   });
 
-  document.getElementById('customFiltrationBackBtn').addEventListener('click', () => goToStep('custom-dims'));
+  document.getElementById('customFiltrationBackBtn').addEventListener('click', () => {
+    switchCustomizeTab('aquarium');
+    goToStep('customize-tabs');
+  });
   document.getElementById('customFiltrationBackBtnTop').addEventListener('click', () => document.getElementById('customFiltrationBackBtn').click());
   document.getElementById('customFiltrationNextBtn').addEventListener('click', async () => {
     await renderCustomCheckout();
@@ -3097,14 +3553,15 @@ async function runDeliveryEstimate() {
     document.getElementById(id).addEventListener('change', () => updateCustomStandPriceEstimate());
   });
   document.getElementById('customStandBackBtn').addEventListener('click', () => goToStep(standBackTarget));
-  document.getElementById('customStandBackBtnTop').addEventListener('click', () => document.getElementById('customStandBackBtn').click());
   document.getElementById('customStandNextBtn').addEventListener('click', async () => {
+    customBuilderType = 'stand';
     const errorMsg = document.getElementById('customStandErrorMsg');
     if (!document.getElementById('standUnit').value) {
       errorMsg.textContent = 'Please select a unit of measure.';
       errorMsg.classList.remove('hidden');
       return;
     }
+    await ensureGlassPricingLoaded();
     const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
     if (!result.ok) {
       errorMsg.textContent = result.error;
@@ -3132,8 +3589,8 @@ async function runDeliveryEstimate() {
   ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
     .forEach((id) => document.getElementById(id).addEventListener('change', () => updateStandaloneFiltrationPriceEstimate()));
   document.getElementById('customStandaloneFiltrationBackBtn').addEventListener('click', () => goToStep(filtrationStandaloneBackTarget));
-  document.getElementById('customStandaloneFiltrationBackBtnTop').addEventListener('click', () => document.getElementById('customStandaloneFiltrationBackBtn').click());
   document.getElementById('customStandaloneFiltrationNextBtn').addEventListener('click', async () => {
+    customBuilderType = 'filtration';
     const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
     if (!document.getElementById('standaloneFiltrationUnit').value) {
       errorMsg.textContent = 'Please select a unit of measure.';
@@ -3152,21 +3609,63 @@ async function runDeliveryEstimate() {
     goToStep('custom-checkout');
   });
 
-  // Goes back to wherever checkout was actually reached from - branches by which Customize
-  // sub-flow (Aquarium/Stand/Filtration) built the pending line (see customBuilderType). For
-  // Aquarium: Filtration when the customer opted into it, Dimensions/Options directly when they
-  // skipped it (mirrors customDimsNextBtn's own branch).
+  // ---- Standalone Accessories/Stickers sub-flow navigation/wiring ----
+  document.getElementById('standaloneStickerType').addEventListener('change', () => {
+    setStandaloneStickerVisibilityState();
+    updateStandaloneStickerPriceEstimate();
+  });
+  ['standaloneStickerLength', 'standaloneStickerWidth'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => updateStandaloneStickerPriceEstimate());
+  });
+  ['standaloneStickerUnit', 'standaloneStickerThickness', 'standaloneStickerRepair'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', () => updateStandaloneStickerPriceEstimate());
+  });
+  document.getElementById('customStandaloneStickerBackBtn').addEventListener('click', () => goToStep(stickerStandaloneBackTarget));
+  document.getElementById('customStandaloneStickerNextBtn').addEventListener('click', async () => {
+    customBuilderType = 'stickers';
+    const errorMsg = document.getElementById('customStandaloneStickerErrorMsg');
+    if (!document.getElementById('standaloneStickerUnit').value) {
+      errorMsg.textContent = 'Please select a unit of measure.';
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+    await ensureGlassPricingLoaded();
+    const result = window.CustomAquariumCalculator.calculateStandaloneSticker(buildStandaloneStickerPayload());
+    if (!result.ok) {
+      errorMsg.textContent = result.error;
+      errorMsg.classList.remove('hidden');
+      return;
+    }
+    errorMsg.classList.add('hidden');
+    await renderCustomCheckout();
+    goToStep('custom-checkout');
+  });
+
+  // Goes back to wherever checkout was actually reached from - branches by which Customize tab
+  // (Aquarium/Stand/Filtration/Stickers) built the pending line (see customBuilderType). For
+  // Aquarium: the embedded Filtration step when the customer opted into it (still its own real
+  // page, not a tab), the Customize tab bar directly when they skipped it (mirrors
+  // customDimsNextBtn's own branch).
   document.getElementById('customCheckoutBackBtn').addEventListener('click', () => {
     if (customBuilderType === 'stand') {
-      goToStep('custom-stand');
+      switchCustomizeTab('stand');
+      goToStep('customize-tabs');
     } else if (customBuilderType === 'filtration') {
-      goToStep('custom-filtration-standalone');
+      switchCustomizeTab('filtration');
+      goToStep('customize-tabs');
+    } else if (customBuilderType === 'stickers') {
+      switchCustomizeTab('stickers');
+      goToStep('customize-tabs');
+    } else if (filtrationEnabled) {
+      goToStep('custom-filtration');
     } else {
-      goToStep(filtrationEnabled ? 'custom-filtration' : 'custom-dims');
+      switchCustomizeTab('aquarium');
+      goToStep('customize-tabs');
     }
   });
   document.getElementById('customCheckoutBackBtnTop').addEventListener('click', () => document.getElementById('customCheckoutBackBtn').click());
-  document.getElementById('customCheckoutConfirmBtn').addEventListener('click', () => {
+  document.getElementById('customCheckoutConfirmBtn').addEventListener('click', async () => {
+    await ensureGlassPricingLoaded();
     if (customBuilderType === 'stand') {
       const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
       cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-STAND');
@@ -3178,6 +3677,13 @@ async function runDeliveryEstimate() {
       const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
       cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-FILTRATION');
       cart.push(buildStandaloneFiltrationCartLine(result));
+      saveCart();
+      detailsBackTarget = 'custom-checkout';
+      goToStep(4);
+    } else if (customBuilderType === 'stickers') {
+      const result = window.CustomAquariumCalculator.calculateStandaloneSticker(buildStandaloneStickerPayload());
+      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-STICKER');
+      cart.push(buildStandaloneStickerCartLine(result));
       saveCart();
       detailsBackTarget = 'custom-checkout';
       goToStep(4);
@@ -3209,14 +3715,16 @@ async function runDeliveryEstimate() {
     customBuilderType = 'stand';
     standBackTarget = 'custom-add-more';
     prefillStandFromAquarium();
-    goToStep('custom-stand');
+    switchCustomizeTab('stand');
+    goToStep('customize-tabs');
   });
   document.getElementById('addMoreFiltrationBtn').addEventListener('click', () => {
     customBuilderType = 'filtration';
     filtrationStandaloneBackTarget = 'custom-add-more';
     resetStandaloneFiltrationBuilder();
     showFiltrationAquariumAwarenessNote();
-    goToStep('custom-filtration-standalone');
+    switchCustomizeTab('filtration');
+    goToStep('customize-tabs');
   });
 
   document.getElementById('customLowIron').addEventListener('change', (event) => {
@@ -3252,7 +3760,7 @@ async function runDeliveryEstimate() {
       enforceGlassThicknessRules().then(updateCustomPriceEstimate);
     }));
   document.getElementById('viewCartBtn').addEventListener('click', () => { renderCart(); goToStep(3); });
-  document.getElementById('cartAddMoreBtn').addEventListener('click', () => goToStep(currentCategoryCode ? 2 : 1));
+  document.getElementById('cartAddMoreBtn').addEventListener('click', () => goToStep(currentCategoryLabel ? 2 : 1));
   document.getElementById('cartContinueBtn').addEventListener('click', () => {
     detailsBackTarget = 3;
     goToStep(4);
@@ -3280,5 +3788,27 @@ async function runDeliveryEstimate() {
     // mixed case, so Back from Details lands there too, same as cartContinueBtn's own target.
     detailsBackTarget = 3;
     goToStep(4);
+  });
+
+  document.getElementById('itemDetailCloseBtn').addEventListener('click', closeItemDetail);
+  document.getElementById('itemDetailQtyStepper').querySelector('[data-action="dec"]').addEventListener('click', () => {
+    const input = document.getElementById('itemDetailQtyInput');
+    input.value = Math.max(1, Number(input.value) - 1);
+  });
+  document.getElementById('itemDetailQtyStepper').querySelector('[data-action="inc"]').addEventListener('click', () => {
+    const input = document.getElementById('itemDetailQtyInput');
+    input.value = Number(input.value) + 1;
+  });
+  document.getElementById('itemDetailAddBtn').addEventListener('click', () => {
+    if (!currentDetailItem) return;
+    const qty = Math.max(1, Number(document.getElementById('itemDetailQtyInput').value) || 1);
+    addToCart({
+      categoryCode: currentDetailItem._sourceCategoryCode || currentCategoryCodes[0],
+      itemCode: currentDetailItem.code,
+      itemName: currentDetailItem.name,
+      price: Number(currentDetailItem.price),
+      quantity: qty
+    });
+    closeItemDetail();
   });
 })();

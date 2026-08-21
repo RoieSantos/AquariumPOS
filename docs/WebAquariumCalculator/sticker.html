@@ -294,27 +294,23 @@
     <div id="errorBanner" class="status-banner hidden"></div>
   </div>
 
+  <!-- Loaded so Sticker/Glass pricing can be pulled from Supabase's StickerPricingSetup/
+       GlassPricingSetup tables (see supabase_pricing_setup_tables.sql) instead of the hardcoded
+       rates baked into custom-aquarium-calculator.js - a price edited from the portal's Pricing
+       Setup page shows up here without a code change. Read RPCs are anon-granted (just prices, no
+       login needed). -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../js/config.js"></script>
+  <script src="../js/supabaseClient.js"></script>
+  <script src="./custom-aquarium-calculator.js"></script>
   <script>
-    // Mirrors ShowCustomStickersDialog in MainForm.cs (the desktop POS app's "CUSTOM STICKERS"
-    // action button) and its pricing constants in GlobalSettings.cs, so a quote given here matches
-    // what the desktop app would charge for the same inputs - same per-sq-ft rates, same
-    // thickness-based overrides for Rubber Matting/Glass, same Glass Repair 2.5x multiplier, same
-    // round-up-to-nearest-10 final price. Quantity is a web-only addition (the desktop dialog
-    // always adds exactly 1 line to the sale, letting staff adjust quantity afterward there) -
-    // added here for convenience, same as the Custom Stand web calculator's Quantity field.
-    var PRICE_PER_SQFT = {
-      'Tiles Sticker': 90,
-      'Plain Sticker': 70,
-      'Acrylic': 135,
-      'Allum TopCover': 500
-    };
-
-    var RUBBER_PRICE_PER_SQFT = { '3mm': 26, '6mm': 32, '10mm': 45, '12mm': 60 };
-    var RUBBER_BASE_PRICE_PER_SQFT = 85;
-
-    var GLASS_PRICE_PER_SQFT = { '3mm': 70, '6mm': 185, '10mm': 290, '12mm': 330 };
-    var GLASS_BASE_PRICE_PER_SQFT = 120;
-
+    // Pricing logic itself now lives in custom-aquarium-calculator.js's calculateStandaloneSticker
+    // (shared with Order Now's Customize > Accessories/Stickers flow, so both quote identically) -
+    // that function mirrors ShowCustomStickersDialog in MainForm.cs (the desktop POS app's "CUSTOM
+    // STICKERS" action button) and its pricing constants in GlobalSettings.cs. Quantity is a
+    // web-only addition on top of that shared function (the desktop dialog always adds exactly 1
+    // line to the sale, letting staff adjust quantity afterward there) - added here for
+    // convenience, same as the Custom Stand web calculator's Quantity field.
     function byId(id) {
       return document.getElementById(id);
     }
@@ -325,58 +321,60 @@
     var summaryDetails = byId('summaryDetails');
     var errorBanner = byId('errorBanner');
 
-    function convertToFeet(value, unit) {
-      var num = Number(value) || 0;
-      if (unit === 'CM') return num / 30.48;
-      if (unit === 'MM') return num / 304.8;
-      if (unit === 'Ft') return num;
-      return num / 12; // Inches
-    }
+    var stickerPricingSetupRows = [];
+    var glassPricingSetupRows = [];
+    var pricingLoadPromise = null;
 
-    function pricePerSqFtFor(type, thickness) {
-      if (type === 'Rubber Matting') return RUBBER_PRICE_PER_SQFT[thickness] || RUBBER_BASE_PRICE_PER_SQFT;
-      if (type === 'Glass') return GLASS_PRICE_PER_SQFT[thickness] || GLASS_BASE_PRICE_PER_SQFT;
-      return PRICE_PER_SQFT[type] || PRICE_PER_SQFT['Plain Sticker'];
+    function ensurePricingLoaded() {
+      if (pricingLoadPromise) return pricingLoadPromise;
+      pricingLoadPromise = Promise.all([
+        supabaseClient.rpc('public_get_sticker_pricing'),
+        supabaseClient.rpc('public_get_glass_pricing')
+      ])
+        .then(function (results) {
+          stickerPricingSetupRows = Array.isArray(results[0].data) ? results[0].data : [];
+          glassPricingSetupRows = Array.isArray(results[1].data) ? results[1].data : [];
+        })
+        .catch(function () {
+          stickerPricingSetupRows = [];
+          glassPricingSetupRows = [];
+        });
+      return pricingLoadPromise;
     }
 
     function calculateSticker() {
-      var length = Number(byId('length').value);
-      var width = Number(byId('width').value);
-
-      if (!(length > 0) || !(width > 0)) {
-        return { ok: false, error: 'Please enter valid positive numbers for length and width.' };
-      }
-
-      var unit = byId('unit').value;
-      var type = byId('type').value;
-      var thickness = byId('thickness').value;
-      var isRepairEligible = type === 'Glass';
-      var isRepair = isRepairEligible && byId('repair').checked;
       var qty = Math.max(1, Math.round(Number(byId('qty').value) || 1));
+      var type = byId('type').value;
 
-      var lengthFt = convertToFeet(length, unit);
-      var widthFt = convertToFeet(width, unit);
-      var areaSqFt = lengthFt * widthFt;
+      var result = window.CustomAquariumCalculator.calculateStandaloneSticker({
+        length: byId('length').value,
+        width: byId('width').value,
+        unit: byId('unit').value,
+        type: type,
+        thickness: byId('thickness').value,
+        repair: byId('repair').checked,
+        stickerPricingSetupRows: stickerPricingSetupRows,
+        glassPricingSetupRows: glassPricingSetupRows,
+        glassPricingUom: 'MM'
+      });
 
-      var pricePerSqFt = pricePerSqFtFor(type, thickness);
-      var estimatedPrice = areaSqFt * pricePerSqFt;
-      if (isRepair) estimatedPrice *= 2.5;
-
-      var unitPrice = Math.ceil(estimatedPrice / 10) * 10;
+      if (!result.ok) {
+        return result;
+      }
 
       return {
         ok: true,
-        areaSqFt: areaSqFt,
-        unitPrice: unitPrice,
-        totalPrice: unitPrice * qty,
+        areaSqFt: result.normalized.areaSqFt,
+        unitPrice: result.totalPrice,
+        totalPrice: result.totalPrice * qty,
         qty: qty,
-        type: type,
-        thickness: thickness,
-        hasThickness: type === 'Rubber Matting' || type === 'Glass',
-        isRepair: isRepair,
-        length: length,
-        width: width,
-        unit: unit
+        type: result.normalized.type,
+        thickness: result.normalized.thickness,
+        hasThickness: Boolean(result.normalized.thickness),
+        isRepair: result.normalized.isRepair,
+        length: byId('length').value,
+        width: byId('width').value,
+        unit: result.normalized.unit
       };
     }
 
@@ -411,8 +409,9 @@
       if (!showRepair) byId('repair').checked = false;
     }
 
-    function runCalculation() {
+    async function runCalculation() {
       setVisibilityState();
+      await ensurePricingLoaded();
 
       var result = calculateSticker();
 

@@ -537,15 +537,6 @@
 
   </div>
 
-  <script id="glassPricingFallback" type="application/json">
-[
-  { "UOM": "MM", "Units": "10", "PricePerSqFt": 290 },
-    { "UOM": "MM", "Units": "12", "PricePerSqFt": 350 },
-    { "UOM": "MM", "Units": "3", "PricePerSqFt": 65 },
-    { "UOM": "MM", "Units": "6", "PricePerSqFt": 185 }
-]
-  </script>
-
   <!-- Loaded so the Light/Pump Item dropdowns below can query the real Items catalog from
        Supabase (see staff_list_items_by_category in supabase_warehouses_items_tables.sql),
        same as the rest of the portal - reuses the already-logged-in portal_session from
@@ -577,6 +568,8 @@
       context.scale(dpr, dpr);
     })();
     var glassPricingSetupRows = [];
+    var tubularPricingSetupRows = [];
+    var stickerPricingSetupRows = [];
     var lastResult = null;
     var suppressUiSync = false;
     var ruleNoticeState = {
@@ -1155,10 +1148,8 @@
         specialNote: byId('specialNote').value,
         glassPricingSetupRows: glassPricingSetupRows,
         glassPricingUom: 'MM',
-        stickerPricesPerSqFt: {
-          plain: 70,
-          tiles: 90
-        }
+        tubularPricingSetupRows: tubularPricingSetupRows,
+        stickerPricingSetupRows: stickerPricingSetupRows
       };
     }
 
@@ -1282,41 +1273,31 @@
       safetyBanner.textContent = messages.join(' ');
     }
 
-    function loadEmbeddedGlassPricingSetupRows() {
-      var fallbackNode = byId('glassPricingFallback');
-      if (!fallbackNode) {
-        throw new Error('No embedded glass pricing fallback was found.');
-      }
+    // Centralized in Supabase (see supabase_pricing_setup_tables.sql) - a price edited from the
+    // portal's Pricing Setup page shows up here, in Order Now, and (once the desktop app reads the
+    // same tables) Local too, instead of three separately-maintained copies that can drift apart.
+    // Read RPCs are anon-granted (just prices, no login needed). custom-aquarium-calculator.js
+    // still has hardcoded fallback constants for the rare case Supabase can't be reached at all.
+    var pricingSetupLoadPromise = null;
 
-      var parsed = JSON.parse(fallbackNode.textContent || '[]');
-      if (!Array.isArray(parsed) || parsed.length === 0) {
-        throw new Error('Embedded glass pricing fallback is empty.');
-      }
-
-      glassPricingSetupRows = parsed;
-      return glassPricingSetupRows;
-    }
-
-    async function loadGlassPricingSetupRows() {
-      try {
-        var response = await fetch('./glass-pricing.json', { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error('Failed to load glass-pricing.json');
-        }
-
-        glassPricingSetupRows = await response.json();
-        return glassPricingSetupRows;
-      } catch (error) {
-        return loadEmbeddedGlassPricingSetupRows();
-      }
-    }
-
-    async function ensureGlassPricingLoaded() {
-      if (glassPricingSetupRows.length > 0) {
-        return glassPricingSetupRows;
-      }
-
-      return loadGlassPricingSetupRows();
+    function ensureGlassPricingLoaded() {
+      if (pricingSetupLoadPromise) return pricingSetupLoadPromise;
+      pricingSetupLoadPromise = Promise.all([
+        supabaseClient.rpc('public_get_glass_pricing'),
+        supabaseClient.rpc('public_get_tubular_pricing'),
+        supabaseClient.rpc('public_get_sticker_pricing')
+      ])
+        .then(function (results) {
+          glassPricingSetupRows = Array.isArray(results[0].data) ? results[0].data : [];
+          tubularPricingSetupRows = Array.isArray(results[1].data) ? results[1].data : [];
+          stickerPricingSetupRows = Array.isArray(results[2].data) ? results[2].data : [];
+        })
+        .catch(function () {
+          glassPricingSetupRows = [];
+          tubularPricingSetupRows = [];
+          stickerPricingSetupRows = [];
+        });
+      return pricingSetupLoadPromise;
     }
 
     // Mirrors MainForm.cs's Submersible Light/Submersible Pump item pickers in the desktop's

@@ -419,6 +419,14 @@
 
   </div>
 
+  <!-- Loaded so tubular pricing can be pulled from Supabase's TubularPricingSetup table (see
+       supabase_pricing_setup_tables.sql) instead of the hardcoded rates baked into
+       custom-aquarium-calculator.js - a price edited from the portal's Pricing Setup page shows up
+       here without a code change. Read RPC is anon-granted (just prices, no login needed), unlike
+       index.html's Light/Pump lookups which do need the logged-in portal session. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../js/config.js"></script>
+  <script src="../js/supabaseClient.js"></script>
   <script src="./custom-aquarium-calculator.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -639,7 +647,9 @@
       var marginLeft = 66;
       var marginRight = 56;
       var marginTop = dims.sumpHolder ? 58 : 34;
-      var marginBottom = 52;
+      // Extra room below the usual Length line, for the second "Built Length (incl. end posts)"
+      // dimension line/chip added underneath it.
+      var marginBottom = 80;
       var availableWidth = Math.max(80, CANVAS_W - marginLeft - marginRight);
       var availableHeight = Math.max(80, CANVAS_H - marginTop - marginBottom);
 
@@ -848,6 +858,53 @@
       drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
       drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
       drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+
+      // Second dimension line below the plain Length line, marking the TRUE built length once the
+      // two end tubular posts are accounted for (dual stand = one post at each end of the Length
+      // run) - see computeStandBuiltLengthInches. Dashed tick-downs from each leg corner show
+      // exactly how much extra each post adds, so staff aren't left guessing where it comes from.
+      var postPx = tubularThicknessIn * scale;
+      var builtLengthLineY = lengthLineY + 26;
+      var builtLeftX = frontLeft - postPx;
+      var builtRightX = frontLeft + frontWidth + postPx;
+      var builtLengthIn = window.CustomAquariumCalculator.computeStandBuiltLengthInches(lengthIn, dims.tubular);
+
+      context.strokeStyle = '#c23b31';
+      context.setLineDash([2, 2]);
+      context.lineWidth = 1;
+      [frontLeft, frontLeft + frontWidth].forEach(function (x) {
+        context.beginPath();
+        context.moveTo(x, baseY + 3);
+        context.lineTo(x, builtLengthLineY);
+        context.stroke();
+      });
+      context.setLineDash([]);
+
+      context.strokeStyle = '#c23b31';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(builtLeftX, builtLengthLineY);
+      context.lineTo(builtRightX, builtLengthLineY);
+      context.stroke();
+      [builtLeftX, builtRightX].forEach(function (x) {
+        context.beginPath();
+        context.moveTo(x, builtLengthLineY - 4);
+        context.lineTo(x, builtLengthLineY + 4);
+        context.stroke();
+      });
+
+      drawDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + round1(builtLengthIn) + '"');
+    }
+
+    var tubularPricingSetupRows = [];
+    var tubularPricingLoadPromise = null;
+
+    function ensureTubularPricingLoaded() {
+      if (tubularPricingLoadPromise) return tubularPricingLoadPromise;
+      tubularPricingLoadPromise = supabaseClient.rpc('public_get_tubular_pricing')
+        .then(function (result) { tubularPricingSetupRows = Array.isArray(result.data) ? result.data : []; })
+        .catch(function () { tubularPricingSetupRows = []; });
+      return tubularPricingLoadPromise;
     }
 
     function buildPayload() {
@@ -863,7 +920,8 @@
         cabinet: byId('cabinet').checked,
         sumpHolder: sumpChecked,
         sumpWidth: sumpChecked ? byId('sumpWidth').value : 0,
-        footingInches: byId('footing').value
+        footingInches: byId('footing').value,
+        tubularPricingSetupRows: tubularPricingSetupRows
       };
     }
 
@@ -914,9 +972,14 @@
       var layers = Math.max(2, Math.round(Number(n.layers) || 2));
       var gapIn = computeStandGapInches(n.heightInches, n.footingInches, layers, n.tubular);
       var qty = Math.max(1, Math.round(Number(byId('qty').value) || 1));
+      // Dual stand = one tubular post at each end of the Length run, so the actual built frame is
+      // longer than the footprint Length by 2x the tubular's own thickness - shown here for staff
+      // reference only, pricing still runs off the entered footprint Length.
+      var builtLengthIn = window.CustomAquariumCalculator.computeStandBuiltLengthInches(n.lengthInches, n.tubular);
 
       var rows = [
         ['Dimensions (in)', 'L: ' + n.lengthInches.toFixed(1) + ' x W: ' + n.widthInches.toFixed(1) + ' x H: ' + n.heightInches.toFixed(1)],
+        ['Built Length (incl. end posts)', builtLengthIn.toFixed(1) + '"'],
         ['Unit of Measure', byId('unit').value],
         ['Footing', round1(n.footingInches) + '"'],
         ['Layers', String(layers)],
@@ -933,7 +996,7 @@
       }).join('');
     }
 
-    function calculateStand(showAlerts) {
+    async function calculateStand(showAlerts) {
       setVisibilityState();
       updateTubularAvailability();
 
@@ -943,6 +1006,7 @@
         return;
       }
 
+      await ensureTubularPricingLoaded();
       var result = window.CustomAquariumCalculator.calculateStandaloneStand(buildPayload());
       lastResult = result;
       drawStand(result);

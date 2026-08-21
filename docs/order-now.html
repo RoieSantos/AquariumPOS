@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Now - RS Pet Stop</title>
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
   <meta name="theme-color" content="#1d4f91" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 </head>
@@ -20,6 +23,11 @@
       <p class="muted">Pick what you need, and we'll get back to you to confirm your order.</p>
       <a href="#" class="view-cart-link" id="viewCartLink">🛒 View Cart</a>
     </div>
+
+    <!-- Ongoing promo banner - public.PromotionSettings (see supabase_promotion_setting.sql),
+         edited from General Setup. Hidden entirely if IsActive is false or PromoText is blank -
+         see loadPromotionBanner() in js/orderNow.js. -->
+    <div class="promo-banner hidden" id="promoBanner"></div>
 
     <div class="wizard-card">
       <!-- Brief transitional loading state shown right after clicking Customize, purely for
@@ -56,24 +64,24 @@
       </div>
     </section>
 
-    <!-- Customize sub-choice: what to build a custom quote for -->
-    <section class="wizard-step" data-step="customize-choice">
-      <button type="button" class="btn btn-secondary btn-sm" id="customizeChoiceBackBtn">&larr; Back</button>
-      <h2 class="wizard-step-title" style="margin-top:14px;">What would you like to customize?</h2>
-      <p class="muted">Choose what you'd like us to build a quote for.</p>
-      <div class="category-grid">
-        <div class="category-card" id="customizeChoiceAquariumBtn">
-          <span class="category-icon"><img src="icons/Aquarium%20icon.jpg" alt="Aquarium" class="category-icon-img" /></span>
-          Aquarium<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom aquarium quote</span>
-        </div>
-        <div class="category-card" id="customizeChoiceStandBtn">
-          <span class="category-icon"><img src="icons/Dual%20Stand.jpg" alt="Stand" class="category-icon-img" /></span>
-          Stand<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom stand quote</span>
-        </div>
-        <div class="category-card" id="customizeChoiceFiltrationBtn">
-          <span class="category-icon"><img src="icons/Sump.jpg" alt="Filtration" class="category-icon-img" /></span>
-          Filtration<br /><span class="muted" style="font-weight:400; font-size:12px;">Build a custom filtration/sump quote</span>
-        </div>
+    <!-- Customize tab bar - per "so they can see the stand / aquarium / filtration only in one
+         page" - replaces the old customize-choice picker (which routed to a separate full-page
+         step per option). The actual Aquarium/Stand/Filtration/Stickers fields still live in
+         their own sections below (data-step="custom-dims" etc.) unchanged, but those sections now
+         also carry class="customize-tab-panel" + data-tab-panel="..." so js/orderNow.js's
+         switchCustomizeTab can show/hide just one of them at a time INSIDE this same step, instead
+         of goToStep navigating to a whole different page. Each tab keeps whatever the customer
+         typed into it while they look at the others - see activeCustomizeTab/
+         applyCustomizeTabVisibility in js/orderNow.js. -->
+    <section class="wizard-step" data-step="customize-tabs">
+      <button type="button" class="btn btn-secondary btn-sm" id="customizeTabsBackBtn">&larr; Back</button>
+      <h2 class="wizard-step-title" style="margin-top:14px;">Build a Custom Quote</h2>
+      <p class="muted">Switch between tabs freely - what you enter in each one is kept.</p>
+      <div class="customize-tab-bar">
+        <button type="button" class="customize-tab-btn active" data-tab="aquarium">🐠 Aquarium</button>
+        <button type="button" class="customize-tab-btn" data-tab="stand">📐 Stand</button>
+        <button type="button" class="customize-tab-btn" data-tab="filtration">💧 Filtration</button>
+        <button type="button" class="customize-tab-btn" data-tab="stickers">🏷️ Accessories</button>
       </div>
     </section>
 
@@ -154,20 +162,20 @@
     <!-- Customize path, step 2: dimensions / unit of measure / glass thickness / sealant / add-on
          options - merged into one step (previously two: Dimensions then Options) since both fit
          on one screen fine and there's no real reason to force a click between them. -->
-    <section class="wizard-step" data-step="custom-dims">
-      <button type="button" class="btn btn-secondary btn-sm" id="customDimsBackBtnTop">&larr; Back</button>
+    <section class="wizard-step customize-tab-panel active" data-step="custom-dims" data-tab-panel="aquarium">
       <h2 class="wizard-step-title" style="margin-top:14px;">Aquarium Dimensions</h2>
       <p class="muted">Tell us the size, glass specs, and any add-ons for your custom aquarium.</p>
-      <div class="card dims-summary-card" id="customAquariumSummary"></div>
+      <div class="rule-notice" id="customDimsPriceGuideNote">To see a price estimate below, please fill in <strong>Length</strong>, <strong>Width</strong>, <strong>Height</strong>, and select a <strong>Unit of Measure</strong>. Glass Thickness and any Options you choose will also change the price.</div>
       <div class="aquarium-canvas-wrap">
         <canvas id="customAquariumCanvasDims" width="720" height="260"></canvas>
         <button type="button" class="aquarium-rotate-btn" id="customAquariumRotateBtn" title="Drag the image, or click, to view the other side">&#8635; Rotate</button>
       </div>
+      <div class="card dims-summary-card" id="customAquariumSummary"></div>
       <div class="card custom-price-card" id="customPriceEstimateDims">Enter your aquarium details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized aquariums may differ from standard tank prices.</p>
       <div class="form-group">
         <h3 class="form-group-title">Dimensions</h3>
-        <div class="form-grid">
+        <div class="form-grid form-grid-single">
           <div class="form-row">
             <label for="customLength">Length</label>
             <input type="number" id="customLength" value="0" step="0.01" min="0" />
@@ -207,6 +215,9 @@
               <option>10mm</option>
               <option>12mm</option>
             </select>
+            <div class="field-example-links">
+              <a href="icons/sticker-glass.jpg" target="_blank" rel="noopener" class="option-example-link">(see Glass sample)</a>
+            </div>
           </div>
           <div class="form-row">
             <label for="customSealant">Sealant Color *</label>
@@ -244,6 +255,11 @@
           <label class="checkbox-row"><input type="checkbox" id="customEnclosure" /> Enclosure</label>
         </div>
       </div>
+      <div class="rule-notice" id="customRubberMattingNote">Good to know: rubber matting is included on the bottom of every tank at no extra charge.
+        <div class="field-example-links">
+          <a href="icons/sticker-rubber-matting.jpg" target="_blank" rel="noopener" class="option-example-link">(see Rubber Matting sample)</a>
+        </div>
+      </div>
       <div class="rule-notice" id="customHeightVarianceNote">Please take note that the final height of the aquarium may vary depending on the size of the rubber matting / bottom glass and brace thickness (if any). This is standard across all tank makers.</div>
       <div id="customDimsGlassNotice" class="rule-notice hidden"></div>
       <div id="customGlassNotice" class="rule-notice hidden"></div>
@@ -257,20 +273,22 @@
     <!-- Customize path, Stand sub-flow (reached directly from the customize-choice picker, no
          aquarium involved) - mirrors the desktop app's Stand Price Calculator fields/pricing
          (StandPriceCalculatorForm.cs) so quotes match what staff would compute in-store. -->
-    <section class="wizard-step" data-step="custom-stand">
-      <button type="button" class="btn btn-secondary btn-sm" id="customStandBackBtnTop">&larr; Back</button>
+    <section class="wizard-step customize-tab-panel" data-step="custom-stand" data-tab-panel="stand">
       <h2 class="wizard-step-title" style="margin-top:14px;">Stand Dimensions</h2>
       <p class="muted">Tell us the size and build specs for your custom stand.</p>
-      <div class="card dims-summary-card" id="customStandSummary"></div>
       <div class="aquarium-canvas-wrap">
         <canvas id="customStandCanvas" width="720" height="260"></canvas>
       </div>
+      <div class="card dims-summary-card" id="customStandSummary"></div>
       <div class="card custom-price-card" id="customPriceEstimateStand">Enter your stand details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized stands may differ from standard stand prices.</p>
       <div id="standAquariumAwarenessNote" class="rule-notice hidden"></div>
       <div class="form-group">
         <h3 class="form-group-title">Dimensions</h3>
-        <div class="form-grid">
+        <div class="field-example-links hidden" id="standAdviseFromAquariumRow">
+          <a href="#" id="standAdviseFromAquariumLink" class="option-example-link">Advise stand dimension base on aquarium</a>
+        </div>
+        <div class="form-grid form-grid-single">
           <div class="form-row">
             <label for="standLength">Length</label>
             <input type="number" id="standLength" value="0" step="0.01" min="0" />
@@ -461,16 +479,37 @@
     <!-- Customize path, standalone Filtration sub-flow (reached directly from the customize-choice
          picker, no aquarium involved) - own Unit/Glass Thickness fields since the embedded
          Filtration step above borrows those from the aquarium flow it's attached to. -->
-    <section class="wizard-step" data-step="custom-filtration-standalone">
-      <button type="button" class="btn btn-secondary btn-sm" id="customStandaloneFiltrationBackBtnTop">&larr; Back</button>
+    <section class="wizard-step customize-tab-panel" data-step="custom-filtration-standalone" data-tab-panel="filtration">
       <h2 class="wizard-step-title" style="margin-top:14px;">Filtration / Sump</h2>
       <p class="muted">Tell us about the filtration sump you'd like built.</p>
       <div class="card custom-price-card" id="customPriceEstimateStandaloneFiltration">Enter your sump details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized filtration/sump builds may differ from standard prices.</p>
       <div id="filtrationAquariumAwarenessNote" class="rule-notice hidden"></div>
       <div class="form-group">
-        <h3 class="form-group-title">Dimensions</h3>
+        <h3 class="form-group-title">Sump Type</h3>
         <div class="form-grid">
+          <div class="form-row">
+            <label for="standaloneSumpType">Sump Type</label>
+            <select id="standaloneSumpType">
+              <option>Undersump</option>
+              <option>Overhead Sump</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="standaloneFiltrationUnit">Unit of Measure *</label>
+            <select id="standaloneFiltrationUnit">
+              <option value="">-- select --</option>
+              <option>Inches</option>
+              <option>CM</option>
+              <option>Ft</option>
+              <option>MM</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <h3 class="form-group-title">Dimensions</h3>
+        <div class="form-grid form-grid-single">
           <div class="form-row">
             <label for="standaloneSumpLength">Sump Length</label>
             <input type="number" id="standaloneSumpLength" value="18" step="0.01" min="0" />
@@ -493,23 +532,6 @@
             <input type="number" id="standaloneFiltrationQty" value="1" step="1" min="1" />
           </div>
           <div class="form-row">
-            <label for="standaloneFiltrationUnit">Unit of Measure *</label>
-            <select id="standaloneFiltrationUnit">
-              <option value="">-- select --</option>
-              <option>Inches</option>
-              <option>CM</option>
-              <option>Ft</option>
-              <option>MM</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <label for="standaloneSumpType">Sump Type</label>
-            <select id="standaloneSumpType">
-              <option>Undersump</option>
-              <option>Overhead Sump</option>
-            </select>
-          </div>
-          <div class="form-row">
             <label for="standaloneFiltrationGlass">Glass Thickness</label>
             <select id="standaloneFiltrationGlass">
               <option>3mm</option>
@@ -530,6 +552,76 @@
       <div class="wizard-nav-buttons">
         <button type="button" class="btn btn-secondary" id="customStandaloneFiltrationBackBtn">&larr; Back</button>
         <button type="button" class="btn btn-primary" id="customStandaloneFiltrationNextBtn">Next &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Customize path, standalone Accessories/Stickers sub-flow (reached directly from the
+         customize-choice picker) - mirrors the desktop app's Custom Stickers calculator
+         (ShowCustomStickersDialog in MainForm.cs) so quotes match what staff would compute
+         in-store. Length/Width only (no height) - stickers/mats/covers are flat. -->
+    <section class="wizard-step customize-tab-panel" data-step="custom-stickers-standalone" data-tab-panel="stickers">
+      <h2 class="wizard-step-title" style="margin-top:14px;">Accessories / Stickers</h2>
+      <p class="muted">Tell us about the sticker or accessory you'd like built.</p>
+      <!-- Reference photo for whichever Type is selected below (see standaloneStickerTypeImageMap
+           in js/orderNow.js) - hidden via onerror until a real photo exists at that path, so a
+           missing file degrades to "no image" instead of a broken-image icon. -->
+      <img id="standaloneStickerTypeImage" class="sticker-type-reference-img hidden" alt="" />
+      <div class="card custom-price-card" id="customPriceEstimateStandaloneSticker">Enter your sticker details to see a price estimate.</div>
+      <p class="muted custom-price-disclaimer">Prices for customized accessories/stickers may differ from standard prices.</p>
+      <div class="form-group">
+        <h3 class="form-group-title">Details</h3>
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="standaloneStickerType">Type</label>
+            <select id="standaloneStickerType">
+              <option>Tiles Sticker</option>
+              <option>Plain Sticker</option>
+              <option>Rubber Matting</option>
+              <option>Glass</option>
+              <option>Acrylic</option>
+              <option>Allum TopCover</option>
+            </select>
+          </div>
+          <div class="form-row hidden" id="standaloneStickerThicknessWrap">
+            <label for="standaloneStickerThickness">Thickness</label>
+            <select id="standaloneStickerThickness">
+              <option>3mm</option>
+              <option selected>6mm</option>
+              <option>10mm</option>
+              <option>12mm</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="standaloneStickerLength">Length</label>
+            <input type="number" id="standaloneStickerLength" value="24" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="standaloneStickerWidth">Width</label>
+            <input type="number" id="standaloneStickerWidth" value="12" step="0.01" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="standaloneStickerUnit">Unit of Measure *</label>
+            <select id="standaloneStickerUnit">
+              <option value="">-- select --</option>
+              <option>Inches</option>
+              <option>CM</option>
+              <option>Ft</option>
+              <option>MM</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="standaloneStickerQty">Quantity</label>
+            <input type="number" id="standaloneStickerQty" value="1" step="1" min="1" />
+          </div>
+        </div>
+      </div>
+      <div class="checkbox-stack hidden" id="standaloneStickerRepairWrap">
+        <label class="checkbox-row"><input type="checkbox" id="standaloneStickerRepair" /> Repair (2.5x price)</label>
+      </div>
+      <div id="customStandaloneStickerErrorMsg" class="error-text hidden"></div>
+      <div class="wizard-nav-buttons">
+        <button type="button" class="btn btn-secondary" id="customStandaloneStickerBackBtn">&larr; Back</button>
+        <button type="button" class="btn btn-primary" id="customStandaloneStickerNextBtn">Next &rarr;</button>
       </div>
     </section>
 
@@ -750,6 +842,30 @@
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
         <button type="button" class="btn btn-secondary" id="cartViewCloseBtn">Close</button>
         <button type="button" class="btn btn-primary" id="cartViewProceedBtn">Proceed to Checkout &rarr;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Product details - opened by tapping an item card's image/name/description area (steps 2's
+       item-grid) so a Set's customer can see what's actually included before adding it, without
+       cluttering every card in the grid with the full description text. Qty-stepper/Add button on
+       the card itself still add directly without opening this. -->
+  <div class="modal-backdrop hidden" id="itemDetailModal">
+    <div class="modal-panel item-detail-modal-panel">
+      <div id="itemDetailImageWrap" class="item-detail-image-wrap"></div>
+      <h3 id="itemDetailName" class="item-detail-name"></h3>
+      <div id="itemDetailPrice" class="item-detail-price"></div>
+      <div id="itemDetailStock" class="item-detail-stock"></div>
+      <div class="item-detail-description-label" id="itemDetailDescriptionLabel">What's included</div>
+      <div id="itemDetailDescription" class="item-detail-description"></div>
+      <div class="qty-stepper" id="itemDetailQtyStepper">
+        <button type="button" data-action="dec">-</button>
+        <input type="number" min="1" value="1" id="itemDetailQtyInput" />
+        <button type="button" data-action="inc">+</button>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button type="button" class="btn btn-secondary" id="itemDetailCloseBtn">Close</button>
+        <button type="button" class="btn btn-primary" id="itemDetailAddBtn">Add to Order</button>
       </div>
     </div>
   </div>

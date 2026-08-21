@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Custom Stickers - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css" />
+  <title>Custom Accessories / Stickers - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -51,7 +51,7 @@
   <div id="topnav"></div>
 
   <div class="page">
-    <h1>Custom Stickers</h1>
+    <h1>Custom Accessories / Stickers</h1>
     <p class="muted">
       Client-side calculator only - nothing here is saved to the database.
       Same pricing as the desktop POS app's Custom Stickers feature (Plain/Tiles/Rubber Matting/Glass/Acrylic/Allum TopCover).
@@ -68,12 +68,12 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
   <script>
     (async function () {
       const session = await requireAuth();
       if (!session) return;
-      renderTopNav('Custom Stickers');
+      renderTopNav('Custom Accessories / Stickers');
     })();
   </script>
   <script src="js/pwa.js"></script>

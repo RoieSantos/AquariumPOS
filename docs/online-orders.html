@@ -1,10 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -85,11 +85,17 @@
     </div>
   </div>
 
+  <!-- Hidden camera-capture input for the "To Ship" flow (js/onlineOrders.js) - capture="environment"
+       opens the phone's rear camera directly instead of a generic file picker on mobile. Shared by
+       every row's "To Ship" button; pendingToShip in onlineOrders.js tracks which order/button
+       triggered it. -->
+  <input type="file" id="toShipPhotoInput" accept="image/*" capture="environment" class="hidden" />
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
   <script src="js/pagination.js"></script>
   <script src="js/onlineOrders.js"></script>
   <script src="js/pwa.js"></script>

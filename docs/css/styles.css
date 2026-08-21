@@ -146,7 +146,11 @@ h1, h2, h3 {
   background: var(--primary);
   box-shadow: var(--shadow);
   position: relative;
-  z-index: 1;
+  /* Must beat .page's z-index: 1 above - equal z-index falls back to DOM order, and .page (the
+     content below the nav, e.g. Dashboard's welcome heading) comes later in the HTML, so a tied
+     value let page content paint over the nav's dropdown menus and swallow their clicks. Still
+     well under .modal-backdrop's z-index: 100 so modals correctly cover the nav. */
+  z-index: 30;
 }
 
 .topnav-inner {
@@ -190,6 +194,77 @@ h1, h2, h3 {
 .topnav-link.active {
   background: #fff;
   color: var(--primary-strong);
+}
+
+.topnav-group {
+  position: relative;
+}
+
+.topnav-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  color: #dce8fb;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.topnav-group-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.topnav-group-toggle.active {
+  background: #fff;
+  color: var(--primary-strong);
+}
+
+.topnav-group-caret {
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.topnav-group.open .topnav-group-caret {
+  transform: rotate(180deg);
+}
+
+.topnav-group-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  min-width: 210px;
+  z-index: 20;
+}
+
+.topnav-group.open .topnav-group-menu {
+  display: block;
+}
+
+.topnav-group-menu .topnav-link {
+  display: block;
+  color: var(--text-main);
+  padding: 8px 10px;
+}
+
+.topnav-group-menu .topnav-link:hover {
+  background: var(--page-bg);
+}
+
+.topnav-group-menu .topnav-link.active {
+  background: var(--primary);
+  color: #fff;
 }
 
 .topnav-logout {
@@ -244,6 +319,40 @@ h1, h2, h3 {
   .topnav-link {
     padding: 12px 14px;
     border-radius: 6px;
+  }
+
+  .topnav-group-toggle {
+    width: 100%;
+    justify-content: space-between;
+    padding: 12px 14px;
+  }
+
+  .topnav-group-menu {
+    display: none;
+    position: static;
+    width: 100%;
+    margin-top: 0;
+    padding: 0 0 0 14px;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .topnav-group.open .topnav-group-menu {
+    display: block;
+  }
+
+  .topnav-group-menu .topnav-link {
+    color: #dce8fb;
+  }
+
+  .topnav-group-menu .topnav-link:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .topnav-group-menu .topnav-link.active {
+    background: #fff;
+    color: var(--primary-strong);
   }
 
   .topnav-logout {
@@ -389,6 +498,10 @@ textarea {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 14px;
+}
+
+.form-grid-single {
+  grid-template-columns: 1fr;
 }
 
 .form-group {
@@ -1275,6 +1388,47 @@ tr.clickable-row:hover {
   background: var(--danger);
   color: #fff;
   font-size: 12px;
+  cursor: pointer;
+}
+
+/* Online Order Lines - "Photos Sent With Status Updates" gallery (js/onlineOrderLines.js,
+   supabase_online_order_status_photo.sql). Bigger than .attachment-thumb since these are the
+   actual evidence photos, not incidental line-item reference chips. */
+.status-photo-card {
+  position: relative;
+  width: 140px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-bg);
+}
+
+.status-photo-thumb {
+  width: 140px;
+  height: 140px;
+  object-fit: cover;
+  display: block;
+}
+
+.status-photo-meta {
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.status-photo-remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  line-height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -2167,6 +2321,17 @@ body:has(.wizard-page) {
   pointer-events: none;
 }
 
+/* Rounded, friendly app-style face for the whole Order Now page (per direct request, matching a
+   shared mockup) - #cartBar/#confirmModal included since they're rendered outside .wizard-page
+   (fixed-position overlays kept as body-level siblings) but still belong to the same page. Loaded
+   via Google Fonts link in order-now.html's <head>; falls back to the portal's normal system font
+   stack if it's ever slow/unavailable to load. */
+.wizard-page,
+#cartBar,
+#confirmModal {
+  font-family: 'Poppins', "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
 .wizard-page {
   max-width: 620px;
   margin: 0 auto;
@@ -2176,6 +2341,19 @@ body:has(.wizard-page) {
 .wizard-header {
   text-align: center;
   margin-bottom: 22px;
+}
+
+.promo-banner {
+  max-width: 720px;
+  margin: 0 auto 22px;
+  padding: 12px 20px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f5934a 0%, #c0392b 100%);
+  color: #fff;
+  text-align: center;
+  font-weight: 700;
+  font-size: 14px;
+  box-shadow: 0 10px 24px rgba(192, 57, 43, 0.25);
 }
 
 .wizard-header .company-logo-img {
@@ -2270,7 +2448,7 @@ body:has(.wizard-page) {
 }
 
 .wizard-progress-step.active::before {
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   transform: translate(-50%, -50%) scale(1.15);
   box-shadow: 0 0 0 4px rgba(29, 79, 145, 0.18);
 }
@@ -2431,26 +2609,55 @@ body:has(.wizard-page) {
   margin-top: 18px;
 }
 
+/* Colorful gradient tap tiles (per direct request, matching a shared mockup) - a small 6-color
+   palette cycling by DOM position via :nth-child, so it applies to both the fixed 3-card mode
+   picker (Standard/Customize/Estimate Delivery) and the dynamically-rendered category grid
+   without any JS changes. Every color stays inside the site's existing navy/teal/green tokens
+   (no new hues introduced) per "keep current brand colors". */
 .category-card {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-  padding: 24px 14px;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(155deg, var(--primary), var(--primary-strong));
+  border: none;
+  border-radius: 18px;
+  box-shadow: 0 14px 26px -12px rgba(21, 52, 94, 0.45);
+  padding: 26px 14px 20px;
   text-align: center;
   cursor: pointer;
   font-weight: 700;
-  color: var(--text-main);
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  color: #fff;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .category-card:hover {
   transform: translateY(-3px);
-  border-color: var(--primary);
-  box-shadow: 0 12px 28px rgba(21, 52, 94, 0.14);
+  box-shadow: 0 18px 32px -12px rgba(21, 52, 94, 0.5);
+}
+
+.category-card::after {
+  content: '';
+  position: absolute;
+  top: -34%;
+  right: -18%;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.22), transparent 70%);
+  pointer-events: none;
+}
+
+.category-card:nth-child(6n+2) { background: linear-gradient(155deg, #2c6bb8, var(--primary-strong)); }
+.category-card:nth-child(6n+3) { background: linear-gradient(155deg, #2596a8, #1c7f8c); }
+.category-card:nth-child(6n+4) { background: linear-gradient(155deg, #3fa5b3, #1c6b76); }
+.category-card:nth-child(6n+5) { background: linear-gradient(155deg, #29b06d, var(--success)); }
+.category-card:nth-child(6n) { background: linear-gradient(155deg, #7c8aa8, #4e5d80); }
+
+.category-card .muted {
+  color: rgba(255, 255, 255, 0.86);
 }
 
 .category-card .category-icon {
+  position: relative;
   font-size: 30px;
   display: flex;
   align-items: center;
@@ -2459,7 +2666,7 @@ body:has(.wizard-page) {
   height: 56px;
   margin: 0 auto 12px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #eaf2fd, #dbe8fb);
+  background: rgba(255, 255, 255, 0.22);
   overflow: hidden;
 }
 
@@ -2470,9 +2677,82 @@ body:has(.wizard-page) {
   border-radius: 50%;
 }
 
+/* Customize tab bar (docs/order-now.html's data-step="customize-tabs") - per "so they can see the
+   stand / aquarium / filtration only in one page": Aquarium/Stand/Filtration/Accessories switch
+   instantly (js/orderNow.js's switchCustomizeTab) instead of navigating to a separate page each. */
+/* Folder-tab look: a single strip of tabs sitting flush on top of the content below, like tabs on
+   a manila folder - the active tab's background matches the content panel and its bottom border
+   is erased right where it meets the divider line, so it reads as "part of" the panel while the
+   other tabs sit a shade further back. Deliberately never wraps to a second row (min-width:0 lets
+   items shrink below their text's natural width instead) - a folder never has a tab dangling on
+   its own row underneath the others, so labels truncate with an ellipsis on very narrow screens
+   instead. */
+.customize-tab-bar {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0 16px;
+  border-bottom: 2px solid var(--panel-border);
+}
+
+/* Each tab keeps the same per-section color used by the category tiles (gradient tap tiles
+   above) as a top accent stripe + active label color, so the tab strip still reads as part of the
+   same colorful system instead of a plain navy/white toggle. */
+.customize-tab-btn[data-tab="aquarium"] { --tab-color: var(--primary); --tab-color-strong: var(--primary-strong); }
+.customize-tab-btn[data-tab="stand"] { --tab-color: #2c6bb8; --tab-color-strong: var(--primary-strong); }
+.customize-tab-btn[data-tab="filtration"] { --tab-color: #2596a8; --tab-color-strong: #1c7f8c; }
+.customize-tab-btn[data-tab="stickers"] { --tab-color: #29b06d; --tab-color-strong: var(--success); }
+
+.customize-tab-btn {
+  flex: 1;
+  min-width: 0;
+  background: var(--page-bg);
+  border: 1px solid var(--panel-border);
+  border-top: 3px solid transparent;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  padding: 8px 10px;
+  margin-bottom: -2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.customize-tab-btn:hover {
+  color: var(--tab-color-strong, var(--primary));
+}
+
+.customize-tab-btn.active {
+  background: var(--panel-bg);
+  border-color: var(--panel-border);
+  border-top-color: var(--tab-color, var(--primary));
+  border-bottom: 2px solid var(--panel-bg);
+  color: var(--tab-color-strong, var(--primary-strong));
+  box-shadow: 0 -6px 14px -10px rgba(21, 52, 94, 0.35);
+  position: relative;
+  z-index: 1;
+}
+
+/* The four builder sections (data-step="custom-dims" etc.) stay .wizard-step (so their own
+   internal fields/canvas/JS are untouched) - they still just use .wizard-step/.wizard-step.active
+   above for show/hide, js/orderNow.js's applyCustomizeTabVisibility only decides which ONE of them
+   gets .active at a time instead of goToStep doing it. */
+
+@media (max-width: 480px) {
+  .customize-tab-btn {
+    padding: 7px 5px;
+    font-size: 11px;
+  }
+}
+
 .item-card {
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
+  border-top: 3px solid var(--primary);
   border-radius: 14px;
   box-shadow: var(--shadow);
   padding: 14px;
@@ -2520,6 +2800,72 @@ body:has(.wizard-page) {
   color: var(--text-muted);
 }
 
+/* Tappable area of the card that opens the details modal (image/name/price) - kept separate from
+   the qty-stepper/Add button below it, which add directly without opening anything. */
+.item-card-tap-area {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.item-detail-modal-panel {
+  max-width: 420px;
+}
+
+.item-detail-image-wrap img,
+.item-detail-image-wrap .item-card-img-placeholder {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #eef3fb;
+}
+
+.item-detail-image-wrap .item-card-img-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 44px;
+}
+
+.item-detail-name {
+  margin: 14px 0 4px;
+  font-size: 18px;
+}
+
+.item-detail-price {
+  font-weight: 800;
+  color: var(--primary);
+  font-size: 20px;
+}
+
+.item-detail-stock {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.item-detail-description-label {
+  margin-top: 16px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.item-detail-description {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+#itemDetailQtyStepper {
+  margin-top: 18px;
+}
+
 .qty-stepper {
   display: flex;
   align-items: center;
@@ -2531,12 +2877,18 @@ body:has(.wizard-page) {
   width: 40px;
   height: 40px;
   border-radius: 6px;
-  border: 1px solid var(--input-border);
-  background: #fff;
+  border: 1px solid var(--panel-border);
+  background: #eaf2fd;
+  color: var(--primary);
   font-weight: 700;
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
+  transition: background 0.12s ease;
+}
+
+.qty-stepper button:hover {
+  background: #dbe8fb;
 }
 
 .qty-stepper input {
@@ -2582,12 +2934,17 @@ body:has(.wizard-page) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--panel-border);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-left: 4px solid var(--primary);
+  border-radius: 12px;
+  box-shadow: 0 6px 14px -12px rgba(21, 52, 94, 0.4);
 }
 
 .cart-line-row:last-child {
-  border-bottom: none;
+  margin-bottom: 0;
 }
 
 .cart-line-name {
@@ -2794,10 +3151,12 @@ body:has(.wizard-page) {
 .aquarium-canvas-wrap {
   position: relative;
   border: 1px solid var(--panel-border);
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  border-radius: 14px;
+  border-top: 4px solid var(--primary);
+  background: linear-gradient(180deg, #eaf2fd 0%, #f8fbff 55%, #ffffff 100%);
+  border-radius: 16px;
   overflow: hidden;
   margin-top: 18px;
+  box-shadow: 0 14px 26px -16px rgba(21, 52, 94, 0.35);
 }
 
 .aquarium-rotate-btn {
@@ -2830,6 +3189,21 @@ body:has(.wizard-page) {
      setupCustomCanvas()) - keeps the isometric drawing's proportions correct at any container
      width instead of stretching to a fixed CSS height. */
   aspect-ratio: 720 / 260;
+}
+
+/* Per-Type reference photo on the standalone Accessories/Stickers step (docs/order-now.html /
+   js/orderNow.js's standaloneStickerTypeImageMap) - swapped whenever Type changes, hidden
+   entirely (via the element's onerror handler) until a real photo exists for that type. */
+.sticker-type-reference-img {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  max-height: 220px;
+  object-fit: cover;
+  margin: 0 auto 14px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow);
 }
 
 .custom-price-card {
@@ -2875,6 +3249,13 @@ body:has(.wizard-page) {
   font-size: 16px;
   line-height: 1.9;
   border-radius: 16px;
+  border-left: 4px solid var(--primary);
+}
+
+/* Aquarium tab only - the preview image now sits above this card (per direct request), so it
+   needs its own top gap the same way it used to get "for free" from being the first element. */
+.aquarium-canvas-wrap + .dims-summary-card {
+  margin-top: 18px;
 }
 
 .dims-summary-card strong {

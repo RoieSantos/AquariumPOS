@@ -7372,6 +7372,263 @@ WHEN NOT MATCHED THEN
             return updatedCount;
         }
 
+        // ---------------------------------------------------------------------------------------
+        // Centralized Glass/Stand-Tubular/Sticker pricing (see supabase_pricing_setup_tables.sql) -
+        // per direct request to stop these prices being hardcoded/duplicated separately in the
+        // desktop app, Order Now, and the Portal calculators (they'd already drifted apart - e.g.
+        // 3mm glass was priced 4 different ways before this). The Web Portal's new Pricing Setup
+        // page is the only place staff should edit these going forward; the local
+        // GlassPricingSetup table's own Add/Edit grid (ManageGlassPricing, further down this file)
+        // still works but any local edit just gets overwritten the next time this sync runs.
+        //
+        // Glass keeps writing to the local SQL table (dbo.GlassPricingSetup) since the existing
+        // aquarium-price calculation already reads straight from that table - no change needed
+        // there, this just becomes an automated writer instead of the manual Add/Edit grid.
+        // Tubular/Sticker have no equivalent local table, so those are cached in memory only (see
+        // PricingCache below) - both are pre-populated with the same values that used to be
+        // hardcoded, so a terminal that's never successfully synced still prices correctly.
+        //
+        // Called from MasterDataSyncTimer_Tick (MainForm.cs) - same "best-effort, retried every 5
+        // minutes" pattern as every other pull in that loop, so being offline never blocks a sale;
+        // worst case a terminal just keeps quoting whatever it last successfully synced.
+        // ---------------------------------------------------------------------------------------
+
+        public static class PricingCache
+        {
+            public static readonly Dictionary<string, decimal> GlassPricePerSqFt = new(StringComparer.OrdinalIgnoreCase)
+            {
+                { "3mm", 85m },
+                { "6mm", 185m },
+                { "10mm", 290m },
+                { "12mm", 350m }
+            };
+
+            public static readonly Dictionary<string, decimal> TubularRatesPerFt = new(StringComparer.OrdinalIgnoreCase)
+            {
+                { "1x1", 46.0m },
+                { "1.5x1.5", 52.0m },
+                { "2x2", 95.0m }
+            };
+
+            public static decimal PlainStickerPricePerSqFt = 70m;
+            public static decimal TilesStickerPricePerSqFt = 90m;
+            public static decimal AcrylicPricePerSqFt = 135m;
+            public static decimal AllumTopCoverPricePerSqFt = 500m;
+            public static decimal RubberMattingBasePricePerSqFt = 85m;
+            public static readonly Dictionary<string, decimal> RubberMattingPricePerSqFt = new(StringComparer.OrdinalIgnoreCase)
+            {
+                { "3mm", 26m },
+                { "6mm", 32m },
+                { "10mm", 45m },
+                { "12mm", 60m }
+            };
+        }
+
+        private static void EnsureGlassPricingSetupTableSchemaStatic(SqlConnection connection)
+        {
+            using var cmd = new SqlCommand(@"
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'GlassPricingSetup')
+BEGIN
+    CREATE TABLE GlassPricingSetup (
+        UOM NVARCHAR(50) NOT NULL,
+        Units NVARCHAR(100) NOT NULL,
+        PricePerSqFt DECIMAL(18,2) NOT NULL,
+        TurnAroundDays NVARCHAR(100) NULL
+    )
+END
+IF COL_LENGTH('GlassPricingSetup', 'TurnAroundDays') IS NULL
+BEGIN
+    ALTER TABLE GlassPricingSetup ADD TurnAroundDays NVARCHAR(100) NULL
+END", connection);
+            cmd.ExecuteNonQuery();
+        }
+
+        /// <summary>
+        /// Pulls public.GlassPricingSetup (thickness -> price/sqft) from Supabase into the local
+        /// dbo.GlassPricingSetup table (upsert - the manual Add/Edit grid only ever did one or the
+        /// other) AND into PricingCache.GlassPricePerSqFt (used by GlobalSettings.GetGlassPricePerSqInch,
+        /// the Custom Stickers dialog's "Glass" type - a separate code path from the aquarium
+        /// calculator's own direct SQL read against the local table).
+        /// </summary>
+        public static async Task SyncGlassPricingFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            using var req = new HttpRequestMessage(HttpMethod.Get, GlobalSettings.GlassPricingRpcEndpoint);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Glass pricing Supabase GET failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+            EnsureGlassPricingSetupTableSchemaStatic(conn);
+
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object) continue;
+
+                string thickness = row.TryGetProperty("thickness", out var thicknessProp) && thicknessProp.ValueKind == JsonValueKind.String
+                    ? thicknessProp.GetString() ?? string.Empty
+                    : string.Empty;
+                if (string.IsNullOrWhiteSpace(thickness)) continue;
+
+                decimal price = row.TryGetProperty("price_per_sqft", out var priceProp) && priceProp.ValueKind == JsonValueKind.Number
+                    ? priceProp.GetDecimal()
+                    : 0m;
+                if (price <= 0) continue;
+
+                using (var updateCmd = new SqlCommand("UPDATE GlassPricingSetup SET PricePerSqFt = @price WHERE UOM = 'MM' AND Units = @units", conn))
+                {
+                    updateCmd.Parameters.Add("@price", System.Data.SqlDbType.Decimal).Value = price;
+                    updateCmd.Parameters.Add("@units", System.Data.SqlDbType.NVarChar, 100).Value = thickness;
+                    int affected = updateCmd.ExecuteNonQuery();
+
+                    if (affected == 0)
+                    {
+                        using var insertCmd = new SqlCommand("INSERT INTO GlassPricingSetup (UOM, Units, PricePerSqFt) VALUES ('MM', @units, @price)", conn);
+                        insertCmd.Parameters.Add("@units", System.Data.SqlDbType.NVarChar, 100).Value = thickness;
+                        insertCmd.Parameters.Add("@price", System.Data.SqlDbType.Decimal).Value = price;
+                        insertCmd.ExecuteNonQuery();
+                    }
+                }
+
+                PricingCache.GlassPricePerSqFt[thickness.Trim().ToLowerInvariant() + "mm"] = price;
+            }
+        }
+
+        /// <summary>Pulls public.TubularPricingSetup from Supabase into PricingCache.TubularRatesPerFt.</summary>
+        public static async Task SyncTubularPricingFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            using var req = new HttpRequestMessage(HttpMethod.Get, GlobalSettings.TubularPricingRpcEndpoint);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Tubular pricing Supabase GET failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object) continue;
+
+                string size = row.TryGetProperty("tubular_size", out var sizeProp) && sizeProp.ValueKind == JsonValueKind.String
+                    ? sizeProp.GetString() ?? string.Empty
+                    : string.Empty;
+                if (string.IsNullOrWhiteSpace(size)) continue;
+
+                decimal price = row.TryGetProperty("price_per_ft", out var priceProp) && priceProp.ValueKind == JsonValueKind.Number
+                    ? priceProp.GetDecimal()
+                    : 0m;
+                if (price <= 0) continue;
+
+                PricingCache.TubularRatesPerFt[size] = price;
+            }
+        }
+
+        /// <summary>
+        /// Pulls public.StickerPricingSetup from Supabase into PricingCache's flat/Rubber Matting
+        /// fields. "Glass" is deliberately not one of the sticker_type values - the Custom Stickers
+        /// dialog's Glass type reads PricingCache.GlassPricePerSqFt instead (see
+        /// SyncGlassPricingFromSupabaseAsync above), same shared table the aquarium calculator uses.
+        /// </summary>
+        public static async Task SyncStickerPricingFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            using var req = new HttpRequestMessage(HttpMethod.Get, GlobalSettings.StickerPricingRpcEndpoint);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Sticker pricing Supabase GET failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                if (row.ValueKind != JsonValueKind.Object) continue;
+
+                string type = row.TryGetProperty("sticker_type", out var typeProp) && typeProp.ValueKind == JsonValueKind.String
+                    ? typeProp.GetString() ?? string.Empty
+                    : string.Empty;
+                if (string.IsNullOrWhiteSpace(type)) continue;
+
+                string? thickness = row.TryGetProperty("thickness", out var thicknessProp) && thicknessProp.ValueKind == JsonValueKind.String
+                    ? thicknessProp.GetString()
+                    : null;
+
+                decimal price = row.TryGetProperty("price_per_sqft", out var priceProp) && priceProp.ValueKind == JsonValueKind.Number
+                    ? priceProp.GetDecimal()
+                    : 0m;
+                if (price <= 0) continue;
+
+                if (string.Equals(type, "Rubber Matting", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrWhiteSpace(thickness))
+                    {
+                        PricingCache.RubberMattingPricePerSqFt[thickness.Trim().ToLowerInvariant() + "mm"] = price;
+                    }
+                    else
+                    {
+                        PricingCache.RubberMattingBasePricePerSqFt = price;
+                    }
+                }
+                else if (string.Equals(type, "Plain Sticker", StringComparison.OrdinalIgnoreCase))
+                {
+                    PricingCache.PlainStickerPricePerSqFt = price;
+                }
+                else if (string.Equals(type, "Tiles Sticker", StringComparison.OrdinalIgnoreCase))
+                {
+                    PricingCache.TilesStickerPricePerSqFt = price;
+                }
+                else if (string.Equals(type, "Acrylic", StringComparison.OrdinalIgnoreCase))
+                {
+                    PricingCache.AcrylicPricePerSqFt = price;
+                }
+                else if (string.Equals(type, "Allum TopCover", StringComparison.OrdinalIgnoreCase))
+                {
+                    PricingCache.AllumTopCoverPricePerSqFt = price;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Runs all three pricing pulls above - each independently best-effort (one failing
+        /// doesn't block the others), called from MasterDataSyncTimer_Tick same as every other
+        /// pull in that loop.
+        /// </summary>
+        public static async Task SyncPricingFromSupabaseAsync()
+        {
+            try { await SyncGlassPricingFromSupabaseAsync().ConfigureAwait(false); } catch { }
+            try { await SyncTubularPricingFromSupabaseAsync().ConfigureAwait(false); } catch { }
+            try { await SyncStickerPricingFromSupabaseAsync().ConfigureAwait(false); } catch { }
+        }
+
         public static async Task<int> SyncCategoriesAsync(TimeSpan? timeout = null)
         {
             string shopIdFromSettings = GlobalSettings.OnlineOrdersShopId ?? string.Empty;

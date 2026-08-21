@@ -81,21 +81,28 @@ namespace AquariumPOS
         public static string PosPrinterName { get; } = string.Empty;
 
         /// <summary>
-        /// Pricing for custom stickers (per square inch)
+        /// Pricing for custom stickers (per square inch) - reads OnlinefunctionsEvents.PricingCache
+        /// (Supabase-synced, see supabase_pricing_setup_tables.sql / SyncPricingFromSupabaseAsync),
+        /// which is itself pre-populated with these same values so a terminal that's never
+        /// successfully synced still prices correctly. Portal's Pricing Setup page is where these
+        /// should actually be edited now, not here.
         /// </summary>
-        public static decimal pricePerSqInchPlain { get; } = 70m; // P70.00 per sq inch for Plain Sticker
-        public static decimal pricePerSqInchTiles { get; } = 90m; // P90.00 per sq inch for Tiles Sticker
+        public static decimal pricePerSqInchPlain => OnlinefunctionsEvents.PricingCache.PlainStickerPricePerSqFt;
+        public static decimal pricePerSqInchTiles => OnlinefunctionsEvents.PricingCache.TilesStickerPricePerSqFt;
         /// <summary>
-        /// Pricing for rubber matting stickers (per square inch)
+        /// Pricing for rubber matting stickers (per square inch) - base/fallback rate, used when
+        /// thickness is unknown/blank. Per-thickness tiers live in GetRubberPricePerSqInch below.
         /// </summary>
-        public static decimal pricePerSqInchRubberMatting { get; } = 85m; // P85.00 per sq inch for Rubber Matting
+        public static decimal pricePerSqInchRubberMatting => OnlinefunctionsEvents.PricingCache.RubberMattingBasePricePerSqFt;
 
         /// <summary>
-        /// Pricing for glass stickers (per square inch)
+        /// Pricing for glass stickers (per square inch) - base/fallback ONLY, used when thickness
+        /// doesn't match one of the known tiers below at all (malformed input) - not itself synced,
+        /// since GlassPricingSetup has no "unknown thickness" row of its own.
         /// </summary>
         public static decimal pricePerSqInchGlass { get; } = 120m; // P120.00 per sq inch for Glass stickers
                                                                    // Pricing for Acrylic stickers (per square foot)
-        public static decimal pricePerSqInchAcrylicHighStrip { get; } = 135m; // P135.00 per sq ft default
+        public static decimal pricePerSqInchAcrylicHighStrip => OnlinefunctionsEvents.PricingCache.AcrylicPricePerSqFt;
 
         /// <summary>
         /// Return a price per square inch for Rubber Matting based on thickness (3mm/6mm/10mm/12mm).
@@ -104,7 +111,9 @@ namespace AquariumPOS
         public static decimal GetRubberPricePerSqInch(string thickness)
         {
             if (string.IsNullOrWhiteSpace(thickness)) return pricePerSqInchRubberMatting;
-            return thickness.Trim().ToLowerInvariant() switch
+            var key = thickness.Trim().ToLowerInvariant();
+            if (OnlinefunctionsEvents.PricingCache.RubberMattingPricePerSqFt.TryGetValue(key, out var cached)) return cached;
+            return key switch
             {
                 "3mm" => 26m,
                 "6mm" => 32m,
@@ -121,12 +130,14 @@ namespace AquariumPOS
         public static decimal GetGlassPricePerSqInch(string thickness)
         {
             if (string.IsNullOrWhiteSpace(thickness)) return pricePerSqInchGlass;
-            return thickness.Trim().ToLowerInvariant() switch
+            var key = thickness.Trim().ToLowerInvariant();
+            if (OnlinefunctionsEvents.PricingCache.GlassPricePerSqFt.TryGetValue(key, out var cached)) return cached;
+            return key switch
             {
-                "3mm" => 70m,
+                "3mm" => 85m,
                 "6mm" => 185m,
                 "10mm" => 290m,
-                "12mm" => 330m,
+                "12mm" => 350m,
                 _ => pricePerSqInchGlass
             };
         }
@@ -187,6 +198,17 @@ namespace AquariumPOS
         // and never learns about those two portal-only flags on its own. See
         // OnlinefunctionsEvents.SyncCategoryProductionFlagsFromSupabaseAsync.
         public static string CategoriesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/Categories";
+
+        // Centralized Glass/Stand-Tubular/Sticker pricing (see supabase_pricing_setup_tables.sql) -
+        // Supabase -> desktop only, same direction as Categories above. The Web Portal's Pricing
+        // Setup page is the only place staff should edit these now; OnlinefunctionsEvents.
+        // SyncPricingFromSupabaseAsync (called from MasterDataSyncTimer_Tick) pulls them down into
+        // OnlinefunctionsEvents.PricingCache / the local GlassPricingSetup table. These are plain
+        // read-only RPCs granted to anon (just prices, no auth needed), called with the same
+        // publishable apikey used everywhere else on this page.
+        public static string GlassPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_glass_pricing";
+        public static string TubularPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_tubular_pricing";
+        public static string StickerPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_sticker_pricing";
 
         /// <summary>
         /// Optional: Page ID and Conversation IDs to receive admin notifications via the Public API.

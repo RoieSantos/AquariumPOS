@@ -51,6 +51,21 @@ async function loadWarehouseOptionsOnce() {
   warehouseOptions = (data || []).filter((w) => w.name).map((w) => ({ id: w.id, name: w.name }));
 }
 
+// Category dropdown options - loaded once, same reasoning as loadWarehouseOptionsOnce (a fixed
+// pick list rather than free text, so values stay an exact match against Items."CategoryCode").
+async function loadCategoryOptionsOnce() {
+  const { data, error } = await supabaseClient.rpc('staff_list_categories', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error || !data) return;
+
+  const select = document.getElementById('categoryFilter');
+  const options = data.map((c) => `<option value="${escapeHtml(c.code)}">${escapeHtml(c.description)}</option>`).join('');
+  select.innerHTML = '<option value="">All categories</option>' + options;
+}
+
 // True when the row's Location matches the acting Serial Admin's own warehouse, or when the
 // account has no single warehouse assigned ("All warehouses" - nothing to restrict against, same
 // precedent as the Location editor's own picker).
@@ -312,6 +327,7 @@ async function loadSerials() {
 
   const search = document.getElementById('searchInput').value.trim();
   const status = document.getElementById('statusFilter').value;
+  const category = document.getElementById('categoryFilter').value;
   // Same own-warehouse restriction renderSerials used to apply client-side (Serial Admins are
   // exempt - they need the full cross-store picture).
   const ownWarehouseRestrict = (!isProductionWarehouseUser && !isSerialAdmin && currentSession?.warehouseName)
@@ -324,7 +340,8 @@ async function loadSerials() {
     p_search: search || null,
     p_status: status || null,
     p_location_restrict: ownWarehouseRestrict,
-    p_location_filter: urlLocationFilter || null
+    p_location_filter: urlLocationFilter || null,
+    p_category_code: category || null
   });
 
   if (error) {
@@ -521,6 +538,8 @@ async function markSold(serialNo) {
     await loadWarehouseOptionsOnce();
   }
 
+  await loadCategoryOptionsOnce();
+
   // Deep link from Inventory Summary's clickable counts (see inventorySummary.js) - pre-fills the
   // search/status filters and adds a Location filter (which this page otherwise doesn't expose as
   // its own control) so clicking a count there lands here already narrowed to exactly those units.
@@ -544,6 +563,7 @@ async function markSold(serialNo) {
     serialSearchDebounceHandle = setTimeout(loadSerials, 300);
   });
   document.getElementById('statusFilter').addEventListener('change', loadSerials);
+  document.getElementById('categoryFilter').addEventListener('change', loadSerials);
   document.getElementById('refreshBtn').addEventListener('click', loadSerials);
   document.getElementById('closeViewTransferBtn').addEventListener('click', () =>
     document.getElementById('viewTransferModal').classList.add('hidden')

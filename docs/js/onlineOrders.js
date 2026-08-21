@@ -1,10 +1,21 @@
-// Online Orders page logic (any active staff, read-only).
+// Online Orders page logic (any active staff).
 //
 // Reads straight from the persisted public."OnlineOrders" table via admin_list_online_orders() -
-// no live Pancake calls from this page anymore, since the background cron job
+// no live Pancake calls for LISTING orders, since the background cron job
 // (cron_sync_online_orders_from_pancake, runs every minute) already keeps that table fresh on
 // its own. This makes the page load instantly regardless of backlog size, with no
 // throttling/incremental-catch-up/chunked-paging complexity needed.
+//
+// Status IS writable from here though (see statusCellHtml/handleOrderTableClick below) -
+// admin_update_online_order_status (supabase_online_order_portal_status_update.sql) pushes the
+// change live to Pancake, mirroring the desktop app's OnlineOrdersForm grid instead of just
+// reading whatever the last sync happened to pull in.
+//
+// Deliberately NOT a free-form status editor - per direct request, staff can't manually set an
+// order to an arbitrary status from here. The only manual action offered is a "To Ship" button
+// for the common packed-and-ready workflow (with a confirm() prompt before it fires); every other
+// status transition (Shipped, Pending Transfer, In-Transit, Received, Production Done) only ever
+// happens via the background Pancake sync, same as before this status-write feature existed.
 //
 // No password re-unlock prompt here (unlike the super-user-only setup pages) - since this page
 // is open to any active staff member, it reuses the password captured at login (session.password,
@@ -76,6 +87,34 @@ function glassBadgeHtml(order) {
   return `<span class="badge badge-glass" title="This order has a ${order.glass_thickness} glass custom aquarium line - it may need an attachment (see Online Order Lines).">${order.glass_thickness} glass</span>`;
 }
 
+function escapeHtml(value) {
+  return (value ?? '').toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function statusCellHtml(o) {
+  const status = o.status || '';
+  const statusLower = status.trim().toLowerCase();
+  if (statusLower === 'new') {
+    return `<span title="Ask the online sales team to confirm this order first.">${escapeHtml(status)}</span>`;
+  }
+
+  const showToShipBtn = !['to ship', 'shipped', 'cancelled'].includes(statusLower);
+  if (!showToShipBtn) {
+    return escapeHtml(status);
+  }
+
+  return `
+    <div class="status-cell-wrap" style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
+      <span class="status-text">${escapeHtml(status)}</span>
+      <button type="button" class="btn btn-primary btn-sm status-to-ship-btn" style="font-size:12px; padding:3px 8px;">To Ship</button>
+    </div>
+  `;
+}
+
 function orderRowsHtml(orders) {
   return orders
     .map((o) => `
@@ -84,7 +123,7 @@ function orderRowsHtml(orders) {
         <td>${o.order_date || ''}</td>
         <td>${o.order_time || ''}</td>
         <td>${o.customer_name || ''}</td>
-        <td>${o.status || ''}</td>
+        <td>${statusCellHtml(o)}</td>
         <td>${o.confirmed_by || ''}</td>
         <td>${o.created_by || ''}</td>
         <td>${glassBadgeHtml(o)}</td>
@@ -98,6 +137,131 @@ function orderRowsHtml(orders) {
       </tr>
     `)
     .join('');
+}
+
+function refreshCurrentOrders() {
+  return loadOrders(document.getElementById('orderSearchInput').value.trim(), document.getElementById('statusFilterInput').value.trim());
+}
+
+// Shared apply step for the "To Ship" button. admin_update_online_order_status re-validates the
+// transition server-side regardless of what's offered here (blocked-from-'new', 'To Ship' only).
+async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, photoStoragePath, triggerEl) {
+  triggerEl.disabled = true;
+
+  const { data, error } = await supabaseClient.rpc('admin_update_online_order_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId,
+    p_new_status: newStatus,
+    p_notify_customer: notifyCustomer,
+    p_photo_url: photoUrl,
+    p_photo_storage_path: photoStoragePath
+  });
+
+  if (error) {
+    alert('Could not update status: ' + error.message);
+    triggerEl.disabled = false;
+    return;
+  }
+
+  const result = data && data[0];
+  if (notifyCustomer && result && !result.message_sent) {
+    alert('Status updated, but the customer notification failed to send: ' + (result.message_error || 'unknown error'));
+  } else if (photoUrl && result && result.photo_sent === false) {
+    // Text message still went out fine - only the photo attachment failed (see the "unverified
+    // shape" note in supabase_online_order_portal_status_update.sql). Surface it so staff know to
+    // just describe the item to the customer instead, without blaming the whole notification.
+    alert('Status updated and the customer was notified, but the photo could not be attached: ' + (result.photo_error || 'unknown error'));
+  }
+
+  await refreshCurrentOrders();
+}
+
+// Tracks which order/button is waiting on the shared #toShipPhotoInput's result (see
+// handleOrderTableClick/handleToShipPhotoSelected/handleToShipPhotoCancelled below).
+let pendingToShip = null;
+
+// Mirrors OnlineOrdersForm.cs's "To Ship" behavior: asks staff to confirm before notifying the
+// customer (the status change itself always goes through either way - the confirm only gates the
+// message/photo). This is the only manual status action offered on this page (see the comment near
+// the top of this file) - the button click plus the confirm() prompt means a status change can
+// never fire from a single accidental click.
+//
+// Per direct request, staff can snap a photo of the packed order on their phone and have it go out
+// with the ready notification - only prompted when notifying, since a photo is pointless otherwise.
+// Cancelling the camera/file picker just sends the text-only message.
+function handleOrderTableClick(event) {
+  const toShipBtn = event.target.closest('.status-to-ship-btn');
+  if (!toShipBtn) return;
+
+  const row = event.target.closest('tr[data-order-id]');
+  if (!row) return;
+
+  const orderId = row.dataset.orderId;
+  const notifyCustomer = window.confirm('Order complete? Do you want to update the customer?');
+
+  if (!notifyCustomer) {
+    applyStatusChange(orderId, 'To Ship', false, null, null, toShipBtn);
+    return;
+  }
+
+  pendingToShip = { orderId, triggerEl: toShipBtn };
+  document.getElementById('toShipPhotoInput').click();
+}
+
+// Uploads the captured photo via the same signed-upload flow as Online Order Line attachments (see
+// supabase_online_order_status_photo.sql) - returns {url, storagePath}, or null (with an alert) if
+// the upload itself failed, so the caller can still fall back to sending the text-only message.
+async function uploadToShipPhoto(orderId, file) {
+  const { data, error } = await supabaseClient.rpc('admin_create_online_order_status_photo_upload', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId,
+    p_file_name: file.name || 'photo.jpg'
+  });
+
+  if (error || !data || !data[0]) {
+    alert('Could not prepare the photo upload, sending the text-only message instead: ' + (error ? error.message : 'unknown error'));
+    return null;
+  }
+
+  const { storage_path, upload_token, public_url } = data[0];
+  const { error: uploadError } = await supabaseClient.storage
+    .from('online-order-status-photos')
+    .uploadToSignedUrl(storage_path, upload_token, file);
+
+  if (uploadError) {
+    alert('Photo upload failed, sending the text-only message instead: ' + uploadError.message);
+    return null;
+  }
+
+  return { url: public_url, storagePath: storage_path };
+}
+
+async function handleToShipPhotoSelected(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  const pending = pendingToShip;
+  pendingToShip = null;
+  input.value = ''; // reset so picking the same file again still fires 'change' next time
+
+  if (!pending) return;
+
+  if (!file) {
+    // Some browsers fire 'change' with an empty file list instead of a 'cancel' event.
+    applyStatusChange(pending.orderId, 'To Ship', true, null, null, pending.triggerEl);
+    return;
+  }
+
+  const photo = await uploadToShipPhoto(pending.orderId, file);
+  applyStatusChange(pending.orderId, 'To Ship', true, photo ? photo.url : null, photo ? photo.storagePath : null, pending.triggerEl);
+}
+
+function handleToShipPhotoCancelled() {
+  const pending = pendingToShip;
+  pendingToShip = null;
+  if (!pending) return;
+  applyStatusChange(pending.orderId, 'To Ship', true, null, null, pending.triggerEl);
 }
 
 async function loadOrders(search, status) {
@@ -325,6 +489,9 @@ function wireOrderFilters() {
 
   document.getElementById('setupContent').classList.remove('hidden');
   document.getElementById('exportExcelBtn').classList.toggle('hidden', !session.isSuperUser);
+  document.getElementById('orderTableBody').addEventListener('click', handleOrderTableClick);
+  document.getElementById('toShipPhotoInput').addEventListener('change', handleToShipPhotoSelected);
+  document.getElementById('toShipPhotoInput').addEventListener('cancel', handleToShipPhotoCancelled);
   wireOrderFilters();
 
   // Supports deep-linking from the Dashboard's status cards, e.g. online-orders.html?status=Shipped,

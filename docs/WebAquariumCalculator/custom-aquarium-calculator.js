@@ -1,18 +1,20 @@
 (function (global) {
   'use strict';
 
+  // Last-resort fallback only, used when Supabase's GlassPricingSetup table can't be reached at
+  // all (e.g. fully offline) - see buildGlassPriceLookup(). The live values are the actual source
+  // of truth, editable from the portal's Pricing Setup page (see supabase_pricing_setup_tables.sql)
+  // and shared by the aquarium builder AND the Sticker calculator's "Glass" type - one glass price
+  // table now, not two that can drift apart.
   var DEFAULT_GLASS_PRICES = {
     '3mm': 85,
     '6mm': 185,
     '10mm': 290,
-    '12mm': 330
+    '12mm': 350
   };
 
-  var DEFAULT_STICKER_PRICES = {
-    plain: 70,
-    tiles: 90
-  };
-
+  // Last-resort fallback only, same reasoning as DEFAULT_GLASS_PRICES above - see
+  // buildTubularPriceLookup().
   var TUBULAR_RETAIL_RATES = {
     '1x1': 46,
     '1.5x1.5': 52,
@@ -95,6 +97,20 @@
     return '1x1';
   }
 
+  // Nominal thickness (inches) of each tubular size, used only to show the true built Length of a
+  // dual (2-post) stand below - the frame has one end post at each end of the Length run, so the
+  // finished stand is actually 2x the tubular's own thickness longer than the footprint Length
+  // that was entered. Display-only per direct request: pricing still runs off the entered footprint.
+  var TUBULAR_THICKNESS_INCHES = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
+
+  function getTubularThicknessInches(tubular) {
+    return TUBULAR_THICKNESS_INCHES[normalizeTubular(tubular)] || TUBULAR_THICKNESS_INCHES['1x1'];
+  }
+
+  function computeStandBuiltLengthInches(lengthInches, tubular) {
+    return Number(lengthInches || 0) + (2 * getTubularThicknessInches(tubular));
+  }
+
   function getStandHeightInches(layers, tubular) {
     var layerCount = Math.max(2, Math.round(Number(layers) || 2));
     var normalizedTubular = normalizeTubular(tubular);
@@ -146,7 +162,26 @@
     };
   }
 
-  function computeStandRetailPrice(lengthFeet, widthFeet, heightFeet, layers, tubular, stainless, sumpWidthFeet) {
+  // Builds a tubular price lookup from TubularPricingSetup rows (public_get_tubular_pricing),
+  // same "start from the hardcoded fallback, override with live rows" pattern as
+  // buildGlassPriceLookup/buildStickerPriceLookup above.
+  function buildTubularPriceLookup(rows) {
+    var lookup = Object.assign({}, TUBULAR_RETAIL_RATES);
+    var items = Array.isArray(rows) ? rows : [];
+
+    for (var i = 0; i < items.length; i += 1) {
+      var row = items[i] || {};
+      var size = normalizeTubular(row.tubularSize || row.tubular_size || row.TubularSize);
+      var price = Number(row.pricePerFt || row.price_per_ft || row.PricePerFt || 0);
+      if (price > 0) {
+        lookup[size] = price;
+      }
+    }
+
+    return lookup;
+  }
+
+  function computeStandRetailPrice(lengthFeet, widthFeet, heightFeet, layers, tubular, stainless, sumpWidthFeet, tubularRatesLookup) {
     var layerCount = Math.max(2, Math.round(Number(layers) || 2));
     var perimeterPerLayerFeet = 2 * (lengthFeet + widthFeet);
     var totalPerimeterFeet = perimeterPerLayerFeet * layerCount;
@@ -156,7 +191,8 @@
     var totalBraceLengthFeet = braceLengthPerFrameFeet * layerCount;
     var subtotalFeet = totalPerimeterFeet + uprightsFeet + totalBraceLengthFeet;
     var adjustedFeet = subtotalFeet * 1.22;
-    var ratePerFoot = Number(TUBULAR_RETAIL_RATES[normalizeTubular(tubular)]) || TUBULAR_RETAIL_RATES['1x1'];
+    var tubularRates = tubularRatesLookup || TUBULAR_RETAIL_RATES;
+    var ratePerFoot = Number(tubularRates[normalizeTubular(tubular)]) || tubularRates['1x1'] || TUBULAR_RETAIL_RATES['1x1'];
 
     if (stainless) {
       ratePerFoot *= 3;
@@ -213,7 +249,7 @@
     };
   }
 
-  function calculateStand(lengthInches, widthInches, glassThickness, standOptions, defaultUnit) {
+  function calculateStand(lengthInches, widthInches, glassThickness, standOptions, defaultUnit, tubularPricingSetupRows) {
     var stand = standOptions || {};
     if (!stand.enabled) {
       return null;
@@ -235,7 +271,8 @@
       layers,
       tubular,
       stainless,
-      inchesToFeet(sumpWidthInches)
+      inchesToFeet(sumpWidthInches),
+      buildTubularPriceLookup(tubularPricingSetupRows)
     );
 
     return {
@@ -305,7 +342,8 @@
       layers,
       tubular,
       stainless,
-      inchesToFeet(sumpWidthInches)
+      inchesToFeet(sumpWidthInches),
+      buildTubularPriceLookup(options.tubularPricingSetupRows)
     );
 
     return {
@@ -384,7 +422,8 @@
 
     if (options.allumTopCover) {
       var coverAreaSqFt = (lengthInches / 12) * (widthInches / 12);
-      components.allumTopCover = ceilNearest10(coverAreaSqFt * 500);
+      var allumRate = buildStickerPriceLookup(options.stickerPricingSetupRows).flat['Allum TopCover'];
+      components.allumTopCover = ceilNearest10(coverAreaSqFt * allumRate);
     }
 
     var totalPrice = subtotal + components.piping + components.allumTopCover;
@@ -405,6 +444,109 @@
         filterMedias: Boolean(options.filterMedias),
         allumTopCover: Boolean(options.allumTopCover)
       }, normalizedExtra)
+    };
+  }
+
+  // Standalone Custom Sticker/Accessory pricing - mirrors ShowCustomStickersDialog in MainForm.cs
+  // (the desktop POS app's "CUSTOM STICKERS" action button) and its rate constants in
+  // GlobalSettings.cs, so a quote given here (docs/sticker-calculator.html and Order Now's
+  // Customize > Accessories/Stickers flow both call this) matches what the desktop app would
+  // charge for the same inputs. Covers the full standalone sticker/accessory catalog (Rubber
+  // Matting is thickness-priced, Plain/Tiles/Acrylic/Allum TopCover are flat) - Glass is priced
+  // via GlassPricingSetup instead, shared with the Aquarium builder (see stickerPricePerSqFt).
+  // Last-resort fallback only, same reasoning as DEFAULT_GLASS_PRICES above - live values come
+  // from Supabase's StickerPricingSetup table via buildStickerPriceLookup(). "Glass" is
+  // deliberately NOT one of these - the Sticker calculator's Glass type reads the SAME glass price
+  // lookup the Aquarium builder uses (buildGlassPriceLookup), not a separate table, so there's
+  // only ever one place glass-thickness pricing can drift.
+  var STICKER_PRICE_PER_SQFT = {
+    'Tiles Sticker': 90,
+    'Plain Sticker': 70,
+    'Acrylic': 135,
+    'Allum TopCover': 500
+  };
+  var RUBBER_STICKER_PRICE_PER_SQFT = { '3mm': 26, '6mm': 32, '10mm': 45, '12mm': 60 };
+  var RUBBER_STICKER_BASE_PRICE_PER_SQFT = 85;
+
+  // Builds a sticker price lookup from StickerPricingSetup rows (public_get_sticker_pricing), same
+  // "start from the hardcoded fallback, then override with whatever live rows matched" pattern as
+  // buildGlassPriceLookup - a row for a type this function doesn't recognize is just ignored rather
+  // than erroring, so adding new sticker types later doesn't require a matching JS change here.
+  function buildStickerPriceLookup(rows) {
+    var flat = Object.assign({}, STICKER_PRICE_PER_SQFT);
+    var rubber = Object.assign({}, RUBBER_STICKER_PRICE_PER_SQFT);
+    var rubberBase = RUBBER_STICKER_BASE_PRICE_PER_SQFT;
+    var items = Array.isArray(rows) ? rows : [];
+
+    for (var i = 0; i < items.length; i += 1) {
+      var row = items[i] || {};
+      var type = String(row.stickerType || row.sticker_type || row.StickerType || '').trim();
+      var thicknessRaw = row.thickness || row.Thickness;
+      var price = Number(row.pricePerSqFt || row.price_per_sqft || row.PricePerSqFt || 0);
+      if (!type || !(price > 0)) {
+        continue;
+      }
+
+      if (type === 'Rubber Matting') {
+        if (thicknessRaw) {
+          rubber[normalizeGlass(thicknessRaw)] = price;
+        } else {
+          rubberBase = price;
+        }
+      } else if (Object.prototype.hasOwnProperty.call(flat, type)) {
+        flat[type] = price;
+      }
+    }
+
+    return { flat: flat, rubber: rubber, rubberBase: rubberBase };
+  }
+
+  function stickerPricePerSqFt(type, thickness, stickerLookup, glassLookup) {
+    var flat = (stickerLookup && stickerLookup.flat) || STICKER_PRICE_PER_SQFT;
+    var rubber = (stickerLookup && stickerLookup.rubber) || RUBBER_STICKER_PRICE_PER_SQFT;
+    var rubberBase = (stickerLookup && stickerLookup.rubberBase) || RUBBER_STICKER_BASE_PRICE_PER_SQFT;
+    var glass = glassLookup || DEFAULT_GLASS_PRICES;
+
+    if (type === 'Rubber Matting') return rubber[thickness] || rubberBase;
+    if (type === 'Glass') return glass[thickness] || glass['6mm'];
+    return flat[type] || flat['Plain Sticker'];
+  }
+
+  // Length/Width only (no height) - stickers/mats/covers are flat, same as the desktop dialog.
+  function calculateStandaloneSticker(input) {
+    var options = input || {};
+    var unit = options.unit || 'Inches';
+    var lengthInches = toInches(options.length, unit);
+    var widthInches = toInches(options.width, unit);
+
+    if (!(lengthInches > 0) || !(widthInches > 0)) {
+      return { ok: false, error: 'Please enter valid positive Length and Width.' };
+    }
+
+    var type = options.type || 'Plain Sticker';
+    var hasThickness = type === 'Rubber Matting' || type === 'Glass';
+    var thickness = hasThickness ? (options.thickness || '6mm') : null;
+    var isRepair = type === 'Glass' && Boolean(options.repair);
+
+    var stickerLookup = buildStickerPriceLookup(options.stickerPricingSetupRows);
+    var glassLookup = buildGlassPriceLookup(options.glassPricingSetupRows, options.glassPricingUom || 'MM');
+    var areaSqFt = inchesToFeet(lengthInches) * inchesToFeet(widthInches);
+    var pricePerSqFt = stickerPricePerSqFt(type, thickness, stickerLookup, glassLookup);
+    var estimatedPrice = areaSqFt * pricePerSqFt;
+    if (isRepair) estimatedPrice *= 2.5;
+
+    return {
+      ok: true,
+      totalPrice: ceilNearest10(estimatedPrice),
+      normalized: {
+        unit: unit,
+        lengthInches: round2(lengthInches),
+        widthInches: round2(widthInches),
+        areaSqFt: round2(areaSqFt),
+        type: type,
+        thickness: thickness,
+        isRepair: isRepair
+      }
     };
   }
 
@@ -528,7 +670,11 @@
 
   function getStickerRate(stickerType, config) {
     var type = String(stickerType || 'plain').trim().toLowerCase();
-    var stickerRates = Object.assign({}, DEFAULT_STICKER_PRICES, config && config.stickerPricesPerSqFt);
+    var flat = buildStickerPriceLookup(config && config.stickerPricingSetupRows).flat;
+    var stickerRates = Object.assign(
+      { plain: flat['Plain Sticker'], tiles: flat['Tiles Sticker'] },
+      config && config.stickerPricesPerSqFt
+    );
     return type === 'tiles' ? Number(stickerRates.tiles) || 0 : Number(stickerRates.plain) || 0;
   }
 
@@ -658,7 +804,7 @@
     var basePricePerSqFt = Number(glassPrices[glass]) || 100;
     var finalPricePerSqFt = basePricePerSqFt;
     var glassAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
-    var standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit);
+    var standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows);
     var components = {
       glass: 0,
       highStrip: 0,
@@ -760,7 +906,8 @@
             effectiveWidthInches = Math.max(0, widthInches - sumpWidthInches);
           }
           var coverAreaSqFt = (lengthInches / 12) * (effectiveWidthInches / 12);
-          components.allumTopCover = ceilNearest10(coverAreaSqFt * 500);
+          var allumRate = buildStickerPriceLookup(options.stickerPricingSetupRows).flat['Allum TopCover'];
+          components.allumTopCover = ceilNearest10(coverAreaSqFt * allumRate);
         }
       }
     }
@@ -862,12 +1009,17 @@
 
   var api = {
     buildGlassPriceLookup: buildGlassPriceLookup,
+    buildTubularPriceLookup: buildTubularPriceLookup,
+    buildStickerPriceLookup: buildStickerPriceLookup,
     calculateCustomAquarium: calculateCustomAquarium,
     validateGlassSafety: validateGlassSafety,
     toInches: toInches,
     calculateStandaloneStand: calculateStandaloneStand,
     calculateStandaloneFiltration: calculateStandaloneFiltration,
-    enforceStandTubularSafety: enforceStandTubularSafety
+    calculateStandaloneSticker: calculateStandaloneSticker,
+    enforceStandTubularSafety: enforceStandTubularSafety,
+    getTubularThicknessInches: getTubularThicknessInches,
+    computeStandBuiltLengthInches: computeStandBuiltLengthInches
   };
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock On Hand - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Stock On Hand</h1>
+    <p class="muted">Every item's quantity on hand, per warehouse - sourced live from Pancake (the only place real per-warehouse stock is tracked; the desktop app's own stock count has no warehouse breakdown).</p>
+
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Search by item code or name..." style="max-width:260px;" />
+      <label for="categoryFilter" class="muted" style="margin:0;">Category</label>
+      <select id="categoryFilter" style="max-width:200px;">
+        <option value="">All categories</option>
+      </select>
+      <label for="warehouseFilter" class="muted" style="margin:0;">Warehouse</label>
+      <select id="warehouseFilter" style="max-width:220px;">
+        <option value="">All warehouses</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" id="refreshViewBtn" type="button">Refresh</button>
+      <button class="btn btn-primary btn-sm" id="refreshFromPancakeBtn" type="button">Refresh from Pancake</button>
+      <span class="muted" id="lastRefreshedLabel" style="font-size:12px;"></span>
+    </div>
+
+    <div id="refreshStatus" class="hidden" style="margin-bottom:12px;"></div>
+    <div id="stockError" class="error-text hidden"></div>
+    <div id="stockLoading" class="muted">Loading...</div>
+
+    <div class="table-wrap hidden" id="stockTableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Item Code</th>
+            <th>Item Name</th>
+            <th>Category</th>
+            <th>Warehouse</th>
+            <th style="text-align:right;">Quantity On Hand</th>
+          </tr>
+        </thead>
+        <tbody id="stockTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/stockOnHand.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

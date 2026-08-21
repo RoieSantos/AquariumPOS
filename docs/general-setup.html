@@ -1,10 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>General Setup - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -90,6 +90,29 @@
       <div id="logoError" class="error-text hidden"></div>
       <div style="margin-top:8px;">
         <button class="btn btn-success" id="saveCompanyInfoBtn" type="button">Save Company Info</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Promotion</h2>
+      </div>
+      <p class="muted">Shown as a banner on Order Now (no login required) so customers see your ongoing promo before they start an order.</p>
+
+      <div class="form-row">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="promoActiveInput" style="width:auto;" />
+          <span>Show this promo on Order Now</span>
+        </label>
+      </div>
+      <div class="form-row">
+        <label for="promoTextInput">Promo Text</label>
+        <textarea id="promoTextInput" rows="3" placeholder="e.g. Get 10% off all custom aquariums this month!"></textarea>
+      </div>
+
+      <div id="promoError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="savePromoBtn" type="button">Save Promotion</button>
       </div>
 
       <div class="section-divider"></div>
@@ -275,7 +298,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
   <script src="js/pagination.js"></script>
   <script src="js/generalSetup.js"></script>
   <script src="js/pwa.js"></script>
