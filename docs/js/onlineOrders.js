@@ -45,6 +45,24 @@ let currentConfirmedBy = null;
 const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed', 'Printed', 'To Ship'];
 let hidePriceColumns = false;
 
+// Per "i want to show the online order per category: Confirmed / Printed / To-Ship... built it as
+// a mobile GUI friendly. I want button style Confirmed Printed and ToShip, make it very Mobile
+// friendly" - Online Order Staff get a tab per status (docs/online-orders.html's #groupedTabs)
+// over a stacked card list (#groupedOrdersList) instead of the wide flat table, since this role
+// works off a phone in the warehouse. Everyone else keeps the original flat table (#flatOrdersView)
+// - see the isOnlineOrderStaff branch in loadOrders/init below.
+const GROUP_COUNT_IDS = {
+  'Confirmed': 'groupCountConfirmed',
+  'Printed': 'groupCountPrinted',
+  'To Ship': 'groupCountToShip'
+};
+
+// Which tab is currently showing in the grouped (Online Order Staff) view, and the last set of
+// rows fetched for it - switching tabs just re-renders from this, no server round-trip needed
+// since loadOrders already fetches all 3 statuses (up to the 200-row cap) in one call.
+let activeGroupStatus = 'Confirmed';
+let lastGroupedRows = [];
+
 // Warehouse-scoped staff (StaffUsers.WarehouseName set) only see orders for their own
 // warehouse - same convention as Transfer Orders (js/transferOrders.js). Orders with no
 // resolved warehouse_name (e.g. LocationID didn't match any synced Warehouses row) are
@@ -111,7 +129,12 @@ function statusCellHtml(o) {
     return `<span title="Ask the online sales team to confirm this order first.">${escapeHtml(status)}</span>`;
   }
 
-  const showToShipBtn = !['to ship', 'shipped', 'cancelled'].includes(statusLower);
+  // Mirrors the desktop app's IsPrintedStatusForRow gate on MarkRowAsToShipAsync (OnlineOrdersForm.cs)
+  // and admin_update_online_order_status' matching server-side check - only a 'Printed' order can
+  // be marked 'To Ship' from here, not 'Confirmed' or anything else, so the button only appears
+  // then (the RPC would reject it anyway, but showing it only when it'll actually work avoids a
+  // confusing rejection).
+  const showToShipBtn = statusLower === 'printed';
   if (!showToShipBtn) {
     return escapeHtml(status);
   }
@@ -146,6 +169,72 @@ function orderRowsHtml(orders) {
       </tr>
     `)
     .join('');
+}
+
+// Stacked card for the grouped (Online Order Staff / mobile) view - one order's info as
+// label/value rows instead of a wide table, so nothing gets clipped or forces horizontal
+// scrolling on a phone. The "To Ship" button follows the same rule as statusCellHtml (only shown
+// once an order is 'Printed').
+function orderCardHtml(o) {
+  const status = o.status || '';
+  // Same 'Printed' gate as statusCellHtml above - see the comment there.
+  const showToShipBtn = status.trim().toLowerCase() === 'printed';
+
+  return `
+    <div class="order-card" data-order-id="${o.order_id}">
+      <div class="order-card-top">
+        <span class="order-card-id">#${o.order_id || ''}</span>
+        ${glassBadgeHtml(o)}
+      </div>
+      <div class="order-card-customer">${o.customer_name || 'No name on order'}</div>
+      <div class="order-card-grid">
+        <span class="order-card-label">Date</span><span>${o.order_date || ''} ${o.order_time || ''}</span>
+        <span class="order-card-label">Warehouse</span><span>${o.warehouse_name || o.location_id || ''}</span>
+        <span class="order-card-label">Delivery</span><span><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span> ${o.estimated_delivery_date ? '&middot; ' + o.estimated_delivery_date : ''}</span>
+        <span class="order-card-label">Confirmed By</span><span>${o.confirmed_by || '-'}</span>
+        ${o.note_print ? `<span class="order-card-label">Print Note</span><span>${o.note_print}</span>` : ''}
+      </div>
+      <div class="order-card-actions">
+        <a class="btn btn-secondary btn-sm" href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View Order Lines</a>
+        ${showToShipBtn ? '<button type="button" class="btn btn-primary status-to-ship-btn">To Ship</button>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+// Filters the last-fetched rows down to whichever status tab is active and renders them as cards
+// - called both after a fresh fetch (loadOrders) and on a plain tab click (no re-fetch needed,
+// see wireGroupedTabs below).
+function renderActiveGroupTab() {
+  const list = document.getElementById('groupedOrdersList');
+  const bucket = lastGroupedRows.filter((o) => (o.status || '').trim().toLowerCase() === activeGroupStatus.toLowerCase());
+  list.innerHTML = bucket.length === 0
+    ? `<p class="muted">No ${activeGroupStatus} orders.</p>`
+    : bucket.map(orderCardHtml).join('');
+}
+
+// Splits rows into the Confirmed/Printed/To Ship counts (see GROUP_COUNT_IDS above), stores them
+// for tab switching, and renders whichever tab is currently active. fetchedCount/totalCount come
+// straight from the server response (BEFORE the client-side warehouse/outstanding post-filters
+// loadOrders applies) - used only to flag when the 200-row fetch cap might be hiding older
+// matching orders, not to decide what's actually shown.
+function renderGroupedOrders(rows, fetchedCount, totalCount) {
+  lastGroupedRows = rows;
+
+  ONLINE_ORDER_STAFF_STATUS_SCOPE.forEach((status) => {
+    const count = rows.filter((o) => (o.status || '').trim().toLowerCase() === status.toLowerCase()).length;
+    document.getElementById(GROUP_COUNT_IDS[status]).textContent = count;
+  });
+
+  renderActiveGroupTab();
+
+  const note = document.getElementById('groupedOrdersNote');
+  if (fetchedCount < totalCount) {
+    note.textContent = `Showing the most recent ${fetchedCount} of ${totalCount} matching orders. Use search to find an older one if it's not listed below.`;
+    note.classList.remove('hidden');
+  } else {
+    note.classList.add('hidden');
+  }
 }
 
 function refreshCurrentOrders() {
@@ -203,7 +292,10 @@ function handleOrderTableClick(event) {
   const toShipBtn = event.target.closest('.status-to-ship-btn');
   if (!toShipBtn) return;
 
-  const row = event.target.closest('tr[data-order-id]');
+  // Generic [data-order-id] (not tr[data-order-id]) - matches both the flat table's <tr> rows and
+  // the grouped view's <div class="order-card"> cards (see orderCardHtml above), since the same
+  // handler covers both.
+  const row = event.target.closest('[data-order-id]');
   if (!row) return;
 
   const orderId = row.dataset.orderId;
@@ -275,7 +367,7 @@ function handleToShipPhotoCancelled() {
 
 async function loadOrders(search, status) {
   const myGeneration = ++loadGeneration;
-  const tbody = document.getElementById('orderTableBody');
+  const grouped = !!currentSession.isOnlineOrderStaff;
   const trimmedSearch = (search || '').trim();
   const trimmedStatus = (status || '').trim();
 
@@ -289,13 +381,17 @@ async function loadOrders(search, status) {
     p_page: currentPage,
     p_page_size: currentPageSize,
     p_confirmed_by: currentConfirmedBy,
-    p_status_in: currentSession.isOnlineOrderStaff ? ONLINE_ORDER_STAFF_STATUS_SCOPE : null
+    p_status_in: grouped ? ONLINE_ORDER_STAFF_STATUS_SCOPE : null
   });
 
   if (myGeneration !== loadGeneration) return;
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="15" class="error-text">${error.message}</td></tr>`;
+    if (grouped) {
+      document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
+    } else {
+      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="15" class="error-text">${error.message}</td></tr>`;
+    }
     return;
   }
 
@@ -310,6 +406,16 @@ async function loadOrders(search, status) {
     rows = rows.filter((o) => Number(o.balance) > 0);
   }
 
+  // Online Order Staff get the tabbed card view (renderGroupedOrders) instead of the flat table +
+  // pagination bar - see the isOnlineOrderStaff branch in init() below, which hides
+  // #flatOrdersView/shows #groupedOrdersView and bumps currentPageSize to the server's 200-row
+  // cap so this single fetch covers their whole Confirmed/Printed/To Ship queue.
+  if (grouped) {
+    renderGroupedOrders(rows, (data || []).length, data?.[0]?.total_count || 0);
+    return;
+  }
+
+  const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
     ? '<tr><td colspan="15" class="muted">No online orders found.</td></tr>'
     : orderRowsHtml(rows);
@@ -444,6 +550,21 @@ function updateStatusPillActiveState() {
   });
 }
 
+// Tab buttons for the grouped (Online Order Staff) view - switching tabs re-renders from the
+// last-fetched rows (lastGroupedRows) rather than re-querying the server, so it's instant.
+function wireGroupedTabs() {
+  document.getElementById('groupedTabs').addEventListener('click', (event) => {
+    const tabBtn = event.target.closest('.grouped-tab-btn');
+    if (!tabBtn) return;
+
+    activeGroupStatus = tabBtn.dataset.status;
+    document.querySelectorAll('#groupedTabs .grouped-tab-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn === tabBtn);
+    });
+    renderActiveGroupTab();
+  });
+}
+
 function wireOrderFilters() {
   const searchInput = document.getElementById('orderSearchInput');
   const statusInput = document.getElementById('statusFilterInput');
@@ -499,7 +620,11 @@ function wireOrderFilters() {
 
   document.getElementById('setupContent').classList.remove('hidden');
   document.getElementById('exportExcelBtn').classList.toggle('hidden', !session.isSuperUser);
-  document.getElementById('orderTableBody').addEventListener('click', handleOrderTableClick);
+  // Delegated on #setupContent (not #orderTableBody directly) so the same "To Ship" handling
+  // works whether the click lands in the flat table or one of the three grouped-view tables
+  // (see the isOnlineOrderStaff branch below) - handleOrderTableClick already finds its target
+  // via .closest(), so it doesn't care which table fired the event.
+  document.getElementById('setupContent').addEventListener('click', handleOrderTableClick);
   document.getElementById('toShipPhotoInput').addEventListener('change', handleToShipPhotoSelected);
   document.getElementById('toShipPhotoInput').addEventListener('cancel', handleToShipPhotoCancelled);
   wireOrderFilters();
@@ -534,6 +659,15 @@ function wireOrderFilters() {
     statusInput.disabled = true;
     statusInput.title = 'Your account only shows Confirmed, Printed, and To Ship orders.';
     document.getElementById('statusSummaryBar').classList.add('hidden');
+
+    // Per "i want to show the online order per category: Confirmed / Printed / To-Ship" - swap
+    // the flat table for the three-section grouped view (see renderGroupedOrders/loadOrders
+    // above), and fetch at the server's max page size (200, see admin_list_online_orders) in one
+    // shot instead of paging, since this role's whole queue is only ever these 3 statuses.
+    document.getElementById('flatOrdersView').classList.add('hidden');
+    document.getElementById('groupedOrdersView').classList.remove('hidden');
+    currentPageSize = 200;
+    wireGroupedTabs();
   }
   updateStatusPillActiveState();
 

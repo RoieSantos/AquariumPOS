@@ -308,9 +308,19 @@ async function loadOrderDetail() {
   });
 
   if (error) {
-    document.getElementById('unlockBox').classList.remove('hidden');
-    document.getElementById('unlockError').textContent = `Could not load order ${orderId}: ${error.message}`;
-    document.getElementById('unlockBtn').addEventListener('click', logout);
+    // NOT necessarily a session problem (unlike the !session.password case in init() below) - the
+    // most common cause here is Pancake's live API being slow/unreachable for a moment
+    // (admin_get_online_order_detail_live does a real-time HTTP call, see supabase_pancake_manual_
+    // sync.sql), not a broken login. Logging out wouldn't fix that, so show the real error with a
+    // Retry instead of pushing staff toward re-authenticating for no reason.
+    document.getElementById('setupContent').classList.remove('hidden');
+    document.getElementById('orderSummaryNote').textContent = `Order ${orderId} - could not load line items.`;
+    document.getElementById('lineTableBody').innerHTML = `
+      <tr><td colspan="11" class="error-text">
+        Could not load order ${escapeHtml(orderId)}: ${escapeHtml(error.message)}
+        <button type="button" class="btn btn-secondary btn-sm" id="retryOrderDetailBtn" style="margin-left:10px;">Retry</button>
+      </td></tr>`;
+    document.getElementById('retryOrderDetailBtn').addEventListener('click', loadOrderDetail);
     return;
   }
 

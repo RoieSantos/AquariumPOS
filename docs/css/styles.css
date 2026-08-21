@@ -677,6 +677,105 @@ tr.clickable-row:hover {
   font-weight: 700;
 }
 
+/* Grouped Confirmed/Printed/To Ship tabs + card list (Online Order Staff view, Online Orders page)
+   - built for a phone screen: big tap targets, one column, no horizontal scrolling. */
+.grouped-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.grouped-tab-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.grouped-tab-btn:hover {
+  border-color: var(--primary);
+}
+
+.grouped-tab-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(29, 79, 145, 0.18);
+}
+
+.grouped-tab-count {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.order-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.order-card {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: var(--panel-bg);
+  padding: 14px 16px;
+}
+
+.order-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.order-card-id {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.order-card-customer {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 4px 0 10px;
+}
+
+.order-card-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.order-card-label {
+  color: var(--neutral);
+  font-weight: 600;
+}
+
+.order-card-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.order-card-actions .btn {
+  flex: 1;
+  text-align: center;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
 /* Dashboard status overview cards */
 .stat-card-grid {
   display: grid;

@@ -78,6 +78,15 @@ begin
     raise exception 'You can only change status to ''To Ship'' from here.';
   end if;
 
+  -- Mirrors OnlineOrdersForm.cs's IsPrintedStatusForRow gate on MarkRowAsToShipAsync - the desktop
+  -- app already refuses to mark an order 'To Ship' unless it's currently 'Printed' ("Update not
+  -- allowed status is not \"printed\""), so this portal RPC needs the same guard, not just the
+  -- 'new' check above - otherwise a Confirmed-but-not-yet-printed order could be jumped straight
+  -- to To Ship from here even though the desktop app would block it.
+  if lower(trim(coalesce(v_current_status, ''))) <> 'printed' then
+    raise exception 'Cannot mark as To Ship - this order''s status is not ''Printed'' yet. Print the order first.';
+  end if;
+
   v_api_token := '8'; -- MapStatusForApi's token for 'To Ship'
 
   v_order_url := v_base_url || '/shops/' || v_shop_id || '/orders/' || p_order_id || '?api_key=' || v_api_key || '&page_size=1000';

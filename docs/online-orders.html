@@ -59,32 +59,52 @@
         <button type="button" class="status-summary-pill" data-status="Shipped"><span class="badge badge-success">Shipped</span> <span class="status-summary-count" id="statusCountShipped">-</span></button>
         <button type="button" class="status-summary-pill" data-status="Cancelled"><span class="badge badge-danger">Cancelled</span> <span class="status-summary-count" id="statusCountCancelled">-</span></button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Order ID</th>
-              <th>Date</th>
-              <th>Time</th>
-              <th>Customer</th>
-              <th>Status</th>
-              <th>Confirmed By</th>
-              <th>Created By</th>
-              <th>Glass</th>
-              <th>Print Note</th>
-              <th id="deliveryFeeHeader">Delivery Fee</th>
-              <th>Warehouse</th>
-              <th>For Delivery</th>
-              <th>Est. Delivery Date</th>
-              <th>Last Updated</th>
-              <th>Lines</th>
-            </tr>
-          </thead>
-          <tbody id="orderTableBody">
-          </tbody>
-        </table>
+      <div id="flatOrdersView">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Confirmed By</th>
+                <th>Created By</th>
+                <th>Glass</th>
+                <th>Print Note</th>
+                <th id="deliveryFeeHeader">Delivery Fee</th>
+                <th>Warehouse</th>
+                <th>For Delivery</th>
+                <th>Est. Delivery Date</th>
+                <th>Last Updated</th>
+                <th>Lines</th>
+              </tr>
+            </thead>
+            <tbody id="orderTableBody">
+            </tbody>
+          </table>
+        </div>
+        <div id="orderPaginationBar"></div>
       </div>
-      <div id="orderPaginationBar"></div>
+
+      <!-- Online Order Staff only (js/onlineOrders.js's init()) - per "i want to show the online
+           order per category: Confirmed / Printed / To-Ship... built it as a mobile GUI friendly.
+           I want button style Confirmed Printed and ToShip, make it very Mobile friendly" - a big
+           tap-target tab per status (switches which bucket is shown, all fetched in one shot - see
+           renderGroupedOrders) plus a stacked card per order instead of a wide table, since these
+           staff work off a phone in the warehouse, not a desktop. -->
+      <div id="groupedOrdersView" class="hidden">
+        <div class="grouped-tabs" id="groupedTabs">
+          <button type="button" class="grouped-tab-btn active" data-status="Confirmed">Confirmed<span class="grouped-tab-count" id="groupCountConfirmed">0</span></button>
+          <button type="button" class="grouped-tab-btn" data-status="Printed">Printed<span class="grouped-tab-count" id="groupCountPrinted">0</span></button>
+          <button type="button" class="grouped-tab-btn" data-status="To Ship">To Ship<span class="grouped-tab-count" id="groupCountToShip">0</span></button>
+        </div>
+        <p class="muted hidden" id="groupedOrdersNote"></p>
+        <div id="groupedOrdersList" class="order-card-list">
+          <p class="muted">Loading...</p>
+        </div>
+      </div>
     </div>
   </div>
 
