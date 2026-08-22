@@ -114,6 +114,24 @@
        triggered it. -->
   <input type="file" id="toShipPhotoInput" accept="image/*" capture="environment" class="hidden" />
 
+  <!-- Serial picker for To Ship at a production warehouse (js/onlineOrders.js) - mirrors the
+       desktop's EnsureOrderSerialTrackingAsync gate. Only EXISTING IN_STOCK serials can be picked
+       here (see supabase_online_order_to_ship_serials.sql's header comment) - if there aren't
+       enough available, staff are told to finish on the desktop app instead. Reuses the same
+       .serial-tag-picker/.serial-tag-chip styling Transfer Orders already established. -->
+  <div id="shipSerialModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:560px;">
+      <h3 style="margin:0 0 6px;">Select Serials to Ship</h3>
+      <p class="muted" style="margin:0 0 16px;">This order has serial-tracked item(s) - pick which physical unit(s) are shipping.</p>
+      <div id="shipSerialModalLines"></div>
+      <p class="error-text hidden" id="shipSerialModalError" style="margin-top:12px;"></p>
+      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
+        <button type="button" class="btn btn-secondary" id="shipSerialModalCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="shipSerialModalConfirmBtn">Confirm &amp; Continue</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>

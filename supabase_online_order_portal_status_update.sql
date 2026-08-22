@@ -29,6 +29,7 @@
 drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean);
 drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean, text);
 drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean, text, text);
+drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean, text, text, bigint[]);
 
 create or replace function public.admin_update_online_order_status(
   p_admin_username text,
@@ -37,7 +38,8 @@ create or replace function public.admin_update_online_order_status(
   p_new_status text,
   p_notify_customer boolean default false,
   p_photo_url text default null,
-  p_photo_storage_path text default null
+  p_photo_storage_path text default null,
+  p_serial_running_nos bigint[] default null
 )
 returns table(new_status text, message_sent boolean, message_error text, photo_sent boolean, photo_error text)
 language plpgsql
@@ -60,6 +62,8 @@ declare
   v_message_error text;
   v_photo_sent boolean;
   v_photo_error text;
+  v_requested_serial_count int;
+  v_claimed_serial_count int;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -85,6 +89,35 @@ begin
   -- to To Ship from here even though the desktop app would block it.
   if lower(trim(coalesce(v_current_status, ''))) <> 'printed' then
     raise exception 'Cannot mark as To Ship - this order''s status is not ''Printed'' yet. Print the order first.';
+  end if;
+
+  -- Mirrors OnlineOrdersForm.cs's EnsureOrderSerialTrackingAsync, which the desktop's own To Ship
+  -- action runs before changing status: a production warehouse can't ship a serial-tracked item
+  -- (e.g. a custom aquarium) without a physical unit's serial tied to the order. The portal's
+  -- picker (docs/js/onlineOrders.js) only ever offers EXISTING IN_STOCK serials, never generates
+  -- new ones (per direct instruction - unlike the desktop, which can auto-create + print labels),
+  -- so p_serial_running_nos is only ever populated when every required line was fully covered by
+  -- available stock; the caller blocks Ship client-side otherwise and tells staff to finish on the
+  -- desktop app instead. Claiming BEFORE the Pancake calls below means if the Pancake PATCH fails
+  -- later and this function raises, Postgres rolls back this UPDATE too (same implicit-transaction
+  -- semantics as everything else in a single SECURITY DEFINER call) - so a failed attempt never
+  -- leaves serials claimed against an order that's still sitting at 'Printed' in Pancake.
+  if p_serial_running_nos is not null and array_length(p_serial_running_nos, 1) > 0 then
+    v_requested_serial_count := array_length(p_serial_running_nos, 1);
+
+    with claimed as (
+      update public."ItemSerialTracking"
+        set "Status" = 'SOLD',
+            "SoldOnlineOrderId" = p_order_id,
+            "UpdatedAtUtc" = now()
+        where "RunningSerialNo" = any(p_serial_running_nos) and "Status" = 'IN_STOCK'
+        returning "RunningSerialNo"
+    )
+    select count(*) into v_claimed_serial_count from claimed;
+
+    if v_claimed_serial_count < v_requested_serial_count then
+      raise exception 'Only % of % selected serial(s) were still available - someone may have just claimed one. Refresh and try again.', v_claimed_serial_count, v_requested_serial_count;
+    end if;
   end if;
 
   v_api_token := '8'; -- MapStatusForApi's token for 'To Ship'
@@ -174,7 +207,7 @@ begin
 end;
 $$;
 
-grant execute on function public.admin_update_online_order_status(text, text, text, text, boolean, text, text) to anon;
+grant execute on function public.admin_update_online_order_status(text, text, text, text, boolean, text, text, bigint[]) to anon;
 
 -- ---------------------------------------------------------------------------
 -- Message sender - builds and sends the same "your order is ready" message the desktop app sends

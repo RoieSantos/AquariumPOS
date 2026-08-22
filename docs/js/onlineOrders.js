@@ -63,6 +63,27 @@ const GROUP_COUNT_IDS = {
 let activeGroupStatus = 'Confirmed';
 let lastGroupedRows = [];
 
+// Whether the logged-in staff's own warehouse is flagged Production - gates whether "To Ship"
+// needs to check for serial-tracked lines at all (see EnsureOrderSerialTrackingAsync's own gate in
+// OnlineOrdersForm.cs - a non-production store never needed this). Resolved once at init, same
+// pattern (and duplicated for the same "no shared module system between these plain <script>
+// pages" reason) as transferOrders.js/serialTracker.js's own resolveIsProductionWarehouse.
+let currentSessionIsProductionWarehouse = true;
+
+async function resolveIsProductionWarehouse(session) {
+  if (!session?.warehouseName) return true;
+
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_search: session.warehouseName
+  });
+  if (error || !data) return true;
+
+  const match = data.find((w) => (w.name || '').trim().toLowerCase() === session.warehouseName.trim().toLowerCase());
+  return match ? !!match.is_production_warehouse : true;
+}
+
 // Warehouse-scoped staff (StaffUsers.WarehouseName set) only see orders for their own
 // warehouse - same convention as Transfer Orders (js/transferOrders.js). Orders with no
 // resolved warehouse_name (e.g. LocationID didn't match any synced Warehouses row) are
@@ -243,7 +264,10 @@ function refreshCurrentOrders() {
 
 // Shared apply step for the "To Ship" button. admin_update_online_order_status re-validates the
 // transition server-side regardless of what's offered here (blocked-from-'new', 'To Ship' only).
-async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, photoStoragePath, triggerEl) {
+// serialRunningNos (from the serial picker modal, production warehouses only - see
+// handleToShipClick/supabase_online_order_to_ship_serials.sql) are claimed inside the same RPC
+// call, atomically with the Pancake status PATCH - null/empty when no serial pick was needed.
+async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, photoStoragePath, serialRunningNos, triggerEl) {
   triggerEl.disabled = true;
 
   const { data, error } = await supabaseClient.rpc('admin_update_online_order_status', {
@@ -253,7 +277,8 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
     p_new_status: newStatus,
     p_notify_customer: notifyCustomer,
     p_photo_url: photoUrl,
-    p_photo_storage_path: photoStoragePath
+    p_photo_storage_path: photoStoragePath,
+    p_serial_running_nos: serialRunningNos && serialRunningNos.length > 0 ? serialRunningNos : null
   });
 
   if (error) {
@@ -275,19 +300,231 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
   await refreshCurrentOrders();
 }
 
+// Fetches which of this order's lines need a serial pick before shipping, and how many - see
+// supabase_online_order_to_ship_serials.sql (resolves Pancake's item_code/category server-side and
+// applies the same prefix/IsProductionCategory rule OnlineOrdersForm.cs uses, so the client doesn't
+// need to duplicate that logic).
+async function getOrderSerialRequirements(orderId) {
+  const { data, error } = await supabaseClient.rpc('admin_get_online_order_serial_requirements', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+  if (error) throw error;
+  return data || [];
+}
+
+// --- Serial picker modal (#shipSerialModal) ---------------------------------------------------
+// Reuses the .serial-tag-picker/.serial-tag-chip/.item-suggest-* styling and interaction pattern
+// Transfer Orders already established (js/transferOrders.js's searchAvailableSerialsForRow etc.) -
+// duplicated rather than shared, same "no module system" reason as resolveIsProductionWarehouse
+// above. Only offers EXISTING IN_STOCK serials (see supabase_online_order_to_ship_serials.sql's
+// header comment) - if staff can't find enough, Confirm blocks with a message pointing them to the
+// desktop app instead of letting them ship short.
+
+function getSelectedSerialsForShipPicker(picker) {
+  try {
+    return JSON.parse(picker.dataset.selected || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function updateShipSerialTagCount(picker) {
+  const selected = getSelectedSerialsForShipPicker(picker);
+  const required = Math.max(0, parseFloat(picker.dataset.required) || 0);
+  const countEl = picker.querySelector('.serial-tag-count');
+  const satisfied = selected.length === required;
+  countEl.textContent = `${selected.length} / ${required} selected`;
+  countEl.classList.toggle('satisfied', satisfied && required > 0);
+  countEl.classList.toggle('unsatisfied', !satisfied);
+}
+
+function renderShipSerialTagChips(picker) {
+  const chipsEl = picker.querySelector('.serial-tag-chips');
+  const selected = getSelectedSerialsForShipPicker(picker);
+  chipsEl.innerHTML = selected
+    .map((s) => `
+      <span class="serial-tag-chip" data-running-serial-no="${s.runningSerialNo}">
+        ${escapeHtml(s.serialNo)}<span class="serial-tag-chip-remove" title="Remove">&times;</span>
+      </span>
+    `)
+    .join('');
+
+  chipsEl.querySelectorAll('.serial-tag-chip-remove').forEach((removeBtn) => {
+    removeBtn.addEventListener('click', () => {
+      const chip = removeBtn.closest('.serial-tag-chip');
+      const runningSerialNo = Number(chip.dataset.runningSerialNo);
+      const remaining = getSelectedSerialsForShipPicker(picker).filter((s) => s.runningSerialNo !== runningSerialNo);
+      picker.dataset.selected = JSON.stringify(remaining);
+      renderShipSerialTagChips(picker);
+      updateShipSerialTagCount(picker);
+    });
+  });
+}
+
+function addSerialTagToShipPicker(picker, serial) {
+  const selected = getSelectedSerialsForShipPicker(picker);
+  if (selected.some((s) => s.runningSerialNo === serial.runningSerialNo)) return;
+  selected.push(serial);
+  picker.dataset.selected = JSON.stringify(selected);
+  renderShipSerialTagChips(picker);
+  updateShipSerialTagCount(picker);
+}
+
+async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
+  const dropdown = picker.querySelector('.serial-tag-dropdown');
+  const itemCode = lineEl.dataset.itemCode;
+  const variationId = lineEl.dataset.variationId;
+
+  let query = supabaseClient
+    .from('ItemSerialTracking')
+    .select('RunningSerialNo, SerialNo, ItemCode, VariantCode')
+    .eq('Status', 'IN_STOCK')
+    .eq('ItemCode', itemCode);
+  query = variationId ? query.eq('VariantCode', variationId) : query.or('VariantCode.is.null,VariantCode.eq.');
+  // Only offer serials physically at the staff member's own location - same reasoning as Transfer
+  // Orders' identical restriction (searchAvailableSerialsForRow). Staff with no assigned warehouse
+  // stay unrestricted, same convention used everywhere else this session field is checked.
+  if (currentSession?.warehouseName) {
+    query = query.eq('Location', currentSession.warehouseName);
+  }
+  if (searchText && searchText.trim()) {
+    query = query.ilike('SerialNo', `%${searchText.trim()}%`);
+  }
+  query = query.order('SerialNo').limit(20);
+
+  const { data, error } = await query;
+
+  if (error) {
+    dropdown.innerHTML = `<div class="item-suggest-empty error-text">${escapeHtml(error.message)}</div>`;
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  const selected = getSelectedSerialsForShipPicker(picker);
+  const alreadySelected = new Set(selected.map((s) => s.runningSerialNo));
+  const available = (data || []).filter((s) => !alreadySelected.has(s.RunningSerialNo));
+
+  if (available.length === 0) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">No available serials found.</div>';
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  dropdown.innerHTML = available
+    .map((s) => `<div class="item-suggest-option" data-running-serial-no="${s.RunningSerialNo}" data-serial-no="${encodeURIComponent(s.SerialNo)}">${escapeHtml(s.SerialNo)}</div>`)
+    .join('');
+  dropdown.classList.remove('hidden');
+
+  // mousedown + preventDefault, same reasoning as Transfer Orders' identical picker - keeps the
+  // search input focused so there's no blur-vs-click race hiding the dropdown before a pick lands.
+  dropdown.querySelectorAll('.item-suggest-option').forEach((opt) => {
+    opt.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      addSerialTagToShipPicker(picker, {
+        runningSerialNo: Number(opt.dataset.runningSerialNo),
+        serialNo: decodeURIComponent(opt.dataset.serialNo)
+      });
+      dropdown.classList.add('hidden');
+      dropdown.innerHTML = '';
+      picker.querySelector('.serial-tag-search').value = '';
+    });
+  });
+}
+
+function wireShipSerialPicker(lineEl, picker) {
+  updateShipSerialTagCount(picker);
+
+  const searchInput = picker.querySelector('.serial-tag-search');
+  const dropdown = picker.querySelector('.serial-tag-dropdown');
+  let debounceHandle = null;
+
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(debounceHandle);
+    const value = e.target.value;
+    debounceHandle = setTimeout(() => searchAvailableSerialsForShipLine(lineEl, picker, value), 250);
+  });
+  searchInput.addEventListener('focus', () => searchAvailableSerialsForShipLine(lineEl, picker, searchInput.value));
+  searchInput.addEventListener('blur', () => {
+    setTimeout(() => dropdown.classList.add('hidden'), 150);
+  });
+}
+
+function renderShipSerialModal(requirements) {
+  const container = document.getElementById('shipSerialModalLines');
+  container.innerHTML = requirements
+    .map((r) => `
+      <div class="ship-serial-line" data-line-id="${r.line_id}" data-item-code="${escapeHtml(r.item_code)}" data-variation-id="${escapeHtml(r.variation_id || '')}" style="margin-bottom:18px;">
+        <div class="ship-serial-line-label" style="font-weight:600; margin-bottom:6px;">${escapeHtml(r.description || r.item_code)} <span class="muted">(need ${r.quantity_needed})</span></div>
+        <div class="serial-tag-picker" data-required="${r.quantity_needed}" data-selected="[]">
+          <div class="serial-tag-count muted">0 / ${r.quantity_needed} selected</div>
+          <div class="serial-tag-chips"></div>
+          <input type="text" class="serial-tag-search" placeholder="Search serial no..." autocomplete="off" />
+          <div class="serial-tag-dropdown hidden"></div>
+        </div>
+      </div>
+    `)
+    .join('');
+
+  container.querySelectorAll('.ship-serial-line').forEach((lineEl) => {
+    wireShipSerialPicker(lineEl, lineEl.querySelector('.serial-tag-picker'));
+  });
+}
+
+// Resolves with an array of runningSerialNo once every line is fully picked and Confirm is
+// clicked, or null if staff cancels - handleToShipClick treats null as "abort To Ship entirely".
+let shipSerialModalResolve = null;
+
+function openShipSerialModal(requirements) {
+  return new Promise((resolve) => {
+    shipSerialModalResolve = resolve;
+    document.getElementById('shipSerialModalError').classList.add('hidden');
+    renderShipSerialModal(requirements);
+    document.getElementById('shipSerialModal').classList.remove('hidden');
+  });
+}
+
+function closeShipSerialModal(result) {
+  document.getElementById('shipSerialModal').classList.add('hidden');
+  const resolve = shipSerialModalResolve;
+  shipSerialModalResolve = null;
+  if (resolve) resolve(result);
+}
+
+function wireShipSerialModalButtons() {
+  document.getElementById('shipSerialModalCancelBtn').addEventListener('click', () => closeShipSerialModal(null));
+
+  document.getElementById('shipSerialModalConfirmBtn').addEventListener('click', () => {
+    const pickers = Array.from(document.querySelectorAll('#shipSerialModalLines .serial-tag-picker'));
+    const errorEl = document.getElementById('shipSerialModalError');
+    const incompleteLabels = [];
+    const allSelected = [];
+
+    pickers.forEach((picker) => {
+      const required = Math.max(0, parseFloat(picker.dataset.required) || 0);
+      const selected = getSelectedSerialsForShipPicker(picker);
+      if (selected.length < required) {
+        const label = picker.closest('.ship-serial-line').querySelector('.ship-serial-line-label').textContent.trim();
+        incompleteLabels.push(label);
+      }
+      allSelected.push(...selected);
+    });
+
+    if (incompleteLabels.length > 0) {
+      errorEl.textContent = `Pick a serial for every unit needed: ${incompleteLabels.join(', ')}. If there aren't enough available, finish this order on the desktop app instead.`;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    closeShipSerialModal(allSelected.map((s) => s.runningSerialNo));
+  });
+}
+
 // Tracks which order/button is waiting on the shared #toShipPhotoInput's result (see
-// handleOrderTableClick/handleToShipPhotoSelected/handleToShipPhotoCancelled below).
+// handleToShipClick/handleToShipPhotoSelected/handleToShipPhotoCancelled below).
 let pendingToShip = null;
 
-// Mirrors OnlineOrdersForm.cs's "To Ship" behavior: asks staff to confirm before notifying the
-// customer (the status change itself always goes through either way - the confirm only gates the
-// message/photo). This is the only manual status action offered on this page (see the comment near
-// the top of this file) - the button click plus the confirm() prompt means a status change can
-// never fire from a single accidental click.
-//
-// Per direct request, staff can snap a photo of the packed order on their phone and have it go out
-// with the ready notification - only prompted when notifying, since a photo is pointless otherwise.
-// Cancelling the camera/file picker just sends the text-only message.
 function handleOrderTableClick(event) {
   const toShipBtn = event.target.closest('.status-to-ship-btn');
   if (!toShipBtn) return;
@@ -298,15 +535,53 @@ function handleOrderTableClick(event) {
   const row = event.target.closest('[data-order-id]');
   if (!row) return;
 
-  const orderId = row.dataset.orderId;
+  handleToShipClick(row.dataset.orderId, toShipBtn);
+}
+
+// Mirrors OnlineOrdersForm.cs's EnsureOrderSerialTrackingAsync gate: at a production warehouse, a
+// serial-tracked line (e.g. a custom aquarium) needs a physical unit's serial picked and tied to
+// this order before it can ship - see supabase_online_order_to_ship_serials.sql. Only checked at
+// all when the logged-in staff's own warehouse is Production (currentSessionIsProductionWarehouse,
+// resolved once at init) - a regular store's To Ship never needed this, same as the desktop.
+// Cancelling the serial picker aborts the whole To Ship action (nothing sent, nothing changed).
+async function handleToShipClick(orderId, toShipBtn) {
+  let serialRunningNos = null;
+
+  if (currentSessionIsProductionWarehouse) {
+    toShipBtn.disabled = true;
+    let requirements;
+    try {
+      requirements = await getOrderSerialRequirements(orderId);
+    } catch (err) {
+      alert('Could not check serial requirements for this order: ' + (err?.message || 'unknown error'));
+      toShipBtn.disabled = false;
+      return;
+    }
+    toShipBtn.disabled = false;
+
+    if (requirements.length > 0) {
+      serialRunningNos = await openShipSerialModal(requirements);
+      if (serialRunningNos === null) return; // cancelled - To Ship not sent at all
+    }
+  }
+
+  // Mirrors OnlineOrdersForm.cs's "To Ship" behavior: asks staff to confirm before notifying the
+  // customer (the status change itself always goes through either way - the confirm only gates the
+  // message/photo). This is the only manual status action offered on this page (see the comment
+  // near the top of this file) - the button click plus the confirm() prompt means a status change
+  // can never fire from a single accidental click.
+  //
+  // Per direct request, staff can snap a photo of the packed order on their phone and have it go
+  // out with the ready notification - only prompted when notifying, since a photo is pointless
+  // otherwise. Cancelling the camera/file picker just sends the text-only message.
   const notifyCustomer = window.confirm('Order complete? Do you want to update the customer?');
 
   if (!notifyCustomer) {
-    applyStatusChange(orderId, 'To Ship', false, null, null, toShipBtn);
+    applyStatusChange(orderId, 'To Ship', false, null, null, serialRunningNos, toShipBtn);
     return;
   }
 
-  pendingToShip = { orderId, triggerEl: toShipBtn };
+  pendingToShip = { orderId, triggerEl: toShipBtn, serialRunningNos };
   document.getElementById('toShipPhotoInput').click();
 }
 
@@ -350,19 +625,19 @@ async function handleToShipPhotoSelected(event) {
 
   if (!file) {
     // Some browsers fire 'change' with an empty file list instead of a 'cancel' event.
-    applyStatusChange(pending.orderId, 'To Ship', true, null, null, pending.triggerEl);
+    applyStatusChange(pending.orderId, 'To Ship', true, null, null, pending.serialRunningNos, pending.triggerEl);
     return;
   }
 
   const photo = await uploadToShipPhoto(pending.orderId, file);
-  applyStatusChange(pending.orderId, 'To Ship', true, photo ? photo.url : null, photo ? photo.storagePath : null, pending.triggerEl);
+  applyStatusChange(pending.orderId, 'To Ship', true, photo ? photo.url : null, photo ? photo.storagePath : null, pending.serialRunningNos, pending.triggerEl);
 }
 
 function handleToShipPhotoCancelled() {
   const pending = pendingToShip;
   pendingToShip = null;
   if (!pending) return;
-  applyStatusChange(pending.orderId, 'To Ship', true, null, null, pending.triggerEl);
+  applyStatusChange(pending.orderId, 'To Ship', true, null, null, pending.serialRunningNos, pending.triggerEl);
 }
 
 async function loadOrders(search, status) {
@@ -628,6 +903,8 @@ function wireOrderFilters() {
   document.getElementById('toShipPhotoInput').addEventListener('change', handleToShipPhotoSelected);
   document.getElementById('toShipPhotoInput').addEventListener('cancel', handleToShipPhotoCancelled);
   wireOrderFilters();
+  wireShipSerialModalButtons();
+  currentSessionIsProductionWarehouse = await resolveIsProductionWarehouse(session);
 
   // Supports deep-linking from the Dashboard's status cards, e.g. online-orders.html?status=Shipped,
   // from the Dashboard's finance cards, e.g. ?period=month|today|prevmonth, ?scope=walkin,
