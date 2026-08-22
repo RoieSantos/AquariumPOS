@@ -68,6 +68,7 @@ declare
   v_message_error text;
   v_requested_serial_count int;
   v_claimed_serial_count int;
+  v_patch_attempt int;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -151,16 +152,34 @@ begin
   -- Header set matches the one proven working elsewhere in this codebase for Pancake writes (see
   -- _push_automated_order_to_pancake's comment) - 'Expect: ' suppresses libcurl's automatic
   -- "Expect: 100-continue" header, which Pancake's side has been observed to mishandle.
-  select * into v_patch_response from extensions.http((
-    'PATCH',
-    v_order_url,
-    array[
-      extensions.http_header('Accept', 'application/json'),
-      extensions.http_header('Expect', '')
-    ],
-    'application/json',
-    jsonb_build_object('status', v_api_token)::text
-  )::extensions.http_request);
+  --
+  -- Retried once on a connection-level failure (e.g. "OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno
+  -- 0" - a dropped/stale reused connection, not a rejection from Pancake) - this was previously
+  -- unguarded, so a single transient network hiccup failed the whole To Ship action outright. Safe
+  -- to retry: PATCHing the same target status twice is idempotent, not a duplicate action. Does
+  -- NOT retry a legitimate non-2xx response from Pancake (e.g. a real rejection) - only an
+  -- exception raised by the HTTP call itself triggers the retry.
+  v_patch_attempt := 0;
+  loop
+    v_patch_attempt := v_patch_attempt + 1;
+    begin
+      select * into v_patch_response from extensions.http((
+        'PATCH',
+        v_order_url,
+        array[
+          extensions.http_header('Accept', 'application/json'),
+          extensions.http_header('Expect', '')
+        ],
+        'application/json',
+        jsonb_build_object('status', v_api_token)::text
+      )::extensions.http_request);
+      exit;
+    exception when others then
+      if v_patch_attempt >= 2 then
+        raise;
+      end if;
+    end;
+  end loop;
 
   if v_patch_response.status < 200 or v_patch_response.status >= 300 then
     raise exception 'Pancake rejected the status update (HTTP %).', v_patch_response.status;
@@ -362,6 +381,7 @@ declare
   v_response extensions.http_response;
   v_photo_sent boolean := false;
   v_photo_error text;
+  v_photo_attempt int;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -386,20 +406,35 @@ begin
       || '/messages?page_access_token=' || public._pancake_public_api_key();
 
     begin
-      select * into v_response from extensions.http((
-        'POST',
-        v_url,
-        array[
-          extensions.http_header('Accept', 'application/json'),
-          extensions.http_header('Expect', '')
-        ],
-        'application/json',
-        jsonb_build_object(
-          'action', 'reply_inbox',
-          'Type', 'image',
-          'content_url', p_photo_url
-        )::text
-      )::extensions.http_request);
+      -- Retried once on a connection-level failure (same reasoning as
+      -- admin_update_online_order_status's status PATCH retry above - a dropped/stale reused
+      -- connection like "OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno 0" isn't a real rejection
+      -- from Pancake, just a transient network hiccup worth one immediate retry).
+      v_photo_attempt := 0;
+      loop
+        v_photo_attempt := v_photo_attempt + 1;
+        begin
+          select * into v_response from extensions.http((
+            'POST',
+            v_url,
+            array[
+              extensions.http_header('Accept', 'application/json'),
+              extensions.http_header('Expect', '')
+            ],
+            'application/json',
+            jsonb_build_object(
+              'action', 'reply_inbox',
+              'Type', 'image',
+              'content_url', p_photo_url
+            )::text
+          )::extensions.http_request);
+          exit;
+        exception when others then
+          if v_photo_attempt >= 2 then
+            raise;
+          end if;
+        end;
+      end loop;
 
       if v_response.status >= 200 and v_response.status < 300 then
         v_photo_sent := true;

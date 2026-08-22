@@ -2589,6 +2589,51 @@ body:has(.wizard-page) {
   animation: customizeLoadingFadeIn 0.2s ease;
 }
 
+/* "Install app" banner (js/pwa.js) - fixed bottom bar, dismissible. env(safe-area-inset-bottom)
+   keeps it clear of the home indicator once actually installed/running standalone on iOS (it's
+   hidden entirely once installed, but the same padding is harmless before then too). */
+.pwa-install-banner {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+.pwa-install-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.pwa-install-text {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.pwa-install-action {
+  white-space: nowrap;
+}
+
+.pwa-install-dismiss {
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+}
+
 /* Swipe-down-to-refresh indicator (js/pullToRefresh.js) - fixed pill that tracks the finger while
    pulling, pinned just under the top nav once visible. Hidden (translated off-screen) at rest. */
 .pull-refresh-indicator {
