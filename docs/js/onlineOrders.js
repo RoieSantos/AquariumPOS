@@ -262,6 +262,30 @@ function refreshCurrentOrders() {
   return loadOrders(document.getElementById('orderSearchInput').value.trim(), document.getElementById('statusFilterInput').value.trim());
 }
 
+// Friendly "please hold on" banner shown while applyStatusChange's RPCs are in flight - per direct
+// request, so staff have some indication of progress instead of a disabled button with no feedback
+// while the photo send in particular can take several seconds across its retries (see
+// admin_send_online_order_status_photo's statement_timeout/retry-loop comments). Built dynamically
+// rather than static markup, same pattern as pwa.js's install banner.
+let sendStatusBannerEl = null;
+
+function showSendStatusBanner(text) {
+  if (!sendStatusBannerEl) {
+    sendStatusBannerEl = document.createElement('div');
+    sendStatusBannerEl.className = 'send-status-banner';
+    sendStatusBannerEl.innerHTML = '<span class="send-status-spinner"></span><span class="send-status-text"></span>';
+    document.body.appendChild(sendStatusBannerEl);
+  }
+  sendStatusBannerEl.querySelector('.send-status-text').textContent = text;
+}
+
+function hideSendStatusBanner() {
+  if (sendStatusBannerEl) {
+    sendStatusBannerEl.remove();
+    sendStatusBannerEl = null;
+  }
+}
+
 // Shared apply step for the "To Ship" button. admin_update_online_order_status re-validates the
 // transition server-side regardless of what's offered here (blocked-from-'new', 'To Ship' only).
 // serialRunningNos (from the serial picker modal, production warehouses only - see
@@ -276,47 +300,57 @@ function refreshCurrentOrders() {
 // and means a slow/failing photo attach can never roll back the actual status change.
 async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, photoStoragePath, serialRunningNos, triggerEl) {
   triggerEl.disabled = true;
+  showSendStatusBanner("Hey there! Updating this order's status, please hold on...");
 
-  const { data, error } = await supabaseClient.rpc('admin_update_online_order_status', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_order_id: orderId,
-    p_new_status: newStatus,
-    p_notify_customer: notifyCustomer,
-    p_serial_running_nos: serialRunningNos && serialRunningNos.length > 0 ? serialRunningNos : null
-  });
-
-  if (error) {
-    alert('Could not update status: ' + error.message);
-    triggerEl.disabled = false;
-    return;
-  }
-
-  const result = data && data[0];
-  if (notifyCustomer && result && !result.message_sent) {
-    alert('Status updated, but the customer notification failed to send: ' + (result.message_error || 'unknown error'));
-  }
-
-  if (photoUrl) {
-    const { data: photoData, error: photoError } = await supabaseClient.rpc('admin_send_online_order_status_photo', {
+  try {
+    const { data, error } = await supabaseClient.rpc('admin_update_online_order_status', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_order_id: orderId,
-      p_photo_url: photoUrl,
-      p_photo_storage_path: photoStoragePath
+      p_new_status: newStatus,
+      p_notify_customer: notifyCustomer,
+      p_serial_running_nos: serialRunningNos && serialRunningNos.length > 0 ? serialRunningNos : null
     });
 
-    const photoResult = photoData && photoData[0];
-    if (photoError || (photoResult && photoResult.photo_sent === false)) {
-      // Status change (and text message, if requested) already went through fine - only the
-      // photo attachment failed. Surface it so staff know to just describe the item to the
-      // customer instead, without implying the whole notification failed.
-      const detail = photoError ? photoError.message : (photoResult?.photo_error || 'unknown error');
-      alert('Status updated, but the photo could not be attached: ' + detail);
+    if (error) {
+      alert('Could not update status: ' + error.message);
+      triggerEl.disabled = false;
+      return;
     }
-  }
 
-  await refreshCurrentOrders();
+    const result = data && data[0];
+    if (notifyCustomer && result && !result.message_sent) {
+      alert('Status updated, but the customer notification failed to send: ' + (result.message_error || 'unknown error'));
+    }
+
+    if (photoUrl) {
+      // The retry loop inside admin_send_online_order_status_photo can take several seconds (up to
+      // 4 attempts with a short pause between each) - update the banner text so it's clear this
+      // specific step, not the whole action, is what's still working.
+      showSendStatusBanner("Hang tight, sending the photo to the customer's conversation - this can take a few tries...");
+
+      const { data: photoData, error: photoError } = await supabaseClient.rpc('admin_send_online_order_status_photo', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_order_id: orderId,
+        p_photo_url: photoUrl,
+        p_photo_storage_path: photoStoragePath
+      });
+
+      const photoResult = photoData && photoData[0];
+      if (photoError || (photoResult && photoResult.photo_sent === false)) {
+        // Status change (and text message, if requested) already went through fine - only the
+        // photo attachment failed. Surface it so staff know to just describe the item to the
+        // customer instead, without implying the whole notification failed.
+        const detail = photoError ? photoError.message : (photoResult?.photo_error || 'unknown error');
+        alert('Status updated, but the photo could not be attached: ' + detail);
+      }
+    }
+
+    await refreshCurrentOrders();
+  } finally {
+    hideSendStatusBanner();
+  }
 }
 
 // Fetches which of this order's lines need a serial pick before shipping, and how many - see

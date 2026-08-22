@@ -51,6 +51,11 @@ returns table(new_status text, message_sent boolean, message_error text)
 language plpgsql
 security definer
 set search_path = public, extensions
+-- Overrides whatever statement_timeout the authenticator role happens to have (previously seen
+-- hitting Postgres's default ~8s and killing this mid-flight - "canceling statement due to
+-- statement timeout" - since this chains a GET + PATCH + PATCH, each with its own retry). Set
+-- directly on the function so it's guaranteed regardless of role/session config.
+set statement_timeout = '45000'
 as $$
 declare
   v_base_url text := 'https://pos.pages.fm/api/v1';
@@ -342,7 +347,9 @@ Thank you for choosing RSPetStop‚ÄîWe appreciate you always! and see you soon ‚ù
       extensions.http_header('Expect', '')
     ],
     'application/json',
-    jsonb_build_object('action', 'reply_inbox', 'message', v_message)::text
+    -- json_build_object (not jsonb_build_object) - see admin_send_online_order_status_photo's
+    -- matching comment below for why the key order actually matters here.
+    json_build_object('action', 'reply_inbox', 'message', v_message)::text
   )::extensions.http_request);
 
   if v_response.status < 200 or v_response.status >= 300 then
@@ -374,6 +381,12 @@ returns table(photo_sent boolean, photo_error text)
 language plpgsql
 security definer
 set search_path = public, extensions
+-- Overrides whatever statement_timeout the authenticator role happens to have (this was seen
+-- hitting Postgres's default ~8s and killing the send before the retry loop below even got its
+-- second attempt in - "canceling statement due to statement timeout"). Set directly on the
+-- function so retries are guaranteed a real budget regardless of role/session config. 4 attempts
+-- x up to 8s each + a short pause between = comfortably under this.
+set statement_timeout = '60000'
 as $$
 declare
   v_order public."OnlineOrders"%rowtype;
@@ -382,6 +395,7 @@ declare
   v_photo_sent boolean := false;
   v_photo_error text;
   v_photo_attempt int;
+  v_max_photo_attempts constant int := 4;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -400,19 +414,27 @@ begin
      or trim(v_order."Page_ID") = '' or trim(v_order."Conversation_ID") = '' then
     v_photo_error := 'Order is missing Page_ID/Conversation_ID - cannot message this customer.';
   else
-    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '15000');
+    -- Shortened from 15000ms so up to v_max_photo_attempts fit comfortably inside this function's
+    -- own statement_timeout override above, instead of one or two slow attempts eating the whole
+    -- budget before the loop gets a real chance to retry.
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '8000');
 
     v_url := 'https://pages.fm/api/public_api/v1/pages/' || v_order."Page_ID" || '/conversations/' || v_order."Conversation_ID"
       || '/messages?page_access_token=' || public._pancake_public_api_key();
 
     begin
-      -- Retried once on a connection-level failure (same reasoning as
+      -- Retried up to v_max_photo_attempts times on a connection-level failure (same reasoning as
       -- admin_update_online_order_status's status PATCH retry above - a dropped/stale reused
-      -- connection like "OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno 0" isn't a real rejection
-      -- from Pancake, just a transient network hiccup worth one immediate retry).
+      -- connection like "OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno 0" isn't a real rejection from
+      -- Pancake, just a transient network hiccup) - per direct request to not give up so easily. A
+      -- short pause between attempts gives a struggling connection a moment before being reused
+      -- again, rather than hammering it back-to-back.
       v_photo_attempt := 0;
       loop
         v_photo_attempt := v_photo_attempt + 1;
+        if v_photo_attempt > 1 then
+          perform pg_sleep(0.75);
+        end if;
         begin
           select * into v_response from extensions.http((
             'POST',
@@ -422,7 +444,15 @@ begin
               extensions.http_header('Expect', '')
             ],
             'application/json',
-            jsonb_build_object(
+            -- json_build_object, NOT jsonb_build_object: jsonb canonicalizes/reorders object keys
+            -- by string length then alphabetically (a real Postgres behavior, not a bug) - for
+            -- these three keys that reorders to {"Type",...,"action",...,"content_url",...}
+            -- instead of the {"action","Type","content_url"} order confirmed to actually work
+            -- against a live Pancake test. Pancake's API apparently still returns 200 either way
+            -- (that's why every past attempt recorded SentToCustomer = true) but silently doesn't
+            -- attach the image unless the fields arrive in that exact order - json_build_object
+            -- serializes the given key order verbatim, unlike jsonb.
+            json_build_object(
               'action', 'reply_inbox',
               'Type', 'image',
               'content_url', p_photo_url
@@ -430,7 +460,7 @@ begin
           )::extensions.http_request);
           exit;
         exception when others then
-          if v_photo_attempt >= 2 then
+          if v_photo_attempt >= v_max_photo_attempts then
             raise;
           end if;
         end;

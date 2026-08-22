@@ -2634,6 +2634,43 @@ body:has(.wizard-page) {
   padding: 0 2px;
 }
 
+/* "Please hold on" banner while a To Ship status/message/photo send is in flight (js/onlineOrders.js
+   showSendStatusBanner/hideSendStatusBanner) - the photo send in particular can take several
+   seconds across its retries, so this keeps staff from thinking the button just silently did
+   nothing while it works. Pinned to the top so it doesn't collide with the install banner below. */
+.send-status-banner {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+.send-status-spinner {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 3px solid #d7e0ef;
+  border-top-color: var(--primary);
+  animation: pullRefreshSpin 0.8s linear infinite;
+}
+
+.send-status-text {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
 /* Swipe-down-to-refresh indicator (js/pullToRefresh.js) - fixed pill that tracks the finger while
    pulling, pinned just under the top nav once visible. Hidden (translated off-screen) at rest. */
 .pull-refresh-indicator {
