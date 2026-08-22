@@ -267,6 +267,13 @@ function refreshCurrentOrders() {
 // serialRunningNos (from the serial picker modal, production warehouses only - see
 // handleToShipClick/supabase_online_order_to_ship_serials.sql) are claimed inside the same RPC
 // call, atomically with the Pancake status PATCH - null/empty when no serial pick was needed.
+//
+// The photo (if any) is sent as its OWN separate call (admin_send_online_order_status_photo),
+// per direct instruction - AFTER the status change/text message above has already gone through,
+// never bundled into that RPC. This keeps admin_update_online_order_status's own runtime short
+// (it used to chain a status PATCH + bank_payments snapshot/restore + text message + photo POST
+// all in one request, long enough to occasionally hit the authenticator role's statement_timeout)
+// and means a slow/failing photo attach can never roll back the actual status change.
 async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, photoStoragePath, serialRunningNos, triggerEl) {
   triggerEl.disabled = true;
 
@@ -276,8 +283,6 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
     p_order_id: orderId,
     p_new_status: newStatus,
     p_notify_customer: notifyCustomer,
-    p_photo_url: photoUrl,
-    p_photo_storage_path: photoStoragePath,
     p_serial_running_nos: serialRunningNos && serialRunningNos.length > 0 ? serialRunningNos : null
   });
 
@@ -290,11 +295,25 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
   const result = data && data[0];
   if (notifyCustomer && result && !result.message_sent) {
     alert('Status updated, but the customer notification failed to send: ' + (result.message_error || 'unknown error'));
-  } else if (photoUrl && result && result.photo_sent === false) {
-    // Text message still went out fine - only the photo attachment failed (see the "unverified
-    // shape" note in supabase_online_order_portal_status_update.sql). Surface it so staff know to
-    // just describe the item to the customer instead, without blaming the whole notification.
-    alert('Status updated and the customer was notified, but the photo could not be attached: ' + (result.photo_error || 'unknown error'));
+  }
+
+  if (photoUrl) {
+    const { data: photoData, error: photoError } = await supabaseClient.rpc('admin_send_online_order_status_photo', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId,
+      p_photo_url: photoUrl,
+      p_photo_storage_path: photoStoragePath
+    });
+
+    const photoResult = photoData && photoData[0];
+    if (photoError || (photoResult && photoResult.photo_sent === false)) {
+      // Status change (and text message, if requested) already went through fine - only the
+      // photo attachment failed. Surface it so staff know to just describe the item to the
+      // customer instead, without implying the whole notification failed.
+      const detail = photoError ? photoError.message : (photoResult?.photo_error || 'unknown error');
+      alert('Status updated, but the photo could not be attached: ' + detail);
+    }
   }
 
   await refreshCurrentOrders();
@@ -904,6 +923,9 @@ function wireOrderFilters() {
   document.getElementById('toShipPhotoInput').addEventListener('cancel', handleToShipPhotoCancelled);
   wireOrderFilters();
   wireShipSerialModalButtons();
+  // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
+  // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
+  if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);
   currentSessionIsProductionWarehouse = await resolveIsProductionWarehouse(session);
 
   // Supports deep-linking from the Dashboard's status cards, e.g. online-orders.html?status=Shipped,

@@ -30,18 +30,24 @@ drop function if exists public.admin_update_online_order_status(text, text, text
 drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean, text);
 drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean, text, text);
 drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean, text, text, bigint[]);
+drop function if exists public.admin_update_online_order_status(text, text, text, text, boolean, bigint[]);
 
+-- Per direct instruction, the photo send is now a SEPARATE call the client makes on its own
+-- (see admin_send_online_order_status_photo below) rather than bundled into this function - this
+-- used to chain a status PATCH + bank_payments snapshot/restore + text message + photo POST all
+-- inside one request, which was long enough to occasionally hit the authenticator role's
+-- statement_timeout ("canceling statement due to statement timeout"). Splitting the photo out
+-- shortens this function's own worst-case runtime and means a slow/failing photo attach can never
+-- roll back the actual status change.
 create or replace function public.admin_update_online_order_status(
   p_admin_username text,
   p_admin_password text,
   p_order_id text,
   p_new_status text,
   p_notify_customer boolean default false,
-  p_photo_url text default null,
-  p_photo_storage_path text default null,
   p_serial_running_nos bigint[] default null
 )
-returns table(new_status text, message_sent boolean, message_error text, photo_sent boolean, photo_error text)
+returns table(new_status text, message_sent boolean, message_error text)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -60,8 +66,6 @@ declare
   v_patch_response extensions.http_response;
   v_message_sent boolean := false;
   v_message_error text;
-  v_photo_sent boolean;
-  v_photo_error text;
   v_requested_serial_count int;
   v_claimed_serial_count int;
 begin
@@ -188,26 +192,18 @@ begin
 
   if p_notify_customer then
     begin
-      select s.photo_sent, s.photo_error into v_photo_sent, v_photo_error
-      from public._send_online_order_status_message(p_order_id, p_new_status, p_photo_url) s;
+      perform public._send_online_order_status_message(p_order_id, p_new_status);
       v_message_sent := true;
     exception when others then
       v_message_error := sqlerrm;
     end;
   end if;
 
-  -- Records every photo that was actually captured, sent or not, so staff can look back at what
-  -- went out - see public."OnlineOrderStatusPhotos" (supabase_online_order_status_photo.sql).
-  if p_photo_url is not null and trim(p_photo_url) <> '' then
-    insert into public."OnlineOrderStatusPhotos" ("OrderID", "Status", "StoragePath", "PublicUrl", "SentToCustomer", "SendError", "UploadedBy")
-    values (p_order_id, p_new_status, coalesce(p_photo_storage_path, ''), p_photo_url, coalesce(v_photo_sent, false), v_photo_error, p_admin_username);
-  end if;
-
-  return query select p_new_status, v_message_sent, v_message_error, v_photo_sent, v_photo_error;
+  return query select p_new_status, v_message_sent, v_message_error;
 end;
 $$;
 
-grant execute on function public.admin_update_online_order_status(text, text, text, text, boolean, text, text, bigint[]) to anon;
+grant execute on function public.admin_update_online_order_status(text, text, text, text, boolean, bigint[]) to anon;
 
 -- ---------------------------------------------------------------------------
 -- Message sender - builds and sends the same "your order is ready" message the desktop app sends
@@ -219,15 +215,13 @@ grant execute on function public.admin_update_online_order_status(text, text, te
 drop function if exists public._send_online_order_status_message(text, text);
 drop function if exists public._send_online_order_status_message(text, text, text);
 
--- p_photo_url (optional): per direct request, staff can attach a photo of the packed order (snapped
--- on their phone) to this message. The photo is sent as a SEPARATE, best-effort API call AFTER the
--- text message below has already succeeded - Pancake's exact attachment field/shape is unverified
--- (no usable public docs found for it), so a wrong guess there only costs the photo, never the text
--- message or the status change itself. photo_sent/photo_error report the outcome back up through
--- admin_update_online_order_status. Adjust the jsonb_build_object shape a few lines down once the
--- real one is confirmed against a live test.
-create or replace function public._send_online_order_status_message(p_order_id text, p_new_status text, p_photo_url text default null)
-returns table(photo_sent boolean, photo_error text)
+-- Text-only "your order is ready" message. Photo attachment used to be bundled in here too, but
+-- per direct instruction it's now a fully separate call the client makes on its own (see
+-- admin_send_online_order_status_photo below) - both to shorten this function's own runtime (see
+-- admin_update_online_order_status's header comment) and because the two are genuinely
+-- independent Pancake API calls with no shared state.
+create or replace function public._send_online_order_status_message(p_order_id text, p_new_status text)
+returns void
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -240,15 +234,10 @@ declare
   v_message text;
   v_url text;
   v_response extensions.http_response;
-  v_photo_sent boolean := false;
-  v_photo_error text;
 begin
   select * into v_order from public."OnlineOrders" where "OrderID" = p_order_id;
   if not found or v_order."Page_ID" is null or v_order."Conversation_ID" is null
      or trim(v_order."Page_ID") = '' or trim(v_order."Conversation_ID") = '' then
-    photo_sent := false;
-    photo_error := null;
-    return next;
     return; -- same "missing Page_ID/Conversation_ID, cannot send" guard as the desktop app
   end if;
 
@@ -340,12 +329,62 @@ Thank you for choosing RSPetStop‚ÄîWe appreciate you always! and see you soon ‚ù
   if v_response.status < 200 or v_response.status >= 300 then
     raise exception 'Pancake messaging API returned HTTP %.', v_response.status;
   end if;
+end;
+$$;
 
-  -- Best-effort photo attachment - see the function header for why this never raises. Tries the
-  -- most standard shape for this kind of simplified messaging wrapper (a top-level "attachment"
-  -- object); if Pancake actually expects something else, this call fails harmlessly and
-  -- photo_error reports why so the real shape can be identified and swapped in here.
-  if p_photo_url is not null and trim(p_photo_url) <> '' then
+-- ---------------------------------------------------------------------------
+-- Photo attachment - a SEPARATE call from the status change/text message above (per direct
+-- instruction, and to keep this out of admin_update_online_order_status's own runtime - see its
+-- header comment). The client (docs/js/onlineOrders.js) only calls this after the status change
+-- itself has already succeeded, and only when a photo was actually captured.
+--
+-- Payload CONFIRMED against a live Pancake test (not a guess, unlike the shape this replaced):
+--   POST .../messages  {"action":"reply_inbox","Type":"image","content_url":"<public photo url>"}
+-- ---------------------------------------------------------------------------
+
+drop function if exists public.admin_send_online_order_status_photo(text, text, text, text, text);
+
+create or replace function public.admin_send_online_order_status_photo(
+  p_admin_username text,
+  p_admin_password text,
+  p_order_id text,
+  p_photo_url text,
+  p_photo_storage_path text default null
+)
+returns table(photo_sent boolean, photo_error text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_order public."OnlineOrders"%rowtype;
+  v_url text;
+  v_response extensions.http_response;
+  v_photo_sent boolean := false;
+  v_photo_error text;
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  if p_photo_url is null or trim(p_photo_url) = '' then
+    raise exception 'Photo URL is required.';
+  end if;
+
+  select * into v_order from public."OnlineOrders" where "OrderID" = p_order_id;
+  if not found then
+    raise exception 'Order % not found.', p_order_id;
+  end if;
+
+  if v_order."Page_ID" is null or v_order."Conversation_ID" is null
+     or trim(v_order."Page_ID") = '' or trim(v_order."Conversation_ID") = '' then
+    v_photo_error := 'Order is missing Page_ID/Conversation_ID - cannot message this customer.';
+  else
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '15000');
+
+    v_url := 'https://pages.fm/api/public_api/v1/pages/' || v_order."Page_ID" || '/conversations/' || v_order."Conversation_ID"
+      || '/messages?page_access_token=' || public._pancake_public_api_key();
+
     begin
       select * into v_response from extensions.http((
         'POST',
@@ -357,7 +396,8 @@ Thank you for choosing RSPetStop‚ÄîWe appreciate you always! and see you soon ‚ù
         'application/json',
         jsonb_build_object(
           'action', 'reply_inbox',
-          'attachment', jsonb_build_object('type', 'image', 'url', p_photo_url)
+          'Type', 'image',
+          'content_url', p_photo_url
         )::text
       )::extensions.http_request);
 
@@ -371,8 +411,15 @@ Thank you for choosing RSPetStop‚ÄîWe appreciate you always! and see you soon ‚ù
     end;
   end if;
 
+  -- Records every photo that was actually captured, sent or not, so staff can look back at what
+  -- went out - see public."OnlineOrderStatusPhotos" (supabase_online_order_status_photo.sql).
+  insert into public."OnlineOrderStatusPhotos" ("OrderID", "Status", "StoragePath", "PublicUrl", "SentToCustomer", "SendError", "UploadedBy")
+  values (p_order_id, v_order."Status", coalesce(p_photo_storage_path, ''), p_photo_url, v_photo_sent, v_photo_error, p_admin_username);
+
   photo_sent := v_photo_sent;
   photo_error := v_photo_error;
   return next;
 end;
 $$;
+
+grant execute on function public.admin_send_online_order_status_photo(text, text, text, text, text) to anon;

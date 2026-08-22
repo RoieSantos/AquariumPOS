@@ -364,5 +364,7 @@ async function loadOrderDetail() {
     const removeBtn = event.target.closest('.status-photo-remove-btn');
     if (removeBtn) handleRemoveStatusPhoto(removeBtn.dataset.photoId);
   });
+  // Swipe-down-to-refresh (js/pullToRefresh.js) - re-fetches this order's live detail from Pancake.
+  if (window.initPullToRefresh) initPullToRefresh(loadOrderDetail);
   await loadOrderDetail();
 })();
