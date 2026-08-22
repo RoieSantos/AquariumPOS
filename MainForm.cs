@@ -15399,6 +15399,19 @@ ORDER BY VariantName, ItemCode", connection);
                 || IsProductionCategoryCode(normalizedCategory);
         }
 
+        // Shared by PromptForAquariumSaleSerials (lets the item onto the sale grid without a serial)
+        // and CheckoutButton_Click (blocks a full-payment checkout for it) - a build-to-order item
+        // is identified purely by its item code prefix, not Category.IsProductionCategory, since
+        // that flag also covers real pre-tagged catalog stock (e.g. transferred serials) which
+        // SHOULD still go through a normal sale when actually in stock.
+        private static bool IsBuildToOrderItemCode(string? itemCode)
+        {
+            string normalizedItemCode = itemCode?.Trim() ?? string.Empty;
+            return normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
+                || normalizedItemCode.StartsWith("CUSTOM-", StringComparison.OrdinalIgnoreCase)
+                || normalizedItemCode.StartsWith("CUSTOM_", StringComparison.OrdinalIgnoreCase);
+        }
+
         private bool IsProductionCategoryCode(string? categoryCode)
         {
             string normalizedCategory = categoryCode?.Trim() ?? string.Empty;
@@ -15932,10 +15945,27 @@ END", connection);
             // Non-production stores never mint new serials (CreateSerialRecords is production-only),
             // so there's no shortfall fallback for them - per "every normal sale needs a serial 1:1;
             // if there aren't enough, that means there's no stock, and the customer should be routed
-            // to an Advance Order instead." Made-to-order custom builds already only ever go through
-            // Advance Order at non-production stores (never a regular sale there), so this can't block
-            // a build that hasn't been made yet - it only blocks selling more real catalog stock than
-            // is actually on hand and tagged. Production warehouses are unaffected - unchanged below.
+            // to an Advance Order instead." That reasoning only holds for real catalog stock (a
+            // physical unit that should already be tagged but isn't, or was oversold) - it does NOT
+            // hold for genuinely made-to-order builds (AQ-/CUSTOM- prefixed), which by definition
+            // never have a serial at non-production stores since nothing has been built yet. Those
+            // previously hit this same "Insufficient Stock" block on every single Add to Sale attempt
+            // (0 available is the normal, permanent state there, not a shortfall) - per direct
+            // instruction, made-to-order items are let through instead (same as production warehouses
+            // already are, just below) with guidance to use the Downpayment/Advance Order checkout
+            // flow rather than a regular full sale, since the item doesn't physically exist yet for
+            // this store to hand over. Production warehouses are unaffected - unchanged below.
+            if (availableSerials.Count == 0 && IsBuildToOrderItemCode(itemCode) && !IsCurrentWarehouseProductionForLabels())
+            {
+                MessageBox.Show(this,
+                    $"{itemCode} is a made-to-order build - this store doesn't have a physical unit for it yet, so there's nothing to hand over on a regular sale. " +
+                    "It's fine to add it to the sale, but check out using the Downpayment button (not a full sale) so it's recorded as an Advance Order; production will build it and tag its serial later.",
+                    "Made-to-Order Item",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return new List<ProductSerialTrackingForm.AvailableSerialRecord>();
+            }
+
             if (availableSerials.Count < requiredQuantity && !IsCurrentWarehouseProductionForLabels())
             {
                 MessageBox.Show(this,
@@ -17073,6 +17103,38 @@ END", connection);
             {
                 MessageBox.Show("No items in sale!", "Checkout", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
+            }
+
+            // Blocks a full-payment Checkout when the sale contains a made-to-order build (per
+            // "so i see the message did prompt but the complete payment is allowed. can we force
+            // the user to do the advance order instead") - PromptForAquariumSaleSerials only warned
+            // when the item was added, it never stopped staff from completing a regular full sale
+            // afterward. This store has no physical unit for these, so a regular Checkout can't
+            // actually be fulfilled - only Downpayment (checkoutButton.Tag == "DOWNPAYMENT", wired
+            // up by downPaymentButton's click handler above) may proceed, recording it as an Advance
+            // Order instead. Production warehouses are unaffected - they DO have (or can mint) real
+            // units, so a normal sale is legitimate there.
+            if (!string.Equals(checkoutButton.Tag?.ToString(), "DOWNPAYMENT", StringComparison.OrdinalIgnoreCase)
+                && !IsCurrentWarehouseProductionForLabels())
+            {
+                var buildToOrderItemNames = salesListView.Items
+                    .Cast<ListViewItem>()
+                    .Where(saleItem => IsBuildToOrderItemCode(saleItem.SubItems.Count > 5 ? saleItem.SubItems[5].Text : null))
+                    .Select(saleItem => saleItem.Text?.Trim())
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct()
+                    .ToList();
+
+                if (buildToOrderItemNames.Count > 0)
+                {
+                    MessageBox.Show(this,
+                        $"This sale includes made-to-order build(s) this store doesn't have a physical unit for yet: {string.Join(", ", buildToOrderItemNames)}. " +
+                        "A regular Checkout can't be completed for these - use the Downpayment button instead so it's recorded as an Advance Order.",
+                        "Advance Order Required",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
             }
 
             // Prevent checkout when any non-payment item has a zero or invalid price
