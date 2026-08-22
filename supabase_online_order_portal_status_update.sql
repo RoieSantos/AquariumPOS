@@ -377,16 +377,16 @@ create or replace function public.admin_send_online_order_status_photo(
   p_photo_url text,
   p_photo_storage_path text default null
 )
-returns table(photo_sent boolean, photo_error text)
+returns table(photo_sent boolean, photo_error text, attempts_used int, elapsed_ms int)
 language plpgsql
 security definer
 set search_path = public, extensions
 -- Overrides whatever statement_timeout the authenticator role happens to have (this was seen
 -- hitting Postgres's default ~8s and killing the send before the retry loop below even got its
 -- second attempt in - "canceling statement due to statement timeout"). Set directly on the
--- function so retries are guaranteed a real budget regardless of role/session config. 4 attempts
--- x up to 8s each + a short pause between = comfortably under this.
-set statement_timeout = '60000'
+-- function so retries are guaranteed a real budget regardless of role/session config. Worst case
+-- v_max_photo_attempts x (8s call timeout + 1s pause) is comfortably under this.
+set statement_timeout = '120000'
 as $$
 declare
   v_order public."OnlineOrders"%rowtype;
@@ -394,8 +394,10 @@ declare
   v_response extensions.http_response;
   v_photo_sent boolean := false;
   v_photo_error text;
-  v_photo_attempt int;
-  v_max_photo_attempts constant int := 4;
+  v_photo_attempt int := 0;
+  v_max_photo_attempts constant int := 8;
+  v_started_at timestamptz;
+  v_elapsed_ms int;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -422,58 +424,63 @@ begin
     v_url := 'https://pages.fm/api/public_api/v1/pages/' || v_order."Page_ID" || '/conversations/' || v_order."Conversation_ID"
       || '/messages?page_access_token=' || public._pancake_public_api_key();
 
-    begin
-      -- Retried up to v_max_photo_attempts times on a connection-level failure (same reasoning as
-      -- admin_update_online_order_status's status PATCH retry above - a dropped/stale reused
-      -- connection like "OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno 0" isn't a real rejection from
-      -- Pancake, just a transient network hiccup) - per direct request to not give up so easily. A
-      -- short pause between attempts gives a struggling connection a moment before being reused
-      -- again, rather than hammering it back-to-back.
-      v_photo_attempt := 0;
-      loop
-        v_photo_attempt := v_photo_attempt + 1;
-        if v_photo_attempt > 1 then
-          perform pg_sleep(0.75);
-        end if;
-        begin
-          select * into v_response from extensions.http((
-            'POST',
-            v_url,
-            array[
-              extensions.http_header('Accept', 'application/json'),
-              extensions.http_header('Expect', '')
-            ],
-            'application/json',
-            -- json_build_object, NOT jsonb_build_object: jsonb canonicalizes/reorders object keys
-            -- by string length then alphabetically (a real Postgres behavior, not a bug) - for
-            -- these three keys that reorders to {"Type",...,"action",...,"content_url",...}
-            -- instead of the {"action","Type","content_url"} order confirmed to actually work
-            -- against a live Pancake test. Pancake's API apparently still returns 200 either way
-            -- (that's why every past attempt recorded SentToCustomer = true) but silently doesn't
-            -- attach the image unless the fields arrive in that exact order - json_build_object
-            -- serializes the given key order verbatim, unlike jsonb.
-            json_build_object(
-              'action', 'reply_inbox',
-              'Type', 'image',
-              'content_url', p_photo_url
-            )::text
-          )::extensions.http_request);
-          exit;
-        exception when others then
-          if v_photo_attempt >= v_max_photo_attempts then
-            raise;
-          end if;
-        end;
-      end loop;
+    v_started_at := clock_timestamp();
 
-      if v_response.status >= 200 and v_response.status < 300 then
-        v_photo_sent := true;
-      else
-        v_photo_error := 'Pancake rejected the photo (HTTP ' || v_response.status || '): ' || left(coalesce(v_response.content, ''), 300);
+    -- Retries up to v_max_photo_attempts times on BOTH a connection-level failure (e.g. "OpenSSL
+    -- SSL_read: SSL_ERROR_SYSCALL, errno 0" - a dropped/stale reused connection, not a rejection
+    -- from Pancake) AND a non-2xx response - per direct request to keep trying rather than give up
+    -- after one or two tries, so we can also see (via attempts_used/elapsed_ms below) how long a
+    -- successful send actually takes and whether failures are transient or consistent. A short
+    -- pause between attempts avoids hammering a struggling connection back-to-back.
+    loop
+      v_photo_attempt := v_photo_attempt + 1;
+      if v_photo_attempt > 1 then
+        perform pg_sleep(1);
       end if;
-    exception when others then
-      v_photo_error := sqlerrm;
-    end;
+
+      begin
+        select * into v_response from extensions.http((
+          'POST',
+          v_url,
+          array[
+            extensions.http_header('Accept', 'application/json'),
+            extensions.http_header('Expect', '')
+          ],
+          'application/json',
+          -- json_build_object, NOT jsonb_build_object: jsonb canonicalizes/reorders object keys
+          -- by string length then alphabetically (a real Postgres behavior, not a bug) - for
+          -- these three keys that reorders to {"Type",...,"action",...,"content_url",...}
+          -- instead of the {"action","Type","content_url"} order confirmed to actually work
+          -- against a live Pancake test. Pancake's API apparently still returns 200 either way
+          -- (that's why every past attempt recorded SentToCustomer = true) but silently doesn't
+          -- attach the image unless the fields arrive in that exact order - json_build_object
+          -- serializes the given key order verbatim, unlike jsonb.
+          json_build_object(
+            'action', 'reply_inbox',
+            'Type', 'image',
+            'content_url', p_photo_url
+          )::text
+        )::extensions.http_request);
+
+        if v_response.status >= 200 and v_response.status < 300 then
+          v_photo_sent := true;
+          v_photo_error := null;
+          exit;
+        else
+          v_photo_error := 'Pancake rejected the photo (HTTP ' || v_response.status || '): ' || left(coalesce(v_response.content, ''), 300);
+          if v_photo_attempt >= v_max_photo_attempts then
+            exit;
+          end if;
+        end if;
+      exception when others then
+        v_photo_error := sqlerrm;
+        if v_photo_attempt >= v_max_photo_attempts then
+          exit;
+        end if;
+      end;
+    end loop;
+
+    v_elapsed_ms := round(extract(epoch from (clock_timestamp() - v_started_at)) * 1000)::int;
   end if;
 
   -- Records every photo that was actually captured, sent or not, so staff can look back at what
@@ -483,6 +490,8 @@ begin
 
   photo_sent := v_photo_sent;
   photo_error := v_photo_error;
+  attempts_used := v_photo_attempt;
+  elapsed_ms := v_elapsed_ms;
   return next;
 end;
 $$;

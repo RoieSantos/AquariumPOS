@@ -325,7 +325,7 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
 
     if (photoUrl) {
       // The retry loop inside admin_send_online_order_status_photo can take several seconds (up to
-      // 4 attempts with a short pause between each) - update the banner text so it's clear this
+      // 8 attempts with a short pause between each) - update the banner text so it's clear this
       // specific step, not the whole action, is what's still working.
       showSendStatusBanner("Hang tight, sending the photo to the customer's conversation - this can take a few tries...");
 
@@ -338,12 +338,25 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
       });
 
       const photoResult = photoData && photoData[0];
+      // attempts_used/elapsed_ms are new diagnostic fields from admin_send_online_order_status_photo
+      // - per direct request, so we can actually see how long the retries take and whether a send
+      // succeeds/fails consistently, not just a pass/fail alert. Always logged; also surfaced to
+      // staff so they don't have to ask a developer to check the console.
+      const attempts = photoResult?.attempts_used;
+      const elapsedSeconds = photoResult?.elapsed_ms != null ? (photoResult.elapsed_ms / 1000).toFixed(1) : null;
+      console.log('[online order photo send]', { orderId, sent: photoResult?.photo_sent, attempts, elapsedMs: photoResult?.elapsed_ms, error: photoResult?.photo_error || photoError?.message });
+
       if (photoError || (photoResult && photoResult.photo_sent === false)) {
         // Status change (and text message, if requested) already went through fine - only the
         // photo attachment failed. Surface it so staff know to just describe the item to the
         // customer instead, without implying the whole notification failed.
         const detail = photoError ? photoError.message : (photoResult?.photo_error || 'unknown error');
-        alert('Status updated, but the photo could not be attached: ' + detail);
+        const timingNote = elapsedSeconds != null ? ` (gave up after ${attempts} attempt(s), ${elapsedSeconds}s)` : '';
+        alert('Status updated, but the photo could not be attached: ' + detail + timingNote);
+      } else if (photoResult && photoResult.photo_sent) {
+        // Brief success flash with timing, then the finally block below hides the banner as usual.
+        showSendStatusBanner(`Photo sent! (${attempts} attempt(s), ${elapsedSeconds}s)`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
 
