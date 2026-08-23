@@ -747,6 +747,7 @@ async function sendOrderStatusPhoto(orderId, photoUrl, photoStoragePath, trigger
   triggerEl.disabled = true;
   showSendStatusBanner("Hang tight, sending the photo to the customer's conversation - this can take a few tries...");
 
+  let sent = false;
   try {
     const { data, error } = await supabaseClient.rpc('admin_send_online_order_status_photo', {
       p_admin_username: currentSession.username,
@@ -766,6 +767,7 @@ async function sendOrderStatusPhoto(orderId, photoUrl, photoStoragePath, trigger
       const timingNote = elapsedSeconds != null ? ` (gave up after ${attempts} attempt(s), ${elapsedSeconds}s)` : '';
       alert('Could not send the photo: ' + detail + timingNote);
     } else if (result && result.photo_sent) {
+      sent = true;
       showSendStatusBanner(`Photo sent! (${attempts} attempt(s), ${elapsedSeconds}s)`);
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
@@ -773,6 +775,59 @@ async function sendOrderStatusPhoto(orderId, photoUrl, photoStoragePath, trigger
     hideSendStatusBanner();
     triggerEl.disabled = false;
   }
+  return sent;
+}
+
+// Per direct follow-up request: once a photo actually goes out, ask staff whether they're about to
+// ship this order and, if so, give them a heads-up on serial availability before they head to the
+// local POS to do it (To Ship itself stays disabled - see TO_SHIP_ENABLED - so this is purely
+// informational, nothing is claimed/changed here). Applicability mirrors the exact same gate
+// handleToShipClick used when it was still live: only a production warehouse
+// (currentSessionIsProductionWarehouse) with at least one serial-tracked line
+// (admin_get_online_order_serial_requirements) counts - anything else is treated as "not
+// applicable" and the flow ends quietly right after the ship question, per direct instruction.
+async function promptShipAfterPhoto(orderId) {
+  if (!window.confirm('Are you going to ship this order?')) return;
+  if (!currentSessionIsProductionWarehouse) return;
+
+  let requirements;
+  try {
+    requirements = await getOrderSerialRequirements(orderId);
+  } catch (err) {
+    console.error('Could not check serial requirements after photo send:', err);
+    return;
+  }
+  if (requirements.length === 0) return;
+
+  // Counts only (head: true) - no need to pull actual serial numbers here, this is just a
+  // heads-up, not a picker (that's still the disabled To Ship flow's job). Same IN_STOCK/
+  // ItemCode/VariantCode/Location filters as searchAvailableSerialsForShipLine above.
+  const breakdown = [];
+  let totalAvailable = 0;
+
+  for (const r of requirements) {
+    let query = supabaseClient
+      .from('ItemSerialTracking')
+      .select('RunningSerialNo', { count: 'exact', head: true })
+      .eq('Status', 'IN_STOCK')
+      .eq('ItemCode', r.item_code);
+    query = r.variation_id ? query.eq('VariantCode', r.variation_id) : query.or('VariantCode.is.null,VariantCode.eq.');
+    if (currentSession?.warehouseName) {
+      query = query.eq('Location', currentSession.warehouseName);
+    }
+
+    const { count, error } = await query;
+    const available = error ? 0 : (count || 0);
+    totalAvailable += available;
+    breakdown.push(`${r.description || r.item_code} (${available}/${r.quantity_needed})`);
+  }
+
+  if (totalAvailable === 0) {
+    alert('No serials found, please To-Ship through your local POS.');
+    return;
+  }
+
+  alert(`There are ${totalAvailable} serial(s) found for:\n${breakdown.join('\n')}`);
 }
 
 async function handleSendPhotoSelected(event) {
@@ -787,7 +842,8 @@ async function handleSendPhotoSelected(event) {
   const photo = await uploadOrderStatusPhoto(pending.orderId, file);
   if (!photo) return; // uploadOrderStatusPhoto already alerted with the reason
 
-  await sendOrderStatusPhoto(pending.orderId, photo.url, photo.storagePath, pending.triggerEl);
+  const sent = await sendOrderStatusPhoto(pending.orderId, photo.url, photo.storagePath, pending.triggerEl);
+  if (sent) await promptShipAfterPhoto(pending.orderId);
 }
 
 function handleSendPhotoCancelled() {
