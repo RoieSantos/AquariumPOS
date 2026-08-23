@@ -3424,6 +3424,14 @@ async function runDeliveryEstimate() {
     });
   });
 
+  // Sealant Color doesn't factor into price/glass-safety at all (buildCustomPayload doesn't even
+  // send it to calculateCustomAquarium), but it IS one of the fields renderCustomAquariumSummary
+  // shows on the live spec summary - this was the one option with no listener at all, so picking a
+  // color left the summary showing a stale/blank "Sealant Color" until some other field's own
+  // change happened to trigger a refresh. Plain updateCustomPriceEstimate() call, no
+  // enforceGlassThicknessRules needed since this can't affect that check.
+  document.getElementById('customSealant').addEventListener('change', () => updateCustomPriceEstimate());
+
   document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep('customize-tabs'));
   document.getElementById('customDimsNextBtn').addEventListener('click', async () => {
     customBuilderType = 'aquarium';

@@ -17105,21 +17105,34 @@ END", connection);
                 return;
             }
 
-            // Blocks a full-payment Checkout when the sale contains a made-to-order build (per
-            // "so i see the message did prompt but the complete payment is allowed. can we force
-            // the user to do the advance order instead") - PromptForAquariumSaleSerials only warned
-            // when the item was added, it never stopped staff from completing a regular full sale
-            // afterward. This store has no physical unit for these, so a regular Checkout can't
-            // actually be fulfilled - only Downpayment (checkoutButton.Tag == "DOWNPAYMENT", wired
-            // up by downPaymentButton's click handler above) may proceed, recording it as an Advance
-            // Order instead. Production warehouses are unaffected - they DO have (or can mint) real
-            // units, so a normal sale is legitimate there.
+            // Blocks a full-payment Checkout when the sale contains a made-to-order build with NO
+            // real physical unit behind it (per "so i see the message did prompt but the complete
+            // payment is allowed. can we force the user to do the advance order instead") -
+            // PromptForAquariumSaleSerials only warned when the item was added, it never stopped
+            // staff from completing a regular full sale afterward. Only Downpayment
+            // (checkoutButton.Tag == "DOWNPAYMENT", wired up by downPaymentButton's click handler
+            // above) may proceed for those, recording it as an Advance Order instead. Production
+            // warehouses are unaffected - they DO have (or can mint) real units, so a normal sale
+            // is legitimate there.
+            //
+            // NOT just an item-code-prefix check, though - a non-production store CAN genuinely
+            // have real, available serials for an AQ-/CUSTOM- item on hand (e.g. received via a
+            // Transfer Order - see PromptForAquariumSaleSerials' own comment on why non-production
+            // stores go through the same required serial picker as production ones). If the sale
+            // line's SubItems[7] (Serial No - see AddSaleLine) is non-blank, a real serial WAS
+            // picked for it at add-to-sale time, so this line has an actual unit to hand over and
+            // should NOT be forced into an Advance Order. An empty SubItems[7] on a build-to-order
+            // item only happens when PromptForAquariumSaleSerials let it through with zero
+            // available serials (see its own "Made-to-Order Item" branch) - that's the genuine
+            // no-physical-unit case this block exists to catch.
             if (!string.Equals(checkoutButton.Tag?.ToString(), "DOWNPAYMENT", StringComparison.OrdinalIgnoreCase)
                 && !IsCurrentWarehouseProductionForLabels())
             {
                 var buildToOrderItemNames = salesListView.Items
                     .Cast<ListViewItem>()
-                    .Where(saleItem => IsBuildToOrderItemCode(saleItem.SubItems.Count > 5 ? saleItem.SubItems[5].Text : null))
+                    .Where(saleItem =>
+                        IsBuildToOrderItemCode(saleItem.SubItems.Count > 5 ? saleItem.SubItems[5].Text : null)
+                        && string.IsNullOrWhiteSpace(saleItem.SubItems.Count > 7 ? saleItem.SubItems[7].Text : null))
                     .Select(saleItem => saleItem.Text?.Trim())
                     .Where(name => !string.IsNullOrWhiteSpace(name))
                     .Distinct()
