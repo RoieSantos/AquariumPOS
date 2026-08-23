@@ -48,14 +48,6 @@ let filtrationEnabled = false;
 // the shared "custom-checkout" (Order Summary) screen - lets that one screen
 // serve all four instead of needing a separate checkout page per sub-flow.
 let customBuilderType = 'aquarium';
-// The Stand/Filtration/Stickers sub-flows are reachable both from the Customize tab bar and from
-// the post-Aquarium-checkout "add more products?" prompt - these track which one so each tab's own
-// Back button returns to the right place instead of always assuming direct entry. (Stickers is
-// currently only reachable directly - there's no "add more" prompt for it - but this still tracks
-// it for consistency with the other two.)
-let standBackTarget = 'customize-tabs';
-let filtrationStandaloneBackTarget = 'customize-tabs';
-let stickerStandaloneBackTarget = 'customize-tabs';
 // Which Customize tab (aquarium/stand/filtration/stickers) is currently showing - see
 // switchCustomizeTab/applyCustomizeTabVisibility below. Independent of currentStep/goToStep on
 // purpose: switching tabs, or navigating away to custom-checkout and back, must never reset
@@ -135,6 +127,16 @@ function cartTotal() {
 
 function formatMoney(value) {
   return '₱' + Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Short single-line preview of item.description (Pancake's note_product, see Items.Description)
+// for the item grid card - the full multi-line text (piping/sump/etc. broken out with \r\n) is
+// still shown as-is in the item-details modal (openItemDetail), this is just a "there's more, tap
+// to see it" teaser so the card doesn't have to grow to fit a whole paragraph.
+function shortDescriptionSnippet(description, maxLength = 90) {
+  const flat = String(description || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  return flat.length > maxLength ? flat.slice(0, maxLength).trim() + '…' : flat;
 }
 
 function firstImageUrl(images) {
@@ -428,12 +430,15 @@ async function loadItems(codes) {
         : item.quantity_in_stock > 0
           ? `<div class="item-card-stock">In stock</div>`
           : `<div class="item-card-stock">Currently out of stock - request anyway</div>`;
+      const descSnippet = shortDescriptionSnippet(item.description);
+      const descHtml = descSnippet ? `<div class="item-card-desc">${descSnippet}</div>` : '';
 
       return `
         <div class="item-card" data-code="${item.code}" data-name="${item.name}" data-price="${item.price}">
           <div class="item-card-tap-area" data-action="details">
             ${imgHtml}
             <div class="item-card-name">${item.name}</div>
+            ${descHtml}
             <div class="item-card-price">${formatMoney(item.price)}</div>
             ${stockHtml}
           </div>
@@ -1697,6 +1702,21 @@ function buildEmbeddedFiltrationCartLine(result) {
 // deliveryEstimateMethod/selectDeliveryEstimateMethod - the toggle buttons just reflect this.
 let selectedStandTubular = '1x1';
 
+// Per direct request: when the customer uses the aquarium's footprint for the stand
+// (prefillStandFromAquarium), Height should default based on which Tubular is selected - 30in
+// for 1x1, 36in for 1 1/2x1 1/2 or 2x2. This flag tracks whether standHeight is still showing
+// that auto-default (so selectStandTubular can keep it in sync as the customer tries different
+// Tubular sizes) versus a value the customer typed in themselves (which should never be
+// silently overwritten) - same "don't clobber deliberate input" pattern as glassBeforeLowIron/
+// glassBeforeRimless above. Only ever set true by prefillStandFromAquarium - manually building a
+// stand from scratch (no footprint prefill) never auto-fills Height at all, per the request being
+// scoped to "if the user wants to use footprint".
+let standHeightIsFootprintDefault = false;
+
+function defaultStandHeightInches(tubular) {
+  return tubular === '1x1' ? 30 : 36;
+}
+
 function customStandQty() {
   return Math.max(1, Math.round(Number(document.getElementById('standQty').value) || 1));
 }
@@ -1725,6 +1745,13 @@ function selectStandTubular(value) {
   document.getElementById('standTubular1x1').classList.toggle('selected', value === '1x1');
   document.getElementById('standTubular1_5x1_5').classList.toggle('selected', value === '1.5x1.5');
   document.getElementById('standTubular2x2').classList.toggle('selected', value === '2x2');
+
+  // Keep Height following the Tubular-based default (see defaultStandHeightInches) as long as the
+  // customer hasn't typed their own Height yet - see standHeightIsFootprintDefault above.
+  if (standHeightIsFootprintDefault) {
+    const unit = document.getElementById('standUnit').value || 'Inches';
+    document.getElementById('standHeight').value = round1(convertFromInches(defaultStandHeightInches(value), unit));
+  }
 }
 
 // Fades out (and blocks clicking) whichever Tubular options the current Length/Width would
@@ -1896,6 +1923,9 @@ function buildCustomStandCartLine(result) {
 // Puts the Stand step back to its just-loaded defaults, same reasoning as
 // resetCustomAquariumBuilder - opening it should always feel like starting fresh.
 function resetCustomStandBuilder() {
+  // Plain reset (no footprint prefill) never auto-fills Height - only prefillStandFromAquarium
+  // (called right after this) arms the flag and overwrites the '0' just set below.
+  standHeightIsFootprintDefault = false;
   document.getElementById('standLength').value = '0';
   document.getElementById('standWidth').value = '0';
   document.getElementById('standHeight').value = '0';
@@ -1934,6 +1964,14 @@ function prefillStandFromAquarium() {
   document.getElementById('standLength').value = length;
   document.getElementById('standWidth').value = width;
   document.getElementById('standUnit').value = unit;
+
+  // Per direct request: default Height by Tubular size when using the footprint - 30in for 1x1,
+  // 36in for 1 1/2x1 1/2 or 2x2 (see defaultStandHeightInches). resetCustomStandBuilder() just
+  // above always leaves Tubular at 1x1, so this starts at 30in; armed here so selectStandTubular
+  // keeps it synced if the customer then tries a different Tubular size, up until they type their
+  // own Height.
+  standHeightIsFootprintDefault = true;
+  document.getElementById('standHeight').value = round1(convertFromInches(defaultStandHeightInches(selectedStandTubular), unit));
 
   const note = document.getElementById('standAquariumAwarenessNote');
   note.textContent = `Using this aquarium's footprint: ${length} x ${width} ${unit}. You can adjust Length/Width if you'd like a different fit.`;
@@ -2025,8 +2063,26 @@ function applyStandaloneSumpTypeDefaults() {
   document.getElementById('standaloneSumpHeight').value = side;
 }
 
+// Live "declutter" spec summary, same purpose as renderCustomAquariumSummary/
+// renderCustomStandSummary - reuses buildStandaloneFiltrationSpecText() (already exists for the
+// cart line's item name) rather than duplicating its field-reading logic.
+function renderStandaloneFiltrationSummary() {
+  const summaryEl = document.getElementById('standaloneFiltrationSummary');
+  const unit = document.getElementById('standaloneFiltrationUnit').value;
+  if (!unit) {
+    summaryEl.innerHTML = '';
+    return;
+  }
+  const qty = document.getElementById('standaloneFiltrationQty').value || '1';
+  summaryEl.innerHTML = `
+    <div><strong>Build:</strong> ${buildStandaloneFiltrationSpecText()}</div>
+    <div><strong>Quantity:</strong> ${qty}</div>
+  `;
+}
+
 async function updateStandaloneFiltrationPriceEstimate() {
   const box = document.getElementById('customPriceEstimateStandaloneFiltration');
+  renderStandaloneFiltrationSummary();
 
   if (!document.getElementById('standaloneFiltrationUnit').value) {
     box.textContent = 'Select a unit of measure to see a price estimate.';
@@ -2090,6 +2146,8 @@ function resetStandaloneFiltrationBuilder() {
   const awarenessNote = document.getElementById('filtrationAquariumAwarenessNote');
   awarenessNote.textContent = '';
   awarenessNote.classList.add('hidden');
+
+  renderStandaloneFiltrationSummary();
 }
 
 // Standalone Custom Accessories/Stickers sub-flow (own tab in the Customize tab bar, no aquarium
@@ -2115,8 +2173,26 @@ function buildStandaloneStickerPayload() {
   };
 }
 
+// Live "declutter" spec summary, same purpose as renderCustomAquariumSummary/
+// renderCustomStandSummary/renderStandaloneFiltrationSummary - reuses buildStandaloneStickerSpecText()
+// (already exists for the cart line's item name) rather than duplicating its field-reading logic.
+function renderStandaloneStickerSummary() {
+  const summaryEl = document.getElementById('standaloneStickerSummary');
+  const unit = document.getElementById('standaloneStickerUnit').value;
+  if (!unit) {
+    summaryEl.innerHTML = '';
+    return;
+  }
+  const qty = document.getElementById('standaloneStickerQty').value || '1';
+  summaryEl.innerHTML = `
+    <div><strong>Build:</strong> ${buildStandaloneStickerSpecText()}</div>
+    <div><strong>Quantity:</strong> ${qty}</div>
+  `;
+}
+
 async function updateStandaloneStickerPriceEstimate() {
   const box = document.getElementById('customPriceEstimateStandaloneSticker');
+  renderStandaloneStickerSummary();
 
   if (!document.getElementById('standaloneStickerUnit').value) {
     box.textContent = 'Select a unit of measure to see a price estimate.';
@@ -2210,6 +2286,8 @@ function resetStandaloneStickerBuilder() {
   errorMsg.textContent = '';
   errorMsg.classList.add('hidden');
   document.getElementById('customPriceEstimateStandaloneSticker').textContent = 'Enter your sticker details to see a price estimate.';
+
+  renderStandaloneStickerSummary();
 }
 
 // Reached from the post-Aquarium-checkout "Add Filtration" prompt - a sump's dimensions are
@@ -2227,11 +2305,170 @@ function showFiltrationAquariumAwarenessNote() {
   note.classList.remove('hidden');
 }
 
+// Per-tab checkout-line computers, one per Customize tab. Each reads that tab's OWN current form
+// fields (independent of which tab is actually active) and returns [] if that tab doesn't have a
+// valid, priced estimate sitting in it (e.g. still at default/blank dimensions), or one or more
+// {categoryCode, label, qty, amount, cartLine} rows if it does - Aquarium can return two (itself
+// plus its embedded Filtration/Sump) when filtrationEnabled. Used by collectCustomizeCheckoutLines
+// below to pull in every already-estimated tab, not just the one Checkout was clicked from.
+function computeAquariumCheckoutLines() {
+  // Same "must pick a unit first" gate updateCustomPriceEstimate already enforces on the live
+  // price card - without it, buildCustomPayload's unit fallback to 'Inches' would let this compute
+  // a "valid" price even though the customer never actually selected Unit of Measure yet.
+  if (!document.getElementById('customUnit').value) return [];
+  const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
+  if (!result.ok) return [];
+  const qty = customAquariumQty();
+  if (filtrationEnabled) {
+    const split = splitCustomAquariumFiltrationPrice(result);
+    return [
+      { categoryCode: 'CUSTOM-AQUARIUM', label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: split.aquariumPrice * qty, cartLine: buildCustomAquariumCartLine(result) },
+      { categoryCode: 'CUSTOM-FILTRATION', label: `Filtration/Sump (for Custom Aquarium) - ${buildFiltrationSpecText()}`, qty, amount: split.filtrationPrice * qty, cartLine: buildEmbeddedFiltrationCartLine(result) }
+    ];
+  }
+  return [{ categoryCode: 'CUSTOM-AQUARIUM', label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: result.totalPrice * qty, cartLine: buildCustomAquariumCartLine(result) }];
+}
+function computeStandCheckoutLines() {
+  if (!document.getElementById('standUnit').value) return [];
+  const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
+  if (!result.ok) return [];
+  const qty = customStandQty();
+  return [{ categoryCode: 'CUSTOM-STAND', label: `Custom Stand - ${buildCustomStandSpecText()}`, qty, amount: result.totalPrice * qty, cartLine: buildCustomStandCartLine(result) }];
+}
+function computeFiltrationCheckoutLines() {
+  if (!document.getElementById('standaloneFiltrationUnit').value) return [];
+  const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
+  if (!result.ok) return [];
+  const qty = standaloneFiltrationQty();
+  return [{ categoryCode: 'CUSTOM-FILTRATION', label: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`, qty, amount: result.totalPrice * qty, cartLine: buildStandaloneFiltrationCartLine(result) }];
+}
+function computeStickerCheckoutLines() {
+  if (!document.getElementById('standaloneStickerUnit').value) return [];
+  const result = window.CustomAquariumCalculator.calculateStandaloneSticker(buildStandaloneStickerPayload());
+  if (!result.ok) return [];
+  const qty = standaloneStickerQty();
+  return [{ categoryCode: 'CUSTOM-STICKER', label: `Custom Accessory/Sticker - ${buildStandaloneStickerSpecText()}`, qty, amount: result.totalPrice * qty, cartLine: buildStandaloneStickerCartLine(result) }];
+}
+
+const CUSTOMIZE_LINE_COMPUTERS = {
+  aquarium: computeAquariumCheckoutLines,
+  stand: computeStandCheckoutLines,
+  filtration: computeFiltrationCheckoutLines,
+  stickers: computeStickerCheckoutLines
+};
+
+const CUSTOMIZE_CHECKOUT_TITLES = {
+  aquarium: 'CUSTOM AQUARIUM ORDER SUMMARY',
+  stand: 'CUSTOM STAND ORDER SUMMARY',
+  filtration: 'CUSTOM FILTRATION ORDER SUMMARY',
+  stickers: 'CUSTOM ACCESSORIES/STICKERS ORDER SUMMARY'
+};
+
+const CUSTOMIZE_TAB_LABELS = {
+  aquarium: 'Aquarium',
+  stand: 'Stand',
+  filtration: 'Filtration',
+  stickers: 'Accessory/Sticker'
+};
+
+// True when every one of `lines` (from a CUSTOMIZE_LINE_COMPUTERS entry) already sits in the cart
+// exactly as computed right now (same category, name, price, and quantity) - i.e. the customer
+// already added this tab's current estimate (via its own Add to Cart button, Checkout, or a prior
+// answer to this same prompt) and hasn't changed anything on the tab since. Used to skip
+// re-asking maybeAddCurrentTabEstimateToCart below for no reason.
+function customizeLinesAlreadyInCart(lines) {
+  return lines.every((line) => cart.some((cartLine) =>
+    cartLine.categoryCode === line.cartLine.categoryCode &&
+    cartLine.itemName === line.cartLine.itemName &&
+    cartLine.price === line.cartLine.price &&
+    cartLine.quantity === line.cartLine.quantity
+  ));
+}
+
+// Fires right before switchCustomizeTab() moves the customer off of `activeCustomizeTab` onto a
+// different one - per direct request, a tab that's already priced out shouldn't just be silently
+// left behind if the customer wanders off to another tab without ever pressing that tab's own
+// Checkout button. Only asks when the tab being LEFT actually has a valid, priced estimate right
+// now (see CUSTOMIZE_LINE_COMPUTERS) that ISN'T already sitting in the cart as-is - nothing to
+// offer for a still-blank/untouched tab, and nothing to re-ask about once it's already been added.
+async function maybeAddCurrentTabEstimateToCart() {
+  const computeLines = CUSTOMIZE_LINE_COMPUTERS[activeCustomizeTab];
+  if (!computeLines) return;
+  await ensureGlassPricingLoaded();
+  const lines = computeLines();
+  if (!lines.length) return;
+  if (customizeLinesAlreadyInCart(lines)) return;
+
+  const tabLabel = CUSTOMIZE_TAB_LABELS[activeCustomizeTab] || 'item';
+  const total = lines.reduce((sum, line) => sum + line.amount, 0);
+  const addToCart = await showConfirmModal(
+    `You have an estimated ${tabLabel} (${formatMoney(total)}). Add it to your cart before switching tabs?`,
+    'Yes, Add to Cart',
+    'No, Skip'
+  );
+  if (!addToCart) return;
+
+  const categoryCodes = new Set(lines.map((line) => line.categoryCode));
+  cart = cart.filter((line) => !categoryCodes.has(line.categoryCode));
+  lines.forEach((line) => cart.push(line.cartLine));
+  saveCart();
+}
+
+// Wired to each Customize tab's own "Add to Cart" button (sits above that tab's Checkout button) -
+// adds whatever's currently estimated on `type`'s own fields straight to the cart without leaving
+// the tab or walking through the Order Summary/Checkout screen, so the customer can add one thing
+// and keep building the next without losing their place. `msgEl` is a single dedicated
+// success/error-text element per tab (not shared with that tab's own validation errorMsg element,
+// to avoid the two stepping on each other's success/error styling).
+async function addCustomizeTabToCart(type, msgEl) {
+  await ensureGlassPricingLoaded();
+  const lines = CUSTOMIZE_LINE_COMPUTERS[type]();
+  if (!lines.length) {
+    msgEl.textContent = 'Please fill in the required fields above to see a price before adding to cart.';
+    msgEl.classList.remove('success-text');
+    msgEl.classList.add('error-text');
+    msgEl.classList.remove('hidden');
+    return;
+  }
+
+  const categoryCodes = new Set(lines.map((line) => line.categoryCode));
+  cart = cart.filter((line) => !categoryCodes.has(line.categoryCode));
+  lines.forEach((line) => cart.push(line.cartLine));
+  saveCart();
+
+  const total = lines.reduce((sum, line) => sum + line.amount, 0);
+  msgEl.textContent = `Added to cart (${formatMoney(total)}).`;
+  msgEl.classList.remove('error-text');
+  msgEl.classList.add('success-text');
+  msgEl.classList.remove('hidden');
+}
+
+// Combines primaryType's own freshly-computed checkout line(s) (the tab Checkout was actually
+// clicked from) with whatever else is ALREADY sitting in the cart - per direct request, Checkout
+// should only proceed with items the customer actually has in their cart, not silently sweep in
+// some other tab just because it happens to have a valid price sitting unsaved in its fields (that
+// tab's own Add to Cart button, or the tab-switch prompt, is what puts it in the cart). primaryType
+// always wins over any stale cart line with the same categoryCode (e.g. re-confirming Aquarium
+// after editing it replaces the old CUSTOM-AQUARIUM cart line rather than showing both).
+function collectCustomizeCheckoutLines(primaryType) {
+  const primaryLines = CUSTOMIZE_LINE_COMPUTERS[primaryType]();
+  const primaryCategoryCodes = new Set(primaryLines.map((line) => line.categoryCode));
+  const cartLines = cart
+    .filter((line) => !primaryCategoryCodes.has(line.categoryCode))
+    .map((line) => ({
+      categoryCode: line.categoryCode,
+      label: line.itemName,
+      qty: line.quantity,
+      amount: line.price * line.quantity,
+      cartLine: line
+    }));
+  return [...primaryLines, ...cartLines];
+}
+
 // Populates the receipt-styled checkout/review page (step "custom-checkout") with the company
-// letterhead (same fields the Delivery Receipt page shows, via companyBranding.js) and a single
-// product row summarizing whichever Customize sub-flow (Aquarium/Stand/Filtration, tracked by
-// customBuilderType) the customer just built. Returns the current calculator result so the
-// Confirm handler can build the cart line from the same numbers being displayed.
+// letterhead (same fields the Delivery Receipt page shows, via companyBranding.js) and one product
+// row per item actually in the cart, plus the tab Checkout was just clicked from (see
+// collectCustomizeCheckoutLines).
 async function renderCustomCheckout() {
   const info = await fetchCompanyInfo();
   const logo = document.getElementById('checkoutLogo');
@@ -2247,61 +2484,33 @@ async function renderCustomCheckout() {
   document.getElementById('checkoutContactNo').textContent = info && info['ContactNo'] ? `Contact No : ${info['ContactNo']}` : '';
   document.getElementById('checkoutDtiNo').textContent = info && info['DtiNo'] ? `DTI No.: ${info['DtiNo']}` : '';
 
-  let result;
-  let rows; // [{ label, qty, amount }] - more than one entry when Aquarium+Filtration are split
-  let titleText;
-
   // All four Customize builders can now depend on centralized pricing (Aquarium/Filtration on
   // GlassPricingSetup, Stand on TubularPricingSetup, Stickers on both StickerPricingSetup and
   // GlassPricingSetup for its "Glass" type) - one shared await up front instead of repeating it
-  // per branch below.
+  // per builder below.
   await ensureGlassPricingLoaded();
 
-  if (customBuilderType === 'stand') {
-    result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
-    const qty = customStandQty();
-    rows = [{ label: `Custom Stand - ${buildCustomStandSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
-    titleText = 'CUSTOM STAND ORDER SUMMARY';
-  } else if (customBuilderType === 'filtration') {
-    result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
-    const qty = standaloneFiltrationQty();
-    rows = [{ label: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
-    titleText = 'CUSTOM FILTRATION ORDER SUMMARY';
-  } else if (customBuilderType === 'stickers') {
-    result = window.CustomAquariumCalculator.calculateStandaloneSticker(buildStandaloneStickerPayload());
-    const qty = standaloneStickerQty();
-    rows = [{ label: `Custom Accessory/Sticker - ${buildStandaloneStickerSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
-    titleText = 'CUSTOM ACCESSORIES/STICKERS ORDER SUMMARY';
-  } else {
-    result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
-    const qty = customAquariumQty();
-    if (result.ok && filtrationEnabled) {
-      const split = splitCustomAquariumFiltrationPrice(result);
-      rows = [
-        { label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: split.aquariumPrice * qty },
-        { label: `Filtration/Sump (for Custom Aquarium) - ${buildFiltrationSpecText()}`, qty, amount: split.filtrationPrice * qty }
-      ];
-    } else {
-      rows = [{ label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: result.ok ? result.totalPrice * qty : 0 }];
-    }
-    titleText = 'CUSTOM AQUARIUM ORDER SUMMARY';
-  }
+  const primaryCategoryCodes = new Set(CUSTOMIZE_LINE_COMPUTERS[customBuilderType]().map((line) => line.categoryCode));
+  const lines = collectCustomizeCheckoutLines(customBuilderType);
+  // Only the specific per-tab title (matching the old single-tab behavior) when nothing else got
+  // pulled in - as soon as another tab's estimate is combined in, "Aquarium" alone stops being an
+  // accurate title for what's actually listed below.
+  const onlyPrimaryType = lines.every((line) => primaryCategoryCodes.has(line.categoryCode));
+  document.getElementById('checkoutTitle').textContent = onlyPrimaryType ? CUSTOMIZE_CHECKOUT_TITLES[customBuilderType] : 'CUSTOM ORDER SUMMARY';
 
-  document.getElementById('checkoutTitle').textContent = titleText;
-
-  const grandTotal = result.ok ? rows.reduce((sum, row) => sum + row.amount, 0) : 0;
-  document.getElementById('checkoutLinesBody').innerHTML = result.ok
-    ? rows.map((row) => `
+  const grandTotal = lines.reduce((sum, line) => sum + line.amount, 0);
+  document.getElementById('checkoutLinesBody').innerHTML = lines.length
+    ? lines.map((line) => `
       <tr>
-        <td>${row.label}</td>
-        <td>${row.qty}</td>
-        <td style="text-align:right;">${formatMoney(row.amount)}</td>
+        <td>${line.label}</td>
+        <td>${line.qty}</td>
+        <td style="text-align:right;">${formatMoney(line.amount)}</td>
       </tr>
     `).join('')
     : '';
-  document.getElementById('checkoutTotal').textContent = result.ok ? formatMoney(grandTotal) : (result.error || 'Please review your details.');
+  document.getElementById('checkoutTotal').textContent = lines.length ? formatMoney(grandTotal) : 'Please review your details.';
 
-  return result;
+  return lines;
 }
 
 function convertToInches(value, unit) {
@@ -2448,6 +2657,28 @@ async function enforceGlassThicknessRules() {
         tempered.checked = false;
       }
       messages.push('Low Iron was unchecked since 10mm glass was declined.');
+    }
+  }
+
+  // Plain Tempered Glass (not via Low Iron, which already forces its own 10mm prompt above) still
+  // needs a minimum of 10mm per direct request - asks the same way AIO/Low Iron/Rimless do below,
+  // rather than silently bumping the thickness, since it changes the price.
+  if (tempered.checked && !lowIron.checked && (glass.value === '3mm' || glass.value === '6mm')) {
+    const upgrade = await showConfirmModal(
+      'Tempering Glass starts at 10mm Glass Thickness. Would you like to proceed? (Price change may vary)',
+      'Yes, Upgrade Glass',
+      'No, Keep Current'
+    );
+    if (upgrade) {
+      glass.value = '10mm';
+      messages.push('Glass thickness was increased to 10mm for Tempered Glass.');
+    } else if (temperedMandatory) {
+      // Can't uncheck - required by the 36in+ dimension rule above - so the decline just keeps
+      // the current (thinner) glass selected instead of forcing 10mm on them.
+      messages.push('Tempered Glass is still required for these dimensions, even at the current glass thickness.');
+    } else {
+      tempered.checked = false;
+      messages.push('Tempered Glass was unchecked since 10mm glass was declined.');
     }
   }
 
@@ -2734,8 +2965,22 @@ function exitOrderNow() {
 // Brief transitional loading state shown right after clicking Customize on the mode picker -
 // purely for delight (there's no real work happening), per direct request for some animation and
 // a "grab your tape measure" message before landing on the Aquarium/Stand/Filtration sub-choice.
-function showCustomizeLoading(durationMs = 1300) {
+// Also reused for switching between the Aquarium/Stand/Filtration/Accessories tabs themselves (see
+// the customize-tab-btn click handler below) with its own icon/text/brand line, passed via
+// `options` - defaults reproduce the original Customize-entry message unchanged so that call site
+// doesn't need to change.
+function showCustomizeLoading(durationMs = 1300, options = {}) {
   const overlay = document.getElementById('customizeLoadingOverlay');
+  const icon = options.icon || '📏';
+  const text = options.text || 'Grab your tape measure - we\'re going to start building!';
+  const brand = options.brand || '';
+
+  overlay.querySelector('.customize-loading-icon').textContent = icon;
+  overlay.querySelector('.customize-loading-text').textContent = text;
+  const brandEl = overlay.querySelector('.customize-loading-brand');
+  brandEl.textContent = brand;
+  brandEl.classList.toggle('hidden', !brand);
+
   overlay.classList.remove('hidden');
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -3325,6 +3570,12 @@ async function runDeliveryEstimate() {
   document.getElementById('customizeTabsBackBtn').addEventListener('click', () => goToStep(0));
   document.querySelectorAll('.customize-tab-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      // Skip the loading flash when re-clicking the tab that's already showing - nothing is
+      // actually changing, so there's nothing to "build".
+      if (btn.dataset.tab !== activeCustomizeTab) {
+        await maybeAddCurrentTabEstimateToCart();
+        await showCustomizeLoading(700, { icon: '🏗️', text: 'Building something great!', brand: 'RSPETSTOP' });
+      }
       switchCustomizeTab(btn.dataset.tab);
       if (btn.dataset.tab === 'stand') {
         await maybeOfferStandPrefillFromAquarium();
@@ -3432,7 +3683,9 @@ async function runDeliveryEstimate() {
   // enforceGlassThicknessRules needed since this can't affect that check.
   document.getElementById('customSealant').addEventListener('change', () => updateCustomPriceEstimate());
 
-  document.getElementById('customDimsBackBtn').addEventListener('click', () => goToStep('customize-tabs'));
+  document.getElementById('customDimsAddToCartBtn').addEventListener('click', () => {
+    addCustomizeTabToCart('aquarium', document.getElementById('customDimsAddToCartMsg'));
+  });
   document.getElementById('customDimsNextBtn').addEventListener('click', async () => {
     customBuilderType = 'aquarium';
     const errorMsg = document.getElementById('customDimsErrorMsg');
@@ -3552,15 +3805,24 @@ async function runDeliveryEstimate() {
     document.getElementById('standSumpWidthRow').classList.toggle('hidden', !event.target.checked);
     updateCustomStandPriceEstimate();
   });
-  ['standLength', 'standWidth', 'standHeight', 'standLayers', 'standSumpWidth', 'standFooting'].forEach((id) => {
+  ['standLength', 'standWidth', 'standLayers', 'standSumpWidth', 'standFooting'].forEach((id) => {
     document.getElementById(id).addEventListener('input', () => updateCustomStandPriceEstimate());
+  });
+  // Separate listener (not lumped into the array above) - typing into Height directly means the
+  // customer wants their own value, so this stops selectStandTubular from silently overwriting it
+  // if they go on to try a different Tubular size afterward. See standHeightIsFootprintDefault.
+  document.getElementById('standHeight').addEventListener('input', () => {
+    standHeightIsFootprintDefault = false;
+    updateCustomStandPriceEstimate();
   });
   document.getElementById('standQty').addEventListener('input', () => renderCustomStandSummary());
   document.getElementById('standUnit').addEventListener('change', () => updateCustomStandPriceEstimate());
   ['standStainless', 'standCabinet'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => updateCustomStandPriceEstimate());
   });
-  document.getElementById('customStandBackBtn').addEventListener('click', () => goToStep(standBackTarget));
+  document.getElementById('customStandAddToCartBtn').addEventListener('click', () => {
+    addCustomizeTabToCart('stand', document.getElementById('customStandAddToCartMsg'));
+  });
   document.getElementById('customStandNextBtn').addEventListener('click', async () => {
     customBuilderType = 'stand';
     const errorMsg = document.getElementById('customStandErrorMsg');
@@ -3594,9 +3856,15 @@ async function runDeliveryEstimate() {
     document.getElementById(id).addEventListener('input', () => updateStandaloneFiltrationPriceEstimate());
   });
   document.getElementById('standaloneFiltrationGlass').addEventListener('change', () => updateStandaloneFiltrationPriceEstimate());
+  // Quantity doesn't affect price (a per-unit estimate, same as the Aquarium/Stand tabs' own Qty
+  // fields), but it IS shown on the live summary now - had no listener at all before, matching
+  // the same "not wired" gap standaloneStickerQty below had until now.
+  document.getElementById('standaloneFiltrationQty').addEventListener('input', () => renderStandaloneFiltrationSummary());
   ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
     .forEach((id) => document.getElementById(id).addEventListener('change', () => updateStandaloneFiltrationPriceEstimate()));
-  document.getElementById('customStandaloneFiltrationBackBtn').addEventListener('click', () => goToStep(filtrationStandaloneBackTarget));
+  document.getElementById('customStandaloneFiltrationAddToCartBtn').addEventListener('click', () => {
+    addCustomizeTabToCart('filtration', document.getElementById('customStandaloneFiltrationAddToCartMsg'));
+  });
   document.getElementById('customStandaloneFiltrationNextBtn').addEventListener('click', async () => {
     customBuilderType = 'filtration';
     const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
@@ -3628,7 +3896,12 @@ async function runDeliveryEstimate() {
   ['standaloneStickerUnit', 'standaloneStickerThickness', 'standaloneStickerRepair'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => updateStandaloneStickerPriceEstimate());
   });
-  document.getElementById('customStandaloneStickerBackBtn').addEventListener('click', () => goToStep(stickerStandaloneBackTarget));
+  // Same as standaloneFiltrationQty above - doesn't affect price, but is shown on the live
+  // summary now and had no listener at all before.
+  document.getElementById('standaloneStickerQty').addEventListener('input', () => renderStandaloneStickerSummary());
+  document.getElementById('customStandaloneStickerAddToCartBtn').addEventListener('click', () => {
+    addCustomizeTabToCart('stickers', document.getElementById('customStandaloneStickerAddToCartMsg'));
+  });
   document.getElementById('customStandaloneStickerNextBtn').addEventListener('click', async () => {
     customBuilderType = 'stickers';
     const errorMsg = document.getElementById('customStandaloneStickerErrorMsg');
@@ -3674,38 +3947,20 @@ async function runDeliveryEstimate() {
   document.getElementById('customCheckoutBackBtnTop').addEventListener('click', () => document.getElementById('customCheckoutBackBtn').click());
   document.getElementById('customCheckoutConfirmBtn').addEventListener('click', async () => {
     await ensureGlassPricingLoaded();
-    if (customBuilderType === 'stand') {
-      const result = window.CustomAquariumCalculator.calculateStandaloneStand(buildCustomStandPayload());
-      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-STAND');
-      cart.push(buildCustomStandCartLine(result));
-      saveCart();
-      detailsBackTarget = 'custom-checkout';
-      goToStep(4);
-    } else if (customBuilderType === 'filtration') {
-      const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
-      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-FILTRATION');
-      cart.push(buildStandaloneFiltrationCartLine(result));
-      saveCart();
-      detailsBackTarget = 'custom-checkout';
-      goToStep(4);
-    } else if (customBuilderType === 'stickers') {
-      const result = window.CustomAquariumCalculator.calculateStandaloneSticker(buildStandaloneStickerPayload());
-      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-STICKER');
-      cart.push(buildStandaloneStickerCartLine(result));
-      saveCart();
+    // Same combined set renderCustomCheckout just displayed (see collectCustomizeCheckoutLines) -
+    // replaces every categoryCode actually being confirmed (not just customBuilderType's own) so
+    // an Aquarium+Stand combined checkout, for example, pushes both cart lines together instead of
+    // only whichever tab's Checkout button was clicked.
+    const lines = collectCustomizeCheckoutLines(customBuilderType);
+    const categoryCodes = new Set(lines.map((line) => line.categoryCode));
+    cart = cart.filter((line) => !categoryCodes.has(line.categoryCode));
+    lines.forEach((line) => cart.push(line.cartLine));
+    saveCart();
+
+    if (customBuilderType === 'stand' || customBuilderType === 'filtration' || customBuilderType === 'stickers') {
       detailsBackTarget = 'custom-checkout';
       goToStep(4);
     } else {
-      const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
-      // Also drops any prior CUSTOM-FILTRATION line (from an earlier confirm of this same build,
-      // or from the standalone Filtration flow) before conditionally re-adding it below - keeps
-      // "at most one filtration line per order" true regardless of which flow last touched it.
-      cart = cart.filter((line) => line.categoryCode !== 'CUSTOM-AQUARIUM' && line.categoryCode !== 'CUSTOM-FILTRATION');
-      cart.push(buildCustomAquariumCartLine(result));
-      if (filtrationEnabled) {
-        cart.push(buildEmbeddedFiltrationCartLine(result));
-      }
-      saveCart();
       // Unlike Stand/Filtration (which go straight to contact details), a just-confirmed
       // Aquarium build offers to add a matching Stand/Filtration on top of it first.
       goToStep('custom-add-more');
@@ -3721,14 +3976,12 @@ async function runDeliveryEstimate() {
   });
   document.getElementById('addMoreStandBtn').addEventListener('click', () => {
     customBuilderType = 'stand';
-    standBackTarget = 'custom-add-more';
     prefillStandFromAquarium();
     switchCustomizeTab('stand');
     goToStep('customize-tabs');
   });
   document.getElementById('addMoreFiltrationBtn').addEventListener('click', () => {
     customBuilderType = 'filtration';
-    filtrationStandaloneBackTarget = 'custom-add-more';
     resetStandaloneFiltrationBuilder();
     showFiltrationAquariumAwarenessNote();
     switchCustomizeTab('filtration');

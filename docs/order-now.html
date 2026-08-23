@@ -39,6 +39,7 @@
         <div class="customize-loading-icon">📏</div>
         <div class="customize-loading-spinner"></div>
         <p class="customize-loading-text">Grab your tape measure - we're going to start building!</p>
+        <p class="customize-loading-brand hidden"></p>
       </div>
       <div class="wizard-progress" id="wizardProgress">
         <div class="wizard-progress-step" data-step="1"></div>
@@ -173,8 +174,8 @@
         <canvas id="customAquariumCanvasDims" width="720" height="260"></canvas>
         <button type="button" class="aquarium-rotate-btn" id="customAquariumRotateBtn" title="Drag the image, or click, to view the other side">&#8635; Rotate</button>
       </div>
-      <div class="card dims-summary-card" id="customAquariumSummary"></div>
       <div class="card custom-price-card" id="customPriceEstimateDims">Enter your aquarium details to see a price estimate.</div>
+      <div class="card dims-summary-card" id="customAquariumSummary"></div>
       <p class="muted custom-price-disclaimer">Prices for customized aquariums may differ from standard tank prices.</p>
       <div class="form-group">
         <h3 class="form-group-title">Dimensions</h3>
@@ -267,9 +268,10 @@
       <div id="customDimsGlassNotice" class="rule-notice hidden"></div>
       <div id="customGlassNotice" class="rule-notice hidden"></div>
       <div id="customDimsErrorMsg" class="error-text hidden"></div>
-      <div class="wizard-nav-buttons">
-        <button type="button" class="btn btn-secondary" id="customDimsBackBtn">&larr; Back</button>
-        <button type="button" class="btn btn-primary" id="customDimsNextBtn">Next &rarr;</button>
+      <div id="customDimsAddToCartMsg" class="success-text hidden"></div>
+      <div class="wizard-nav-buttons wizard-nav-buttons-stacked">
+        <button type="button" class="btn btn-secondary" id="customDimsAddToCartBtn" style="width:100%;">🛒 Add to Cart</button>
+        <button type="button" class="btn btn-primary" id="customDimsNextBtn" style="width:100%;">🛒 Checkout</button>
       </div>
     </section>
 
@@ -282,8 +284,8 @@
       <div class="aquarium-canvas-wrap">
         <canvas id="customStandCanvas" width="720" height="260"></canvas>
       </div>
-      <div class="card dims-summary-card" id="customStandSummary"></div>
       <div class="card custom-price-card" id="customPriceEstimateStand">Enter your stand details to see a price estimate.</div>
+      <div class="card dims-summary-card" id="customStandSummary"></div>
       <p class="muted custom-price-disclaimer">Prices for customized stands may differ from standard stand prices.</p>
       <div id="standAquariumAwarenessNote" class="rule-notice hidden"></div>
       <div class="form-group">
@@ -360,9 +362,10 @@
       </div>
       <div id="customStandNotice" class="rule-notice hidden"></div>
       <div id="customStandErrorMsg" class="error-text hidden"></div>
-      <div class="wizard-nav-buttons">
-        <button type="button" class="btn btn-secondary" id="customStandBackBtn">&larr; Back</button>
-        <button type="button" class="btn btn-primary" id="customStandNextBtn">Next &rarr;</button>
+      <div id="customStandAddToCartMsg" class="success-text hidden"></div>
+      <div class="wizard-nav-buttons wizard-nav-buttons-stacked">
+        <button type="button" class="btn btn-secondary" id="customStandAddToCartBtn" style="width:100%;">🛒 Add to Cart</button>
+        <button type="button" class="btn btn-primary" id="customStandNextBtn" style="width:100%;">🛒 Checkout</button>
       </div>
     </section>
 
@@ -485,6 +488,7 @@
     <section class="wizard-step customize-tab-panel" data-step="custom-filtration-standalone" data-tab-panel="filtration">
       <h2 class="wizard-step-title" style="margin-top:14px;">Filtration / Sump</h2>
       <p class="muted">Tell us about the filtration sump you'd like built.</p>
+      <div class="card dims-summary-card" id="standaloneFiltrationSummary"></div>
       <div class="card custom-price-card" id="customPriceEstimateStandaloneFiltration">Enter your sump details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized filtration/sump builds may differ from standard prices.</p>
       <div id="filtrationAquariumAwarenessNote" class="rule-notice hidden"></div>
@@ -552,9 +556,10 @@
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpAllumTopCover" /> Allum Top Cover</label>
       </div>
       <div id="customStandaloneFiltrationErrorMsg" class="error-text hidden"></div>
-      <div class="wizard-nav-buttons">
-        <button type="button" class="btn btn-secondary" id="customStandaloneFiltrationBackBtn">&larr; Back</button>
-        <button type="button" class="btn btn-primary" id="customStandaloneFiltrationNextBtn">Next &rarr;</button>
+      <div id="customStandaloneFiltrationAddToCartMsg" class="success-text hidden"></div>
+      <div class="wizard-nav-buttons wizard-nav-buttons-stacked">
+        <button type="button" class="btn btn-secondary" id="customStandaloneFiltrationAddToCartBtn" style="width:100%;">🛒 Add to Cart</button>
+        <button type="button" class="btn btn-primary" id="customStandaloneFiltrationNextBtn" style="width:100%;">🛒 Checkout</button>
       </div>
     </section>
 
@@ -569,6 +574,7 @@
            in js/orderNow.js) - hidden via onerror until a real photo exists at that path, so a
            missing file degrades to "no image" instead of a broken-image icon. -->
       <img id="standaloneStickerTypeImage" class="sticker-type-reference-img hidden" alt="" />
+      <div class="card dims-summary-card" id="standaloneStickerSummary"></div>
       <div class="card custom-price-card" id="customPriceEstimateStandaloneSticker">Enter your sticker details to see a price estimate.</div>
       <p class="muted custom-price-disclaimer">Prices for customized accessories/stickers may differ from standard prices.</p>
       <div class="form-group">
@@ -622,9 +628,10 @@
         <label class="checkbox-row"><input type="checkbox" id="standaloneStickerRepair" /> Repair (2.5x price)</label>
       </div>
       <div id="customStandaloneStickerErrorMsg" class="error-text hidden"></div>
-      <div class="wizard-nav-buttons">
-        <button type="button" class="btn btn-secondary" id="customStandaloneStickerBackBtn">&larr; Back</button>
-        <button type="button" class="btn btn-primary" id="customStandaloneStickerNextBtn">Next &rarr;</button>
+      <div id="customStandaloneStickerAddToCartMsg" class="success-text hidden"></div>
+      <div class="wizard-nav-buttons wizard-nav-buttons-stacked">
+        <button type="button" class="btn btn-secondary" id="customStandaloneStickerAddToCartBtn" style="width:100%;">🛒 Add to Cart</button>
+        <button type="button" class="btn btn-primary" id="customStandaloneStickerNextBtn" style="width:100%;">🛒 Checkout</button>
       </div>
     </section>
 

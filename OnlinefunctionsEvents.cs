@@ -8161,7 +8161,7 @@ END", conn, tx);
                 return string.Empty;
             }
 
-            static void AddMappingsFromItems(JsonElement itemsArray, List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)> mappings, HashSet<string> seen, Func<JsonElement, string[], string> getString)
+            static void AddMappingsFromItems(JsonElement itemsArray, List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images, string Description)> mappings, HashSet<string> seen, Func<JsonElement, string[], string> getString)
             {
                 if (itemsArray.ValueKind != JsonValueKind.Array)
                     return;
@@ -8169,7 +8169,7 @@ END", conn, tx);
                 static void AddMapping(
                     JsonElement source,
                     JsonElement? parentProduct,
-                    List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)> mappings,
+                    List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images, string Description)> mappings,
                     HashSet<string> seen,
                     Func<JsonElement, string[], string> getString)
                 {
@@ -8184,6 +8184,11 @@ END", conn, tx);
                     var name = getString(source, new[] { "name", "Name", "variation_name", "variationName", "title", "Title" }).Trim();
                     var retailPriceRaw = getString(source, new[] { "retail_price", "retailPrice", "price", "Price" }).Trim();
                     var categoryName = getString(source, new[] { "category", "Category", "category_name", "categoryName" }).Trim();
+                    // Pancake's product-level free-text note (see /products' "note_product" field) - the
+                    // only real product description Pancake exposes, per direct request. Pulled the same
+                    // way retailPriceRaw/images are: check this level first, then fall back to the parent
+                    // product/variation_info objects below.
+                    var noteProduct = getString(source, new[] { "note_product", "NoteProduct", "description", "Description" }).Trim();
                     var images = ExtractFirstImageReference(source).Trim();
 
                     if (parentProduct.HasValue && parentProduct.Value.ValueKind == JsonValueKind.Object)
@@ -8252,6 +8257,9 @@ END", conn, tx);
 
                             if (string.IsNullOrWhiteSpace(images))
                                 images = ExtractFirstImageReference(prod).Trim();
+
+                            if (string.IsNullOrWhiteSpace(noteProduct))
+                                noteProduct = getString(prod, new[] { "note_product", "NoteProduct", "description", "Description" }).Trim();
                         }
                     }
                     catch { }
@@ -8267,6 +8275,7 @@ END", conn, tx);
                             if (string.IsNullOrWhiteSpace(name)) name = getString(vi, new[] { "name", "Name" }).Trim();
                             if (string.IsNullOrWhiteSpace(images)) images = ExtractFirstImageReference(vi).Trim();
                             if (string.IsNullOrWhiteSpace(retailPriceRaw)) retailPriceRaw = getString(vi, new[] { "retail_price", "retailPrice", "price", "Price" }).Trim();
+                            if (string.IsNullOrWhiteSpace(noteProduct)) noteProduct = getString(vi, new[] { "note_product", "NoteProduct", "description", "Description" }).Trim();
                         }
                     }
                     catch { }
@@ -8278,7 +8287,7 @@ END", conn, tx);
                     if (!seen.Add(key))
                         return;
 
-                    mappings.Add((variationId, productId, productDisplayId, displayId, sku, name + "\u0001" + retailPriceRaw + "\u0001" + categoryName, images));
+                    mappings.Add((variationId, productId, productDisplayId, displayId, sku, name + "\u0001" + retailPriceRaw + "\u0001" + categoryName, images, noteProduct));
                 }
 
                 foreach (var item in itemsArray.EnumerateArray())
@@ -8304,7 +8313,7 @@ END", conn, tx);
 
             string GetStringWrapper(JsonElement obj, string[] names) => GetString(obj, names);
 
-            var mappings = new List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images)>();
+            var mappings = new List<(string VariationId, string ProductId, string ProductDisplayId, string DisplayId, string Sku, string Name, string Images, string Description)>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             Exception? lastEx = null;
@@ -8553,6 +8562,10 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                         (hasPrice ? ", Price = COALESCE(@Price, Price)" : string.Empty) +
                         (hasImages ? ", Images = COALESCE(NULLIF(@Images,''), Images)" : string.Empty) +
                         (hasCategoryCode ? ", CategoryCode = COALESCE(NULLIF(@CategoryCode,''), CategoryCode)" : string.Empty) +
+                        // Description now tracks Pancake's own note_product on every sync (not just once on
+                        // insert, see the auto-add branch below) - per direct request, note_product is the
+                        // real customer-facing description Pancake exposes and should stay current.
+                        (hasDescription ? ", Description = COALESCE(NULLIF(@Description,''), Description)" : string.Empty) +
                         " WHERE Code=@Code";
                     using var byCode = new SqlCommand(byCodeSql, conn, tx);
                     byCode.Parameters.Add(new SqlParameter("@VariationId", System.Data.SqlDbType.NVarChar, 50));
@@ -8568,6 +8581,8 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                         byCode.Parameters.Add(new SqlParameter("@Images", System.Data.SqlDbType.NVarChar, -1));
                     if (hasCategoryCode)
                         byCode.Parameters.Add(new SqlParameter("@CategoryCode", System.Data.SqlDbType.NVarChar, 255));
+                    if (hasDescription)
+                        byCode.Parameters.Add(new SqlParameter("@Description", System.Data.SqlDbType.NVarChar, 1000));
 
                     SqlCommand? bySku = null;
                     if (hasSku)
@@ -8577,6 +8592,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                             (hasPrice ? ", Price = COALESCE(@Price, Price)" : string.Empty) +
                             (hasImages ? ", Images = COALESCE(NULLIF(@Images,''), Images)" : string.Empty) +
                             (hasCategoryCode ? ", CategoryCode = COALESCE(NULLIF(@CategoryCode,''), CategoryCode)" : string.Empty) +
+                            (hasDescription ? ", Description = COALESCE(NULLIF(@Description,''), Description)" : string.Empty) +
                             " WHERE SKU=@SKU";
                         bySku = new SqlCommand(bySkuSql, conn, tx);
                         bySku.Parameters.Add(new SqlParameter("@VariationId", System.Data.SqlDbType.NVarChar, 50));
@@ -8592,6 +8608,8 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Variant_MainItemCode' 
                             bySku.Parameters.Add(new SqlParameter("@Images", System.Data.SqlDbType.NVarChar, -1));
                         if (hasCategoryCode)
                             bySku.Parameters.Add(new SqlParameter("@CategoryCode", System.Data.SqlDbType.NVarChar, 255));
+                        if (hasDescription)
+                            bySku.Parameters.Add(new SqlParameter("@Description", System.Data.SqlDbType.NVarChar, 1000));
                     }
 
                     SqlCommand? resolveItemCodeBySku = null;
@@ -8722,6 +8740,12 @@ END", conn, tx);
                         if (categoryCode.Length > 50)
                             categoryCode = categoryCode.Substring(0, 50);
 
+                        // Pancake's product-level note_product (see AddMapping above) - the real
+                        // customer-facing description, truncated to fit Items.Description (NVARCHAR(1000)).
+                        string noteProduct = (m.Description ?? string.Empty).Trim();
+                        if (noteProduct.Length > 1000)
+                            noteProduct = noteProduct.Substring(0, 1000);
+
                         decimal? retailPrice = null;
                         if (hasPrice)
                             retailPrice = TryParseDecimalInvariant(retailPriceRaw);
@@ -8757,6 +8781,8 @@ END", conn, tx);
                                 bySku.Parameters["@Images"].Value = string.IsNullOrWhiteSpace(m.Images) ? DBNull.Value : m.Images;
                             if (hasCategoryCode)
                                 bySku.Parameters["@CategoryCode"].Value = categoryCode;
+                            if (hasDescription)
+                                bySku.Parameters["@Description"].Value = string.IsNullOrWhiteSpace(noteProduct) ? DBNull.Value : noteProduct;
                             affected = await bySku.ExecuteNonQueryAsync().ConfigureAwait(false);
                         }
 
@@ -8772,6 +8798,8 @@ END", conn, tx);
                                 byCode.Parameters["@Images"].Value = string.IsNullOrWhiteSpace(m.Images) ? DBNull.Value : m.Images;
                             if (hasCategoryCode)
                                 byCode.Parameters["@CategoryCode"].Value = categoryCode;
+                            if (hasDescription)
+                                byCode.Parameters["@Description"].Value = string.IsNullOrWhiteSpace(noteProduct) ? DBNull.Value : noteProduct;
                             affected = await byCode.ExecuteNonQueryAsync().ConfigureAwait(false);
                         }
 
@@ -8781,7 +8809,8 @@ END", conn, tx);
                         // If no match by SKU/Code, auto-add item using mapping:
                         // product.display_id -> Code
                         // id -> VariationId
-                        // product.name -> Name & Description
+                        // product.name -> Name
+                        // product.note_product -> Description (falls back to Name if blank)
                         // retail_price -> Price
                         if (affected == 0 && insertItem != null && !string.IsNullOrWhiteSpace(m.ProductDisplayId))
                         {
@@ -8794,7 +8823,10 @@ END", conn, tx);
                             if (insertItem.Parameters.Contains("@Name"))
                                 insertItem.Parameters["@Name"].Value = (object?)name ?? DBNull.Value;
                             if (insertItem.Parameters.Contains("@Description"))
-                                insertItem.Parameters["@Description"].Value = (object?)name ?? DBNull.Value;
+                                // Prefer Pancake's own note_product over Name - previously always fell
+                                // back to Name (no real description), per direct request to surface
+                                // note_product as the actual item description.
+                                insertItem.Parameters["@Description"].Value = !string.IsNullOrWhiteSpace(noteProduct) ? noteProduct : ((object?)name ?? DBNull.Value);
                             if (insertItem.Parameters.Contains("@Price"))
                             {
                                 var dec = TryParseDecimalInvariant(retailPriceRaw);

@@ -172,6 +172,7 @@ begin
     code text,
     sku text,
     name text,
+    description text,
     price numeric,
     category text,
     product_id text,
@@ -210,7 +211,7 @@ begin
     -- nested inside variations[0], not present on the bare product object at all. Only fall back
     -- to the bare numeric product display_id as an absolute last resort (kept only so a product
     -- with zero usable identifiers still gets some code rather than being dropped).
-    insert into tmp_pancake_products (code, sku, name, price, category, product_id, images)
+    insert into tmp_pancake_products (code, sku, name, description, price, category, product_id, images)
     select
       coalesce(
         nullif(product ->> 'custom_id', ''),
@@ -227,6 +228,10 @@ begin
       -- often end up equal, which is the requested behavior, not a bug.
       coalesce(nullif(product -> 'variations' -> 0 ->> 'display_id', ''), nullif(product ->> 'display_id', '')) as sku,
       product ->> 'name' as name,
+      -- The actual customer-facing description Pancake exposes, per direct request (see the
+      -- product-detail payload's "note_product" field) - previously not captured at all, so
+      -- Items.Description was always just a copy of Name (see the ins/upd statements below).
+      nullif(product ->> 'note_product', '') as description,
       public.try_parse_numeric(coalesce(
         nullif(product -> 'variations' -> 0 ->> 'retail_price', ''),
         nullif(product ->> 'retail_price', ''),
@@ -263,6 +268,7 @@ begin
     code text,
     sku text,
     name text,
+    description text,
     price numeric,
     category text,
     product_id text,
@@ -271,10 +277,10 @@ begin
   ) on commit drop;
   truncate tmp_pancake_products_resolved;
 
-  insert into tmp_pancake_products_resolved (code, sku, name, price, category, product_id, images, was_existing)
+  insert into tmp_pancake_products_resolved (code, sku, name, description, price, category, product_id, images, was_existing)
   select distinct on (coalesce(existing.matched_code, t.code))
     coalesce(existing.matched_code, t.code) as code,
-    t.sku, t.name, t.price, t.category, t.product_id, t.images,
+    t.sku, t.name, t.description, t.price, t.category, t.product_id, t.images,
     (existing.matched_code is not null) as was_existing
   from tmp_pancake_products t
   left join lateral (
@@ -289,6 +295,11 @@ begin
   with upd as (
     update public."Items" i
     set "Name" = coalesce(nullif(r.name, ''), i."Name"),
+        -- Description now tracks Pancake's own note_product on every sync (not just once on
+        -- insert, per the ins statement below) - per direct request, note_product is the real
+        -- customer-facing description and should stay current rather than frozen at whatever it
+        -- was the first time this item synced.
+        "Description" = coalesce(nullif(r.description, ''), i."Description"),
         "Price" = coalesce(r.price, i."Price"),
         "CategoryCode" = coalesce(r.category, i."CategoryCode"),
         "SKU" = coalesce(r.sku, i."SKU"),
@@ -304,7 +315,9 @@ begin
 
   with ins as (
     insert into public."Items" ("Code", "Name", "Description", "Price", "CategoryCode", "SKU", "ProductId", "Images", "SyncedAtUtc")
-    select r.code, r.name, r.name, r.price, r.category, r.sku, r.product_id, r.images, now()
+    -- Prefer note_product for Description, falling back to Name only when Pancake has no
+    -- note_product set for this product (previously always just copied Name).
+    select r.code, r.name, coalesce(nullif(r.description, ''), r.name), r.price, r.category, r.sku, r.product_id, r.images, now()
     from tmp_pancake_products_resolved r
     where not r.was_existing
     returning 1
@@ -899,6 +912,7 @@ begin
     code text,
     sku text,
     name text,
+    description text,
     price numeric,
     category text,
     product_id text,
@@ -937,7 +951,7 @@ begin
     -- nested inside variations[0], not present on the bare product object at all. Only fall back
     -- to the bare numeric product display_id as an absolute last resort (kept only so a product
     -- with zero usable identifiers still gets some code rather than being dropped).
-    insert into tmp_pancake_products (code, sku, name, price, category, product_id, images)
+    insert into tmp_pancake_products (code, sku, name, description, price, category, product_id, images)
     select
       coalesce(
         nullif(product ->> 'custom_id', ''),
@@ -954,6 +968,10 @@ begin
       -- often end up equal, which is the requested behavior, not a bug.
       coalesce(nullif(product -> 'variations' -> 0 ->> 'display_id', ''), nullif(product ->> 'display_id', '')) as sku,
       product ->> 'name' as name,
+      -- The actual customer-facing description Pancake exposes, per direct request (see the
+      -- product-detail payload's "note_product" field) - previously not captured at all, so
+      -- Items.Description was always just a copy of Name (see the ins/upd statements below).
+      nullif(product ->> 'note_product', '') as description,
       public.try_parse_numeric(coalesce(
         nullif(product -> 'variations' -> 0 ->> 'retail_price', ''),
         nullif(product ->> 'retail_price', ''),
@@ -990,6 +1008,7 @@ begin
     code text,
     sku text,
     name text,
+    description text,
     price numeric,
     category text,
     product_id text,
@@ -998,10 +1017,10 @@ begin
   ) on commit drop;
   truncate tmp_pancake_products_resolved;
 
-  insert into tmp_pancake_products_resolved (code, sku, name, price, category, product_id, images, was_existing)
+  insert into tmp_pancake_products_resolved (code, sku, name, description, price, category, product_id, images, was_existing)
   select distinct on (coalesce(existing.matched_code, t.code))
     coalesce(existing.matched_code, t.code) as code,
-    t.sku, t.name, t.price, t.category, t.product_id, t.images,
+    t.sku, t.name, t.description, t.price, t.category, t.product_id, t.images,
     (existing.matched_code is not null) as was_existing
   from tmp_pancake_products t
   left join lateral (
@@ -1016,6 +1035,11 @@ begin
   with upd as (
     update public."Items" i
     set "Name" = coalesce(nullif(r.name, ''), i."Name"),
+        -- Description now tracks Pancake's own note_product on every sync (not just once on
+        -- insert, per the ins statement below) - per direct request, note_product is the real
+        -- customer-facing description and should stay current rather than frozen at whatever it
+        -- was the first time this item synced.
+        "Description" = coalesce(nullif(r.description, ''), i."Description"),
         "Price" = coalesce(r.price, i."Price"),
         "CategoryCode" = coalesce(r.category, i."CategoryCode"),
         "SKU" = coalesce(r.sku, i."SKU"),
@@ -1031,7 +1055,9 @@ begin
 
   with ins as (
     insert into public."Items" ("Code", "Name", "Description", "Price", "CategoryCode", "SKU", "ProductId", "Images", "SyncedAtUtc")
-    select r.code, r.name, r.name, r.price, r.category, r.sku, r.product_id, r.images, now()
+    -- Prefer note_product for Description, falling back to Name only when Pancake has no
+    -- note_product set for this product (previously always just copied Name).
+    select r.code, r.name, coalesce(nullif(r.description, ''), r.name), r.price, r.category, r.sku, r.product_id, r.images, now()
     from tmp_pancake_products_resolved r
     where not r.was_existing
     returning 1
