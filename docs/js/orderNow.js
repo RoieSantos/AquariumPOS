@@ -2839,25 +2839,41 @@ async function submitOrder(event) {
   // pancake_sync_status 'Pending' now, so the confirmation screen shows immediately with just the
   // order number, and pollAutomatedOrderPancakeStatus below fills in the Pancake number a moment
   // later once the background sync (fired right after, not awaited) actually lands.
-  const result = (data && data[0]) || {};
-  document.getElementById('confirmationOrderNo').textContent = result.order_no;
+  // Wrapped in try/catch purely as a diagnostic aid: the order is already safely committed server-
+  // side at this point (submit_automated_order already returned successfully above), so nothing
+  // here SHOULD be able to fail - but if it somehow does, this makes that failure visible (console
+  // + on-screen message) instead of silently leaving the customer stuck on Step 4 with no
+  // indication their order actually went through.
+  try {
+    const result = (data && data[0]) || {};
+    document.getElementById('confirmationOrderNo').textContent = result.order_no;
 
-  const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
-  const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
-  onlineOrderNoBox.classList.add('hidden');
-  onlineOrderNoLabel.classList.add('hidden');
+    const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
+    const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
+    onlineOrderNoBox.classList.add('hidden');
+    onlineOrderNoLabel.classList.add('hidden');
 
-  if (result.order_no) {
-    // Deliberately not awaited - this is what keeps order submission fast regardless of Pancake's
-    // own latency. Runs in the background while the customer is already looking at their
-    // confirmation screen; pollAutomatedOrderPancakeStatus below picks up the result once it lands.
-    supabaseClient.rpc('public_sync_automated_order_to_pancake', { p_order_no: result.order_no }).catch(() => {});
-    pollAutomatedOrderPancakeStatus(result.order_no);
+    if (result.order_no) {
+      // Deliberately not awaited - this is what keeps order submission fast regardless of
+      // Pancake's own latency. Runs in the background while the customer is already looking at
+      // their confirmation screen; pollAutomatedOrderPancakeStatus below picks up the result once
+      // it lands. supabaseClient.rpc(...) returns a PostgREST "thenable" builder, not a real
+      // Promise - it only implements .then(), not .catch()/.finally(), so calling .catch()
+      // directly on it throws "is not a function" (this is what was silently breaking every
+      // single order's confirmation screen - the whole rest of submitOrder never got to run).
+      // Promise.resolve(...) converts it into a genuine Promise first, so .catch() is safe here.
+      Promise.resolve(supabaseClient.rpc('public_sync_automated_order_to_pancake', { p_order_no: result.order_no })).catch(() => {});
+      pollAutomatedOrderPancakeStatus(result.order_no).catch((err) => console.error('pollAutomatedOrderPancakeStatus failed:', err));
+    }
+
+    cart = [];
+    saveCart();
+    goToStep(5);
+  } catch (err) {
+    console.error('submitOrder: order was created (see result above) but showing the confirmation screen failed:', err);
+    errorMsg.textContent = 'Your order was submitted (order #' + ((data && data[0] && data[0].order_no) || '?') + '), but something went wrong showing the confirmation. Please take a screenshot of this and contact us.';
+    errorMsg.classList.remove('hidden');
   }
-
-  cart = [];
-  saveCart();
-  goToStep(5);
 }
 
 // Briefly polls for the background Pancake sync (kicked off just above) to land, so the

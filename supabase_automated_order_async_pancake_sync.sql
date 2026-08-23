@@ -198,7 +198,7 @@ begin
   for v_order_no in
     select "OrderNo" from public."AutomatedOrders"
     where "PancakeSyncStatus" = 'Pending'
-    order by "EntryNo"
+    order by "CreatedAtUtc"
     limit 25
   loop
     perform public._push_automated_order_to_pancake(v_order_no);
