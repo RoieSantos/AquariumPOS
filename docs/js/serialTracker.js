@@ -10,6 +10,7 @@ let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit
 let warehouseOptions = []; // [{ id, name }] loaded once, used by the edit-location dropdown
 let editLocationSerialNo = null;
 let urlLocationFilter = null; // ?location= from an Inventory Summary deep link - see openEditLocationModal's sibling, applyUrlFilters
+let urlVariantFilter = null; // ?variant= from an Inventory Summary deep link - narrows to the exact variant that count's row represented, not just the item code
 let serialSearchDebounceHandle = null;
 
 // Non-production (store) warehouses only see serial activity for their own location - Production
@@ -341,6 +342,7 @@ async function loadSerials() {
     p_status: status || null,
     p_location_restrict: ownWarehouseRestrict,
     p_location_filter: urlLocationFilter || null,
+    p_variant_filter: urlVariantFilter || null,
     p_category_code: category || null
   });
 
@@ -353,6 +355,7 @@ async function loadSerials() {
     SerialNo: r.serial_no,
     ItemCode: r.item_code,
     ItemDescription: r.item_description,
+    VariantCode: r.variant_code,
     Location: r.location,
     Status: r.status,
     SourceDocumentNo: r.source_document_no,
@@ -382,6 +385,9 @@ function renderSerials() {
   if (urlLocationFilter) {
     const targetLocation = urlLocationFilter.toLowerCase();
     rows = rows.filter((r) => (r.Location || '').trim().toLowerCase() === targetLocation);
+  }
+  if (urlVariantFilter) {
+    rows = rows.filter((r) => (r.VariantCode || '').trim() === urlVariantFilter.trim());
   }
   if (statusFilter) {
     rows = rows.filter((r) => (r.Status || '') === statusFilter);
@@ -547,12 +553,14 @@ async function markSold(serialNo) {
   const urlItem = urlParams.get('item');
   const urlStatus = urlParams.get('status');
   const urlLocation = urlParams.get('location');
+  const urlVariant = urlParams.get('variant');
   if (urlItem) document.getElementById('searchInput').value = urlItem;
   if (urlStatus) document.getElementById('statusFilter').value = urlStatus;
+  if (urlVariant) urlVariantFilter = urlVariant;
   if (urlLocation) {
     urlLocationFilter = urlLocation;
     const note = document.getElementById('warehouseFilterNote');
-    note.innerHTML = `Filtered by location: ${escapeHtml(urlLocation)} (from Inventory Summary) - <a href="serial-tracker.html">Clear</a>`;
+    note.innerHTML = `Filtered by location: ${escapeHtml(urlLocation)}${urlVariant ? ', variant: ' + escapeHtml(urlVariant) : ''} (from Inventory Summary) - <a href="serial-tracker.html">Clear</a>`;
     note.classList.remove('hidden');
   }
 

@@ -87,6 +87,7 @@ namespace AquariumPOS
         private Button btnMarkSold = null!;
         private Button btnMarkInStock = null!;
         private Button btnSyncCloud = null!;
+        private Button btnPullCloud = null!;
         private Button btnDeleteSerial = null!;
         private Button btnClose = null!;
 
@@ -94,8 +95,12 @@ namespace AquariumPOS
         {
             Text = "Product Serial Tracker";
             StartPosition = FormStartPosition.CenterParent;
-            Size = new Size(1280, 760);
-            MinimumSize = new Size(1100, 680);
+            // Widened by 260px (was 1280x760/min 1100x680) to fit the "Pull from Cloud" button
+            // added alongside "Sync Cloud" - every other absolutely-positioned control below that
+            // depends on this width (addPanel/filterPanel/dgvSerials Size, btnClose.Location) was
+            // shifted by the same 260px so the layout stays consistent.
+            Size = new Size(1540, 760);
+            MinimumSize = new Size(1360, 680);
             BackColor = Color.White;
 
             InitializeComponent();
@@ -108,7 +113,7 @@ namespace AquariumPOS
             {
                 Text = "Add Product Serials",
                 Location = new Point(12, 10),
-                Size = new Size(1240, 120),
+                Size = new Size(1500, 120),
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
 
@@ -209,7 +214,7 @@ namespace AquariumPOS
             {
                 Text = "Tracking List",
                 Location = new Point(12, 138),
-                Size = new Size(1240, 64),
+                Size = new Size(1500, 64),
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
 
@@ -293,6 +298,17 @@ namespace AquariumPOS
             };
             btnSyncCloud.Click += async (_, _) => await SyncSerialsToCloudAsync();
 
+            btnPullCloud = new Button
+            {
+                Text = "Pull from Cloud",
+                Location = new Point(1174, 22),
+                Size = new Size(140, 30),
+                BackColor = Color.SteelBlue,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 9, FontStyle.Bold)
+            };
+            btnPullCloud.Click += async (_, _) => await PullSerialsFromCloudAsync();
+
             btnDeleteSerial = new Button
             {
                 Text = "Delete Serial",
@@ -309,8 +325,8 @@ namespace AquariumPOS
             lblSummary = new Label
             {
                 Text = "0 serials",
-                Location = new Point(1042, 28),
-                Size = new Size(186, 22),
+                Location = new Point(1326, 28),
+                Size = new Size(160, 22),
                 Font = new Font("Arial", 9, FontStyle.Bold),
                 ForeColor = Color.DarkSlateBlue,
                 TextAlign = ContentAlignment.MiddleRight
@@ -318,7 +334,7 @@ namespace AquariumPOS
 
             filterPanel.Controls.AddRange(new Control[]
             {
-                lblSearch, txtSearch, lblStatus, cboStatusFilter, btnRefresh, btnMarkSold, btnMarkInStock, btnSyncCloud, btnDeleteSerial, lblSummary
+                lblSearch, txtSearch, lblStatus, cboStatusFilter, btnRefresh, btnMarkSold, btnMarkInStock, btnSyncCloud, btnPullCloud, btnDeleteSerial, lblSummary
             });
 
             if (CurrentUser.IsSuperUser)
@@ -334,7 +350,7 @@ namespace AquariumPOS
             dgvSerials = new DataGridView
             {
                 Location = new Point(12, 210),
-                Size = new Size(1240, 468),
+                Size = new Size(1500, 468),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
@@ -366,7 +382,7 @@ namespace AquariumPOS
             btnClose = new Button
             {
                 Text = "Close",
-                Location = new Point(1132, 686),
+                Location = new Point(1392, 686),
                 Size = new Size(120, 34),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 BackColor = Color.Gray,
@@ -912,7 +928,7 @@ ORDER BY RunningSerialNo DESC", conn);
             try
             {
                 UseWaitCursor = true;
-                ToggleCloudSyncButton(false);
+                ToggleCloudButtons(false);
 
                 var result = await Task.Run(() => OnlinefunctionsEvents.SyncItemSerialTrackingToSupabase()).ConfigureAwait(true);
                 string skippedNote = result.SkippedDueToConflictCount > 0
@@ -931,17 +947,57 @@ ORDER BY RunningSerialNo DESC", conn);
             finally
             {
                 UseWaitCursor = false;
-                ToggleCloudSyncButton(true);
+                ToggleCloudButtons(true);
             }
         }
 
-        private void ToggleCloudSyncButton(bool enabled)
+        // Manual counterpart to "Sync Cloud" (push) - the background masterDataSyncTimer already
+        // pulls Supabase -> local automatically every 5 minutes, but each of its ticks is capped at
+        // ItemSerialTrackingPullPageSize (1000) rows so it stays cheap. That's fine for steady-state
+        // drift, but after a local reset (e.g. dbo.ItemSerialTracking or its pull watermark got
+        // cleared) waiting through however many 5-minute cycles a large backlog needs is impractical.
+        // This calls SyncItemSerialTrackingFromSupabaseFullyAsync, which loops past that cap so a
+        // full catch-up finishes in one click.
+        private async Task PullSerialsFromCloudAsync()
         {
-            if (btnSyncCloud == null)
-                return;
+            try
+            {
+                UseWaitCursor = true;
+                ToggleCloudButtons(false);
 
-            btnSyncCloud.Enabled = enabled;
-            btnSyncCloud.Text = enabled ? "Sync Cloud" : "Syncing...";
+                int applied = await OnlinefunctionsEvents.SyncItemSerialTrackingFromSupabaseFullyAsync().ConfigureAwait(true);
+
+                MessageBox.Show(this,
+                    $"Pulled {applied} serial record(s) from the cloud.",
+                    "Pull from Cloud",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+
+                LoadSerials();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Pull from Cloud failed: {ex.Message}", "Pull from Cloud", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                UseWaitCursor = false;
+                ToggleCloudButtons(true);
+            }
+        }
+
+        private void ToggleCloudButtons(bool enabled)
+        {
+            if (btnSyncCloud != null)
+            {
+                btnSyncCloud.Enabled = enabled;
+                btnSyncCloud.Text = enabled ? "Sync Cloud" : "Syncing...";
+            }
+            if (btnPullCloud != null)
+            {
+                btnPullCloud.Enabled = enabled;
+                btnPullCloud.Text = enabled ? "Pull from Cloud" : "Pulling...";
+            }
         }
 
         public static List<(string SerialNo, string ItemCode, string Description)> CreateSerialRecords(

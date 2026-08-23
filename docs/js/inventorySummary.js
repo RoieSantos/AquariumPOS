@@ -25,13 +25,18 @@ function escapeHtml(value) {
 }
 
 // Links a count to Serial Tracker, pre-filtered to exactly the units that make up that count -
-// same item code, same location, same status filter that was active when this count was computed
-// (see loadItemBreakdown's p_status). "(Unassigned)" is this page's own display placeholder for a
-// blank/null Location (see the RPC's coalesce), not a real stored value, so it's left out of the
-// link rather than passed through as a location that would never actually match anything there.
-function buildSerialTrackerLink(itemCode, location, status) {
+// same item code, same variant, same location, same status filter that was active when this count
+// was computed (see loadItemBreakdown's p_status). staff_get_serial_item_counts_by_location now
+// groups by VariantCode too (see supabase_serial_item_counts_by_variant.sql), so each row here is
+// already scoped to one variant - passing it through means the link no longer mixes every variant
+// of an item code together on the Serial Tracker side. "(Unassigned)" is this page's own display
+// placeholder for a blank/null Location (see the RPC's coalesce), not a real stored value, so it's
+// left out of the link rather than passed through as a location that would never actually match
+// anything there.
+function buildSerialTrackerLink(itemCode, variantCode, location, status) {
   const params = new URLSearchParams();
   if (itemCode) params.set('item', itemCode);
+  if (variantCode) params.set('variant', variantCode);
   if (location && location !== '(Unassigned)') params.set('location', location);
   if (status) params.set('status', status);
   const query = params.toString();
@@ -56,7 +61,7 @@ function renderItemTable(rows) {
         <td>${escapeHtml(r.item_description)}</td>
         <td>${categoryLabel(r.category)}</td>
         <td>${escapeHtml(r.location)}</td>
-        <td style="text-align:right;"><a href="${buildSerialTrackerLink(r.item_code, r.location, status)}">${formatCount(r.unit_count)}</a></td>
+        <td style="text-align:right;"><a href="${buildSerialTrackerLink(r.item_code, r.variant_code, r.location, status)}">${formatCount(r.unit_count)}</a></td>
       </tr>
     `)
     .join('');

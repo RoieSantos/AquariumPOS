@@ -3228,7 +3228,11 @@ ORDER BY [Line No.]", conn))
         /// own - simpler and more robust than trying to filter server-side by "is this store's
         /// warehouse name", at the cost of some redundant local storage.
         /// </summary>
-        public static async Task<int> SyncItemSerialTrackingFromSupabaseAsync(TimeSpan? timeout = null)
+        // Page size for one SyncItemSerialTrackingFromSupabaseAsync call - shared with the
+        // HasMore check below so the two never drift apart.
+        private const int ItemSerialTrackingPullPageSize = 1000;
+
+        public static async Task<(int AppliedCount, bool HasMore)> SyncItemSerialTrackingFromSupabaseAsync(TimeSpan? timeout = null)
         {
             timeout ??= TimeSpan.FromSeconds(30);
 
@@ -3248,7 +3252,7 @@ ORDER BY [Line No.]", conn))
             string requestUrl = endpointUrl
                 + "?select=SerialNo,ItemCode,ItemDescription,VariantCode,Location,Status,SourceDocumentNo,CreatedAtUtc,CreatedBy,UpdatedAtUtc,UpdatedBy,SoldReceiptNo,SoldOnlineOrderId"
                 + "&UpdatedAtUtc=gt." + Uri.EscapeDataString(watermarkFilterValue)
-                + "&order=UpdatedAtUtc.asc&limit=1000";
+                + "&order=UpdatedAtUtc.asc&limit=" + ItemSerialTrackingPullPageSize;
             using var req = new HttpRequestMessage(HttpMethod.Get, requestUrl);
             req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
             req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
@@ -3261,8 +3265,9 @@ ORDER BY [Line No.]", conn))
                 throw new HttpRequestException($"ItemSerialTracking Supabase GET failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
 
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0)
-                return 0;
+            int fetchedCount = doc.RootElement.ValueKind == JsonValueKind.Array ? doc.RootElement.GetArrayLength() : 0;
+            if (fetchedCount == 0)
+                return (0, false);
 
             int appliedCount = 0;
             DateTime? maxUpdatedAtUtcSeen = null;
@@ -3397,7 +3402,30 @@ VALUES
             if (maxUpdatedAtUtcSeen.HasValue)
                 SetItemSerialTrackingPullWatermarkUtc(conn, maxUpdatedAtUtcSeen.Value);
 
-            return appliedCount;
+            return (appliedCount, fetchedCount >= ItemSerialTrackingPullPageSize);
+        }
+
+        /// <summary>
+        /// Manual, full-catch-up counterpart to SyncItemSerialTrackingFromSupabaseAsync, for the
+        /// "Pull from Cloud" button (ProductSerialTrackingForm.cs). That method is capped at
+        /// ItemSerialTrackingPullPageSize (1000) rows per call by design, so the background
+        /// masterDataSyncTimer's 5-minute ticks stay cheap - but after a local reset (e.g. the
+        /// ItemSerialTracking table or its pull watermark got cleared), waiting through however
+        /// many 5-minute cycles a large backlog needs is impractical for a one-off manual catch-up.
+        /// This just loops the same page-capped call until a call reports it wasn't a full page
+        /// (HasMore = false), i.e. genuinely caught up. maxIterations is a safety cap (200 x 1000 =
+        /// 200,000 rows) against looping forever if HasMore somehow never turns false.
+        /// </summary>
+        public static async Task<int> SyncItemSerialTrackingFromSupabaseFullyAsync(TimeSpan? timeout = null, int maxIterations = 200)
+        {
+            int totalApplied = 0;
+            for (int i = 0; i < maxIterations; i++)
+            {
+                var (applied, hasMore) = await SyncItemSerialTrackingFromSupabaseAsync(timeout).ConfigureAwait(false);
+                totalApplied += applied;
+                if (!hasMore) break;
+            }
+            return totalApplied;
         }
 
         private static void EnsureItemSerialTrackingPullStateTable(SqlConnection conn)
