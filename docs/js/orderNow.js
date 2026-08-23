@@ -2818,14 +2818,19 @@ async function submitOrder(event) {
     }))
   });
 
-  submitBtn.disabled = false;
-  submitBtn.textContent = 'Submit Order Request';
-
   if (error) {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Order Request';
     errorMsg.textContent = 'Could not submit your order: ' + error.message;
     errorMsg.classList.remove('hidden');
     return;
   }
+
+  // Order is now safely created - stays disabled/relabeled through the brief Pancake-sync wait
+  // below too (previously this reset back to normal here, leaving the customer staring at a
+  // plain, clickable "Submit Order Request" button with no indication anything was happening for
+  // that whole wait - and nothing stopping a second, duplicate submission).
+  submitBtn.textContent = 'Confirming your order...';
 
   // submit_automated_order returns a row (order_no, pancake_order_id, pancake_sync_status). Order
   // ID (our internal AO-##### number) always shows - it's assigned before the Pancake push even
@@ -2836,9 +2841,10 @@ async function submitOrder(event) {
   //
   // submit_automated_order no longer pushes to Pancake itself (see
   // supabase_automated_order_async_pancake_sync.sql) - it always comes back with
-  // pancake_sync_status 'Pending' now, so the confirmation screen shows immediately with just the
-  // order number, and pollAutomatedOrderPancakeStatus below fills in the Pancake number a moment
-  // later once the background sync (fired right after, not awaited) actually lands.
+  // pancake_sync_status 'Pending' now. Per direct request, the confirmation screen now waits a
+  // short moment for that push to actually land before it shows, instead of always appearing
+  // immediately and letting the Online Order ID pop in a moment later - see
+  // PANCAKE_SYNC_WAIT_BEFORE_CONFIRMATION_MS below.
   // Wrapped in try/catch purely as a diagnostic aid: the order is already safely committed server-
   // side at this point (submit_automated_order already returned successfully above), so nothing
   // here SHOULD be able to fail - but if it somehow does, this makes that failure visible (console
@@ -2846,6 +2852,23 @@ async function submitOrder(event) {
   // indication their order actually went through.
   try {
     const result = (data && data[0]) || {};
+
+    if (result.order_no) {
+      // supabaseClient.rpc(...) returns a PostgREST "thenable" builder, not a real Promise - it
+      // only implements .then(), not .catch()/.finally(), so calling .catch() directly on it
+      // throws "is not a function" (this is what was silently breaking every single order's
+      // confirmation screen before - the whole rest of submitOrder never got to run).
+      // Promise.resolve(...) converts it into a genuine Promise first, so .catch() is safe here.
+      // Raced against a flat timeout so a slow/hung Pancake round trip can never leave the
+      // customer staring at "Submitting..." for too long - if it doesn't land in time, the
+      // confirmation screen just shows without the Online Order ID yet (same as before this
+      // change), and pollAutomatedOrderPancakeStatus below still picks it up shortly after.
+      await Promise.race([
+        Promise.resolve(supabaseClient.rpc('public_sync_automated_order_to_pancake', { p_order_no: result.order_no })).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, PANCAKE_SYNC_WAIT_BEFORE_CONFIRMATION_MS))
+      ]);
+    }
+
     document.getElementById('confirmationOrderNo').textContent = result.order_no;
 
     const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
@@ -2854,16 +2877,19 @@ async function submitOrder(event) {
     onlineOrderNoLabel.classList.add('hidden');
 
     if (result.order_no) {
-      // Deliberately not awaited - this is what keeps order submission fast regardless of
-      // Pancake's own latency. Runs in the background while the customer is already looking at
-      // their confirmation screen; pollAutomatedOrderPancakeStatus below picks up the result once
-      // it lands. supabaseClient.rpc(...) returns a PostgREST "thenable" builder, not a real
-      // Promise - it only implements .then(), not .catch()/.finally(), so calling .catch()
-      // directly on it throws "is not a function" (this is what was silently breaking every
-      // single order's confirmation screen - the whole rest of submitOrder never got to run).
-      // Promise.resolve(...) converts it into a genuine Promise first, so .catch() is safe here.
-      Promise.resolve(supabaseClient.rpc('public_sync_automated_order_to_pancake', { p_order_no: result.order_no })).catch(() => {});
-      pollAutomatedOrderPancakeStatus(result.order_no).catch((err) => console.error('pollAutomatedOrderPancakeStatus failed:', err));
+      // Check once immediately - the wait above may already have let the push land - before
+      // falling back to the existing short poll for the (still-normal) case it hasn't yet.
+      let shown = false;
+      try {
+        const { data: statusData } = await supabaseClient.rpc('public_get_automated_order_status', { p_order_no: result.order_no });
+        shown = applyPancakeSyncStatusDisplay((statusData && statusData[0]) || null);
+      } catch (err) {
+        console.error('public_get_automated_order_status failed:', err);
+      }
+
+      if (!shown) {
+        pollAutomatedOrderPancakeStatus(result.order_no).catch((err) => console.error('pollAutomatedOrderPancakeStatus failed:', err));
+      }
     }
 
     cart = [];
@@ -2871,9 +2897,31 @@ async function submitOrder(event) {
     goToStep(5);
   } catch (err) {
     console.error('submitOrder: order was created (see result above) but showing the confirmation screen failed:', err);
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Order Request';
     errorMsg.textContent = 'Your order was submitted (order #' + ((data && data[0] && data[0].order_no) || '?') + '), but something went wrong showing the confirmation. Please take a screenshot of this and contact us.';
     errorMsg.classList.remove('hidden');
   }
+}
+
+// How long submitOrder waits for the background Pancake push to land before showing the
+// confirmation screen anyway - "a bit of delay" per direct request, not a guarantee (the push can
+// genuinely take longer than this on a slow Pancake response, which is exactly why
+// pollAutomatedOrderPancakeStatus below still exists as a fallback).
+const PANCAKE_SYNC_WAIT_BEFORE_CONFIRMATION_MS = 3000;
+
+// Shows the Online Order ID box once the background Pancake sync reports it Synced - shared by
+// submitOrder's own immediate post-wait check above and the background poll fallback right below,
+// so the "what counts as ready to show" logic lives in exactly one place. Returns true/false so
+// each caller can decide whether it still needs to keep checking.
+function applyPancakeSyncStatusDisplay(status) {
+  if (!status || status.pancake_sync_status !== 'Synced' || !status.pancake_order_id) return false;
+  const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
+  const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
+  onlineOrderNoBox.textContent = '#' + status.pancake_order_id;
+  onlineOrderNoBox.classList.remove('hidden');
+  onlineOrderNoLabel.classList.remove('hidden');
+  return true;
 }
 
 // Briefly polls for the background Pancake sync (kicked off just above) to land, so the
@@ -2894,14 +2942,7 @@ async function pollAutomatedOrderPancakeStatus(orderNo, attempt) {
   const { data, error } = await supabaseClient.rpc('public_get_automated_order_status', { p_order_no: orderNo });
   const status = !error && data && data[0];
 
-  if (status && status.pancake_sync_status === 'Synced' && status.pancake_order_id) {
-    const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
-    const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
-    onlineOrderNoBox.textContent = '#' + status.pancake_order_id;
-    onlineOrderNoBox.classList.remove('hidden');
-    onlineOrderNoLabel.classList.remove('hidden');
-    return;
-  }
+  if (applyPancakeSyncStatusDisplay(status)) return;
 
   if (status && status.pancake_sync_status === 'Failed') return;
 
