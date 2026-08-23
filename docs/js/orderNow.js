@@ -1680,7 +1680,7 @@ function buildCustomAquariumCartLine(result) {
 }
 
 // Companion line to buildCustomAquariumCartLine when Filtration was added onto the aquarium -
-// same CategoryCode ('CUSTOM-FILTRATION') the standalone Customize > Filtration flow's own cart
+// same CategoryCode ('CUSTOM-SUMP') the standalone Customize > Filtration flow's own cart
 // line uses, so it matches the same Pancake catalog item (see
 // supabase_diagnose_custom_stand_filtration_items.sql) - the two flows are treated as "at most one
 // filtration per order" either way, consistent with how Aquarium/Stand/Filtration already each
@@ -1688,7 +1688,7 @@ function buildCustomAquariumCartLine(result) {
 function buildEmbeddedFiltrationCartLine(result) {
   const { filtrationPrice } = splitCustomAquariumFiltrationPrice(result);
   return {
-    categoryCode: 'CUSTOM-FILTRATION',
+    categoryCode: 'CUSTOM-SUMP',
     itemCode: null,
     itemName: `Filtration/Sump (for Custom Aquarium) - ${buildFiltrationSpecText()}`,
     price: filtrationPrice,
@@ -2119,7 +2119,7 @@ function buildStandaloneFiltrationSpecText() {
 
 function buildStandaloneFiltrationCartLine(result) {
   return {
-    categoryCode: 'CUSTOM-FILTRATION',
+    categoryCode: 'CUSTOM-SUMP',
     itemCode: null,
     itemName: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`,
     price: result && result.ok ? result.totalPrice : 0,
@@ -2323,7 +2323,7 @@ function computeAquariumCheckoutLines() {
     const split = splitCustomAquariumFiltrationPrice(result);
     return [
       { categoryCode: 'CUSTOM-AQUARIUM', label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: split.aquariumPrice * qty, cartLine: buildCustomAquariumCartLine(result) },
-      { categoryCode: 'CUSTOM-FILTRATION', label: `Filtration/Sump (for Custom Aquarium) - ${buildFiltrationSpecText()}`, qty, amount: split.filtrationPrice * qty, cartLine: buildEmbeddedFiltrationCartLine(result) }
+      { categoryCode: 'CUSTOM-SUMP', label: `Filtration/Sump (for Custom Aquarium) - ${buildFiltrationSpecText()}`, qty, amount: split.filtrationPrice * qty, cartLine: buildEmbeddedFiltrationCartLine(result) }
     ];
   }
   return [{ categoryCode: 'CUSTOM-AQUARIUM', label: `Custom Aquarium - ${buildCustomAquariumSpecText()}`, qty, amount: result.totalPrice * qty, cartLine: buildCustomAquariumCartLine(result) }];
@@ -2340,7 +2340,7 @@ function computeFiltrationCheckoutLines() {
   const result = window.CustomAquariumCalculator.calculateStandaloneFiltration(buildStandaloneFiltrationPayload());
   if (!result.ok) return [];
   const qty = standaloneFiltrationQty();
-  return [{ categoryCode: 'CUSTOM-FILTRATION', label: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`, qty, amount: result.totalPrice * qty, cartLine: buildStandaloneFiltrationCartLine(result) }];
+  return [{ categoryCode: 'CUSTOM-SUMP', label: `Custom Filtration - ${buildStandaloneFiltrationSpecText()}`, qty, amount: result.totalPrice * qty, cartLine: buildStandaloneFiltrationCartLine(result) }];
 }
 function computeStickerCheckoutLines() {
   if (!document.getElementById('standaloneStickerUnit').value) return [];
