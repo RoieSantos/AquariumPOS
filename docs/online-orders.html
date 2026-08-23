@@ -111,8 +111,15 @@
   <!-- Hidden camera-capture input for the "To Ship" flow (js/onlineOrders.js) - capture="environment"
        opens the phone's rear camera directly instead of a generic file picker on mobile. Shared by
        every row's "To Ship" button; pendingToShip in onlineOrders.js tracks which order/button
-       triggered it. -->
+       triggered it. Currently unused while TO_SHIP_ENABLED is false (see onlineOrders.js), kept
+       wired so re-enabling To Ship doesn't need this markup back. -->
   <input type="file" id="toShipPhotoInput" accept="image/*" capture="environment" class="hidden" />
+
+  <!-- Hidden camera-capture input for the standalone "Send Photo" button (js/onlineOrders.js) -
+       detached from the "To Ship" flow above so staff can send a packed-order photo to the customer
+       on its own, regardless of To Ship's status. pendingSendPhoto tracks which order/button
+       triggered it. -->
+  <input type="file" id="sendPhotoInput" accept="image/*" capture="environment" class="hidden" />
 
   <!-- Serial picker for To Ship at a production warehouse (js/onlineOrders.js) - mirrors the
        desktop's EnsureOrderSerialTrackingAsync gate. Only EXISTING IN_STOCK serials can be picked

@@ -70,6 +70,13 @@ let lastGroupedRows = [];
 // pages" reason) as transferOrders.js/serialTracker.js's own resolveIsProductionWarehouse.
 let currentSessionIsProductionWarehouse = true;
 
+// Per direct request: "To Ship" is temporarily taken out of service on the portal (still being
+// shaken out) - staff are told to finish shipping the order through the local POS/desktop app
+// instead. Flip this back to true to restore the real flow (serial check, notify prompt, status
+// change) once it's ready again; see handleToShipClick below. The "Send Photo" button is
+// unaffected - it was detached from this flow so it keeps working either way.
+const TO_SHIP_ENABLED = false;
+
 async function resolveIsProductionWarehouse(session) {
   if (!session?.warehouseName) return true;
 
@@ -195,7 +202,8 @@ function orderRowsHtml(orders) {
 // Stacked card for the grouped (Online Order Staff / mobile) view - one order's info as
 // label/value rows instead of a wide table, so nothing gets clipped or forces horizontal
 // scrolling on a phone. The "To Ship" button follows the same rule as statusCellHtml (only shown
-// once an order is 'Printed').
+// once an order is 'Printed'). "Send Photo" is detached from that gate entirely - it's always
+// offered, independent of To Ship's status/enabled state (see handleSendPhotoClick).
 function orderCardHtml(o) {
   const status = o.status || '';
   // Same 'Printed' gate as statusCellHtml above - see the comment there.
@@ -217,6 +225,7 @@ function orderCardHtml(o) {
       </div>
       <div class="order-card-actions">
         <a class="btn btn-secondary btn-sm" href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View Order Lines</a>
+        <button type="button" class="btn btn-secondary btn-sm status-send-photo-btn">Send Photo</button>
         ${showToShipBtn ? '<button type="button" class="btn btn-primary status-to-ship-btn">To Ship</button>' : ''}
       </div>
     </div>
@@ -593,7 +602,8 @@ let pendingToShip = null;
 
 function handleOrderTableClick(event) {
   const toShipBtn = event.target.closest('.status-to-ship-btn');
-  if (!toShipBtn) return;
+  const sendPhotoBtn = event.target.closest('.status-send-photo-btn');
+  if (!toShipBtn && !sendPhotoBtn) return;
 
   // Generic [data-order-id] (not tr[data-order-id]) - matches both the flat table's <tr> rows and
   // the grouped view's <div class="order-card"> cards (see orderCardHtml above), since the same
@@ -601,6 +611,10 @@ function handleOrderTableClick(event) {
   const row = event.target.closest('[data-order-id]');
   if (!row) return;
 
+  if (sendPhotoBtn) {
+    handleSendPhotoClick(row.dataset.orderId, sendPhotoBtn);
+    return;
+  }
   handleToShipClick(row.dataset.orderId, toShipBtn);
 }
 
@@ -611,6 +625,11 @@ function handleOrderTableClick(event) {
 // resolved once at init) - a regular store's To Ship never needed this, same as the desktop.
 // Cancelling the serial picker aborts the whole To Ship action (nothing sent, nothing changed).
 async function handleToShipClick(orderId, toShipBtn) {
+  if (!TO_SHIP_ENABLED) {
+    alert('To-Ship is under construction, please To-Ship through the local POS for now.');
+    return;
+  }
+
   let serialRunningNos = null;
 
   if (currentSessionIsProductionWarehouse) {
@@ -653,8 +672,9 @@ async function handleToShipClick(orderId, toShipBtn) {
 
 // Uploads the captured photo via the same signed-upload flow as Online Order Line attachments (see
 // supabase_online_order_status_photo.sql) - returns {url, storagePath}, or null (with an alert) if
-// the upload itself failed, so the caller can still fall back to sending the text-only message.
-async function uploadToShipPhoto(orderId, file) {
+// the upload itself failed. Shared by both the (currently disabled) To Ship photo step and the
+// standalone Send Photo button below - neither RPC it calls cares which flow triggered it.
+async function uploadOrderStatusPhoto(orderId, file) {
   const { data, error } = await supabaseClient.rpc('admin_create_online_order_status_photo_upload', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
@@ -663,7 +683,7 @@ async function uploadToShipPhoto(orderId, file) {
   });
 
   if (error || !data || !data[0]) {
-    alert('Could not prepare the photo upload, sending the text-only message instead: ' + (error ? error.message : 'unknown error'));
+    alert('Could not prepare the photo upload: ' + (error ? error.message : 'unknown error'));
     return null;
   }
 
@@ -673,7 +693,7 @@ async function uploadToShipPhoto(orderId, file) {
     .uploadToSignedUrl(storage_path, upload_token, file);
 
   if (uploadError) {
-    alert('Photo upload failed, sending the text-only message instead: ' + uploadError.message);
+    alert('Photo upload failed: ' + uploadError.message);
     return null;
   }
 
@@ -695,7 +715,7 @@ async function handleToShipPhotoSelected(event) {
     return;
   }
 
-  const photo = await uploadToShipPhoto(pending.orderId, file);
+  const photo = await uploadOrderStatusPhoto(pending.orderId, file);
   applyStatusChange(pending.orderId, 'To Ship', true, photo ? photo.url : null, photo ? photo.storagePath : null, pending.serialRunningNos, pending.triggerEl);
 }
 
@@ -704,6 +724,74 @@ function handleToShipPhotoCancelled() {
   pendingToShip = null;
   if (!pending) return;
   applyStatusChange(pending.orderId, 'To Ship', true, null, null, pending.serialRunningNos, pending.triggerEl);
+}
+
+// --- Standalone "Send Photo" button --------------------------------------------------------
+// Per direct request: detached entirely from the To Ship flow above (and from any status change -
+// admin_send_online_order_status_photo just messages whatever conversation is on the order record
+// already, it was never actually coupled to a status transition server-side). Lets staff send a
+// packed-order photo to the customer regardless of To Ship's enabled state or the order's status.
+
+let pendingSendPhoto = null;
+
+function handleSendPhotoClick(orderId, triggerEl) {
+  pendingSendPhoto = { orderId, triggerEl };
+  document.getElementById('sendPhotoInput').click();
+}
+
+// Same RPC call applyStatusChange makes for the photo half of To Ship, just fired on its own
+// instead of chained after a status-change RPC - see admin_send_online_order_status_photo's own
+// retry-loop/statement_timeout comments (supabase_online_order_portal_status_update.sql) for why
+// this can take a few seconds.
+async function sendOrderStatusPhoto(orderId, photoUrl, photoStoragePath, triggerEl) {
+  triggerEl.disabled = true;
+  showSendStatusBanner("Hang tight, sending the photo to the customer's conversation - this can take a few tries...");
+
+  try {
+    const { data, error } = await supabaseClient.rpc('admin_send_online_order_status_photo', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId,
+      p_photo_url: photoUrl,
+      p_photo_storage_path: photoStoragePath
+    });
+
+    const result = data && data[0];
+    const attempts = result?.attempts_used;
+    const elapsedSeconds = result?.elapsed_ms != null ? (result.elapsed_ms / 1000).toFixed(1) : null;
+    console.log('[online order photo send]', { orderId, sent: result?.photo_sent, attempts, elapsedMs: result?.elapsed_ms, error: result?.photo_error || error?.message });
+
+    if (error || (result && result.photo_sent === false)) {
+      const detail = error ? error.message : (result?.photo_error || 'unknown error');
+      const timingNote = elapsedSeconds != null ? ` (gave up after ${attempts} attempt(s), ${elapsedSeconds}s)` : '';
+      alert('Could not send the photo: ' + detail + timingNote);
+    } else if (result && result.photo_sent) {
+      showSendStatusBanner(`Photo sent! (${attempts} attempt(s), ${elapsedSeconds}s)`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  } finally {
+    hideSendStatusBanner();
+    triggerEl.disabled = false;
+  }
+}
+
+async function handleSendPhotoSelected(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  const pending = pendingSendPhoto;
+  pendingSendPhoto = null;
+  input.value = ''; // reset so picking the same file again still fires 'change' next time
+
+  if (!pending || !file) return; // no pending request, or staff cancelled the camera/file picker
+
+  const photo = await uploadOrderStatusPhoto(pending.orderId, file);
+  if (!photo) return; // uploadOrderStatusPhoto already alerted with the reason
+
+  await sendOrderStatusPhoto(pending.orderId, photo.url, photo.storagePath, pending.triggerEl);
+}
+
+function handleSendPhotoCancelled() {
+  pendingSendPhoto = null;
 }
 
 async function loadOrders(search, status) {
@@ -968,6 +1056,8 @@ function wireOrderFilters() {
   document.getElementById('setupContent').addEventListener('click', handleOrderTableClick);
   document.getElementById('toShipPhotoInput').addEventListener('change', handleToShipPhotoSelected);
   document.getElementById('toShipPhotoInput').addEventListener('cancel', handleToShipPhotoCancelled);
+  document.getElementById('sendPhotoInput').addEventListener('change', handleSendPhotoSelected);
+  document.getElementById('sendPhotoInput').addEventListener('cancel', handleSendPhotoCancelled);
   wireOrderFilters();
   wireShipSerialModalButtons();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
