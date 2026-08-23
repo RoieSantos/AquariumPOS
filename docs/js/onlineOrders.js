@@ -779,55 +779,81 @@ async function sendOrderStatusPhoto(orderId, photoUrl, photoStoragePath, trigger
 }
 
 // Per direct follow-up request: once a photo actually goes out, ask staff whether they're about to
-// ship this order and, if so, give them a heads-up on serial availability before they head to the
-// local POS to do it (To Ship itself stays disabled - see TO_SHIP_ENABLED - so this is purely
-// informational, nothing is claimed/changed here). Applicability mirrors the exact same gate
-// handleToShipClick used when it was still live: only a production warehouse
-// (currentSessionIsProductionWarehouse) with at least one serial-tracked line
-// (admin_get_online_order_serial_requirements) counts - anything else is treated as "not
-// applicable" and the flow ends quietly right after the ship question, per direct instruction.
+// ship this order and, if so, show them which physical serials are actually available before they
+// head to the local POS to do it (To Ship itself stays disabled - see TO_SHIP_ENABLED - so this is
+// purely informational, nothing is picked/claimed here).
+//
+// Applicability deliberately mirrors the desktop's REGULAR CHECKOUT serial rule
+// (ShouldRequireAquariumSerialSelection in MainForm.cs - item code prefix/category flag only), NOT
+// the Online-Order-specific EnsureOrderSerialTrackingAsync gate the (disabled) To Ship flow used,
+// which only checked at a warehouse flagged Production. Per direct confirmation after checking both
+// against the desktop source: checkout's rule has no such gate - any warehouse selling an AQ-/
+// CUSTOM- item (or one in a production-flagged category) requires a serial, so this check now runs
+// regardless of currentSessionIsProductionWarehouse. Conveniently, admin_get_online_order_serial_
+// requirements (supabase_online_order_to_ship_serials.sql) already implements that same
+// prefix/category rule with no warehouse gate of its own - so nothing there needed to change, only
+// the client-side "only if production warehouse" shortcut this function used to add on top.
 async function promptShipAfterPhoto(orderId) {
   if (!window.confirm('Are you going to ship this order?')) return;
-  if (!currentSessionIsProductionWarehouse) return;
 
   let requirements;
   try {
     requirements = await getOrderSerialRequirements(orderId);
   } catch (err) {
-    console.error('Could not check serial requirements after photo send:', err);
+    alert('Could not check serial availability for this order: ' + (err?.message || 'unknown error'));
     return;
   }
   if (requirements.length === 0) return;
 
-  // Counts only (head: true) - no need to pull actual serial numbers here, this is just a
-  // heads-up, not a picker (that's still the disabled To Ship flow's job). Same IN_STOCK/
-  // ItemCode/VariantCode/Location filters as searchAvailableSerialsForShipLine above.
-  const breakdown = [];
-  let totalAvailable = 0;
-
+  // Actual serial numbers (not just a count) - same IN_STOCK/ItemCode/VariantCode/Location filters
+  // as searchAvailableSerialsForShipLine above, just read-only display instead of a picker.
+  const lines = [];
   for (const r of requirements) {
     let query = supabaseClient
       .from('ItemSerialTracking')
-      .select('RunningSerialNo', { count: 'exact', head: true })
+      .select('SerialNo')
       .eq('Status', 'IN_STOCK')
       .eq('ItemCode', r.item_code);
     query = r.variation_id ? query.eq('VariantCode', r.variation_id) : query.or('VariantCode.is.null,VariantCode.eq.');
     if (currentSession?.warehouseName) {
       query = query.eq('Location', currentSession.warehouseName);
     }
+    query = query.order('SerialNo').limit(50);
 
-    const { count, error } = await query;
-    const available = error ? 0 : (count || 0);
-    totalAvailable += available;
-    breakdown.push(`${r.description || r.item_code} (${available}/${r.quantity_needed})`);
+    const { data, error } = await query;
+    lines.push({
+      description: r.description || r.item_code,
+      quantityNeeded: r.quantity_needed,
+      serialNumbers: error ? [] : (data || []).map((s) => s.SerialNo)
+    });
   }
 
-  if (totalAvailable === 0) {
-    alert('No serials found, please To-Ship through your local POS.');
-    return;
-  }
+  openViewSerialsModal(lines);
+}
 
-  alert(`There are ${totalAvailable} serial(s) found for:\n${breakdown.join('\n')}`);
+function renderViewSerialsModal(lines) {
+  const container = document.getElementById('viewSerialsModalLines');
+  container.innerHTML = lines
+    .map((l) => `
+      <div style="margin-bottom:16px;">
+        <div style="font-weight:600; margin-bottom:6px;">${escapeHtml(l.description)} <span class="muted">(need ${l.quantityNeeded})</span></div>
+        ${l.serialNumbers.length === 0
+          ? '<p class="error-text" style="margin:0;">No serials found, please To-Ship through your local POS.</p>'
+          : `<ul style="margin:0; padding-left:20px;">${l.serialNumbers.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>`}
+      </div>
+    `)
+    .join('');
+}
+
+function openViewSerialsModal(lines) {
+  renderViewSerialsModal(lines);
+  document.getElementById('viewSerialsModal').classList.remove('hidden');
+}
+
+function wireViewSerialsModalButtons() {
+  document.getElementById('viewSerialsModalCloseBtn').addEventListener('click', () => {
+    document.getElementById('viewSerialsModal').classList.add('hidden');
+  });
 }
 
 async function handleSendPhotoSelected(event) {
@@ -1116,6 +1142,7 @@ function wireOrderFilters() {
   document.getElementById('sendPhotoInput').addEventListener('cancel', handleSendPhotoCancelled);
   wireOrderFilters();
   wireShipSerialModalButtons();
+  wireViewSerialsModalButtons();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
   if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);

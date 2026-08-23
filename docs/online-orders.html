@@ -139,6 +139,24 @@
     </div>
   </div>
 
+  <!-- Read-only "available serials" list shown after a staff member confirms (via the Send Photo
+       button's post-send prompt) that they're about to ship an order with a serial-tracked line -
+       see promptShipAfterPhoto in js/onlineOrders.js. Mirrors the desktop's REGULAR CHECKOUT serial
+       rule (ShouldRequireAquariumSerialSelection in MainForm.cs - item code prefix/category flag,
+       no production-warehouse gate), not the Online-Order-specific EnsureOrderSerialTrackingAsync
+       gate the (currently disabled) To Ship picker above still uses. View-only, nothing is picked
+       or claimed here - staff still finish the actual shipment on the local POS. -->
+  <div id="viewSerialsModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:560px;">
+      <h3 style="margin:0 0 6px;">Available Serials</h3>
+      <p class="muted" style="margin:0 0 16px;">This order has serial-tracked item(s) - here's what's currently in stock at your location.</p>
+      <div id="viewSerialsModalLines"></div>
+      <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+        <button type="button" class="btn btn-secondary" id="viewSerialsModalCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
