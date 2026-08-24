@@ -3580,7 +3580,13 @@ async function loadDeliveryEstimateVehicleTypes() {
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error || `Failed to load vehicle types (${response.status}).`);
 
-    deliveryEstimateVehicleTypes = body.vehicleTypes || [];
+    // Lalamove's /v3/cities returns its full PH fleet (motorcycles up to 10-wheeler trucks) - way
+    // more than a customer picking up an aquarium/stand order needs. Narrowed to the vehicle types
+    // that can actually fit our typical order (Motorcycle/Sedan/MPV/L300 a.k.a. TRUCK330), per
+    // direct request after seeing the full unfiltered list in the dropdown. 2000KG_ALUMINUM added
+    // as the option for bigger/bulkier orders (multiple aquariums/stands, large custom builds).
+    const ALLOWED_VEHICLE_KEYS = ['MOTORCYCLE', 'SEDAN', 'MPV', 'TRUCK330', '2000KG_ALUMINUM'];
+    deliveryEstimateVehicleTypes = (body.vehicleTypes || []).filter((v) => ALLOWED_VEHICLE_KEYS.includes(v.key));
     if (deliveryEstimateVehicleTypes.length === 0) throw new Error('No vehicle types available for this account/market.');
 
     select.innerHTML = deliveryEstimateVehicleTypes.map((v) => `<option value="${v.key}" title="${v.description}">${v.key}</option>`).join('');
@@ -3797,6 +3803,15 @@ async function runDeliveryEstimate() {
   document.getElementById('deliveryEstimateStartOrderBtn').addEventListener('click', () => goToStep(1));
   // Picking a different branch is itself a request to re-preview that location on the map.
   document.getElementById('deliveryEstimateOriginSelect').addEventListener('change', showDeliveryEstimateOriginPreview);
+  // A quote already on screen is priced for whatever vehicle type was selected when "Get
+  // Estimate" last ran - switching vehicles afterwards left the old (now wrong) price showing
+  // with no indication it was stale. Per direct request, always re-run on change (not just when a
+  // result is already showing) - runDeliveryEstimate already validates origin/destination itself
+  // and shows its own error state if either isn't filled in yet, same as a manual Get Estimate
+  // click would.
+  document.getElementById('deliveryEstimateVehicleTypeSelect').addEventListener('change', () => {
+    if (deliveryEstimateMethod === 'lalamove') runDeliveryEstimate();
+  });
   wireDeliveryEstimatePlacesAutocomplete();
 
   // RSPetStop Delivery vs Lalamove toggle - same two-option touch UI as the Pickup/Delivery
