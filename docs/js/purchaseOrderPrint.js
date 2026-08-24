@@ -11,7 +11,7 @@ function formatDate(value) {
 function renderLines(lines) {
   const body = document.getElementById('poLinesBody');
   if (!lines || lines.length === 0) {
-    body.innerHTML = '<tr><td colspan="4" class="muted">No line items.</td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="muted">No line items.</td></tr>';
     return;
   }
 
@@ -20,7 +20,6 @@ function renderLines(lines) {
       <tr>
         <td>${l.item_code || ''}</td>
         <td>${l.item_name || ''}</td>
-        <td>${l.warehouse_name || ''}</td>
         <td style="text-align:right;">${Number(l.quantity || 0).toLocaleString()}</td>
       </tr>
     `)
