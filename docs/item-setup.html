@@ -40,8 +40,16 @@
         <h2 style="margin:0;">Items</h2>
         <div style="display:flex; gap:12px; align-items:center;">
           <input type="text" id="itemSearchInput" placeholder="Search by code or name..." style="max-width:280px;" />
+          <label for="itemCategoryFilter" class="muted" style="margin:0;">Category</label>
+          <select id="itemCategoryFilter" style="max-width:200px;">
+            <option value="">All categories</option>
+          </select>
+          <button class="btn btn-secondary" id="exportItemsExcelBtn" type="button">Export to Excel</button>
+          <button class="btn btn-secondary" id="importItemsExcelBtn" type="button">Import from Excel</button>
         </div>
       </div>
+      <p class="muted" style="font-size:12px; margin-top:-8px;">Export to Excel downloads the current item list with a Vendor Code column. Fill it in and use Import from Excel to bulk-assign vendors by Item Code - only the Vendor Code column is applied on import, everything else (Name/Category/Price) is read-only context.</p>
+      <input type="file" id="importItemsExcelFileInput" class="hidden" accept=".csv" />
       <div class="item-setup-layout">
         <div class="item-setup-table-col">
           <div class="table-wrap">
@@ -51,12 +59,13 @@
                   <th>Code</th>
                   <th>Name</th>
                   <th>Category</th>
+                  <th>Vendor</th>
                   <th style="text-align:right;">Price</th>
                   <th>Variants</th>
                 </tr>
               </thead>
               <tbody id="itemTableBody">
-                <tr><td colspan="5" class="muted">Loading...</td></tr>
+                <tr><td colspan="6" class="muted">Loading...</td></tr>
               </tbody>
             </table>
           </div>

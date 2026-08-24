@@ -18,7 +18,7 @@
 
   <div class="page">
     <h1>Category Setup</h1>
-    <p class="muted">Every category code currently used on Items. Production Category and Exclude in Transfer Orders are portal-only (not synced from the Local POS). Production Category drives item lookup filtering on Transfer Orders' "Use Production Category" checkbox; Exclude in Transfer Orders hides items under that category from Transfer Orders' Item/Variant lookups entirely, regardless of that checkbox. Only visible to super users.</p>
+    <p class="muted">Every category code currently used on Items. Production Category, Exclude in Transfer Orders, and Include in Stock Sync are portal-only (not synced from the Local POS). Production Category drives item lookup filtering on Transfer Orders' "Use Production Category" checkbox; Exclude in Transfer Orders hides items under that category from Transfer Orders' Item/Variant lookups entirely, regardless of that checkbox; Include in Stock Sync controls which categories the Stock On Hand page's "Refresh from Pancake" button actually syncs - unchecked by default, so nothing syncs until you turn categories on here. Only visible to super users.</p>
 
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
@@ -45,10 +45,11 @@
               <th>Item Count</th>
               <th>Production Category</th>
               <th>Exclude in Transfer Orders</th>
+              <th>Include in Stock Sync</th>
             </tr>
           </thead>
           <tbody id="categoryTableBody">
-            <tr><td colspan="5" class="muted">Loading...</td></tr>
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>

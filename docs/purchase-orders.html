@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Purchase Orders - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Purchase Orders</h1>
+    <p class="muted">Generated from Stock On Hand's editable Quantity column - each Purchase Order records what was requested from a vendor, at the time it was created. No receiving/status tracking - correct a mistake by deleting and creating a new one from Stock On Hand.</p>
+
+    <div class="toolbar">
+      <input type="text" id="poSearchInput" placeholder="Search by PO No. or vendor..." style="max-width:280px;" />
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>PO No.</th>
+            <th>Vendor</th>
+            <th>Date</th>
+            <th style="text-align:right;">Items</th>
+            <th style="text-align:right;">Total Qty</th>
+            <th>Created By</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="poTableBody">
+          <tr><td colspan="7" class="muted">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="poPaginationBar"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/purchaseOrders.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

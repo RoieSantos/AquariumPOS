@@ -583,6 +583,21 @@ th {
   font-weight: 700;
 }
 
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortable-th:hover {
+  background: #e0ebfa;
+}
+
+.sort-indicator {
+  color: var(--primary, #1d4f91);
+  font-size: 11px;
+}
+
 tr.clickable-row {
   cursor: pointer;
 }

@@ -30,11 +30,19 @@
       <select id="warehouseFilter" style="max-width:220px;">
         <option value="">All warehouses</option>
       </select>
+      <label for="vendorFilter" class="muted" style="margin:0;">Vendor</label>
+      <select id="vendorFilter" style="max-width:200px;">
+        <option value="">All vendors</option>
+      </select>
       <button class="btn btn-secondary btn-sm" id="refreshViewBtn" type="button">Refresh</button>
       <button class="btn btn-primary btn-sm" id="refreshFromPancakeBtn" type="button">Refresh from Pancake</button>
+      <button class="btn btn-secondary btn-sm" id="printBtn" type="button">Print</button>
+      <button class="btn btn-primary btn-sm" id="createPoBtn" type="button">Create Purchase Order</button>
       <span class="muted" id="lastRefreshedLabel" style="font-size:12px;"></span>
     </div>
 
+    <p class="muted" style="font-size:12px; margin-top:-8px;">"Refresh from Pancake" only syncs categories marked "Include in Stock Sync" on Category Setup - the Category filter above is just for viewing what's already cached.</p>
+    <p class="muted" style="font-size:12px; margin-top:-4px;">The Quantity column is editable - type in how much to order per item, then Print to include it on the printout in place of Quantity On Hand, or Create Purchase Order to turn it into an actual Purchase Order record (requires the Vendor filter above to be set to one vendor first).</p>
     <div id="refreshStatus" class="hidden" style="margin-bottom:12px;"></div>
     <div id="stockError" class="error-text hidden"></div>
     <div id="stockLoading" class="muted">Loading...</div>
@@ -43,11 +51,13 @@
       <table>
         <thead>
           <tr>
-            <th>Item Code</th>
-            <th>Item Name</th>
-            <th>Category</th>
-            <th>Warehouse</th>
-            <th style="text-align:right;">Quantity On Hand</th>
+            <th class="sortable-th" data-sort="item_code">Item Code<span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="item_name">Item Name<span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="category_name">Category<span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="vendor_name">Vendor<span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="warehouse_name">Warehouse<span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="remain_quantity" style="text-align:right;">Quantity On Hand<span class="sort-indicator"></span></th>
+            <th style="text-align:right;">Quantity</th>
           </tr>
         </thead>
         <tbody id="stockTableBody"></tbody>
