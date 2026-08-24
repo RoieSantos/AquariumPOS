@@ -24,7 +24,10 @@
       <div id="companyLogoBox"></div>
       <h1>Order Now</h1>
       <p class="muted">Pick what you need, and we'll get back to you to confirm your order.</p>
-      <a href="#" class="view-cart-link" id="viewCartLink">🛒 View Cart</a>
+      <div class="wizard-header-links">
+        <a href="#" class="view-cart-link" id="viewCartLink">🛒 View Cart</a>
+        <a href="#" class="view-cart-link" id="helpLink">❓ Help</a>
+      </div>
     </div>
 
     <!-- Ongoing promo banner - public.PromotionSettings (see supabase_promotion_setting.sql),
@@ -182,15 +185,15 @@
         <div class="form-grid form-grid-single">
           <div class="form-row">
             <label for="customLength">Length</label>
-            <input type="number" id="customLength" value="0" step="0.01" min="0" />
+            <input type="number" id="customLength" value="0" step="0.1" min="0" />
           </div>
           <div class="form-row">
             <label for="customWidth">Width</label>
-            <input type="number" id="customWidth" value="0" step="0.01" min="0" />
+            <input type="number" id="customWidth" value="0" step="0.1" min="0" />
           </div>
           <div class="form-row">
             <label for="customHeight">Height</label>
-            <input type="number" id="customHeight" value="0" step="0.01" min="0" />
+            <input type="number" id="customHeight" value="0" step="0.1" min="0" />
           </div>
         </div>
       </div>
@@ -296,15 +299,15 @@
         <div class="form-grid form-grid-single">
           <div class="form-row">
             <label for="standLength">Length</label>
-            <input type="number" id="standLength" value="0" step="0.01" min="0" />
+            <input type="number" id="standLength" value="0" step="0.1" min="0" />
           </div>
           <div class="form-row">
             <label for="standWidth">Width</label>
-            <input type="number" id="standWidth" value="0" step="0.01" min="0" />
+            <input type="number" id="standWidth" value="0" step="0.1" min="0" />
           </div>
           <div class="form-row">
             <label for="standHeight">Height</label>
-            <input type="number" id="standHeight" value="0" step="0.01" min="0" />
+            <input type="number" id="standHeight" value="0" step="0.1" min="0" />
             <div class="muted" style="font-size:12px; margin-top:4px;">Auto-filled based on layers - you can override it.</div>
           </div>
           <div class="form-row">
@@ -358,7 +361,7 @@
       </div>
       <div class="form-row hidden" id="standSumpWidthRow">
         <label for="standSumpWidth">Sump Width</label>
-        <input type="number" id="standSumpWidth" value="0" step="0.01" min="0" />
+        <input type="number" id="standSumpWidth" value="0" step="0.1" min="0" />
       </div>
       <div id="customStandNotice" class="rule-notice hidden"></div>
       <div id="customStandErrorMsg" class="error-text hidden"></div>
@@ -456,15 +459,15 @@
         </div>
         <div class="form-row">
           <label for="sumpLength">Sump Length</label>
-          <input type="number" id="sumpLength" value="18" step="0.01" min="0" />
+          <input type="number" id="sumpLength" value="18" step="0.1" min="0" />
         </div>
         <div class="form-row">
           <label for="sumpWidth">Sump Width</label>
-          <input type="number" id="sumpWidth" value="18" step="0.01" min="0" />
+          <input type="number" id="sumpWidth" value="18" step="0.1" min="0" />
         </div>
         <div class="form-row">
           <label for="sumpHeight">Sump Height</label>
-          <input type="number" id="sumpHeight" value="18" step="0.01" min="0" />
+          <input type="number" id="sumpHeight" value="18" step="0.1" min="0" />
         </div>
       </div>
       <p class="muted" style="margin-top:-8px;">Sump dimensions use the same unit of measure as your aquarium.</p>
@@ -519,15 +522,15 @@
         <div class="form-grid form-grid-single">
           <div class="form-row">
             <label for="standaloneSumpLength">Sump Length</label>
-            <input type="number" id="standaloneSumpLength" value="18" step="0.01" min="0" />
+            <input type="number" id="standaloneSumpLength" value="18" step="0.1" min="0" />
           </div>
           <div class="form-row">
             <label for="standaloneSumpWidth">Sump Width</label>
-            <input type="number" id="standaloneSumpWidth" value="18" step="0.01" min="0" />
+            <input type="number" id="standaloneSumpWidth" value="18" step="0.1" min="0" />
           </div>
           <div class="form-row">
             <label for="standaloneSumpHeight">Sump Height</label>
-            <input type="number" id="standaloneSumpHeight" value="18" step="0.01" min="0" />
+            <input type="number" id="standaloneSumpHeight" value="18" step="0.1" min="0" />
           </div>
         </div>
       </div>
@@ -601,14 +604,6 @@
             </select>
           </div>
           <div class="form-row">
-            <label for="standaloneStickerLength">Length</label>
-            <input type="number" id="standaloneStickerLength" value="24" step="0.01" min="0" />
-          </div>
-          <div class="form-row">
-            <label for="standaloneStickerWidth">Width</label>
-            <input type="number" id="standaloneStickerWidth" value="12" step="0.01" min="0" />
-          </div>
-          <div class="form-row">
             <label for="standaloneStickerUnit">Unit of Measure *</label>
             <select id="standaloneStickerUnit">
               <option value="">-- select --</option>
@@ -621,6 +616,19 @@
           <div class="form-row">
             <label for="standaloneStickerQty">Quantity</label>
             <input type="number" id="standaloneStickerQty" value="1" step="1" min="1" />
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <h3 class="form-group-title">Dimensions</h3>
+        <div class="form-grid form-grid-single">
+          <div class="form-row">
+            <label for="standaloneStickerLength">Length</label>
+            <input type="number" id="standaloneStickerLength" value="24" step="0.1" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="standaloneStickerWidth">Width</label>
+            <input type="number" id="standaloneStickerWidth" value="12" step="0.1" min="0" />
           </div>
         </div>
       </div>
@@ -741,6 +749,7 @@
           <label for="customerEmail">Email (optional)</label>
           <input type="email" id="customerEmail" />
         </div>
+        <p class="muted hidden" id="psidPrefillHint" style="font-size: 12px;">Auto-filled from your Messenger info. Not you? Just edit the fields above.</p>
         <div class="form-row">
           <label>Which branch? *</label>
           <div class="location-toggle">
@@ -789,6 +798,14 @@
           <div class="muted" style="margin-top:-8px; font-size:12px;">Order ID</div>
           <div class="confirmation-order-no hidden" id="confirmationOnlineOrderNo" style="font-size:16px; margin:8px 0 0;"></div>
           <div class="muted hidden" id="confirmationOnlineOrderNoLabel" style="margin-top:-6px; font-size:12px;">Online Order ID</div>
+        </div>
+        <!-- Shown while pollAutomatedOrderPancakeStatus (js/orderNow.js) is still trying to fill in
+             the Online Order ID above. Never just disappears once shown - settleConfirmationWaitingNote
+             swaps it to a calm resting message (spinner hidden) if the ID lands late/not at all, so the
+             screen never looks like it silently broke mid-wait. -->
+        <div class="confirmation-waiting-note hidden" id="confirmationWaitingNote">
+          <span class="confirmation-waiting-spinner" id="confirmationWaitingSpinner"></span>
+          <span id="confirmationWaitingText">Gathering your order details - please don't close this screen while we work on it.</span>
         </div>
         <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
           <button type="button" class="btn btn-primary" id="startNewOrderBtn">Start a New Order</button>
@@ -880,7 +897,115 @@
     </div>
   </div>
 
-  <!-- Sticky cart bar (steps 1-2 only) -->
+  <!-- "How to Order" help - opened from the "❓ Help" header link, reachable from any step. Plain
+       numbered walkthrough of both flows (Standard and Customize) using the app's existing
+       emoji-icon look rather than real screenshots - see .help-step in css/styles.css if actual
+       screenshots get added later, each step's icon div is a ready-made slot to swap for an <img>. -->
+  <div class="modal-backdrop hidden" id="helpModal">
+    <div class="modal-panel help-modal-panel">
+      <h3 style="margin-top:0;">How to Order</h3>
+      <div class="help-step">
+        <span class="help-step-icon">🛍️</span>
+        <div>
+          <div class="help-step-title">1. Choose how you want to order</div>
+          <div class="help-step-text">Tap <strong>Standard</strong> to browse ready-made items, or <strong>Customize</strong> to build your own Aquarium, Stand, Filtration, or Accessories.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">📂</span>
+        <div>
+          <div class="help-step-title">2. Pick a category</div>
+          <div class="help-step-text">Tap a tile like Aquarium, Stand, or SET to see what's available.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">➕</span>
+        <div>
+          <div class="help-step-title">3. Add items to your cart</div>
+          <div class="help-step-text">Use the +/- buttons to set the quantity, then tap Add.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">🛒</span>
+        <div>
+          <div class="help-step-title">4. Review your cart</div>
+          <div class="help-step-text">Tap "View Cart" anytime to check what you've added, then Checkout when you're ready.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">📝</span>
+        <div>
+          <div class="help-step-title">5. Fill in your details</div>
+          <div class="help-step-text">Your name, phone number, and pickup or delivery information.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">✅</span>
+        <div>
+          <div class="help-step-title">6. Submit your order</div>
+          <div class="help-step-text">You'll get an Order ID right away, and we'll contact you shortly to confirm.</div>
+        </div>
+      </div>
+
+      <div class="help-section-title">Getting a Customize Quotation</div>
+      <div class="help-step">
+        <span class="help-step-icon">💡</span>
+        <div>
+          <div class="help-step-text">From Customize, use the tabs at the top - Aquarium, Stand, Filtration, Accessories - to switch between builds. Each one shows a live price estimate as you fill in the fields, so you can try different sizes/options and see the price change instantly, with nothing submitted yet. Use <strong>Add to Cart</strong> to save one build and keep working on the next, or <strong>Checkout</strong> once you're ready to submit everything.</div>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <span class="help-step-icon">🐠</span>
+        <div>
+          <div class="help-step-title">Choosing the right Aquarium</div>
+          <div class="help-step-text">
+            <ul>
+              <li>Pick your Unit of Measure first - the price estimate and preview won't show until it's selected.</li>
+              <li>Glass Thickness (3mm/6mm/10mm/12mm) is safety-checked automatically against your Length/Width/Height - if your tank is too big for the thickness you picked, the system will tell you and upgrade it for you.</li>
+              <li>Tempered Glass always needs at least 10mm - picking a thinner thickness with Tempered checked will prompt you to upgrade.</li>
+              <li>Low Iron, Rimless, and AIO (All-In-One) each have their own extra thickness rules - you don't need to memorize these, the system checks and prompts you automatically.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <span class="help-step-icon">🗄️</span>
+        <div>
+          <div class="help-step-title">Choosing the right Stand</div>
+          <div class="help-step-text">
+            <ul>
+              <li>Already built your Aquarium in this session? The Stand tab will offer to use its exact footprint - tap "Yes, Use Its Footprint" so the stand always matches the tank going on top of it.</li>
+              <li>Tubular size (1x1, 1½x1½, or 2x2) is auto-adjusted for you based on the stand's Length, and - when linked to an aquarium - its glass thickness (10mm+ glass always requires a 2x2 stand for safety).</li>
+              <li>Height defaults automatically based on Tubular size and number of layers/shelves, but you can always type your own if you need a specific height.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <span class="help-step-icon">🌀</span>
+        <div>
+          <div class="help-step-title">Choosing the right Sump/Filtration</div>
+          <div class="help-step-text">
+            <ul>
+              <li><strong>Undersump</strong> sits inside the stand cabinet, below the tank; <strong>Overhead Sump</strong> sits above/behind it - pick whichever fits your setup.</li>
+              <li>As a general rule of thumb, size your sump's Length/Width close to your aquarium's own footprint so it fits comfortably in the same stand - there's no fixed requirement, so enter whatever actually fits your space.</li>
+              <li>Piping, Overflow Box, Filter Medias, and Allum TopCover are optional add-ons, each adding its own line to the price - only tick the ones you actually need built.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+        <button type="button" class="btn btn-secondary" id="helpModalCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticky cart bar (Standard flow's browsing steps 1-2, and the whole Customize flow - see
+       updateCartBar in js/orderNow.js) -->
   <div class="cart-bar hidden" id="cartBar">
     <div>
       <div class="cart-bar-info" id="cartBarInfo">0 items</div>

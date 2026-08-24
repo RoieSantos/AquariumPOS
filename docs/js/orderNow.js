@@ -14,11 +14,13 @@ const CART_STORAGE_KEY = 'order_now_cart';
 // so this list never needs to be exhaustive.
 const CATEGORY_ICONS = {
   AQUARIUM: '🐠',
-  STAND: '🪑',
+  STAND: '🗄️',
   FILTRATION: '🌀',
   SUMP: '🪣',
   FISH: '🐟',
-  SET: '🎁'
+  SET: '🎁',
+  PUMP: '⚙️',
+  LIGHTS: '💡'
 };
 const DEFAULT_CATEGORY_ICON = '🛒';
 
@@ -71,22 +73,58 @@ let deliveryEstimateReturnStep = 0;
 // Pancake personalized with the sender's PSID. Kept in sessionStorage too so it survives the
 // wizard's internal navigation/refreshes. Stays null for anyone who reaches the page any other way.
 const PSID_STORAGE_KEY = 'order_now_psid';
+const TOKEN_STORAGE_KEY = 'order_now_session_token';
 let messengerPsid = sessionStorage.getItem(PSID_STORAGE_KEY) || null;
+let messengerSessionToken = sessionStorage.getItem(TOKEN_STORAGE_KEY) || null;
 
-function captureMessengerPsid() {
+// Mints (or reuses) the one-time session token submit_automated_order uses to verify a psid
+// actually belongs to whoever is submitting - see supabase_automated_order_session_token.sql for
+// the full design. Botcake's real Messenger button always links to a plain "?psid=X" URL with no
+// token, so a genuine fresh visit always hits the "mint a new one + rewrite the address bar" path
+// below; a URL that ALREADY has a token (a copied/forwarded link) reuses it as-is instead - that's
+// the one rule that makes the whole scheme work, since minting a fresh token for every visitor
+// would defeat the point entirely.
+async function captureMessengerPsid() {
   const params = new URLSearchParams(window.location.search);
   const psid = params.get('psid');
-  if (psid) {
-    messengerPsid = psid;
-    sessionStorage.setItem(PSID_STORAGE_KEY, psid);
+  const token = params.get('token');
+  if (!psid) return;
+
+  messengerPsid = psid;
+  sessionStorage.setItem(PSID_STORAGE_KEY, psid);
+
+  if (token) {
+    messengerSessionToken = token;
+    sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+    return;
   }
+
+  const { data, error } = await supabaseClient.rpc('public_issue_order_now_session_token', { p_psid: psid });
+  if (error || !data) return;
+
+  messengerSessionToken = data;
+  sessionStorage.setItem(TOKEN_STORAGE_KEY, data);
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('token', data);
+  window.history.replaceState(null, '', url.toString());
 }
 
-// Auto-fills Step 4's name/phone/email from the customer's existing Pancake record (matched by
-// PSID) so someone who arrived via a Messenger link doesn't have to retype details Pancake
-// already has - see public_lookup_customer_by_psid() in supabase_online_customers_table.sql.
-// Only fills fields that are still blank, so it never clobbers something the customer already
-// typed (e.g. if the lookup resolves after they started filling the form in manually).
+// Auto-fills Step 4's name/email from the customer's existing Pancake record (matched by PSID) so
+// someone who arrived via a Messenger link doesn't have to retype details Pancake already has -
+// see public_lookup_customer_by_psid() in supabase_online_customers_table.sql. Only fills fields
+// that are still blank, so it never clobbers something the customer already typed (e.g. if the
+// lookup resolves after they started filling the form in manually).
+//
+// Deliberately does NOT prefill the phone number, even though public_lookup_customer_by_psid
+// returns one. The primary anti link-sharing check is now the one-time session token
+// (supabase_automated_order_session_token.sql - see captureMessengerPsid above), which doesn't
+// care about phone at all, but phone is still the FALLBACK check for the rare case no token ever
+// got minted (JS disabled, an old cached page load). If this link gets forwarded and the recipient
+// doesn't bother clearing a prefilled phone field (easy to miss - a string of digits doesn't read
+// as "not mine" the way a wrong name does), their order would still show the ORIGINAL customer's
+// real phone number and pass that fallback check too. Leaving phone always blank means every
+// submitter has to type their own number fresh either way.
 async function prefillCustomerDetailsFromPsid() {
   if (!messengerPsid) return;
 
@@ -95,12 +133,18 @@ async function prefillCustomerDetailsFromPsid() {
 
   const match = data[0];
   const nameInput = document.getElementById('customerName');
-  const phoneInput = document.getElementById('customerPhone');
   const emailInput = document.getElementById('customerEmail');
+  let filledSomething = false;
 
-  if (nameInput && !nameInput.value.trim() && match.name) nameInput.value = match.name;
-  if (phoneInput && !phoneInput.value.trim() && match.phone) phoneInput.value = match.phone;
-  if (emailInput && !emailInput.value.trim() && match.email) emailInput.value = match.email;
+  if (nameInput && !nameInput.value.trim() && match.name) { nameInput.value = match.name; filledSomething = true; }
+  if (emailInput && !emailInput.value.trim() && match.email) { emailInput.value = match.email; filledSomething = true; }
+
+  // Surfaces the autofill so someone who opened a forwarded/copied Messenger link notices these
+  // aren't their own details and edits them - a UX nudge on top of the real server-side
+  // enforcement (the session token check, or the phone-match fallback), not the enforcement
+  // itself.
+  const prefillHint = document.getElementById('psidPrefillHint');
+  if (prefillHint && filledSomething) prefillHint.classList.remove('hidden');
 }
 
 function loadCart() {
@@ -147,7 +191,12 @@ function firstImageUrl(images) {
 
 function updateCartBar() {
   const bar = document.getElementById('cartBar');
-  const showBar = (currentStep === 1 || currentStep === 2) && cart.length > 0;
+  // Standard flow's browsing steps (1-2), plus the whole Customize flow (the tab picker itself and
+  // every custom-* tab/sub-step - same "starts with custom" test already used elsewhere, e.g. the
+  // wizard-back-button visibility check above) - per direct request, so there's always a quick way
+  // to jump to the cart no matter which tab the customer is on. Still hidden on Your Details/
+  // confirmation (steps 4-5) and Estimate Delivery, where it'd just be clutter.
+  const showBar = (currentStep === 1 || currentStep === 2 || currentStep === 'customize-tabs' || String(currentStep).indexOf('custom') === 0) && cart.length > 0;
   bar.classList.toggle('hidden', !showBar);
   document.getElementById('cartBarInfo').textContent = `${cartItemCount()} item${cartItemCount() === 1 ? '' : 's'} - ${formatMoney(cartTotal())}`;
   document.getElementById('cartBarSub').textContent = 'Tap to review your order';
@@ -320,11 +369,11 @@ async function loadCategories() {
     return;
   }
 
-  // Standard flow offers pre-built Sets, Aquariums, and Stands - per direct request, every other
-  // category (Filtration/Sump/Fish sold separately) stays hidden here even though
-  // public_list_order_categories() still returns all of them, so the Customize flow (which has
-  // its own separate step-by-step Aquarium/Stand builder, unaffected by this) keeps working.
-  const STANDARD_FLOW_CATEGORY_CODES = ['SET', 'AQUARIUM', 'STAND'];
+  // Standard flow offers pre-built Sets, Aquariums, Stands, Pumps, and Lights - per direct
+  // request, every other category (Filtration/Sump/Fish sold separately) stays hidden here even
+  // though public_list_order_categories() still returns all of them, so the Customize flow (which
+  // has its own separate step-by-step Aquarium/Stand builder, unaffected by this) keeps working.
+  const STANDARD_FLOW_CATEGORY_CODES = ['SET', 'AQUARIUM', 'STAND', 'PUMP', 'LIGHTS'];
   const standardCategoriesRaw = data.filter((cat) => STANDARD_FLOW_CATEGORY_CODES.includes(String(cat.code).toUpperCase()));
 
   if (!standardCategoriesRaw || standardCategoriesRaw.length === 0) {
@@ -1713,6 +1762,14 @@ let selectedStandTubular = '1x1';
 // scoped to "if the user wants to use footprint".
 let standHeightIsFootprintDefault = false;
 
+// Set by prefillStandFromAquarium() to the Aquarium tab's own Glass Thickness (e.g. "10mm") when
+// the customer confirms this stand is FOR that aquarium - the one case a standalone stand actually
+// has a real glass thickness to validate the Tubular against (calculateStandaloneStand's "Stand
+// Rule": 10mm+ glass requires a 2x2 Tubular, same rule the embedded Aquarium+Stand build already
+// enforces). Cleared by resetCustomStandBuilder() so a from-scratch stand (or one built before the
+// footprint prompt) never inherits a stale aquarium's glass by accident.
+let standLinkedAquariumGlass = null;
+
 function defaultStandHeightInches(tubular) {
   return tubular === '1x1' ? 30 : 36;
 }
@@ -1736,6 +1793,7 @@ function buildCustomStandPayload() {
     sumpHolder: sumpHolder,
     sumpWidth: sumpHolder ? document.getElementById('standSumpWidth').value : 0,
     footingInches: document.getElementById('standFooting').value,
+    linkedAquariumGlass: standLinkedAquariumGlass,
     tubularPricingSetupRows: tubularPricingSetupRows
   };
 }
@@ -1771,8 +1829,8 @@ function updateStandTubularAvailability() {
     return;
   }
 
-  const check1x1 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, undefined, '1x1');
-  const check15 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, undefined, '1.5x1.5');
+  const check1x1 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, standLinkedAquariumGlass, '1x1');
+  const check15 = window.CustomAquariumCalculator.enforceStandTubularSafety(lengthIn, widthIn, standLinkedAquariumGlass, '1.5x1.5');
   btn1x1.classList.toggle('option-disabled', check1x1.tubular !== '1x1');
   btn15.classList.toggle('option-disabled', check15.tubular !== '1.5x1.5');
 }
@@ -1926,6 +1984,9 @@ function resetCustomStandBuilder() {
   // Plain reset (no footprint prefill) never auto-fills Height - only prefillStandFromAquarium
   // (called right after this) arms the flag and overwrites the '0' just set below.
   standHeightIsFootprintDefault = false;
+  // Same reasoning - only prefillStandFromAquarium (called right after this, when that's what's
+  // actually happening) re-arms the aquarium glass link; a plain reset never has one.
+  standLinkedAquariumGlass = null;
   document.getElementById('standLength').value = '0';
   document.getElementById('standWidth').value = '0';
   document.getElementById('standHeight').value = '0';
@@ -1964,6 +2025,14 @@ function prefillStandFromAquarium() {
   document.getElementById('standLength').value = length;
   document.getElementById('standWidth').value = width;
   document.getElementById('standUnit').value = unit;
+
+  // This stand is confirmed to be FOR this aquarium, so its glass thickness is now known - carry
+  // it over so updateCustomStandPriceEstimate's tubular-safety check (calculateStandaloneStand ->
+  // enforceStandTubularSafety) can enforce the same "10mm+ glass needs a 2x2 Tubular" rule the
+  // embedded Aquarium+Stand build already applies. Without this, a stand built via "Use Its
+  // Footprint" for a heavy tempered-glass tank could default to an undersized 1x1/1.5x1.5 Tubular
+  // with nothing catching it.
+  standLinkedAquariumGlass = document.getElementById('customGlass').value;
 
   // Per direct request: default Height by Tubular size when using the footprint - 30in for 1x1,
   // 36in for 1 1/2x1 1/2 or 2x2 (see defaultStandHeightInches). resetCustomStandBuilder() just
@@ -2412,6 +2481,7 @@ async function maybeAddCurrentTabEstimateToCart() {
   cart = cart.filter((line) => !categoryCodes.has(line.categoryCode));
   lines.forEach((line) => cart.push(line.cartLine));
   saveCart();
+  updateCartBar();
 }
 
 // Wired to each Customize tab's own "Add to Cart" button (sits above that tab's Checkout button) -
@@ -2435,6 +2505,7 @@ async function addCustomizeTabToCart(type, msgEl) {
   cart = cart.filter((line) => !categoryCodes.has(line.categoryCode));
   lines.forEach((line) => cart.push(line.cartLine));
   saveCart();
+  updateCartBar();
 
   const total = lines.reduce((sum, line) => sum + line.amount, 0);
   msgEl.textContent = `Added to cart (${formatMoney(total)}).`;
@@ -2809,6 +2880,7 @@ async function submitOrder(event) {
     p_notes: notes || null,
     p_location: selectedLocation,
     p_psid: messengerPsid,
+    p_token: messengerSessionToken,
     p_lines: cart.map((line) => ({
       category_code: line.categoryCode,
       item_code: line.itemCode,
@@ -2888,6 +2960,7 @@ async function submitOrder(event) {
       }
 
       if (!shown) {
+        showConfirmationWaitingNote();
         pollAutomatedOrderPancakeStatus(result.order_no).catch((err) => console.error('pollAutomatedOrderPancakeStatus failed:', err));
       }
     }
@@ -2921,30 +2994,79 @@ function applyPancakeSyncStatusDisplay(status) {
   onlineOrderNoBox.textContent = '#' + status.pancake_order_id;
   onlineOrderNoBox.classList.remove('hidden');
   onlineOrderNoLabel.classList.remove('hidden');
+  document.getElementById('confirmationWaitingNote').classList.add('hidden');
+  document.getElementById('startNewOrderBtn').disabled = false;
   return true;
 }
 
-// Briefly polls for the background Pancake sync (kicked off just above) to land, so the
-// confirmation screen can reveal the real Pancake order number without the customer ever having to
-// wait on it up front. 5 tries, 1.5s apart (~7.5s total) - generous for the normal case, and if it
-// genuinely doesn't land in that window the screen just quietly stays as-is; the order itself is
-// already confirmed either way, and the pg_cron safety net still catches it within a minute.
+// Resets the note back to its active "still working" appearance and shows it - used at the start
+// of a fresh order's wait, so a previous order's settled (spinner-hidden, muted) state can never
+// bleed into a new order's own wait.
+function showConfirmationWaitingNote() {
+  const note = document.getElementById('confirmationWaitingNote');
+  note.classList.remove('settled');
+  document.getElementById('confirmationWaitingSpinner').classList.remove('hidden');
+  document.getElementById('confirmationWaitingText').textContent = 'Retrieving your Online Order ID...';
+  note.classList.remove('hidden');
+  // Per direct request: starting a new order while this one is still being linked to Pancake
+  // would abandon pollAutomatedOrderPancakeStatus for it mid-wait (stillOnThisOrder's guard just
+  // quietly stops checking rather than erroring, but the customer would never see the ID land) -
+  // disabled here, re-enabled by applyPancakeSyncStatusDisplay/settleConfirmationWaitingNote below
+  // once there's nothing left to wait for.
+  document.getElementById('startNewOrderBtn').disabled = true;
+}
+
+// Swaps the waiting note to a calm resting message instead of hiding it outright, once
+// pollAutomatedOrderPancakeStatus stops actively checking without ever finding a Synced status -
+// per direct report, silently hiding it made the screen look like it had just stopped/broken
+// mid-wait even though the order itself is still perfectly fine (and, per that same report, the
+// real Pancake order can genuinely land slightly after our polling window closes - the push retries
+// server-side with its own backoff, see _push_automated_order_to_pancake, so this is a real timing
+// gap, not just a perception issue).
+function settleConfirmationWaitingNote(message) {
+  const note = document.getElementById('confirmationWaitingNote');
+  document.getElementById('confirmationWaitingSpinner').classList.add('hidden');
+  document.getElementById('confirmationWaitingText').textContent = message;
+  note.classList.remove('hidden');
+  note.classList.add('settled');
+  document.getElementById('startNewOrderBtn').disabled = false;
+}
+
+// Polls for the background Pancake sync (kicked off just above) to land, so the confirmation
+// screen can reveal the real Pancake order number without the customer ever having to wait on it
+// up front. 16 tries, 2.5s apart (40s total) - _push_automated_order_to_pancake retries up to 3
+// times server-side with its own 1.5s backoff between attempts, each attempt allowed up to 20s, so
+// the old 5-try/7.5s window could genuinely close before a retried push finished - this comfortably
+// outlasts that normal-case worst time. If it still isn't back by then, settleConfirmationWaitingNote
+// leaves a clear final message rather than the note just vanishing; the order itself is already
+// confirmed either way, and the pg_cron safety net still catches it within a minute regardless.
 async function pollAutomatedOrderPancakeStatus(orderNo, attempt) {
   attempt = attempt || 0;
-  if (attempt >= 5) return;
+  // The customer may have already left the confirmation step (e.g. started a new order) - checked
+  // before every exit path below (including the give-up case), so a timed-out poll for an OLD
+  // order can never touch a NEWER order's still-in-progress waiting note.
+  const stillOnThisOrder = () => document.getElementById('confirmationOrderNo').textContent === orderNo;
 
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  if (attempt >= 16) {
+    if (stillOnThisOrder()) {
+      settleConfirmationWaitingNote('We couldn\'t retrieve your Online Order ID yet - your order is already confirmed.');
+    }
+    return;
+  }
 
-  // The customer may have already left the confirmation step (e.g. started a new order) - stop
-  // polling rather than surprise them with an unrelated screen update.
-  if (document.getElementById('confirmationOrderNo').textContent !== orderNo) return;
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+
+  if (!stillOnThisOrder()) return;
 
   const { data, error } = await supabaseClient.rpc('public_get_automated_order_status', { p_order_no: orderNo });
   const status = !error && data && data[0];
 
   if (applyPancakeSyncStatusDisplay(status)) return;
 
-  if (status && status.pancake_sync_status === 'Failed') return;
+  if (status && status.pancake_sync_status === 'Failed') {
+    settleConfirmationWaitingNote('Your order is confirmed! We\'re still finishing linking it to our online system - no action needed, we\'ll follow up if there\'s anything else to confirm.');
+    return;
+  }
 
   await pollAutomatedOrderPancakeStatus(orderNo, attempt + 1);
 }
@@ -3718,6 +3840,26 @@ async function runDeliveryEstimate() {
       updateCustomPriceEstimate();
     });
   });
+
+  // Per direct request: every Length/Width/Height-style dimension field, across all four
+  // Customize tabs, should only ever show one decimal place (24.3, not 24.567). step="0.1" on the
+  // input itself (docs/order-now.html) only constrains the up/down spinner arrows, not what the
+  // customer can type, so this clamps on blur - not on every keystroke via 'input', which would
+  // fight the customer mid-type by stripping digits out from under their cursor. Dispatches a
+  // synthetic 'input' afterward so whichever tab's own live price/preview listener (all wired to
+  // 'input', not 'change', for these fields) picks up the now-rounded value immediately instead of
+  // waiting on the next real edit.
+  ['customLength', 'customWidth', 'customHeight', 'standLength', 'standWidth', 'standHeight', 'standSumpWidth',
+    'sumpLength', 'sumpWidth', 'sumpHeight', 'standaloneSumpLength', 'standaloneSumpWidth', 'standaloneSumpHeight',
+    'standaloneStickerLength', 'standaloneStickerWidth'].forEach((id) => {
+    document.getElementById(id).addEventListener('blur', (event) => {
+      if (event.target.value === '') return;
+      const rounded = round1(event.target.value);
+      if (Number(event.target.value) === rounded) return;
+      event.target.value = rounded;
+      event.target.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
   // Re-runs the option-specific rules (enforceGlassThicknessRules) here too, not just on the
   // Options checkboxes' own change handlers below - per direct request: if the customer already
   // ticked Rimless (or AIO/Low Iron) and then comes back and manually picks a thinner Glass
@@ -4098,6 +4240,13 @@ async function runDeliveryEstimate() {
     openCartViewModal();
   });
   document.getElementById('cartViewCloseBtn').addEventListener('click', closeCartViewModal);
+  document.getElementById('helpLink').addEventListener('click', (event) => {
+    event.preventDefault();
+    document.getElementById('helpModal').classList.remove('hidden');
+  });
+  document.getElementById('helpModalCloseBtn').addEventListener('click', () => {
+    document.getElementById('helpModal').classList.add('hidden');
+  });
   document.getElementById('cartViewProceedBtn').addEventListener('click', () => {
     if (cart.length === 0) return;
     closeCartViewModal();

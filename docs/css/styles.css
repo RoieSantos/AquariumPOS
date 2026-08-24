@@ -529,6 +529,11 @@ textarea {
   text-decoration: none;
 }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-primary {
   background: var(--primary);
   color: #fff;
@@ -2671,6 +2676,50 @@ body:has(.wizard-page) {
   color: var(--text-main);
 }
 
+/* Order Now's confirmation screen (docs/order-now.html step 5) - shown while
+   pollAutomatedOrderPancakeStatus (js/orderNow.js) is still trying to fill in the Online Order ID,
+   so the customer sees something is actively happening instead of a static screen that looks
+   finished but is still quietly working in the background. Sized deliberately large/bold (per
+   direct request) so it reads as the thing currently happening on this screen, not a footnote. */
+.confirmation-waiting-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 4px 0 14px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  background: rgba(29, 79, 145, 0.08);
+  border: 1px solid var(--primary);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--primary-strong);
+  text-align: left;
+  line-height: 1.35;
+}
+
+.confirmation-waiting-spinner {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 4px solid #d7e0ef;
+  border-top-color: var(--primary);
+  animation: pullRefreshSpin 0.8s linear infinite;
+}
+
+/* Resting state once pollAutomatedOrderPancakeStatus stops actively checking (Online Order ID
+   landed late/not at all, or the sync explicitly failed) - settleConfirmationWaitingNote()
+   (js/orderNow.js) swaps to this instead of hiding the note outright, so the screen visibly
+   settles on a clear final message rather than a wait indicator just silently vanishing. */
+.confirmation-waiting-note.settled {
+  background: var(--panel-bg);
+  border-color: var(--panel-border);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 13px;
+}
+
 /* Swipe-down-to-refresh indicator (js/pullToRefresh.js) - fixed pill that tracks the finger while
    pulling, pinned just under the top nav once visible. Hidden (translated off-screen) at rest. */
 .pull-refresh-indicator {
@@ -3245,6 +3294,78 @@ body:has(.wizard-page) {
 
 .view-cart-link:hover {
   text-decoration: underline;
+}
+
+/* Wraps View Cart + Help in the header (docs/order-now.html) - both share .view-cart-link's own
+   look, this just keeps them side by side instead of stacking. */
+.wizard-header-links {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+}
+
+.wizard-header-links .view-cart-link {
+  margin-top: 0;
+}
+
+/* "How to Order" help modal (#helpModal) - one row per step, icon + text, mirroring the app's
+   existing emoji-icon visual language elsewhere (category tiles, etc.) rather than real
+   screenshots, which aren't wired up yet. */
+.help-modal-panel {
+  max-width: 480px;
+}
+
+.help-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.help-step:last-of-type {
+  border-bottom: none;
+}
+
+.help-step-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(29, 79, 145, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.help-step-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-main);
+  margin-bottom: 2px;
+}
+
+.help-step-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.help-step-text ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.help-step-text li {
+  margin-bottom: 4px;
+}
+
+.help-section-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 20px 0 4px;
 }
 
 .cart-line-qty-controls {

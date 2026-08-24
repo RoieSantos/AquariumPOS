@@ -294,9 +294,12 @@
 
   // Standalone Stand build - same pricing engine as the Stand add-on above
   // (computeStandRetailPrice/getStandHeightInches/enforceStandTubularSafety), just driven by the
-  // stand's OWN Length/Width rather than an aquarium's footprint, for the Customize > Stand flow
-  // (no aquarium involved, so no glass thickness to feed the extra glass-based tubular rule -
-  // passing undefined for it below is deliberate, see enforceStandTubularSafety's glassMm check).
+  // stand's OWN Length/Width rather than an aquarium's footprint, for the Customize > Stand flow.
+  // options.linkedAquariumGlass is only ever set by the caller when this stand was built via
+  // "Use Its Footprint" from the Aquarium tab (see js/orderNow.js's prefillStandFromAquarium) -
+  // that's the one case where a standalone stand actually IS for a specific aquarium, so the same
+  // glass-based tubular rule the embedded Stand add-on above already enforces applies here too.
+  // Left undefined for every other stand (no aquarium involved, nothing to check).
   function calculateStandaloneStand(input) {
     var options = input || {};
     var unit = options.unit || 'Inches';
@@ -311,7 +314,7 @@
       return { ok: false, error: 'Please enter valid positive Length and Width.' };
     }
 
-    var tubularSafety = enforceStandTubularSafety(lengthInches, widthInches, undefined, options.tubular || '1x1');
+    var tubularSafety = enforceStandTubularSafety(lengthInches, widthInches, options.linkedAquariumGlass, options.tubular || '1x1');
     var tubular = tubularSafety.tubular;
     var standHeightInches = getStandHeightInches(layers, tubular);
     // Height is auto-computed from layers/tubular by default (matches the desktop app), but the
