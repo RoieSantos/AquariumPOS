@@ -306,13 +306,17 @@ async function refreshFromPancake() {
     }
     if (search) params.set('search', search);
 
-    // Hand the entered Quantity values off to the print page via localStorage (shared per-origin
-    // across tabs, unlike sessionStorage which isn't reliably inherited by window.open in every
-    // browser) - always overwritten fresh here so a later print never shows stale leftovers from
-    // an earlier session.
+    // Hand the entered Quantity values off to the print page via localStorage (persists across
+    // navigations, unlike an in-memory JS variable) - always overwritten fresh here so a later
+    // print never shows stale leftovers from an earlier session.
     localStorage.setItem('stockOnHandEnteredQuantities', JSON.stringify(Object.fromEntries(enteredQuantities)));
 
-    window.open('stock-on-hand-print.html?' + params.toString(), '_blank');
+    // Same-tab navigation, NOT window.open(..., '_blank') - the portal login session lives in
+    // sessionStorage (js/auth.js), which browsers don't reliably carry over into a new tab. A new
+    // tab with no inherited session immediately bounces to the login page, which looked like (and
+    // was reported as) "opening this logs me out" - it never actually touched the real session on
+    // the original tab, but same-tab navigation avoids the whole class of bug outright.
+    window.location.href = 'stock-on-hand-print.html?' + params.toString();
   });
 
   // Per "once I input the quantity on the stock on hand can you convert it to Purchase Order?
@@ -372,7 +376,9 @@ async function refreshFromPancake() {
     renderTable();
 
     window.alert(`Purchase Order ${data} created.`);
-    window.open(`purchase-order-print.html?po=${encodeURIComponent(data)}`, '_blank');
+    // Same-tab navigation - see the Print button's handler above for why (sessionStorage-based
+    // login session doesn't reliably survive a new tab).
+    window.location.href = `purchase-order-print.html?po=${encodeURIComponent(data)}`;
   });
 
   // Delegated on the tbody (not per-row, since renderTable rebuilds the row markup on every sort/

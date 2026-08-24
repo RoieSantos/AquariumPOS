@@ -16,14 +16,14 @@ function poRowsHtml(rows) {
   return rows
     .map((po) => `
       <tr>
-        <td><a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" target="_blank">${po.po_no}</a></td>
+        <td><a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}">${po.po_no}</a></td>
         <td>${po.vendor_name || po.vendor_code || ''}</td>
         <td>${formatDate(po.order_date)}</td>
         <td style="text-align:right;">${po.line_count ?? 0}</td>
         <td style="text-align:right;">${Number(po.total_quantity || 0).toLocaleString()}</td>
         <td>${po.created_by || ''}</td>
         <td>
-          <a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" target="_blank" class="btn btn-secondary btn-sm">Print</a>
+          <a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" class="btn btn-secondary btn-sm">Print</a>
           <button class="btn btn-secondary btn-sm" data-delete-po="${encodeURIComponent(po.po_no)}" type="button">Delete</button>
         </td>
       </tr>
