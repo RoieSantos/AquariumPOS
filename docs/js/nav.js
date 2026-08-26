@@ -91,6 +91,7 @@ function renderTopNav(activeLabel) {
   inventory.push({ href: 'inventory-summary.html', label: 'Inventory Summary' });
   inventory.push({ href: 'stock-on-hand.html', label: 'Stock On Hand' });
   inventory.push({ href: 'purchase-orders.html', label: 'Purchase Orders' });
+  inventory.push({ href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });
   if (isSuperUser) {
     inventory.push({ href: 'warehouse-setup.html', label: 'Warehouse Setup' });
     inventory.push({ href: 'item-setup.html', label: 'Item Setup' });

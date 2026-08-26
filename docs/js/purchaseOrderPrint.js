@@ -1,5 +1,9 @@
 // Printable single Purchase Order (?po=PO-0001), linked from Purchase Orders' list page
-// (js/purchaseOrders.js) and directly after creating one from Stock On Hand (js/stockOnHand.js).
+// (js/purchaseOrders.js), Posted Purchase Orders (js/postedPurchaseOrders.js), and directly after
+// creating one from Stock On Hand (js/stockOnHand.js). Tries the live PurchaseOrders table first,
+// then falls back to PostedPurchaseOrders (see supabase_purchase_order_receiving.sql) - once a PO
+// is posted it no longer exists in the live table, but this same URL (already handed out/printed
+// before posting) should keep working.
 let currentSession = null;
 
 function formatDate(value) {
@@ -42,7 +46,7 @@ function renderLines(lines) {
     return;
   }
 
-  const [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
+  let [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
     supabaseClient.rpc('staff_get_purchase_order', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -54,6 +58,27 @@ function renderLines(lines) {
       p_po_no: poNo
     })
   ]);
+
+  // Not found live (or nothing came back) - it may have already been posted, so fall back to the
+  // Posted Purchase Orders archive before giving up.
+  if (!headerError && (!headerRows || headerRows.length === 0)) {
+    const [postedHeader, postedLines] = await Promise.all([
+      supabaseClient.rpc('staff_get_posted_purchase_order', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_po_no: poNo
+      }),
+      supabaseClient.rpc('staff_list_posted_purchase_order_lines', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_po_no: poNo
+      })
+    ]);
+    headerRows = postedHeader.data;
+    headerError = postedHeader.error;
+    lineRows = postedLines.data;
+    lineError = postedLines.error;
+  }
 
   if (headerError || !headerRows || headerRows.length === 0) {
     document.getElementById('poSubtitle').textContent = headerError?.message || `Purchase Order ${poNo} not found.`;
