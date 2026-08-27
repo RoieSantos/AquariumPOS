@@ -24,6 +24,7 @@ let googleMapsApiKey = null; // fetched from PortalSettings (GOOGLE_MAPS_API_KEY
 let routeScheduleByDayOfWeek = {}; // 0-6 -> {route_name, warehouse_ids, warehouse_names, vendor_codes, vendor_names}, from loadAndRenderRouteSchedule
 let warehouseById = {}; // WarehouseID -> {name, address, latitude, longitude, geocode_status, geocoded_address}, from loadWarehouseLookup
 let vendorByCode = {}; // VendorCode -> {name, address, latitude, longitude, geocode_status, geocoded_address}, from loadVendorLookup
+let dateVendorsByDate = {}; // 'YYYY-MM-DD' -> [{vendor_code, vendor_name}], from loadMonthDateVendors - per-date (not weekly recurring) Vendor tags, super-user-assignable
 
 function toDateKey(date) {
   const y = date.getFullYear();
@@ -243,6 +244,34 @@ async function loadMonthStops(year, month) {
   });
 }
 
+// Per-date Vendor tags (super-user-assignable, docs/delivery-setup.html's weekly recurring
+// schedule is a separate thing) - see admin_assign_delivery_date_vendor/staff_list_delivery_date_
+// vendors (supabase_delivery_date_vendors.sql). Loaded the same month-range way as loadMonthStops.
+async function loadMonthDateVendors(year, month) {
+  const startDate = new Date(year, month, 1);
+  const endDate = new Date(year, month + 1, 1);
+
+  const { data, error } = await supabaseClient.rpc('staff_list_delivery_date_vendors', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_start_date: toDateKey(startDate),
+    p_end_date: toDateKey(endDate)
+  });
+
+  if (error) {
+    console.error('staff_list_delivery_date_vendors failed:', error);
+    dateVendorsByDate = {};
+    return;
+  }
+
+  dateVendorsByDate = {};
+  (data || []).forEach((row) => {
+    const key = row.delivery_date;
+    if (!dateVendorsByDate[key]) dateVendorsByDate[key] = [];
+    dateVendorsByDate[key].push(row);
+  });
+}
+
 function renderCalendarGrid(year, month) {
   const grid = document.getElementById('calendarGrid');
   const firstOfMonth = new Date(year, month, 1);
@@ -275,6 +304,9 @@ function renderCalendarGrid(year, month) {
     // "add a stop on the date showing how many stops fixed" - count of Warehouses + Vendors
     // tagged for this weekday, separate from the real-order "X stops" badge below.
     const fixedCount = fixedRoute ? (fixedRoute.warehouse_names?.length || 0) + (fixedRoute.vendor_names?.length || 0) : 0;
+    // Per-date Vendor assignments (super-user-only, ad hoc) - separate badge from the weekly
+    // recurring "N Fixed" one above, since these are one-off tags for THIS date specifically.
+    const dateVendors = dateVendorsByDate[key] || [];
 
     html += `
       <div class="${classes.join(' ')}" data-date="${key}">
@@ -282,6 +314,7 @@ function renderCalendarGrid(year, month) {
         ${isNoDelivery ? '<span class="badge badge-neutral">No Delivery</span>' : ''}
         ${fixedRoute && fixedRoute.route_name ? `<span class="badge badge-purple" title="Fixed route for this day">${fixedRoute.route_name}</span>` : ''}
         ${fixedCount > 0 ? `<span class="badge badge-glass" title="${fixedCount} fixed Warehouse/Vendor stop${fixedCount === 1 ? '' : 's'} for this day">${fixedCount} Fixed</span>` : ''}
+        ${dateVendors.length > 0 ? `<span class="badge badge-vendor" title="${dateVendors.map((v) => v.vendor_name).join(', ')}">${dateVendors.length} Vendor${dateVendors.length === 1 ? '' : 's'}</span>` : ''}
         ${stops.length > 0 ? `<span class="badge badge-primary">${stops.length} stop${stops.length === 1 ? '' : 's'}</span>` : ''}
       </div>
     `;
@@ -298,7 +331,7 @@ async function renderMonth(year, month) {
   document.getElementById('calendarMonthLabel').textContent = new Date(year, month, 1)
     .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-  await loadMonthStops(year, month);
+  await Promise.all([loadMonthStops(year, month), loadMonthDateVendors(year, month)]);
   renderCalendarGrid(year, month);
 }
 
@@ -346,7 +379,7 @@ async function changeDriverDay(deltaDays) {
   if (next.getFullYear() !== currentYear || next.getMonth() !== currentMonth) {
     currentYear = next.getFullYear();
     currentMonth = next.getMonth();
-    await loadMonthStops(currentYear, currentMonth);
+    await Promise.all([loadMonthStops(currentYear, currentMonth), loadMonthDateVendors(currentYear, currentMonth)]);
   }
 
   await renderDriverRouteView(toDateKey(next));
@@ -476,6 +509,80 @@ function fixedRouteRowHtml(dateKey) {
   `;
 }
 
+// Per-date Vendor tags (super-user-only assign/remove, everyone else sees them read-only) - the
+// chip list + assign dropdown shown at the top of the day-detail panel. See
+// admin_assign_delivery_date_vendor/admin_remove_delivery_date_vendor/dateVendorsByDate above.
+function renderDateVendorsSection(dateKey) {
+  const vendors = dateVendorsByDate[dateKey] || [];
+  const chipsEl = document.getElementById('dateVendorChips');
+
+  chipsEl.innerHTML = vendors.length === 0
+    ? '<span class="muted" style="font-size:12px;">No vendors assigned to this date.</span>'
+    : vendors.map((v) => `
+        <span class="serial-tag-chip">
+          Vendor: ${v.vendor_name}
+          ${currentSession.isSuperUser ? `<span class="serial-tag-chip-remove" data-remove-vendor-code="${v.vendor_code}" title="Remove">&times;</span>` : ''}
+        </span>
+      `).join('');
+
+  chipsEl.querySelectorAll('[data-remove-vendor-code]').forEach((el) => {
+    el.addEventListener('click', () => removeDateVendor(dateKey, el.dataset.removeVendorCode));
+  });
+
+  const controls = document.getElementById('assignVendorControls');
+  controls.classList.toggle('hidden', !currentSession.isSuperUser);
+  if (!currentSession.isSuperUser) return;
+
+  const assignedCodes = new Set(vendors.map((v) => v.vendor_code));
+  const availableVendors = Object.values(vendorByCode).filter((v) => !assignedCodes.has(v.vendor_code));
+  const select = document.getElementById('assignVendorSelect');
+  select.innerHTML = availableVendors.length === 0
+    ? '<option value="">No more vendors available</option>'
+    : availableVendors.map((v) => `<option value="${v.vendor_code}">${v.name}</option>`).join('');
+
+  const assignBtn = document.getElementById('assignVendorBtn');
+  assignBtn.disabled = availableVendors.length === 0 || isBlockedDeliveryDateKey(dateKey);
+  assignBtn.title = isBlockedDeliveryDateKey(dateKey) ? 'Mondays are not available for delivery.' : '';
+}
+
+async function assignDateVendor(dateKey) {
+  const vendorCode = document.getElementById('assignVendorSelect').value;
+  if (!vendorCode) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_assign_delivery_date_vendor', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_delivery_date: dateKey,
+    p_vendor_code: vendorCode
+  });
+
+  const result = data?.[0];
+  if (error || !result?.success) {
+    window.alert((error && error.message) || result?.message || 'Could not assign vendor.');
+    return;
+  }
+
+  await renderMonth(currentYear, currentMonth);
+  showDayDetail(dateKey);
+}
+
+async function removeDateVendor(dateKey, vendorCode) {
+  const { error } = await supabaseClient.rpc('admin_remove_delivery_date_vendor', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_delivery_date: dateKey,
+    p_vendor_code: vendorCode
+  });
+
+  if (error) {
+    console.error('admin_remove_delivery_date_vendor failed:', error);
+    return;
+  }
+
+  await renderMonth(currentYear, currentMonth);
+  showDayDetail(dateKey);
+}
+
 function showDayDetail(dateKey) {
   selectedDateKey = dateKey;
   document.querySelectorAll('.delivery-day-cell[data-date]').forEach((cell) => {
@@ -486,6 +593,8 @@ function showDayDetail(dateKey) {
   const panel = document.getElementById('dayDetailPanel');
   panel.classList.remove('hidden');
   panel.dataset.date = dateKey;
+
+  renderDateVendorsSection(dateKey);
 
   const label = new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
@@ -600,6 +709,30 @@ async function resolveFixedRouteVendorMarkers(dateKey) {
   return markers;
 }
 
+// Per-date (ad hoc, super-user-assigned) Vendor counterpart of resolveFixedRouteVendorMarkers
+// above - same lazy-geocode-and-cache approach, but reading dateVendorsByDate for this exact
+// date instead of the weekly recurring schedule. Plotted with a distinct marker color (see
+// renderDayMap below) so it reads as "one-off for this date" rather than "every week".
+async function resolveDateVendorMarkers(dateKey) {
+  const vendorCodes = (dateVendorsByDate[dateKey] || []).map((v) => v.vendor_code);
+  const markers = [];
+
+  for (const vendorCode of vendorCodes) {
+    const vendor = vendorByCode[vendorCode];
+    if (!vendor || !vendor.address) continue;
+
+    if (vendor.geocode_status !== 'ok' || vendor.geocoded_address !== vendor.address) {
+      await geocodeAndSaveVendor(vendorCode, vendor.address);
+    }
+
+    if (vendor.geocode_status === 'ok' && vendor.latitude && vendor.longitude) {
+      markers.push(vendor);
+    }
+  }
+
+  return markers;
+}
+
 // Dark map style matching the Driver Route View's "tech" motif (#driverRouteView in
 // css/styles.css) - applied only to the driverRouteMap element below, never to the admin
 // calendar's dayMap, which stays on the default light Google Maps look.
@@ -633,8 +766,9 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   const plottedStops = stops.filter((s) => s.geocode_status === 'ok' && s.latitude && s.longitude);
   const warehouseMarkers = await resolveFixedRouteWarehouseMarkers(dateKey);
   const vendorMarkers = await resolveFixedRouteVendorMarkers(dateKey);
+  const dateVendorMarkers = await resolveDateVendorMarkers(dateKey);
 
-  if (plottedStops.length === 0 && warehouseMarkers.length === 0 && vendorMarkers.length === 0) {
+  if (plottedStops.length === 0 && warehouseMarkers.length === 0 && vendorMarkers.length === 0 && dateVendorMarkers.length === 0) {
     mapEl.innerHTML = '<p class="muted" style="padding:12px;">No geocoded locations to show for this day yet.</p>';
     dayMapInstance = null;
     return;
@@ -666,6 +800,19 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
       map: dayMapInstance,
       title: `Vendor: ${v.name}`,
       icon: 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+    });
+    bounds.extend(position);
+  });
+
+  // Per-date (one-off, super-user-assigned) vendors get a distinct purple pin so they read as
+  // "just for this date" rather than the weekly-recurring orange ones above.
+  dateVendorMarkers.forEach((v) => {
+    const position = { lat: Number(v.latitude), lng: Number(v.longitude) };
+    new google.maps.Marker({
+      position,
+      map: dayMapInstance,
+      title: `Vendor (this date): ${v.name}`,
+      icon: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png'
     });
     bounds.extend(position);
   });
@@ -976,6 +1123,11 @@ function wireToolbarAndModal() {
     if (dateKey) window.open(`delivery-manifest.html?date=${encodeURIComponent(dateKey)}`, '_blank');
   });
 
+  document.getElementById('assignVendorBtn').addEventListener('click', () => {
+    const dateKey = document.getElementById('dayDetailPanel').dataset.date;
+    if (dateKey) assignDateVendor(dateKey);
+  });
+
   document.getElementById('assignOrderBtn').addEventListener('click', () => {
     const panel = document.getElementById('dayDetailPanel');
     const prefilledDate = !panel.classList.contains('hidden') ? panel.dataset.date : null;
@@ -1037,7 +1189,7 @@ function wireToolbarAndModal() {
     document.getElementById('driverRouteView').classList.remove('hidden');
     document.getElementById('calendarView').classList.add('hidden');
     wireDriverRouteNav();
-    await loadMonthStops(currentYear, currentMonth);
+    await Promise.all([loadMonthStops(currentYear, currentMonth), loadMonthDateVendors(currentYear, currentMonth)]);
     await renderDriverRouteView(toDateKey(today));
     return;
   }

@@ -647,6 +647,7 @@ tr.clickable-row:hover {
 .badge-purple { background: #ece5fa; color: #7b5bc9; }
 .badge-glass { background: #dcf1fb; color: #146b96; }
 .badge-custom { background: #ffe9d6; color: #a15c1e; }
+.badge-vendor { background: #f3e5f9; color: #7a2f9e; }
 
 .pancake-order-id-link {
   display: inline-block;
