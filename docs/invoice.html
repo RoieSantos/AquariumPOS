@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Invoice - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav" class="no-print"></div>
+
+  <div class="page">
+    <div class="toolbar no-print">
+      <a href="delivery.html">&larr; Back to Delivery</a>
+      <button class="btn btn-primary" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="unlockBox" class="hidden no-print">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="loadError" class="error-text hidden"></div>
+
+    <div id="receiptContent" class="hidden">
+      <div class="delivery-receipt">
+        <div class="delivery-receipt-section invoice-header">
+          <div class="delivery-receipt-header">
+            <img id="receiptLogo" class="delivery-receipt-logo hidden" alt="Company logo" />
+            <div class="delivery-receipt-company-info">
+              <div id="receiptCompanyName" class="delivery-receipt-company-name"></div>
+              <div id="receiptFacebook" class="delivery-receipt-line"></div>
+              <div id="receiptAddress" class="delivery-receipt-line"></div>
+              <div id="receiptContactNo" class="delivery-receipt-line"></div>
+              <div id="receiptDtiNo" class="delivery-receipt-line"></div>
+              <div id="receiptTinNo" class="delivery-receipt-line"></div>
+            </div>
+          </div>
+          <div class="invoice-order-info">
+            <div id="receiptOrderNo" class="delivery-receipt-line"></div>
+            <div id="receiptSalesStaff" class="delivery-receipt-line"></div>
+            <div id="receiptCreationDate" class="delivery-receipt-line"></div>
+            <div id="receiptLocation" class="delivery-receipt-line"></div>
+            <div id="receiptWarehouseAddress" class="delivery-receipt-line"></div>
+          </div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div id="receiptReceiverName" class="delivery-receipt-line"></div>
+          <div id="receiptReceiverAddress" class="delivery-receipt-line"></div>
+          <div id="receiptReceiverPhone" class="delivery-receipt-line"></div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div class="delivery-receipt-title">INVOICE</div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Products</th>
+                  <th>Qty</th>
+                  <th style="text-align:right;">Amount</th>
+                </tr>
+              </thead>
+              <tbody id="receiptLinesBody"></tbody>
+            </table>
+          </div>
+          <div id="receiptNote" class="delivery-receipt-note"></div>
+          <div id="receiptDeliveryFee" class="delivery-receipt-fee"></div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <p>Thank you for choosing RSPETSTOP. Please settle your balance according to the payment terms stated above. Delivery fees are customer-shouldered unless arranged in advance.</p>
+          <p>We appreciate your trust in us! Happy Fish Keeping!</p>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div class="invoice-summary">
+            <div class="invoice-summary-row"><span>Total</span><span id="summaryTotal"></span></div>
+            <div class="invoice-summary-row"><span>Discount</span><span id="summaryDiscount"></span></div>
+            <div class="invoice-summary-row"><span>Amount Paid</span><span id="summaryAmountPaid"></span></div>
+            <div class="invoice-summary-row invoice-summary-balance"><span>Balance</span><span id="summaryBalance"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/invoice.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

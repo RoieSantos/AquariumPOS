@@ -1918,28 +1918,35 @@ grant execute on function public.admin_sync_online_orders_from_pancake(text, tex
 -- the page of online orders"): after the headers-only pass above, this also does up to
 -- p_max_glass_detail_calls (default 30) one-off detail fetches - one extra Pancake call each -
 -- for whichever synced orders still have "GlassThicknessCheckedAt" is null, i.e. have never
--- been checked. The result (10mm/12mm/null) is cached PERMANENTLY on OnlineOrders and never
--- re-checked once set, same "compute once, cache forever" pattern the desktop app already uses
--- for OnlineOrderHeader's Estimated Delivery Date (see DetectPriorityGlassThickness in
--- OnlineOrdersForm.cs). The cap keeps a single run cheap and bounded even though the initial
--- backlog (thousands of pre-existing orders with no cached value yet) is far larger than that -
--- the remaining backlog just gets picked up a further ~30/minute at a time on subsequent runs
--- until it's fully caught up, then steady-state cost is ~0 since only newly-synced orders ever
--- need checking again. admin_list_online_orders (supabase_orders_sync_tables.sql) reads the
--- cached "GlassThickness" column directly, so the flag is already sitting there with zero added
--- cost by the time anyone opens the Online Orders list page.
+-- been checked. The result (10mm/12mm/null) is cached on OnlineOrders and NOT re-checked just
+-- because a run happens to pass by - same "compute once, cache" pattern the desktop app already
+-- uses for OnlineOrderHeader's Estimated Delivery Date (see DetectPriorityGlassThickness in
+-- OnlineOrdersForm.cs) - but per direct request (after finding a real order whose Pancake-side
+-- note_print was edited days after its one-time check, and Supabase never noticed), this is NOT
+-- permanent: the WHERE clause below also re-qualifies an order once Pancake's own
+-- "Last_Updated_At" moves past whichever check timestamp is older, so a later Pancake-side edit
+-- (to the note, or in principle the glass-relevant lines) gets picked back up automatically
+-- instead of being cached-stale forever. The cap keeps a single run cheap and bounded even
+-- though the initial backlog (thousands of pre-existing orders with no cached value yet) is far
+-- larger than that - the remaining backlog just gets picked up a further ~30/minute at a time on
+-- subsequent runs until it's fully caught up, then steady-state cost is ~0 since only newly-
+-- synced or newly-changed orders ever need (re-)checking. admin_list_online_orders (supabase_
+-- orders_sync_tables.sql) reads the cached "GlassThickness" column directly, so the flag is
+-- already sitting there with zero added cost by the time anyone opens the Online Orders list
+-- page.
 -- ORDER LINES BACKFILL (per discovering, while building the Top Selling Items report, that
 -- public."OnlineOrderLines" was completely empty - 2205 orders, 0 with lines - because no
 -- automatic path had ever populated it: this header-only cron never touched lines, the manual
 -- admin_sync_online_orders_from_pancake button has no UI trigger wired up, and admin_get_online_
--- order_detail_live is fetch-for-display-only, never persisted). Same "compute once, cache
--- forever" bounded-per-run pattern as the glass thickness backfill just below - up to
--- p_max_lines_detail_calls (default 30) one-off detail fetches for orders with zero rows in
--- OnlineOrderLines, ordered by Last_Updated_At so the most relevant/recent orders backfill first.
--- Deliberately NOT restricted to ReceivedAtShop = false (unlike the glass check) - Top Selling
--- Items intentionally includes walk-in/in-store orders too. See also the one-off
--- admin_backfill_online_order_lines RPC (supabase_backfill_online_order_lines.sql) for catching
--- up the existing backlog faster than ~30/minute from the SQL editor.
+-- order_detail_live is fetch-for-display-only, never persisted). Same bounded-per-run pattern as
+-- the glass thickness backfill just below (including the same later-edit re-check condition on
+-- NotePrint) - up to p_max_lines_detail_calls (default 30) one-off detail fetches for orders
+-- with zero rows in OnlineOrderLines (or a stale NotePrint check), ordered by Last_Updated_At so
+-- the most relevant/recent orders backfill first. Deliberately NOT restricted to ReceivedAtShop
+-- = false (unlike the glass check) - Top Selling Items intentionally includes walk-in/in-store
+-- orders too. See also the one-off admin_backfill_online_order_lines RPC
+-- (supabase_backfill_online_order_lines.sql) for catching up the existing backlog faster than
+-- ~30/minute from the SQL editor.
 drop function if exists public.cron_sync_online_orders_from_pancake(int, int);
 drop function if exists public.cron_sync_online_orders_from_pancake(int, int, int);
 drop function if exists public.cron_sync_online_orders_from_pancake(int, int, int, int);
@@ -2344,7 +2351,20 @@ begin
 
     for v_glass_order_id in
       select "OrderID" from public."OnlineOrders"
-      where ("GlassThicknessCheckedAt" is null or "NotePrintCheckedAt" is null)
+      where (
+        "GlassThicknessCheckedAt" is null
+        or "NotePrintCheckedAt" is null
+        -- Per direct request: "compute once, cache forever" was silently missing a NotePrint
+        -- edited in Pancake AFTER the one-time check already ran (confirmed on a real order -
+        -- checked once, cached null forever, even though Pancake's own note_print was edited
+        -- days later). Re-qualifies an already-checked order once Pancake's own Last_Updated_At
+        -- moves past whichever check timestamp is older, so a later edit gets picked back up on
+        -- this cron's very next pass instead of needing a manual reset
+        -- (supabase_reset_note_print_check_76357.sql) every time.
+        or ("Last_Updated_At" is not null and (
+          "Last_Updated_At" > "GlassThicknessCheckedAt" or "Last_Updated_At" > "NotePrintCheckedAt"
+        ))
+      )
         and coalesce("ReceivedAtShop", false) is not true
       order by "Last_Updated_At" desc nulls last
       limit v_max_glass_detail_calls
@@ -2410,6 +2430,8 @@ begin
       select o."OrderID" from public."OnlineOrders" o
       where not exists (select 1 from public."OnlineOrderLines" l where l."OrderID" = o."OrderID")
          or o."NotePrintCheckedAt" is null
+         -- Same re-check-on-later-edit fix as the glass thickness loop above - see its comment.
+         or (o."Last_Updated_At" is not null and o."Last_Updated_At" > o."NotePrintCheckedAt")
       order by o."Last_Updated_At" desc nulls last
       limit v_max_lines_detail_calls
     loop

@@ -646,6 +646,7 @@ tr.clickable-row:hover {
 .badge-primary { background: #e2ecfb; color: var(--primary); }
 .badge-purple { background: #ece5fa; color: #7b5bc9; }
 .badge-glass { background: #dcf1fb; color: #146b96; }
+.badge-custom { background: #ffe9d6; color: #a15c1e; }
 
 .pancake-order-id-link {
   display: inline-block;
@@ -2232,6 +2233,24 @@ body.hide-price-columns .price-col {
   color: var(--danger);
   font-weight: 600;
   margin-top: 10px;
+  /* Pancake's own note_print often embeds real line breaks between segments (e.g. "AM Delivery
+     before 12.\r\n\r\nInstallation of pipes and Leak Testing included on setup") - pre-line
+     preserves those as actual line breaks while still collapsing/wrapping normal runs of spaces,
+     so the note reliably renders on separate lines instead of happening to wrap only when the
+     text is coincidentally long enough to hit the container width. */
+  white-space: pre-line;
+}
+
+/* A single line item's own Note (e.g. a custom aquarium's dimensions/sealant spec), printed as
+   its own full-width row directly under that product row so it stays visually attached to the
+   line it describes - see the line_note column on admin_get_delivery_receipt
+   (supabase_delivery_receipt.sql). */
+.delivery-receipt-line-note {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-muted);
+  white-space: pre-line;
+  padding-top: 0;
 }
 
 .delivery-receipt-fee {
@@ -2263,6 +2282,53 @@ body.hide-price-columns .price-col {
 
 .delivery-receipt-signature-right {
   white-space: nowrap;
+}
+
+/* Invoice print layout (docs/invoice.html) - an itemized alternative to the plain Delivery
+   Receipt above, for the same stop. Reuses every .delivery-receipt-* class as-is (none of them
+   are actually delivery-specific); these are just the pieces the Delivery Receipt didn't need. */
+.invoice-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.invoice-order-info {
+  text-align: right;
+}
+
+.invoice-summary {
+  margin-left: auto;
+  width: 260px;
+}
+
+.invoice-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 3px 0;
+}
+
+.invoice-summary-row.invoice-summary-balance {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* Bundled print job (docs/delivery-receipt.html) - 2 Delivery Receipt copies + (when the order
+   has a Balance) 1 Invoice copy, all built and injected into #printArea by js/deliveryReceipt.js
+   and printed as one window.print() call. Each .print-page is one physical printed page -
+   page-break-after forces the next block onto a new page regardless of content height, which is
+   the only reliable cross-printer way to get an exact copy count (there's no web API to preset
+   the OS print dialog's own "copies" field). */
+.print-page + .print-page {
+  margin-top: 24px;
+}
+
+.print-page-label {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-muted);
 }
 
 /* "Production Order" print layout - a larger-font warehouse packing list (see
@@ -3997,6 +4063,20 @@ body:has(.wizard-page) {
   .table-wrap {
     border: none;
     overflow: visible;
+  }
+
+  .print-page {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .print-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .print-page + .print-page {
+    margin-top: 0;
   }
 
   /* Printed output should always be light regardless of the on-screen theme - a dark-mode print

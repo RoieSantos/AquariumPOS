@@ -229,6 +229,19 @@ drop function if exists public.admin_list_online_orders(text, text, text, text, 
 -- computed here from OnlineOrderLines/live Pancake, so this stays a plain instant read with no
 -- per-row lookup cost at page-load time.
 --
+-- has_custom_line: per "assign the order to a team member" for custom-built items (custom
+-- aquarium/stand/sump/etc, identified the same way as everywhere else in this codebase - the
+-- word "custom" in the line's item code/description, see supabase_online_order_production_
+-- assignment.sql's header comment). Unlike glass_thickness above, this is computed live via a
+-- correlated EXISTS against OnlineOrderLines rather than cached on the row - OnlineOrderLines is
+-- already a locally-synced table (no live Pancake call needed to check it), so there's no reason
+-- to pay for a separate cache/backfill job here.
+--
+-- assigned_production_member / assigned_production_member_name: the Production Member (see
+-- supabase_staff_users_production_member_field.sql) this order's custom build is assigned to, if
+-- any - set via admin_assign_online_order_production_member
+-- (supabase_online_order_production_assignment.sql).
+--
 -- p_period / p_walkin_only: per "once I click the dashboard I want to be able to open the
 -- corresponding data/page of entries filtered" - the dashboard's finance cards (Total Sales This
 -- Month, Today's Online Sales, Walk-In Sales This Month, Today's Walk-In Sales) link here with
@@ -275,6 +288,9 @@ returns table(
   confirmed_by text,
   note_print text,
   delivery_fee numeric,
+  has_custom_line boolean,
+  assigned_production_member text,
+  assigned_production_member_name text,
   total_count bigint
 )
 language plpgsql
@@ -305,9 +321,16 @@ begin
            o."MoneyToCollect", o."AmountPaid", o."Discount", o."Balance", o."ForDelivery", o."ShippingAddress"::text,
            o."EstimatedDeliveryDate", o."Last_Updated_At", o."SyncedAtUtc", o."GlassThickness"::text,
            o."CreatedBy"::text, o."ConfirmedBy"::text, o."NotePrint"::text, o."DeliveryFee",
+           exists (
+             select 1 from public."OnlineOrderLines" ol
+             where ol."OrderID" = o."OrderID"
+               and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
+           ),
+           o."AssignedProductionMember"::text, spm."DisplayName"::text,
            count(*) over()
     from public."OnlineOrders" o
     left join public."Warehouses" w on w."ID" = o."LocationID"
+    left join public."StaffUsers" spm on spm."Username" = o."AssignedProductionMember"
     where (case when p_walkin_only then o."ReceivedAtShop" is true else o."ReceivedAtShop" is not true end)
       and (p_period is distinct from 'month' or (o."Date" >= v_month_start and o."Date" < v_month_end))
       and (

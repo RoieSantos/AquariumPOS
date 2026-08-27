@@ -70,6 +70,23 @@ let lastGroupedRows = [];
 // pages" reason) as transferOrders.js/serialTracker.js's own resolveIsProductionWarehouse.
 let currentSessionIsProductionWarehouse = true;
 
+// Roster for the "Assigned To" dropdown (Production Member-flagged staff only, see
+// supabase_staff_users_production_member_field.sql) - fetched once at init() via
+// staff_list_production_members, since it rarely changes and every row's dropdown needs it.
+let productionMembers = [];
+
+async function loadProductionMembers() {
+  const { data, error } = await supabaseClient.rpc('staff_list_production_members', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (error || !data) {
+    console.error('staff_list_production_members failed:', error);
+    return;
+  }
+  productionMembers = data;
+}
+
 // Per direct request: "To Ship" is temporarily taken out of service on the portal (still being
 // shaken out) - staff are told to finish shipping the order through the local POS/desktop app
 // instead. Flip this back to true to restore the real flow (serial check, notify prompt, status
@@ -142,6 +159,28 @@ function glassBadgeHtml(order) {
   return `<span class="badge badge-glass" title="This order has a ${order.glass_thickness} glass custom aquarium line - it may need an attachment (see Online Order Lines).">${order.glass_thickness} glass</span>`;
 }
 
+// Flags an order with a "custom" line (custom aquarium/stand/sump/etc - see
+// admin_list_online_orders' has_custom_line comment in supabase_orders_sync_tables.sql) so it's
+// obvious at a glance which orders need production work assigned via assignSelectHtml below.
+function customBadgeHtml(order) {
+  if (!order.has_custom_line) return '';
+  return `<span class="badge badge-custom" title="This order has a custom-built line - it may need a Production Member assigned.">Custom</span>`;
+}
+
+// "Assigned To" dropdown (Production Member roster only, see loadProductionMembers) - change is
+// handled by the delegated listener wired to .assign-production-select in init() below.
+function assignSelectHtml(order) {
+  const options = productionMembers
+    .map((m) => `<option value="${escapeHtml(m.username)}" ${order.assigned_production_member === m.username ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
+    .join('');
+  return `
+    <select class="assign-production-select" data-order-id="${escapeHtml(order.order_id)}" style="max-width:150px;">
+      <option value="" ${!order.assigned_production_member ? 'selected' : ''}>&mdash; Unassigned &mdash;</option>
+      ${options}
+    </select>
+  `;
+}
+
 function escapeHtml(value) {
   return (value ?? '').toString()
     .replace(/&/g, '&amp;')
@@ -186,7 +225,8 @@ function orderRowsHtml(orders) {
         <td>${statusCellHtml(o)}</td>
         <td>${o.confirmed_by || ''}</td>
         <td>${o.created_by || ''}</td>
-        <td>${glassBadgeHtml(o)}</td>
+        <td>${assignSelectHtml(o)}</td>
+        <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)}</td>
         <td>${o.note_print || ''}</td>
         ${hidePriceColumns ? '' : `<td>${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.warehouse_name || o.location_id || ''}</td>
@@ -213,7 +253,7 @@ function orderCardHtml(o) {
     <div class="order-card" data-order-id="${o.order_id}">
       <div class="order-card-top">
         <span class="order-card-id">#${o.order_id || ''}</span>
-        ${glassBadgeHtml(o)}
+        ${glassBadgeHtml(o)} ${customBadgeHtml(o)}
       </div>
       <div class="order-card-customer">${o.customer_name || 'No name on order'}</div>
       <div class="order-card-grid">
@@ -222,6 +262,7 @@ function orderCardHtml(o) {
         <span class="order-card-label">Delivery</span><span><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span> ${o.estimated_delivery_date ? '&middot; ' + o.estimated_delivery_date : ''}</span>
         <span class="order-card-label">Confirmed By</span><span>${o.confirmed_by || '-'}</span>
         ${o.note_print ? `<span class="order-card-label">Print Note</span><span>${o.note_print}</span>` : ''}
+        <span class="order-card-label">Assigned To</span><span>${assignSelectHtml(o)}</span>
       </div>
       <div class="order-card-actions">
         <a class="btn btn-secondary btn-sm" href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View Order Lines</a>
@@ -618,6 +659,32 @@ function handleOrderTableClick(event) {
   handleToShipClick(row.dataset.orderId, toShipBtn);
 }
 
+// Delegated on #setupContent (see init() below) so this fires for the assign dropdown in both the
+// flat table (orderRowsHtml) and the grouped card view (orderCardHtml) - same delegation
+// convention as handleOrderTableClick above, just for 'change' instead of 'click'.
+async function handleAssignProductionMemberChange(event) {
+  const select = event.target.closest('.assign-production-select');
+  if (!select) return;
+
+  const orderId = select.dataset.orderId;
+  const username = select.value || null;
+
+  select.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_assign_online_order_production_member', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId,
+    p_username: username
+  });
+  select.disabled = false;
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result || !result.success) {
+    alert('Could not update the assignment: ' + (error?.message || result?.message || 'unknown error'));
+    await refreshCurrentOrders(); // reverts the dropdown back to its last saved value
+  }
+}
+
 // Mirrors OnlineOrdersForm.cs's EnsureOrderSerialTrackingAsync gate: at a production warehouse, a
 // serial-tracked line (e.g. a custom aquarium) needs a physical unit's serial picked and tied to
 // this order before it can ship - see supabase_online_order_to_ship_serials.sql. Only checked at
@@ -901,7 +968,7 @@ async function loadOrders(search, status) {
     if (grouped) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
-      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="15" class="error-text">${error.message}</td></tr>`;
+      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="16" class="error-text">${error.message}</td></tr>`;
     }
     return;
   }
@@ -928,7 +995,7 @@ async function loadOrders(search, status) {
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="15" class="muted">No online orders found.</td></tr>'
+    ? '<tr><td colspan="16" class="muted">No online orders found.</td></tr>'
     : orderRowsHtml(rows);
 
   renderPaginationBar(
@@ -1006,7 +1073,7 @@ async function exportOrdersToExcel() {
       'Order ID', 'Date', 'Time', 'Status', 'Customer', 'Location ID', 'Warehouse',
       'Money To Collect', 'Amount Paid', 'Discount', 'Balance', 'For Delivery',
       'Shipping Address', 'Est. Delivery Date', 'Last Updated', 'Synced At', 'Glass Thickness',
-      'Created By', 'Confirmed By', 'Print Note', 'Delivery Fee'
+      'Created By', 'Confirmed By', 'Print Note', 'Delivery Fee', 'Has Custom Line', 'Assigned Production Member'
     ];
     const csvLines = [headers.map(escapeCsvValue).join(',')];
     allRows.forEach((o) => {
@@ -1031,7 +1098,9 @@ async function exportOrdersToExcel() {
         o.created_by,
         o.confirmed_by,
         o.note_print,
-        o.delivery_fee
+        o.delivery_fee,
+        o.has_custom_line ? 'Yes' : 'No',
+        o.assigned_production_member_name || o.assigned_production_member
       ].map(escapeCsvValue).join(','));
     });
 
@@ -1136,6 +1205,7 @@ function wireOrderFilters() {
   // (see the isOnlineOrderStaff branch below) - handleOrderTableClick already finds its target
   // via .closest(), so it doesn't care which table fired the event.
   document.getElementById('setupContent').addEventListener('click', handleOrderTableClick);
+  document.getElementById('setupContent').addEventListener('change', handleAssignProductionMemberChange);
   document.getElementById('toShipPhotoInput').addEventListener('change', handleToShipPhotoSelected);
   document.getElementById('toShipPhotoInput').addEventListener('cancel', handleToShipPhotoCancelled);
   document.getElementById('sendPhotoInput').addEventListener('change', handleSendPhotoSelected);
@@ -1147,6 +1217,7 @@ function wireOrderFilters() {
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
   if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);
   currentSessionIsProductionWarehouse = await resolveIsProductionWarehouse(session);
+  await loadProductionMembers();
 
   // Supports deep-linking from the Dashboard's status cards, e.g. online-orders.html?status=Shipped,
   // from the Dashboard's finance cards, e.g. ?period=month|today|prevmonth, ?scope=walkin,

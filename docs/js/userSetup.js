@@ -107,6 +107,7 @@ function openNewUserModal() {
   document.getElementById('newUserSerialAdmin').checked = false;
   document.getElementById('newUserDeliveryTeam').checked = false;
   document.getElementById('newUserOnlineOrderStaff').checked = false;
+  document.getElementById('newUserProductionMember').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
   document.getElementById('newUserError').classList.add('hidden');
@@ -126,6 +127,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserSerialAdmin').checked = !!user.is_serial_admin;
   document.getElementById('editUserDeliveryTeam').checked = !!user.is_delivery_team;
   document.getElementById('editUserOnlineOrderStaff').checked = !!user.is_online_order_staff;
+  document.getElementById('editUserProductionMember').checked = !!user.is_production_member;
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
@@ -146,6 +148,7 @@ async function saveEditUser() {
   const isSerialAdmin = document.getElementById('editUserSerialAdmin').checked;
   const isDeliveryTeam = document.getElementById('editUserDeliveryTeam').checked;
   const isOnlineOrderStaff = document.getElementById('editUserOnlineOrderStaff').checked;
+  const isProductionMember = document.getElementById('editUserProductionMember').checked;
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
@@ -174,7 +177,8 @@ async function saveEditUser() {
     p_must_change_password: mustChangePassword,
     p_is_serial_admin: isSerialAdmin,
     p_is_delivery_team: isDeliveryTeam,
-    p_is_online_order_staff: isOnlineOrderStaff
+    p_is_online_order_staff: isOnlineOrderStaff,
+    p_is_production_member: isProductionMember
   });
 
   saveBtn.disabled = false;
@@ -204,6 +208,7 @@ async function saveNewUser() {
   const isSerialAdmin = document.getElementById('newUserSerialAdmin').checked;
   const isDeliveryTeam = document.getElementById('newUserDeliveryTeam').checked;
   const isOnlineOrderStaff = document.getElementById('newUserOnlineOrderStaff').checked;
+  const isProductionMember = document.getElementById('newUserProductionMember').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
 
@@ -235,7 +240,8 @@ async function saveNewUser() {
     p_must_change_password: mustChangePassword,
     p_is_serial_admin: isSerialAdmin,
     p_is_delivery_team: isDeliveryTeam,
-    p_is_online_order_staff: isOnlineOrderStaff
+    p_is_online_order_staff: isOnlineOrderStaff,
+    p_is_production_member: isProductionMember
   });
 
   saveBtn.disabled = false;
