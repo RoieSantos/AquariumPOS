@@ -763,6 +763,14 @@ async function getQuote() {
   const errorEl = document.getElementById('quoteError');
   const resultEl = document.getElementById('quoteResult');
   const getQuoteBtn = document.getElementById('getQuoteBtn');
+
+  // Per "make sure that we change every field the price will be auto populated" - nearly every
+  // pricing-relevant field now triggers its own getQuote() call (see wireForm below), so a quick
+  // run of edits (e.g. picking a From warehouse then immediately blurring To) can otherwise fire
+  // overlapping calls. Skip a new call while one is already in flight rather than letting them
+  // race - the button is re-enabled in the finally block below once the in-flight one finishes.
+  if (getQuoteBtn.disabled) return;
+
   errorEl.classList.add('hidden');
   resultEl.classList.add('hidden');
 
@@ -826,11 +834,17 @@ function wireForm() {
     'lalamoveRecipientNameRow', 'lalamoveRecipientPhoneRow'
   ];
 
-  deliveryMethodSelect.addEventListener('change', (e) => {
+  // Per "make sure that we change every field the price will be auto populated" - switching
+  // between in-house/Lalamove pricing is itself a request for a new price, same as picking a
+  // different Lalamove vehicle type below. loadLalamoveVehicleTypes() sets the vehicle <select>'s
+  // default (MOTORCYCLE) BEFORE getQuote() runs here, since a programmatic value assignment
+  // doesn't dispatch its own 'change' event to trigger a second, redundant quote.
+  deliveryMethodSelect.addEventListener('change', async (e) => {
     const isLalamove = e.target.value === 'lalamove';
     document.getElementById('lalamoveSandboxNote').classList.toggle('hidden', !isLalamove);
     lalamoveOnlyRowIds.forEach((id) => document.getElementById(id).classList.toggle('hidden', !isLalamove));
-    if (isLalamove) loadLalamoveVehicleTypes();
+    if (isLalamove) await loadLalamoveVehicleTypes();
+    getQuote();
   });
 
   document.getElementById('bookDeliveryBtn').addEventListener('click', bookLalamoveDelivery);
@@ -852,11 +866,18 @@ function wireForm() {
       const address = fromOtherInput.value.trim();
       const cached = resolvedFromOtherLocation && resolvedFromOtherLocation.address === address ? resolvedFromOtherLocation : null;
       await setFromMarker(cached ? { ...cached, label: address } : null);
+      // Only a cached/already-resolved "Other" address is quotable immediately here - an empty
+      // or not-yet-geocoded one waits for the blur/Autocomplete-pick handlers below, same as
+      // switching TO "Other address..." with nothing typed yet shouldn't error immediately.
+      if (cached) getQuote();
       return;
     }
 
     try {
       await setFromMarker(await resolveFromLocation());
+      // Per "make sure that we change every field the price will be auto populated" - picking a
+      // saved warehouse is itself a complete, immediately-quotable From location.
+      getQuote();
     } catch (err) {
       console.error('Could not resolve From location for map preview:', err);
       await setFromMarker(null);
@@ -868,9 +889,23 @@ function wireForm() {
   fromOtherInput.addEventListener('input', () => { resolvedFromOtherLocation = null; });
   toAddressInput.addEventListener('input', () => { resolvedToLocation = null; });
 
+  // Blur (not 'input') re-quotes once the user finishes typing a manual address without picking
+  // an Autocomplete suggestion - picking a suggestion already re-quotes immediately via the
+  // wirePlacesAutocomplete callbacks below, so this only covers the "typed it and tabbed/clicked
+  // away" path. Per "make sure that we change every field the price will be auto populated".
+  fromOtherInput.addEventListener('blur', () => {
+    if (fromSelect.value === '__other__' && fromOtherInput.value.trim()) getQuote();
+  });
+  toAddressInput.addEventListener('blur', () => {
+    if (toAddressInput.value.trim()) getQuote();
+  });
+
   wirePlacesAutocomplete(fromOtherInput, (loc) => {
     resolvedFromOtherLocation = loc;
-    if (fromSelect.value === '__other__') setFromMarker({ ...loc, label: loc.address });
+    if (fromSelect.value === '__other__') {
+      setFromMarker({ ...loc, label: loc.address });
+      getQuote();
+    }
   });
 
   wirePlacesAutocomplete(toAddressInput, (loc) => {
