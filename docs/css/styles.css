@@ -1907,6 +1907,13 @@ body.hide-price-columns .price-col {
   box-shadow: 0 8px 20px rgba(3, 8, 16, 0.3);
 }
 
+/* Vendor pickup/drop stops (getDayVendorCodes/vendorStopCardsHtml, js/delivery.js) - same card
+   shape as an order stop, but a distinct purple left-accent (matching .badge-vendor) so a driver
+   can tell "pickup from a vendor" apart from "deliver to a customer" at a glance. */
+#driverRouteView .driver-stop-card-vendor {
+  border-left-color: #a78bfa;
+}
+
 #driverRouteView .driver-stop-order-id {
   background: rgba(34, 211, 238, 0.12);
   border: 1px solid rgba(34, 211, 238, 0.35);

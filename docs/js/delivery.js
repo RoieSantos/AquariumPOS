@@ -348,6 +348,45 @@ async function renderMonth(year, month) {
   renderCalendarGrid(year, month);
 }
 
+// Every Vendor tagged to this date - both the weekly recurring Delivery Setup schedule and the
+// per-date ad hoc assignments (supabase_delivery_date_vendors.sql) - deduped by code so a vendor
+// tagged both ways only shows once. Feeds vendorStopCardsHtml below (Driver Route View) and
+// resolveFixedRouteVendorMarkers/resolveDateVendorMarkers already cover the map side separately.
+function getDayVendorCodes(dateKey) {
+  const dow = new Date(`${dateKey}T00:00:00`).getDay();
+  const weeklyCodes = routeScheduleByDayOfWeek[dow]?.vendor_codes || [];
+  const dateCodes = (dateVendorsByDate[dateKey] || []).map((v) => v.vendor_code);
+  return Array.from(new Set([...weeklyCodes, ...dateCodes]));
+}
+
+// Per "can you show the details of the vendor on the stops for mobile version too" - the Driver
+// Route View (Delivery Team's single-day mobile screen) only ever rendered order stops as cards;
+// a vendor pickup/drop tagged to that date (weekly recurring or per-date) never showed there at
+// all, even though it already plots on the driver's map (renderDayMap). Mirrors the order card's
+// shape/classes (driver-stop-card/-header/-address/-notes) so it reads as the same kind of stop,
+// with a distinct left-accent color + "Vendor" badge (see .driver-stop-card-vendor, css/
+// styles.css) so a driver can tell a pickup apart from a delivery at a glance.
+function vendorStopCardsHtml(dateKey) {
+  const codes = getDayVendorCodes(dateKey);
+  if (codes.length === 0) return '';
+
+  return codes.map((code) => {
+    const v = vendorByCode[code];
+    const name = v?.name || code;
+    const contact = [v?.contact_person, v?.phone].filter(Boolean).join(' - ');
+    return `
+      <div class="driver-stop-card driver-stop-card-vendor">
+        <div class="driver-stop-card-header">
+          <span class="driver-stop-customer" style="margin-bottom:0;">${name}</span>
+          <span class="badge badge-vendor">Vendor</span>
+        </div>
+        ${v?.address ? `<div class="driver-stop-address">&#128205; ${v.address}</div>` : ''}
+        ${contact ? `<div class="driver-stop-notes muted">&#128222; ${contact}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
 // Driver Route View (Delivery Team only) - a single day's stops as cards, plus its route map
 // (renderDayMap reused with the driverRouteMap element id). stopsByDate must already cover this
 // date's month - see changeDriverDay/init below, which call loadMonthStops before this.
@@ -359,13 +398,14 @@ async function renderDriverRouteView(dateKey) {
 
   const stops = stopsByDate[dateKey] || [];
   const cardsEl = document.getElementById('driverStopCards');
+  const vendorCardsHtml = isBlockedDeliveryDateKey(dateKey) ? '' : vendorStopCardsHtml(dateKey);
 
   if (isBlockedDeliveryDateKey(dateKey)) {
     cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No deliveries today - the store truck does not run on Mondays.</p>';
-  } else if (stops.length === 0) {
+  } else if (stops.length === 0 && !vendorCardsHtml) {
     cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No stops scheduled for this day.</p>';
   } else {
-    cardsEl.innerHTML = stops.map((s) => {
+    cardsEl.innerHTML = vendorCardsHtml + stops.map((s) => {
       const displayAddress = s.shipping_address || s.geocoded_address || '';
       return `
         <div class="driver-stop-card">
