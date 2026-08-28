@@ -649,6 +649,26 @@ tr.clickable-row:hover {
 .badge-custom { background: #ffe9d6; color: #a15c1e; }
 .badge-vendor { background: #f3e5f9; color: #7a2f9e; }
 
+/* Per-date Vendor assignments (docs/js/delivery.js's renderDateVendorsSection) - a small vertical
+   list of vendor chip + muted detail line (address/contact person/phone, see vendorDetailText),
+   replacing the flat .serial-tag-chips row now that each entry carries a second line of text. */
+.delivery-vendor-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.delivery-vendor-detail-row .serial-tag-chip {
+  width: fit-content;
+}
+
+.delivery-vendor-detail-text {
+  font-size: 12px;
+  margin-top: 2px;
+  margin-left: 4px;
+}
+
 .pancake-order-id-link {
   display: inline-block;
   margin-top: 4px;

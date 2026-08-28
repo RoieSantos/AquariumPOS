@@ -23,7 +23,7 @@ let googleMapsReadyPromise = null;
 let googleMapsApiKey = null; // fetched from PortalSettings (GOOGLE_MAPS_API_KEY) during init()
 let routeScheduleByDayOfWeek = {}; // 0-6 -> {route_name, warehouse_ids, warehouse_names, vendor_codes, vendor_names}, from loadAndRenderRouteSchedule
 let warehouseById = {}; // WarehouseID -> {name, address, latitude, longitude, geocode_status, geocoded_address}, from loadWarehouseLookup
-let vendorByCode = {}; // VendorCode -> {name, address, latitude, longitude, geocode_status, geocoded_address}, from loadVendorLookup
+let vendorByCode = {}; // VendorCode -> {name, address, contact_person, phone, email, latitude, longitude, geocode_status, geocoded_address}, from loadVendorLookup
 let dateVendorsByDate = {}; // 'YYYY-MM-DD' -> [{vendor_code, vendor_name}], from loadMonthDateVendors - per-date (not weekly recurring) Vendor tags, super-user-assignable
 
 function toDateKey(date) {
@@ -157,6 +157,19 @@ async function loadVendorLookup() {
 
   vendorByCode = {};
   (data || []).forEach((v) => { vendorByCode[v.vendor_code] = v; });
+}
+
+// Per "can you include the details too on the delivery view? so the user can see the address /
+// contacts and other details" - a vendor stop's Address/Contact Person/Phone (staff_search_
+// vendors, supabase_vendor_address_geocode.sql), rendered as a single "Address · Contact ·
+// Phone" line wherever a vendor tag is shown (fixedRouteRowHtml, renderDateVendorsSection, map
+// marker titles below). Returns '' when the vendor lookup hasn't resolved or has none of these
+// fields set, so callers can skip an empty detail line entirely.
+function vendorDetailText(vendorCode) {
+  const v = vendorByCode[vendorCode];
+  if (!v) return '';
+  const contact = [v.contact_person, v.phone].filter(Boolean).join(' - ');
+  return [v.address, contact].filter(Boolean).join(' · ');
 }
 
 async function geocodeAndSaveVendor(vendorCode, address) {
@@ -493,7 +506,13 @@ function fixedRouteRowHtml(dateKey) {
 
   const tags = [
     ...(route.warehouse_names || []).map((n) => `Warehouse: ${n}`),
-    ...(route.vendor_names || []).map((n) => `Vendor: ${n}`)
+    // vendor_codes/vendor_names are parallel arrays (same order - both sorted by Name server-side,
+    // see staff_get_delivery_route_schedule) so index-zipping them is safe here.
+    ...(route.vendor_codes || []).map((code, i) => {
+      const name = (route.vendor_names || [])[i] || code;
+      const details = vendorDetailText(code);
+      return `Vendor: ${name}${details ? ` (${details})` : ''}`;
+    })
   ];
 
   return `
@@ -516,14 +535,24 @@ function renderDateVendorsSection(dateKey) {
   const vendors = dateVendorsByDate[dateKey] || [];
   const chipsEl = document.getElementById('dateVendorChips');
 
+  // Per "can you include the details too on the delivery view? so the user can see the address /
+  // contacts and other details" - each assigned vendor now renders as a chip (name + remove)
+  // plus a muted detail line underneath (address/contact person/phone, via vendorDetailText)
+  // instead of a bare name-only pill.
   chipsEl.innerHTML = vendors.length === 0
     ? '<span class="muted" style="font-size:12px;">No vendors assigned to this date.</span>'
-    : vendors.map((v) => `
-        <span class="serial-tag-chip">
-          Vendor: ${v.vendor_name}
-          ${currentSession.isSuperUser ? `<span class="serial-tag-chip-remove" data-remove-vendor-code="${v.vendor_code}" title="Remove">&times;</span>` : ''}
-        </span>
-      `).join('');
+    : vendors.map((v) => {
+        const details = vendorDetailText(v.vendor_code);
+        return `
+          <div class="delivery-vendor-detail-row">
+            <span class="serial-tag-chip">
+              Vendor: ${v.vendor_name}
+              ${currentSession.isSuperUser ? `<span class="serial-tag-chip-remove" data-remove-vendor-code="${v.vendor_code}" title="Remove">&times;</span>` : ''}
+            </span>
+            ${details ? `<div class="muted delivery-vendor-detail-text">${details}</div>` : ''}
+          </div>
+        `;
+      }).join('');
 
   chipsEl.querySelectorAll('[data-remove-vendor-code]').forEach((el) => {
     el.addEventListener('click', () => removeDateVendor(dateKey, el.dataset.removeVendorCode));
@@ -795,10 +824,11 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
 
   vendorMarkers.forEach((v) => {
     const position = { lat: Number(v.latitude), lng: Number(v.longitude) };
+    const details = vendorDetailText(v.vendor_code);
     new google.maps.Marker({
       position,
       map: dayMapInstance,
-      title: `Vendor: ${v.name}`,
+      title: `Vendor: ${v.name}${details ? ` - ${details}` : ''}`,
       icon: 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
     });
     bounds.extend(position);
@@ -808,10 +838,11 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   // "just for this date" rather than the weekly-recurring orange ones above.
   dateVendorMarkers.forEach((v) => {
     const position = { lat: Number(v.latitude), lng: Number(v.longitude) };
+    const details = vendorDetailText(v.vendor_code);
     new google.maps.Marker({
       position,
       map: dayMapInstance,
-      title: `Vendor (this date): ${v.name}`,
+      title: `Vendor (this date): ${v.name}${details ? ` - ${details}` : ''}`,
       icon: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png'
     });
     bounds.extend(position);

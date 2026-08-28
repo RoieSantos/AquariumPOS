@@ -44,11 +44,20 @@ $$;
 
 drop function if exists public.staff_search_vendors(text, text, text, int);
 
+-- Per "can you include the details too on the delivery view? so the user can see the address /
+-- contacts and other details" - widened to also return ContactPerson/Phone/Email (already on
+-- Vendors, supabase_vendor_tables.sql) so the Delivery calendar's vendor stops (both the weekly
+-- recurring Delivery Setup schedule and per-date ad hoc assignments, supabase_delivery_date_
+-- vendors.sql) can show more than just a name - see renderDateVendorsSection/fixedRouteRowHtml
+-- (docs/js/delivery.js), which already cache this whole row per vendor in vendorByCode.
 create or replace function public.staff_search_vendors(p_admin_username text, p_admin_password text, p_search text default null, p_limit int default 50)
 returns table(
   vendor_code text,
   name text,
   address text,
+  contact_person text,
+  phone text,
+  email text,
   latitude numeric,
   longitude numeric,
   geocode_status text,
@@ -66,7 +75,8 @@ begin
   end if;
 
   return query
-    select "VendorCode"::text, "Name"::text, "Address"::text, "Latitude", "Longitude", "GeocodeStatus"::text, "GeocodedAddress"::text
+    select "VendorCode"::text, "Name"::text, "Address"::text, "ContactPerson"::text, "Phone"::text, "Email"::text,
+           "Latitude", "Longitude", "GeocodeStatus"::text, "GeocodedAddress"::text
     from public."Vendors"
     where "IsActive" and (p_search is null or trim(p_search) = '' or "Name" ilike '%' || p_search || '%')
     order by "Name"
