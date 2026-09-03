@@ -137,7 +137,7 @@ function receiveLineRemaining(l) {
 // supabase_purchase_order_edit_lines.sql, which enforce the same gate server-side (this client
 // check is just what shows the controls, not the actual security boundary).
 function receiveLinesColspan() {
-  return currentSession?.isSuperUser ? 7 : 6;
+  return currentSession?.isSuperUser ? 8 : 7;
 }
 
 function renderReceiveLines(lines) {
@@ -168,6 +168,7 @@ function renderReceiveLines(lines) {
         <tr data-entry-no="${l.entry_no}">
           <td>${l.item_code || ''}</td>
           <td>${l.item_name || ''}</td>
+          <td>${escapeHtml(l.description || '')}</td>
           <td>${l.warehouse_name || ''}</td>
           <td style="text-align:right;">${Number(l.quantity || 0).toLocaleString()}</td>
           <td style="text-align:right;">${Number(l.qty_received || 0).toLocaleString()}</td>
@@ -363,14 +364,24 @@ async function postPurchaseOrder() {
 // (currentReceiveVendorCode, set in openReceiveModal) rather than a picker of its own.
 let poAddItemSelectedCode = '';
 let poAddItemSelectedName = '';
+let poAddVariantSelectedCode = '';
+let poAddVariantSelectedName = '';
 
 function resetPoAddItemFields() {
   poAddItemSelectedCode = '';
   poAddItemSelectedName = '';
+  poAddVariantSelectedCode = '';
+  poAddVariantSelectedName = '';
   const input = document.getElementById('poAddItemInput');
   if (input) input.value = '';
   const dropdown = document.getElementById('poAddItemDropdown');
   if (dropdown) { dropdown.classList.add('hidden'); dropdown.innerHTML = ''; }
+  const variantInput = document.getElementById('poAddVariantInput');
+  if (variantInput) variantInput.value = '';
+  const variantDropdown = document.getElementById('poAddVariantDropdown');
+  if (variantDropdown) { variantDropdown.classList.add('hidden'); variantDropdown.innerHTML = ''; }
+  const descriptionInput = document.getElementById('poAddDescriptionInput');
+  if (descriptionInput) descriptionInput.value = '';
   const warehouseSelect = document.getElementById('poAddItemWarehouse');
   if (warehouseSelect) warehouseSelect.innerHTML = newPoWarehouseOptionsHtml;
   const qtyInput = document.getElementById('poAddItemQty');
@@ -424,6 +435,68 @@ async function searchItemsForAddToPo(searchText) {
       document.getElementById('poAddItemInput').value = poAddItemSelectedCode;
       dropdown.classList.add('hidden');
       dropdown.innerHTML = '';
+
+      // A different item invalidates any variant already picked for the previous item.
+      poAddVariantSelectedCode = '';
+      poAddVariantSelectedName = '';
+      const variantInput = document.getElementById('poAddVariantInput');
+      if (variantInput) variantInput.value = '';
+    });
+  });
+}
+
+async function searchVariantsForAddToPo(searchText) {
+  const dropdown = document.getElementById('poAddVariantDropdown');
+
+  if (!poAddItemSelectedCode) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">Select an Item first.</div>';
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  const { data, error } = await supabaseClient.rpc('staff_search_variants', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: poAddItemSelectedCode,
+    p_search: searchText || null,
+    p_limit: 20
+  });
+
+  if (error) {
+    dropdown.innerHTML = `<div class="item-suggest-empty error-text">${describeSupabaseError(error, 'Search failed.')}</div>`;
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  const variants = data || [];
+  if (variants.length === 0) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">This item has no variants.</div>';
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  dropdown.innerHTML = variants
+    .map((v) => {
+      const code = v.item_code || v.main_item_code || '';
+      const label = v.sku || v.variant_name || v.variation_id;
+      const combinedName = `${poAddItemSelectedName || v.item_name || ''} - ${v.variant_name || v.sku || v.variation_id}`;
+      return `
+        <div class="item-suggest-option" data-code="${encodeURIComponent(code)}" data-name="${encodeURIComponent(combinedName)}" data-label="${encodeURIComponent(label)}">
+          <span class="item-suggest-code">${escapeHtml(label)}</span><span class="item-suggest-name">${escapeHtml(v.variant_name || '')}</span>
+        </div>
+      `;
+    })
+    .join('');
+  dropdown.classList.remove('hidden');
+
+  dropdown.querySelectorAll('.item-suggest-option').forEach((opt) => {
+    opt.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      poAddVariantSelectedCode = decodeURIComponent(opt.dataset.code);
+      poAddVariantSelectedName = decodeURIComponent(opt.dataset.name);
+      document.getElementById('poAddVariantInput').value = decodeURIComponent(opt.dataset.label);
+      dropdown.classList.add('hidden');
+      dropdown.innerHTML = '';
     });
   });
 }
@@ -449,11 +522,12 @@ async function addItemToExistingPurchaseOrder() {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_po_no: currentReceivePoNo,
-      p_item_code: poAddItemSelectedCode,
-      p_item_name: poAddItemSelectedName,
+      p_item_code: poAddVariantSelectedCode || poAddItemSelectedCode,
+      p_item_name: poAddVariantSelectedName || poAddItemSelectedName,
       p_warehouse_id: warehouseSelect.value || null,
       p_warehouse_name: warehouseSelect.value ? warehouseOption.dataset.name : null,
-      p_quantity: quantity
+      p_quantity: quantity,
+      p_description: document.getElementById('poAddDescriptionInput').value.trim() || null
     });
     if (error) throw error;
 
@@ -526,6 +600,15 @@ function applyNewPoItemSelection(row, code, name) {
   row.querySelector('.new-po-line-item').value = code;
   row.dataset.itemCode = code;
   row.dataset.itemName = name || '';
+  // A different item invalidates any variant already picked for the previous item.
+  clearNewPoVariantSelection(row);
+}
+
+function clearNewPoVariantSelection(row) {
+  row.dataset.variantCode = '';
+  row.dataset.variantName = '';
+  const variantInput = row.querySelector('.new-po-line-variant');
+  if (variantInput) variantInput.value = '';
 }
 
 async function searchItemsForNewPoRow(row, searchText) {
@@ -581,6 +664,67 @@ async function searchItemsForNewPoRow(row, searchText) {
   });
 }
 
+// Variant lookup for a New PO row - scoped to whichever Item that row already has selected
+// (row.dataset.itemCode), same staff_search_variants RPC Transfer Orders' own variant field uses
+// (transferOrders.js). Picking a variant here overrides that line's effective order code/name
+// (see createNewPurchaseOrder) without disturbing the Item field's own display value, so switching
+// variants back and forth never requires re-picking the Item.
+async function searchVariantsForNewPoRow(row, searchText) {
+  const dropdown = row.querySelector('.variant-suggest-dropdown');
+
+  if (!row.dataset.itemCode) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">Select an Item first.</div>';
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  const { data, error } = await supabaseClient.rpc('staff_search_variants', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: row.dataset.itemCode,
+    p_search: searchText || null,
+    p_limit: 20
+  });
+
+  if (error) {
+    dropdown.innerHTML = `<div class="item-suggest-empty error-text">${describeSupabaseError(error, 'Search failed.')}</div>`;
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  const variants = data || [];
+  if (variants.length === 0) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">This item has no variants.</div>';
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  dropdown.innerHTML = variants
+    .map((v) => {
+      const code = v.item_code || v.main_item_code || '';
+      const label = v.sku || v.variant_name || v.variation_id;
+      const combinedName = `${row.dataset.itemName || v.item_name || ''} - ${v.variant_name || v.sku || v.variation_id}`;
+      return `
+        <div class="item-suggest-option" data-code="${encodeURIComponent(code)}" data-name="${encodeURIComponent(combinedName)}" data-label="${encodeURIComponent(label)}">
+          <span class="item-suggest-code">${escapeHtml(label)}</span><span class="item-suggest-name">${escapeHtml(v.variant_name || '')}</span>
+        </div>
+      `;
+    })
+    .join('');
+  dropdown.classList.remove('hidden');
+
+  dropdown.querySelectorAll('.item-suggest-option').forEach((opt) => {
+    opt.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      row.dataset.variantCode = decodeURIComponent(opt.dataset.code);
+      row.dataset.variantName = decodeURIComponent(opt.dataset.name);
+      row.querySelector('.new-po-line-variant').value = decodeURIComponent(opt.dataset.label);
+      dropdown.classList.add('hidden');
+      dropdown.innerHTML = '';
+    });
+  });
+}
+
 function addNewPoLineRow() {
   const tbody = document.getElementById('newPoLinesBody');
   const row = document.createElement('tr');
@@ -589,6 +733,11 @@ function addNewPoLineRow() {
       <input type="text" class="new-po-line-item" placeholder="Search item code or name..." autocomplete="off" />
       <div class="item-suggest-dropdown hidden"></div>
     </td>
+    <td class="item-search-cell">
+      <input type="text" class="new-po-line-variant" placeholder="Select an item first..." autocomplete="off" />
+      <div class="variant-suggest-dropdown hidden"></div>
+    </td>
+    <td><input type="text" class="new-po-line-description" placeholder="Optional" /></td>
     <td><select class="new-po-line-warehouse">${newPoWarehouseOptionsHtml}</select></td>
     <td><input type="number" class="new-po-line-qty" min="0" step="0.01" value="1" style="width:90px; text-align:right;" /></td>
     <td><button type="button" class="btn btn-danger btn-sm">Remove</button></td>
@@ -600,6 +749,7 @@ function addNewPoLineRow() {
   itemInput.addEventListener('input', (e) => {
     row.dataset.itemCode = '';
     row.dataset.itemName = '';
+    clearNewPoVariantSelection(row);
     clearTimeout(debounceHandle);
     const value = e.target.value;
     debounceHandle = setTimeout(() => searchItemsForNewPoRow(row, value), 250);
@@ -607,6 +757,20 @@ function addNewPoLineRow() {
   itemInput.addEventListener('focus', () => searchItemsForNewPoRow(row, itemInput.value));
   itemInput.addEventListener('blur', () => {
     setTimeout(() => row.querySelector('.item-suggest-dropdown').classList.add('hidden'), 150);
+  });
+
+  const variantInput = row.querySelector('.new-po-line-variant');
+  let variantDebounceHandle = null;
+  variantInput.addEventListener('input', (e) => {
+    row.dataset.variantCode = '';
+    row.dataset.variantName = '';
+    clearTimeout(variantDebounceHandle);
+    const value = e.target.value;
+    variantDebounceHandle = setTimeout(() => searchVariantsForNewPoRow(row, value), 250);
+  });
+  variantInput.addEventListener('focus', () => searchVariantsForNewPoRow(row, variantInput.value));
+  variantInput.addEventListener('blur', () => {
+    setTimeout(() => row.querySelector('.variant-suggest-dropdown').classList.add('hidden'), 150);
   });
 
   tbody.appendChild(row);
@@ -644,8 +808,9 @@ async function createNewPurchaseOrder() {
       const warehouseOption = warehouseSelect.selectedOptions[0];
       const quantity = parseFloat(row.querySelector('.new-po-line-qty')?.value) || 0;
       return {
-        item_code: row.dataset.itemCode || '',
-        item_name: row.dataset.itemName || '',
+        item_code: row.dataset.variantCode || row.dataset.itemCode || '',
+        item_name: row.dataset.variantName || row.dataset.itemName || '',
+        description: row.querySelector('.new-po-line-description')?.value.trim() || null,
         warehouse_id: warehouseSelect.value || null,
         warehouse_name: warehouseSelect.value ? warehouseOption.dataset.name : null,
         quantity
@@ -721,6 +886,9 @@ async function createNewPurchaseOrder() {
   poAddItemInput.addEventListener('input', (e) => {
     poAddItemSelectedCode = '';
     poAddItemSelectedName = '';
+    poAddVariantSelectedCode = '';
+    poAddVariantSelectedName = '';
+    document.getElementById('poAddVariantInput').value = '';
     clearTimeout(poAddItemDebounceHandle);
     const value = e.target.value;
     poAddItemDebounceHandle = setTimeout(() => searchItemsForAddToPo(value), 250);
@@ -729,6 +897,21 @@ async function createNewPurchaseOrder() {
   poAddItemInput.addEventListener('blur', () => {
     setTimeout(() => document.getElementById('poAddItemDropdown').classList.add('hidden'), 150);
   });
+
+  let poAddVariantDebounceHandle = null;
+  const poAddVariantInput = document.getElementById('poAddVariantInput');
+  poAddVariantInput.addEventListener('input', (e) => {
+    poAddVariantSelectedCode = '';
+    poAddVariantSelectedName = '';
+    clearTimeout(poAddVariantDebounceHandle);
+    const value = e.target.value;
+    poAddVariantDebounceHandle = setTimeout(() => searchVariantsForAddToPo(value), 250);
+  });
+  poAddVariantInput.addEventListener('focus', () => searchVariantsForAddToPo(poAddVariantInput.value));
+  poAddVariantInput.addEventListener('blur', () => {
+    setTimeout(() => document.getElementById('poAddVariantDropdown').classList.add('hidden'), 150);
+  });
+
   document.getElementById('poAddItemBtn').addEventListener('click', addItemToExistingPurchaseOrder);
 
   document.getElementById('newPoBtn').addEventListener('click', openNewPoModal);

@@ -14,6 +14,14 @@ function formatDate(value) {
   return isNaN(d.getTime()) ? value : d.toLocaleDateString();
 }
 
+// Description is unconstrained free text (js/purchaseOrders.js), unlike item_code/item_name which
+// come from a catalog picker - escaped before going into innerHTML.
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[ch]);
+}
+
 function formatDateTime(value) {
   if (!value) return '';
   const d = new Date(value);
@@ -85,7 +93,7 @@ async function loadPurchaseOrders() {
 function renderViewLines(lines) {
   const body = document.getElementById('viewLinesBody');
   if (!lines || lines.length === 0) {
-    body.innerHTML = '<tr><td colspan="5" class="muted">No line items.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="muted">No line items.</td></tr>';
     return;
   }
 
@@ -94,6 +102,7 @@ function renderViewLines(lines) {
       <tr>
         <td>${l.item_code || ''}</td>
         <td>${l.item_name || ''}</td>
+        <td>${escapeHtml(l.description || '')}</td>
         <td>${l.warehouse_name || ''}</td>
         <td style="text-align:right;">${Number(l.quantity || 0).toLocaleString()}</td>
         <td style="text-align:right;">${Number(l.qty_received || 0).toLocaleString()}</td>
@@ -106,7 +115,7 @@ async function openViewModal(poNo) {
   document.getElementById('viewModalTitle').textContent = `Purchase Order ${poNo}`;
   document.getElementById('viewPrintLink').href = `purchase-order-print.html?po=${encodeURIComponent(poNo)}`;
   const body = document.getElementById('viewLinesBody');
-  body.innerHTML = '<tr><td colspan="5" class="muted">Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
   document.getElementById('viewModal').classList.remove('hidden');
 
   const [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
@@ -123,7 +132,7 @@ async function openViewModal(poNo) {
   ]);
 
   if (headerError || !headerRows || headerRows.length === 0) {
-    body.innerHTML = `<tr><td colspan="5" class="error-text">${headerError?.message || 'Posted Purchase Order not found.'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="error-text">${headerError?.message || 'Posted Purchase Order not found.'}</td></tr>`;
     return;
   }
 

@@ -15,7 +15,7 @@ let currentSession = null;
 function renderRows(rows, enteredQuantities) {
   const tbody = document.getElementById('printTableBody');
   if (!rows || rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="muted">No stock records match these filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">No stock records match these filters.</td></tr>';
     return;
   }
 
@@ -27,6 +27,7 @@ function renderRows(rows, enteredQuantities) {
       <tr>
         <td>${r.item_code || ''}</td>
         <td>${r.item_name || ''}</td>
+        <td>${r.variant_name || ''}</td>
         <td>${r.warehouse_name || ''}</td>
         <td style="text-align:right;">${qty}</td>
         <td></td>

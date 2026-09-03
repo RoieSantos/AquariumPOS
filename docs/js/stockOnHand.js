@@ -71,13 +71,13 @@ function renderTable() {
   const tbody = document.getElementById('stockTableBody');
   const search = document.getElementById('searchInput').value.trim().toLowerCase();
   const filtered = search
-    ? allRows.filter((r) => [r.item_code, r.item_name].some((v) => (v || '').toString().toLowerCase().includes(search)))
+    ? allRows.filter((r) => [r.item_code, r.item_name, r.variant_name].some((v) => (v || '').toString().toLowerCase().includes(search)))
     : allRows;
   const rows = sortRows(filtered);
   updateSortIndicators();
 
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">No stock records found. Try "Refresh from Pancake" if this is the first time loading this page.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">No stock records found. Try "Refresh from Pancake" if this is the first time loading this page.</td></tr>';
     return;
   }
 
@@ -89,6 +89,7 @@ function renderTable() {
       <tr>
         <td>${escapeHtml(r.item_code)}</td>
         <td>${escapeHtml(r.item_name)}</td>
+        <td>${r.variant_name ? escapeHtml(r.variant_name) : '<span class="muted">-</span>'}</td>
         <td>${escapeHtml(r.category_name)}</td>
         <td>${r.vendor_name ? escapeHtml(r.vendor_name) : '<span class="muted">-</span>'}</td>
         <td>${escapeHtml(r.warehouse_name)}</td>

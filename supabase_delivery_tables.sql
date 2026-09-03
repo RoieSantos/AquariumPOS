@@ -141,6 +141,15 @@ drop function if exists public.admin_list_delivery_stops(text, text, date, date)
 -- Powers the calendar - one call per visible month. Joins in the order/truck info the UI needs
 -- so it never has to make a second round-trip per stop. Widened to also expose CreatedBy
 -- (returned as created_by) so the Stops table can show "Assigned By" instead of Balance.
+--
+-- note_print: per "can you add the note_print on the stops so the driver can see" - Pancake's own
+-- order-level print note (OnlineOrders."NotePrint"), falling back to this order's own line-level
+-- Notes (OnlineOrderLines."Note", e.g. a custom aquarium's dimensions/sealant spec) when the
+-- order-level one is blank - same fallback logic as admin_get_delivery_receipt's note_print
+-- (supabase_delivery_receipt.sql), reused here so the Stops table itself shows the same note a
+-- printed Delivery Receipt would, without needing to open the print view first. Deliberately kept
+-- distinct from "notes" (DeliveryStops."Notes", a staff-typed scheduling note set when the stop
+-- was created) - the two are unrelated fields shown in separate table columns (js/delivery.js).
 create or replace function public.admin_list_delivery_stops(p_admin_username text, p_admin_password text, p_start_date date, p_end_date date)
 returns table(
   stop_id uuid,
@@ -160,7 +169,8 @@ returns table(
   geocode_status text,
   geocoded_address text,
   route_name text,
-  created_by text
+  created_by text,
+  note_print text
 )
 language plpgsql
 security definer
@@ -176,7 +186,13 @@ begin
            o."OrderID"::text, o."CustomerName"::text, o."Status"::text, o."ShippingAddress"::text,
            o."MoneyToCollect", o."Balance", s."Notes"::text,
            s."Latitude", s."Longitude", s."GeocodeStatus"::text, s."GeocodedAddress"::text,
-           s."RouteName"::text, s."CreatedBy"::text
+           s."RouteName"::text, s."CreatedBy"::text,
+           coalesce(
+             nullif(trim(o."NotePrint"::text), ''),
+             (select string_agg(nullif(trim(l."Note"::text), ''), '; ' order by l."LineID")
+                from public."OnlineOrderLines" l
+                where l."OrderID" = o."OrderID" and nullif(trim(l."Note"::text), '') is not null)
+           ) as note_print
     from public."DeliveryStops" s
     join public."OnlineOrders" o on o."OrderID" = s."OrderID"
     join public."DeliveryTrucks" t on t."TruckID" = s."TruckID"

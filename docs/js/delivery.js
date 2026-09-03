@@ -405,6 +405,10 @@ async function renderDriverRouteView(dateKey) {
   } else if (stops.length === 0 && !vendorCardsHtml) {
     cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No stops scheduled for this day.</p>';
   } else {
+    // Per "can you add the note_print on the stops so the driver can see" - Pancake's own print
+    // note (falls back to line-level notes, admin_list_delivery_stops' note_print column), shown
+    // as its own line separate from the staff-typed "Note" (DeliveryStops."Notes") above it -
+    // same distinction as the desktop Stops table's "Print Note" column.
     cardsEl.innerHTML = vendorCardsHtml + stops.map((s) => {
       const displayAddress = s.shipping_address || s.geocoded_address || '';
       return `
@@ -416,7 +420,8 @@ async function renderDriverRouteView(dateKey) {
           <div class="driver-stop-customer">${s.customer_name || ''}</div>
           <div class="driver-stop-address">&#128205; ${displayAddress || '<span class="muted">No address on file</span>'}</div>
           ${s.route_name ? `<div class="driver-stop-route muted">&#128666; Route: ${s.route_name}</div>` : ''}
-          ${s.notes ? `<div class="driver-stop-notes muted">&#128221; ${s.notes}</div>` : ''}
+          ${s.notes ? `<div class="driver-stop-notes muted">&#128221; Note: ${s.notes}</div>` : ''}
+          ${s.note_print ? `<div class="driver-stop-notes muted">&#128204; Delivery Note: ${s.note_print}</div>` : ''}
         </div>
       `;
     }).join('');
@@ -564,6 +569,7 @@ function fixedRouteRowHtml(dateKey) {
       <td colspan="2">${tags.join(', ')}</td>
       <td class="muted">Set in Delivery Setup</td>
       <td></td>
+      <td></td>
     </tr>
   `;
 }
@@ -673,13 +679,18 @@ function showDayDetail(dateKey) {
   const tbody = document.getElementById('dayStopsTableBody');
   const fixedRouteRow = fixedRouteRowHtml(dateKey);
   tbody.innerHTML = fixedRouteRow + (stops.length === 0
-    ? '<tr><td colspan="8" class="muted">No stops scheduled for this day.</td></tr>'
+    ? '<tr><td colspan="9" class="muted">No stops scheduled for this day.</td></tr>'
     : stops.map((s) => {
         // Falls back to geocoded_address (a DeliveryStops-only field) when the order itself has
         // no ShippingAddress on file - that's where a manually-typed address from the "no
         // address" confirmation prompt in confirmAssign() ends up, since it's never written back
         // to OnlineOrders.ShippingAddress (a Pancake-synced field).
         const displayAddress = s.shipping_address || s.geocoded_address || '';
+        // Per "can you add the note_print on the stops so the driver can see" - Pancake's own
+        // print note (falls back to line-level notes, see admin_list_delivery_stops' note_print
+        // column, supabase_delivery_tables.sql), rendered in its own "Print Note" column,
+        // separate from the "Notes" column above (DeliveryStops."Notes" - a staff-typed
+        // scheduling note, an unrelated field).
         return `
         <tr>
           <td>${s.order_id || ''}</td>
@@ -689,6 +700,7 @@ function showDayDetail(dateKey) {
           <td>${displayAddress}${!s.shipping_address && s.geocoded_address ? ' <span class="muted">(manually entered)</span>' : ''}</td>
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
+          <td>${s.note_print || ''}</td>
           <td>
             <button class="btn btn-secondary btn-sm" data-print-stop-id="${s.stop_id}" type="button">Print</button>
             <button class="btn btn-secondary btn-sm" data-print-invoice-stop-id="${s.stop_id}" type="button">Print Invoice</button>

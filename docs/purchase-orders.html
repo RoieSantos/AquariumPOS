@@ -72,6 +72,8 @@
           <thead>
             <tr>
               <th>Item</th>
+              <th>Variant</th>
+              <th>Description</th>
               <th>Warehouse</th>
               <th style="text-align:right;">Quantity</th>
               <th></th>
@@ -121,6 +123,7 @@
             <tr>
               <th>Item Code</th>
               <th>Item Name</th>
+              <th>Description</th>
               <th>Warehouse</th>
               <th style="text-align:right;">Qty Ordered</th>
               <th style="text-align:right;">Qty Received</th>
@@ -139,6 +142,11 @@
             <input type="text" id="poAddItemInput" placeholder="Search item code or name..." autocomplete="off" />
             <div id="poAddItemDropdown" class="item-suggest-dropdown hidden"></div>
           </div>
+          <div class="item-search-cell" style="position:relative; max-width:220px;">
+            <input type="text" id="poAddVariantInput" placeholder="Select an item first..." autocomplete="off" />
+            <div id="poAddVariantDropdown" class="variant-suggest-dropdown hidden"></div>
+          </div>
+          <input type="text" id="poAddDescriptionInput" placeholder="Description (optional)" style="max-width:200px;" />
           <select id="poAddItemWarehouse"></select>
           <input type="number" id="poAddItemQty" min="0" step="0.01" value="1" style="width:80px;" />
           <button class="btn btn-secondary btn-sm" id="poAddItemBtn" type="button">Add Item</button>
