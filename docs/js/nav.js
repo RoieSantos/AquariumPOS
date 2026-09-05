@@ -5,6 +5,7 @@ function renderTopNav(activeLabel) {
   if (!nav) return;
 
   const session = getPortalSession();
+  mountChatWidget(session);
 
   // Per "if the user is on Delivery team they can only see the Delivery calendar that is all" -
   // js/auth.js's requireAuth() only allows dashboard.html (shows just a "Go to Delivery" link,
@@ -116,6 +117,9 @@ function renderTopNav(activeLabel) {
     admin.push({ href: 'general-setup.html', label: 'General Setup' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
+    admin.push({ href: 'payroll.html', label: 'Payroll' });
+    admin.push({ href: 'payroll-setup.html', label: 'Payroll Setup' });
+    admin.push({ href: 'payroll-ledger.html', label: 'Payroll Ledger' });
   }
 
   const groups = [
@@ -208,4 +212,31 @@ function renderTopNav(activeLabel) {
       groupEl.querySelector('.topnav-group-toggle').setAttribute('aria-expanded', 'false');
     });
   });
+}
+
+// Lazy-loads js/chat.js on first call rather than requiring every page's <script> list to include
+// it - renderTopNav already runs on every authenticated page, so hooking the widget in here means
+// one change here instead of editing ~40 HTML files. Safe to call with no session (no-ops).
+let chatWidgetScriptPromise = null;
+function mountChatWidget(session) {
+  if (!session) return;
+
+  if (typeof initChatWidget === 'function') {
+    initChatWidget(session);
+    return;
+  }
+
+  if (!chatWidgetScriptPromise) {
+    chatWidgetScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'js/chat.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  chatWidgetScriptPromise
+    .then(() => initChatWidget(session))
+    .catch((err) => console.error('Chat: failed to load chat widget', err));
 }

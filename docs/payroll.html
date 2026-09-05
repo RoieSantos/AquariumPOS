@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payroll - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Payroll</h1>
+    <p class="muted">Create and review payroll runs. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="payrollContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Payroll Runs</h2>
+        <button class="btn btn-primary" id="newRunBtn" type="button">+ New Payroll Run</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th>Pay Cycle</th>
+              <th>Pay Date</th>
+              <th>Status</th>
+              <th>Employees</th>
+              <th>Total Net Pay</th>
+              <th>Created By</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="runTableBody">
+            <tr><td colspan="8" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="runPaginationBar"></div>
+    </div>
+  </div>
+
+  <!-- New payroll run modal -->
+  <div id="newRunModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">New Payroll Run</h2>
+        <button class="btn btn-secondary btn-sm" id="closeNewRunBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newRunPayCycle">Pay Cycle</label>
+          <select id="newRunPayCycle">
+            <option value="SemiMonthly">Semi-Monthly</option>
+            <option value="Weekly">Weekly</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="cutoffAutofillRow" class="form-grid hidden">
+        <div class="form-row">
+          <label for="newRunCutoff">Cutoff</label>
+          <select id="newRunCutoff">
+            <option value="A">Cutoff A</option>
+            <option value="B">Cutoff B</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="newRunTargetMonth">Month</label>
+          <input type="month" id="newRunTargetMonth" />
+        </div>
+        <div class="form-row" style="align-self:end;">
+          <button class="btn btn-secondary btn-sm" id="autofillDatesBtn" type="button">Autofill Dates</button>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newRunPeriodStart">Period Start</label>
+          <input type="date" id="newRunPeriodStart" />
+        </div>
+        <div class="form-row">
+          <label for="newRunPeriodEnd">Period End</label>
+          <input type="date" id="newRunPeriodEnd" />
+        </div>
+        <div class="form-row">
+          <label for="newRunPayDate">Pay Date</label>
+          <input type="date" id="newRunPayDate" />
+        </div>
+      </div>
+
+      <div id="newRunError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveRunBtn" type="button">Create Run</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/payroll.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

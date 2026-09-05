@@ -38,12 +38,16 @@ function formatMonthlyTarget(amount) {
   return value > 0 ? '₱' + value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span class="muted">-</span>';
 }
 
+function formatCycleLabel(cycle) {
+  return cycle === 'SemiMonthly' ? 'Semi-Monthly' : cycle === 'Weekly' ? 'Weekly' : '';
+}
+
 function renderUserRows(users) {
   currentUsers = users || [];
   const tbody = document.getElementById('userTableBody');
 
   if (!users || users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="14" class="muted">No staff logins found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="17" class="muted">No staff logins found.</td></tr>';
     return;
   }
 
@@ -63,6 +67,9 @@ function renderUserRows(users) {
         <td><span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
         <td>${u.created_at_utc ? new Date(u.created_at_utc).toLocaleDateString() : ''}</td>
         <td>${u.last_login_at_utc ? new Date(u.last_login_at_utc).toLocaleString() : '<span class="muted">Never</span>'}</td>
+        <td>${u.job_position || ''}</td>
+        <td>${formatCycleLabel(u.pay_cycle) || '<span class="muted">-</span>'}</td>
+        <td>${formatMonthlyTarget(u.monthly_salary)}</td>
         <td><button class="btn btn-secondary btn-sm" data-edit-username="${u.username}" type="button">Edit</button></td>
       </tr>
     `)
@@ -71,7 +78,7 @@ function renderUserRows(users) {
 
 async function loadUsers() {
   const tbody = document.getElementById('userTableBody');
-  tbody.innerHTML = '<tr><td colspan="14" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="17" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_staff_users', {
     p_admin_username: currentSession.username,
@@ -81,7 +88,7 @@ async function loadUsers() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="14" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="17" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -110,6 +117,14 @@ function openNewUserModal() {
   document.getElementById('newUserProductionMember').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
+  document.getElementById('newUserPosition').value = '';
+  document.getElementById('newUserHireDate').value = '';
+  document.getElementById('newUserBirthdate').value = '';
+  document.getElementById('newUserPhoneNumber').value = '';
+  document.getElementById('newUserHomeAddress').value = '';
+  document.getElementById('newUserPaymentMethod').value = '';
+  document.getElementById('newUserPayCycle').value = '';
+  document.getElementById('newUserMonthlySalary').value = 0;
   document.getElementById('newUserError').classList.add('hidden');
   document.getElementById('newUserModal').classList.remove('hidden');
 }
@@ -131,6 +146,14 @@ function openEditUserModal(username) {
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
+  document.getElementById('editUserPosition').value = user.job_position || '';
+  document.getElementById('editUserHireDate').value = user.hire_date || '';
+  document.getElementById('editUserBirthdate').value = user.birthdate || '';
+  document.getElementById('editUserPhoneNumber').value = user.phone_number || '';
+  document.getElementById('editUserHomeAddress').value = user.home_address || '';
+  document.getElementById('editUserPaymentMethod').value = user.payment_method || '';
+  document.getElementById('editUserPayCycle').value = user.pay_cycle || '';
+  document.getElementById('editUserMonthlySalary').value = Number(user.monthly_salary) || 0;
   document.getElementById('editUserError').classList.add('hidden');
   document.getElementById('editUserModal').classList.remove('hidden');
 }
@@ -152,6 +175,14 @@ async function saveEditUser() {
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
+  const position = document.getElementById('editUserPosition').value.trim();
+  const hireDate = document.getElementById('editUserHireDate').value || null;
+  const birthdate = document.getElementById('editUserBirthdate').value || null;
+  const phoneNumber = document.getElementById('editUserPhoneNumber').value.trim();
+  const homeAddress = document.getElementById('editUserHomeAddress').value.trim();
+  const paymentMethod = document.getElementById('editUserPaymentMethod').value || null;
+  const payCycle = document.getElementById('editUserPayCycle').value || null;
+  const monthlySalary = Number(document.getElementById('editUserMonthlySalary').value) || 0;
 
   if (newPassword && newPassword.length < 6) {
     errorEl.textContent = 'New password must be at least 6 characters.';
@@ -178,7 +209,15 @@ async function saveEditUser() {
     p_is_serial_admin: isSerialAdmin,
     p_is_delivery_team: isDeliveryTeam,
     p_is_online_order_staff: isOnlineOrderStaff,
-    p_is_production_member: isProductionMember
+    p_is_production_member: isProductionMember,
+    p_position: position || null,
+    p_home_address: homeAddress || null,
+    p_birthdate: birthdate,
+    p_phone_number: phoneNumber || null,
+    p_payment_method: paymentMethod,
+    p_hire_date: hireDate,
+    p_pay_cycle: payCycle,
+    p_monthly_salary: monthlySalary
   });
 
   saveBtn.disabled = false;
@@ -211,6 +250,14 @@ async function saveNewUser() {
   const isProductionMember = document.getElementById('newUserProductionMember').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
+  const position = document.getElementById('newUserPosition').value.trim();
+  const hireDate = document.getElementById('newUserHireDate').value || null;
+  const birthdate = document.getElementById('newUserBirthdate').value || null;
+  const phoneNumber = document.getElementById('newUserPhoneNumber').value.trim();
+  const homeAddress = document.getElementById('newUserHomeAddress').value.trim();
+  const paymentMethod = document.getElementById('newUserPaymentMethod').value || null;
+  const payCycle = document.getElementById('newUserPayCycle').value || null;
+  const monthlySalary = Number(document.getElementById('newUserMonthlySalary').value) || 0;
 
   if (!username) {
     errorEl.textContent = 'Username is required.';
@@ -241,7 +288,15 @@ async function saveNewUser() {
     p_is_serial_admin: isSerialAdmin,
     p_is_delivery_team: isDeliveryTeam,
     p_is_online_order_staff: isOnlineOrderStaff,
-    p_is_production_member: isProductionMember
+    p_is_production_member: isProductionMember,
+    p_position: position || null,
+    p_home_address: homeAddress || null,
+    p_birthdate: birthdate,
+    p_phone_number: phoneNumber || null,
+    p_payment_method: paymentMethod,
+    p_hire_date: hireDate,
+    p_pay_cycle: payCycle,
+    p_monthly_salary: monthlySalary
   });
 
   saveBtn.disabled = false;

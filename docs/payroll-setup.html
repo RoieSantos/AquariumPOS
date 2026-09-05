@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payroll Setup - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Payroll Setup</h1>
+    <p class="muted">Assign each employee's pay cycle and monthly salary. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="payrollSetupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Semi-Monthly Cutoff Settings</h2>
+      </div>
+      <p class="muted">Used to auto-fill Period Start/End and Pay Date when creating a new Semi-Monthly payroll run.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="cutoffAStartDay">Cutoff A: Start Day</label>
+          <input type="number" id="cutoffAStartDay" min="1" max="31" />
+        </div>
+        <div class="form-row">
+          <label for="cutoffAEndDay">Cutoff A: End Day</label>
+          <input type="number" id="cutoffAEndDay" min="1" max="31" />
+        </div>
+        <div class="form-row">
+          <label for="cutoffAPayDay">Cutoff A: Pay Day</label>
+          <input type="number" id="cutoffAPayDay" min="1" max="31" />
+        </div>
+        <div class="form-row">
+          <label for="cutoffAPayLastDay" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="cutoffAPayLastDay" style="width:auto;" />
+            <span>Pay on last day of month instead</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label for="cutoffBStartDay">Cutoff B: Start Day</label>
+          <input type="number" id="cutoffBStartDay" min="1" max="31" />
+        </div>
+        <div class="form-row">
+          <label for="cutoffBEndDay">Cutoff B: End Day</label>
+          <input type="number" id="cutoffBEndDay" min="1" max="31" />
+        </div>
+        <div class="form-row">
+          <label for="cutoffBPayDay">Cutoff B: Pay Day</label>
+          <input type="number" id="cutoffBPayDay" min="1" max="31" />
+        </div>
+        <div class="form-row">
+          <label for="cutoffBPayLastDay" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="cutoffBPayLastDay" style="width:auto;" />
+            <span>Pay on last day of month instead</span>
+          </label>
+        </div>
+      </div>
+      <div id="cutoffSettingsError" class="error-text hidden"></div>
+      <div style="margin-bottom:24px;">
+        <button class="btn btn-success btn-sm" id="saveCutoffSettingsBtn" type="button">Save Cutoff Settings</button>
+      </div>
+
+      <h2>Employees</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Display Name</th>
+              <th>Active</th>
+              <th>Pay Cycle</th>
+              <th>Monthly Salary</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="employeeTableBody">
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit payroll profile modal -->
+  <div id="editProfileModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">Edit Payroll Profile</h2>
+        <button class="btn btn-secondary btn-sm" id="closeEditProfileBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="editProfileUsername">Username</label>
+          <input type="text" id="editProfileUsername" disabled />
+        </div>
+        <div class="form-row">
+          <label for="editProfilePayCycle">Pay Cycle</label>
+          <select id="editProfilePayCycle">
+            <option value="">(Not enrolled)</option>
+            <option value="SemiMonthly">Semi-Monthly</option>
+            <option value="Weekly">Weekly</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="editProfileMonthlySalary">Monthly Salary</label>
+          <input type="number" id="editProfileMonthlySalary" min="0" step="0.01" value="0" />
+        </div>
+      </div>
+
+      <div id="editProfileError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveProfileBtn" type="button">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/payrollSetup.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payroll Run - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <div class="toolbar">
+      <div>
+        <h1 id="runTitle" style="margin-bottom:4px;">Payroll Run</h1>
+        <p class="muted" id="runSubtitle"></p>
+      </div>
+      <a href="payroll.html" class="btn btn-secondary">Back to Payroll</a>
+    </div>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="runContent" class="hidden">
+      <div class="toolbar">
+        <span id="runStatusBadge"></span>
+        <div>
+          <button class="btn btn-danger" id="deleteRunBtn" type="button">Delete Run</button>
+          <button class="btn btn-success" id="finalizeRunBtn" type="button">Finalize Run</button>
+        </div>
+      </div>
+
+      <div id="runError" class="error-text hidden"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Base Pay</th>
+              <th>Additions</th>
+              <th>Deductions</th>
+              <th>Net Pay</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="lineTableBody">
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Shown only once the run is Finalized - admin_finalize_payroll_run posts these rows
+           automatically at that moment (see supabase_payroll_ledger.sql). -->
+      <div id="ledgerSection" class="hidden" style="margin-top:24px;">
+        <div class="toolbar">
+          <h2 style="margin:0;">Ledger</h2>
+          <a class="btn btn-secondary btn-sm" href="payroll-ledger.html">Full Ledger Report</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Entry Type</th>
+                <th>Label</th>
+                <th style="text-align:right;">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="ledgerTableBody">
+              <tr><td colspan="4" class="muted">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Line detail modal: override base pay, add/remove addition/deduction line items -->
+  <div id="lineModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;" id="lineModalTitle">Payroll Line</h2>
+        <button class="btn btn-secondary btn-sm" id="closeLineModalBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="lineBasePay">Base Pay</label>
+          <input type="number" id="lineBasePay" min="0" step="0.01" />
+        </div>
+      </div>
+      <div style="text-align:right; margin-bottom:16px;">
+        <button class="btn btn-secondary btn-sm" id="saveBasePayBtn" type="button">Save Base Pay</button>
+      </div>
+
+      <h3>Additions / Deductions</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Label</th>
+              <th style="text-align:right;">Amount</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="lineItemTableBody">
+            <tr><td colspan="4" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="form-grid" style="margin-top:12px;">
+        <div class="form-row">
+          <label for="newItemType">Type</label>
+          <select id="newItemType">
+            <option value="Addition">Addition</option>
+            <option value="Deduction">Deduction</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="newItemLabel">Label</label>
+          <input type="text" id="newItemLabel" placeholder="e.g. Bonus, Cash Advance" />
+        </div>
+        <div class="form-row">
+          <label for="newItemAmount">Amount</label>
+          <input type="number" id="newItemAmount" min="0" step="0.01" />
+        </div>
+      </div>
+      <div id="lineItemError" class="error-text hidden"></div>
+      <div style="margin-top:8px; text-align:right;">
+        <button class="btn btn-primary btn-sm" id="addLineItemBtn" type="button">+ Add Line Item</button>
+      </div>
+
+      <div style="margin-top:16px; text-align:right;">
+        <a class="btn btn-secondary" id="printPayslipLink" href="#">Print Payslip</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/payrollRun.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>
