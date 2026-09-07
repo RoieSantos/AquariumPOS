@@ -42,12 +42,19 @@ function formatCycleLabel(cycle) {
   return cycle === 'SemiMonthly' ? 'Semi-Monthly' : cycle === 'Weekly' ? 'Weekly' : '';
 }
 
+// Salary shows Monthly Salary; Hourly shows Daily Rate instead - only one is ever relevant.
+function togglePayTypeRows(prefix) {
+  const isHourly = document.getElementById(`${prefix}PayType`).value === 'Hourly';
+  document.getElementById(`${prefix}MonthlySalaryRow`).classList.toggle('hidden', isHourly);
+  document.getElementById(`${prefix}DailyRateRow`).classList.toggle('hidden', !isHourly);
+}
+
 function renderUserRows(users) {
   currentUsers = users || [];
   const tbody = document.getElementById('userTableBody');
 
   if (!users || users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="17" class="muted">No staff logins found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="18" class="muted">No staff logins found.</td></tr>';
     return;
   }
 
@@ -62,6 +69,7 @@ function renderUserRows(users) {
         <td><span class="badge ${u.is_serial_admin ? 'badge-success' : 'badge-neutral'}">${u.is_serial_admin ? 'Yes' : 'No'}</span></td>
         <td><span class="badge ${u.is_delivery_team ? 'badge-success' : 'badge-neutral'}">${u.is_delivery_team ? 'Yes' : 'No'}</span></td>
         <td><span class="badge ${u.is_online_order_staff ? 'badge-success' : 'badge-neutral'}">${u.is_online_order_staff ? 'Yes' : 'No'}</span></td>
+        <td><span class="badge ${u.is_payroll_officer ? 'badge-success' : 'badge-neutral'}">${u.is_payroll_officer ? 'Yes' : 'No'}</span></td>
         <td>${formatMonthlyTarget(u.monthly_sales_target)}</td>
         <td><span class="badge ${u.must_change_password ? 'badge-warning' : 'badge-neutral'}">${u.must_change_password ? 'Required' : 'No'}</span></td>
         <td><span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
@@ -78,7 +86,7 @@ function renderUserRows(users) {
 
 async function loadUsers() {
   const tbody = document.getElementById('userTableBody');
-  tbody.innerHTML = '<tr><td colspan="17" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="18" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_staff_users', {
     p_admin_username: currentSession.username,
@@ -88,7 +96,7 @@ async function loadUsers() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="17" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="18" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -115,6 +123,7 @@ function openNewUserModal() {
   document.getElementById('newUserDeliveryTeam').checked = false;
   document.getElementById('newUserOnlineOrderStaff').checked = false;
   document.getElementById('newUserProductionMember').checked = false;
+  document.getElementById('newUserPayrollOfficer').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
   document.getElementById('newUserPosition').value = '';
@@ -125,6 +134,10 @@ function openNewUserModal() {
   document.getElementById('newUserPaymentMethod').value = '';
   document.getElementById('newUserPayCycle').value = '';
   document.getElementById('newUserMonthlySalary').value = 0;
+  document.getElementById('newUserPayType').value = 'Salary';
+  document.getElementById('newUserDailyRate').value = 0;
+  document.getElementById('newUserPaidRestDay').value = '';
+  togglePayTypeRows('newUser');
   document.getElementById('newUserError').classList.add('hidden');
   document.getElementById('newUserModal').classList.remove('hidden');
 }
@@ -143,6 +156,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserDeliveryTeam').checked = !!user.is_delivery_team;
   document.getElementById('editUserOnlineOrderStaff').checked = !!user.is_online_order_staff;
   document.getElementById('editUserProductionMember').checked = !!user.is_production_member;
+  document.getElementById('editUserPayrollOfficer').checked = !!user.is_payroll_officer;
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
@@ -154,6 +168,10 @@ function openEditUserModal(username) {
   document.getElementById('editUserPaymentMethod').value = user.payment_method || '';
   document.getElementById('editUserPayCycle').value = user.pay_cycle || '';
   document.getElementById('editUserMonthlySalary').value = Number(user.monthly_salary) || 0;
+  document.getElementById('editUserPayType').value = user.pay_type || 'Salary';
+  document.getElementById('editUserDailyRate').value = Number(user.daily_rate) || 0;
+  document.getElementById('editUserPaidRestDay').value = user.paid_rest_day === null || user.paid_rest_day === undefined ? '' : String(user.paid_rest_day);
+  togglePayTypeRows('editUser');
   document.getElementById('editUserError').classList.add('hidden');
   document.getElementById('editUserModal').classList.remove('hidden');
 }
@@ -172,6 +190,7 @@ async function saveEditUser() {
   const isDeliveryTeam = document.getElementById('editUserDeliveryTeam').checked;
   const isOnlineOrderStaff = document.getElementById('editUserOnlineOrderStaff').checked;
   const isProductionMember = document.getElementById('editUserProductionMember').checked;
+  const isPayrollOfficer = document.getElementById('editUserPayrollOfficer').checked;
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
@@ -183,6 +202,10 @@ async function saveEditUser() {
   const paymentMethod = document.getElementById('editUserPaymentMethod').value || null;
   const payCycle = document.getElementById('editUserPayCycle').value || null;
   const monthlySalary = Number(document.getElementById('editUserMonthlySalary').value) || 0;
+  const payType = document.getElementById('editUserPayType').value || 'Salary';
+  const dailyRate = Number(document.getElementById('editUserDailyRate').value) || 0;
+  const paidRestDayRaw = document.getElementById('editUserPaidRestDay').value;
+  const paidRestDay = paidRestDayRaw === '' ? null : Number(paidRestDayRaw);
 
   if (newPassword && newPassword.length < 6) {
     errorEl.textContent = 'New password must be at least 6 characters.';
@@ -217,7 +240,11 @@ async function saveEditUser() {
     p_payment_method: paymentMethod,
     p_hire_date: hireDate,
     p_pay_cycle: payCycle,
-    p_monthly_salary: monthlySalary
+    p_monthly_salary: monthlySalary,
+    p_is_payroll_officer: isPayrollOfficer,
+    p_pay_type: payType,
+    p_daily_rate: dailyRate,
+    p_paid_rest_day: paidRestDay
   });
 
   saveBtn.disabled = false;
@@ -248,6 +275,7 @@ async function saveNewUser() {
   const isDeliveryTeam = document.getElementById('newUserDeliveryTeam').checked;
   const isOnlineOrderStaff = document.getElementById('newUserOnlineOrderStaff').checked;
   const isProductionMember = document.getElementById('newUserProductionMember').checked;
+  const isPayrollOfficer = document.getElementById('newUserPayrollOfficer').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
   const position = document.getElementById('newUserPosition').value.trim();
@@ -258,6 +286,10 @@ async function saveNewUser() {
   const paymentMethod = document.getElementById('newUserPaymentMethod').value || null;
   const payCycle = document.getElementById('newUserPayCycle').value || null;
   const monthlySalary = Number(document.getElementById('newUserMonthlySalary').value) || 0;
+  const payType = document.getElementById('newUserPayType').value || 'Salary';
+  const dailyRate = Number(document.getElementById('newUserDailyRate').value) || 0;
+  const paidRestDayRaw = document.getElementById('newUserPaidRestDay').value;
+  const paidRestDay = paidRestDayRaw === '' ? null : Number(paidRestDayRaw);
 
   if (!username) {
     errorEl.textContent = 'Username is required.';
@@ -296,7 +328,11 @@ async function saveNewUser() {
     p_payment_method: paymentMethod,
     p_hire_date: hireDate,
     p_pay_cycle: payCycle,
-    p_monthly_salary: monthlySalary
+    p_monthly_salary: monthlySalary,
+    p_is_payroll_officer: isPayrollOfficer,
+    p_pay_type: payType,
+    p_daily_rate: dailyRate,
+    p_paid_rest_day: paidRestDay
   });
 
   saveBtn.disabled = false;
@@ -336,6 +372,9 @@ async function saveNewUser() {
   document.getElementById('userSetupContent').classList.remove('hidden');
   await loadUsers();
   await loadWarehouseOptionsOnce();
+
+  document.getElementById('newUserPayType').addEventListener('change', () => togglePayTypeRows('newUser'));
+  document.getElementById('editUserPayType').addEventListener('change', () => togglePayTypeRows('editUser'));
 
   document.getElementById('newUserBtn').addEventListener('click', openNewUserModal);
   document.getElementById('closeNewUserBtn').addEventListener('click', () =>

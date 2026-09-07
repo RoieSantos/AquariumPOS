@@ -78,6 +78,17 @@
         <div class="form-row">
           <label>From Warehouse</label>
           <div id="viewFromWarehouse" class="muted"></div>
+          <!-- Super-user-only override - see the "From/To Warehouse are locked" note in
+               transferOrders.js: everyone else still has no way to change this once an order
+               exists. Hidden whenever anything has already shipped (updateManageActionButtons) -
+               the source warehouse a real shipment already moved from can't be rewritten after
+               the fact. -->
+          <button class="btn btn-secondary btn-sm hidden" id="editFromWarehouseBtn" type="button" style="margin-top:6px; align-self:flex-start;">Change From Warehouse</button>
+          <div id="viewFromWarehouseEditRow" class="hidden" style="margin-top:6px; display:flex; gap:8px; align-items:center;">
+            <select id="viewFromWarehouseSelect" style="flex:1;"></select>
+            <button class="btn btn-primary btn-sm" id="saveFromWarehouseBtn" type="button">Save</button>
+            <button class="btn btn-secondary btn-sm" id="cancelFromWarehouseEditBtn" type="button">Cancel</button>
+          </div>
         </div>
         <div class="form-row">
           <label>To Warehouse</label>

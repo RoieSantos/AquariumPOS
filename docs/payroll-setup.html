@@ -18,7 +18,7 @@
 
   <div class="page">
     <h1>Payroll Setup</h1>
-    <p class="muted">Assign each employee's pay cycle and monthly salary. Only visible to super users.</p>
+    <p class="muted">Assign each employee's pay cycle and monthly salary. Only visible to super users and payroll officers.</p>
 
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
@@ -67,12 +67,92 @@
           </label>
         </div>
       </div>
+
+      <h3>Overtime Settings</h3>
+      <p class="muted">Used by Timesheets to compute an hourly rate (Monthly Salary / (Work Days/Month x Hours/Day)) and the Overtime Addition / Undertime Deduction auto-posted when a payroll run is created.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="standardHoursPerDay">Standard Hours / Day</label>
+          <input type="number" id="standardHoursPerDay" min="1" max="24" step="0.5" />
+        </div>
+        <div class="form-row">
+          <label for="standardWorkDaysPerMonth">Standard Work Days / Month</label>
+          <input type="number" id="standardWorkDaysPerMonth" min="1" max="31" step="0.5" />
+        </div>
+        <div class="form-row">
+          <label for="overtimeMultiplier">Overtime Multiplier</label>
+          <input type="number" id="overtimeMultiplier" min="1" step="0.05" />
+        </div>
+      </div>
+
       <div id="cutoffSettingsError" class="error-text hidden"></div>
       <div style="margin-bottom:24px;">
         <button class="btn btn-success btn-sm" id="saveCutoffSettingsBtn" type="button">Save Cutoff Settings</button>
       </div>
 
-      <h2>Employees</h2>
+      <div class="section-divider"></div>
+      <div class="toolbar">
+        <h2 style="margin:0;">Cash & Digital On Hand</h2>
+      </div>
+      <p class="muted">Log cash/digital actually received here (Funding) before running payroll. Each finalized run automatically deducts its Net Pay total from the matching balance below - which bucket an employee's pay draws from is decided by their Payment Method (set per employee in the Employees table below; unset defaults to Cash). Finalizing a run is blocked if either balance can't cover it.</p>
+
+      <div class="form-grid" style="margin-bottom:12px;">
+        <div class="form-row">
+          <label>Cash on Hand</label>
+          <div id="cashOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+        </div>
+        <div class="form-row">
+          <label>Digital (GCash) on Hand</label>
+          <div id="digitalOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="fundingMethod">Method</label>
+          <select id="fundingMethod">
+            <option value="Cash">Cash</option>
+            <option value="Digital">Digital (GCash)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="fundingAmount">Amount Received</label>
+          <input type="number" id="fundingAmount" min="0.01" step="0.01" />
+        </div>
+        <div class="form-row">
+          <label for="fundingNotes">Notes</label>
+          <input type="text" id="fundingNotes" placeholder="e.g. Owner cash deposit, GCash transfer ref #" />
+        </div>
+      </div>
+      <div id="fundingError" class="error-text hidden"></div>
+      <div style="margin-bottom:16px;">
+        <button class="btn btn-success btn-sm" id="logFundingBtn" type="button">Log Funding Entry</button>
+      </div>
+
+      <h3>Funding Journal</h3>
+      <div class="table-wrap" style="margin-bottom:24px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Method</th>
+              <th>Amount</th>
+              <th>Notes</th>
+              <th>Posted By</th>
+            </tr>
+          </thead>
+          <tbody id="fundingTableBody">
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="toolbar">
+        <h2 style="margin:0;">Employees</h2>
+        <button class="btn btn-primary btn-sm" id="newEmployeeBtn" type="button">+ New Employee</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -81,12 +161,68 @@
               <th>Display Name</th>
               <th>Active</th>
               <th>Pay Cycle</th>
-              <th>Monthly Salary</th>
+              <th>Pay Type</th>
+              <th>Rate</th>
+              <th>Payment Method</th>
+              <th>Paid Rest Day</th>
               <th>Actions</th>
+            </tr>
+            <!-- Per-field filter row, Business Central style: free-text "contains" filters on the
+                 text columns, exact dropdowns on the enum-like columns, and BC-style numeric filter
+                 syntax (">5000", "<=10000", "1000..5000", "<>0") on Monthly Salary. Filters apply
+                 client-side against the already-loaded employee list in payrollSetup.js. -->
+            <tr class="filter-row">
+              <th><input type="text" id="filterUsername" placeholder="Filter..." style="width:100%; font-size:12px; padding:4px 6px;" /></th>
+              <th><input type="text" id="filterDisplayName" placeholder="Filter..." style="width:100%; font-size:12px; padding:4px 6px;" /></th>
+              <th>
+                <select id="filterActive" style="width:100%; font-size:12px; padding:4px 6px;">
+                  <option value="">All</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </th>
+              <th>
+                <select id="filterPayCycle" style="width:100%; font-size:12px; padding:4px 6px;">
+                  <option value="">All</option>
+                  <option value="none">Not enrolled</option>
+                  <option value="SemiMonthly">Semi-Monthly</option>
+                  <option value="Weekly">Weekly</option>
+                </select>
+              </th>
+              <th>
+                <select id="filterPayType" style="width:100%; font-size:12px; padding:4px 6px;">
+                  <option value="">All</option>
+                  <option value="Salary">Salary</option>
+                  <option value="Hourly">Hourly</option>
+                </select>
+              </th>
+              <th><input type="text" id="filterMonthlySalary" placeholder="e.g. >5000, 1000..2000" style="width:100%; font-size:12px; padding:4px 6px;" /></th>
+              <th>
+                <select id="filterPaymentMethod" style="width:100%; font-size:12px; padding:4px 6px;">
+                  <option value="">All</option>
+                  <option value="none">(Not set)</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Digital">Digital (GCash)</option>
+                </select>
+              </th>
+              <th>
+                <select id="filterPaidRestDay" style="width:100%; font-size:12px; padding:4px 6px;">
+                  <option value="">All</option>
+                  <option value="none">None</option>
+                  <option value="0">Sunday</option>
+                  <option value="1">Monday</option>
+                  <option value="2">Tuesday</option>
+                  <option value="3">Wednesday</option>
+                  <option value="4">Thursday</option>
+                  <option value="5">Friday</option>
+                  <option value="6">Saturday</option>
+                </select>
+              </th>
+              <th><button class="btn btn-secondary btn-sm" id="clearFiltersBtn" type="button">Clear</button></th>
             </tr>
           </thead>
           <tbody id="employeeTableBody">
-            <tr><td colspan="6" class="muted">Loading...</td></tr>
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -115,14 +251,150 @@
           </select>
         </div>
         <div class="form-row">
+          <label for="editProfilePayType">Pay Type</label>
+          <select id="editProfilePayType">
+            <option value="Salary">Salary (fixed Monthly Salary)</option>
+            <option value="Hourly">Hourly (Daily Rate / 8 x hours worked, from Timesheets)</option>
+          </select>
+        </div>
+        <div class="form-row" id="editProfileMonthlySalaryRow">
           <label for="editProfileMonthlySalary">Monthly Salary</label>
           <input type="number" id="editProfileMonthlySalary" min="0" step="0.01" value="0" />
+        </div>
+        <div class="form-row hidden" id="editProfileDailyRateRow">
+          <label for="editProfileDailyRate">Daily Rate</label>
+          <input type="number" id="editProfileDailyRate" min="0" step="0.01" value="0" />
+        </div>
+        <div class="form-row">
+          <label for="editProfilePaidRestDay">Paid Rest Day</label>
+          <select id="editProfilePaidRestDay">
+            <option value="">None - every blank day is Absent</option>
+            <option value="0">Sunday</option>
+            <option value="1">Monday</option>
+            <option value="2">Tuesday</option>
+            <option value="3">Wednesday</option>
+            <option value="4">Thursday</option>
+            <option value="5">Friday</option>
+            <option value="6">Saturday</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="editProfilePaymentMethod">Payment Method</label>
+          <select id="editProfilePaymentMethod">
+            <option value="">(Not set - treated as Cash)</option>
+            <option value="Cash">Cash</option>
+            <option value="Digital">Digital (GCash)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="editProfileActive" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="editProfileActive" style="width:auto;" />
+            <span>Active (unchecking excludes this employee from future payroll runs)</span>
+          </label>
         </div>
       </div>
 
       <div id="editProfileError" class="error-text hidden"></div>
       <div style="margin-top:16px; text-align:right;">
         <button class="btn btn-success" id="saveProfileBtn" type="button">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New employee modal - creates a plain StaffUsers login (no role flags, temp password,
+       must-change-password forced) via admin_create_payroll_employee. A Payroll Officer who isn't
+       a Super User can use this without needing User Setup access; a Super User who wants to also
+       grant roles/a warehouse does that afterward in User Setup. -->
+  <div id="newEmployeeModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">New Employee</h2>
+        <button class="btn btn-secondary btn-sm" id="closeNewEmployeeBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newEmployeeUsername">Username</label>
+          <input type="text" id="newEmployeeUsername" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeePassword">Temporary Password</label>
+          <input type="text" id="newEmployeePassword" autocomplete="off" value="123456" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeeDisplayName">Display Name</label>
+          <input type="text" id="newEmployeeDisplayName" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeePosition">Position</label>
+          <input type="text" id="newEmployeePosition" placeholder="e.g. Cashier, Helper, Manager" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeeHireDate">Hire Date</label>
+          <input type="date" id="newEmployeeHireDate" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeeBirthdate">Birthdate</label>
+          <input type="date" id="newEmployeeBirthdate" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeePhoneNumber">Phone Number</label>
+          <input type="text" id="newEmployeePhoneNumber" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeeHomeAddress">Home Address</label>
+          <input type="text" id="newEmployeeHomeAddress" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeePaymentMethod">Payment Method</label>
+          <select id="newEmployeePaymentMethod">
+            <option value="">(Not set)</option>
+            <option value="Cash">Cash</option>
+            <option value="Digital">Digital (GCash)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="newEmployeePayCycle">Pay Cycle</label>
+          <select id="newEmployeePayCycle">
+            <option value="">(Not enrolled)</option>
+            <option value="SemiMonthly">Semi-Monthly</option>
+            <option value="Weekly">Weekly</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="newEmployeePayType">Pay Type</label>
+          <select id="newEmployeePayType">
+            <option value="Salary">Salary (fixed Monthly Salary)</option>
+            <option value="Hourly">Hourly (Daily Rate / 8 x hours worked, from Timesheets)</option>
+          </select>
+        </div>
+        <div class="form-row" id="newEmployeeMonthlySalaryRow">
+          <label for="newEmployeeMonthlySalary">Monthly Salary</label>
+          <input type="number" id="newEmployeeMonthlySalary" min="0" step="0.01" value="0" />
+        </div>
+        <div class="form-row hidden" id="newEmployeeDailyRateRow">
+          <label for="newEmployeeDailyRate">Daily Rate</label>
+          <input type="number" id="newEmployeeDailyRate" min="0" step="0.01" value="0" />
+        </div>
+        <div class="form-row">
+          <label for="newEmployeePaidRestDay">Paid Rest Day</label>
+          <select id="newEmployeePaidRestDay">
+            <option value="">None - every blank day is Absent</option>
+            <option value="0">Sunday</option>
+            <option value="1">Monday</option>
+            <option value="2">Tuesday</option>
+            <option value="3">Wednesday</option>
+            <option value="4">Thursday</option>
+            <option value="5">Friday</option>
+            <option value="6">Saturday</option>
+          </select>
+        </div>
+      </div>
+
+      <p class="muted" style="font-size:12px;">Creates a login with no special roles (not Super User, Sales User, etc.) and forces a password change at first login. A super user can grant additional roles later in User Setup.</p>
+      <div id="newEmployeeError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveNewEmployeeBtn" type="button">Create Employee</button>
       </div>
     </div>
   </div>

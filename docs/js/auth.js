@@ -57,6 +57,7 @@ async function attemptLogin(username, password) {
     isSerialAdmin: !!result.is_serial_admin,
     isDeliveryTeam: !!result.is_delivery_team,
     isOnlineOrderStaff: !!result.is_online_order_staff,
+    isPayrollOfficer: !!result.is_payroll_officer,
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -234,6 +235,7 @@ async function refreshPortalSession(session) {
       isSerialAdmin: !!result.is_serial_admin,
       isDeliveryTeam: !!result.is_delivery_team,
       isOnlineOrderStaff: !!result.is_online_order_staff,
+      isPayrollOfficer: !!result.is_payroll_officer,
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);

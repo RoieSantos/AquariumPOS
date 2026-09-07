@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Employee Timesheets - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Employee Timesheets</h1>
+    <p class="muted">Daily hours worked per employee, entered by the payroll officer/supervisor. Standard day is set in Payroll Setup's Overtime Settings - hours beyond that auto-post as Overtime when a payroll run is created; entered days short of it auto-post as Undertime. Only visible to super users and payroll officers.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="timesheetsContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Weekly Entry (All Employees)</h2>
+        <button class="btn btn-secondary btn-sm" id="prevWeekBtn" type="button">&laquo; Prev Week</button>
+        <span class="muted" id="weekRangeLabel" style="min-width:180px; text-align:center;"></span>
+        <button class="btn btn-secondary btn-sm" id="nextWeekBtn" type="button">Next Week &raquo;</button>
+        <button class="btn btn-primary" id="createRunFromTimesheetsBtn" type="button" style="margin-left:auto;">Create Payroll Run from This Week</button>
+      </div>
+      <p class="muted">Type hours worked directly into each day's cell (e.g. "8"). Leave a cell blank for a day not worked - blank cells are skipped on save, not deleted (remove an existing entry via the list below instead).</p>
+      <div class="table-wrap" style="margin-bottom:12px;">
+        <table>
+          <thead id="bulkEntryTableHead"></thead>
+          <tbody id="bulkEntryTableBody">
+            <tr><td class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="bulkEntryError" class="error-text hidden"></div>
+      <div style="margin-bottom:24px;">
+        <button class="btn btn-success btn-sm" id="saveBulkEntryBtn" type="button">Save All</button>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="toolbar">
+        <h2 style="margin:0;">All Entries</h2>
+      </div>
+      <div class="toolbar">
+        <select id="filterUsername" style="max-width:240px;">
+          <option value="">All employees</option>
+        </select>
+        <input type="date" id="filterDateStart" />
+        <span class="muted">to</span>
+        <input type="date" id="filterDateEnd" />
+        <button class="btn btn-secondary btn-sm" id="applyFiltersBtn" type="button">Filter</button>
+        <button class="btn btn-primary" id="newEntryBtn" type="button" style="margin-left:auto;">+ Add Single Entry</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Date</th>
+              <th>Hours Worked</th>
+              <th>Notes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="timesheetTableBody">
+            <tr><td colspan="5" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="timesheetPaginationBar"></div>
+    </div>
+  </div>
+
+  <!-- New payroll run modal (same fields/flow as payroll.html's "+ New Payroll Run") -->
+  <div id="newRunModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">New Payroll Run</h2>
+        <button class="btn btn-secondary btn-sm" id="closeNewRunBtn" type="button">Close</button>
+      </div>
+      <p class="muted">Period dates default to the week shown in the grid above - make sure any timesheet hours you want reflected in this run were entered for dates inside the period below.</p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newRunPayCycle">Pay Cycle</label>
+          <select id="newRunPayCycle">
+            <option value="Weekly">Weekly</option>
+            <option value="SemiMonthly">Semi-Monthly</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="cutoffAutofillRow" class="form-grid hidden">
+        <div class="form-row">
+          <label for="newRunCutoff">Cutoff</label>
+          <select id="newRunCutoff">
+            <option value="A">Cutoff A</option>
+            <option value="B">Cutoff B</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="newRunTargetMonth">Month</label>
+          <input type="month" id="newRunTargetMonth" />
+        </div>
+        <div class="form-row" style="align-self:end;">
+          <button class="btn btn-secondary btn-sm" id="autofillDatesBtn" type="button">Autofill Dates</button>
+        </div>
+      </div>
+
+      <div id="weeklyAutofillRow" class="form-grid hidden">
+        <div class="form-row">
+          <label for="newRunWeeklyPayDate">Pay Date (Sunday)</label>
+          <input type="date" id="newRunWeeklyPayDate" />
+        </div>
+        <div class="form-row" style="align-self:end;">
+          <button class="btn btn-secondary btn-sm" id="autofillWeeklyDatesBtn" type="button">Autofill Dates</button>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newRunPeriodStart">Period Start</label>
+          <input type="date" id="newRunPeriodStart" />
+        </div>
+        <div class="form-row">
+          <label for="newRunPeriodEnd">Period End</label>
+          <input type="date" id="newRunPeriodEnd" />
+        </div>
+        <div class="form-row">
+          <label for="newRunPayDate">Pay Date</label>
+          <input type="date" id="newRunPayDate" />
+        </div>
+      </div>
+
+      <div id="newRunError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveRunBtn" type="button">Create Run</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add/Edit timesheet entry modal -->
+  <div id="entryModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;" id="entryModalTitle">Add Timesheet Entry</h2>
+        <button class="btn btn-secondary btn-sm" id="closeEntryModalBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="entryUsername">Employee</label>
+          <select id="entryUsername"></select>
+        </div>
+        <div class="form-row">
+          <label for="entryWorkDate">Work Date</label>
+          <input type="date" id="entryWorkDate" />
+        </div>
+        <div class="form-row">
+          <label for="entryHoursWorked">Hours Worked</label>
+          <input type="number" id="entryHoursWorked" min="0.5" max="24" step="0.5" value="8" />
+        </div>
+        <div class="form-row">
+          <label for="entryNotes">Notes</label>
+          <input type="text" id="entryNotes" />
+        </div>
+      </div>
+
+      <div id="entryError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveEntryBtn" type="button">Save Entry</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/payrollTimesheets.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

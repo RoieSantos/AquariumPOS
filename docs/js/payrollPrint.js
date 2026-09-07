@@ -26,19 +26,35 @@ function renderSummary(payslip) {
   `;
 }
 
+// Same split as payrollRun.js's classifyLineItems: the auto "Overtime (...)"/"Undertime/Absence
+// (...)" items (posted by admin_create_payroll_run) net against Base Pay to show pay for hours
+// actually worked (Gross Pay); anything manually added is an "Other" item on top of that.
+function classifyLineItems(items) {
+  const isOvertime = (i) => i.item_type === 'Addition' && /^Overtime/i.test(i.label || '');
+  const isAbsent = (i) => i.item_type === 'Deduction' && /^Undertime/i.test(i.label || '');
+  return {
+    overtimeItems: (items || []).filter(isOvertime),
+    absentItems: (items || []).filter(isAbsent),
+    otherItems: (items || []).filter((i) => !isOvertime(i) && !isAbsent(i))
+  };
+}
+
+function itemRow(i) {
+  return `
+    <tr>
+      <td>${i.item_type}</td>
+      <td>${i.label}</td>
+      <td style="text-align:right;">${i.item_type === 'Deduction' ? '-' : ''}${formatCurrency(i.amount)}</td>
+    </tr>
+  `;
+}
+
 function renderRows(payslip) {
   const tbody = document.getElementById('printTableBody');
-  const items = payslip.items || [];
+  const { overtimeItems, absentItems, otherItems } = classifyLineItems(payslip.items || []);
 
-  const itemRows = items
-    .map((i) => `
-      <tr>
-        <td>${i.item_type}</td>
-        <td>${i.label}</td>
-        <td style="text-align:right;">${i.item_type === 'Deduction' ? '-' : ''}${formatCurrency(i.amount)}</td>
-      </tr>
-    `)
-    .join('');
+  const sum = (arr) => arr.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const grossPay = Number(payslip.base_pay) - sum(absentItems) + sum(overtimeItems);
 
   tbody.innerHTML = `
     <tr>
@@ -46,7 +62,13 @@ function renderRows(payslip) {
       <td></td>
       <td style="text-align:right;">${formatCurrency(payslip.base_pay)}</td>
     </tr>
-    ${itemRows}
+    ${overtimeItems.map(itemRow).join('')}
+    ${absentItems.map(itemRow).join('')}
+    <tr>
+      <td colspan="2"><strong>Gross Pay</strong></td>
+      <td style="text-align:right;"><strong>${formatCurrency(grossPay)}</strong></td>
+    </tr>
+    ${otherItems.map(itemRow).join('')}
     <tr>
       <td colspan="2"><strong>Net Pay</strong></td>
       <td style="text-align:right;"><strong>${formatCurrency(payslip.net_pay)}</strong></td>

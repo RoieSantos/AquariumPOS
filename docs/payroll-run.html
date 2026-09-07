@@ -38,6 +38,39 @@
         </div>
       </div>
 
+      <!-- Shown only while Draft - a preview of admin_finalize_payroll_run's hard-block check
+           (supabase_payroll_funding_ledger.sql), so a shortfall is visible before Finalize is even
+           clicked, not just as an error after. -->
+      <div id="fundingRequirementBox" class="hidden" style="margin-bottom:16px;">
+        <h3 style="margin-bottom:8px;">Cash & Digital (GCash) on Hand</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Required for This Run</th>
+                <th>On Hand</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Cash</td>
+                <td id="cashRequiredDisplay">-</td>
+                <td id="cashOnHandRunDisplay">-</td>
+                <td id="cashStatusDisplay"></td>
+              </tr>
+              <tr>
+                <td>Digital (GCash)</td>
+                <td id="digitalRequiredDisplay">-</td>
+                <td id="digitalOnHandRunDisplay">-</td>
+                <td id="digitalStatusDisplay"></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div id="runError" class="error-text hidden"></div>
 
       <div class="table-wrap">
@@ -100,6 +133,22 @@
       </div>
       <div style="text-align:right; margin-bottom:16px;">
         <button class="btn btn-secondary btn-sm" id="saveBasePayBtn" type="button">Save Base Pay</button>
+      </div>
+
+      <!-- Pay for hours actually worked: Base Pay minus the auto Absent deduction plus any auto
+           Overtime addition = Gross Pay. Other (manual) additions/deductions then reach Net Pay. -->
+      <div class="table-wrap" style="margin-bottom:16px;">
+        <table>
+          <tbody>
+            <tr><td>Base Pay</td><td style="text-align:right;" id="summaryBasePay">-</td></tr>
+            <tr><td>Overtime</td><td style="text-align:right;" id="summaryOvertime">-</td></tr>
+            <tr><td>Absent</td><td style="text-align:right;" id="summaryAbsent">-</td></tr>
+            <tr><td><strong>Gross Pay</strong></td><td style="text-align:right;"><strong id="summaryGrossPay">-</strong></td></tr>
+            <tr><td>Other Additions</td><td style="text-align:right;" id="summaryOtherAdditions">-</td></tr>
+            <tr><td>Other Deductions</td><td style="text-align:right;" id="summaryOtherDeductions">-</td></tr>
+            <tr><td><strong>Net Pay</strong></td><td style="text-align:right;"><strong id="summaryNetPay">-</strong></td></tr>
+          </tbody>
+        </table>
       </div>
 
       <h3>Additions / Deductions</h3>

@@ -18,13 +18,29 @@
 
   <div class="page">
     <h1>Payroll</h1>
-    <p class="muted">Create and review payroll runs. Only visible to super users.</p>
+    <p class="muted">Create and review payroll runs. Only visible to super users and payroll officers.</p>
 
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
 
     <div id="payrollContent" class="hidden">
+      <!-- Read-only reference - manage/log funding from Payroll Setup's Cash & Digital On Hand
+           section (supabase_payroll_funding_ledger.sql). -->
+      <div class="form-grid" style="margin-bottom:20px;">
+        <div class="form-row">
+          <label>Cash on Hand</label>
+          <div id="cashOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+        </div>
+        <div class="form-row">
+          <label>Digital (GCash) on Hand</label>
+          <div id="digitalOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+        </div>
+        <div class="form-row" style="align-self:end;">
+          <a class="btn btn-secondary btn-sm" href="payroll-setup.html">Log Funding / View Journal</a>
+        </div>
+      </div>
+
       <div class="toolbar">
         <h2 style="margin:0;">Payroll Runs</h2>
         <button class="btn btn-primary" id="newRunBtn" type="button">+ New Payroll Run</button>
@@ -85,6 +101,18 @@
         </div>
         <div class="form-row" style="align-self:end;">
           <button class="btn btn-secondary btn-sm" id="autofillDatesBtn" type="button">Autofill Dates</button>
+        </div>
+      </div>
+
+      <!-- Weekly has no cutoff concept - pay date is always a Sunday, period is just that
+           preceding 7-day week. -->
+      <div id="weeklyAutofillRow" class="form-grid hidden">
+        <div class="form-row">
+          <label for="newRunWeeklyPayDate">Pay Date (Sunday)</label>
+          <input type="date" id="newRunWeeklyPayDate" />
+        </div>
+        <div class="form-row" style="align-self:end;">
+          <button class="btn btn-secondary btn-sm" id="autofillWeeklyDatesBtn" type="button">Autofill Dates</button>
         </div>
       </div>
 

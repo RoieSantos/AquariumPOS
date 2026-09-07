@@ -68,6 +68,40 @@ function autofillDates() {
   document.getElementById('newRunPayDate').value = toDateInputValue(dates.payDate);
 }
 
+// Weekly has no cutoff concept - pay date is always a Sunday, period is just the preceding 7-day
+// week (Monday-Sunday) ending on that pay date.
+function getMostRecentSunday(fromDate) {
+  const d = new Date(fromDate);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
+function autofillWeeklyDates() {
+  const payDateValue = document.getElementById('newRunWeeklyPayDate').value;
+  const errorEl = document.getElementById('newRunError');
+
+  if (!payDateValue) {
+    errorEl.textContent = 'Pick a pay date first.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const payDate = new Date(payDateValue + 'T00:00:00');
+  if (payDate.getDay() !== 0) {
+    errorEl.textContent = 'Weekly pay date should be a Sunday.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  errorEl.classList.add('hidden');
+
+  const periodStart = new Date(payDate);
+  periodStart.setDate(periodStart.getDate() - 6);
+
+  document.getElementById('newRunPeriodStart').value = toDateInputValue(periodStart);
+  document.getElementById('newRunPeriodEnd').value = toDateInputValue(payDate);
+  document.getElementById('newRunPayDate').value = toDateInputValue(payDate);
+}
+
 function formatCurrency(amount) {
   const value = Number(amount) || 0;
   return '₱' + value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -134,9 +168,23 @@ async function loadRuns() {
   );
 }
 
+async function loadFundBalances() {
+  const { data, error } = await supabaseClient.rpc('admin_get_payroll_fund_balances', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  const balances = Array.isArray(data) ? data[0] : data;
+  if (error || !balances) return;
+
+  document.getElementById('cashOnHandDisplay').textContent = formatCurrency(balances.cash_balance);
+  document.getElementById('digitalOnHandDisplay').textContent = formatCurrency(balances.digital_balance);
+}
+
 function updateCutoffRowVisibility() {
-  const isSemiMonthly = document.getElementById('newRunPayCycle').value === 'SemiMonthly';
-  document.getElementById('cutoffAutofillRow').classList.toggle('hidden', !isSemiMonthly);
+  const payCycle = document.getElementById('newRunPayCycle').value;
+  document.getElementById('cutoffAutofillRow').classList.toggle('hidden', payCycle !== 'SemiMonthly');
+  document.getElementById('weeklyAutofillRow').classList.toggle('hidden', payCycle !== 'Weekly');
 }
 
 function openNewRunModal() {
@@ -144,6 +192,7 @@ function openNewRunModal() {
   document.getElementById('newRunCutoff').value = 'A';
   const now = new Date();
   document.getElementById('newRunTargetMonth').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  document.getElementById('newRunWeeklyPayDate').value = toDateInputValue(getMostRecentSunday(now));
   document.getElementById('newRunPeriodStart').value = '';
   document.getElementById('newRunPeriodEnd').value = '';
   document.getElementById('newRunPayDate').value = '';
@@ -199,7 +248,7 @@ async function saveNewRun() {
   currentSession = session;
   renderTopNav('Payroll');
 
-  if (!session.isSuperUser) {
+  if (!session.isSuperUser && !session.isPayrollOfficer) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
     return;
   }
@@ -207,6 +256,7 @@ async function saveNewRun() {
   document.getElementById('payrollContent').classList.remove('hidden');
   await loadRuns();
   await loadCutoffSettingsOnce();
+  await loadFundBalances();
 
   document.getElementById('newRunBtn').addEventListener('click', openNewRunModal);
   document.getElementById('closeNewRunBtn').addEventListener('click', () =>
@@ -215,4 +265,5 @@ async function saveNewRun() {
   document.getElementById('saveRunBtn').addEventListener('click', saveNewRun);
   document.getElementById('newRunPayCycle').addEventListener('change', updateCutoffRowVisibility);
   document.getElementById('autofillDatesBtn').addEventListener('click', autofillDates);
+  document.getElementById('autofillWeeklyDatesBtn').addEventListener('click', autofillWeeklyDates);
 })();

@@ -108,7 +108,7 @@ async function loadLedger() {
   currentSession = session;
   renderTopNav('Payroll Ledger');
 
-  if (!session.isSuperUser) {
+  if (!session.isSuperUser && !session.isPayrollOfficer) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
     return;
   }

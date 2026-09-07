@@ -7,6 +7,7 @@ let currentSession = null;
 let currentRunId = null;
 let currentRun = null;
 let currentLines = [];
+let currentLineItems = [];
 let activeLineId = null;
 
 function formatCurrency(amount) {
@@ -38,6 +39,35 @@ function renderRunHeader() {
 
   document.getElementById('ledgerSection').classList.toggle('hidden', !isRunFinalized());
   if (isRunFinalized()) loadLedger();
+
+  document.getElementById('fundingRequirementBox').classList.toggle('hidden', isRunFinalized());
+  if (!isRunFinalized()) loadFundingRequirement();
+}
+
+// Preview of admin_finalize_payroll_run's hard-block check (supabase_payroll_funding_ledger.sql) -
+// shows the shortfall, if any, before Finalize is even clicked.
+async function loadFundingRequirement() {
+  const { data, error } = await supabaseClient.rpc('admin_get_payroll_run_funding_requirement', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_run_id: currentRunId
+  });
+
+  const req = Array.isArray(data) ? data[0] : data;
+  if (error || !req) return;
+
+  const cashShort = Number(req.cash_required) > Number(req.cash_balance);
+  const digitalShort = Number(req.digital_required) > Number(req.digital_balance);
+
+  document.getElementById('cashRequiredDisplay').textContent = formatCurrency(req.cash_required);
+  document.getElementById('cashOnHandRunDisplay').textContent = formatCurrency(req.cash_balance);
+  document.getElementById('cashStatusDisplay').innerHTML =
+    cashShort ? '<span class="badge badge-danger">Short</span>' : '<span class="badge badge-success">OK</span>';
+
+  document.getElementById('digitalRequiredDisplay').textContent = formatCurrency(req.digital_required);
+  document.getElementById('digitalOnHandRunDisplay').textContent = formatCurrency(req.digital_balance);
+  document.getElementById('digitalStatusDisplay').innerHTML =
+    digitalShort ? '<span class="badge badge-danger">Short</span>' : '<span class="badge badge-success">OK</span>';
 }
 
 function renderLedgerRows(entries) {
@@ -162,6 +192,38 @@ function renderLineItemRows(items) {
     .join('');
 }
 
+// Base Pay is only ever partial pay for actual attendance once the auto "Overtime (...)"/
+// "Undertime/Absence (...)" items (posted by admin_create_payroll_run) are factored in - split
+// those out from any manually-added items so Gross Pay reflects hours actually worked, and Other
+// Additions/Deductions are whatever the officer layered on top by hand.
+function classifyLineItems(items) {
+  const sum = (arr) => arr.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const overtime = (items || []).filter((i) => i.item_type === 'Addition' && /^Overtime/i.test(i.label || ''));
+  const absent = (items || []).filter((i) => i.item_type === 'Deduction' && /^Undertime/i.test(i.label || ''));
+  const otherAdditions = (items || []).filter((i) => i.item_type === 'Addition' && !/^Overtime/i.test(i.label || ''));
+  const otherDeductions = (items || []).filter((i) => i.item_type === 'Deduction' && !/^Undertime/i.test(i.label || ''));
+  return {
+    overtime: sum(overtime),
+    absent: sum(absent),
+    otherAdditions: sum(otherAdditions),
+    otherDeductions: sum(otherDeductions)
+  };
+}
+
+function renderLineSummary(basePay, items) {
+  const c = classifyLineItems(items);
+  const grossPay = basePay - c.absent + c.overtime;
+  const netPay = grossPay + c.otherAdditions - c.otherDeductions;
+
+  document.getElementById('summaryBasePay').textContent = formatCurrency(basePay);
+  document.getElementById('summaryOvertime').textContent = formatCurrency(c.overtime);
+  document.getElementById('summaryAbsent').textContent = c.absent > 0 ? `-${formatCurrency(c.absent)}` : formatCurrency(0);
+  document.getElementById('summaryGrossPay').textContent = formatCurrency(grossPay);
+  document.getElementById('summaryOtherAdditions').textContent = formatCurrency(c.otherAdditions);
+  document.getElementById('summaryOtherDeductions').textContent = c.otherDeductions > 0 ? `-${formatCurrency(c.otherDeductions)}` : formatCurrency(0);
+  document.getElementById('summaryNetPay').textContent = formatCurrency(netPay);
+}
+
 async function loadLineItems(lineId) {
   const tbody = document.getElementById('lineItemTableBody');
   tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading...</td></tr>';
@@ -177,7 +239,9 @@ async function loadLineItems(lineId) {
     return;
   }
 
-  renderLineItemRows(data);
+  currentLineItems = data || [];
+  renderLineItemRows(currentLineItems);
+  renderLineSummary(Number(document.getElementById('lineBasePay').value) || 0, currentLineItems);
 }
 
 async function openLineModal(lineId) {
@@ -218,7 +282,9 @@ async function saveBasePay() {
     return;
   }
 
+  renderLineSummary(basePay, currentLineItems);
   await loadLines();
+  await loadFundingRequirement();
 }
 
 async function addLineItem() {
@@ -254,6 +320,7 @@ async function addLineItem() {
   document.getElementById('newItemAmount').value = '';
   await loadLineItems(activeLineId);
   await loadLines();
+  await loadFundingRequirement();
 }
 
 async function deleteLineItem(itemId) {
@@ -273,6 +340,7 @@ async function deleteLineItem(itemId) {
 
   await loadLineItems(activeLineId);
   await loadLines();
+  await loadFundingRequirement();
 }
 
 async function finalizeRun() {
@@ -320,7 +388,7 @@ async function deleteRun() {
   currentSession = session;
   renderTopNav('Payroll');
 
-  if (!session.isSuperUser) {
+  if (!session.isSuperUser && !session.isPayrollOfficer) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
     return;
   }

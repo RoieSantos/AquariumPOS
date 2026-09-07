@@ -52,6 +52,7 @@ function renderTopNav(activeLabel) {
   // Orders since it's the same transfer-order workflow, just the read-only posted view.
   const isSalesOnlyUser = session?.isSalesUser && !session?.isSuperUser;
   const isSuperUser = !!session?.isSuperUser;
+  const isPayrollOfficer = !!session?.isPayrollOfficer;
 
   // Dashboard stands alone (not part of any group) since it's the one link everyone reaches for
   // first. Everything else is bucketed by function so the nav reads as a handful of menus instead
@@ -117,8 +118,14 @@ function renderTopNav(activeLabel) {
     admin.push({ href: 'general-setup.html', label: 'General Setup' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
+  }
+  // Payroll Officer (supabase_staff_users_payroll_officer_field.sql) sees these three even
+  // without full Super User - same "isSuperUser || isPayrollOfficer" gate each payroll page itself
+  // enforces in its own init().
+  if (isSuperUser || isPayrollOfficer) {
     admin.push({ href: 'payroll.html', label: 'Payroll' });
     admin.push({ href: 'payroll-setup.html', label: 'Payroll Setup' });
+    admin.push({ href: 'payroll-timesheets.html', label: 'Timesheets' });
     admin.push({ href: 'payroll-ledger.html', label: 'Payroll Ledger' });
   }
 

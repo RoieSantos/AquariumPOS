@@ -316,6 +316,16 @@ function updateManageActionButtons(status, lines) {
     'hidden',
     !active || currentManageIsOwnFromWarehouse || currentManageHasAnyShipped || currentManageIsLocked
   );
+
+  // Super-user-only "Change From Warehouse" - same active/not-yet-shipped gating as Cancel above,
+  // for the same reason: once anything has physically shipped, the source it shipped from can't be
+  // rewritten after the fact. Unlike Cancel, this has no currentManageIsOwnFromWarehouse
+  // restriction - a super user can do this regardless of which warehouse they're assigned to.
+  closeFromWarehouseEdit();
+  document.getElementById('editFromWarehouseBtn').classList.toggle(
+    'hidden',
+    !currentSession?.isSuperUser || !active || currentManageHasAnyShipped
+  );
 }
 
 function renderManageLines(lines, status) {
@@ -1188,6 +1198,63 @@ async function cancelTransferOrder(docNo) {
   }
 }
 
+// Super-user-only override of an already-created order's From Warehouse - see the
+// "editFromWarehouseBtn" toggle in updateManageActionButtons for why this is only ever offered
+// before anything has shipped. Populates from the same staff_search_warehouses list
+// applyPreferredFromWarehouse uses, just without its Production/Stock preference filtering - a
+// super user overriding this should be able to pick any warehouse, not just the auto-picked ones.
+async function openFromWarehouseEdit() {
+  const select = document.getElementById('viewFromWarehouseSelect');
+  select.innerHTML = '<option value="">Loading...</option>';
+  document.getElementById('editFromWarehouseBtn').classList.add('hidden');
+  document.getElementById('viewFromWarehouseEditRow').classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error || !data) {
+    select.innerHTML = '<option value="">Failed to load warehouses</option>';
+    return;
+  }
+
+  const currentId = currentManageHeader?.['From Warehouse ID'] || '';
+  select.innerHTML = data
+    .map((w) => `<option value="${w.id}" ${w.id === currentId ? 'selected' : ''}>${w.name}</option>`)
+    .join('');
+}
+
+function closeFromWarehouseEdit() {
+  document.getElementById('viewFromWarehouseEditRow').classList.add('hidden');
+}
+
+async function saveFromWarehouseEdit() {
+  const errorEl = document.getElementById('viewLinesError');
+  errorEl.classList.add('hidden');
+
+  const select = document.getElementById('viewFromWarehouseSelect');
+  const newId = select.value;
+  const newName = select.options[select.selectedIndex]?.textContent || '';
+  if (!newId) return;
+
+  const saveBtn = document.getElementById('saveFromWarehouseBtn');
+  saveBtn.disabled = true;
+  try {
+    await upsertRow('Transfer_Header', { 'No.': currentManageDocNo }, {
+      'From Warehouse ID': newId,
+      'From Warehouse': newName
+    });
+    await openManageModal(currentManageDocNo);
+    await loadHeaders();
+  } catch (err) {
+    errorEl.textContent = describeSupabaseError(err, 'Failed to change From Warehouse.');
+    errorEl.classList.remove('hidden');
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
 // "Print Production Order" - just opens the warehouse packing list layout
 // (transfer-order-print-production.html) in a new tab. Locking no longer happens here - every
 // order is locked automatically the moment it's requested (see saveNewTransfer's header payload
@@ -1883,6 +1950,9 @@ async function saveNewTransfer() {
   document.getElementById('shipTransferBtn').addEventListener('click', () => shipTransferOrder(currentManageDocNo));
   document.getElementById('receiveTransferBtn').addEventListener('click', () => receiveTransferOrder(currentManageDocNo));
   document.getElementById('cancelTransferBtn').addEventListener('click', () => cancelTransferOrder(currentManageDocNo));
+  document.getElementById('editFromWarehouseBtn').addEventListener('click', openFromWarehouseEdit);
+  document.getElementById('cancelFromWarehouseEditBtn').addEventListener('click', closeFromWarehouseEdit);
+  document.getElementById('saveFromWarehouseBtn').addEventListener('click', saveFromWarehouseEdit);
   document.getElementById('newUseProductionCategory').addEventListener('change', (e) =>
     applyPreferredFromWarehouse(e.target.checked)
   );
