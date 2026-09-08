@@ -1,18 +1,22 @@
 /* Customer landing page (docs/index.html) - deliberately its OWN stylesheet, separate from
-   css/styles.css (the internal staff-portal look). Per direct request, this page gets a distinct
-   marketing/storefront design rather than reusing the portal's blue admin-panel aesthetic. */
+   css/styles.css (the internal staff-portal look). Dark, gradient-accented theme per direct
+   request to mimic a reference "Ai Creative" SaaS landing page (dark navy background, teal-to-
+   purple gradient CTAs/accents, colored feature headings, glowing hero visual panel) - reusing
+   its color/typography language for RS Pet Stop's own content rather than its literal layout. */
 
 :root {
-  --land-bg: #f4faf9;
-  --land-surface: #ffffff;
-  --land-ink: #0d2b2e;
-  --land-ink-muted: #4b6a6d;
-  --land-teal: #0c8577;
-  --land-teal-strong: #086158;
-  --land-coral: #ff7a59;
-  --land-coral-strong: #e8623f;
-  --land-border: #dcece9;
-  --land-shadow: 0 16px 40px rgba(11, 59, 55, 0.12);
+  --land-bg: #060a14;
+  --land-bg-alt: #0a0f1f;
+  --land-surface: #10162a;
+  --land-surface-2: #161d36;
+  --land-ink: #f5f7ff;
+  --land-ink-muted: #93a0c2;
+  --land-border: #232a45;
+  --land-teal: #16e0bd;
+  --land-purple: #8b5cf6;
+  --land-pink: #ff4fd0;
+  --land-gradient: linear-gradient(90deg, var(--land-teal), var(--land-purple));
+  --land-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -25,6 +29,40 @@ body {
   background: var(--land-bg);
   color: var(--land-ink);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Full-page fixed logo background - same technique as the staff portal's Dashboard
+   (body.app-has-photo-bg in css/styles.css / applyAppBackground in js/companyBranding.js): a
+   fixed (non-scrolling) background image with a tint overlay on top, so it reads as a faint
+   brand touch rather than a photo you're meant to look at. Set via js/landing.js once
+   CompanyInfo.LogoUrl loads. The dashboard tints toward white (light theme); this tints toward
+   var(--land-bg) instead since this page is dark.
+   Centered per direct request ("embedded in the middle"), at a size well short of `cover` (which
+   blew the logo up to poster size, cropping its bottom edge/wordmark off-viewport) but bigger
+   than a small corner mark - the whole square logo, wordmark included, shows uncropped, sitting
+   centered behind the hero content. */
+body.land-has-logo-bg {
+  background-size: min(560px, 46vw);
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+body.land-has-logo-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 10, 20, 0.8);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.land-topbar,
+.land-hero,
+.land-section,
+.land-footer {
+  position: relative;
+  z-index: 1;
 }
 
 a {
@@ -41,12 +79,14 @@ img {
   padding: 0 24px;
 }
 
+
 /* ---- Top bar ---- */
 .land-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 0;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--land-border);
 }
 
 .land-brand {
@@ -66,6 +106,12 @@ img {
   background: var(--land-surface);
 }
 
+.land-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .land-staff-link {
   font-size: 0.85rem;
   color: var(--land-ink-muted);
@@ -73,69 +119,21 @@ img {
   border: 1px solid var(--land-border);
   padding: 8px 14px;
   border-radius: 999px;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
 
 .land-staff-link:hover {
-  background: var(--land-teal);
-  color: #fff;
   border-color: var(--land-teal);
+  color: var(--land-ink);
 }
 
-/* ---- Hero ---- */
-.land-hero {
-  background: radial-gradient(circle at 15% 20%, rgba(12, 133, 119, 0.16), transparent 55%),
-    radial-gradient(circle at 85% 0%, rgba(255, 122, 89, 0.14), transparent 45%),
-    linear-gradient(180deg, #ffffff 0%, var(--land-bg) 100%);
-  padding: 56px 0 72px;
-}
-
-.land-hero-inner {
-  text-align: center;
-  max-width: 720px;
-  margin: 0 auto;
-}
-
-.land-eyebrow {
-  display: inline-block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--land-teal-strong);
-  background: rgba(12, 133, 119, 0.1);
-  padding: 6px 14px;
-  border-radius: 999px;
-  margin-bottom: 18px;
-}
-
-.land-hero h1 {
-  font-size: clamp(2rem, 5vw, 3rem);
-  line-height: 1.15;
-  margin: 0 0 16px;
-  font-weight: 800;
-}
-
-.land-hero p.lead {
-  font-size: 1.05rem;
-  color: var(--land-ink-muted);
-  margin: 0 auto 32px;
-  max-width: 560px;
-}
-
-.land-cta-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 14px;
-}
-
+/* ---- Buttons ---- */
 .land-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 14px 26px;
-  border-radius: 12px;
+  border-radius: 999px;
   font-weight: 600;
   font-size: 0.98rem;
   text-decoration: none;
@@ -148,18 +146,15 @@ img {
 }
 
 .land-btn-primary {
-  background: var(--land-coral);
-  color: #fff;
-  box-shadow: 0 10px 24px rgba(255, 122, 89, 0.35);
-}
-
-.land-btn-primary:hover {
-  background: var(--land-coral-strong);
+  background: var(--land-gradient);
+  color: #04101a;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(139, 92, 246, 0.35);
 }
 
 .land-btn-secondary {
-  background: var(--land-surface);
-  color: var(--land-teal-strong);
+  background: transparent;
+  color: var(--land-ink);
   border-color: var(--land-border);
 }
 
@@ -167,9 +162,184 @@ img {
   border-color: var(--land-teal);
 }
 
-/* ---- Feature cards ---- */
+.land-btn-sm {
+  padding: 9px 18px;
+  font-size: 0.85rem;
+}
+
+.land-inline-link {
+  display: inline-block;
+  margin-top: 18px;
+  font-size: 0.88rem;
+  color: var(--land-teal);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.land-inline-link:hover {
+  text-decoration: underline;
+}
+
+.land-gradient-text {
+  background: var(--land-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.land-accent-teal { color: var(--land-teal); }
+.land-accent-purple { color: var(--land-purple); }
+.land-accent-pink { color: var(--land-pink); }
+
+/* ---- Hero ---- */
+/* No opaque base color here (unlike the other sections' backgrounds below) - only the two
+   translucent glow spots, both fading to fully transparent - so the fixed logo background on
+   <body> (body.land-has-logo-bg above) shows through the hero instead of being hidden behind it. */
+.land-hero {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(22, 224, 189, 0.16), transparent 45%),
+    radial-gradient(circle at 88% 10%, rgba(139, 92, 246, 0.2), transparent 42%);
+  padding: 64px 0 80px;
+}
+
+.land-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 42px 42px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 30% 35%, black 40%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 60% at 30% 35%, black 40%, transparent 78%);
+  pointer-events: none;
+}
+
+.land-hero-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  align-items: center;
+  gap: 40px;
+}
+
+.land-eyebrow {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-teal);
+  background: rgba(22, 224, 189, 0.12);
+  border: 1px solid rgba(22, 224, 189, 0.3);
+  padding: 6px 14px;
+  border-radius: 999px;
+  margin-bottom: 18px;
+}
+
+.land-hero-copy h1 {
+  font-size: clamp(2rem, 4.2vw, 3rem);
+  line-height: 1.15;
+  margin: 0 0 16px;
+  font-weight: 800;
+}
+
+.land-hero-copy p.lead {
+  font-size: 1.05rem;
+  color: var(--land-ink-muted);
+  margin: 0 0 32px;
+  max-width: 480px;
+}
+
+.land-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.land-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+  font-size: 0.88rem;
+  color: var(--land-ink-muted);
+}
+
+.land-stats-row strong {
+  color: var(--land-ink);
+}
+
+.land-stats-dot {
+  color: var(--land-border);
+}
+
+.land-hero-visual {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+}
+
+.land-hero-glow {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  background: var(--land-gradient);
+  filter: blur(90px);
+  opacity: 0.35;
+}
+
+.land-hero-logo-frame {
+  position: relative;
+  width: 260px;
+  height: 260px;
+  border-radius: 32px;
+  background: var(--land-surface);
+  border: 1px solid var(--land-border);
+  box-shadow: var(--land-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 36px;
+}
+
+.land-hero-logo-frame::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 32px;
+  padding: 1px;
+  background: var(--land-gradient);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.6;
+}
+
+.land-hero-logo-frame img {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 18px;
+}
+
+/* ---- Section shells ---- */
 .land-section {
-  padding: 48px 0;
+  padding: 56px 0;
+}
+
+.land-section.land-visit {
+  background: var(--land-bg-alt);
+  border-top: 1px solid var(--land-border);
+  border-bottom: 1px solid var(--land-border);
 }
 
 .land-section-title {
@@ -177,6 +347,7 @@ img {
   font-size: 1.6rem;
   font-weight: 700;
   margin: 0 0 8px;
+  color: var(--land-ink);
 }
 
 .land-section-sub {
@@ -185,6 +356,7 @@ img {
   margin: 0 0 32px;
 }
 
+/* ---- Feature cards ---- */
 .land-feature-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -195,18 +367,32 @@ img {
   background: var(--land-surface);
   border: 1px solid var(--land-border);
   border-radius: 16px;
-  padding: 24px 20px;
+  padding: 26px 20px;
   text-align: center;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.land-feature-card:hover {
+  border-color: var(--land-purple);
+  transform: translateY(-3px);
 }
 
 .land-feature-icon {
-  font-size: 1.8rem;
-  margin-bottom: 10px;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 14px;
+  border-radius: 14px;
+  background: var(--land-surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
 }
 
 .land-feature-card h3 {
   margin: 0 0 6px;
-  font-size: 1.05rem;
+  font-size: 1.02rem;
+  font-weight: 700;
 }
 
 .land-feature-card p {
@@ -231,17 +417,16 @@ img {
   border-radius: 999px;
   background: var(--land-surface);
   border: 1px solid var(--land-border);
-  color: var(--land-teal-strong);
+  color: var(--land-ink-muted);
   font-size: 0.88rem;
   font-weight: 600;
   text-decoration: none;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
 
 .land-pill:hover {
-  background: var(--land-teal);
-  color: #fff;
   border-color: var(--land-teal);
+  color: var(--land-ink);
 }
 
 /* ---- Featured products (dynamic, real catalog photos - see js/landing.js loadFeaturedProducts) ---- */
@@ -253,18 +438,18 @@ img {
 
 .land-product-card {
   display: block;
-  background: var(--land-bg);
+  background: var(--land-surface);
   border: 1px solid var(--land-border);
   border-radius: 14px;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease;
 }
 
 .land-product-card:hover {
   transform: translateY(-3px);
-  box-shadow: var(--land-shadow);
+  border-color: var(--land-purple);
 }
 
 .land-product-card img {
@@ -272,7 +457,7 @@ img {
   height: 160px;
   object-fit: cover;
   display: block;
-  background: var(--land-border);
+  background: var(--land-surface-2);
 }
 
 .land-product-info {
@@ -290,7 +475,7 @@ img {
 
 .land-product-price {
   font-size: 0.85rem;
-  color: var(--land-coral-strong);
+  color: var(--land-teal);
   font-weight: 700;
 }
 
@@ -306,6 +491,12 @@ img {
   overflow: hidden;
   border: 1px solid var(--land-border);
   background: var(--land-surface);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.land-build-card:hover {
+  border-color: var(--land-teal);
+  transform: translateY(-3px);
 }
 
 .land-build-card img {
@@ -324,10 +515,6 @@ img {
 }
 
 /* ---- Visit us / branches ---- */
-.land-visit {
-  background: var(--land-surface);
-}
-
 .land-branch-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -338,20 +525,32 @@ img {
 .land-branch-card {
   border: 1px solid var(--land-border);
   border-radius: 16px;
-  padding: 22px;
-  background: var(--land-bg);
+  overflow: hidden;
+  background: var(--land-surface);
+}
+
+.land-branch-photo {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  display: block;
+}
+
+.land-branch-body {
+  padding: 20px 22px 22px;
 }
 
 .land-branch-card h3 {
   margin: 0 0 10px;
   font-size: 1.05rem;
-  color: var(--land-teal-strong);
+  color: var(--land-teal);
 }
 
 .land-branch-card p {
   margin: 0 0 6px;
   font-size: 0.92rem;
   line-height: 1.5;
+  color: var(--land-ink-muted);
 }
 
 .land-hours-strip {
@@ -361,8 +560,9 @@ img {
   gap: 10px;
   text-align: center;
   font-weight: 600;
-  color: var(--land-teal-strong);
-  background: rgba(12, 133, 119, 0.08);
+  color: var(--land-teal);
+  background: rgba(22, 224, 189, 0.08);
+  border: 1px solid rgba(22, 224, 189, 0.2);
   border-radius: 12px;
   padding: 14px;
   flex-wrap: wrap;
@@ -377,7 +577,7 @@ img {
 }
 
 .land-footer a {
-  color: var(--land-teal-strong);
+  color: var(--land-teal);
   font-weight: 600;
   text-decoration: none;
 }
@@ -391,4 +591,32 @@ img {
   display: flex;
   justify-content: center;
   gap: 16px;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 760px) {
+  .land-hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .land-hero-visual {
+    order: -1;
+    min-height: 200px;
+  }
+
+  .land-hero-logo-frame {
+    width: 180px;
+    height: 180px;
+    padding: 26px;
+  }
+
+  .land-hero-glow {
+    width: 220px;
+    height: 220px;
+    filter: blur(70px);
+  }
+
+  .land-hero-copy p.lead {
+    max-width: none;
+  }
 }

@@ -10,29 +10,47 @@
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/landing.css" />
   <link rel="icon" href="icons/icon-192.png" />
-  <meta name="theme-color" content="#0c8577" />
+  <meta name="theme-color" content="#060a14" />
 </head>
 <body>
   <header class="land-topbar land-wrap">
     <div class="land-brand">
-      <img id="landingLogo" src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
+      <img id="landingLogoNav" src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
       <span data-company-name>RS Pet Stop</span>
     </div>
-    <a class="land-staff-link" href="staff-login.html">Staff Login</a>
+    <nav class="land-nav-actions">
+      <a class="land-staff-link" href="staff-login.html">Staff Login</a>
+      <a class="land-btn land-btn-primary land-btn-sm" href="order-now.html">Order Now</a>
+    </nav>
   </header>
 
   <section class="land-hero">
-    <div class="land-wrap land-hero-inner">
-      <span class="land-eyebrow">Tanza &amp; GMA, Cavite</span>
-      <h1>Everything your aquarium and pets need, in one stop.</h1>
-      <p class="lead">
-        Fish, aquatic life, custom-built aquariums and stands, and pet supplies -
-        order online for pickup or delivery, or drop by either of our stores.
-      </p>
-      <div class="land-cta-row">
-        <a class="land-btn land-btn-primary" href="order-now.html">Order Now</a>
-        <a class="land-btn land-btn-secondary" href="order-now.html">Build a Custom Aquarium</a>
-        <a class="land-btn land-btn-secondary" href="order-now.html">Estimate Delivery Fee</a>
+    <div class="land-hero-grid land-wrap">
+      <div class="land-hero-copy">
+        <span class="land-eyebrow">Tanza &amp; GMA, Cavite</span>
+        <h1>Everything your <span class="land-gradient-text">aquarium &amp; pets</span> need, in one stop.</h1>
+        <p class="lead">
+          Fish, aquatic life, custom-built aquariums and stands, and pet supplies -
+          order online for pickup or delivery, or drop by either of our stores.
+        </p>
+        <div class="land-cta-row">
+          <a class="land-btn land-btn-primary" href="order-now.html">Order Now</a>
+          <a class="land-btn land-btn-secondary" href="order-now.html">Build a Custom Aquarium</a>
+        </div>
+        <div class="land-stats-row">
+          <span><strong>2</strong> Branches in Cavite</span>
+          <span class="land-stats-dot">&bull;</span>
+          <span><strong>8AM&ndash;8PM</strong> Daily</span>
+          <span class="land-stats-dot">&bull;</span>
+          <span><strong>Pickup</strong> &amp; Delivery</span>
+        </div>
+        <a class="land-inline-link" href="order-now.html">Just need a delivery quote? Estimate the fee &rarr;</a>
+      </div>
+      <div class="land-hero-visual">
+        <div class="land-hero-glow"></div>
+        <div class="land-hero-logo-frame">
+          <img id="landingLogo" src="icons/icon-192.png" alt="RS Pet Stop logo" />
+        </div>
       </div>
     </div>
   </section>
@@ -43,23 +61,23 @@
       <p class="land-section-sub">From a quick fish pickup to a full custom setup, we've got you covered.</p>
       <div class="land-feature-grid">
         <div class="land-feature-card">
-          <div class="land-feature-icon">🐠</div>
-          <h3>Fish &amp; Aquatic Life</h3>
+          <div class="land-feature-icon land-accent-teal">🐠</div>
+          <h3 class="land-accent-teal">Fish &amp; Aquatic Life</h3>
           <p>A wide selection of freshwater fish and aquatic plants, always in stock.</p>
         </div>
         <div class="land-feature-card">
-          <div class="land-feature-icon">🛠️</div>
-          <h3>Custom Aquariums &amp; Stands</h3>
+          <div class="land-feature-icon land-accent-purple">🛠️</div>
+          <h3 class="land-accent-purple">Custom Aquariums &amp; Stands</h3>
           <p>Tell us your size and style - we build and price your custom tank, stand, and filtration.</p>
         </div>
         <div class="land-feature-card">
-          <div class="land-feature-icon">🦴</div>
-          <h3>Pet Supplies</h3>
+          <div class="land-feature-icon land-accent-pink">🦴</div>
+          <h3 class="land-accent-pink">Pet Supplies</h3>
           <p>Food, accessories, and everyday essentials for your fish and other pets.</p>
         </div>
         <div class="land-feature-card">
-          <div class="land-feature-icon">🚚</div>
-          <h3>Delivery</h3>
+          <div class="land-feature-icon land-accent-teal">🚚</div>
+          <h3 class="land-accent-teal">Delivery</h3>
           <p>Get an instant delivery fee estimate to your address, or pick up in-store.</p>
         </div>
       </div>
@@ -107,16 +125,22 @@
       <p class="land-section-sub">Two branches serving Cavite.</p>
       <div class="land-branch-grid">
         <div class="land-branch-card">
-          <h3>📍 Amaya Branch</h3>
-          <p>Amaya Dos, Antero Soriano Highway, Tanza, Cavite</p>
-          <p>(Search "RSPetStop Amaya" on Google/Waze Maps)</p>
-          <p>☎ +63 945 518 4066</p>
+          <img class="land-branch-photo" src="icons/Amaya.jpg" alt="RS Pet Stop Amaya branch storefront" loading="lazy" />
+          <div class="land-branch-body">
+            <h3>📍 Amaya Branch</h3>
+            <p>Amaya Dos, Antero Soriano Highway, Tanza, Cavite</p>
+            <p>(Search "RSPetStop Amaya" on Google/Waze Maps)</p>
+            <p>☎ +63 945 518 4066</p>
+          </div>
         </div>
         <div class="land-branch-card">
-          <h3>📍 GMA Branch</h3>
-          <p>Blk 2 Lot 53, Brgy. Granados, Gen. Mariano Alvarez, Cavite</p>
-          <p>(Search "RSPetStop GMA" on Google/Waze Maps)</p>
-          <p>☎ +63 997 189 1662</p>
+          <img class="land-branch-photo" src="icons/GMA.jpg" alt="RS Pet Stop GMA branch storefront" loading="lazy" />
+          <div class="land-branch-body">
+            <h3>📍 GMA Branch</h3>
+            <p>Blk 2 Lot 53, Brgy. Granados, Gen. Mariano Alvarez, Cavite</p>
+            <p>(Search "RSPetStop GMA" on Google/Waze Maps)</p>
+            <p>☎ +63 997 189 1662</p>
+          </div>
         </div>
       </div>
       <div class="land-hours-strip">

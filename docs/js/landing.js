@@ -1,3 +1,40 @@
+// The logo file itself is flat white behind the circular mark (no alpha channel) - fine for the
+// nav bar/hero-card logo, which are meant to look like a framed badge, but it shows up as an ugly
+// light rectangle when used as the faint page background below. There's no separate cutout asset
+// to point at instead, so this draws the image to an off-screen canvas and clears any near-white
+// pixel's alpha, returning a data: URL with a true transparent background. Falls back to the
+// original URL untouched if the canvas can't be read back (e.g. the image host doesn't send
+// CORS headers, which would otherwise throw on getImageData - "tainted canvas").
+function makeWhiteTransparent(imageUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const WHITE_THRESHOLD = 232;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] >= WHITE_THRESHOLD && data[i + 1] >= WHITE_THRESHOLD && data[i + 2] >= WHITE_THRESHOLD) {
+            data[i + 3] = 0;
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve(imageUrl);
+      }
+    };
+    img.onerror = () => resolve(imageUrl);
+    img.src = imageUrl;
+  });
+}
+
 // Customer landing page (docs/index.html) - populates the logo/name/Facebook link from
 // public."CompanyInfo" (see supabase_company_info_table.sql), reusing fetchCompanyInfo() from
 // companyBranding.js. That table is readable by the anon key with no session at all, which is
@@ -14,11 +51,29 @@ async function applyLandingBranding() {
   }
 
   if (info['LogoUrl']) {
-    const logoImg = document.getElementById('landingLogo');
-    if (logoImg) {
-      logoImg.src = info['LogoUrl'];
-      logoImg.hidden = false;
+    // Nav bar logo starts hidden (a tiny fallback icon looks off in that strip) - only shown
+    // once the real logo is in. The big hero logo is always visible (falls back to the small
+    // app icon while this loads) since it's the page's main visual, mirroring the hero image in
+    // the reference design.
+    const navLogo = document.getElementById('landingLogoNav');
+    if (navLogo) {
+      navLogo.src = info['LogoUrl'];
+      navLogo.hidden = false;
     }
+
+    const heroLogo = document.getElementById('landingLogo');
+    if (heroLogo) heroLogo.src = info['LogoUrl'];
+
+    // Same full-page background technique as the staff portal's Dashboard (applyAppBackground in
+    // companyBranding.js / body.app-has-photo-bg in css/styles.css) - a fixed, centered background
+    // image plus a tint overlay (see body.land-has-logo-bg in css/landing.css) - using the logo
+    // itself here rather than CompanyInfo.BackgroundImageUrl, since the request was specifically
+    // "our logo in the background" like the Dashboard has. Its white backing is stripped first
+    // (see makeWhiteTransparent above) so it blends into the page instead of showing a light box.
+    makeWhiteTransparent(info['LogoUrl']).then((transparentUrl) => {
+      document.body.style.backgroundImage = `url(${transparentUrl})`;
+      document.body.classList.add('land-has-logo-bg');
+    });
   }
 
   if (info['FacebookUrl']) {
