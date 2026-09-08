@@ -547,6 +547,7 @@ async function openDriverOrderDetail(stopId) {
     <div class="driver-detail-row"><strong>Phone:</strong> ${header.shipping_phone || '<span class="muted">Not on file</span>'}</div>
     <div class="driver-detail-row"><strong>Address:</strong> ${header.shipping_address || '<span class="muted">Not on file</span>'}</div>
     ${header.note_print ? `<div class="driver-detail-row"><strong>Notes:</strong> ${header.note_print}</div>` : ''}
+    ${header.stop_notes ? `<div class="driver-detail-row"><strong>Delivery Instructions:</strong> ${header.stop_notes}</div>` : ''}
     <h3 class="driver-detail-products-heading">Products</h3>
     ${lines.length === 0
       ? '<p class="muted">No line items found.</p>'
@@ -1121,17 +1122,24 @@ function closeAssignModal() {
   document.getElementById('assignModal').classList.add('hidden');
 }
 
-// customerName is only ever passed from confirmAssign() for a walk-in placeholder order (see
-// isWalkInPlaceholderOrder) - every other caller (a plain missing-address prompt, the "Retry Map"
-// button) omits it, and admin_update_delivery_stop_geocode leaves whatever name is already stored
-// untouched whenever null is sent, so those calls can never blank out a name entered earlier.
+// details is { customerName, phone, notes } - only ever passed with real values from
+// confirmAssign() for a walk-in placeholder order (see isWalkInPlaceholderOrder) or from
+// openFixStopDetails' edit flow. Every other caller (a plain missing-address prompt, the
+// "Retry Map" button) omits it, and admin_update_delivery_stop_geocode leaves whatever is already
+// stored untouched whenever a field comes in null, so those calls can never blank out a name/
+// phone/note entered earlier.
+//
 // Returns true on success, false if the save itself failed - callers that matter to the user
 // (confirmAssign, openFixStopDetails) surface that rather than letting it fail silently. Earlier
 // versions of this function ignored the RPC's own {error} entirely, so a bad call here (wrong
 // argument name, an ambiguous overload, a schema-cache that hadn't picked up a just-run migration
 // yet) looked identical to success: the stop existed, nothing on screen said otherwise, and the
-// manual name/address just never appeared. Per "it never fill in the stops address and customer".
-async function geocodeAndSaveStop(stopId, address, customerName = null) {
+// manual details just never appeared. Per "it never fill in the stops address and customer".
+async function geocodeAndSaveStop(stopId, address, details = null) {
+  const customerName = details?.customerName || null;
+  const phone = details?.phone || null;
+  const notes = details?.notes || null;
+
   if (!address || !address.trim()) {
     const { error } = await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
       p_admin_username: currentSession.username,
@@ -1141,11 +1149,13 @@ async function geocodeAndSaveStop(stopId, address, customerName = null) {
       p_latitude: null,
       p_longitude: null,
       p_geocode_status: 'failed',
-      p_customer_name: customerName || null
+      p_customer_name: customerName,
+      p_contact_number: phone,
+      p_notes: notes
     });
     if (error) {
       console.error('admin_update_delivery_stop_geocode failed:', error);
-      window.alert(`The stop was created, but saving its manual name/address failed: ${error.message}. Use "Edit Details" on this stop to try again.`);
+      window.alert(`The stop was created, but saving its manual details failed: ${error.message}. Use "Edit Details" on this stop to try again.`);
       return false;
     }
     return true;
@@ -1173,7 +1183,9 @@ async function geocodeAndSaveStop(stopId, address, customerName = null) {
           p_latitude: result.geometry.location.lat(),
           p_longitude: result.geometry.location.lng(),
           p_geocode_status: 'ok',
-          p_customer_name: customerName || null
+          p_customer_name: customerName,
+          p_contact_number: phone,
+          p_notes: notes
         })
       : await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
           p_admin_username: currentSession.username,
@@ -1183,12 +1195,14 @@ async function geocodeAndSaveStop(stopId, address, customerName = null) {
           p_latitude: null,
           p_longitude: null,
           p_geocode_status: 'failed',
-          p_customer_name: customerName || null
+          p_customer_name: customerName,
+          p_contact_number: phone,
+          p_notes: notes
         });
 
     if (error) {
       console.error('admin_update_delivery_stop_geocode failed:', error);
-      window.alert(`The stop was created, but saving its manual name/address failed: ${error.message}. Use "Edit Details" on this stop to try again.`);
+      window.alert(`The stop was created, but saving its manual details failed: ${error.message}. Use "Edit Details" on this stop to try again.`);
       return false;
     }
     return true;
@@ -1200,33 +1214,36 @@ async function geocodeAndSaveStop(stopId, address, customerName = null) {
 }
 
 // Portal-styled replacement for window.confirm()/window.prompt() when the selected order has no
-// shipping address, or is a walk-in placeholder needing a name too (isWalkInPlaceholderOrder) -
-// resolves to { address, customerName } (either can be null if left blank) if the user clicks
-// Continue, or `undefined` if they cancel. noAddressResolve is a module-level handle so the
-// Cancel/Continue buttons (wired once in wireToolbarAndModal) can settle whichever promise is
-// currently pending.
+// shipping address, or is a walk-in placeholder needing a name/contact number/note too
+// (isWalkInPlaceholderOrder) - resolves to { address, customerName, phone, notes } (any of which
+// can be null if left blank) if the user clicks Continue, or `undefined` if they cancel.
+// noAddressResolve is a module-level handle so the Cancel/Continue buttons (wired once in
+// wireToolbarAndModal) can settle whichever promise is currently pending.
 let noAddressResolve = null;
 
-// title/message/prefillAddress/prefillName let openFixStopDetails (below) reuse this same modal
-// as a general "edit an existing stop's details" tool, with its own wording and the values it
-// already has typed in rather than blank boxes.
-function openNoAddressModal(orderId, { askName = false, title, message, prefillAddress = '', prefillName = '' } = {}) {
+// title/message/prefill* let openFixStopDetails (below) reuse this same modal as a general "edit
+// an existing stop's details" tool, with its own wording and the values it already has typed in
+// rather than blank boxes.
+function openNoAddressModal(orderId, { askDetails = false, title, message, prefillAddress = '', prefillName = '', prefillPhone = '', prefillNotes = '' } = {}) {
   document.getElementById('noAddressOrderId').textContent = orderId;
   document.getElementById('noAddressInput').value = prefillAddress || '';
   document.getElementById('noAddressNameInput').value = prefillName || '';
-  document.getElementById('noAddressNameRow').classList.toggle('hidden', !askName);
+  document.getElementById('noAddressPhoneInput').value = prefillPhone || '';
+  document.getElementById('noAddressNotesInput').value = prefillNotes || '';
+  document.querySelectorAll('.walkin-extra-row').forEach((row) => row.classList.toggle('hidden', !askDetails));
 
-  // The walk-in wording explains WHY a name/address is being asked for (Pancake's own generic
-  // placeholder, not this order's real customer) - the plain missing-address prompt keeps its
-  // original text unchanged, since that path existed before walk-in orders were a consideration.
-  document.getElementById('noAddressTitle').textContent = title || (askName
+  // The walk-in wording explains WHY these extra fields are being asked for (Pancake's own
+  // generic placeholder, not this order's real customer) - the plain missing-address prompt keeps
+  // its original text unchanged, since that path existed before walk-in orders were a
+  // consideration.
+  document.getElementById('noAddressTitle').textContent = title || (askDetails
     ? 'Walk-in Order - Delivery Details'
     : 'No Delivery Address');
-  document.getElementById('noAddressMessage').innerHTML = message || (askName
+  document.getElementById('noAddressMessage').innerHTML = message || (askDetails
     ? `Order <strong>${orderId}</strong> is logged under Pancake's generic "POS WALKIN ORDERS" customer with no real address on file. Who is this delivery actually for, and where is it going?`
     : `Order <strong>${orderId}</strong> has no shipping address on file. Enter one below to plot it on the map, or leave it blank to continue without one.`);
   document.getElementById('noAddressModal').classList.remove('hidden');
-  document.getElementById(askName ? 'noAddressNameInput' : 'noAddressInput').focus();
+  document.getElementById(askDetails ? 'noAddressNameInput' : 'noAddressInput').focus();
 
   return new Promise((resolve) => { noAddressResolve = resolve; });
 }
@@ -1234,36 +1251,43 @@ function openNoAddressModal(orderId, { askName = false, title, message, prefillA
 function closeNoAddressModal(proceed) {
   const address = document.getElementById('noAddressInput').value.trim();
   const customerName = document.getElementById('noAddressNameInput').value.trim();
+  const phone = document.getElementById('noAddressPhoneInput').value.trim();
+  const notes = document.getElementById('noAddressNotesInput').value.trim();
   document.getElementById('noAddressModal').classList.add('hidden');
 
   if (noAddressResolve) {
-    noAddressResolve(proceed ? { address: address || null, customerName: customerName || null } : undefined);
+    noAddressResolve(proceed
+      ? { address: address || null, customerName: customerName || null, phone: phone || null, notes: notes || null }
+      : undefined);
     noAddressResolve = null;
   }
 }
 
-// Fixes an ALREADY-CREATED stop's manual name/address, per "it never fill in the stops address
-// and customer" - confirmAssign()'s prompt only ever fires once, at the moment a stop is created,
-// so until now there was no way back in if it was skipped, mistyped, or (per the error handling
-// just added to geocodeAndSaveStop) silently failed to save. Available on every stop, not just a
-// walk-in placeholder - the same gap applies to any stop whose address needs correcting later.
+// Fixes an ALREADY-CREATED stop's manual details, per "it never fill in the stops address and
+// customer" - confirmAssign()'s prompt only ever fires once, at the moment a stop is created, so
+// until now there was no way back in if it was skipped, mistyped, or (per the error handling just
+// added to geocodeAndSaveStop) silently failed to save. Available on every stop, not just a
+// walk-in placeholder - the same gap applies to any stop whose details need correcting later.
 //
 // Prefills with whatever is on the stop already, so this reads as "edit" rather than "start over" -
 // the manually-entered address (isPlaceholderAddress covers a stop that still shows the raw
-// "Walkin" text because nothing has been saved for it yet) and the current customer_name (already
-// resolved to the manual one if admin_list_delivery_stops has one on file).
+// "Walkin" text because nothing has been saved for it yet), the current customer_name (already
+// resolved to the manual one if admin_list_delivery_stops has one on file), and the stop's own
+// contact_number/notes.
 async function openFixStopDetails(stop) {
   const currentAddress = isPlaceholderAddress(stop.shipping_address) ? (stop.geocoded_address || '') : stop.shipping_address;
   const manualDetails = await openNoAddressModal(stop.order_id, {
-    askName: true,
+    askDetails: true,
     title: 'Edit Delivery Details',
-    message: `Update the delivery address and/or customer name shown for order <strong>${stop.order_id}</strong>. This only affects what this portal shows and prints for this stop - it does not change anything in Pancake.`,
+    message: `Update the delivery details shown for order <strong>${stop.order_id}</strong>. This only affects what this portal shows and prints for this stop - it does not change anything in Pancake.`,
     prefillAddress: currentAddress || '',
-    prefillName: stop.customer_name || ''
+    prefillName: stop.customer_name || '',
+    prefillPhone: stop.contact_number || '',
+    prefillNotes: stop.notes || ''
   });
   if (manualDetails === undefined) return; // cancelled
 
-  const saved = await geocodeAndSaveStop(stop.stop_id, manualDetails.address, manualDetails.customerName);
+  const saved = await geocodeAndSaveStop(stop.stop_id, manualDetails.address, manualDetails);
   if (!saved) return; // geocodeAndSaveStop already alerted why
 
   await renderMonth(currentYear, currentMonth);
@@ -1294,20 +1318,22 @@ async function confirmAssign() {
   // back to OnlineOrders.ShippingAddress (a Pancake-synced field), so a manual entry here can't
   // get silently overwritten or drift from what Pancake has on file.
   //
-  // A walk-in placeholder order (isWalkInPlaceholderOrder) gets the same prompt PLUS a Customer
-  // Name field, per "if the customer is POS WALKIN ORDERS and Address is Walkin can you ask the
-  // user for Address and Name of customer once its assigned" - "Walkin" isn't a real address
-  // either, so it is treated the same as a genuinely missing one (isPlaceholderAddress).
+  // A walk-in placeholder order (isWalkInPlaceholderOrder) gets the same prompt PLUS Customer
+  // Name/Contact Number/Delivery Instructions fields, per "if the customer is POS WALKIN ORDERS and
+  // Address is Walkin can you ask the user for Address and Name of customer once its assigned",
+  // "can you fill in notes too together with Name and Address" and "also add the contact number" -
+  // "Walkin" isn't a real address either, so it is treated the same as a genuinely missing one
+  // (isPlaceholderAddress).
   const matchedOrder = assignOrdersByOrderId.get(selectedOrderId);
   let addressForGeocode = matchedOrder ? matchedOrder.shipping_address : null;
-  let customerNameForStop = null;
+  let detailsForStop = null;
 
   const needsWalkInDetails = isWalkInPlaceholderOrder(matchedOrder);
   if (needsWalkInDetails || isPlaceholderAddress(addressForGeocode)) {
-    const manualDetails = await openNoAddressModal(selectedOrderId, { askName: needsWalkInDetails });
+    const manualDetails = await openNoAddressModal(selectedOrderId, { askDetails: needsWalkInDetails });
     if (manualDetails === undefined) return; // cancelled
     addressForGeocode = manualDetails.address;
-    customerNameForStop = manualDetails.customerName;
+    detailsForStop = manualDetails;
   }
 
   const { data: stopId, error } = await supabaseClient.rpc('admin_create_delivery_stop', {
@@ -1333,7 +1359,7 @@ async function confirmAssign() {
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);
 
-  await geocodeAndSaveStop(stopId, addressForGeocode, customerNameForStop);
+  await geocodeAndSaveStop(stopId, addressForGeocode, detailsForStop);
 
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);

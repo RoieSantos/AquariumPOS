@@ -135,6 +135,11 @@ function deliveryReceiptBlockHtml(info, header, lines, copyLabel) {
             </table>
           </div>
           ${header.note_print ? `<div class="delivery-receipt-note">Additional NOTE: ${escapeHtml(header.note_print)}</div>` : ''}
+          <!-- Staff-typed delivery note (DeliveryStops."Notes", stop_notes) - a different note
+               from note_print above (Pancake's own order-level one). Per "in the delivery if its
+               pos Walkin can you fill in notes too... notes will need to flow to the printout
+               too". -->
+          ${header.stop_notes ? `<div class="delivery-receipt-note">Delivery Instructions: ${escapeHtml(header.stop_notes)}</div>` : ''}
           <div class="delivery-receipt-fee">Delivery Fee : ${formatMoney(header.delivery_fee)}</div>
         </div>
         <div class="delivery-receipt-section">
@@ -199,6 +204,7 @@ function invoiceBlockHtml(info, header, lines) {
             </table>
           </div>
           ${header.note_print ? `<div class="delivery-receipt-note">Additional NOTE: ${escapeHtml(header.note_print)}</div>` : ''}
+          ${header.stop_notes ? `<div class="delivery-receipt-note">Delivery Instructions: ${escapeHtml(header.stop_notes)}</div>` : ''}
           <div class="delivery-receipt-fee">Delivery Fee : ${formatMoney(header.delivery_fee)}</div>
         </div>
         <div class="delivery-receipt-section">

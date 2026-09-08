@@ -1,31 +1,44 @@
--- Manual Customer Name for a delivery stop, alongside the manual Address it already had. Per
--- "hey can you help me in the deliver if the customer is POS WALKIN ORDERS and Address is Walkin
--- can you ask the user for Address and Name of customer once its assigned. This will fall under
--- the printout too".
+-- Manual Customer Name/Contact Number/Delivery Instructions for a delivery stop, alongside the
+-- manual Address it already had. Per "hey can you help me in the deliver if the customer is POS
+-- WALKIN ORDERS and Address is Walkin can you ask the user for Address and Name of customer once
+-- its assigned. This will fall under the printout too", then "can you fill in notes too together
+-- with Name and Address... notes will need to flow to the printout too", then "also add the
+-- contact number".
 --
 -- BACKGROUND. A sale rung up at the POS with no real customer picked syncs from Pancake with
 -- CustomerName literally "POS WALKIN ORDERS" and ShippingAddress literally "Walkin" - neither is
--- an actual customer identity or a place a driver can be sent to. Assigning one of these to a
--- delivery already prompted for a manual address when ShippingAddress was BLANK (see
--- confirmAssign/openNoAddressModal, js/delivery.js, and admin_update_delivery_stop_geocode
--- below) - "Walkin" is not blank, so that prompt never fired for it, and there was nowhere to
--- record a real customer name at all.
+-- an actual customer identity or a place a driver can be sent to, and there is often no real
+-- phone number on file either. Assigning one of these to a delivery already prompted for a manual
+-- address when ShippingAddress was BLANK (see confirmAssign/openNoAddressModal, js/delivery.js,
+-- and admin_update_delivery_stop_geocode below) - "Walkin" is not blank, so that prompt never
+-- fired for it, and there was nowhere to record a real customer name, phone, or delivery note at
+-- all.
 --
 -- THE FIX. js/delivery.js now treats "Walkin" the same as a blank address (isPlaceholderAddress),
 -- and detects the "POS WALKIN ORDERS" placeholder (isWalkInPlaceholderOrder) to also ask for a
--- Customer Name at the same moment. Both are stored on DeliveryStops - never written back to
--- OnlineOrders.CustomerName/ShippingAddress (Pancake-synced fields a manual entry must not drift
--- from or get silently overwritten by) - and substituted in on every read, so the manifest print,
--- the delivery receipt/invoice print, the day-detail table, and the Driver Route View all show the
--- real name/address instead of the placeholder.
+-- Customer Name, Contact Number and a free-text Delivery Instructions note at the same moment (and
+-- an "Edit Details" action lets any stop's details be corrected afterwards too - see
+-- openFixStopDetails). All of it is stored on DeliveryStops - never written back to
+-- OnlineOrders.CustomerName/ShippingAddress/ShippingPhone (Pancake-synced fields a manual entry
+-- must not drift from or get silently overwritten by) - and substituted in on every read, so the
+-- manifest print, the delivery receipt/invoice print, the day-detail table, and the Driver Route
+-- View all show the real details instead of the placeholder.
+--
+-- Notes: DeliveryStops."Notes" already existed (a staff-typed scheduling note), but nothing ever
+-- set it - admin_create_delivery_stop's p_notes parameter was always called with nothing. It is
+-- now set the same way the other manual fields are (via admin_update_delivery_stop_geocode, right
+-- after the stop is created), not via that creation-time parameter, so "Edit Details" on an
+-- existing stop can update it too through the one function that already owns every other manual
+-- field on a stop.
 
 alter table public."DeliveryStops" add column if not exists "ManualCustomerName" varchar(255);
+alter table public."DeliveryStops" add column if not exists "ManualContactNumber" varchar(50);
 
 -- ============================================================================
--- admin_update_delivery_stop_geocode gains a trailing p_customer_name - dropped by OID first (an
--- added parameter is a distinct overload as far as Postgres is concerned, and PostgREST calls by
--- argument name, so an old 7-arg overload left beside this one would make every call ambiguous,
--- PGRST203).
+-- admin_update_delivery_stop_geocode gains trailing p_customer_name/p_contact_number/p_notes -
+-- dropped by OID first (an added parameter is a distinct overload as far as Postgres is
+-- concerned, and PostgREST calls by argument name, so an old overload left beside this one would
+-- make every call ambiguous, PGRST203).
 
 do $$
 declare
@@ -44,9 +57,10 @@ begin
 end;
 $$;
 
--- p_customer_name default null and coalesce-preserved (only overwritten when a non-blank value is
--- actually sent): the "Retry Map" button and every other existing caller re-geocode an address
--- without knowing or touching the name, and must not blank one out that was entered earlier.
+-- All three new parameters default null and are coalesce-preserved (only overwritten when a
+-- non-blank value is actually sent): the "Retry Map" button and every other existing caller
+-- re-geocode an address without knowing or touching the rest, and must not blank out a name/
+-- phone/note that was entered earlier.
 create or replace function public.admin_update_delivery_stop_geocode(
   p_admin_username text,
   p_admin_password text,
@@ -55,7 +69,9 @@ create or replace function public.admin_update_delivery_stop_geocode(
   p_latitude numeric,
   p_longitude numeric,
   p_geocode_status text,
-  p_customer_name text default null
+  p_customer_name text default null,
+  p_contact_number text default null,
+  p_notes text default null
 )
 returns void
 language plpgsql
@@ -73,12 +89,14 @@ begin
       "Longitude" = p_longitude,
       "GeocodeStatus" = p_geocode_status,
       "GeocodedAtUtc" = now(),
-      "ManualCustomerName" = coalesce(nullif(trim(p_customer_name), ''), "ManualCustomerName")
+      "ManualCustomerName" = coalesce(nullif(trim(p_customer_name), ''), "ManualCustomerName"),
+      "ManualContactNumber" = coalesce(nullif(trim(p_contact_number), ''), "ManualContactNumber"),
+      "Notes" = coalesce(nullif(trim(p_notes), ''), "Notes")
   where "StopID" = p_stop_id;
 end;
 $$;
 
-grant execute on function public.admin_update_delivery_stop_geocode(text, text, uuid, text, numeric, numeric, text, text) to anon;
+grant execute on function public.admin_update_delivery_stop_geocode(text, text, uuid, text, numeric, numeric, text, text, text, text) to anon;
 
 -- ============================================================================
 -- admin_list_delivery_stops (the calendar day-detail table, Driver Route View and print manifest
@@ -86,8 +104,10 @@ grant execute on function public.admin_update_delivery_stop_geocode(text, text, 
 -- columns, created_by + note_print added after route_tagging.sql's 17-column copy) - copying the
 -- older shape here made Postgres reject this as a return-type change (42P13, "Row type defined by
 -- OUT parameters is different"), since create-or-replace only tolerates an IDENTICAL output shape.
--- Explicit drop first, then recreate with the full current shape - only the customer_name
--- expression actually changes.
+-- Explicit drop first, then recreate with the full current shape plus a new trailing
+-- contact_number column - openFixStopDetails (js/delivery.js) needs it to prefill "Edit Details"
+-- with whatever contact number is already on the stop. "notes" was already returned (s."Notes")
+-- and needed no change - it simply starts getting populated now that something writes to it.
 drop function if exists public.admin_list_delivery_stops(text, text, date, date);
 
 create or replace function public.admin_list_delivery_stops(p_admin_username text, p_admin_password text, p_start_date date, p_end_date date)
@@ -110,7 +130,8 @@ returns table(
   geocoded_address text,
   route_name text,
   created_by text,
-  note_print text
+  note_print text,
+  contact_number text
 )
 language plpgsql
 security definer
@@ -134,7 +155,8 @@ begin
              (select string_agg(nullif(trim(l."Note"::text), ''), '; ' order by l."LineID")
                 from public."OnlineOrderLines" l
                 where l."OrderID" = o."OrderID" and nullif(trim(l."Note"::text), '') is not null)
-           ) as note_print
+           ) as note_print,
+           s."ManualContactNumber"::text as contact_number
     from public."DeliveryStops" s
     join public."OnlineOrders" o on o."OrderID" = s."OrderID"
     join public."DeliveryTrucks" t on t."TruckID" = s."TruckID"
@@ -181,6 +203,7 @@ returns table(
   shipping_phone text,
   delivery_fee numeric,
   note_print text,
+  stop_notes text,
   confirmed_by text,
   warehouse_name text,
   warehouse_address text,
@@ -203,6 +226,8 @@ declare
   v_order_id text;
   v_geocoded_address text;
   v_manual_customer_name text;
+  v_manual_contact_number text;
+  v_stop_notes text;
   v_order_date date;
   v_customer_name text;
   v_shipping_address text;
@@ -223,8 +248,8 @@ begin
     raise exception 'Not authorized.';
   end if;
 
-  select s."OrderID", s."GeocodedAddress", s."ManualCustomerName"
-    into v_order_id, v_geocoded_address, v_manual_customer_name
+  select s."OrderID", s."GeocodedAddress", s."ManualCustomerName", s."ManualContactNumber", s."Notes"::text
+    into v_order_id, v_geocoded_address, v_manual_customer_name, v_manual_contact_number, v_stop_notes
   from public."DeliveryStops" s
   where s."StopID" = p_stop_id;
 
@@ -242,9 +267,10 @@ begin
   left join public."Warehouses" w on w."ID" = o."LocationID"
   where o."OrderID" = v_order_id;
 
-  -- Manually-entered-name override, per the header comment above - preferred whenever one was
-  -- actually typed at assignment time.
+  -- Manually-entered overrides, per the header comment above - preferred whenever something was
+  -- actually typed at assignment time or via "Edit Details".
   v_customer_name := coalesce(nullif(trim(v_manual_customer_name), ''), v_customer_name);
+  v_shipping_phone := coalesce(nullif(trim(v_manual_contact_number), ''), v_shipping_phone);
 
   -- Same manually-entered-address fallback convention as the Delivery day-detail table
   -- (js/delivery.js's isPlaceholderAddress) - covers a stop whose order has no real
@@ -271,6 +297,7 @@ begin
     shipping_phone := v_shipping_phone;
     delivery_fee := v_delivery_fee;
     note_print := v_note_print;
+    stop_notes := v_stop_notes;
     confirmed_by := v_confirmed_by;
     warehouse_name := v_warehouse_name;
     warehouse_address := v_warehouse_address;
@@ -295,6 +322,7 @@ begin
     shipping_phone := v_shipping_phone;
     delivery_fee := v_delivery_fee;
     note_print := v_note_print;
+    stop_notes := v_stop_notes;
     confirmed_by := v_confirmed_by;
     warehouse_name := v_warehouse_name;
     warehouse_address := v_warehouse_address;

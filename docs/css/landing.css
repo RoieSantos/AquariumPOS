@@ -216,6 +216,113 @@ img {
   line-height: 1.5;
 }
 
+/* ---- Shop-by-category pills (dynamic, see js/landing.js loadCategoryPills) ---- */
+.land-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.land-pill {
+  display: inline-block;
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: var(--land-surface);
+  border: 1px solid var(--land-border);
+  color: var(--land-teal-strong);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.land-pill:hover {
+  background: var(--land-teal);
+  color: #fff;
+  border-color: var(--land-teal);
+}
+
+/* ---- Featured products (dynamic, real catalog photos - see js/landing.js loadFeaturedProducts) ---- */
+.land-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px;
+}
+
+.land-product-card {
+  display: block;
+  background: var(--land-bg);
+  border: 1px solid var(--land-border);
+  border-radius: 14px;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.land-product-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--land-shadow);
+}
+
+.land-product-card img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  display: block;
+  background: var(--land-border);
+}
+
+.land-product-info {
+  padding: 12px 14px;
+}
+
+.land-product-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.land-product-price {
+  font-size: 0.85rem;
+  color: var(--land-coral-strong);
+  font-weight: 700;
+}
+
+/* ---- Custom build photo gallery (static real photos, see docs/index.html) ---- */
+.land-build-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 18px;
+}
+
+.land-build-card {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--land-border);
+  background: var(--land-surface);
+}
+
+.land-build-card img {
+  width: 100%;
+  height: 190px;
+  object-fit: cover;
+  display: block;
+}
+
+.land-build-caption {
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--land-ink);
+  text-align: center;
+}
+
 /* ---- Visit us / branches ---- */
 .land-visit {
   background: var(--land-surface);

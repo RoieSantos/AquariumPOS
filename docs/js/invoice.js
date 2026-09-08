@@ -102,6 +102,18 @@ async function loadInvoice(stopId) {
   } else {
     noteEl.classList.add('hidden');
   }
+
+  // The staff-typed delivery note (stop_notes, from DeliveryStops."Notes") - a different note
+  // from note_print above (Pancake's own order-level one), so it prints as its own line rather
+  // than being merged in. Per "notes will need to flow to the printout too".
+  const deliveryNoteEl = document.getElementById('receiptDeliveryNote');
+  if (header.stop_notes) {
+    deliveryNoteEl.textContent = `Delivery Instructions: ${header.stop_notes}`;
+    deliveryNoteEl.classList.remove('hidden');
+  } else {
+    deliveryNoteEl.classList.add('hidden');
+  }
+
   document.getElementById('receiptDeliveryFee').textContent = `Delivery Fee : ${formatMoney(header.delivery_fee)}`;
 
   document.getElementById('summaryTotal').textContent = formatMoney(header.money_to_collect);

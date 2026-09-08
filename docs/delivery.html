@@ -169,16 +169,19 @@
        shipping address on file, OR is one of Pancake's generic "POS WALKIN ORDERS" / "Walkin"
        placeholder sales (a walk-in rung up at the register with no real customer picked - per
        "if the customer is POS WALKIN ORDERS and Address is Walkin can you ask the user for
-       Address and Name of customer once its assigned"). Replaces the old
+       Address and Name of customer once its assigned", extended by "can you fill in notes too
+       together with Name and Address" and "also add the contact number"). Replaces the old
        window.confirm()/window.prompt() combo with one modal that both confirms and collects a
-       manual address (and, for a walk-in placeholder, a customer name too), styled consistently
-       with the rest of the portal instead of the browser's native dialog chrome.
+       manual address (and, for a walk-in placeholder, a customer name/contact number/note too),
+       styled consistently with the rest of the portal instead of the browser's native dialog
+       chrome.
 
-       Neither field is required - Cancel aborts the whole assignment, Continue proceeds with
-       whatever was typed (blank is fine), same as the address-only version of this prompt always
-       allowed. The Name row is only shown (js/delivery.js's openNoAddressModal) when the order is
-       a walk-in placeholder - an order that's simply missing an address keeps the original,
-       name-free prompt. -->
+       No field is required - Cancel aborts the whole assignment, Continue proceeds with whatever
+       was typed (blank is fine), same as the address-only version of this prompt always allowed.
+       The extra fields (#noAddressExtraFields) are only shown (js/delivery.js's
+       openNoAddressModal) when the order is a walk-in placeholder, or when reopened via "Edit
+       Details" on an existing stop - an order that's simply missing an address at assignment time
+       keeps the original, name-free prompt. -->
   <div id="noAddressModal" class="modal-backdrop hidden">
     <div class="modal-panel">
       <div class="toolbar">
@@ -189,13 +192,29 @@
       <p class="muted" id="noAddressMessage">Order <strong id="noAddressOrderId"></strong> has no shipping address on file. Enter one below to plot it on the map, or leave it blank to continue without one.</p>
 
       <div class="form-grid">
-        <div class="form-row hidden" id="noAddressNameRow">
+        <!-- Shown together, only for a walk-in placeholder (or when reopened via "Edit Details") -
+             js/delivery.js toggles all three ".walkin-extra-row" elements as one group. -->
+        <div class="form-row walkin-extra-row hidden">
           <label for="noAddressNameInput">Customer Name</label>
           <input type="text" id="noAddressNameInput" placeholder="Who is this delivery actually for?" />
+        </div>
+        <div class="form-row walkin-extra-row hidden">
+          <label for="noAddressPhoneInput">Contact Number</label>
+          <input type="text" id="noAddressPhoneInput" placeholder="e.g. 0917 123 4567" />
         </div>
         <div class="form-row">
           <label for="noAddressInput" id="noAddressInputLabel">Delivery Address (optional)</label>
           <input type="text" id="noAddressInput" placeholder="e.g. 123 Main St, Quezon City" />
+        </div>
+        <!-- Printed on the Delivery Receipt/Invoice as its own "Delivery Instructions" line,
+             separate from the order's own Pancake "Additional NOTE" (note_print, already labelled
+             "Delivery Note" on the driver's stop cards - a DIFFERENT field, so this one gets its
+             own name to avoid the two being confused for each other). Stored on
+             DeliveryStops."Notes" - the column already existed for a staff-typed scheduling note,
+             just never had a way to be set from this prompt until now. -->
+        <div class="form-row walkin-extra-row hidden">
+          <label for="noAddressNotesInput">Delivery Instructions</label>
+          <textarea id="noAddressNotesInput" rows="2" placeholder="e.g. Cash on delivery, prefers evening drop-off"></textarea>
         </div>
       </div>
 
