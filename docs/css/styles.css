@@ -1696,6 +1696,14 @@ body.hide-price-columns .price-col {
   color: var(--text-muted);
 }
 
+/* Vendor pickup/drop stops listed as rows in the day-detail stops table (vendorStopRowsHtml,
+   js/delivery.js) - a purple left accent matching .badge-vendor and the Driver Route View's
+   .driver-stop-card-vendor, so a vendor stop reads as a stop while still being distinguishable
+   from a customer delivery at a glance. */
+.delivery-vendor-stop-row > td:first-child {
+  border-left: 3px solid #a78bfa;
+}
+
 .delivery-weekday-route {
   font-size: 11px;
   font-weight: 400;
@@ -2021,33 +2029,28 @@ body.hide-price-columns .price-col {
   overflow: hidden;
 }
 
-/* Item Setup - table + side factbox layout (js/itemSetup.js) */
-.item-setup-layout {
+/* Item Card (js/itemSetup.js) - the item detail is a Business Central-style card document now
+   rather than a strip down the side of the list, so it reuses .po-doc-panel / .doc-fasttab from
+   the Purchase Order document. General's own layout is the only thing it needs of its own: the
+   fields on the left, the item picture where BC keeps its FactBox, on the right. */
+.item-card-general {
   display: flex;
   gap: 20px;
   align-items: flex-start;
 }
 
-.item-setup-table-col {
-  flex: 1;
-  min-width: 0;
-}
-
-.item-factbox {
-  width: 300px;
+.item-card-image {
+  width: 220px;
   flex-shrink: 0;
-  position: sticky;
-  top: 20px;
 }
 
-@media (max-width: 900px) {
-  .item-setup-layout {
+@media (max-width: 700px) {
+  .item-card-general {
     flex-direction: column;
   }
 
-  .item-factbox {
+  .item-card-image {
     width: 100%;
-    position: static;
   }
 }
 
@@ -2066,6 +2069,100 @@ body.hide-price-columns .price-col {
   border-radius: 8px;
   border: 1px solid var(--panel-border);
   display: block;
+}
+
+/* Item Vendor catalog rows in the Item Setup factbox (js/itemSetup.js) - one card per vendor who
+   supplies the item, with that vendor's own item no. / cost / lead time. The fields wrap rather
+   than shrink, since the factbox is a narrow side panel. */
+.item-vendor-row {
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--panel-bg);
+}
+
+.item-vendor-row-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.item-vendor-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.item-vendor-remove:hover {
+  color: var(--danger, #b42318);
+}
+
+.item-vendor-row-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.item-vendor-row-fields input {
+  flex: 1 1 90px;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12.5px;
+}
+
+.item-vendor-row-fields .item-vendor-lead {
+  flex: 0 0 64px;
+}
+
+/* Item units of measure (js/itemSetup.js) - one compact line per unit: code, badges, and the
+   conversion into base units. */
+.item-uom-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.item-uom-row:last-child {
+  border-bottom: none;
+}
+
+.item-uom-code {
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 52px;
+}
+
+.item-uom-row .item-uom-qty {
+  margin-left: auto;
+  width: 84px;
+  padding: 3px 6px;
+  font-size: 12.5px;
+  text-align: right;
+}
+
+.item-uom-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.item-uom-remove:hover {
+  color: var(--danger, #b42318);
 }
 
 .factbox-variant-row {
@@ -4369,5 +4466,269 @@ body:has(.wizard-page) {
     right: 10px;
     left: 10px;
     width: auto;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Business Central-style document modal (Purchase Orders)
+
+   Per direct request: "if I open the page purchase make it similar to business central style.
+   also i want this to be able to maximize the page". Two separate things:
+
+     1. MAXIMIZE - .modal-maximized on the backdrop + panel drops the centred-card treatment and
+        lets the document fill the viewport, which a line-heavy PO needs. The panel becomes a
+        flex column so only the lines area scrolls, keeping the header and the totals strip
+        permanently in view - the way a BC document page behaves.
+
+     2. DENSITY - BC document lines are a compact grid, not a roomy web table. The default table
+        styling wraps a long Item Name over five lines and pushes each row ~120px tall, so only
+        two lines fit on screen. .doc-lines tightens the rows, pins the header, and truncates
+        long text to one line (full text still available on hover via title).
+
+   Scoped to .doc-* classes rather than restyling every table, so nothing else in the portal
+   shifts.
+   --------------------------------------------------------------------------- */
+
+/* Windowed size for the Purchase Order document. Kept here rather than as an inline style so the
+   .modal-maximized rules below can actually override it - inline styles win over any stylesheet
+   rule regardless of specificity, which previously made Maximize taller but never wider. */
+.po-doc-panel {
+  max-width: 1100px;
+  width: 95vw;
+}
+
+.modal-backdrop.modal-maximized {
+  padding: 0;
+  align-items: stretch;
+}
+
+/* Full width AND full height. max-width must be cleared explicitly - .po-doc-panel's 1100px would
+   otherwise keep clamping the document no matter how wide the window is. */
+.modal-panel.modal-maximized {
+  max-width: none;
+  width: 100vw;
+  min-height: 100vh;
+  border-radius: 0;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Only the lines table scrolls when maximized - the header block and totals stay put. */
+.modal-panel.modal-maximized .doc-lines-wrap {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* BC "FastTab": a collapsible header section with its key fields summarised on the tab itself
+   when collapsed, so closing it never hides what you needed to see. */
+.doc-fasttab {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  background: var(--panel-bg);
+}
+
+.doc-fasttab > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-fasttab > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Chevron drawn in CSS so no icon font is needed - rotates when the tab opens. */
+.doc-fasttab > summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+  flex: none;
+}
+
+.doc-fasttab[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.doc-fasttab > summary .doc-fasttab-summary {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The collapsed summary is redundant once the fields themselves are visible. */
+.doc-fasttab[open] > summary .doc-fasttab-summary {
+  display: none;
+}
+
+.doc-fasttab-body {
+  padding: 0 14px 12px;
+}
+
+.doc-lines-wrap {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.doc-lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.doc-lines th,
+.doc-lines td {
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+/* Pinned header, so the column meanings survive scrolling a long PO. A sticky cell must paint its
+   own opaque background or the rows scroll through it - and there is no CSS variable for the
+   header tint, so both themes are set explicitly here to match the plain `th` rules above. */
+.doc-lines thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #eef3fb;
+}
+
+.doc-lines tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: #eef3fb;
+  border-top: 2px solid var(--panel-border);
+}
+
+:root[data-theme="dark"] .doc-lines thead th,
+:root[data-theme="dark"] .doc-lines tfoot td {
+  background: #16213a;
+}
+
+/* Long free text collapses to one line rather than wrapping the row to five - the untruncated
+   value stays reachable through the cell's title attribute. */
+.doc-lines .doc-cell-text {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-lines input {
+  padding: 3px 6px;
+  font-size: 12.5px;
+}
+
+.doc-lines .doc-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editable cells get a faint tint, the way BC distinguishes an input field from a computed one.
+   The light tint would be unreadable on the dark theme, so it gets its own value there. */
+.doc-lines input:not([disabled]) {
+  background: #fffdf5;
+}
+
+:root[data-theme="dark"] .doc-lines input:not([disabled]) {
+  background: #1a2438;
+}
+
+/* BC keeps the line actions in a strip directly above the grid, labelled, rather than as a loose
+   button underneath it - it reads as "these act on the lines below". */
+.doc-lines-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 6px;
+}
+
+.doc-lines-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* Row number - BC's line indicator. Muted, since it is a position, not data you enter. */
+.doc-lines .doc-line-no {
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The New Purchase Order grid is fully editable, so its columns are fixed (via the colgroup in
+   purchase-orders.html) - an entry grid whose columns jump every time a longer item name is
+   picked is unusable. Below that width the wrapper scrolls sideways instead of crushing nine
+   columns into a phone. */
+.new-po-lines {
+  table-layout: fixed;
+  min-width: 940px;
+}
+
+/* Each editor fills its cell rather than sitting at some default width, which is what makes the
+   rows read as one grid instead of a row of loose form controls. */
+.new-po-lines td input,
+.new-po-lines td select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.new-po-lines td input[type="number"] {
+  text-align: right;
+}
+
+/* Same "this cell is editable" tint the .doc-lines inputs get - the Warehouse picker is an entry
+   field too, so it should not read as computed text sitting between two editable columns. */
+.new-po-lines td select:not([disabled]) {
+  padding: 3px 6px;
+  font-size: 12.5px;
+  background: #fffdf5;
+}
+
+:root[data-theme="dark"] .new-po-lines td select:not([disabled]) {
+  background: #1a2438;
+}
+
+.new-po-lines td .btn {
+  width: 100%;
+  padding: 3px 6px;
+}
+
+/* "= 60 PCS" under a line's unit picker - what the ordered quantity actually comes to in stock
+   units (js/purchaseOrders.js, supabase_units_of_measure.sql). Empty, and so invisible, on a line
+   ordered in its own base unit. */
+.new-po-lines .new-po-line-base-qty {
+  font-size: 11px;
+  line-height: 1.3;
+  margin-top: 2px;
+}
+
+/* The item/variant pickers sit in narrow grid cells, and the suggestion list is anchored to the
+   cell (left:0; right:0), so without this it renders as an unreadable sliver a few characters
+   wide. It opens rightwards from the cell instead. */
+.doc-lines .item-suggest-dropdown,
+.doc-lines .variant-suggest-dropdown {
+  min-width: 320px;
+  white-space: normal;
+}
+
+@media (max-width: 700px) {
+  .doc-lines .doc-cell-text {
+    max-width: 140px;
   }
 }

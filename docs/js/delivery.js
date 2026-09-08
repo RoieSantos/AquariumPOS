@@ -13,6 +13,28 @@ let stopsByDate = {}; // 'YYYY-MM-DD' -> array of stop rows
 let selectedDateKey = null; // last-clicked day cell, for the .selected highlight
 let selectedOrderId = null;
 let assignOrdersByOrderId = new Map(); // last-rendered assign-modal rows, keyed by order_id
+
+// Pancake's generic identity for a sale rung up at the POS with no real customer picked - the
+// CustomerName reads literally "POS WALKIN ORDERS" and the ShippingAddress literally "Walkin" on
+// every such order. Per "if the customer is POS WALKIN ORDERS and Address is Walkin can you ask
+// the user for Address and Name of customer once its assigned" - there's nowhere to plot "Walkin"
+// on a map and nobody named "POS WALKIN ORDERS" for a driver to ask for at the door, so assigning
+// one of these to a delivery prompts for both, same moment confirmAssign() already prompts for a
+// plain missing address.
+function isWalkInPlaceholderOrder(order) {
+  const name = (order?.customer_name || '').trim().toLowerCase();
+  const address = (order?.shipping_address || '').trim().toLowerCase();
+  return name === 'pos walkin orders' || address === 'walkin';
+}
+
+// An address that isn't really an address - blank, or Pancake's own "Walkin" placeholder text.
+// Used everywhere a stop's shipping_address is displayed or geocoded, so the placeholder is
+// treated exactly like "no address on file" rather than shown (or plotted) as if it meant
+// something.
+function isPlaceholderAddress(address) {
+  const a = (address || '').trim().toLowerCase();
+  return !a || a === 'walkin';
+}
 let assignSearchDebounceHandle = null;
 let assignSearch = '';
 let assignPage = 1;
@@ -304,8 +326,15 @@ function renderCalendarGrid(year, month) {
     const stops = stopsByDate[key] || [];
     const isToday = key === todayKey;
     const isNoDelivery = cellDate.getDay() === NO_DELIVERY_DAY_OF_WEEK;
+
+    // Per "can you put the stops on the delivery calendar even if its vendor" - a vendor
+    // pickup/drop counts as a stop for the day the same way an order does, whether it came from
+    // the weekly recurring Delivery Setup route or a per-date tag (getDayVendorCodes dedupes the
+    // two), so a day with vendors only still lights up as a day with stops.
+    const vendorCodes = !isNoDelivery ? getDayVendorCodes(key) : [];
+
     const classes = ['delivery-day-cell'];
-    if (stops.length > 0) classes.push('has-stops');
+    if (stops.length > 0 || vendorCodes.length > 0) classes.push('has-stops');
     if (isToday) classes.push('today');
     if (key === selectedDateKey) classes.push('selected');
     if (isNoDelivery) classes.push('no-delivery');
@@ -314,20 +343,19 @@ function renderCalendarGrid(year, month) {
     // fixed route on that date" - every occurrence of that weekday gets a badge, not just the
     // weekday header column, so it's visible at a glance while browsing the month.
     const fixedRoute = !isNoDelivery ? routeScheduleByDayOfWeek[cellDate.getDay()] : null;
-    // "add a stop on the date showing how many stops fixed" - count of Warehouses + Vendors
-    // tagged for this weekday, separate from the real-order "X stops" badge below.
-    const fixedCount = fixedRoute ? (fixedRoute.warehouse_names?.length || 0) + (fixedRoute.vendor_names?.length || 0) : 0;
-    // Per-date Vendor assignments (super-user-only, ad hoc) - separate badge from the weekly
-    // recurring "N Fixed" one above, since these are one-off tags for THIS date specifically.
-    const dateVendors = dateVendorsByDate[key] || [];
+    // "add a stop on the date showing how many stops fixed" - count of Warehouses tagged for this
+    // weekday. Vendors used to be counted here too, but they now carry their own "N Vendor stop"
+    // badge below (weekly + per-date together), so counting them twice would double up.
+    const fixedCount = fixedRoute ? (fixedRoute.warehouse_names?.length || 0) : 0;
+    const vendorNames = vendorCodes.map((code) => vendorByCode[code]?.name || code);
 
     html += `
       <div class="${classes.join(' ')}" data-date="${key}">
         <div class="delivery-day-number">${day}</div>
         ${isNoDelivery ? '<span class="badge badge-neutral">No Delivery</span>' : ''}
         ${fixedRoute && fixedRoute.route_name ? `<span class="badge badge-purple" title="Fixed route for this day">${fixedRoute.route_name}</span>` : ''}
-        ${fixedCount > 0 ? `<span class="badge badge-glass" title="${fixedCount} fixed Warehouse/Vendor stop${fixedCount === 1 ? '' : 's'} for this day">${fixedCount} Fixed</span>` : ''}
-        ${dateVendors.length > 0 ? `<span class="badge badge-vendor" title="${dateVendors.map((v) => v.vendor_name).join(', ')}">${dateVendors.length} Vendor${dateVendors.length === 1 ? '' : 's'}</span>` : ''}
+        ${fixedCount > 0 ? `<span class="badge badge-glass" title="${fixedCount} fixed Warehouse stop${fixedCount === 1 ? '' : 's'} for this day">${fixedCount} Fixed</span>` : ''}
+        ${vendorCodes.length > 0 ? `<span class="badge badge-vendor" title="${vendorNames.join(', ')}">${vendorCodes.length} Vendor stop${vendorCodes.length === 1 ? '' : 's'}</span>` : ''}
         ${stops.length > 0 ? `<span class="badge badge-primary">${stops.length} stop${stops.length === 1 ? '' : 's'}</span>` : ''}
       </div>
     `;
@@ -410,7 +438,7 @@ async function renderDriverRouteView(dateKey) {
     // as its own line separate from the staff-typed "Note" (DeliveryStops."Notes") above it -
     // same distinction as the desktop Stops table's "Print Note" column.
     cardsEl.innerHTML = vendorCardsHtml + stops.map((s) => {
-      const displayAddress = s.shipping_address || s.geocoded_address || '';
+      const displayAddress = isPlaceholderAddress(s.shipping_address) ? (s.geocoded_address || '') : s.shipping_address;
       return `
         <div class="driver-stop-card">
           <div class="driver-stop-card-header">
@@ -549,29 +577,63 @@ function fixedRouteRowHtml(dateKey) {
   const route = routeScheduleByDayOfWeek[dow];
   if (!route || !route.route_name) return '';
 
-  const tags = [
-    ...(route.warehouse_names || []).map((n) => `Warehouse: ${n}`),
-    // vendor_codes/vendor_names are parallel arrays (same order - both sorted by Name server-side,
-    // see staff_get_delivery_route_schedule) so index-zipping them is safe here.
-    ...(route.vendor_codes || []).map((code, i) => {
-      const name = (route.vendor_names || [])[i] || code;
-      const details = vendorDetailText(code);
-      return `Vendor: ${name}${details ? ` (${details})` : ''}`;
-    })
-  ];
+  // Warehouses only - this weekday's Vendors used to be listed here too, but each one now gets
+  // its own stop row (vendorStopRowsHtml) per "can you put the stops on the delivery calendar
+  // even if its vendor", so repeating them here would just duplicate the same stops.
+  const tags = (route.warehouse_names || []).map((n) => `Warehouse: ${n}`);
 
   return `
     <tr class="delivery-fixed-route-row">
       <td>-</td>
       <td><em>Fixed Route</em></td>
       <td>${route.route_name}</td>
-      <td><span class="badge badge-neutral">${tags.length} Fixed</span></td>
+      <td>${tags.length > 0 ? `<span class="badge badge-neutral">${tags.length} Fixed</span>` : ''}</td>
       <td colspan="2">${tags.join(', ')}</td>
       <td class="muted">Set in Delivery Setup</td>
       <td></td>
       <td></td>
     </tr>
   `;
+}
+
+// Per "can you put the stops on the delivery calendar even if its vendor" - the day-detail table
+// only ever listed real order stops (plus the one summary Fixed Route row), so a vendor
+// pickup/drop was visible only as a chip above the table or a tag inside that summary row, never
+// as a stop in its own right. Each vendor tagged to this date (weekly recurring Delivery Setup
+// route + per-date assignment, deduped by getDayVendorCodes) now gets its own row in the same
+// table, mirroring vendorStopCardsHtml on the Driver Route View. Address/contact come from
+// vendorByCode (loadVendorLookup), the same source the map markers use.
+function vendorStopRowsHtml(dateKey) {
+  if (isBlockedDeliveryDateKey(dateKey)) return '';
+
+  const dow = new Date(`${dateKey}T00:00:00`).getDay();
+  const weeklyRoute = routeScheduleByDayOfWeek[dow];
+  const weeklyCodes = new Set(weeklyRoute?.vendor_codes || []);
+
+  return getDayVendorCodes(dateKey).map((code) => {
+    const vendor = vendorByCode[code];
+    const name = vendor?.name || code;
+    const contact = [vendor?.contact_person, vendor?.phone].filter(Boolean).join(' - ');
+    const isWeekly = weeklyCodes.has(code);
+    // Weekly recurring vendors are edited in Delivery Setup, so only the ad hoc per-date ones
+    // get a Remove button here - same super-user gate as the vendor chips above the table
+    // (removeDateVendor / admin_remove_delivery_date_vendor).
+    const canRemove = !isWeekly && currentSession.isSuperUser;
+
+    return `
+      <tr class="delivery-vendor-stop-row">
+        <td>-</td>
+        <td>${name}</td>
+        <td>${isWeekly && weeklyRoute?.route_name ? weeklyRoute.route_name : ''}</td>
+        <td><span class="badge badge-vendor">Vendor</span></td>
+        <td>${vendor?.address || '<span class="muted">No address on file</span>'}</td>
+        <td class="muted">${isWeekly ? 'Delivery Setup' : 'Assigned to this date'}</td>
+        <td>${contact}</td>
+        <td></td>
+        <td>${canRemove ? `<button class="btn btn-danger btn-sm" data-remove-vendor-stop-code="${code}" type="button">Remove</button>` : ''}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 // Per-date Vendor tags (super-user-only assign/remove, everyone else sees them read-only) - the
@@ -678,14 +740,18 @@ function showDayDetail(dateKey) {
 
   const tbody = document.getElementById('dayStopsTableBody');
   const fixedRouteRow = fixedRouteRowHtml(dateKey);
-  tbody.innerHTML = fixedRouteRow + (stops.length === 0
-    ? '<tr><td colspan="9" class="muted">No stops scheduled for this day.</td></tr>'
+  // Vendor stops sit between the Fixed Route summary row and the order stops, so a day whose
+  // only work is a vendor pickup still reads as a day with stops instead of "No stops scheduled".
+  const vendorRows = vendorStopRowsHtml(dateKey);
+  tbody.innerHTML = fixedRouteRow + vendorRows + (stops.length === 0
+    ? (vendorRows ? '' : '<tr><td colspan="9" class="muted">No stops scheduled for this day.</td></tr>')
     : stops.map((s) => {
         // Falls back to geocoded_address (a DeliveryStops-only field) when the order itself has
-        // no ShippingAddress on file - that's where a manually-typed address from the "no
-        // address" confirmation prompt in confirmAssign() ends up, since it's never written back
-        // to OnlineOrders.ShippingAddress (a Pancake-synced field).
-        const displayAddress = s.shipping_address || s.geocoded_address || '';
+        // no real ShippingAddress on file - either genuinely blank, or Pancake's own "Walkin"
+        // placeholder text (isPlaceholderAddress) - that's where a manually-typed address from
+        // the "no address"/walk-in confirmation prompt in confirmAssign() ends up, since it's
+        // never written back to OnlineOrders.ShippingAddress (a Pancake-synced field).
+        const displayAddress = isPlaceholderAddress(s.shipping_address) ? (s.geocoded_address || '') : s.shipping_address;
         // Per "can you add the note_print on the stops so the driver can see" - Pancake's own
         // print note (falls back to line-level notes, see admin_list_delivery_stops' note_print
         // column, supabase_delivery_tables.sql), rendered in its own "Print Note" column,
@@ -697,7 +763,7 @@ function showDayDetail(dateKey) {
           <td>${s.customer_name || ''}</td>
           <td>${s.route_name || ''}</td>
           <td>${s.status || ''}</td>
-          <td>${displayAddress}${!s.shipping_address && s.geocoded_address ? ' <span class="muted">(manually entered)</span>' : ''}</td>
+          <td>${displayAddress}${isPlaceholderAddress(s.shipping_address) && s.geocoded_address ? ' <span class="muted">(manually entered)</span>' : ''}</td>
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
           <td>${s.note_print || ''}</td>
@@ -713,6 +779,10 @@ function showDayDetail(dateKey) {
 
   tbody.querySelectorAll('button[data-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => removeStop(btn.dataset.stopId, dateKey));
+  });
+
+  tbody.querySelectorAll('button[data-remove-vendor-stop-code]').forEach((btn) => {
+    btn.addEventListener('click', () => removeDateVendor(dateKey, btn.dataset.removeVendorStopCode));
   });
 
   tbody.querySelectorAll('button[data-print-stop-id]').forEach((btn) => {
@@ -961,14 +1031,15 @@ function renderAssignOrdersTable(orders) {
 
   // No-address orders are flagged here too (not just at confirmAssign's prompt) so staff can
   // spot them before picking one, per "in the assign Order to Delivery can you show the address
-  // too".
+  // too". A "Walkin" address is Pancake's own placeholder text, not a real one - flagged the same
+  // way (isPlaceholderAddress) so it reads as missing here too, rather than as an actual address.
   tbody.innerHTML = orders.map((o) => `
     <tr>
       <td><input type="radio" name="assignOrderRadio" value="${o.order_id}" /></td>
       <td>${o.order_id || ''}</td>
-      <td>${o.customer_name || ''}</td>
+      <td>${o.customer_name || ''}${isWalkInPlaceholderOrder(o) ? ' <span class="muted">(walk-in)</span>' : ''}</td>
       <td>${o.status || ''}</td>
-      <td>${o.shipping_address ? o.shipping_address : '<span class="muted">No address</span>'}</td>
+      <td>${isPlaceholderAddress(o.shipping_address) ? '<span class="muted">No address</span>' : o.shipping_address}</td>
       <td>${o.scheduled_date || '-'}</td>
     </tr>
   `).join('');
@@ -1042,7 +1113,11 @@ function closeAssignModal() {
   document.getElementById('assignModal').classList.add('hidden');
 }
 
-async function geocodeAndSaveStop(stopId, address) {
+// customerName is only ever passed from confirmAssign() for a walk-in placeholder order (see
+// isWalkInPlaceholderOrder) - every other caller (a plain missing-address prompt, the "Retry Map"
+// button) omits it, and admin_update_delivery_stop_geocode leaves whatever name is already stored
+// untouched whenever null is sent, so those calls can never blank out a name entered earlier.
+async function geocodeAndSaveStop(stopId, address, customerName = null) {
   if (!address || !address.trim()) {
     await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
       p_admin_username: currentSession.username,
@@ -1051,7 +1126,8 @@ async function geocodeAndSaveStop(stopId, address) {
       p_geocoded_address: null,
       p_latitude: null,
       p_longitude: null,
-      p_geocode_status: 'failed'
+      p_geocode_status: 'failed',
+      p_customer_name: customerName || null
     });
     return;
   }
@@ -1077,7 +1153,8 @@ async function geocodeAndSaveStop(stopId, address) {
         p_geocoded_address: address,
         p_latitude: result.geometry.location.lat(),
         p_longitude: result.geometry.location.lng(),
-        p_geocode_status: 'ok'
+        p_geocode_status: 'ok',
+        p_customer_name: customerName || null
       });
     } else {
       await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
@@ -1087,7 +1164,8 @@ async function geocodeAndSaveStop(stopId, address) {
         p_geocoded_address: address,
         p_latitude: null,
         p_longitude: null,
-        p_geocode_status: 'failed'
+        p_geocode_status: 'failed',
+        p_customer_name: customerName || null
       });
     }
   } catch (err) {
@@ -1096,27 +1174,41 @@ async function geocodeAndSaveStop(stopId, address) {
 }
 
 // Portal-styled replacement for window.confirm()/window.prompt() when the selected order has no
-// shipping address - resolves to the manually-typed address (a string, or null if left blank) if
-// the user clicks Continue, or `undefined` if they cancel. noAddressResolve is a module-level
-// handle so the Cancel/Continue buttons (wired once in wireToolbarAndModal) can settle whichever
-// promise is currently pending.
+// shipping address, or is a walk-in placeholder needing a name too (isWalkInPlaceholderOrder) -
+// resolves to { address, customerName } (either can be null if left blank) if the user clicks
+// Continue, or `undefined` if they cancel. noAddressResolve is a module-level handle so the
+// Cancel/Continue buttons (wired once in wireToolbarAndModal) can settle whichever promise is
+// currently pending.
 let noAddressResolve = null;
 
-function openNoAddressModal(orderId) {
+function openNoAddressModal(orderId, { askName = false } = {}) {
   document.getElementById('noAddressOrderId').textContent = orderId;
   document.getElementById('noAddressInput').value = '';
+  document.getElementById('noAddressNameInput').value = '';
+  document.getElementById('noAddressNameRow').classList.toggle('hidden', !askName);
+
+  // The walk-in wording explains WHY a name/address is being asked for (Pancake's own generic
+  // placeholder, not this order's real customer) - the plain missing-address prompt keeps its
+  // original text unchanged, since that path existed before walk-in orders were a consideration.
+  document.getElementById('noAddressTitle').textContent = askName
+    ? 'Walk-in Order - Delivery Details'
+    : 'No Delivery Address';
+  document.getElementById('noAddressMessage').innerHTML = askName
+    ? `Order <strong>${orderId}</strong> is logged under Pancake's generic "POS WALKIN ORDERS" customer with no real address on file. Who is this delivery actually for, and where is it going?`
+    : `Order <strong>${orderId}</strong> has no shipping address on file. Enter one below to plot it on the map, or leave it blank to continue without one.`;
   document.getElementById('noAddressModal').classList.remove('hidden');
-  document.getElementById('noAddressInput').focus();
+  document.getElementById(askName ? 'noAddressNameInput' : 'noAddressInput').focus();
 
   return new Promise((resolve) => { noAddressResolve = resolve; });
 }
 
 function closeNoAddressModal(proceed) {
   const address = document.getElementById('noAddressInput').value.trim();
+  const customerName = document.getElementById('noAddressNameInput').value.trim();
   document.getElementById('noAddressModal').classList.add('hidden');
 
   if (noAddressResolve) {
-    noAddressResolve(proceed ? (address || null) : undefined);
+    noAddressResolve(proceed ? { address: address || null, customerName: customerName || null } : undefined);
     noAddressResolve = null;
   }
 }
@@ -1144,13 +1236,21 @@ async function confirmAssign() {
   // manually-typed address (if any) is only used to geocode/plot this stop - it does not write
   // back to OnlineOrders.ShippingAddress (a Pancake-synced field), so a manual entry here can't
   // get silently overwritten or drift from what Pancake has on file.
+  //
+  // A walk-in placeholder order (isWalkInPlaceholderOrder) gets the same prompt PLUS a Customer
+  // Name field, per "if the customer is POS WALKIN ORDERS and Address is Walkin can you ask the
+  // user for Address and Name of customer once its assigned" - "Walkin" isn't a real address
+  // either, so it is treated the same as a genuinely missing one (isPlaceholderAddress).
   const matchedOrder = assignOrdersByOrderId.get(selectedOrderId);
   let addressForGeocode = matchedOrder ? matchedOrder.shipping_address : null;
+  let customerNameForStop = null;
 
-  if (!addressForGeocode || !addressForGeocode.trim()) {
-    const manualAddress = await openNoAddressModal(selectedOrderId);
-    if (manualAddress === undefined) return; // cancelled
-    addressForGeocode = manualAddress;
+  const needsWalkInDetails = isWalkInPlaceholderOrder(matchedOrder);
+  if (needsWalkInDetails || isPlaceholderAddress(addressForGeocode)) {
+    const manualDetails = await openNoAddressModal(selectedOrderId, { askName: needsWalkInDetails });
+    if (manualDetails === undefined) return; // cancelled
+    addressForGeocode = manualDetails.address;
+    customerNameForStop = manualDetails.customerName;
   }
 
   const { data: stopId, error } = await supabaseClient.rpc('admin_create_delivery_stop', {
@@ -1176,7 +1276,7 @@ async function confirmAssign() {
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);
 
-  await geocodeAndSaveStop(stopId, addressForGeocode);
+  await geocodeAndSaveStop(stopId, addressForGeocode, customerNameForStop);
 
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);

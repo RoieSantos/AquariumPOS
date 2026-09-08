@@ -10,6 +10,15 @@ function formatMoney(value) {
   return Number(value).toFixed(2);
 }
 
+// An address that isn't really an address - blank, or Pancake's own "Walkin" placeholder text
+// used on a walk-in POS sale with no real customer picked. Same check as delivery.js's own
+// isPlaceholderAddress, so "Walkin" prints as the manually-entered address instead of the literal
+// placeholder - per "this will fall under the printout too".
+function isPlaceholderAddress(address) {
+  const a = (address || '').trim().toLowerCase();
+  return !a || a === 'walkin';
+}
+
 function renderManifestRows(stops) {
   const tbody = document.getElementById('manifestTableBody');
 
@@ -18,17 +27,19 @@ function renderManifestRows(stops) {
     return;
   }
 
-  // Falls back to geocoded_address when the order has no ShippingAddress on file - that's where
-  // a manually-typed address from the "no address" confirmation prompt on the Delivery page
-  // ends up (see delivery.js's confirmAssign), since it's never written back to
-  // OnlineOrders.ShippingAddress (a Pancake-synced field).
+  // Falls back to geocoded_address when the order has no real ShippingAddress on file - either
+  // genuinely blank, or the "Walkin" placeholder (isPlaceholderAddress) - that's where a
+  // manually-typed address from the "no address"/walk-in confirmation prompt on the Delivery
+  // page ends up (see delivery.js's confirmAssign), since it's never written back to
+  // OnlineOrders.ShippingAddress (a Pancake-synced field). customer_name needs no such fallback
+  // here - admin_list_delivery_stops already substitutes the manually-entered name server-side.
   tbody.innerHTML = stops
     .map((s, index) => `
       <tr>
         <td>${index + 1}</td>
         <td>${s.order_id || ''}</td>
         <td>${s.customer_name || ''}</td>
-        <td>${s.shipping_address || s.geocoded_address || ''}</td>
+        <td>${isPlaceholderAddress(s.shipping_address) ? (s.geocoded_address || '') : s.shipping_address}</td>
         <td>${formatMoney(s.balance)}</td>
         <td>${s.notes || ''}</td>
       </tr>

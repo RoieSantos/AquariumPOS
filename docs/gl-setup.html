@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>G/L Setup - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>G/L Setup</h1>
+    <p class="muted">
+      The chart of accounts and which account each kind of posting uses. Seeded with a starter
+      chart - rename, renumber or add accounts to match how your accountant works.
+      <a href="gl-entries.html">View the General Ledger</a>.
+    </p>
+
+    <div id="glSetupError" class="error-text hidden"></div>
+
+    <section class="card" style="margin-bottom:18px;">
+      <h2 style="margin-top:0; font-size:15px;">Posting Accounts</h2>
+      <p class="muted" style="margin-top:0; font-size:12px;">
+        Which account each document posts to. Changing these affects future postings only -
+        entries already in the ledger are permanent.
+      </p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="setupInventory">Inventory</label>
+          <select id="setupInventory"></select>
+        </div>
+        <div class="form-row">
+          <label for="setupPayable">Accounts Payable</label>
+          <select id="setupPayable"></select>
+        </div>
+        <div class="form-row">
+          <label for="setupCash">Cash on Hand</label>
+          <select id="setupCash"></select>
+        </div>
+        <div class="form-row">
+          <label for="setupDigital">Digital / Bank</label>
+          <select id="setupDigital"></select>
+        </div>
+        <div class="form-row">
+          <label for="setupDefaultExpense">Default Expense</label>
+          <select id="setupDefaultExpense"></select>
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button class="btn btn-primary" id="saveSetupBtn" type="button">Save Posting Accounts</button>
+        <span id="setupSaved" class="muted hidden">Saved.</span>
+      </div>
+    </section>
+
+    <section class="card" style="margin-bottom:18px;">
+      <h2 style="margin-top:0; font-size:15px;">Expense Categories</h2>
+      <p class="muted" style="margin-top:0; font-size:12px;">
+        Categories that have appeared on synced expenses. Unmapped ones post to the Default Expense
+        account above - map them here to see expenses split properly on the ledger.
+      </p>
+      <div class="table-wrap">
+        <table class="doc-lines">
+          <thead>
+            <tr>
+              <th>Expense Category</th>
+              <th>G/L Account</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="categoryMapBody">
+            <tr><td colspan="3" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-top:0; font-size:15px;">Chart of Accounts</h2>
+      <div class="toolbar" style="margin-top:0;">
+        <input type="text" id="newAccountNo" placeholder="Account No." style="max-width:120px;" />
+        <input type="text" id="newAccountName" placeholder="Account Name" style="max-width:240px;" />
+        <select id="newAccountType" style="max-width:150px;">
+          <option value="Asset">Asset</option>
+          <option value="Liability">Liability</option>
+          <option value="Equity">Equity</option>
+          <option value="Income">Income</option>
+          <option value="Expense" selected>Expense</option>
+        </select>
+        <button class="btn btn-secondary" id="addAccountBtn" type="button">Add / Update Account</button>
+      </div>
+      <div class="table-wrap">
+        <table class="doc-lines">
+          <thead>
+            <tr>
+              <th>Account No.</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Direct Posting</th>
+              <th>Active</th>
+              <th style="text-align:right;">Balance</th>
+            </tr>
+          </thead>
+          <tbody id="accountsBody">
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/glSetup.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

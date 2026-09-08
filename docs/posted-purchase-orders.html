@@ -30,6 +30,7 @@
           <tr>
             <th>PO No.</th>
             <th>Vendor</th>
+            <th>Warehouse</th>
             <th>Date</th>
             <th style="text-align:right;">Items</th>
             <th style="text-align:right;">Total Qty</th>
@@ -40,7 +41,7 @@
           </tr>
         </thead>
         <tbody id="poTableBody">
-          <tr><td colspan="9" class="muted">Loading...</td></tr>
+          <tr><td colspan="10" class="muted">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -60,6 +61,10 @@
         <div class="form-row">
           <label>Vendor</label>
           <div id="viewVendor" class="muted"></div>
+        </div>
+        <div class="form-row">
+          <label>Warehouse</label>
+          <div id="viewWarehouse" class="muted"></div>
         </div>
         <div class="form-row">
           <label>Order Date</label>
@@ -86,9 +91,17 @@
               <th>Warehouse</th>
               <th style="text-align:right;">Qty Ordered</th>
               <th style="text-align:right;">Qty Received</th>
+              <th style="text-align:right;">Unit Cost</th>
+              <th style="text-align:right;">Line Cost</th>
             </tr>
           </thead>
           <tbody id="viewLinesBody"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="7" style="text-align:right; font-weight:600;">Total Cost</td>
+              <td id="viewTotalCost" style="text-align:right; font-weight:600;">0.00</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>

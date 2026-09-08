@@ -283,6 +283,38 @@
       display: none;
     }
 
+    /* Stock sheet inputs on the Glass Cut Sheet card - narrow, since both are shop constants
+       that rarely change, unlike the tank dimensions above. */
+    .cut-sheet-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 220px));
+      gap: 10px;
+    }
+
+    .cut-sheet-fields .field {
+      margin-bottom: 0;
+    }
+
+    /* Deliberately NOT .canvas-wrap - that clamps to a 260px-tall canvas and clips overflow,
+       which would crop a full-height cut sheet. This scrolls sideways on narrow screens instead. */
+    .cut-sheet-host {
+      border: 1px solid var(--panel-border);
+      background: #ffffff;
+      overflow-x: auto;
+      padding: 8px;
+    }
+
+    .cut-sheet-host svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto 14px;
+    }
+
+    .cut-sheet-host svg:last-child {
+      margin-bottom: 0;
+    }
+
     @media (max-width: 1060px) {
       .card-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -517,6 +549,7 @@
     <div class="actions-row">
       <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
       <button id="addToSale" class="btn btn-success" type="button">Add to sale</button>
+      <button id="cutSheetButton" class="btn btn-neutral" type="button">Glass Cut Sheet</button>
       <button id="closeButton" class="btn btn-neutral" type="button">Close</button>
 
       <div class="summary">
@@ -535,6 +568,33 @@
       </div>
     </section>
 
+    <!-- Glass cut sheet - the layout the production team otherwise draws by hand for every
+         10mm/12mm order. Hidden until "Glass Cut Sheet" is pressed so it does not get in the way
+         of ordinary pricing work. Stock sheet size lives here rather than in the main form
+         because it is a shop/material setting, not a property of the customer's tank. -->
+    <section id="cutSheetCard" class="drawing-card hidden">
+      <h2>Glass Cut Sheet</h2>
+
+      <div class="cut-sheet-fields" style="margin-bottom: 12px;">
+        <div class="field">
+          <label for="stockSheetWidth">Stock sheet width (in)</label>
+          <input id="stockSheetWidth" type="number" value="72" step="0.25" min="1">
+        </div>
+        <div class="field">
+          <label for="stockSheetHeight">Stock sheet height (in)</label>
+          <input id="stockSheetHeight" type="number" value="84" step="0.25" min="1">
+        </div>
+      </div>
+
+      <div id="cutSheetSummary" class="summary-small" style="margin-bottom: 10px;"></div>
+      <div id="cutSheetHost" class="cut-sheet-host"></div>
+
+      <div class="actions-row" style="margin-top: 12px;">
+        <button id="cutSheetDownload" class="btn btn-primary" type="button">Download PNG</button>
+        <button id="cutSheetPrint" class="btn btn-neutral" type="button">Print</button>
+      </div>
+    </section>
+
   </div>
 
   <!-- Loaded so the Light/Pump Item dropdowns below can query the real Items catalog from
@@ -546,6 +606,7 @@
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
   <script src="./custom-aquarium-calculator.js"></script>
+  <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
     var addToSaleButton = document.getElementById('addToSale');
@@ -1191,6 +1252,14 @@
         suppressUiSync = false;
       }
 
+      // The glass thickness written back above can differ from what the user picked (the safety
+      // rules upgrade it - see validateGlassSafety), and assigning .value fires no change event.
+      // Refresh the Glass Cut Sheet here so it always reflects the thickness that will actually
+      // be built, not the one that was clicked. No-op while the cut sheet card is closed.
+      if (typeof window.refreshGlassCutSheet === 'function') {
+        window.refreshGlassCutSheet();
+      }
+
       var notices = collectAutoNotices(result);
       var signature = getAutoNoticeSignature(notices);
 
@@ -1499,6 +1568,198 @@
         renderSummary({ ok: false, error: error.message });
         drawPlaceholder('Initial pricing load failed.');
       });
+  </script>
+
+  <!-- Glass Cut Sheet wiring. Reads the tank dimensions straight off the form (converted with
+       the calculator's own toInches so CM/MM/Ft entries work) rather than waiting for Calculate,
+       so the cut sheet can be checked against a hand-drawn one without running pricing first.
+       Deliberately kept separate from the pricing script above - it shares no state with it. -->
+  <script>
+    (function () {
+      var cutSheetButton = document.getElementById('cutSheetButton');
+      var cutSheetCard = document.getElementById('cutSheetCard');
+      var cutSheetHost = document.getElementById('cutSheetHost');
+      var cutSheetSummary = document.getElementById('cutSheetSummary');
+      var stockSheetWidth = document.getElementById('stockSheetWidth');
+      var stockSheetHeight = document.getElementById('stockSheetHeight');
+
+      function currentCutListOptions() {
+        var unit = document.getElementById('unit').value;
+        var convert = window.CustomAquariumCalculator.toInches;
+
+        return {
+          length: convert(document.getElementById('length').value, unit),
+          width: convert(document.getElementById('width').value, unit),
+          height: convert(document.getElementById('height').value, unit),
+          glass: document.getElementById('glass').value,
+          sheetWidth: Number(stockSheetWidth.value),
+          sheetHeight: Number(stockSheetHeight.value)
+        };
+      }
+
+      function renderCutSheet() {
+        var opts = currentCutListOptions();
+        var f = window.GlassCutList.formatInches;
+
+        // Recorded even for the invalid/oversized paths below, so a rejected state is not retried
+        // on every keystroke - any real change to an input moves the signature again.
+        lastRenderedSignature = cutSheetSignature(opts);
+
+        if (!(opts.length > 0) || !(opts.width > 0) || !(opts.height > 0)) {
+          cutSheetHost.innerHTML = '';
+          cutSheetSummary.textContent = 'Enter positive Length, Width and Height first.';
+          return;
+        }
+        if (!(opts.sheetWidth > 0) || !(opts.sheetHeight > 0)) {
+          cutSheetHost.innerHTML = '';
+          cutSheetSummary.textContent = 'Enter a positive stock sheet width and height.';
+          return;
+        }
+
+        var result = window.GlassCutList.buildCutList(opts);
+
+        if (result.oversized.length > 0) {
+          cutSheetHost.innerHTML = '';
+          cutSheetSummary.textContent =
+            'These panels do not fit a ' + f(opts.sheetWidth) + '" x ' + f(opts.sheetHeight) +
+            '" sheet even rotated: ' + result.oversized.map(function (p) { return p.label; }).join(', ') +
+            '. A larger stock sheet is needed.';
+          return;
+        }
+
+        var panelList = result.panels.map(function (p) {
+          return p.name + ' ' + f(p.width) + '" x ' + f(p.height) + '"';
+        }).join('  -  ');
+
+        cutSheetSummary.innerHTML =
+          '<strong>Tank ' + f(opts.length) + '" x ' + f(opts.width) + '" x ' + f(opts.height) +
+          '" in ' + opts.glass + ' - ' + result.sheets.length + ' stock sheet(s).</strong><br>' + panelList;
+
+        cutSheetHost.innerHTML = result.sheets.map(function (sheet, i) {
+          var caption = 'Sheet ' + (i + 1) + ' of ' + result.sheets.length + ' - ' + opts.glass +
+            ' - tank ' + f(opts.length) + ' x ' + f(opts.width) + ' x ' + f(opts.height);
+          return window.GlassCutList.renderSheetSvg(sheet, { caption: caption });
+        }).join('');
+      }
+
+      cutSheetButton.addEventListener('click', function () {
+        cutSheetCard.classList.remove('hidden');
+        renderCutSheet();
+        cutSheetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+
+      // Everything the layout actually depends on. Glass thickness matters as much as the
+      // dimensions do - the side panels are (W - 2 x glass), so switching 10mm to 12mm moves them
+      // from 23 1/4" to 23", and a cut sheet still showing the old figure is worse than no cut
+      // sheet at all. Unit is included because it rescales all three dimensions at once.
+      var CUT_SHEET_INPUT_IDS = ['length', 'width', 'height', 'unit', 'glass'];
+
+      var lastRenderedSignature = null;
+
+      function cutSheetSignature(opts) {
+        return [opts.length, opts.width, opts.height, opts.glass, opts.sheetWidth, opts.sheetHeight].join('|');
+      }
+
+      // Only ever re-renders while the card is already open, so opening it stays an explicit
+      // action - changing glass thickness during ordinary pricing work should not make a cut
+      // sheet appear unasked.
+      //
+      // Idempotent by design: this is called from several places that can fire for the same
+      // change (the input listeners below, and the pricing pipeline once its async normalisation
+      // has settled), so an unchanged signature is a no-op rather than a redundant re-render.
+      function refreshCutSheetIfOpen() {
+        if (cutSheetCard.classList.contains('hidden')) return;
+
+        var signature = cutSheetSignature(currentCutListOptions());
+        if (signature === lastRenderedSignature) return;
+
+        renderCutSheet();
+      }
+
+      CUT_SHEET_INPUT_IDS.forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        // 'input' covers typing in the number fields, 'change' covers the selects. These fire
+        // AFTER the calculator's own handler (registered earlier, in attachAutoStateHandlers), so
+        // by this point enforceOptionRules has already applied any synchronous glass upgrade -
+        // e.g. Low Iron + Tempered forcing 10mm - and this reads the corrected value.
+        el.addEventListener('input', refreshCutSheetIfOpen);
+        el.addEventListener('change', refreshCutSheetIfOpen);
+      });
+
+      [stockSheetWidth, stockSheetHeight].forEach(function (input) {
+        input.addEventListener('input', refreshCutSheetIfOpen);
+      });
+
+      // The pricing pipeline normalises #glass asynchronously (calculateAquarium is async, and
+      // syncCalculatedStateToUi writes the final thickness back into the select without firing a
+      // change event). So syncCalculatedStateToUi calls this hook once its writes have landed -
+      // without it, a glass thickness the safety rules corrected would leave a stale cut sheet.
+      window.refreshGlassCutSheet = refreshCutSheetIfOpen;
+
+      // Rasterises one sheet's SVG to a PNG download. The SVG embeds no external images or fonts
+      // beyond a generic family, so drawing it to a canvas does not taint it and toDataURL()
+      // stays allowed.
+      function downloadSheetPng(svg, fileName) {
+        return new Promise(function (resolve, reject) {
+          var serialized = new XMLSerializer().serializeToString(svg);
+          var scale = 2;
+          var width = Number(svg.getAttribute('width'));
+          var height = Number(svg.getAttribute('height'));
+          var image = new Image();
+
+          image.onload = function () {
+            var canvas = document.createElement('canvas');
+            canvas.width = width * scale;
+            canvas.height = height * scale;
+
+            var ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+            var link = document.createElement('a');
+            link.download = fileName;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            resolve();
+          };
+
+          image.onerror = reject;
+          image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized);
+        });
+      }
+
+      // Every sheet gets its own PNG, one after the other - a big tank can legitimately need two
+      // or three, and exporting only the first would quietly send an incomplete cut list.
+      document.getElementById('cutSheetDownload').addEventListener('click', function () {
+        var svgs = Array.prototype.slice.call(cutSheetHost.querySelectorAll('svg'));
+        if (svgs.length === 0) {
+          window.alert('Generate a cut sheet first.');
+          return;
+        }
+
+        // Rounded because a CM/MM entry converts to a long float, which would otherwise end up
+        // in the file name.
+        var opts = currentCutListOptions();
+        var dim = function (v) { return Math.round(v * 100) / 100; };
+        var base = 'cut-sheet-' + dim(opts.length) + 'x' + dim(opts.width) + 'x' + dim(opts.height) +
+          '-' + opts.glass;
+
+        svgs.reduce(function (chain, svg, i) {
+          return chain.then(function () {
+            var suffix = svgs.length > 1 ? '-sheet' + (i + 1) : '';
+            return downloadSheetPng(svg, base + suffix + '.png');
+          });
+        }, Promise.resolve()).catch(function () {
+          window.alert('Could not convert the cut sheet to PNG. Use Print instead.');
+        });
+      });
+
+      document.getElementById('cutSheetPrint').addEventListener('click', function () {
+        window.print();
+      });
+    })();
   </script>
 </body>
 </html>

@@ -82,6 +82,7 @@ function renderTopNav(activeLabel) {
     { href: 'stand-calculator.html', label: 'Custom Stand' },
     { href: 'aquarium-calculator.html', label: 'Aquarium Calculator' },
     { href: 'sticker-calculator.html', label: 'Custom Accessories / Stickers' },
+    { href: 'glass-cut-list.html', label: 'Glass Cut List' },
   ];
 
   const inventory = [];
@@ -111,12 +112,16 @@ function renderTopNav(activeLabel) {
   if (isSuperUser) {
     reports.push({ href: 'order-timing-dashboard.html', label: 'Order Timing' });
     reports.push({ href: 'expense-entries.html', label: 'Expenses' });
+    // Financials - super users only, matching the Expenses page it draws from. Both RPCs behind
+    // these re-check with is_admin_authorized, so this gate is convenience, not the control.
+    reports.push({ href: 'gl-entries.html', label: 'General Ledger' });
   }
 
   const admin = [];
   if (isSuperUser) {
     admin.push({ href: 'general-setup.html', label: 'General Setup' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
+    admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
   }
   // Payroll Officer (supabase_staff_users_payroll_officer_field.sql) sees these three even

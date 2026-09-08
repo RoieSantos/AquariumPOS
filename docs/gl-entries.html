@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>General Ledger - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>General Ledger</h1>
+    <p class="muted">
+      Every posted purchase, vendor bill, payment and expense. Entries are permanent - a mistake is
+      corrected by posting a reversing entry (voiding a bill or payment does this automatically),
+      never by deleting, so the history always reconciles.
+    </p>
+
+    <div class="toolbar">
+      <div class="field" style="max-width:160px;">
+        <label for="glFromDate">From</label>
+        <input type="date" id="glFromDate" />
+      </div>
+      <div class="field" style="max-width:160px;">
+        <label for="glToDate">To</label>
+        <input type="date" id="glToDate" />
+      </div>
+      <div class="field" style="max-width:260px;">
+        <label for="glAccountFilter">Account</label>
+        <select id="glAccountFilter"><option value="">All accounts</option></select>
+      </div>
+      <div class="field" style="max-width:240px;">
+        <label for="glSearchInput">Search</label>
+        <input type="text" id="glSearchInput" placeholder="Description, document or vendor..." />
+      </div>
+      <button class="btn btn-secondary" id="glRefreshBtn" type="button">Apply</button>
+      <a class="btn btn-secondary" href="gl-setup.html">G/L Setup</a>
+    </div>
+
+    <div class="toolbar" style="margin-top:0;">
+      <button class="btn btn-primary" id="postExpensesBtn" type="button" title="Posts synced expenses in the selected date range to the ledger">Post Expenses to G/L</button>
+      <span class="muted" style="font-size:12px;">Uses the From/To dates above. Already-posted expenses are skipped, so this is safe to re-run.</span>
+    </div>
+
+    <div id="glError" class="error-text hidden"></div>
+
+    <div class="table-wrap">
+      <table class="doc-lines">
+        <thead>
+          <tr>
+            <th>Posting Date</th>
+            <th>Account</th>
+            <th>Description</th>
+            <th>Document</th>
+            <th>Source</th>
+            <th style="text-align:right;">Debit</th>
+            <th style="text-align:right;">Credit</th>
+            <th>Posted By</th>
+          </tr>
+        </thead>
+        <tbody id="glTableBody">
+          <tr><td colspan="8" class="muted">Loading...</td></tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="5" style="text-align:right; font-weight:600;">Totals (all filtered entries)</td>
+            <td id="glTotalDebit" class="doc-num" style="font-weight:600;">0.00</td>
+            <td id="glTotalCredit" class="doc-num" style="font-weight:600;">0.00</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div id="glPaginationBar"></div>
+
+    <h2 style="margin-top:26px;">Trial Balance</h2>
+    <p class="muted" style="margin-top:0;">
+      Totals for the same date range. Debits and credits must be equal - if they ever differ,
+      something wrote to the ledger without going through the posting engine.
+    </p>
+    <div class="table-wrap">
+      <table class="doc-lines">
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th style="text-align:right;">Debit</th>
+            <th style="text-align:right;">Credit</th>
+            <th style="text-align:right;">Balance</th>
+          </tr>
+        </thead>
+        <tbody id="trialBalanceBody">
+          <tr><td colspan="6" class="muted">Loading...</td></tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" style="text-align:right; font-weight:600;">Total</td>
+            <td id="tbTotalDebit" class="doc-num" style="font-weight:600;">0.00</td>
+            <td id="tbTotalCredit" class="doc-num" style="font-weight:600;">0.00</td>
+            <td id="tbBalanceCheck" class="doc-num" style="font-weight:600;"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/glEntries.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

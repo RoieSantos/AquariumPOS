@@ -264,9 +264,6 @@ async function loadSalesByStaff(session) {
 // loadFinancialSummary above, so the two sections always agree on what "this month"/"today"
 // means regardless of the viewer's own browser timezone.
 //
-// "Total Purchase" (statTotalPurchase/statTotalPurchaseSub in dashboard.html) is still an
-// unwired placeholder - add a backend RPC (mirroring this function) and call it here the same
-// way once its calculation formula is defined.
 async function loadExpenseSummary(session) {
   if (!session.password) return;
 
@@ -296,6 +293,46 @@ async function loadExpenseSummary(session) {
   const todayCount = row.today_expense_count || 0;
   const todayWord = todayCount === 1 ? 'entry' : 'entries';
   document.getElementById('statTodayExpenseSub').textContent = `${todayLabel} · ${todayCount} ${todayWord}`;
+}
+
+// "Total Purchase" card, sourced from admin_get_purchase_summary()
+// (supabase_item_cost_and_po_line_cost.sql) - the same Asia/Manila month boundary as
+// loadExpenseSummary/loadFinancialSummary above, so all three sections agree on "this month".
+//
+// Counts POSTED purchase orders only, costed against Qty Received, and dated by the PO's
+// OrderDate - see the RPC for why each of those was chosen.
+async function loadPurchaseSummary(session) {
+  if (!session.password) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_purchase_summary', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_warehouse_name: session.warehouseName || null
+  });
+
+  if (error || !data) {
+    console.error('admin_get_purchase_summary failed:', error);
+    return;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return;
+
+  const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  document.getElementById('statTotalPurchase').textContent = formatCurrency(row.month_purchase);
+
+  const poCount = row.month_po_count || 0;
+  const poWord = poCount === 1 ? 'PO' : 'POs';
+  const uncosted = row.month_uncosted_po_count || 0;
+
+  // An uncosted received line contributes zero, so without this note the card would silently
+  // understate purchases and read like a bug rather than missing data.
+  const uncostedNote = uncosted > 0
+    ? ` · ${uncosted} not fully costed`
+    : '';
+
+  document.getElementById('statTotalPurchaseSub').textContent =
+    `${monthLabel} · ${poCount} ${poWord} so far${uncostedNote}`;
 }
 
 async function loadStatusSummary(session) {
@@ -476,6 +513,7 @@ async function loadNotifications(session) {
     document.getElementById('financeCardGrid').classList.remove('hidden');
     await loadFinancialSummary(session);
     await loadExpenseSummary(session);
+    await loadPurchaseSummary(session);
   }
 
   // Per "if the user is a sales user show the dashboard sales by confirmation" - Sales Users

@@ -36,6 +36,12 @@
           <label>Vendor</label>
           <div id="poVendor" class="muted"></div>
         </div>
+        <!-- Header warehouse (supabase_purchase_order_header_warehouse.sql) - the printed PO has
+             to say which branch the goods are for, since that is what the vendor delivers to. -->
+        <div class="form-row">
+          <label>Warehouse</label>
+          <div id="poWarehouse" class="muted"></div>
+        </div>
         <div class="form-row">
           <label>Order Date</label>
           <div id="poDate" class="muted"></div>
@@ -52,12 +58,26 @@
           <thead>
             <tr>
               <th>Item Code</th>
+              <!-- The vendor's own code for the item (ItemVendors."VendorItemNo") - shown only
+                   when at least one line on this order has one, so a PO to a vendor who has never
+                   given you their codes does not print an empty column. -->
+              <th id="poVendorItemNoHeader" class="hidden">Vendor Item No.</th>
               <th>Item Name</th>
               <th>Description</th>
               <th style="text-align:right;">Quantity</th>
+              <th style="text-align:right;">Unit Cost</th>
+              <th style="text-align:right;">Line Cost</th>
             </tr>
           </thead>
           <tbody id="poLinesBody"></tbody>
+          <tfoot>
+            <tr>
+              <!-- colspan is widened by one in js/purchaseOrderPrint.js when the Vendor Item No.
+                   column is shown, so the total stays under Line Cost. -->
+              <td id="poTotalCostLabel" colspan="5" style="text-align:right; font-weight:600;">Total Cost</td>
+              <td id="poTotalCost" style="text-align:right; font-weight:600;">0.00</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 

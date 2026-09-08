@@ -351,6 +351,11 @@ async function refreshFromPancake() {
       return;
     }
 
+    // The one warehouse every line shares, or null when they differ - see the p_warehouse_id note
+    // on the RPC call below.
+    const distinctWarehouseIds = new Set(lines.map((l) => l.warehouse_id || ''));
+    const singleWarehouse = distinctWarehouseIds.size === 1 && lines[0].warehouse_id ? lines[0] : null;
+
     const btn = document.getElementById('createPoBtn');
     btn.disabled = true;
     btn.textContent = 'Creating...';
@@ -360,7 +365,13 @@ async function refreshFromPancake() {
       p_admin_password: currentSession.password,
       p_vendor_code: vendorCode,
       p_notes: null,
-      p_lines: lines
+      p_lines: lines,
+      // Header warehouse (supabase_purchase_order_header_warehouse.sql) - only set when every
+      // line of this order is for the same warehouse, which is the usual case here since Stock On
+      // Hand is normally filtered to one. A mixed order leaves the header blank rather than
+      // claiming a warehouse that only some of its lines belong to; the lines still each name one.
+      p_warehouse_id: singleWarehouse ? singleWarehouse.warehouse_id : null,
+      p_warehouse_name: singleWarehouse ? singleWarehouse.warehouse_name : null
     });
 
     btn.disabled = false;

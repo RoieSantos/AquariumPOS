@@ -31,6 +31,7 @@
           <tr>
             <th>PO No.</th>
             <th>Vendor</th>
+            <th>Warehouse</th>
             <th>Date</th>
             <th style="text-align:right;">Items</th>
             <th style="text-align:right;">Total Qty</th>
@@ -40,143 +41,250 @@
           </tr>
         </thead>
         <tbody id="poTableBody">
-          <tr><td colspan="8" class="muted">Loading...</td></tr>
+          <tr><td colspan="9" class="muted">Loading...</td></tr>
         </tbody>
       </table>
     </div>
     <div id="poPaginationBar"></div>
   </div>
 
-  <!-- New Purchase Order modal (manual entry - not generated from Stock On Hand) -->
-  <div id="newPoModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:900px; width:95vw;">
+  <!-- Purchase Order card - ONE document used both to create a new order and to view/receive an
+       existing one, per "can you do the purchase order like business central approach for list and
+       for the card?" -> "one unified PO card". BC pairs its Purchase Order List with a single
+       Purchase Order page used for both jobs; before this, this portal had two differently-shaped
+       modals (New Purchase Order / Receive Purchase Order) doing that. This is one modal element,
+       one Maximize/FastTab state, one title and one General FastTab -
+       js/purchaseOrders.js's currentPoCardMode ('new' | 'existing') switches which header fields
+       are editable, which of the two lines-areas below shows, and which footer actions appear -
+       the way BC's own ribbon changes with a document's status rather than swapping the page out.
+
+       THE TWO LINES-AREAS STAY SEPARATE (poCardNewLines / poCardExistingLines) rather than one
+       shared grid: a brand-new order's lines are typed inline and stay unsaved client-side until
+       Create is pressed (staff_create_purchase_order, one RPC for the whole order - any staff can
+       do this), while an existing order's lines are already real rows, each edited/added through
+       its own RPC (staff_add_purchase_order_line and friends - super-user only, since it is
+       structural editing of a persisted record). Collapsing those two into one grid would mean
+       either letting any staff edit a saved order's lines or blocking ordinary staff from creating
+       a PO at all - a permissions change nobody asked for, so the two stay as they are, just
+       inside one shared card instead of two separate ones. -->
+  <div id="poCardModal" class="modal-backdrop hidden">
+    <!-- Sizing lives in .po-doc-panel, NOT inline: an inline style would beat the
+         .modal-maximized rule (inline always wins over a stylesheet), so Maximize could only ever
+         make this taller, never wider. -->
+    <div class="modal-panel po-doc-panel">
       <div class="toolbar">
-        <h2>New Purchase Order</h2>
-        <button class="btn btn-secondary btn-sm" id="closeNewPoModalBtn" type="button" style="margin-left:auto;">Close</button>
+        <h2 id="poCardTitle">Purchase Order</h2>
+        <a id="poCardPrintLink" href="#" class="btn btn-secondary btn-sm hidden" style="margin-left:auto;">Print</a>
+        <button class="btn btn-secondary btn-sm" id="poCardMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
+        <button class="btn btn-secondary btn-sm" id="poCardCloseBtn" type="button">Close</button>
       </div>
 
-      <div class="form-grid">
-        <div class="form-row">
-          <label>Vendor</label>
-          <select id="newPoVendor"><option value="">Select a vendor...</option></select>
-        </div>
-        <div class="form-row">
-          <label>Notes</label>
-          <input type="text" id="newPoNotes" placeholder="Optional" />
-        </div>
-      </div>
+      <!-- Business Central-style "General" FastTab - collapsible, and when collapsed it keeps the
+           vendor/warehouse/notes on the tab itself so folding it away never hides what you needed.
+           Open by default; the choice is remembered per browser (js/purchaseOrders.js). -->
+      <details class="doc-fasttab" id="poCardGeneralTab" open>
+        <summary>
+          General
+          <span class="doc-fasttab-summary" id="poCardGeneralSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div class="form-grid">
+            <!-- New order: editable. Defaults to the signed-in user's own designated warehouse
+                 (StaffUsers."WarehouseName") and every line inherits it. -->
+            <div class="form-row" id="poCardVendorEditRow">
+              <label for="newPoVendor">Vendor</label>
+              <select id="newPoVendor"><option value="">Select a vendor...</option></select>
+            </div>
+            <div class="form-row" id="poCardWarehouseEditRow">
+              <label for="newPoWarehouse">Warehouse</label>
+              <select id="newPoWarehouse" title="Where this order is for - new lines inherit it."></select>
+            </div>
+            <div class="form-row" id="poCardNotesEditRow">
+              <label for="newPoNotes">Notes</label>
+              <input type="text" id="newPoNotes" placeholder="Optional" />
+            </div>
 
-      <div class="section-divider"></div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Variant</th>
-              <th>Description</th>
-              <th>Warehouse</th>
-              <th style="text-align:right;">Quantity</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="newPoLinesBody"></tbody>
-        </table>
-      </div>
-      <button class="btn btn-secondary btn-sm" id="addNewPoLineBtn" type="button" style="margin-top:8px;">Add Line</button>
-
-      <div id="newPoModalError" class="error-text hidden" style="margin-top:12px;"></div>
-
-      <div class="toolbar" style="margin-top:12px;">
-        <button class="btn btn-primary" id="createNewPoBtn" type="button" style="margin-left:auto;">Create Purchase Order</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Receive Purchase Order modal -->
-  <div id="receiveModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:900px; width:95vw;">
-      <div class="toolbar">
-        <h2 id="receiveModalTitle">Purchase Order</h2>
-        <a id="receivePrintLink" href="#" class="btn btn-secondary btn-sm" style="margin-left:auto;">Print</a>
-        <button class="btn btn-secondary btn-sm" id="closeReceiveModalBtn" type="button">Close</button>
-      </div>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label>Vendor</label>
-          <div id="receiveVendor" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Order Date</label>
-          <div id="receiveOrderDate" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Notes</label>
-          <div id="receiveNotes" class="muted"></div>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Item Code</th>
-              <th>Item Name</th>
-              <th>Description</th>
-              <th>Warehouse</th>
-              <th style="text-align:right;">Qty Ordered</th>
-              <th style="text-align:right;">Qty Received</th>
-              <th style="text-align:right;">Receive Now</th>
-              <th id="receiveLinesActionsHeader" class="hidden"></th>
-            </tr>
-          </thead>
-          <tbody id="receiveLinesBody"></tbody>
-        </table>
-      </div>
-
-      <!-- Add Item to this Purchase Order - super users only (toggled in openReceiveModal, purchaseOrders.js) -->
-      <div id="poEditSection" class="hidden">
-        <div class="toolbar" style="margin-top:8px;">
-          <div class="item-search-cell" style="position:relative; max-width:280px;">
-            <input type="text" id="poAddItemInput" placeholder="Search item code or name..." autocomplete="off" />
-            <div id="poAddItemDropdown" class="item-suggest-dropdown hidden"></div>
+            <!-- Existing order: read-only - once an order is real, its vendor and header warehouse
+                 are fixed (changing the vendor after lines exist would misprice them; a per-line
+                 Warehouse below still moves individual items). -->
+            <div class="form-row hidden" id="poCardVendorViewRow">
+              <label>Vendor</label>
+              <div id="receiveVendor" class="muted"></div>
+            </div>
+            <div class="form-row hidden" id="poCardWarehouseViewRow">
+              <label>Warehouse</label>
+              <div id="receiveWarehouse" class="muted"></div>
+            </div>
+            <div class="form-row hidden" id="poCardOrderDateRow">
+              <label>Order Date</label>
+              <div id="receiveOrderDate" class="muted"></div>
+            </div>
+            <div class="form-row hidden" id="poCardNotesViewRow">
+              <label>Notes</label>
+              <div id="receiveNotes" class="muted"></div>
+            </div>
           </div>
-          <div class="item-search-cell" style="position:relative; max-width:220px;">
-            <input type="text" id="poAddVariantInput" placeholder="Select an item first..." autocomplete="off" />
-            <div id="poAddVariantDropdown" class="variant-suggest-dropdown hidden"></div>
-          </div>
-          <input type="text" id="poAddDescriptionInput" placeholder="Description (optional)" style="max-width:200px;" />
-          <select id="poAddItemWarehouse"></select>
-          <input type="number" id="poAddItemQty" min="0" step="0.01" value="1" style="width:80px;" />
-          <button class="btn btn-secondary btn-sm" id="poAddItemBtn" type="button">Add Item</button>
         </div>
-      </div>
+      </details>
 
-      <div id="pancakeSyncSection" class="hidden">
-        <div class="section-divider"></div>
-        <h3 style="margin-bottom:8px;">Pancake Sync</h3>
-        <p class="muted" style="margin-top:0;">Each Receive pushes a stock-in purchase to Pancake per warehouse. A line's Qty Received only updates once Pancake confirms it here.</p>
-        <div class="table-wrap">
-          <table>
+      <!-- New order lines: BC puts the line actions in a strip above the grid rather than loose
+           underneath it. Nothing here is saved until Create Purchase Order is pressed. -->
+      <div id="poCardNewLines">
+        <div class="doc-lines-toolbar">
+          <span class="doc-lines-title">Lines</span>
+          <button class="btn btn-secondary btn-sm" id="addNewPoLineBtn" type="button">+ Add Line</button>
+        </div>
+
+        <div class="doc-lines-wrap">
+          <!-- Fixed column widths (see .new-po-lines in css/styles.css) - an editable grid must not
+               re-flow its columns every time a longer item name is picked. -->
+          <table class="doc-lines new-po-lines">
+            <!-- The six fixed columns come to 508px; the four proportional ones are sized to take
+                 the remaining ~46% at the grid's 940px minimum, and simply grow from there as the
+                 document is widened or maximized. -->
+            <colgroup>
+              <col style="width:44px;" />
+              <col style="width:16%;" />
+              <col style="width:11%;" />
+              <col style="width:12%;" />
+              <col style="width:7%;" />
+              <col style="width:90px;" />
+              <col style="width:88px;" />
+              <col style="width:100px;" />
+              <col style="width:100px;" />
+              <col style="width:86px;" />
+            </colgroup>
             <thead>
               <tr>
-                <th>Received</th>
+                <th style="text-align:right;">No.</th>
+                <th>Item</th>
+                <th>Variant</th>
+                <th>Description</th>
                 <th>Warehouse</th>
-                <th>Pancake Purchase ID</th>
-                <th>Status</th>
-                <th>Error</th>
+                <th style="text-align:right;">Quantity</th>
+                <!-- BC's Unit of Measure Code, straight after Quantity - the two are read together.
+                     Quantity and Unit Cost are both PER this unit; the base quantity that actually
+                     goes into stock is shown underneath it. See supabase_units_of_measure.sql. -->
+                <th>UoM</th>
+                <th style="text-align:right;">Unit Cost</th>
+                <th style="text-align:right;">Line Cost</th>
+                <th></th>
               </tr>
             </thead>
-            <tbody id="pancakeSyncBody"></tbody>
+            <tbody id="newPoLinesBody"></tbody>
+            <tfoot>
+              <!-- colspan 8 (No. through Unit Cost) puts the total directly under Line Cost, the
+                   column it totals - same alignment as the existing document's footer below. -->
+              <tr>
+                <td colspan="8" style="text-align:right; font-weight:600;">Total Cost</td>
+                <td id="newPoTotalCost" class="doc-num" style="font-weight:600;">0.00</td>
+                <td></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
 
-      <div id="receiveModalError" class="error-text hidden"></div>
+      <!-- Existing order lines: each row is already a saved PurchaseOrderLines record, edited or
+           received one field at a time through its own RPC. -->
+      <div id="poCardExistingLines" class="hidden">
+        <div class="doc-lines-wrap">
+          <table class="doc-lines">
+            <thead>
+              <tr>
+                <th>Item Code</th>
+                <th>Item Name</th>
+                <!-- Editable while nothing has been received against the line - see
+                     staff_set_purchase_order_line_variant (supabase_purchase_order_line_variant.sql).
+                     Changing it re-points the line at that variant's own item code. -->
+                <th>Variant</th>
+                <th>Description</th>
+                <th>Warehouse</th>
+                <th style="text-align:right;">Qty Ordered</th>
+                <!-- Editable while nothing has been received against the line - see
+                     staff_set_purchase_order_line_uom (supabase_purchase_order_line_uom_edit.sql).
+                     Changing it keeps the quantity as typed and restates the base quantity. -->
+                <th>UoM</th>
+                <!-- One column, not the old "Qty Received" + "Receive Now" pair: staff type what
+                     arrived here and that is exactly what gets added to inventory. -->
+                <th style="text-align:right;">Qty Received</th>
+                <th style="text-align:right;">Unit Cost</th>
+                <th style="text-align:right;">Line Cost</th>
+                <th id="receiveLinesActionsHeader" class="hidden"></th>
+              </tr>
+            </thead>
+            <tbody id="receiveLinesBody"></tbody>
+            <tfoot>
+              <!-- colspan 9 puts the total directly under the Line Cost column (the 10th), which is
+                   what it totals - not under Unit Cost. -->
+              <tr>
+                <td colspan="9" style="text-align:right; font-weight:600;">Total Cost</td>
+                <td id="receiveTotalCost" class="doc-num" style="font-weight:600;">0.00</td>
+                <!-- Hidden in step with the Remove column's header, which only super users see -
+                     otherwise the footer would carry one more cell than the rows above it. -->
+                <td id="receiveTotalActionsCell" class="hidden"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
 
-      <div class="toolbar" style="margin-top:12px;">
-        <button class="btn btn-primary" id="receiveQtyBtn" type="button">Receive</button>
+        <!-- Add Item to this Purchase Order - super users only (toggled in openReceiveModal, purchaseOrders.js) -->
+        <div id="poEditSection" class="hidden">
+          <div class="toolbar" style="margin-top:8px;">
+            <div class="item-search-cell" style="position:relative; max-width:280px;">
+              <input type="text" id="poAddItemInput" placeholder="Search item code or name..." autocomplete="off" />
+              <div id="poAddItemDropdown" class="item-suggest-dropdown hidden"></div>
+            </div>
+            <div class="item-search-cell" style="position:relative; max-width:220px;">
+              <input type="text" id="poAddVariantInput" placeholder="Select an item first..." autocomplete="off" />
+              <div id="poAddVariantDropdown" class="variant-suggest-dropdown hidden"></div>
+            </div>
+            <!-- Prefilled from the picked item's catalog description (js/purchaseOrders.js's
+                 refreshPoAddDescription) - type over it to word the line differently, clear it to
+                 get the catalog text back. -->
+            <input type="text" id="poAddDescriptionInput" placeholder="Description (from the item)" title="Filled in from the item's catalog description - type over it to word this line differently, or clear it to get the catalog text back." style="max-width:200px;" />
+            <select id="poAddItemWarehouse"></select>
+            <input type="number" id="poAddItemQty" min="0" step="0.01" value="1" style="width:80px;" title="Quantity - in the unit picked beside it" />
+            <!-- The item's units of measure; Quantity and Unit cost are both per one of these, same
+                 as a New Purchase Order line. See supabase_units_of_measure.sql. -->
+            <select id="poAddItemUom" style="max-width:110px;" title="The unit this line is ordered in"></select>
+            <input type="number" id="poAddItemCost" min="0" step="0.01" placeholder="Unit cost" style="width:100px;" title="Unit cost per the unit picked beside it - leave blank to use the item's catalog cost" />
+            <button class="btn btn-secondary btn-sm" id="poAddItemBtn" type="button">Add Item</button>
+          </div>
+        </div>
+
+        <div id="pancakeSyncSection" class="hidden">
+          <div class="section-divider"></div>
+          <h3 style="margin-bottom:8px;">Pancake Sync</h3>
+          <p class="muted" style="margin-top:0;">Each Receive pushes a stock-in purchase to Pancake per warehouse. A line's Qty Received only updates once Pancake confirms it here.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Received</th>
+                  <th>Warehouse</th>
+                  <th>Pancake Purchase ID</th>
+                  <th>Status</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody id="pancakeSyncBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="poCardError" class="error-text hidden" style="margin-top:12px;"></div>
+
+      <!-- New order footer. -->
+      <div class="toolbar" style="margin-top:12px;" id="poCardNewFooter">
+        <button class="btn btn-primary" id="createNewPoBtn" type="button" style="margin-left:auto;">Create Purchase Order</button>
+      </div>
+
+      <!-- Existing order footer. -->
+      <div class="toolbar hidden" style="margin-top:12px;" id="poCardExistingFooter">
+        <button class="btn btn-primary" id="receiveQtyBtn" type="button" title="Adds the Qty Received you entered to inventory">Receive</button>
+        <span class="muted" style="font-size:12px;">Fill in Qty Received for what arrived, then Receive to add it to inventory.</span>
         <button class="btn btn-primary" id="postPoBtn" type="button" style="margin-left:auto;">Post Purchase Order</button>
       </div>
     </div>

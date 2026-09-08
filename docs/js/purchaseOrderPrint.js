@@ -20,20 +20,64 @@ function escapeHtml(value) {
   })[ch]);
 }
 
+// The vendor is being asked for boxes, so a line ordered in one leads with "5 BOX" and carries the
+// base quantity underneath - that second figure is what the delivery gets counted against on
+// arrival. A line ordered in its base unit just prints the one number.
+// See supabase_units_of_measure.sql.
+// The price of one of whatever the Quantity column is counting (unit_cost_uom, derived by the
+// list RPCs - see supabase_purchase_order_line_uom_edit.sql). A line ordered in boxes has to print
+// the box price, or "5 BOX x 40.00 = 2,400.00" goes to the vendor as arithmetic that does not
+// work. unit_cost itself stays per base unit everywhere it is stored.
+function unitCostPerUomText(l) {
+  const value = l.unit_cost_uom ?? l.unit_cost;
+  return value === null || value === undefined ? '-' : Number(value).toFixed(2);
+}
+
+function quantityWithUomHtml(l) {
+  const base = Number(l.quantity || 0).toLocaleString();
+  if (!l.uom_code || !l.quantity_uom || Number(l.qty_per_uom || 1) === 1) return base;
+
+  return `${Number(l.quantity_uom).toLocaleString()} ${escapeHtml(l.uom_code)}`
+    + `<div class="muted" style="font-size:11px;">${base}</div>`;
+}
+
 function renderLines(lines) {
   const body = document.getElementById('poLinesBody');
+  const totalEl = document.getElementById('poTotalCost');
+
   if (!lines || lines.length === 0) {
-    body.innerHTML = '<tr><td colspan="4" class="muted">No line items.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="muted">No line items.</td></tr>';
+    if (totalEl) totalEl.textContent = '0.00';
     return;
   }
+
+  // line_cost is computed server-side by the list RPCs (see
+  // supabase_item_cost_and_po_line_cost.sql). This page prints BOTH open and posted POs, and the
+  // two cost their lines differently on purpose - an open PO against Qty Ordered (nothing has
+  // arrived yet), a posted one against Qty Received (what was actually paid for). Summing the
+  // server's figure keeps this sheet agreeing with whichever it was handed.
+  if (totalEl) {
+    totalEl.textContent = lines
+      .reduce((sum, l) => sum + (Number(l.line_cost) || 0), 0)
+      .toFixed(2);
+  }
+
+  // An item's vendor code only exists for vendors who have given you one (the Vendors list in Item
+  // Setup's factbox), so the column earns its place per order rather than printing blank.
+  const showVendorItemNo = lines.some((l) => l.vendor_item_no);
+  document.getElementById('poVendorItemNoHeader').classList.toggle('hidden', !showVendorItemNo);
+  document.getElementById('poTotalCostLabel').colSpan = showVendorItemNo ? 6 : 5;
 
   body.innerHTML = lines
     .map((l) => `
       <tr>
         <td>${l.item_code || ''}</td>
+        ${showVendorItemNo ? `<td>${escapeHtml(l.vendor_item_no || '')}</td>` : ''}
         <td>${l.item_name || ''}</td>
         <td>${escapeHtml(l.description || '')}</td>
-        <td style="text-align:right;">${Number(l.quantity || 0).toLocaleString()}</td>
+        <td style="text-align:right;">${quantityWithUomHtml(l)}</td>
+        <td style="text-align:right;">${unitCostPerUomText(l)}</td>
+        <td style="text-align:right;">${l.unit_cost === null || l.unit_cost === undefined ? '-' : Number(l.line_cost || 0).toFixed(2)}</td>
       </tr>
     `)
     .join('');
@@ -98,6 +142,9 @@ function renderLines(lines) {
   const header = headerRows[0];
   document.getElementById('poNo').textContent = header.po_no || '';
   document.getElementById('poVendor').textContent = header.vendor_name || header.vendor_code || '';
+  // Blank on POs raised before the header carried a warehouse, and on any whose lines span
+  // several - the lines themselves still name one each.
+  document.getElementById('poWarehouse').textContent = header.warehouse_name || '-';
   document.getElementById('poDate').textContent = formatDate(header.order_date);
   document.getElementById('poNotes').textContent = header.notes || '-';
   document.getElementById('poSubtitle').textContent = `Created by ${header.created_by || 'unknown'} on ${formatDate(header.created_at_utc)}`;

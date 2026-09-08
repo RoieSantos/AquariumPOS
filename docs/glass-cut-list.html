@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Glass Cut List - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .cut-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      align-items: end;
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      margin-top: 16px;
+    }
+    .cut-form label { display: block; font-size: 12px; margin-bottom: 4px; color: #475569; }
+    .cut-form input, .cut-form select { width: 100%; box-sizing: border-box; }
+    .cut-panel {
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      margin-top: 16px;
+    }
+    .cut-panel h2 { margin: 0 0 10px; font-size: 14px; }
+    .panel-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .panel-table th, .panel-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--panel-border); }
+    .panel-table th { font-weight: 600; color: #475569; }
+    .sheet-wrap { overflow-x: auto; margin-top: 12px; }
+    .sheet-wrap svg { display: block; }
+    .selftest { font-size: 13px; margin-top: 8px; }
+    .selftest .ok { color: #15803d; font-weight: 600; }
+    .selftest .fail { color: #b91c1c; font-weight: 600; }
+    .selftest ul { margin: 6px 0 0; padding-left: 18px; }
+    @media print {
+      #topnav, .cut-form, .no-print { display: none !important; }
+      .cut-panel { border: none; box-shadow: none; page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Glass Cut List</h1>
+    <p class="muted">
+      Client-side only - nothing here is saved to the database. Derives the glass panels for a
+      custom aquarium and nests them onto stock sheets as guillotine strips (full-width cuts),
+      the same way the cut sheet is drawn by hand for 10mm/12mm orders. Leftovers are marked
+      Retaso. Use Print for a shop copy.
+    </p>
+
+    <div class="cut-form">
+      <div>
+        <label for="tankLength">Tank length (in)</label>
+        <input type="number" id="tankLength" value="72" step="0.25" min="0" />
+      </div>
+      <div>
+        <label for="tankWidth">Tank width / depth (in)</label>
+        <input type="number" id="tankWidth" value="24" step="0.25" min="0" />
+      </div>
+      <div>
+        <label for="tankHeight">Tank height (in)</label>
+        <input type="number" id="tankHeight" value="18" step="0.25" min="0" />
+      </div>
+      <div>
+        <label for="glassThickness">Glass</label>
+        <select id="glassThickness">
+          <option value="3mm">3mm</option>
+          <option value="6mm">6mm</option>
+          <option value="10mm" selected>10mm</option>
+          <option value="12mm">12mm</option>
+        </select>
+      </div>
+      <div>
+        <label for="sheetWidth">Sheet width (in)</label>
+        <input type="number" id="sheetWidth" value="72" step="0.25" min="0" />
+      </div>
+      <div>
+        <label for="sheetHeight">Sheet height (in)</label>
+        <input type="number" id="sheetHeight" value="84" step="0.25" min="0" />
+      </div>
+      <div>
+        <label for="trimAllowance">Trim allowance (in)</label>
+        <input type="number" id="trimAllowance" value="0" step="0.0625" min="0" />
+      </div>
+      <div class="no-print">
+        <button type="button" id="printBtn">Print</button>
+      </div>
+    </div>
+
+    <div class="cut-panel">
+      <h2>Panels</h2>
+      <table class="panel-table">
+        <thead>
+          <tr><th>Panel</th><th>Size</th><th>Qty</th><th>How it is derived</th></tr>
+        </thead>
+        <tbody id="panelBody"></tbody>
+      </table>
+      <p class="muted" id="panelSummary" style="margin-bottom:0;"></p>
+    </div>
+
+    <div id="sheetsHost"></div>
+
+    <div class="cut-panel no-print">
+      <h2>Self-test</h2>
+      <p class="muted" style="margin-top:0;">
+        Checks the generator against the shop's known hand-drawn sheet
+        (72 x 24 x 18 tank, 10mm glass, 72 x 84 stock), then checks that aligned strip tails
+        merge into one large retaso instead of being cut up (60 x 24 x 24 tank on 72 x 96 stock).
+      </p>
+      <div class="selftest" id="selfTest"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/glassCutList.js"></script>
+  <script>
+    (async function () {
+      const session = await requireAuth();
+      if (!session) return;
+      renderTopNav('Glass Cut List');
+
+      const f = GlassCutList.formatInches;
+
+      function readForm() {
+        return {
+          length: Number(document.getElementById('tankLength').value),
+          width: Number(document.getElementById('tankWidth').value),
+          height: Number(document.getElementById('tankHeight').value),
+          glass: document.getElementById('glassThickness').value,
+          sheetWidth: Number(document.getElementById('sheetWidth').value),
+          sheetHeight: Number(document.getElementById('sheetHeight').value),
+          trimAllowance: Number(document.getElementById('trimAllowance').value)
+        };
+      }
+
+      function render() {
+        const opts = readForm();
+        const result = GlassCutList.buildCutList(opts);
+
+        document.getElementById('panelBody').innerHTML = result.panels
+          .map((p) => `<tr><td>${p.name}</td><td><strong>${f(p.width)}" x ${f(p.height)}"</strong></td><td>${p.qty}</td><td class="muted">${p.note}</td></tr>`)
+          .join('');
+
+        const totalSqFt = result.panels
+          .reduce((sum, p) => sum + ((p.width * p.height * p.qty) / 144), 0);
+        document.getElementById('panelSummary').textContent =
+          `${result.sheets.length} stock sheet(s) needed - ${totalSqFt.toFixed(2)} sq ft of glass in panels.`;
+
+        const host = document.getElementById('sheetsHost');
+        if (result.oversized.length > 0) {
+          host.innerHTML = `<div class="cut-panel"><h2>Cannot nest</h2><p class="muted">These panels do not fit a ${f(opts.sheetWidth)}" x ${f(opts.sheetHeight)}" sheet even rotated: ${result.oversized.map((p) => p.label).join(', ')}. A larger stock sheet is needed.</p></div>`;
+          return;
+        }
+
+        host.innerHTML = result.sheets
+          .map((sheet, i) => {
+            const caption = `Sheet ${i + 1} of ${result.sheets.length} - ${opts.glass} - tank ${f(opts.length)} x ${f(opts.width)} x ${f(opts.height)}`;
+            return `<div class="cut-panel"><h2>Sheet ${i + 1} of ${result.sheets.length}</h2><div class="sheet-wrap">${GlassCutList.renderSheetSvg(sheet, { caption: caption })}</div></div>`;
+          })
+          .join('');
+      }
+
+      // Reproduces the hand-drawn reference sheet exactly, so a change to the derivation or the
+      // nester that silently breaks the shop's known-good layout shows up here immediately.
+      function runSelfTest() {
+        const r = GlassCutList.buildCutList({
+          length: 72, width: 24, height: 18, glass: '10mm', sheetWidth: 72, sheetHeight: 84
+        });
+
+        const got = r.panels.map((p) => `${p.name} ${f(p.width)}x${f(p.height)}`);
+        const checks = [
+          ['Bottom is 72 x 24', got.includes('Bottom 72x24')],
+          ['Front is 72 x 18', got.includes('Front 72x18')],
+          ['Back is 72 x 18', got.includes('Back 72x18')],
+          ['Left is 23 1/4 x 18', got.includes('Left 23 1/4x18')],
+          ['Right is 23 1/4 x 18', got.includes('Right 23 1/4x18')],
+          ['Fits on one sheet', r.sheets.length === 1],
+          ['Four strips: 24, 18, 18, 18', r.sheets.length === 1 &&
+            r.sheets[0].strips.map((s) => s.height).join(',') === '24,18,18,18'],
+          ['Two sides share one strip', r.sheets.length === 1 &&
+            r.sheets[0].strips.some((s) => s.pieces.length === 2 &&
+              s.pieces.every((p) => p.name === 'Left' || p.name === 'Right'))],
+          ['Retaso beside the sides is 25 1/2 wide', r.sheets.length === 1 &&
+            r.sheets[0].offcuts.some((o) => f(o.width) === '25 1/2' && f(o.height) === '18')],
+          ['Bottom edge retaso is 72 x 6', r.sheets.length === 1 &&
+            r.sheets[0].offcuts.some((o) => f(o.width) === '72' && f(o.height) === '6')]
+        ];
+
+        // Aligned strip tails must come back as ONE tall offcut, not one per strip, and the
+        // strip cut lines must stop at it rather than slicing it into pieces. A 60 x 24 x 24
+        // tank on a 72 x 96 sheet leaves three 12-wide tails stacked at the same x.
+        const m = GlassCutList.buildCutList({
+          length: 60, width: 24, height: 24, glass: '10mm', sheetWidth: 72, sheetHeight: 96
+        });
+        const mSheet = m.sheets[0];
+
+        checks.push(
+          ['Merge case fits one sheet', m.sheets.length === 1],
+          ['Stacked tails merge into one 12 x 72 retaso', !!mSheet &&
+            mSheet.offcuts.some((o) => f(o.width) === '12' && f(o.height) === '72')],
+          ['No 12 x 24 tails left over', !!mSheet &&
+            !mSheet.offcuts.some((o) => f(o.width) === '12' && f(o.height) === '24')],
+          ['Exactly two offcuts remain', !!mSheet && mSheet.offcuts.length === 2],
+          ['Cut at 24" stops at the retaso (0-60 only)', !!mSheet &&
+            JSON.stringify(GlassCutList.horizontalCutSegments(mSheet, 24)) === JSON.stringify([[0, 60]])],
+          ['Cut at 72" still runs full width', !!mSheet &&
+            JSON.stringify(GlassCutList.horizontalCutSegments(mSheet, 72)) === JSON.stringify([[0, 72]])]
+        );
+
+        const failed = checks.filter((c) => !c[1]);
+        document.getElementById('selfTest').innerHTML =
+          (failed.length === 0
+            ? '<span class="ok">PASS</span> - all ' + checks.length + ' checks passed.'
+            : '<span class="fail">FAIL</span> - ' + failed.length + ' of ' + checks.length + ' checks did not match.') +
+          '<ul>' + checks.map((c) => `<li>${c[1] ? '&#10003;' : '&#10007;'} ${c[0]}</li>`).join('') + '</ul>';
+      }
+
+      document.querySelectorAll('.cut-form input, .cut-form select')
+        .forEach((el) => el.addEventListener('input', render));
+      document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+      render();
+      runSelfTest();
+    })();
+  </script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

@@ -166,21 +166,35 @@
   </div>
 
   <!-- No-address confirmation - shown from confirmAssign() when the selected order has no
-       shipping address on file. Replaces the old window.confirm()/window.prompt() combo with one
-       modal that both confirms and collects an optional manual address, styled consistently with
-       the rest of the portal instead of the browser's native dialog chrome. -->
+       shipping address on file, OR is one of Pancake's generic "POS WALKIN ORDERS" / "Walkin"
+       placeholder sales (a walk-in rung up at the register with no real customer picked - per
+       "if the customer is POS WALKIN ORDERS and Address is Walkin can you ask the user for
+       Address and Name of customer once its assigned"). Replaces the old
+       window.confirm()/window.prompt() combo with one modal that both confirms and collects a
+       manual address (and, for a walk-in placeholder, a customer name too), styled consistently
+       with the rest of the portal instead of the browser's native dialog chrome.
+
+       Neither field is required - Cancel aborts the whole assignment, Continue proceeds with
+       whatever was typed (blank is fine), same as the address-only version of this prompt always
+       allowed. The Name row is only shown (js/delivery.js's openNoAddressModal) when the order is
+       a walk-in placeholder - an order that's simply missing an address keeps the original,
+       name-free prompt. -->
   <div id="noAddressModal" class="modal-backdrop hidden">
     <div class="modal-panel">
       <div class="toolbar">
-        <h2 style="margin:0;">No Delivery Address</h2>
+        <h2 id="noAddressTitle" style="margin:0;">No Delivery Address</h2>
         <button class="btn btn-secondary btn-sm" id="noAddressCloseBtn" type="button">Cancel</button>
       </div>
 
-      <p class="muted">Order <strong id="noAddressOrderId"></strong> has no shipping address on file. Enter one below to plot it on the map, or leave it blank to continue without one.</p>
+      <p class="muted" id="noAddressMessage">Order <strong id="noAddressOrderId"></strong> has no shipping address on file. Enter one below to plot it on the map, or leave it blank to continue without one.</p>
 
       <div class="form-grid">
+        <div class="form-row hidden" id="noAddressNameRow">
+          <label for="noAddressNameInput">Customer Name</label>
+          <input type="text" id="noAddressNameInput" placeholder="Who is this delivery actually for?" />
+        </div>
         <div class="form-row">
-          <label for="noAddressInput">Delivery Address (optional)</label>
+          <label for="noAddressInput" id="noAddressInputLabel">Delivery Address (optional)</label>
           <input type="text" id="noAddressInput" placeholder="e.g. 123 Main St, Quezon City" />
         </div>
       </div>

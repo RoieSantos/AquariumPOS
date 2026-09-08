@@ -48,71 +48,228 @@
           <button class="btn btn-secondary" id="importItemsExcelBtn" type="button">Import from Excel</button>
         </div>
       </div>
-      <p class="muted" style="font-size:12px; margin-top:-8px;">Export to Excel downloads the current item list with a Vendor Code column. Fill it in and use Import from Excel to bulk-assign vendors by Item Code - only the Vendor Code column is applied on import, everything else (Name/Category/Price) is read-only context.</p>
+      <p class="muted" style="font-size:12px; margin-top:-8px;">Export to Excel downloads the current item list with editable <strong>Vendor Code</strong> and <strong>Cost</strong> columns. Fill them in and use Import from Excel to bulk-update by Item Code - only those two columns are applied, everything else (Name/Category/Price) is read-only context. A blank cell clears that item's vendor or cost; if the file has no Cost column at all, costs are left untouched.</p>
       <input type="file" id="importItemsExcelFileInput" class="hidden" accept=".csv" />
-      <div class="item-setup-layout">
-        <div class="item-setup-table-col">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th>Name</th>
-                  <th>Category</th>
-                  <th>Vendor</th>
-                  <th style="text-align:right;">Price</th>
-                  <th>Variants</th>
-                </tr>
-              </thead>
-              <tbody id="itemTableBody">
-                <tr><td colspan="6" class="muted">Loading...</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div id="itemPaginationBar"></div>
-        </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Vendor</th>
+              <th style="text-align:right;">Cost</th>
+              <th style="text-align:right;">Price</th>
+              <th>Variants</th>
+            </tr>
+          </thead>
+          <tbody id="itemTableBody">
+            <tr><td colspan="7" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="itemPaginationBar"></div>
+    </div>
+  </div>
 
-        <!-- Factbox: details for whichever item row was last clicked. -->
-        <div id="itemFactbox" class="card item-factbox">
-          <p class="muted" id="factboxPlaceholder">Click an item row to view its variants and images.</p>
-          <div id="factboxContent" class="hidden">
-            <div class="toolbar" style="margin-bottom:12px;">
-              <h3 id="factboxTitle" style="margin:0; font-size:15px;"></h3>
-              <button class="btn btn-secondary btn-sm" id="factboxCloseBtn" type="button">Close</button>
+  <!-- Item Card - per "can you show the item setup as card same as business central too". BC pairs
+       a list page with a card page: click a row and the whole item opens as a document of
+       collapsible FastTabs, rather than a strip of detail down the side. Same treatment as the
+       Purchase Order document (.po-doc-panel / .doc-fasttab / Maximize, css/styles.css), so the
+       two read as the same kind of screen.
+
+       The field ids are the ones the factbox used, so every save path in js/itemSetup.js is
+       unchanged - only where they sit on screen has moved. -->
+  <div id="itemCardModal" class="modal-backdrop hidden">
+    <div class="modal-panel po-doc-panel">
+      <div class="toolbar">
+        <h2 id="itemCardTitle">Item</h2>
+        <button class="btn btn-secondary btn-sm" id="itemCardMaximizeBtn" type="button" style="margin-left:auto;" title="Maximize this card to fill the window">Maximize</button>
+        <button class="btn btn-secondary btn-sm" id="itemCardCloseBtn" type="button">Close</button>
+      </div>
+
+      <details class="doc-fasttab" id="itemCardGeneralTab" open>
+        <summary>
+          General
+          <span class="doc-fasttab-summary" id="itemCardGeneralSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div class="item-card-general">
+            <div class="form-grid" style="flex:1;">
+              <div class="form-row">
+                <label>Item Code</label>
+                <div id="itemCardCode" class="muted"></div>
+              </div>
+              <div class="form-row">
+                <label>Name</label>
+                <div id="itemCardName" class="muted"></div>
+              </div>
+              <div class="form-row">
+                <label>Description</label>
+                <div id="itemCardDescription" class="muted"></div>
+              </div>
+              <div class="form-row">
+                <label>Category</label>
+                <div id="itemCardCategory" class="muted"></div>
+              </div>
+              <div class="form-row">
+                <label>Brand</label>
+                <div id="itemCardBrand" class="muted"></div>
+              </div>
+              <div class="form-row">
+                <label>SKU</label>
+                <div id="itemCardSku" class="muted"></div>
+              </div>
+              <div class="form-row">
+                <label>Qty in Stock</label>
+                <div id="itemCardStock" class="muted"></div>
+              </div>
+              <div class="form-row">
+                <label>Status</label>
+                <div id="itemCardStatus" class="muted"></div>
+              </div>
             </div>
-
-            <div id="factboxImageSection" style="margin-bottom:18px;">
-              <h4 class="factbox-section-heading">Images</h4>
+            <!-- BC keeps the item picture in a FactBox beside the card; here it sits at the top
+                 right of General, which is the same place on the screen. -->
+            <div class="item-card-image">
               <div id="factboxImage"></div>
             </div>
+          </div>
+          <p class="muted" style="font-size:12px; margin-bottom:0;">
+            These fields come from Pancake and are refreshed by the background sync - they are read
+            only here. Everything editable on this card is portal-owned.
+          </p>
+        </div>
+      </details>
 
-            <div style="margin-bottom:18px;">
-              <h4 class="factbox-section-heading">Vendor</h4>
+      <details class="doc-fasttab" id="itemCardPricesTab">
+        <summary>
+          Prices
+          <span class="doc-fasttab-summary" id="itemCardPricesSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Price</label>
+              <div id="itemCardPrice" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Wholesale Price</label>
+              <div id="itemCardWholesalePrice" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Retail Price</label>
+              <div id="itemCardRetailPrice" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Promo Price</label>
+              <div id="itemCardPromoPrice" class="muted"></div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- BC's Costs & Posting plus its Purchases vendor list, together: what the item costs you
+           and who you buy it from are read as one thing. -->
+      <details class="doc-fasttab" id="itemCardCostTab" open>
+        <summary>
+          Cost &amp; Vendors
+          <span class="doc-fasttab-summary" id="itemCardCostSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div class="form-grid">
+            <div class="form-row">
+              <label for="factboxCostInput">Unit Cost</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input type="number" id="factboxCostInput" step="0.01" min="0" placeholder="Not costed" style="flex:1;" />
+                <button class="btn btn-secondary btn-sm" id="factboxCostSaveBtn" type="button">Save</button>
+              </div>
+              <div class="muted" style="margin-top:4px; font-size:12px;">
+                Per base unit. The default unit cost on Purchase Order lines, updated to the cost
+                actually paid when a PO is posted. Blank if not yet costed.
+              </div>
+              <div id="factboxCostSaved" class="muted hidden" style="margin-top:4px;">Saved.</div>
+            </div>
+
+            <!-- Business Central's split: one PRIMARY vendor on the item (Items."VendorCode" -
+                 what Stock On Hand groups by and what a PO defaults to), plus the catalog below
+                 of everyone else who supplies it. See supabase_item_vendors_catalog.sql. -->
+            <div class="form-row">
+              <label for="factboxVendorSelect">Primary Vendor</label>
               <div style="display:flex; gap:8px; align-items:center;">
                 <select id="factboxVendorSelect" style="flex:1;">
                   <option value="">(No vendor tagged)</option>
                 </select>
                 <button class="btn btn-secondary btn-sm" id="factboxVendorSaveBtn" type="button">Save</button>
               </div>
+              <div class="muted" style="margin-top:4px; font-size:12px;">
+                The default supplier - what Stock On Hand groups this item under. Saving also adds
+                them to the vendor list below.
+              </div>
               <div id="factboxVendorSaved" class="muted hidden" style="margin-top:4px;">Saved.</div>
             </div>
+          </div>
 
-            <div style="margin-bottom:18px;">
-              <h4 class="factbox-section-heading">Order Now</h4>
-              <label class="checkbox-row" style="font-weight:400;">
-                <input type="checkbox" id="factboxHideFromSetCheckbox" />
-                Hide from Order Now "SET" listing
-              </label>
-              <div id="factboxHideFromSetSaved" class="muted hidden" style="margin-top:4px;">Saved.</div>
-            </div>
-
-            <div>
-              <h4 class="factbox-section-heading">Variants</h4>
-              <div id="factboxVariants"></div>
-            </div>
+          <h4 class="factbox-section-heading" style="margin-top:14px;">Vendors</h4>
+          <div class="muted" style="font-size:12px; margin-bottom:6px;">
+            Everyone who can supply this item. A Purchase Order to any of them can order it, and
+            prefills that vendor's own cost. Leave Cost blank to use the item's cost above.
+          </div>
+          <div id="factboxItemVendors"></div>
+          <div id="factboxAddVendorRow" style="display:flex; gap:6px; margin-top:8px; max-width:420px;">
+            <select id="factboxAddVendorSelect" style="flex:1;"></select>
+            <button class="btn btn-secondary btn-sm" id="factboxAddVendorBtn" type="button">Add</button>
           </div>
         </div>
-      </div>
+      </details>
+
+      <!-- BC's Item Unit of Measure (table 5404): the base unit stock is counted in, the unit
+           Purchase Orders default to, and one row per unit this item can be handled in with its
+           conversion into base. See supabase_units_of_measure.sql. -->
+      <details class="doc-fasttab" id="itemCardUomTab" open>
+        <summary>
+          Units of Measure
+          <span class="doc-fasttab-summary" id="itemCardUomSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px; max-width:520px;">
+            <label for="factboxBaseUomSelect" style="font-size:12px; min-width:38px;">Base</label>
+            <select id="factboxBaseUomSelect" style="flex:1;" title="How stock is counted - this is what Pancake's quantities and the item's cost mean"></select>
+            <label for="factboxPurchUomSelect" style="font-size:12px; min-width:38px;">Buy</label>
+            <select id="factboxPurchUomSelect" style="flex:1;" title="What a Purchase Order line defaults to for this item"></select>
+            <button class="btn btn-secondary btn-sm" id="factboxUomSaveBtn" type="button">Save</button>
+          </div>
+          <div id="factboxUomSaved" class="muted hidden" style="margin-bottom:4px;">Saved.</div>
+          <div id="factboxItemUoms" style="max-width:520px;"></div>
+          <div style="display:flex; gap:6px; margin-top:8px; max-width:520px;">
+            <input type="text" id="factboxAddUomCode" placeholder="Code (e.g. BOX)" style="flex:1;" list="uomCodeList" />
+            <input type="number" id="factboxAddUomQty" step="0.0001" min="0" placeholder="Qty per" style="width:90px;" title="How many base units one of these contains" />
+            <button class="btn btn-secondary btn-sm" id="factboxAddUomBtn" type="button">Add</button>
+          </div>
+          <datalist id="uomCodeList"></datalist>
+        </div>
+      </details>
+
+      <details class="doc-fasttab" id="itemCardVariantsTab">
+        <summary>
+          Variants
+          <span class="doc-fasttab-summary" id="itemCardVariantsSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div id="factboxVariants"></div>
+        </div>
+      </details>
+
+      <details class="doc-fasttab" id="itemCardOrderNowTab">
+        <summary>Order Now</summary>
+        <div class="doc-fasttab-body">
+          <label class="checkbox-row" style="font-weight:400;">
+            <input type="checkbox" id="factboxHideFromSetCheckbox" />
+            Hide from Order Now "SET" listing
+          </label>
+          <div id="factboxHideFromSetSaved" class="muted hidden" style="margin-top:4px;">Saved.</div>
+        </div>
+      </details>
     </div>
   </div>
 
