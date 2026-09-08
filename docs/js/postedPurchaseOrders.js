@@ -28,6 +28,44 @@ function formatDateTime(value) {
   return isNaN(d.getTime()) ? value : d.toLocaleString();
 }
 
+// Business Central-style document view state (maximize + General FastTab), same as the live
+// Purchase Order card (js/purchaseOrders.js) - remembered per browser under this page's own keys,
+// since maximizing to read a posted order is a separate habit from maximizing to work an open one.
+//
+// localStorage is wrapped because it throws outright in some privacy modes rather than just
+// returning null - a stored preference must never be able to stop the view modal from opening.
+const VIEW_MAXIMIZED_KEY = 'posted-po-view-modal-maximized';
+const VIEW_GENERAL_TAB_KEY = 'posted-po-view-general-tab-open';
+
+function readStoredFlag(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === '1';
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function writeStoredFlag(key, value) {
+  try {
+    localStorage.setItem(key, value ? '1' : '0');
+  } catch (err) {
+    /* Preference simply won't persist - not worth surfacing. */
+  }
+}
+
+function applyViewMaximized(maximized) {
+  document.getElementById('viewModal').classList.toggle('modal-maximized', maximized);
+  document.getElementById('viewModal').querySelector('.modal-panel')
+    .classList.toggle('modal-maximized', maximized);
+
+  const btn = document.getElementById('viewMaximizeBtn');
+  btn.textContent = maximized ? 'Restore' : 'Maximize';
+  btn.title = maximized
+    ? 'Restore this document to a window'
+    : 'Maximize this document to fill the window';
+}
+
 function receivedBadgeHtml(po) {
   const total = Number(po.total_quantity || 0);
   const received = Number(po.total_received_quantity || 0);
@@ -47,6 +85,8 @@ function poRowsHtml(rows) {
         <td style="text-align:right;">${po.line_count ?? 0}</td>
         <td style="text-align:right;">${Number(po.total_quantity || 0).toLocaleString()}</td>
         <td>${receivedBadgeHtml(po)}</td>
+        <td style="text-align:right;">${Number(po.total_cost || 0).toFixed(2)}</td>
+        <td>${escapeHtml(po.payment_method || '')}</td>
         <td>${po.posted_by || ''}</td>
         <td>${formatDateTime(po.posted_at_utc)}</td>
         <td><a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();">Print</a></td>
@@ -57,7 +97,7 @@ function poRowsHtml(rows) {
 
 async function loadPurchaseOrders() {
   const tbody = document.getElementById('poTableBody');
-  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="12" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('staff_list_posted_purchase_orders', {
     p_admin_username: currentSession.username,
@@ -68,13 +108,13 @@ async function loadPurchaseOrders() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
   const rows = data || [];
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="10" class="muted">No posted Purchase Orders found.</td></tr>'
+    ? '<tr><td colspan="12" class="muted">No posted Purchase Orders found.</td></tr>'
     : poRowsHtml(rows);
 
   tbody.querySelectorAll('tr[data-po-no]').forEach((row) => {
@@ -131,10 +171,12 @@ function qtyOrderedHtml(l) {
 function renderViewLines(lines) {
   const body = document.getElementById('viewLinesBody');
   const totalEl = document.getElementById('viewTotalCost');
+  const totalNoteEl = document.getElementById('viewTotalCostNote');
 
   if (!lines || lines.length === 0) {
     body.innerHTML = '<tr><td colspan="8" class="muted">No line items.</td></tr>';
     if (totalEl) totalEl.textContent = '0.00';
+    if (totalNoteEl) totalNoteEl.classList.add('hidden');
     return;
   }
 
@@ -145,6 +187,23 @@ function renderViewLines(lines) {
     totalEl.textContent = lines
       .reduce((sum, l) => sum + (Number(l.line_cost) || 0), 0)
       .toFixed(2);
+  }
+
+  // staff_post_purchase_order refuses to post while any RECEIVED line has no Unit Cost (see
+  // supabase_gl_posting_integration.sql), so this should be rare - but a PO posted before that
+  // check existed can still have one. An unreceived line's $0 is correct (nothing was received,
+  // nothing was spent); only a RECEIVED-but-uncosted line means the total is actually missing
+  // money, same distinction the open PO's own Total Cost note makes.
+  if (totalNoteEl) {
+    const uncostedReceivedCount = lines.filter((l) =>
+      (l.unit_cost === null || l.unit_cost === undefined) && Number(l.qty_received || 0) > 0
+    ).length;
+    if (uncostedReceivedCount > 0) {
+      totalNoteEl.textContent = `Excludes ${uncostedReceivedCount} received item${uncostedReceivedCount === 1 ? '' : 's'} with no Unit Cost - total is understated`;
+      totalNoteEl.classList.remove('hidden');
+    } else {
+      totalNoteEl.classList.add('hidden');
+    }
   }
 
   body.innerHTML = lines
@@ -170,6 +229,10 @@ async function openViewModal(poNo) {
   body.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
   document.getElementById('viewModal').classList.remove('hidden');
 
+  // Restore the layout this browser last used, before the panel is seen.
+  applyViewMaximized(readStoredFlag(VIEW_MAXIMIZED_KEY, false));
+  document.getElementById('viewGeneralTab').open = readStoredFlag(VIEW_GENERAL_TAB_KEY, true);
+
   const [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
     supabaseClient.rpc('staff_get_posted_purchase_order', {
       p_admin_username: currentSession.username,
@@ -194,8 +257,17 @@ async function openViewModal(poNo) {
   // supabase_purchase_order_header_warehouse.sql); blank on orders posted before that existed.
   document.getElementById('viewWarehouse').textContent = header.warehouse_name || '-';
   document.getElementById('viewOrderDate').textContent = formatDate(header.order_date);
+  // Carried over from the live PO when it was posted (supabase_purchase_order_payment_method.sql's
+  // TR_PostedPurchaseOrders_FillPaymentMethod trigger); blank on orders posted before that existed.
+  document.getElementById('viewPaymentMethod').textContent = header.payment_method || '-';
   document.getElementById('viewNotes').textContent = header.notes || '-';
   document.getElementById('viewPostedBy').textContent = `${header.posted_by || 'unknown'} on ${formatDateTime(header.posted_at_utc)}`;
+
+  // Shown on the General tab only while it is collapsed, so folding the tab away never costs you
+  // the fields you most need at a glance - same rule the live PO card uses.
+  document.getElementById('viewGeneralSummary').textContent =
+    [header.vendor_name || header.vendor_code, header.warehouse_name, formatDate(header.order_date)]
+      .filter(Boolean).join(' · ');
 
   if (lineError) {
     body.innerHTML = `<tr><td colspan="8" class="error-text">${lineError.message}</td></tr>`;
@@ -224,6 +296,14 @@ async function openViewModal(poNo) {
   document.getElementById('closeViewModalBtn').addEventListener('click', () =>
     document.getElementById('viewModal').classList.add('hidden')
   );
+  document.getElementById('viewMaximizeBtn').addEventListener('click', () => {
+    const nowMaximized = !document.getElementById('viewModal').classList.contains('modal-maximized');
+    applyViewMaximized(nowMaximized);
+    writeStoredFlag(VIEW_MAXIMIZED_KEY, nowMaximized);
+  });
+  document.getElementById('viewGeneralTab').addEventListener('toggle', (e) => {
+    writeStoredFlag(VIEW_GENERAL_TAB_KEY, e.target.open);
+  });
 
   await loadPurchaseOrders();
 })();

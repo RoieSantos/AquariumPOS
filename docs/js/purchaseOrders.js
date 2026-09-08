@@ -54,6 +54,7 @@ function poRowsHtml(rows) {
         <td style="text-align:right;">${po.line_count ?? 0}</td>
         <td style="text-align:right;">${Number(po.total_quantity || 0).toLocaleString()}</td>
         <td>${receivedBadgeHtml(po)}</td>
+        <td>${escapeHtml(po.payment_method || '')}</td>
         <td>${po.created_by || ''}</td>
         <td>
           <a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();">Print</a>
@@ -66,7 +67,7 @@ function poRowsHtml(rows) {
 
 async function loadPurchaseOrders() {
   const tbody = document.getElementById('poTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('staff_list_purchase_orders', {
     p_admin_username: currentSession.username,
@@ -77,13 +78,13 @@ async function loadPurchaseOrders() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
   const rows = data || [];
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="9" class="muted">No Purchase Orders yet - create one from Stock On Hand.</td></tr>'
+    ? '<tr><td colspan="10" class="muted">No Purchase Orders yet - create one from Stock On Hand.</td></tr>'
     : poRowsHtml(rows);
 
   tbody.querySelectorAll('tr[data-po-no]').forEach((row) => {
@@ -128,6 +129,10 @@ async function deletePurchaseOrder(poNo, receivedQty) {
 // staff_receive_purchase_order_lines in supabase_purchase_order_receiving.sql), then post the
 // whole order into Posted Purchase Orders once done receiving.
 let currentReceivePoNo = null;
+// Last-fetched Pancake Sync panel rows for the open PO, newest first (matches the RPC's own
+// ordering) - read by receivePurchaseOrderQuantities to warn before a Receive that could be
+// retrying a previous attempt whose actual outcome in Pancake is unknown. See loadPancakeSyncStatus.
+let currentPancakeSyncRows = [];
 
 function receiveLineRemaining(l) {
   return Math.max(0, (Number(l.quantity) || 0) - (Number(l.qty_received) || 0));
@@ -166,27 +171,47 @@ function writeStoredFlag(key, value) {
   }
 }
 
-function applyReceiveMaximized(maximized) {
-  document.getElementById('receiveModal').classList.toggle('modal-maximized', maximized);
-  document.getElementById('receiveModal').querySelector('.modal-panel')
-    .classList.toggle('modal-maximized', maximized);
+// One PO card element is shared between the New and Existing jobs (see the design comment on
+// #poCardModal in purchase-orders.html), so which document is open right now has to live
+// somewhere - this is what openReceiveModal/openNewPoModal set, and what the maximize/General-tab
+// handlers read to pick the right remembered-state key below.
+let currentPoCardMode = 'new';
 
-  const btn = document.getElementById('receiveMaximizeBtn');
-  btn.textContent = maximized ? 'Restore' : 'Maximize';
-  btn.title = maximized
-    ? 'Restore this document to a window'
-    : 'Maximize this document to fill the window';
+function poCardMaximizedKey() {
+  return currentPoCardMode === 'existing' ? PO_MAXIMIZED_KEY : PO_NEW_MAXIMIZED_KEY;
 }
 
-// Same as applyReceiveMaximized, for the New Purchase Order document. Both classes are needed:
-// the backdrop drops its centring padding, the panel becomes the full-viewport flex column whose
-// only scrolling part is the lines grid.
-function applyNewPoMaximized(maximized) {
-  document.getElementById('newPoModal').classList.toggle('modal-maximized', maximized);
-  document.getElementById('newPoModal').querySelector('.modal-panel')
+function poCardGeneralTabKey() {
+  return currentPoCardMode === 'existing' ? PO_GENERAL_TAB_KEY : PO_NEW_GENERAL_TAB_KEY;
+}
+
+// Switches which of the card's two faces is showing - the editable New header/lines/footer, or
+// the read-only Existing header plus its own lines/footer. currentPoCardMode is set by the caller
+// (openReceiveModal/openNewPoModal) before this runs.
+function applyPoCardMode(mode) {
+  const isExisting = mode === 'existing';
+  document.getElementById('poCardVendorEditRow').classList.toggle('hidden', isExisting);
+  document.getElementById('poCardWarehouseEditRow').classList.toggle('hidden', isExisting);
+  document.getElementById('poCardNotesEditRow').classList.toggle('hidden', isExisting);
+  document.getElementById('poCardVendorViewRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardWarehouseViewRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardOrderDateRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardNotesViewRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardNewLines').classList.toggle('hidden', isExisting);
+  document.getElementById('poCardExistingLines').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardNewFooter').classList.toggle('hidden', isExisting);
+  document.getElementById('poCardExistingFooter').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardPrintLink').classList.toggle('hidden', !isExisting);
+}
+
+// Both classes are needed: the backdrop drops its centring padding, the panel becomes the
+// full-viewport flex column whose only scrolling part is the lines grid.
+function applyPoCardMaximized(maximized) {
+  document.getElementById('poCardModal').classList.toggle('modal-maximized', maximized);
+  document.getElementById('poCardModal').querySelector('.modal-panel')
     .classList.toggle('modal-maximized', maximized);
 
-  const btn = document.getElementById('newPoMaximizeBtn');
+  const btn = document.getElementById('poCardMaximizeBtn');
   btn.textContent = maximized ? 'Restore' : 'Maximize';
   btn.title = maximized
     ? 'Restore this document to a window'
@@ -201,7 +226,7 @@ function refreshNewPoGeneralSummary() {
   const warehouseLabel = newPoHeaderWarehouseName();
   const notes = document.getElementById('newPoNotes').value.trim();
 
-  document.getElementById('newPoGeneralSummary').textContent =
+  document.getElementById('poCardGeneralSummary').textContent =
     [vendorLabel, warehouseLabel, notes].filter(Boolean).join(' · ');
 }
 
@@ -475,9 +500,10 @@ async function savePurchaseOrderLineCost(input) {
 
 // Qty Ordered, in the line's own ordering unit with the base quantity underneath - the same
 // pairing the Unit Cost cell uses, so a row reads "5 BOX x 480.00" straight across and the base
-// figures sit beneath as the secondary. Editable for a super user on an open PO, per "in the PO
-// can we modify the Qty Ordered too?" (staff_set_purchase_order_line_quantity,
-// supabase_purchase_order_line_quantity_edit.sql).
+// figures sit beneath as the secondary. Editable for a super user on an open PO, while nothing has
+// been received against the line yet, per "in the PO can we modify the Qty Ordered too?"
+// (staff_set_purchase_order_line_quantity, supabase_purchase_order_line_quantity_edit.sql) - the
+// same qty_received gate the Unit Cost/UoM/Variant cells use.
 //
 // A quantity is entered in the ordering unit; the conversion to base happens server-side.
 function qtyOrderedCell(l) {
@@ -493,7 +519,12 @@ function qtyOrderedCell(l) {
     ? `<div class="muted" style="font-size:11px;">${Number(l.quantity || 0).toLocaleString()} base</div>`
     : '';
 
-  if (!currentSession?.isSuperUser) {
+  // Locked once anything has been received against the line, per direct request - same gate the
+  // Unit Cost/UoM/Variant cells already use, and the same one
+  // staff_set_purchase_order_line_quantity enforces server-side (see
+  // supabase_purchase_order_line_quantity_edit.sql).
+  const editable = currentSession?.isSuperUser && Number(l.qty_received || 0) === 0;
+  if (!editable) {
     return `${qtyUom.toLocaleString()}${unitLabel}${baseNote}`;
   }
 
@@ -546,10 +577,12 @@ async function renderReceiveLines(lines) {
   document.getElementById('receiveTotalActionsCell').classList.toggle('hidden', !currentSession?.isSuperUser);
 
   const totalEl = document.getElementById('receiveTotalCost');
+  const totalNoteEl = document.getElementById('receiveTotalCostNote');
 
   if (!lines || lines.length === 0) {
     body.innerHTML = `<tr><td colspan="${receiveLinesColspan()}" class="muted">No line items.</td></tr>`;
     if (totalEl) totalEl.textContent = '0.00';
+    if (totalNoteEl) totalNoteEl.classList.add('hidden');
     return;
   }
 
@@ -559,6 +592,22 @@ async function renderReceiveLines(lines) {
     totalEl.textContent = lines
       .reduce((sum, l) => sum + (Number(l.line_cost) || 0), 0)
       .toFixed(2);
+  }
+
+  // An uncosted line's line_cost comes back as 0 from the server (coalesce("UnitCost", 0) *
+  // Quantity), not null - it silently contributes nothing to the total above rather than being
+  // excluded from it, which reads as "the total is wrong" rather than "the total is incomplete"
+  // (per direct feedback: "double check the calculation of total cost.. i think its somehow
+  // wrong"). This spells that out next to the total instead of leaving the per-line dash as the
+  // only hint.
+  if (totalNoteEl) {
+    const uncostedCount = lines.filter((l) => l.unit_cost === null || l.unit_cost === undefined).length;
+    if (uncostedCount > 0) {
+      totalNoteEl.textContent = `Excludes ${uncostedCount} item${uncostedCount === 1 ? '' : 's'} with no Unit Cost yet - total is understated`;
+      totalNoteEl.classList.remove('hidden');
+    } else {
+      totalNoteEl.classList.add('hidden');
+    }
   }
 
   body.innerHTML = lines
@@ -621,21 +670,24 @@ let currentReceiveVendorCode = null;
 let currentReceiveWarehouseId = '';
 
 async function openReceiveModal(poNo) {
+  currentPoCardMode = 'existing';
   currentReceivePoNo = poNo;
   currentReceiveVendorCode = null;
   currentReceiveWarehouseId = '';
-  document.getElementById('receiveModalTitle').textContent = `Purchase Order ${poNo}`;
-  document.getElementById('receiveModalError').classList.add('hidden');
-  document.getElementById('receivePrintLink').href = `purchase-order-print.html?po=${encodeURIComponent(poNo)}`;
+  applyPoCardMode('existing');
+  document.getElementById('poCardTitle').textContent = `Purchase Order ${poNo}`;
+  document.getElementById('poCardError').classList.add('hidden');
+  document.getElementById('poCardPrintLink').href = `purchase-order-print.html?po=${encodeURIComponent(poNo)}`;
   const body = document.getElementById('receiveLinesBody');
   body.innerHTML = `<tr><td colspan="${receiveLinesColspan()}" class="muted">Loading...</td></tr>`;
-  document.getElementById('receiveModal').classList.remove('hidden');
+  document.getElementById('poCardModal').classList.remove('hidden');
 
   // Restore the layout this browser last used, before the panel is seen.
-  applyReceiveMaximized(readStoredFlag(PO_MAXIMIZED_KEY, false));
-  document.getElementById('receiveGeneralTab').open = readStoredFlag(PO_GENERAL_TAB_KEY, true);
+  applyPoCardMaximized(readStoredFlag(poCardMaximizedKey(), false));
+  document.getElementById('poCardGeneralTab').open = readStoredFlag(poCardGeneralTabKey(), true);
 
   document.getElementById('poEditSection').classList.toggle('hidden', !currentSession?.isSuperUser);
+  document.getElementById('confirmReceivedNoSyncBtn').classList.toggle('hidden', !currentSession?.isSuperUser);
   resetPoAddItemFields();
 
   const [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
@@ -666,6 +718,7 @@ async function openReceiveModal(poNo) {
   document.getElementById('receiveWarehouse').textContent = header.warehouse_name || '-';
   document.getElementById('receiveOrderDate').textContent = formatDate(header.order_date);
   document.getElementById('receiveNotes').textContent = header.notes || '-';
+  document.getElementById('poPaymentMethod').value = header.payment_method || '';
 
   // An item added to this order belongs to the same warehouse as the order itself unless someone
   // says otherwise - the toolbar was reset before the header arrived, so the default is applied
@@ -674,7 +727,7 @@ async function openReceiveModal(poNo) {
 
   // Shown on the General tab only while it is collapsed, so folding the tab away never costs you
   // the fields you most need while working the lines.
-  document.getElementById('receiveGeneralSummary').textContent =
+  document.getElementById('poCardGeneralSummary').textContent =
     [vendorLabel, header.warehouse_name, formatDate(header.order_date)].filter(Boolean).join(' · ');
 
   if (lineError) {
@@ -694,6 +747,10 @@ function pancakeSyncBadgeClass(status) {
     case 'Synced': return 'badge-success';
     case 'Failed': return 'badge-danger';
     case 'Rejected': return 'badge-danger';
+    // A super user's manual override (staff_confirm_purchase_order_receipt_without_sync), not an
+    // actual Pancake confirmation - deliberately not badge-success, so it keeps reading as "take a
+    // second look" rather than blending in with a real Synced row.
+    case 'ManuallyConfirmed': return 'badge-warning';
     default: return 'badge-neutral';
   }
 }
@@ -709,26 +766,93 @@ async function loadPancakeSyncStatus(poNo) {
   });
 
   if (error || !data || data.length === 0) {
+    currentPancakeSyncRows = [];
     section.classList.add('hidden');
     return;
   }
 
+  currentPancakeSyncRows = data;
   section.classList.remove('hidden');
+  document.getElementById('pancakeSyncCheckHeader').classList.toggle('hidden', !currentSession?.isSuperUser);
   body.innerHTML = data
-    .map((row) => `
+    .map((row) => {
+      // Only a 'Failed' row is worth checking - 'Rejected' is a definite 4xx that could not have
+      // gone through, and 'Synced'/'ManuallyConfirmed' are already resolved one way or the other.
+      const checkCell = !currentSession?.isSuperUser
+        ? ''
+        : row.sync_status === 'Failed'
+          ? `<td><button type="button" class="btn btn-secondary btn-sm" data-check-pancake-stock="${row.purchase_event_no}">Check Stock</button></td>`
+          : '<td></td>';
+      return `
       <tr>
         <td>${row.received_at_utc ? new Date(row.received_at_utc).toLocaleString() : ''}</td>
         <td>${row.warehouse_name || row.warehouse_id || ''}</td>
+        <!-- Pancake has no confirmed GET/list-by-note endpoint (see this PO's own Pancake sync
+             SQL header comment), so this is not clickable - it's what to type into Pancake's own
+             purchase search to check by hand, matching the note staff_receive_purchase_order_lines
+             actually sent (p_po_no || '-' || v_event_no). -->
+        <td>${escapeHtml(poNo + '-' + row.purchase_event_no)}</td>
         <td>${escapeHtml(row.pancake_purchase_id) || '-'}</td>
         <td><span class="badge ${pancakeSyncBadgeClass(row.sync_status)}">${escapeHtml(row.sync_status)}</span></td>
         <td class="muted" title="${escapeHtml(row.sync_error)}">${escapeHtml(row.sync_error)}</td>
+        ${checkCell}
       </tr>
-    `)
+    `;
+    })
     .join('');
 }
 
+// Live stock comparison for one 'Failed' Pancake Sync row - see
+// supabase_purchase_order_pancake_stock_verification.sql. Purely informational: shows what Pancake
+// currently reports per item against the stock captured right before that attempt, and a rough
+// "likely synced" read from the delta. It cannot prove either way (other stock movement since the
+// attempt confounds it) and never changes anything itself - Confirm Received (Already in Pancake)
+// is the actual action, once these numbers make the call clear.
+async function checkPancakeStockSnapshot(purchaseEventNo, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+  try {
+    const { data, error } = await supabaseClient.rpc('staff_check_pancake_stock_snapshot', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_purchase_event_no: purchaseEventNo
+    });
+
+    if (error) {
+      window.alert(describeSupabaseError(error, 'Failed to check live Pancake stock.'));
+      return;
+    }
+
+    const rows = data || [];
+    if (rows.length === 0) {
+      window.alert('No items found for this Pancake sync attempt.');
+      return;
+    }
+
+    const lines = rows.map((r) => {
+      const before = r.quantity_before === null || r.quantity_before === undefined ? '?' : r.quantity_before;
+      const now = r.quantity_now === null || r.quantity_now === undefined ? '?' : r.quantity_now;
+      const verdict = r.likely_synced === null || r.likely_synced === undefined
+        ? 'Unknown (no baseline captured, or Pancake could not be reached)'
+        : r.likely_synced
+          ? 'Likely SYNCED - stock moved by at least what was expected'
+          : 'Likely NOT synced - stock has not moved as expected';
+      return `${r.item_code || r.variation_id}: before ${before}, now ${now}, expected +${r.quantity_expected}\n  -> ${verdict}`;
+    });
+
+    window.alert(
+      `Live Pancake stock check\n\n${lines.join('\n\n')}\n\n` +
+      `This compares stock BEFORE this attempt to stock right NOW - it is a strong hint, not proof. ` +
+      `Other stock movement (a sale, another purchase) since the attempt can still make it wrong.`
+    );
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Check Stock';
+  }
+}
+
 async function receivePurchaseOrderQuantities() {
-  const errorEl = document.getElementById('receiveModalError');
+  const errorEl = document.getElementById('poCardError');
   errorEl.classList.add('hidden');
 
   const rows = Array.from(document.getElementById('receiveLinesBody').querySelectorAll('tr[data-entry-no]'));
@@ -744,6 +868,27 @@ async function receivePurchaseOrderQuantities() {
     errorEl.textContent = 'Enter a Qty Received for at least one line first.';
     errorEl.classList.remove('hidden');
     return;
+  }
+
+  // Pancake's create-purchase endpoint has no confirmed idempotency key and no confirmed way to
+  // list/search existing purchases (see supabase_purchase_order_pancake_sync.sql's header comment
+  // and staff_receive_purchase_order_lines' own exception handler) - a 'Failed' attempt (a
+  // connection/timeout error, as opposed to 'Rejected', a definite 4xx that could not have gone
+  // through) genuinely might have created the stock-in in Pancake despite the app never seeing a
+  // success response. QtyReceived is never incremented on a Failed attempt, so the Receive inputs
+  // silently refill with the SAME quantity that just failed - clicking Receive again is exactly how
+  // a real duplicate stock-in happens. This can only warn, not verify (nothing here can safely
+  // check Pancake before retrying), so it forces an explicit acknowledgment instead of a
+  // one-line warning sitting in a table nobody re-reads.
+  const lastSync = currentPancakeSyncRows[0];
+  if (lastSync && lastSync.sync_status === 'Failed') {
+    const note = `${currentReceivePoNo}-${lastSync.purchase_event_no}`;
+    const confirmed = window.confirm(
+      `The last Pancake sync for this Purchase Order FAILED with a connection error - it may have actually gone through in Pancake despite the error.\n\n` +
+      `Before receiving again, search Pancake's own purchase list for note "${note}" to check whether it's already there.\n\n` +
+      `Already verified it's NOT in Pancake? Click OK to receive. Not sure? Click Cancel and check first.`
+    );
+    if (!confirmed) return;
   }
 
   const btn = document.getElementById('receiveQtyBtn');
@@ -780,9 +925,73 @@ async function receivePurchaseOrderQuantities() {
   }
 }
 
-async function postPurchaseOrder() {
-  const errorEl = document.getElementById('receiveModalError');
+// Recovery path for a Pancake sync that came back 'Failed' but was manually confirmed in Pancake
+// to have actually gone through - see supabase_purchase_order_manual_receive_confirm.sql. Reuses
+// the same Qty Received inputs as Receive, but calls
+// staff_confirm_purchase_order_receipt_without_sync instead, which updates QtyReceived locally
+// WITHOUT attempting another live Pancake POST (that POST is exactly what would create a real
+// duplicate stock-in now that the first is confirmed to have landed). Super-user only - the button
+// itself is hidden from everyone else (openReceiveModal).
+async function confirmPurchaseOrderReceiptWithoutSync() {
+  const errorEl = document.getElementById('poCardError');
   errorEl.classList.add('hidden');
+
+  const rows = Array.from(document.getElementById('receiveLinesBody').querySelectorAll('tr[data-entry-no]'));
+  const lines = rows
+    .map((row) => {
+      const input = row.querySelector('.receive-qty-input');
+      const quantity = input ? parseFloat(input.value) || 0 : 0;
+      return { entry_no: Number(row.dataset.entryNo), quantity };
+    })
+    .filter((l) => l.quantity > 0);
+
+  if (lines.length === 0) {
+    errorEl.textContent = 'Enter a Qty Received for at least one line first.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `This marks the entered quantities as received LOCALLY WITHOUT calling Pancake again.\n\n` +
+    `Only use this after you have personally checked Pancake's own purchase list and confirmed this exact stock-in is already there (e.g. from a "Failed" sync that actually went through).\n\n` +
+    `Using this WITHOUT checking Pancake first will make your local records disagree with real Pancake inventory.\n\n` +
+    `Have you verified this in Pancake? Click OK to proceed, Cancel if you have not checked yet.`
+  );
+  if (!confirmed) return;
+
+  const btn = document.getElementById('confirmReceivedNoSyncBtn');
+  btn.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('staff_confirm_purchase_order_receipt_without_sync', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_po_no: currentReceivePoNo,
+      p_lines: lines
+    });
+    if (error) throw error;
+
+    await openReceiveModal(currentReceivePoNo);
+    await loadPurchaseOrders();
+  } catch (err) {
+    errorEl.textContent = describeSupabaseError(err, 'Failed to confirm receipt.');
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function postPurchaseOrder() {
+  const errorEl = document.getElementById('poCardError');
+  errorEl.classList.add('hidden');
+
+  // Same rule staff_post_purchase_order enforces server-side (see
+  // supabase_purchase_order_require_payment_method_to_post.sql) - checked here too so a missing
+  // Payment Method is caught before the "This cannot be undone" confirm dialog, not after it.
+  if (!document.getElementById('poPaymentMethod').value) {
+    errorEl.textContent = 'Set a Payment Method for this Purchase Order before posting.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
 
   const rows = Array.from(document.getElementById('receiveLinesBody').querySelectorAll('tr[data-entry-no]'));
   const anyUnreceived = rows.some((row) => {
@@ -805,7 +1014,7 @@ async function postPurchaseOrder() {
     });
     if (error) throw error;
 
-    document.getElementById('receiveModal').classList.add('hidden');
+    document.getElementById('poCardModal').classList.add('hidden');
     await loadPurchaseOrders();
     window.alert(`Purchase Order ${currentReceivePoNo} has been posted.`);
   } catch (err) {
@@ -1047,7 +1256,7 @@ async function searchVariantsForAddToPo(searchText) {
       // same reason as in the New PO grid - see the note there.
       const variantDescription = label;
       return `
-        <div class="item-suggest-option" data-code="${encodeURIComponent(code)}" data-name="${encodeURIComponent(combinedName)}" data-label="${encodeURIComponent(label)}" data-variant-name="${encodeURIComponent(variantDescription)}" data-variation-id="${encodeURIComponent(v.variation_id || '')}">
+        <div class="item-suggest-option" data-code="${encodeURIComponent(code)}" data-name="${encodeURIComponent(combinedName)}" data-label="${encodeURIComponent(label)}" data-variant-name="${encodeURIComponent(variantDescription)}" data-variation-id="${encodeURIComponent(v.variation_id || '')}" data-cost="${v.cost === null || v.cost === undefined ? '' : v.cost}">
           <span class="item-suggest-code">${escapeHtml(v.sku || v.variation_id || '')}</span><span class="item-suggest-name">${escapeHtml(v.variant_name || '')}</span>
         </div>
       `;
@@ -1064,6 +1273,16 @@ async function searchVariantsForAddToPo(searchText) {
       // The variation id itself - stored on the line so the Variant column can show and change it.
       poAddVariantSelectedId = decodeURIComponent(opt.dataset.variationId || '');
       document.getElementById('poAddVariantInput').value = decodeURIComponent(opt.dataset.label);
+
+      // Same re-validation as the New PO grid (purchaseOrders.js searchVariantsForNewPoRow) - the
+      // variant can resolve to its own item setup with its own cost, so re-fill from that rather
+      // than leaving whatever the plain Item search prefilled.
+      const variantCost = opt.dataset.cost;
+      if (variantCost !== '') {
+        const costInput = document.getElementById('poAddItemCost');
+        if (costInput) costInput.value = Number((Number(variantCost) * poAddQtyPer).toFixed(4));
+      }
+
       refreshPoAddDescription();
       dropdown.classList.add('hidden');
       dropdown.innerHTML = '';
@@ -1072,7 +1291,7 @@ async function searchVariantsForAddToPo(searchText) {
 }
 
 async function addItemToExistingPurchaseOrder() {
-  const errorEl = document.getElementById('receiveModalError');
+  const errorEl = document.getElementById('poCardError');
   errorEl.classList.add('hidden');
 
   // Typed in the line's own unit; the server multiplies by p_qty_per_uom for the base quantity.
@@ -1126,7 +1345,7 @@ async function addItemToExistingPurchaseOrder() {
 async function removePurchaseOrderLine(entryNo, itemCode) {
   if (!window.confirm(`Remove ${itemCode} from this Purchase Order?`)) return;
 
-  const errorEl = document.getElementById('receiveModalError');
+  const errorEl = document.getElementById('poCardError');
   errorEl.classList.add('hidden');
 
   const { error } = await supabaseClient.rpc('staff_remove_purchase_order_line', {
@@ -1471,7 +1690,7 @@ async function searchVariantsForNewPoRow(row, searchText) {
       // Description can be composed without the item name landing in it twice.
       const variantDescription = label;
       return `
-        <div class="item-suggest-option" data-code="${encodeURIComponent(code)}" data-name="${encodeURIComponent(combinedName)}" data-label="${encodeURIComponent(label)}" data-variant-name="${encodeURIComponent(variantDescription)}" data-variation-id="${encodeURIComponent(v.variation_id || '')}">
+        <div class="item-suggest-option" data-code="${encodeURIComponent(code)}" data-name="${encodeURIComponent(combinedName)}" data-label="${encodeURIComponent(label)}" data-variant-name="${encodeURIComponent(variantDescription)}" data-variation-id="${encodeURIComponent(v.variation_id || '')}" data-cost="${v.cost === null || v.cost === undefined ? '' : v.cost}">
           <span class="item-suggest-code">${escapeHtml(v.sku || v.variation_id || '')}</span><span class="item-suggest-name">${escapeHtml(v.variant_name || '')}</span>
         </div>
       `;
@@ -1490,7 +1709,20 @@ async function searchVariantsForNewPoRow(row, searchText) {
       row.dataset.variantId = decodeURIComponent(opt.dataset.variationId || '');
       row.dataset.variantLabel = decodeURIComponent(opt.dataset.variantName || '');
       row.querySelector('.new-po-line-variant').value = decodeURIComponent(opt.dataset.label);
+
+      // Re-validate Unit Cost against THIS variant's own item setup (staff_search_variants joins
+      // Items on coalesce(ItemCode, MainItemCode), so this is already "the variant's own cost, or
+      // the parent item's if the variant has none of its own" - same BC pattern as picking the
+      // plain Item). Base-unit cost from the server, restated in the row's current unit exactly
+      // like applyNewPoItemSelection/setNewPoLineQtyPer do.
+      const variantCost = opt.dataset.cost;
+      if (variantCost !== '') {
+        const costInput = row.querySelector('.new-po-line-cost');
+        if (costInput) costInput.value = Number((Number(variantCost) * newPoLineQtyPer(row)).toFixed(4));
+      }
+
       refreshNewPoLineDescription(row);
+      refreshNewPoCostTotals();
       dropdown.classList.add('hidden');
       dropdown.innerHTML = '';
     });
@@ -1505,6 +1737,7 @@ async function searchVariantsForNewPoRow(row, searchText) {
 // a partially-costed PO is still worth raising. The blank cell says as much.
 function refreshNewPoCostTotals() {
   let total = 0;
+  let uncostedCount = 0;
 
   document.querySelectorAll('#newPoLinesBody tr').forEach((row) => {
     const quantity = parseFloat(row.querySelector('.new-po-line-qty')?.value) || 0;
@@ -1518,6 +1751,10 @@ function refreshNewPoCostTotals() {
 
     if (rawCost === '') {
       if (totalCell) totalCell.innerHTML = '<span class="muted">-</span>';
+      // Only a row with an actual item picked counts as "missing a cost" - the couple of always-
+      // blank starter rows every New PO opens with would otherwise trigger the note before anyone
+      // has typed anything.
+      if (row.dataset.itemCode || row.dataset.variantCode) uncostedCount++;
       return;
     }
 
@@ -1528,6 +1765,19 @@ function refreshNewPoCostTotals() {
 
   const totalEl = document.getElementById('newPoTotalCost');
   if (totalEl) totalEl.textContent = total.toFixed(2);
+
+  // Same reasoning as the existing PO's Total Cost note (openReceiveModal/renderReceiveLines) - an
+  // uncosted line contributes 0 here too, so the total needs to say it is incomplete rather than
+  // let the per-line dash be the only hint.
+  const totalNoteEl = document.getElementById('newPoTotalCostNote');
+  if (totalNoteEl) {
+    if (uncostedCount > 0) {
+      totalNoteEl.textContent = `Excludes ${uncostedCount} item${uncostedCount === 1 ? '' : 's'} with no Unit Cost yet - total is understated`;
+      totalNoteEl.classList.remove('hidden');
+    } else {
+      totalNoteEl.classList.add('hidden');
+    }
+  }
 }
 
 // BC numbers every document line, so the row you are on can be named ("line 3") rather than
@@ -1643,7 +1893,8 @@ function addNewPoLineRow() {
 function resetNewPoModal() {
   document.getElementById('newPoVendor').value = '';
   document.getElementById('newPoNotes').value = '';
-  document.getElementById('newPoModalError').classList.add('hidden');
+  document.getElementById('poPaymentMethod').value = '';
+  document.getElementById('poCardError').classList.add('hidden');
 
   // Filled before the lines are added, since each new line reads its warehouse from here.
   const warehouseSelect = document.getElementById('newPoWarehouse');
@@ -1658,20 +1909,23 @@ function resetNewPoModal() {
 }
 
 async function openNewPoModal() {
+  currentPoCardMode = 'new';
+  applyPoCardMode('new');
+  document.getElementById('poCardTitle').textContent = 'Purchase Order';
   resetNewPoModal();
 
   // Restore the layout this browser last used before the panel is seen, same as the Receive
   // document - someone who works maximized should not have to click Maximize on every order.
   // Unlike Receive, the default here is maximized: this is a nine-column entry grid with two
   // type-ahead pickers in it, and it was the cramped 900px card that prompted the change.
-  applyNewPoMaximized(readStoredFlag(PO_NEW_MAXIMIZED_KEY, true));
-  document.getElementById('newPoGeneralTab').open = readStoredFlag(PO_NEW_GENERAL_TAB_KEY, true);
+  applyPoCardMaximized(readStoredFlag(poCardMaximizedKey(), true));
+  document.getElementById('poCardGeneralTab').open = readStoredFlag(poCardGeneralTabKey(), true);
 
-  document.getElementById('newPoModal').classList.remove('hidden');
+  document.getElementById('poCardModal').classList.remove('hidden');
 }
 
 async function createNewPurchaseOrder() {
-  const errorEl = document.getElementById('newPoModalError');
+  const errorEl = document.getElementById('poCardError');
   errorEl.classList.add('hidden');
 
   const vendorCode = document.getElementById('newPoVendor').value;
@@ -1740,7 +1994,21 @@ async function createNewPurchaseOrder() {
     });
     if (error) throw error;
 
-    document.getElementById('newPoModal').classList.add('hidden');
+    // Set separately from staff_create_purchase_order itself (see
+    // supabase_purchase_order_payment_method.sql's header comment on why) - only fired when a
+    // method was actually picked, so a PO left blank here doesn't take an extra round trip.
+    const paymentMethod = document.getElementById('poPaymentMethod').value;
+    if (paymentMethod) {
+      const { error: paymentMethodError } = await supabaseClient.rpc('staff_set_purchase_order_payment_method', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_po_no: data,
+        p_payment_method: paymentMethod
+      });
+      if (paymentMethodError) console.error('Failed to set Payment Method on the new PO:', paymentMethodError);
+    }
+
+    document.getElementById('poCardModal').classList.add('hidden');
     window.alert(`Purchase Order ${data} created.`);
     window.location.href = `purchase-order-print.html?po=${encodeURIComponent(data)}`;
   } catch (err) {
@@ -1773,20 +2041,29 @@ async function createNewPurchaseOrder() {
     deletePurchaseOrder(decodeURIComponent(btn.dataset.deletePo), Number(btn.dataset.receivedQty || 0));
   });
 
-  document.getElementById('closeReceiveModalBtn').addEventListener('click', () =>
-    document.getElementById('receiveModal').classList.add('hidden')
+  // One card, one Close/Maximize/General-tab per the design comment on #poCardModal - which
+  // remembered-state key each writes depends on which of the two jobs (currentPoCardMode) is open.
+  document.getElementById('poCardCloseBtn').addEventListener('click', () =>
+    document.getElementById('poCardModal').classList.add('hidden')
   );
-  document.getElementById('receiveMaximizeBtn').addEventListener('click', () => {
-    const nowMaximized = !document.getElementById('receiveModal').classList.contains('modal-maximized');
-    applyReceiveMaximized(nowMaximized);
-    writeStoredFlag(PO_MAXIMIZED_KEY, nowMaximized);
+  document.getElementById('poCardMaximizeBtn').addEventListener('click', () => {
+    const nowMaximized = !document.getElementById('poCardModal').classList.contains('modal-maximized');
+    applyPoCardMaximized(nowMaximized);
+    writeStoredFlag(poCardMaximizedKey(), nowMaximized);
   });
 
-  document.getElementById('receiveGeneralTab').addEventListener('toggle', (e) => {
-    writeStoredFlag(PO_GENERAL_TAB_KEY, e.target.open);
+  document.getElementById('poCardGeneralTab').addEventListener('toggle', (e) => {
+    writeStoredFlag(poCardGeneralTabKey(), e.target.open);
   });
 
   document.getElementById('receiveQtyBtn').addEventListener('click', receivePurchaseOrderQuantities);
+  document.getElementById('confirmReceivedNoSyncBtn').addEventListener('click', confirmPurchaseOrderReceiptWithoutSync);
+
+  document.getElementById('pancakeSyncBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-check-pancake-stock]');
+    if (!btn) return;
+    checkPancakeStockSnapshot(Number(btn.dataset.checkPancakeStock), btn);
+  });
   document.getElementById('postPoBtn').addEventListener('click', postPurchaseOrder);
 
   document.getElementById('receiveLinesBody').addEventListener('click', (e) => {
@@ -1886,18 +2163,6 @@ async function createNewPurchaseOrder() {
   document.getElementById('poAddItemBtn').addEventListener('click', addItemToExistingPurchaseOrder);
 
   document.getElementById('newPoBtn').addEventListener('click', openNewPoModal);
-  document.getElementById('closeNewPoModalBtn').addEventListener('click', () =>
-    document.getElementById('newPoModal').classList.add('hidden')
-  );
-  document.getElementById('newPoMaximizeBtn').addEventListener('click', () => {
-    const nowMaximized = !document.getElementById('newPoModal').classList.contains('modal-maximized');
-    applyNewPoMaximized(nowMaximized);
-    writeStoredFlag(PO_NEW_MAXIMIZED_KEY, nowMaximized);
-  });
-
-  document.getElementById('newPoGeneralTab').addEventListener('toggle', (e) => {
-    writeStoredFlag(PO_NEW_GENERAL_TAB_KEY, e.target.open);
-  });
 
   // Keeps the collapsed FastTab's summary honest as the header is filled in.
   document.getElementById('newPoVendor').addEventListener('change', refreshNewPoGeneralSummary);
@@ -1906,6 +2171,29 @@ async function createNewPurchaseOrder() {
   document.getElementById('newPoWarehouse').addEventListener('change', () => {
     applyHeaderWarehouseToNewPoLines();
     refreshNewPoGeneralSummary();
+  });
+
+  // Payment Method is shared by both card modes (unlike the fields above). On an existing PO
+  // there's already a PONo to save against, so a change saves immediately; on a New PO there
+  // isn't one yet - the picked value is simply read off this same select when Create Purchase
+  // Order runs (see createNewPurchaseOrder).
+  document.getElementById('poPaymentMethod').addEventListener('change', async (e) => {
+    if (currentPoCardMode !== 'existing') return;
+    const select = e.target;
+    const value = select.value;
+    select.disabled = true;
+    const { error } = await supabaseClient.rpc('staff_set_purchase_order_payment_method', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_po_no: currentReceivePoNo,
+      p_payment_method: value || null
+    });
+    select.disabled = false;
+    if (error) {
+      window.alert(describeSupabaseError(error, 'Failed to update the Payment Method.'));
+      return;
+    }
+    await loadPurchaseOrders();
   });
 
   document.getElementById('addNewPoLineBtn').addEventListener('click', addNewPoLineRow);

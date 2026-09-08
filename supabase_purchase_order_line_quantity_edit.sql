@@ -6,12 +6,15 @@
 -- (supabase_units_of_measure.sql): type 5 on a BOX(12) line and the stored base quantity becomes
 -- 60. The conversion is applied here rather than in the browser, so it has one home.
 --
--- NOT blocked outright once received, unlike the unit cost. A quantity that changes after a
--- partial delivery is ordinary - the vendor short-ships, or you cut the balance of the order - and
--- blocking it would leave "remove the line and re-add it" as the only route, which loses the
--- receipt history. What IS blocked is dropping below what has already arrived: that quantity is
--- real stock in Pancake, and an order claiming to be for less than was received would make the
--- outstanding balance negative and the "Fully Received" badge a lie.
+-- Blocked outright once ANYTHING has been received against the line, per direct request ("once
+-- the po has received item or fully received... make Qty Ordered editable = false so the user
+-- cannot change the ordered qty") - same gate the client already used for Unit Cost/UoM/Variant
+-- (Number(l.qty_received || 0) === 0 in js/purchaseOrders.js). Supersedes this function's original
+-- policy, which only blocked dropping below what had already arrived and otherwise allowed editing
+-- through a partial delivery (a vendor short-ship, or cutting the balance of the order) without
+-- losing receipt history by removing and re-adding the line. That flexibility is intentionally
+-- given up here in favor of a firm rule: once a line has receipt history, its ordered quantity is
+-- locked.
 --
 -- Super-user only (is_admin_authorized), matching staff_set_purchase_order_line_cost and
 -- staff_set_purchase_order_line_uom - changing what was ordered is structural, not a note.
@@ -44,17 +47,17 @@ begin
     raise exception 'Purchase Order line not found - it may already be posted.';
   end if;
 
+  if coalesce(v_line."QtyReceived", 0) > 0 then
+    raise exception 'This line has already received % - the ordered quantity can no longer be changed.',
+      trim(to_char(v_line."QtyReceived", 'FM999999990.00'));
+  end if;
+
   if p_quantity_uom is null or p_quantity_uom <= 0 then
     raise exception 'Quantity must be greater than 0. To take the item off the order, remove the line.';
   end if;
 
   v_qty_per := coalesce(v_line."QtyPerUnitOfMeasure", 1);
   v_new_quantity := p_quantity_uom * v_qty_per;
-
-  if v_new_quantity < coalesce(v_line."QtyReceived", 0) then
-    raise exception 'This line has already received % - the order cannot be reduced below that.',
-      trim(to_char(v_line."QtyReceived", 'FM999999990.00'));
-  end if;
 
   update public."PurchaseOrderLines"
      set "Quantity" = v_new_quantity,

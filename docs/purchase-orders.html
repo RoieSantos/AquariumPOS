@@ -36,12 +36,13 @@
             <th style="text-align:right;">Items</th>
             <th style="text-align:right;">Total Qty</th>
             <th>Received</th>
+            <th>Payment</th>
             <th>Created By</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="poTableBody">
-          <tr><td colspan="9" class="muted">Loading...</td></tr>
+          <tr><td colspan="10" class="muted">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -102,6 +103,21 @@
             <div class="form-row" id="poCardNotesEditRow">
               <label for="newPoNotes">Notes</label>
               <input type="text" id="newPoNotes" placeholder="Optional" />
+            </div>
+
+            <!-- Payment Method (Cash/Online) - per "my process is pay first before receiving the
+                 item, can we track how it is get paid". Shown and editable in BOTH new and
+                 existing modes (unlike the rows above/below, it is not toggled by
+                 applyPoCardMode) - the real order of operations is create the PO, pay it, THEN
+                 receive the goods, so staff need to set/change this on an already-open PO just as
+                 easily as at creation. See supabase_purchase_order_payment_method.sql. -->
+            <div class="form-row" id="poCardPaymentMethodRow">
+              <label for="poPaymentMethod">Payment Method</label>
+              <select id="poPaymentMethod" title="How this order was/will be paid">
+                <option value="">Not set</option>
+                <option value="Cash">Cash</option>
+                <option value="Online">Online</option>
+              </select>
             </div>
 
             <!-- Existing order: read-only - once an order is real, its vendor and header warehouse
@@ -177,7 +193,10 @@
                    column it totals - same alignment as the existing document's footer below. -->
               <tr>
                 <td colspan="8" style="text-align:right; font-weight:600;">Total Cost</td>
-                <td id="newPoTotalCost" class="doc-num" style="font-weight:600;">0.00</td>
+                <td class="doc-num" style="font-weight:600;">
+                  <span id="newPoTotalCost">0.00</span>
+                  <div id="newPoTotalCostNote" class="muted hidden" style="font-size:11px; font-weight:400;"></div>
+                </td>
                 <td></td>
               </tr>
             </tfoot>
@@ -219,7 +238,14 @@
                    what it totals - not under Unit Cost. -->
               <tr>
                 <td colspan="9" style="text-align:right; font-weight:600;">Total Cost</td>
-                <td id="receiveTotalCost" class="doc-num" style="font-weight:600;">0.00</td>
+                <td class="doc-num" style="font-weight:600;">
+                  <span id="receiveTotalCost">0.00</span>
+                  <!-- An uncosted line (dash in Unit Cost/Line Cost) contributes 0 to the total
+                       above, not its real cost - per "double check the calculation of total cost..
+                       i think its somehow wrong", the dash alone wasn't a clear enough signal that
+                       the total is missing money, not miscalculated. See renderReceiveLines. -->
+                  <div id="receiveTotalCostNote" class="muted hidden" style="font-size:11px; font-weight:400;"></div>
+                </td>
                 <!-- Hidden in step with the Remove column's header, which only super users see -
                      otherwise the footer would carry one more cell than the rows above it. -->
                 <td id="receiveTotalActionsCell" class="hidden"></td>
@@ -263,9 +289,18 @@
                 <tr>
                   <th>Received</th>
                   <th>Warehouse</th>
+                  <!-- What to search for in Pancake's own purchase list to verify a Failed/Rejected
+                       attempt before retrying it - see the Receive confirmation in js/purchaseOrders.js. -->
+                  <th>Pancake Note</th>
                   <th>Pancake Purchase ID</th>
                   <th>Status</th>
                   <th>Error</th>
+                  <!-- Live stock check (supabase_purchase_order_pancake_stock_verification.sql) -
+                       only meaningful, and only shown, on a 'Failed' row: 'Rejected' is a definite
+                       4xx that could not have gone through, and 'Synced'/'ManuallyConfirmed' rows
+                       are already resolved. Super-user only (staff_check_pancake_stock_snapshot
+                       itself is is_admin_authorized), toggled in loadPancakeSyncStatus. -->
+                  <th id="pancakeSyncCheckHeader" class="hidden"></th>
                 </tr>
               </thead>
               <tbody id="pancakeSyncBody"></tbody>
@@ -285,6 +320,12 @@
       <div class="toolbar hidden" style="margin-top:12px;" id="poCardExistingFooter">
         <button class="btn btn-primary" id="receiveQtyBtn" type="button" title="Adds the Qty Received you entered to inventory">Receive</button>
         <span class="muted" style="font-size:12px;">Fill in Qty Received for what arrived, then Receive to add it to inventory.</span>
+        <!-- Recovery path for a Pancake sync that came back "Failed" (an ambiguous connection
+             error, not a definite rejection) but was manually confirmed in Pancake to have gone
+             through anyway - see supabase_purchase_order_manual_receive_confirm.sql. Super-user
+             only (toggled in openReceiveModal, js/purchaseOrders.js) since it bypasses the normal
+             Pancake confirmation and trusts a manual check instead. -->
+        <button class="btn btn-secondary btn-sm hidden" id="confirmReceivedNoSyncBtn" type="button" title="Only use after manually verifying in Pancake that this quantity was already added as stock - marks it received locally WITHOUT calling Pancake again">Confirm Received (Already in Pancake)</button>
         <button class="btn btn-primary" id="postPoBtn" type="button" style="margin-left:auto;">Post Purchase Order</button>
       </div>
     </div>

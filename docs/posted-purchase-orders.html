@@ -35,54 +35,72 @@
             <th style="text-align:right;">Items</th>
             <th style="text-align:right;">Total Qty</th>
             <th>Received</th>
+            <th style="text-align:right;">Total Cost</th>
+            <th>Payment</th>
             <th>Posted By</th>
             <th>Posted</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="poTableBody">
-          <tr><td colspan="10" class="muted">Loading...</td></tr>
+          <tr><td colspan="12" class="muted">Loading...</td></tr>
         </tbody>
       </table>
     </div>
     <div id="poPaginationBar"></div>
   </div>
 
-  <!-- Read-only order detail modal -->
+  <!-- Read-only order detail - same Business Central-style document shell as the live Purchase
+       Order card (poCardModal, purchase-orders.html): Maximize + a collapsible General FastTab,
+       so a posted order reads the same way an open one does. Read-only here just means there is
+       only ever one "face" to this card - no New/Existing toggle, no editable fields, no footer
+       actions - the shell is what is shared, not the editing. -->
   <div id="viewModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:900px; width:95vw;">
+    <div class="modal-panel po-doc-panel">
       <div class="toolbar">
         <h2 id="viewModalTitle">Purchase Order</h2>
         <a id="viewPrintLink" href="#" class="btn btn-secondary btn-sm" style="margin-left:auto;">Print</a>
+        <button class="btn btn-secondary btn-sm" id="viewMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
         <button class="btn btn-secondary btn-sm" id="closeViewModalBtn" type="button">Close</button>
       </div>
 
-      <div class="form-grid">
-        <div class="form-row">
-          <label>Vendor</label>
-          <div id="viewVendor" class="muted"></div>
+      <details class="doc-fasttab" id="viewGeneralTab" open>
+        <summary>
+          General
+          <span class="doc-fasttab-summary" id="viewGeneralSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Vendor</label>
+              <div id="viewVendor" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Warehouse</label>
+              <div id="viewWarehouse" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Order Date</label>
+              <div id="viewOrderDate" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Payment Method</label>
+              <div id="viewPaymentMethod" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Notes</label>
+              <div id="viewNotes" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Posted By</label>
+              <div id="viewPostedBy" class="muted"></div>
+            </div>
+          </div>
         </div>
-        <div class="form-row">
-          <label>Warehouse</label>
-          <div id="viewWarehouse" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Order Date</label>
-          <div id="viewOrderDate" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Notes</label>
-          <div id="viewNotes" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Posted By</label>
-          <div id="viewPostedBy" class="muted"></div>
-        </div>
-      </div>
+      </details>
 
-      <div class="section-divider"></div>
-      <div class="table-wrap">
-        <table>
+      <div class="doc-lines-wrap">
+        <table class="doc-lines">
           <thead>
             <tr>
               <th>Item Code</th>
@@ -99,7 +117,10 @@
           <tfoot>
             <tr>
               <td colspan="7" style="text-align:right; font-weight:600;">Total Cost</td>
-              <td id="viewTotalCost" style="text-align:right; font-weight:600;">0.00</td>
+              <td class="doc-num" style="font-weight:600;">
+                <span id="viewTotalCost">0.00</span>
+                <div id="viewTotalCostNote" class="muted hidden" style="font-size:11px; font-weight:400;"></div>
+              </td>
             </tr>
           </tfoot>
         </table>

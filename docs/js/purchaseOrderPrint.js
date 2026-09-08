@@ -146,6 +146,7 @@ function renderLines(lines) {
   // several - the lines themselves still name one each.
   document.getElementById('poWarehouse').textContent = header.warehouse_name || '-';
   document.getElementById('poDate').textContent = formatDate(header.order_date);
+  document.getElementById('poPaymentMethod').textContent = header.payment_method || '-';
   document.getElementById('poNotes').textContent = header.notes || '-';
   document.getElementById('poSubtitle').textContent = `Created by ${header.created_by || 'unknown'} on ${formatDate(header.created_at_utc)}`;
 
