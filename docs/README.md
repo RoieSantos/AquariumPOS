@@ -2,6 +2,8 @@
 
 A lightweight, staff-only web portal for AquariumPOS - plain HTML/CSS/JS, no build step. It talks directly to the same Supabase project the desktop app syncs to.
 
+`index.html` is **not** part of the staff portal - it's the public customer landing page served at rspetstop.com (store info, and links into the customer-facing `order-now.html` wizard). The staff sign-in page lives at `staff-login.html` instead; every staff-only page redirects there (see `js/auth.js`).
+
 ## Modules
 
 - **Transfer Orders** - view existing transfer requests and create new ones (writes to `Transfer_Header` / `Transfer_Line`, the same tables the desktop app already pulls from via `SyncTransferRequestsFromSupabaseToLocalDb`, so new web-created transfer orders will show up in the desktop app too).
@@ -45,7 +47,7 @@ If you ever want the data itself to be genuinely protected (not just the UI), th
 
 ## Running the portal
 
-This is a static site - no build, no npm install. Just open `index.html` in a browser, or serve the `docs` folder with any static file server (e.g. `npx serve`, IIS, GitHub Pages, etc.). It must be served over `http://` or `https://` (not `file://`) for the Supabase JS client to work reliably.
+This is a static site - no build, no npm install. Just open `staff-login.html` in a browser to sign in to the portal (or `index.html` for the public customer landing page), or serve the `docs` folder with any static file server (e.g. `npx serve`, IIS, GitHub Pages, etc.). It must be served over `http://` or `https://` (not `file://`) for the Supabase JS client to work reliably.
 
 ## Installing as a mobile/desktop app (PWA)
 

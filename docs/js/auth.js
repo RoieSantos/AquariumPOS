@@ -65,20 +65,21 @@ async function attemptLogin(username, password) {
 }
 
 // Pages that must stay reachable even while a password change is pending - the change-password
-// page itself (obviously) and index.html (attemptLogin above already redirects there once
+// page itself (obviously) and staff-login.html (attemptLogin above already redirects there once
 // login succeeds, so requireAuth never actually runs on it, but excluding it here too avoids a
-// redirect loop if that ever changes).
-const PASSWORD_CHANGE_EXEMPT_PAGES = ['change-password.html', 'index.html'];
+// redirect loop if that ever changes). Note: index.html is now the public customer landing page
+// (not part of the staff portal at all), so it's deliberately absent from every list below.
+const PASSWORD_CHANGE_EXEMPT_PAGES = ['change-password.html', 'staff-login.html'];
 
 // Per "if the user is on Delivery team they can only see the Delivery calendar that is all" -
 // a Delivery Team account is confined to these pages, regardless of any other flag it might also
-// carry. change-password.html/index.html stay reachable for the same reason they're exempt from
-// the password-change gate above (this check runs after that one, so a Delivery Team account that
-// also must change its password reaches change-password.html first anyway). dashboard.html is
+// carry. change-password.html/staff-login.html stay reachable for the same reason they're exempt
+// from the password-change gate above (this check runs after that one, so a Delivery Team account
+// that also must change its password reaches change-password.html first anyway). dashboard.html is
 // allowed too, but only shows a single "Go to Delivery" link there (#deliveryTeamGoToDeliveryBtn,
 // see dashboard.html/js/dashboard.js) instead of the real dashboard content - per "can you atleast
 // show a button first, the delivery button, on the dashboard" rather than a silent hard redirect.
-const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-password.html', 'index.html'];
+const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
 
 // Same exclusive-lockdown shape as Delivery Team above, per "create me a field in the user setup
 // 'Online Order Staff' - when this is tick the user will only see Orders Printed that to be Ship."
@@ -86,7 +87,7 @@ const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-
 // there - locking it out would break the one workflow this role exists for. dashboard.html is
 // allowed but only shows a "Go to Online Orders" link (#onlineOrderStaffGoToOrdersBtn, see
 // dashboard.html/js/dashboard.js), same pattern as Delivery Team's dashboard landing.
-const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-lines.html', 'dashboard.html', 'change-password.html', 'index.html'];
+const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-lines.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
 
 function currentPageFileName() {
   return (window.location.pathname.split('/').pop() || '').toLowerCase();
@@ -95,7 +96,7 @@ function currentPageFileName() {
 async function requireAuth() {
   const session = getPortalSession();
   if (!session) {
-    window.location.href = 'index.html';
+    window.location.href = 'staff-login.html';
     return null;
   }
 
@@ -105,7 +106,7 @@ async function requireAuth() {
   // Per "Change password - if this field is true then the user will be asked to change their
   // password upon login" - enforced globally here (not just right after login) so it also
   // catches an admin flipping the flag on mid-session, or the user bookmarking/navigating
-  // straight to another page instead of going through index.html.
+  // straight to another page instead of going through staff-login.html.
   if (refreshed.mustChangePassword && !PASSWORD_CHANGE_EXEMPT_PAGES.includes(currentPageFileName())) {
     window.location.href = 'change-password.html';
     return null;
@@ -247,7 +248,7 @@ async function refreshPortalSession(session) {
 
 function logout() {
   sessionStorage.removeItem(PORTAL_SESSION_KEY);
-  window.location.href = 'index.html';
+  window.location.href = 'staff-login.html';
 }
 
 function wireLogoutButton(buttonId) {

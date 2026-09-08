@@ -1,0 +1,287 @@
+/* Customer landing page (docs/index.html) - deliberately its OWN stylesheet, separate from
+   css/styles.css (the internal staff-portal look). Per direct request, this page gets a distinct
+   marketing/storefront design rather than reusing the portal's blue admin-panel aesthetic. */
+
+:root {
+  --land-bg: #f4faf9;
+  --land-surface: #ffffff;
+  --land-ink: #0d2b2e;
+  --land-ink-muted: #4b6a6d;
+  --land-teal: #0c8577;
+  --land-teal-strong: #086158;
+  --land-coral: #ff7a59;
+  --land-coral-strong: #e8623f;
+  --land-border: #dcece9;
+  --land-shadow: 0 16px 40px rgba(11, 59, 55, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Poppins", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--land-bg);
+  color: var(--land-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+img {
+  max-width: 100%;
+}
+
+.land-wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ---- Top bar ---- */
+.land-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 0;
+}
+
+.land-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.2px;
+}
+
+.land-brand img {
+  height: 40px;
+  width: 40px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--land-surface);
+}
+
+.land-staff-link {
+  font-size: 0.85rem;
+  color: var(--land-ink-muted);
+  text-decoration: none;
+  border: 1px solid var(--land-border);
+  padding: 8px 14px;
+  border-radius: 999px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.land-staff-link:hover {
+  background: var(--land-teal);
+  color: #fff;
+  border-color: var(--land-teal);
+}
+
+/* ---- Hero ---- */
+.land-hero {
+  background: radial-gradient(circle at 15% 20%, rgba(12, 133, 119, 0.16), transparent 55%),
+    radial-gradient(circle at 85% 0%, rgba(255, 122, 89, 0.14), transparent 45%),
+    linear-gradient(180deg, #ffffff 0%, var(--land-bg) 100%);
+  padding: 56px 0 72px;
+}
+
+.land-hero-inner {
+  text-align: center;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.land-eyebrow {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--land-teal-strong);
+  background: rgba(12, 133, 119, 0.1);
+  padding: 6px 14px;
+  border-radius: 999px;
+  margin-bottom: 18px;
+}
+
+.land-hero h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1.15;
+  margin: 0 0 16px;
+  font-weight: 800;
+}
+
+.land-hero p.lead {
+  font-size: 1.05rem;
+  color: var(--land-ink-muted);
+  margin: 0 auto 32px;
+  max-width: 560px;
+}
+
+.land-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+}
+
+.land-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 26px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.98rem;
+  text-decoration: none;
+  border: 2px solid transparent;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.land-btn:hover {
+  transform: translateY(-2px);
+}
+
+.land-btn-primary {
+  background: var(--land-coral);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(255, 122, 89, 0.35);
+}
+
+.land-btn-primary:hover {
+  background: var(--land-coral-strong);
+}
+
+.land-btn-secondary {
+  background: var(--land-surface);
+  color: var(--land-teal-strong);
+  border-color: var(--land-border);
+}
+
+.land-btn-secondary:hover {
+  border-color: var(--land-teal);
+}
+
+/* ---- Feature cards ---- */
+.land-section {
+  padding: 48px 0;
+}
+
+.land-section-title {
+  text-align: center;
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.land-section-sub {
+  text-align: center;
+  color: var(--land-ink-muted);
+  margin: 0 0 32px;
+}
+
+.land-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.land-feature-card {
+  background: var(--land-surface);
+  border: 1px solid var(--land-border);
+  border-radius: 16px;
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.land-feature-icon {
+  font-size: 1.8rem;
+  margin-bottom: 10px;
+}
+
+.land-feature-card h3 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.land-feature-card p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--land-ink-muted);
+  line-height: 1.5;
+}
+
+/* ---- Visit us / branches ---- */
+.land-visit {
+  background: var(--land-surface);
+}
+
+.land-branch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.land-branch-card {
+  border: 1px solid var(--land-border);
+  border-radius: 16px;
+  padding: 22px;
+  background: var(--land-bg);
+}
+
+.land-branch-card h3 {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+  color: var(--land-teal-strong);
+}
+
+.land-branch-card p {
+  margin: 0 0 6px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.land-hours-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--land-teal-strong);
+  background: rgba(12, 133, 119, 0.08);
+  border-radius: 12px;
+  padding: 14px;
+  flex-wrap: wrap;
+}
+
+/* ---- Footer ---- */
+.land-footer {
+  padding: 32px 0 40px;
+  text-align: center;
+  color: var(--land-ink-muted);
+  font-size: 0.85rem;
+}
+
+.land-footer a {
+  color: var(--land-teal-strong);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.land-footer a:hover {
+  text-decoration: underline;
+}
+
+.land-social-row {
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}

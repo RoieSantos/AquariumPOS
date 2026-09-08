@@ -3,79 +3,108 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RS Pet Stop Portal - Sign In</title>
-  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
-  <script src="js/theme.js"></script>
-  <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#1d4f91" />
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <title>RS Pet Stop - Aquariums & Pet Supplies</title>
+  <meta name="description" content="RS Pet Stop - aquariums, fish, custom aquarium builds, and pet supplies in Tanza, Cavite and GMA, Cavite. Order online or visit our stores." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/landing.css" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <meta name="theme-color" content="#0c8577" />
 </head>
-<body class="login-backdrop">
-  <div class="centered-page">
-    <div class="login-card">
-      <h1 style="text-align:center;">RS Pet Stop Portal</h1>
-      <p class="muted" style="text-align:center; margin-top:-8px;">Staff sign in</p>
-
-      <form id="loginForm">
-        <div class="form-row">
-          <label for="username">Username</label>
-          <input type="text" id="username" required autocomplete="username" />
-        </div>
-        <div class="form-row">
-          <label for="password">Password</label>
-          <input type="password" id="password" required autocomplete="current-password" />
-        </div>
-        <button type="submit" class="btn btn-primary" style="width:100%;">Sign In</button>
-        <div id="loginError" class="error-text hidden"></div>
-      </form>
+<body>
+  <header class="land-topbar land-wrap">
+    <div class="land-brand">
+      <img id="landingLogo" src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
+      <span data-company-name>RS Pet Stop</span>
     </div>
-  </div>
+    <a class="land-staff-link" href="staff-login.html">Staff Login</a>
+  </header>
+
+  <section class="land-hero">
+    <div class="land-wrap land-hero-inner">
+      <span class="land-eyebrow">Tanza &amp; GMA, Cavite</span>
+      <h1>Everything your aquarium and pets need, in one stop.</h1>
+      <p class="lead">
+        Fish, aquatic life, custom-built aquariums and stands, and pet supplies -
+        order online for pickup or delivery, or drop by either of our stores.
+      </p>
+      <div class="land-cta-row">
+        <a class="land-btn land-btn-primary" href="order-now.html">Order Now</a>
+        <a class="land-btn land-btn-secondary" href="order-now.html">Build a Custom Aquarium</a>
+        <a class="land-btn land-btn-secondary" href="order-now.html">Estimate Delivery Fee</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="land-section">
+    <div class="land-wrap">
+      <h2 class="land-section-title">What we offer</h2>
+      <p class="land-section-sub">From a quick fish pickup to a full custom setup, we've got you covered.</p>
+      <div class="land-feature-grid">
+        <div class="land-feature-card">
+          <div class="land-feature-icon">🐠</div>
+          <h3>Fish &amp; Aquatic Life</h3>
+          <p>A wide selection of freshwater fish and aquatic plants, always in stock.</p>
+        </div>
+        <div class="land-feature-card">
+          <div class="land-feature-icon">🛠️</div>
+          <h3>Custom Aquariums &amp; Stands</h3>
+          <p>Tell us your size and style - we build and price your custom tank, stand, and filtration.</p>
+        </div>
+        <div class="land-feature-card">
+          <div class="land-feature-icon">🦴</div>
+          <h3>Pet Supplies</h3>
+          <p>Food, accessories, and everyday essentials for your fish and other pets.</p>
+        </div>
+        <div class="land-feature-card">
+          <div class="land-feature-icon">🚚</div>
+          <h3>Delivery</h3>
+          <p>Get an instant delivery fee estimate to your address, or pick up in-store.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="land-section land-visit">
+    <div class="land-wrap">
+      <h2 class="land-section-title">Visit Us</h2>
+      <p class="land-section-sub">Two branches serving Cavite.</p>
+      <div class="land-branch-grid">
+        <div class="land-branch-card">
+          <h3>📍 Amaya Branch</h3>
+          <p>Amaya Dos, Antero Soriano Highway, Tanza, Cavite</p>
+          <p>(Search "RSPetStop Amaya" on Google/Waze Maps)</p>
+          <p>☎ +63 945 518 4066</p>
+        </div>
+        <div class="land-branch-card">
+          <h3>📍 GMA Branch</h3>
+          <p>Blk 2 Lot 53, Brgy. Granados, Gen. Mariano Alvarez, Cavite</p>
+          <p>(Search "RSPetStop GMA" on Google/Waze Maps)</p>
+          <p>☎ +63 997 189 1662</p>
+        </div>
+      </div>
+      <div class="land-hours-strip">
+        🕒 Open daily: 8:00 AM - 8:00 PM (Monday to Sunday)
+      </div>
+    </div>
+  </section>
+
+  <footer class="land-footer land-wrap">
+    <div class="land-social-row">
+      <a id="landingFacebookLink" href="#" target="_blank" rel="noopener" hidden>Facebook</a>
+    </div>
+    <p>&copy; <span id="landingYear"></span> <span data-company-name>RS Pet Stop</span>. All rights reserved.</p>
+    <p><a href="staff-login.html">Staff sign in</a></p>
+  </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js"></script>
   <script src="js/companyBranding.js"></script>
+  <script src="js/landing.js"></script>
   <script>
-    (function () {
-      const existingSession = getPortalSession();
-      if (existingSession) {
-        window.location.href = existingSession.mustChangePassword ? 'change-password.html' : 'dashboard.html';
-      }
-    })();
-
-    applyLoginBackground();
-
-    document.getElementById('loginForm').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const errorEl = document.getElementById('loginError');
-      errorEl.classList.add('hidden');
-
-      const submitBtn = event.target.querySelector('button[type="submit"]');
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Signing in...';
-
-      const username = document.getElementById('username').value.trim();
-      const password = document.getElementById('password').value;
-
-      const result = await attemptLogin(username, password);
-
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Sign In';
-
-      if (!result.success) {
-        errorEl.textContent = result.message;
-        errorEl.classList.remove('hidden');
-        return;
-      }
-
-      const session = getPortalSession();
-      window.location.href = session?.mustChangePassword ? 'change-password.html' : 'dashboard.html';
-    });
+    document.getElementById('landingYear').textContent = new Date().getFullYear();
   </script>
-  <script src="js/pwa.js"></script>
 </body>
 </html>
