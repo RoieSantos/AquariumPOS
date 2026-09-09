@@ -64,49 +64,61 @@
 
   <!-- Manage transfer order modal (view + Ship/Receive/Cancel actions) -->
   <div id="viewLinesModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:1100px; width:95vw;">
+    <div class="modal-panel to-manage-panel">
       <div class="toolbar">
         <h2 id="viewLinesTitle">Transfer Order</h2>
         <span id="viewLinesStatusBadge" class="badge badge-neutral"></span>
         <span id="viewLinesLockIcon" class="hidden" title="Locked - no more changes except Ship/Receive" style="font-size:18px;">🔒</span>
         <button class="btn btn-secondary btn-sm" id="printProductionBtn" type="button" style="margin-left:auto;">Print Production Order</button>
         <button class="btn btn-secondary btn-sm" id="printTransferBtn" type="button">Print (Standard Layout)</button>
+        <button class="btn btn-secondary btn-sm" id="viewLinesMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
         <button class="btn btn-secondary btn-sm" id="closeViewLinesBtn" type="button">Close</button>
       </div>
 
-      <div class="form-grid">
-        <div class="form-row">
-          <label>From Warehouse</label>
-          <div id="viewFromWarehouse" class="muted"></div>
-          <!-- Super-user-only override - see the "From/To Warehouse are locked" note in
-               transferOrders.js: everyone else still has no way to change this once an order
-               exists. Hidden whenever anything has already shipped (updateManageActionButtons) -
-               the source warehouse a real shipment already moved from can't be rewritten after
-               the fact. -->
-          <button class="btn btn-secondary btn-sm hidden" id="editFromWarehouseBtn" type="button" style="margin-top:6px; align-self:flex-start;">Change From Warehouse</button>
-          <div id="viewFromWarehouseEditRow" class="hidden" style="margin-top:6px; display:flex; gap:8px; align-items:center;">
-            <select id="viewFromWarehouseSelect" style="flex:1;"></select>
-            <button class="btn btn-primary btn-sm" id="saveFromWarehouseBtn" type="button">Save</button>
-            <button class="btn btn-secondary btn-sm" id="cancelFromWarehouseEditBtn" type="button">Cancel</button>
+      <!-- Business Central-style "General" FastTab - collapsible, and when collapsed it keeps the
+           warehouses/dates on the tab itself so folding it away never hides what you needed. Open
+           by default; the choice is remembered per browser (js/transferOrders.js). -->
+      <details class="doc-fasttab" id="viewLinesGeneralTab" open>
+        <summary>
+          General
+          <span class="doc-fasttab-summary" id="viewLinesGeneralSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div class="form-grid wide-form-grid">
+            <div class="form-row">
+              <label>From Warehouse</label>
+              <div id="viewFromWarehouse" class="muted"></div>
+              <!-- Super-user-only override - see the "From/To Warehouse are locked" note in
+                   transferOrders.js: everyone else still has no way to change this once an order
+                   exists. Hidden whenever anything has already shipped (updateManageActionButtons) -
+                   the source warehouse a real shipment already moved from can't be rewritten after
+                   the fact. -->
+              <button class="btn btn-secondary btn-sm hidden" id="editFromWarehouseBtn" type="button" style="margin-top:6px; align-self:flex-start;">Change From Warehouse</button>
+              <div id="viewFromWarehouseEditRow" class="hidden" style="margin-top:6px; display:flex; gap:8px; align-items:center;">
+                <select id="viewFromWarehouseSelect" style="flex:1;"></select>
+                <button class="btn btn-primary btn-sm" id="saveFromWarehouseBtn" type="button">Save</button>
+                <button class="btn btn-secondary btn-sm" id="cancelFromWarehouseEditBtn" type="button">Cancel</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>To Warehouse</label>
+              <div id="viewToWarehouse" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Requested Date</label>
+              <div id="viewRequestedDate" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Transfer Date</label>
+              <div id="viewTransferDate" class="muted"></div>
+            </div>
+            <div class="form-row">
+              <label>Receive Date</label>
+              <div id="viewReceiveDate" class="muted"></div>
+            </div>
           </div>
         </div>
-        <div class="form-row">
-          <label>To Warehouse</label>
-          <div id="viewToWarehouse" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Requested Date</label>
-          <div id="viewRequestedDate" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Transfer Date</label>
-          <div id="viewTransferDate" class="muted"></div>
-        </div>
-        <div class="form-row">
-          <label>Receive Date</label>
-          <div id="viewReceiveDate" class="muted"></div>
-        </div>
-      </div>
+      </details>
 
       <div class="section-divider"></div>
       <div class="table-wrap manage-lines-wrap">
@@ -159,48 +171,59 @@
 
   <!-- New transfer order modal -->
   <div id="newTransferModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:1400px; width:95vw;">
+    <div class="modal-panel to-new-panel">
       <div class="toolbar">
         <h2>New Transfer Order</h2>
+        <button class="btn btn-secondary btn-sm" id="newTransferMaximizeBtn" type="button" style="margin-left:auto;" title="Maximize this document to fill the window">Maximize</button>
         <button class="btn btn-secondary btn-sm" id="closeNewTransferBtn" type="button">Close</button>
       </div>
 
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="newNo">Document No.</label>
-          <input type="text" id="newNo" />
+      <!-- Business Central-style "General" FastTab, same treatment as the Manage modal above and
+           the Purchase Order card. Open by default; the choice is remembered per browser. -->
+      <details class="doc-fasttab" id="newTransferGeneralTab" open>
+        <summary>
+          General
+          <span class="doc-fasttab-summary" id="newTransferGeneralSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <div class="form-grid wide-form-grid">
+            <div class="form-row">
+              <label for="newNo">Document No.</label>
+              <input type="text" id="newNo" />
+            </div>
+            <div class="form-row">
+              <label for="newDescription">Description</label>
+              <input type="text" id="newDescription" />
+            </div>
+            <div class="form-row">
+              <label for="newFromWarehouse">From Warehouse</label>
+              <input type="text" id="newFromWarehouse" autocomplete="off" disabled />
+              <input type="hidden" id="newFromWarehouseId" value="" />
+            </div>
+            <div class="form-row">
+              <label for="newToWarehouse">To Warehouse</label>
+              <input type="text" id="newToWarehouse" autocomplete="off" disabled />
+              <input type="hidden" id="newToWarehouseId" value="" />
+            </div>
+            <div class="form-row">
+              <label for="newRequestedDate">Requested Date</label>
+              <input type="date" id="newRequestedDate" disabled />
+            </div>
+            <div class="form-row">
+              <label for="newEstimatedDeliveryDate">Estimated Delivery Date</label>
+              <input type="date" id="newEstimatedDeliveryDate" disabled />
+              <span class="muted" style="font-size:12px;">Store delivery runs Wed &amp; Sun - auto-set to the next one at least 3 days out, to give production time to build.</span>
+            </div>
+            <div class="form-row">
+              <label style="display:flex; align-items:center; gap:6px;">
+                <input type="checkbox" id="newUseProductionCategory" style="width:auto;" />
+                <span>Use Production Category (Production Items Warehouse)</span>
+              </label>
+              <span class="muted hidden" id="useProductionCategoryLockHint" style="font-size:12px;">Locked - remove all line items to change this or the From Warehouse.</span>
+            </div>
+          </div>
         </div>
-        <div class="form-row">
-          <label for="newDescription">Description</label>
-          <input type="text" id="newDescription" />
-        </div>
-        <div class="form-row">
-          <label for="newFromWarehouse">From Warehouse</label>
-          <input type="text" id="newFromWarehouse" autocomplete="off" disabled />
-          <input type="hidden" id="newFromWarehouseId" value="" />
-        </div>
-        <div class="form-row">
-          <label for="newToWarehouse">To Warehouse</label>
-          <input type="text" id="newToWarehouse" autocomplete="off" disabled />
-          <input type="hidden" id="newToWarehouseId" value="" />
-        </div>
-        <div class="form-row">
-          <label for="newRequestedDate">Requested Date</label>
-          <input type="date" id="newRequestedDate" disabled />
-        </div>
-        <div class="form-row">
-          <label for="newEstimatedDeliveryDate">Estimated Delivery Date</label>
-          <input type="date" id="newEstimatedDeliveryDate" disabled />
-          <span class="muted" style="font-size:12px;">Store delivery runs Wed &amp; Sun - auto-set to the next one at least 3 days out, to give production time to build.</span>
-        </div>
-        <div class="form-row">
-          <label style="display:flex; align-items:center; gap:6px;">
-            <input type="checkbox" id="newUseProductionCategory" style="width:auto;" />
-            <span>Use Production Category (Production Items Warehouse)</span>
-          </label>
-          <span class="muted hidden" id="useProductionCategoryLockHint" style="font-size:12px;">Locked - remove all line items to change this or the From Warehouse.</span>
-        </div>
-      </div>
+      </details>
 
       <div class="section-divider"></div>
       <div class="toolbar">

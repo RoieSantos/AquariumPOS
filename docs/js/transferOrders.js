@@ -45,6 +45,58 @@ let currentSession = null;
 // clears per-tab close so a stale filter doesn't silently hide new orders in a future session).
 const FILTERS_STORAGE_KEY = 'transferOrders.filters';
 
+// Business Central-style Maximize for the two document modals, same treatment as the Purchase
+// Order card (see the design comment in styles.css) - Manage and New are different jobs so each
+// remembers its own layout separately.
+const TO_MANAGE_MAXIMIZED_KEY = 'to-manage-modal-maximized';
+const TO_NEW_MAXIMIZED_KEY = 'to-new-modal-maximized';
+const TO_MANAGE_GENERAL_TAB_KEY = 'to-manage-general-tab-open';
+const TO_NEW_GENERAL_TAB_KEY = 'to-new-general-tab-open';
+
+function readStoredFlag(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === '1';
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function writeStoredFlag(key, value) {
+  try {
+    localStorage.setItem(key, value ? '1' : '0');
+  } catch (err) {
+    /* Preference simply won't persist - not worth surfacing. */
+  }
+}
+
+// Shown on the New Transfer Order's General tab only while it is collapsed - same reasoning as
+// the PO card's General tab summary.
+function refreshNewTransferGeneralSummary() {
+  const no = document.getElementById('newNo').value.trim();
+  const description = document.getElementById('newDescription').value.trim();
+  const fromWarehouse = document.getElementById('newFromWarehouse').value.trim();
+  const toWarehouse = document.getElementById('newToWarehouse').value.trim();
+
+  document.getElementById('newTransferGeneralSummary').textContent = [
+    no && no !== 'Generating...' ? no : null,
+    description,
+    fromWarehouse && toWarehouse ? `${fromWarehouse} → ${toWarehouse}` : null
+  ].filter(Boolean).join(' · ');
+}
+
+function applyModalMaximized(modalId, btnId, maximized) {
+  const modal = document.getElementById(modalId);
+  modal.classList.toggle('modal-maximized', maximized);
+  modal.querySelector('.modal-panel').classList.toggle('modal-maximized', maximized);
+
+  const btn = document.getElementById(btnId);
+  btn.textContent = maximized ? 'Restore' : 'Maximize';
+  btn.title = maximized
+    ? 'Restore this document to a window'
+    : 'Maximize this document to fill the window';
+}
+
 function saveFilters() {
   const filters = {
     search: document.getElementById('searchInput').value,
@@ -245,6 +297,13 @@ function renderManageHeader(header) {
   // fields. They don't change on later partial ship/receive actions for the same order.
   document.getElementById('viewTransferDate').textContent = formatDate(header['Transfer Date']);
   document.getElementById('viewReceiveDate').textContent = formatDate(header['Receive Date']);
+
+  // Shown on the General tab only while it is collapsed, so folding it away never costs you the
+  // fields you most need while working the lines - same reasoning as the PO card's General tab.
+  document.getElementById('viewLinesGeneralSummary').textContent = [
+    header['From Warehouse'] && `From: ${header['From Warehouse']}`,
+    header['To Warehouse'] && `To: ${header['To Warehouse']}`
+  ].filter(Boolean).join(' · ');
 
   // Staff at the destination (To) warehouse requested the order and will receive it, but can't
   // also ship it to themselves - shipping happens at the source (From) warehouse, by someone
@@ -563,6 +622,10 @@ async function openManageModal(docNo) {
   const body = document.getElementById('viewLinesBody');
   body.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
   document.getElementById('viewLinesModal').classList.remove('hidden');
+
+  // Restore the layout this browser last used, before the panel is seen.
+  applyModalMaximized('viewLinesModal', 'viewLinesMaximizeBtn', readStoredFlag(TO_MANAGE_MAXIMIZED_KEY, false));
+  document.getElementById('viewLinesGeneralTab').open = readStoredFlag(TO_MANAGE_GENERAL_TAB_KEY, true);
 
   const { data: headerRows, error: headerError } = await supabaseClient
     .from('Transfer_Header')
@@ -1776,12 +1839,19 @@ async function openNewTransferModal() {
   updateProductionCategoryLock();
   document.getElementById('newTransferModal').classList.remove('hidden');
 
+  // Restore the layout this browser last used before the panel is seen. Defaults to maximized -
+  // this is a wide entry grid, same reasoning as the New Purchase Order card.
+  applyModalMaximized('newTransferModal', 'newTransferMaximizeBtn', readStoredFlag(TO_NEW_MAXIMIZED_KEY, true));
+  document.getElementById('newTransferGeneralTab').open = readStoredFlag(TO_NEW_GENERAL_TAB_KEY, true);
+  refreshNewTransferGeneralSummary();
+
   // From Warehouse defaults to the Production/Stock-flagged warehouse (per the checkbox); To
   // Warehouse defaults to the logged-in staff's own warehouse - same split the desktop app uses,
   // just resolved against Supabase instead of local SQL.
   await applyPreferredFromWarehouse(false);
   document.getElementById('newToWarehouseId').value = await resolveWarehouseIdByName(currentSession?.warehouseName);
   document.getElementById('newNo').value = await generateTransferNo();
+  refreshNewTransferGeneralSummary();
 }
 
 async function saveNewTransfer() {
@@ -1941,6 +2011,24 @@ async function saveNewTransfer() {
   document.getElementById('closeViewLinesBtn').addEventListener('click', () =>
     document.getElementById('viewLinesModal').classList.add('hidden')
   );
+  document.getElementById('newTransferMaximizeBtn').addEventListener('click', () => {
+    const nowMaximized = !document.getElementById('newTransferModal').classList.contains('modal-maximized');
+    applyModalMaximized('newTransferModal', 'newTransferMaximizeBtn', nowMaximized);
+    writeStoredFlag(TO_NEW_MAXIMIZED_KEY, nowMaximized);
+  });
+  document.getElementById('viewLinesMaximizeBtn').addEventListener('click', () => {
+    const nowMaximized = !document.getElementById('viewLinesModal').classList.contains('modal-maximized');
+    applyModalMaximized('viewLinesModal', 'viewLinesMaximizeBtn', nowMaximized);
+    writeStoredFlag(TO_MANAGE_MAXIMIZED_KEY, nowMaximized);
+  });
+  document.getElementById('newTransferGeneralTab').addEventListener('toggle', (e) => {
+    writeStoredFlag(TO_NEW_GENERAL_TAB_KEY, e.target.open);
+  });
+  document.getElementById('viewLinesGeneralTab').addEventListener('toggle', (e) => {
+    writeStoredFlag(TO_MANAGE_GENERAL_TAB_KEY, e.target.open);
+  });
+  document.getElementById('newNo').addEventListener('input', refreshNewTransferGeneralSummary);
+  document.getElementById('newDescription').addEventListener('input', refreshNewTransferGeneralSummary);
   document.getElementById('printTransferBtn').addEventListener('click', () => {
     if (currentManageDocNo) window.open(`transfer-order-print.html?no=${encodeURIComponent(currentManageDocNo)}`, '_blank');
   });

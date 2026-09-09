@@ -17,12 +17,12 @@ A lightweight, staff-only web portal for AquariumPOS - plain HTML/CSS/JS, no bui
 
 Run these SQL scripts in the **Supabase SQL Editor** (Postgres dialect), in this order, if not already run:
 
-1. `supabase_item_serial_tracking.sql`
-2. `supabase_month_end.sql` (+ `supabase_month_end_add_opening_stock.sql` if needed)
-3. `supabase_expense_report_tables.sql`
-4. `supabase_customer_aquarium_tables.sql` (new)
-5. `supabase_staff_users_table.sql` (new - custom login table + `verify_login()` function)
-6. `supabase_web_portal_rls_policies.sql` (new/updated - see security note below)
+1. [supabase_item_serial_tracking.sql](../sql/supabase_item_serial_tracking.sql)
+2. [supabase_month_end.sql](../sql/supabase_month_end.sql) (+ [supabase_month_end_add_opening_stock.sql](../sql/supabase_month_end_add_opening_stock.sql) if needed)
+3. [supabase_expense_report_tables.sql](../sql/supabase_expense_report_tables.sql)
+4. [supabase_customer_aquarium_tables.sql](../sql/supabase_customer_aquarium_tables.sql) (new)
+5. [supabase_staff_users_table.sql](../sql/supabase_staff_users_table.sql) (new - custom login table + `verify_login()` function)
+6. [supabase_web_portal_rls_policies.sql](../sql/supabase_web_portal_rls_policies.sql) (new/updated - see security note below)
 
 Then create a login for each staff member by running this in the SQL Editor (replace the values):
 
@@ -39,7 +39,7 @@ on conflict ("Username") do update set "PasswordHash" = excluded."PasswordHash",
 
 This portal uses a **custom username/password table** (`StaffUsers`) instead of Supabase Auth, per project decision. Because this is a static site with no backend server, that login can only gate the portal's **UI** - it is not a real session/JWT that Row Level Security can check. As a result:
 
-- `supabase_web_portal_rls_policies.sql` grants full read/write access on Transfer Orders, Reports, Customer Aquarium, and Serial Tracker tables to the **anon** role (the same public key embedded in this portal's JavaScript).
+- [supabase_web_portal_rls_policies.sql](../sql/supabase_web_portal_rls_policies.sql) grants full read/write access on Transfer Orders, Reports, Customer Aquarium, and Serial Tracker tables to the **anon** role (the same public key embedded in this portal's JavaScript).
 - Anyone who extracts that anon key (trivial via browser dev tools) can read/write that data directly through the Supabase API, bypassing the login screen entirely.
 - The `StaffUsers` table itself stays locked down (RLS with no policies) - only the `verify_login()` function can check credentials, and it never exposes password hashes.
 

@@ -1056,10 +1056,32 @@
       });
     }
 
-    selectTubular('1x1');
-    attachHandlers();
-    setVisibilityState();
-    drawPlaceholder('Enter stand details to see a preview.');
+    // Lets the Messenger bot (supabase/functions/facebook-messenger-webhook's computeAquariumQuote)
+    // link a customer straight to a preview of the exact stand it just quoted them, e.g.
+    // stand.html?length=24&width=12&height=42&layers=2&tubular=1x1&stainless=1 - values are already
+    // in inches and already safety-adjusted, so this just renders them, no re-validation surprises.
+    (function applyLinkedQuoteParams() {
+      var params = new URLSearchParams(window.location.search);
+      if (!params.has('length') || !params.has('width') || !params.has('height')) {
+        selectTubular('1x1');
+        attachHandlers();
+        setVisibilityState();
+        drawPlaceholder('Enter stand details to see a preview.');
+        return;
+      }
+
+      byId('length').value = params.get('length');
+      byId('width').value = params.get('width');
+      byId('height').value = params.get('height');
+      byId('unit').value = params.get('unit') || 'Inches';
+      if (params.has('layers')) byId('layers').value = params.get('layers');
+      if (params.get('stainless') === '1') byId('stainless').checked = true;
+
+      selectTubular(params.get('tubular') || '1x1');
+      attachHandlers();
+      setVisibilityState();
+      calculateStand(true);
+    })();
   </script>
 </body>
 </html>

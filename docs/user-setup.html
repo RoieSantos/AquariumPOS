@@ -46,6 +46,7 @@
           <thead>
             <tr>
               <th>Username</th>
+              <th>Employee No.</th>
               <th>Display Name</th>
               <th>Warehouse</th>
               <th>Super User</th>
@@ -66,7 +67,7 @@
             </tr>
           </thead>
           <tbody id="userTableBody">
-            <tr><td colspan="18" class="muted">Loading...</td></tr>
+            <tr><td colspan="19" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -157,6 +158,10 @@
 
       <h3>Employee & Payroll Info</h3>
       <div class="form-grid">
+        <div class="form-row">
+          <label for="newUserEmployeeNo">Employee No.</label>
+          <input type="text" id="newUserEmployeeNo" autocomplete="off" />
+        </div>
         <div class="form-row">
           <label for="newUserPosition">Position</label>
           <input type="text" id="newUserPosition" placeholder="e.g. Cashier, Helper, Manager" />
@@ -319,6 +324,10 @@
 
       <h3>Employee & Payroll Info</h3>
       <div class="form-grid">
+        <div class="form-row">
+          <label for="editUserEmployeeNo">Employee No.</label>
+          <input type="text" id="editUserEmployeeNo" autocomplete="off" />
+        </div>
         <div class="form-row">
           <label for="editUserPosition">Position</label>
           <input type="text" id="editUserPosition" placeholder="e.g. Cashier, Helper, Manager" />

@@ -52,7 +52,7 @@ function renderEmployeeRows(employees) {
     const message = allEmployees.length === 0
       ? 'No staff logins found.'
       : 'No employees match the current filters.';
-    tbody.innerHTML = `<tr><td colspan="9" class="muted">${message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="muted">${message}</td></tr>`;
     return;
   }
 
@@ -60,6 +60,7 @@ function renderEmployeeRows(employees) {
     .map((e) => `
       <tr>
         <td>${e.username || ''}</td>
+        <td>${e.employee_no || ''}</td>
         <td>${e.display_name || ''}</td>
         <td><span class="badge ${e.is_active ? 'badge-success' : 'badge-danger'}">${e.is_active ? 'Active' : 'Inactive'}</span></td>
         <td>${formatCycle(e.pay_cycle)}</td>
@@ -75,7 +76,7 @@ function renderEmployeeRows(employees) {
 
 async function loadEmployees() {
   const tbody = document.getElementById('employeeTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_employees', {
     p_admin_username: currentSession.username,
@@ -83,7 +84,7 @@ async function loadEmployees() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -150,6 +151,7 @@ function numericMatches(fieldValue, filterText) {
 
 function applyFilters() {
   const usernameFilter = document.getElementById('filterUsername').value;
+  const employeeNoFilter = document.getElementById('filterEmployeeNo').value;
   const displayNameFilter = document.getElementById('filterDisplayName').value;
   const activeFilter = document.getElementById('filterActive').value;
   const payCycleFilter = document.getElementById('filterPayCycle').value;
@@ -160,6 +162,7 @@ function applyFilters() {
 
   const filtered = allEmployees.filter((e) => {
     if (!textMatches(e.username, usernameFilter)) return false;
+    if (!textMatches(e.employee_no, employeeNoFilter)) return false;
     if (!textMatches(e.display_name, displayNameFilter)) return false;
     if (activeFilter === 'active' && !e.is_active) return false;
     if (activeFilter === 'inactive' && e.is_active) return false;
@@ -189,6 +192,7 @@ function openEditProfileModal(username) {
   if (!employee) return;
 
   document.getElementById('editProfileUsername').value = employee.username || '';
+  document.getElementById('editProfileEmployeeNo').value = employee.employee_no || '';
   document.getElementById('editProfilePayCycle').value = employee.pay_cycle || '';
   document.getElementById('editProfileMonthlySalary').value = Number(employee.monthly_salary) || 0;
   document.getElementById('editProfilePayType').value = employee.pay_type || 'Salary';
@@ -206,6 +210,7 @@ async function saveProfile() {
   errorEl.classList.add('hidden');
 
   const username = document.getElementById('editProfileUsername').value.trim();
+  const employeeNo = document.getElementById('editProfileEmployeeNo').value.trim();
   const payCycle = document.getElementById('editProfilePayCycle').value || null;
   const monthlySalary = Number(document.getElementById('editProfileMonthlySalary').value) || 0;
   const isActive = document.getElementById('editProfileActive').checked;
@@ -229,7 +234,8 @@ async function saveProfile() {
     p_payment_method: paymentMethod,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay
+    p_paid_rest_day: paidRestDay,
+    p_employee_no: employeeNo || null
   });
 
   saveBtn.disabled = false;
@@ -248,6 +254,7 @@ async function saveProfile() {
 
 function openNewEmployeeModal() {
   document.getElementById('newEmployeeUsername').value = '';
+  document.getElementById('newEmployeeEmployeeNo').value = '';
   document.getElementById('newEmployeePassword').value = '123456';
   document.getElementById('newEmployeeDisplayName').value = '';
   document.getElementById('newEmployeePosition').value = '';
@@ -271,6 +278,7 @@ async function saveNewEmployee() {
   errorEl.classList.add('hidden');
 
   const username = document.getElementById('newEmployeeUsername').value.trim();
+  const employeeNo = document.getElementById('newEmployeeEmployeeNo').value.trim();
   const password = document.getElementById('newEmployeePassword').value;
   const displayName = document.getElementById('newEmployeeDisplayName').value.trim();
   const position = document.getElementById('newEmployeePosition').value.trim();
@@ -317,7 +325,8 @@ async function saveNewEmployee() {
     p_monthly_salary: monthlySalary,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay
+    p_paid_rest_day: paidRestDay,
+    p_employee_no: employeeNo || null
   });
 
   saveBtn.disabled = false;
@@ -539,6 +548,7 @@ async function saveCutoffSettings() {
   });
   document.getElementById('clearFiltersBtn').addEventListener('click', () => {
     document.getElementById('filterUsername').value = '';
+    document.getElementById('filterEmployeeNo').value = '';
     document.getElementById('filterDisplayName').value = '';
     document.getElementById('filterActive').value = '';
     document.getElementById('filterPayCycle').value = '';

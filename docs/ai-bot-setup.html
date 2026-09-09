@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Bot Setup - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>AI Bot Setup</h1>
+    <p class="muted">Controls what the Facebook Messenger AI assistant is named, how it talks, and what it's told about the store. Changes apply to the bot's very next reply - no redeploy needed. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Bot Identity &amp; Behavior</h2>
+      </div>
+      <p class="muted">Shapes the assistant's persona. Leave any field blank to use a sensible default.</p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="botNameInput">Bot Name</label>
+          <input type="text" id="botNameInput" placeholder="e.g. RS Pet Stop Assistant" />
+        </div>
+        <div class="form-row">
+          <label for="communicationStyleInput">Communication Style</label>
+          <input type="text" id="communicationStyleInput" placeholder="e.g. Friendly and casual, occasional emoji, keeps replies short" />
+        </div>
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="greetingMessageInput">Greeting Message</label>
+          <input type="text" id="greetingMessageInput" placeholder="e.g. Hi! Welcome to RS Pet Stop - how can I help you today?" />
+        </div>
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="customDirectionsInput">Directions / Custom Instructions</label>
+          <textarea id="customDirectionsInput" rows="6" placeholder="Anything else the bot should always keep in mind - e.g. always mention the ongoing promo, avoid discussing competitor pricing, recommend low-iron glass for saltwater tanks, etc."></textarea>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">These are followed alongside the bot's built-in rules (never inventing prices/stock, escalating complaints to staff, etc.) - they can't override those. Don't put passwords, API keys, or other secrets here; this text is not encrypted.</span>
+        </div>
+      </div>
+
+      <div id="aiSettingsError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveAiSettingsBtn" type="button">Save Bot Settings</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Store Info (FAQ)</h2>
+      </div>
+      <p class="muted">What the bot tells customers who ask about hours, delivery, payment, or pickup - recited as-is, so keep it accurate.</p>
+
+      <div class="form-grid">
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="businessHoursInput">Business Hours</label>
+          <textarea id="businessHoursInput" rows="2" placeholder="e.g. Open daily 9AM-6PM, closed on major holidays"></textarea>
+        </div>
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="deliveryPolicyInput">Delivery Policy</label>
+          <textarea id="deliveryPolicyInput" rows="2" placeholder="e.g. We deliver within Metro Manila, fees vary by distance"></textarea>
+        </div>
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="paymentMethodsInput">Payment Methods</label>
+          <textarea id="paymentMethodsInput" rows="2" placeholder="e.g. Cash, GCash, bank transfer"></textarea>
+        </div>
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="pickupLocationsInput">Pickup Locations</label>
+          <textarea id="pickupLocationsInput" rows="2" placeholder="e.g. Amaya branch, GMA branch"></textarea>
+        </div>
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="additionalNotesInput">Additional Notes</label>
+          <textarea id="additionalNotesInput" rows="2" placeholder="Anything else customers commonly ask about"></textarea>
+        </div>
+      </div>
+
+      <div id="storeInfoError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveStoreInfoBtn" type="button">Save Store Info</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/aiBotSetup.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

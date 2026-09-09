@@ -504,6 +504,13 @@ textarea {
   grid-template-columns: 1fr;
 }
 
+/* Wider minimum column than the default .form-grid - for FastTabs on documents wide enough
+   (Transfer Order, maximized) that the default 200px minimum leaves fields looking cramped
+   instead of filling the space. */
+.wide-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
 .form-group {
   margin-bottom: 20px;
 }
@@ -628,6 +635,15 @@ tr.clickable-row:hover {
    over the Pancake Sync section below. */
 .manage-lines-wrap {
   overflow: visible;
+}
+
+/* Qty To Ship/Qty To Receive inputs (js/transferOrders.js's renderManageLines) - without an
+   explicit width, a bare <input type="number"> has no intrinsic size for the table's auto layout
+   to go on, so the browser collapses its column down to almost nothing the moment a wide neighbour
+   (Serials to Ship's .serial-tag-picker, min-width 180px) claims the leftover space. */
+.manage-qty-to-ship,
+.manage-qty-to-receive {
+  width: 80px;
 }
 
 /* Badges */
@@ -4516,6 +4532,25 @@ body:has(.wizard-page) {
 
 /* Only the lines table scrolls when maximized - the header block and totals stay put. */
 .modal-panel.modal-maximized .doc-lines-wrap {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* Same treatment for the Transfer Order modals - windowed size as a class (not inline style) so
+   .modal-maximized above can override it, same reasoning as .po-doc-panel. */
+.to-manage-panel {
+  max-width: 1100px;
+  width: 95vw;
+}
+
+.to-new-panel {
+  max-width: 1400px;
+  width: 95vw;
+}
+
+.modal-panel.modal-maximized .manage-lines-wrap,
+.modal-panel.modal-maximized .line-items-wrap {
   flex: 1 1 auto;
   overflow: auto;
   min-height: 0;

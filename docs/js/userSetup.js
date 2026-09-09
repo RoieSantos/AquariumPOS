@@ -54,7 +54,7 @@ function renderUserRows(users) {
   const tbody = document.getElementById('userTableBody');
 
   if (!users || users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="18" class="muted">No staff logins found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="19" class="muted">No staff logins found.</td></tr>';
     return;
   }
 
@@ -62,6 +62,7 @@ function renderUserRows(users) {
     .map((u) => `
       <tr>
         <td>${u.username || ''}</td>
+        <td>${u.employee_no || ''}</td>
         <td>${u.display_name || ''}</td>
         <td>${u.warehouse_name || '<span class="muted">All</span>'}</td>
         <td><span class="badge ${u.is_super_user ? 'badge-success' : 'badge-neutral'}">${u.is_super_user ? 'Yes' : 'No'}</span></td>
@@ -86,7 +87,7 @@ function renderUserRows(users) {
 
 async function loadUsers() {
   const tbody = document.getElementById('userTableBody');
-  tbody.innerHTML = '<tr><td colspan="18" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="19" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_staff_users', {
     p_admin_username: currentSession.username,
@@ -96,7 +97,7 @@ async function loadUsers() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="18" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="19" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -126,6 +127,7 @@ function openNewUserModal() {
   document.getElementById('newUserPayrollOfficer').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
+  document.getElementById('newUserEmployeeNo').value = '';
   document.getElementById('newUserPosition').value = '';
   document.getElementById('newUserHireDate').value = '';
   document.getElementById('newUserBirthdate').value = '';
@@ -160,6 +162,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
+  document.getElementById('editUserEmployeeNo').value = user.employee_no || '';
   document.getElementById('editUserPosition').value = user.job_position || '';
   document.getElementById('editUserHireDate').value = user.hire_date || '';
   document.getElementById('editUserBirthdate').value = user.birthdate || '';
@@ -194,6 +197,7 @@ async function saveEditUser() {
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
+  const employeeNo = document.getElementById('editUserEmployeeNo').value.trim();
   const position = document.getElementById('editUserPosition').value.trim();
   const hireDate = document.getElementById('editUserHireDate').value || null;
   const birthdate = document.getElementById('editUserBirthdate').value || null;
@@ -244,7 +248,8 @@ async function saveEditUser() {
     p_is_payroll_officer: isPayrollOfficer,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay
+    p_paid_rest_day: paidRestDay,
+    p_employee_no: employeeNo || null
   });
 
   saveBtn.disabled = false;
@@ -278,6 +283,7 @@ async function saveNewUser() {
   const isPayrollOfficer = document.getElementById('newUserPayrollOfficer').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
+  const employeeNo = document.getElementById('newUserEmployeeNo').value.trim();
   const position = document.getElementById('newUserPosition').value.trim();
   const hireDate = document.getElementById('newUserHireDate').value || null;
   const birthdate = document.getElementById('newUserBirthdate').value || null;
@@ -332,7 +338,8 @@ async function saveNewUser() {
     p_is_payroll_officer: isPayrollOfficer,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay
+    p_paid_rest_day: paidRestDay,
+    p_employee_no: employeeNo || null
   });
 
   saveBtn.disabled = false;

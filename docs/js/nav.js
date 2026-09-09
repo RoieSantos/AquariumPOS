@@ -120,6 +120,7 @@ function renderTopNav(activeLabel) {
   const admin = [];
   if (isSuperUser) {
     admin.push({ href: 'general-setup.html', label: 'General Setup' });
+    admin.push({ href: 'ai-bot-setup.html', label: 'AI Bot Setup' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
     admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
