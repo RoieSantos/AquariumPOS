@@ -568,6 +568,17 @@
       </div>
     </section>
 
+    <!-- Stand Drawing - a fully dimensioned preview (Gap per layer, tubular thickness pointer,
+         Built Length incl. end posts) of the stand attached to this aquarium, same detail level as
+         the dedicated Stand calculator (WebAquariumCalculator/stand.html) - shown only once a
+         calculation includes a stand, see window.refreshStandDrawing below. -->
+    <section id="standDrawingCard" class="drawing-card hidden">
+      <h2>Stand Drawing</h2>
+      <div class="canvas-wrap">
+        <canvas id="standCanvas" width="720" height="260"></canvas>
+      </div>
+    </section>
+
     <!-- Glass cut sheet - the layout the production team otherwise draws by hand for every
          10mm/12mm order. Hidden until "Glass Cut Sheet" is pressed so it does not get in the way
          of ordinary pricing work. Stock sheet size lives here rather than in the main form
@@ -1492,6 +1503,9 @@
         syncCalculatedStateToUi(result, Boolean(showAlerts));
         renderSummary(result);
         drawAquarium(result);
+        if (typeof window.refreshStandDrawing === 'function') {
+          window.refreshStandDrawing(result);
+        }
       } catch (error) {
         lastResult = null;
         renderSummary({ ok: false, error: error.message });
@@ -1602,6 +1616,447 @@
         renderSummary({ ok: false, error: error.message });
         drawPlaceholder('Initial pricing load failed.');
       });
+  </script>
+
+  <!-- Stand Drawing wiring - a fully dimensioned preview of the stand attached to this aquarium,
+       same detail level as the dedicated Stand calculator (WebAquariumCalculator/stand.html), so a
+       customer configuring an aquarium+stand together can see what they're paying for, not just a
+       price. Ported from stand.html's drawStand (itself ported from docs/js/orderNow.js's
+       drawCustomStandOnActiveCanvas) - deliberately its own canvas/script block, shares no state
+       with the pricing script above, same pattern as the Glass Cut Sheet block below. The embedded
+       stand add-on used by this page's own calculateCustomAquarium has no footingInches field
+       (unlike the standalone Stand calculator) - footingInches is fixed at STAND_FOOTING_INCHES
+       purely for the visual leg stub below the bottom shelf; it never affects price. -->
+  <script>
+    (function () {
+      var standCanvas = document.getElementById('standCanvas');
+      var standContext = standCanvas.getContext('2d');
+      var STAND_CANVAS_W = standCanvas.width;
+      var STAND_CANVAS_H = standCanvas.height;
+      (function setupCanvasResolution() {
+        var dpr = window.devicePixelRatio || 1;
+        standCanvas.width = STAND_CANVAS_W * dpr;
+        standCanvas.height = STAND_CANVAS_H * dpr;
+        standContext.scale(dpr, dpr);
+      })();
+
+      var STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
+      var STAND_FOOTING_INCHES = 3;
+
+      function round1(value) {
+        return Math.round((Number(value) || 0) * 10) / 10;
+      }
+
+      // Mirrors computeStandGapInches in stand.html/docs/js/orderNow.js - kept in sync there since
+      // all three show the same "Gap per layer" figure for a stand built with the same inputs.
+      function computeStandGapInches(totalHeightIn, footingIn, layers, tubular) {
+        if (!(layers > 1)) return null;
+        var heightIn = Math.max(0, (Number(totalHeightIn) || 0) - (Number(footingIn) || 0));
+        var thicknessIn = STAND_TUBULAR_THICKNESS_IN[tubular] || 1;
+        var spacingIn = heightIn / (layers - 1);
+        var gapReductionIn = (layers * thicknessIn) / (layers - 1);
+        return Math.max(0, spacingIn - gapReductionIn);
+      }
+
+      function drawPlaceholder(message) {
+        standContext.clearRect(0, 0, STAND_CANVAS_W, STAND_CANVAS_H);
+        var bg = standContext.createLinearGradient(0, 0, 0, STAND_CANVAS_H);
+        bg.addColorStop(0, '#ffffff');
+        bg.addColorStop(1, '#f4f9ff');
+        standContext.fillStyle = bg;
+        standContext.fillRect(0, 0, STAND_CANVAS_W, STAND_CANVAS_H);
+        standContext.strokeStyle = '#d7e0ef';
+        standContext.strokeRect(0.5, 0.5, STAND_CANVAS_W - 1, STAND_CANVAS_H - 1);
+
+        standContext.fillStyle = '#9fb4d1';
+        standContext.font = '28px Segoe UI';
+        standContext.textAlign = 'center';
+        standContext.fillText('🪑', STAND_CANVAS_W / 2, STAND_CANVAS_H / 2 - 6);
+        standContext.fillStyle = '#6a7a93';
+        standContext.font = '13px Segoe UI';
+        standContext.fillText(message, STAND_CANVAS_W / 2, STAND_CANVAS_H / 2 + 22);
+        standContext.textAlign = 'left';
+      }
+
+      function drawDimensionChip(centerX, centerY, text) {
+        standContext.font = '11px Segoe UI';
+        var textWidth = standContext.measureText(text).width;
+        var paddingX = 7;
+        var chipWidth = textWidth + paddingX * 2;
+        var chipHeight = 17;
+        var x = centerX - chipWidth / 2;
+        var y = centerY - chipHeight / 2;
+        var radius = 8;
+
+        standContext.beginPath();
+        standContext.moveTo(x + radius, y);
+        standContext.arcTo(x + chipWidth, y, x + chipWidth, y + chipHeight, radius);
+        standContext.arcTo(x + chipWidth, y + chipHeight, x, y + chipHeight, radius);
+        standContext.arcTo(x, y + chipHeight, x, y, radius);
+        standContext.arcTo(x, y, x + chipWidth, y, radius);
+        standContext.closePath();
+        standContext.fillStyle = 'rgba(255, 255, 255, 0.94)';
+        standContext.fill();
+        standContext.strokeStyle = '#c3d4ec';
+        standContext.lineWidth = 1;
+        standContext.stroke();
+
+        standContext.fillStyle = '#213b64';
+        standContext.textAlign = 'center';
+        standContext.textBaseline = 'middle';
+        standContext.fillText(text, centerX, centerY + 0.5);
+        standContext.textAlign = 'left';
+        standContext.textBaseline = 'alphabetic';
+      }
+
+      function drawDimensionLine(x1, y1, x2, y2) {
+        var tickLength = 6;
+        var isHorizontal = Math.abs(y2 - y1) < Math.abs(x2 - x1);
+
+        standContext.strokeStyle = '#9fb2cc';
+        standContext.lineWidth = 1;
+        standContext.beginPath();
+        standContext.moveTo(x1, y1);
+        standContext.lineTo(x2, y2);
+        standContext.stroke();
+
+        standContext.beginPath();
+        if (isHorizontal) {
+          standContext.moveTo(x1, y1 - tickLength / 2);
+          standContext.lineTo(x1, y1 + tickLength / 2);
+          standContext.moveTo(x2, y2 - tickLength / 2);
+          standContext.lineTo(x2, y2 + tickLength / 2);
+        } else {
+          standContext.moveTo(x1 - tickLength / 2, y1);
+          standContext.lineTo(x1 + tickLength / 2, y1);
+          standContext.moveTo(x2 - tickLength / 2, y2);
+          standContext.lineTo(x2 + tickLength / 2, y2);
+        }
+        standContext.stroke();
+      }
+
+      function drawGapArrow(x, yTop, yBottom) {
+        var headLen = 6;
+
+        standContext.strokeStyle = '#e2483f';
+        standContext.fillStyle = '#e2483f';
+        standContext.lineWidth = 2;
+        standContext.setLineDash([4, 3]);
+        standContext.beginPath();
+        standContext.moveTo(x, yTop);
+        standContext.lineTo(x, yBottom);
+        standContext.stroke();
+        standContext.setLineDash([]);
+
+        [[yTop, 1], [yBottom, -1]].forEach(function (pair) {
+          var y = pair[0];
+          var dir = pair[1];
+          standContext.beginPath();
+          standContext.moveTo(x, y);
+          standContext.lineTo(x - headLen * 0.55, y + headLen * dir);
+          standContext.lineTo(x + headLen * 0.55, y + headLen * dir);
+          standContext.closePath();
+          standContext.fill();
+        });
+      }
+
+      // `dims` shape: { lengthInches, widthInches, heightInches (stand's own TOTAL height),
+      // layers, tubular, sumpHolder, sumpWidth } - built by window.refreshStandDrawing below from
+      // this page's own calculateCustomAquarium result, not the standalone Stand calculator's
+      // richer result shape.
+      function drawStand(dims) {
+        standContext.clearRect(0, 0, STAND_CANVAS_W, STAND_CANVAS_H);
+        var bg = standContext.createLinearGradient(0, 0, 0, STAND_CANVAS_H);
+        bg.addColorStop(0, '#ffffff');
+        bg.addColorStop(1, '#f4f9ff');
+        standContext.fillStyle = bg;
+        standContext.fillRect(0, 0, STAND_CANVAS_W, STAND_CANVAS_H);
+        standContext.strokeStyle = '#d7e0ef';
+        standContext.strokeRect(0.5, 0.5, STAND_CANVAS_W - 1, STAND_CANVAS_H - 1);
+
+        if (!dims) {
+          drawPlaceholder('Enable a stand to see its drawing.');
+          return;
+        }
+
+        var lengthIn = Math.max(1, Number(dims.lengthInches) || 1);
+        var widthIn = Math.max(1, Number(dims.widthInches) || 1);
+        var totalHeightIn = Math.max(1, Number(dims.heightInches) || 1);
+        var footingIn = STAND_FOOTING_INCHES;
+        var heightIn = Math.max(0, totalHeightIn - footingIn);
+        var layers = Math.max(2, Math.round(Number(dims.layers) || 2));
+
+        var marginLeft = 66;
+        var marginRight = 56;
+        var marginTop = dims.sumpHolder ? 58 : 34;
+        var marginBottom = 80;
+        var availableWidth = Math.max(80, STAND_CANVAS_W - marginLeft - marginRight);
+        var availableHeight = Math.max(80, STAND_CANVAS_H - marginTop - marginBottom);
+
+        var widthBoundScale = availableWidth / (lengthIn + widthIn * 0.38);
+        var heightBoundScale = availableHeight / (totalHeightIn + widthIn * 0.38 * 0.48);
+        var scale = Math.min(Math.max(1.5, Math.min(widthBoundScale, heightBoundScale)), 14);
+
+        var frontWidth = lengthIn * scale;
+        var frontHeight = totalHeightIn * scale;
+        var frameSpan = heightIn * scale;
+        var footingPx = footingIn * scale;
+        var depth = Math.max(24, widthIn * scale * 0.38);
+        var totalWidth = frontWidth + depth;
+        var frontLeft = marginLeft + Math.max(0, (availableWidth - totalWidth) / 2);
+        var baseY = STAND_CANVAS_H - marginBottom;
+        var frontTop = baseY - frontHeight;
+        var backTop = frontTop - depth * 0.48;
+        var backLeft = frontLeft + depth;
+        var backBaseY = baseY - depth * 0.48;
+        var shelfBaseY = baseY - footingPx;
+
+        standContext.lineJoin = 'round';
+        standContext.lineCap = 'round';
+
+        standContext.strokeStyle = '#6b7686';
+        standContext.lineWidth = 3;
+        [
+          [frontLeft, frontTop, frontLeft, baseY],
+          [frontLeft + frontWidth, frontTop, frontLeft + frontWidth, baseY],
+          [backLeft, backTop, backLeft, backBaseY],
+          [backLeft + frontWidth, backTop, backLeft + frontWidth, backBaseY]
+        ].forEach(function (line) {
+          standContext.beginPath();
+          standContext.moveTo(line[0], line[1]);
+          standContext.lineTo(line[2], line[3]);
+          standContext.stroke();
+        });
+
+        var bracesPerFrame = Math.max(1, Math.ceil(lengthIn / 36));
+        standContext.lineWidth = 2.4;
+        for (var i = 0; i < layers; i += 1) {
+          var t = layers === 1 ? 0 : i / (layers - 1);
+          var y = shelfBaseY - t * frameSpan;
+          var backY = y - depth * 0.48;
+          standContext.strokeStyle = i === layers - 1 ? '#45566e' : '#8a94a3';
+          standContext.beginPath();
+          standContext.moveTo(frontLeft, y);
+          standContext.lineTo(frontLeft + frontWidth, y);
+          standContext.lineTo(backLeft + frontWidth, backY);
+          standContext.lineTo(backLeft, backY);
+          standContext.closePath();
+          standContext.stroke();
+
+          standContext.lineWidth = 1.6;
+          for (var b = 1; b <= bracesPerFrame; b += 1) {
+            var bt = b / (bracesPerFrame + 1);
+            standContext.beginPath();
+            standContext.moveTo(frontLeft + bt * frontWidth, y);
+            standContext.lineTo(backLeft + bt * frontWidth, backY);
+            standContext.stroke();
+          }
+          standContext.lineWidth = 2.4;
+        }
+
+        var tubularThicknessIn = STAND_TUBULAR_THICKNESS_IN[dims.tubular] || 1;
+        if (layers > 1) {
+          var gapReductionIn = (layers * tubularThicknessIn) / (layers - 1);
+          var gapIn = computeStandGapInches(totalHeightIn, footingIn, layers, dims.tubular);
+          var gapX = frontLeft + frontWidth * 0.68;
+          var halfReductionPx = (gapReductionIn / 2) * scale;
+          for (var g = 0; g < layers - 1; g += 1) {
+            var yLower = shelfBaseY - (g / (layers - 1)) * frameSpan;
+            var yUpper = shelfBaseY - ((g + 1) / (layers - 1)) * frameSpan;
+            var arrowBottom = yLower - halfReductionPx;
+            var arrowTop = yUpper + halfReductionPx;
+            if (arrowBottom - arrowTop > 10) {
+              drawGapArrow(gapX, arrowTop, arrowBottom);
+            }
+            standContext.fillStyle = '#c23b31';
+            standContext.font = 'bold 13px Segoe UI';
+            standContext.textAlign = 'left';
+            standContext.textBaseline = 'middle';
+            standContext.fillText('Gap: ' + round1(gapIn) + '"', gapX + 9, (yLower + yUpper) / 2);
+            standContext.textBaseline = 'alphabetic';
+          }
+        }
+
+        var tubularSizeLabelMap = { '1x1': '1"×1"', '1.5x1.5': '1½"×1½"', '2x2': '2"×2"' };
+        var tubularSizeLabel = (tubularSizeLabelMap[dims.tubular] || (round1(tubularThicknessIn) + '"')) + ' tube';
+        (function drawTubularPointer() {
+          var spineX = frontLeft - 10;
+          var layerYs = [];
+          for (var li = 0; li < layers; li += 1) {
+            var lt = layers === 1 ? 0 : li / (layers - 1);
+            layerYs.push(shelfBaseY - lt * frameSpan);
+          }
+          var topY = Math.min.apply(null, layerYs);
+          var bottomY = Math.max.apply(null, layerYs);
+          var labelX = 8;
+          var labelY = Math.max(11, topY - 14);
+
+          standContext.strokeStyle = '#45566e';
+          standContext.lineWidth = 1;
+          standContext.font = 'bold 12px Segoe UI';
+          var textWidth = standContext.measureText(tubularSizeLabel).width;
+
+          standContext.beginPath();
+          standContext.moveTo(labelX + textWidth + 4, labelY);
+          standContext.lineTo(spineX, topY);
+          standContext.stroke();
+
+          standContext.beginPath();
+          standContext.moveTo(spineX, topY);
+          standContext.lineTo(spineX, bottomY);
+          standContext.stroke();
+
+          layerYs.forEach(function (ly) {
+            standContext.beginPath();
+            standContext.moveTo(spineX, ly);
+            standContext.lineTo(frontLeft, ly);
+            standContext.stroke();
+
+            standContext.fillStyle = '#45566e';
+            standContext.beginPath();
+            standContext.ellipse(frontLeft, ly, 2.4, 2.4, 0, 0, Math.PI * 2);
+            standContext.fill();
+          });
+
+          standContext.textAlign = 'left';
+          standContext.textBaseline = 'alphabetic';
+          standContext.fillText(tubularSizeLabel, labelX, labelY);
+        })();
+
+        standContext.fillStyle = '#45566e';
+        [[frontLeft, baseY], [frontLeft + frontWidth, baseY]].forEach(function (foot) {
+          standContext.beginPath();
+          standContext.ellipse(foot[0], foot[1], 5, 2.4, 0, 0, Math.PI * 2);
+          standContext.fill();
+        });
+
+        if (footingPx > 0.5) {
+          standContext.strokeStyle = '#8a94a3';
+          standContext.setLineDash([2, 2]);
+          standContext.lineWidth = 1;
+          standContext.beginPath();
+          standContext.moveTo(frontLeft + frontWidth + 3, shelfBaseY);
+          standContext.lineTo(frontLeft + frontWidth + 3, baseY);
+          standContext.stroke();
+          standContext.setLineDash([]);
+
+          standContext.fillStyle = '#45566e';
+          standContext.font = 'bold 14px Segoe UI';
+          standContext.textAlign = 'left';
+          standContext.textBaseline = 'middle';
+          standContext.fillText(round1(footingIn) + '" footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
+          standContext.textBaseline = 'alphabetic';
+        }
+
+        if (dims.sumpHolder) {
+          var sumpGap = 8;
+          var sumpBottom = frontTop - sumpGap;
+          var sumpHeight = 14;
+          var sumpTop = sumpBottom - sumpHeight;
+          var sumpWidth = Math.max(48, frontWidth * 0.4);
+          var sumpLeft = frontLeft + ((frontWidth - sumpWidth) / 2);
+          var sumpRight = sumpLeft + sumpWidth;
+
+          standContext.strokeStyle = '#507193';
+          standContext.lineWidth = 1.6;
+          standContext.strokeRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
+
+          standContext.lineWidth = 1;
+          for (var sb = 1; sb <= bracesPerFrame; sb += 1) {
+            var sbx = sumpLeft + (sb / (bracesPerFrame + 1)) * sumpWidth;
+            standContext.beginPath();
+            standContext.moveTo(sbx, sumpTop + 2);
+            standContext.lineTo(sbx, sumpBottom - 2);
+            standContext.stroke();
+          }
+
+          standContext.lineWidth = 1.6;
+          [[sumpLeft + 4, sumpBottom], [sumpRight - 4, sumpBottom]].forEach(function (leg) {
+            standContext.beginPath();
+            standContext.moveTo(leg[0], leg[1]);
+            standContext.lineTo(leg[0], frontTop);
+            standContext.stroke();
+          });
+
+          var sumpWidthInVal = round1(Number(dims.sumpWidth) || 0);
+          standContext.fillStyle = '#45566e';
+          standContext.font = 'bold 14px Segoe UI';
+          standContext.textAlign = 'left';
+          standContext.textBaseline = 'middle';
+          standContext.fillText('Sump holder with ' + sumpWidthInVal + '" width', sumpRight + 9, (sumpTop + sumpBottom) / 2);
+          standContext.textBaseline = 'alphabetic';
+        }
+
+        var lengthLineY = baseY + 24;
+        var heightLineX = frontLeft - 26;
+        var widthLineX2 = backLeft + frontWidth + 4;
+
+        drawDimensionLine(frontLeft, lengthLineY, frontLeft + frontWidth, lengthLineY);
+        drawDimensionLine(heightLineX, frontTop, heightLineX, baseY);
+        drawDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
+
+        drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
+        drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
+        drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+
+        var postPx = tubularThicknessIn * scale;
+        var builtLengthLineY = lengthLineY + 26;
+        var builtLeftX = frontLeft - postPx;
+        var builtRightX = frontLeft + frontWidth + postPx;
+        var builtLengthIn = window.CustomAquariumCalculator.computeStandBuiltLengthInches(lengthIn, dims.tubular);
+
+        standContext.strokeStyle = '#c23b31';
+        standContext.setLineDash([2, 2]);
+        standContext.lineWidth = 1;
+        [frontLeft, frontLeft + frontWidth].forEach(function (x) {
+          standContext.beginPath();
+          standContext.moveTo(x, baseY + 3);
+          standContext.lineTo(x, builtLengthLineY);
+          standContext.stroke();
+        });
+        standContext.setLineDash([]);
+
+        standContext.strokeStyle = '#c23b31';
+        standContext.lineWidth = 1;
+        standContext.beginPath();
+        standContext.moveTo(builtLeftX, builtLengthLineY);
+        standContext.lineTo(builtRightX, builtLengthLineY);
+        standContext.stroke();
+        [builtLeftX, builtRightX].forEach(function (x) {
+          standContext.beginPath();
+          standContext.moveTo(x, builtLengthLineY - 4);
+          standContext.lineTo(x, builtLengthLineY + 4);
+          standContext.stroke();
+        });
+
+        drawDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + round1(builtLengthIn) + '"');
+      }
+
+      drawPlaceholder('Enable a stand to see its drawing.');
+
+      // Called from the main pricing script's calculateAquarium() after every run - `result` is
+      // the same object calculateCustomAquarium returns; dims comes straight off
+      // result.normalized (lengthInches/widthInches shared with the aquarium, stand for the
+      // stand-specific fields).
+      window.refreshStandDrawing = function (result) {
+        var standCard = document.getElementById('standDrawingCard');
+        var n = result && result.normalized;
+        var stand = n && n.stand;
+
+        standCard.classList.toggle('hidden', !stand);
+        if (!stand) return;
+
+        drawStand({
+          lengthInches: n.lengthInches,
+          widthInches: n.widthInches,
+          heightInches: stand.heightInches,
+          layers: stand.layers,
+          tubular: stand.tubular,
+          sumpHolder: stand.sumpHolder,
+          sumpWidth: stand.sumpWidth
+        });
+      };
+    })();
   </script>
 
   <!-- Glass Cut Sheet wiring. Reads the tank dimensions straight off the form (converted with
