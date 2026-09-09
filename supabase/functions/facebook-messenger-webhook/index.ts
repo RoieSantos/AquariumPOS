@@ -781,7 +781,7 @@ function buildSystemPrompt(
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number (format like AO-00001). If they ask about "my order" without a number, ask them for it first - never call get_order_status without one.',
-    '- Custom aquarium and/or stand price quotes: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). Always tell the customer this is an estimate and staff will confirm the final price. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. If the result includes standDrawingUrl, always share that exact link too (word for word, don\'t alter it) so they can see the precise scaled drawing for their own stand\'s dimensions.',
+    '- Custom aquarium and/or stand price quotes: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). Always tell the customer this is an estimate and staff will confirm the final price. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
     '- Delivery fee estimates: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. Always tell the customer this is an estimate and staff will confirm the final fee.',
     '- General conversation about aquariums, fish, and pets, related to what the store sells.',
     '',
@@ -892,6 +892,31 @@ async function computeAquariumQuote(supabase: SupabaseClient, input: Record<stri
     });
     if (stand.stainless) params.set('stainless', '1');
     result.standDrawingUrl = `https://rspetstop.com/WebAquariumCalculator/stand.html?${params.toString()}`;
+  }
+
+  // Same idea as standDrawingUrl above, but for the aquarium itself - see
+  // docs/WebAquariumCalculator/index.html's applyLinkedQuoteParams (matching field names/query
+  // params). Glass thickness/tempered here are already safety-adjusted (result.normalized), so
+  // the drawing always matches what the bot just quoted, even if the customer asked for something
+  // the safety rules changed.
+  if (result.ok && normalized) {
+    const aquariumParams = new URLSearchParams({
+      length: String(normalized.lengthInches),
+      width: String(normalized.widthInches),
+      height: String(normalized.heightInches),
+      unit: 'Inches',
+      glass: String(normalized.glassThickness)
+    });
+    if (normalized.temperedGlass) aquariumParams.set('tempered', '1');
+    if (normalized.rimless) aquariumParams.set('rimless', '1');
+    if (input.high_strip) aquariumParams.set('highStrip', '1');
+    if (stand) {
+      aquariumParams.set('standEnabled', '1');
+      aquariumParams.set('standLayers', String(stand.layers));
+      aquariumParams.set('standTubular', String(stand.tubular));
+      if (stand.stainless) aquariumParams.set('standStainless', '1');
+    }
+    result.aquariumDrawingUrl = `https://rspetstop.com/WebAquariumCalculator/index.html?${aquariumParams.toString()}`;
   }
 
   return result;

@@ -1553,6 +1553,37 @@
       calculateAquarium(true);
     });
 
+    // Lets the Messenger bot (supabase/functions/facebook-messenger-webhook's computeAquariumQuote)
+    // link a customer straight to a preview of the exact aquarium it just quoted them, e.g.
+    // index.html?length=24&width=12&height=12&glass=6mm&tempered=1&standEnabled=1&standTubular=2x2
+    // - values are already in inches and already safety-adjusted, so this just renders them, no
+    // re-validation surprises. Same pattern as stand.html's applyLinkedQuoteParams.
+    var autoCalculateFromLink = false;
+    (function applyLinkedQuoteParams() {
+      var params = new URLSearchParams(window.location.search);
+      if (!params.has('length') || !params.has('width') || !params.has('height')) {
+        return;
+      }
+
+      byId('length').value = params.get('length');
+      byId('width').value = params.get('width');
+      byId('height').value = params.get('height');
+      byId('unit').value = params.get('unit') || 'Inches';
+      if (params.has('glass')) byId('glass').value = params.get('glass');
+      if (params.get('tempered') === '1') byId('tempered').checked = true;
+      if (params.get('rimless') === '1') byId('rimless').checked = true;
+      if (params.get('highStrip') === '1') byId('highStrip').checked = true;
+
+      if (params.get('standEnabled') === '1') {
+        byId('standEnabled').checked = true;
+        if (params.has('standLayers')) byId('standLayers').value = params.get('standLayers');
+        if (params.has('standTubular')) byId('standTubular').value = params.get('standTubular');
+        if (params.get('standStainless') === '1') byId('standStainless').checked = true;
+      }
+
+      autoCalculateFromLink = true;
+    })();
+
     attachAutoStateHandlers();
     enforceOptionRules(false);
     setVisibilityState();
@@ -1561,6 +1592,9 @@
 
     ensureGlassPricingLoaded()
       .then(function () {
+        if (autoCalculateFromLink) {
+          return calculateAquarium(true);
+        }
         renderSummary({ ok: false, error: 'Click Calculate to run the pricing.' });
         drawPlaceholder('Glass pricing loaded. Click Calculate to render the aquarium.');
       })
