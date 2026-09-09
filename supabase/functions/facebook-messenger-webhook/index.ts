@@ -141,6 +141,13 @@ interface TubularSafetyResult {
   notice: { title: string; message: string; updatedTubular: string } | null;
 }
 
+// Checks the mandatory 2x2 conditions (glass thickness, then length+width) BEFORE the softer
+// "starting tubular is 1x1 and length > 30" upgrade - each rule below used to "return" immediately,
+// so a stand starting at the default 1x1 tubular could match the softer 30" rule and get back
+// 1.5x1.5 before ever reaching the mandatory checks, understating what a 49"+ x 18"+ (or 10mm+
+// glass) stand structurally requires. Checking strictest-first means the answer no longer depends
+// on what tubular the caller happened to start from. Mirrors the fix in
+// docs/WebAquariumCalculator/custom-aquarium-calculator.js - keep both in sync.
 function enforceStandTubularSafety(lengthInches: number, widthInches: number, glassThickness: string, tubular: string): TubularSafetyResult {
   const normalizedTubular = normalizeTubular(tubular);
   const glassMm = extractGlassMm(glassThickness);
@@ -156,17 +163,6 @@ function enforceStandTubularSafety(lengthInches: number, widthInches: number, gl
     };
   }
 
-  if (normalizedTubular === '1x1' && lengthInches > 30) {
-    return {
-      tubular: '1.5x1.5',
-      notice: {
-        title: 'Tubular size adjusted',
-        message: 'Length is greater than 30 inches - switching tubular to 1 1/2 x 1 1/2 for safety.',
-        updatedTubular: '1.5x1.5'
-      }
-    };
-  }
-
   if (lengthInches >= 49 && widthInches >= 18 && normalizedTubular !== '2x2') {
     return {
       tubular: '2x2',
@@ -174,6 +170,17 @@ function enforceStandTubularSafety(lengthInches: number, widthInches: number, gl
         title: 'Tubular size adjusted',
         message: 'Length > 50 in and Width > 18 in - tubular set to 2 x 2 (mandatory).',
         updatedTubular: '2x2'
+      }
+    };
+  }
+
+  if (normalizedTubular === '1x1' && lengthInches > 30) {
+    return {
+      tubular: '1.5x1.5',
+      notice: {
+        title: 'Tubular size adjusted',
+        message: 'Length is greater than 30 inches - switching tubular to 1 1/2 x 1 1/2 for safety.',
+        updatedTubular: '1.5x1.5'
       }
     };
   }
@@ -774,9 +781,17 @@ function buildSystemPrompt(
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number (format like AO-00001). If they ask about "my order" without a number, ask them for it first - never call get_order_status without one.',
-    '- Custom aquarium price quotes: ask for length/width/height and glass thickness, then use compute_aquarium_quote to get a real number - never state a price yourself. Only ask about a matching stand if the customer mentions wanting one. When you get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total. Always tell the customer this is an estimate and staff will confirm the final price. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. If a stand was included, a reference photo of what the stands look like is sent automatically right after your reply - mention that a photo is on the way, but don\'t describe it since you haven\'t seen it. If the result includes standDrawingUrl, always share that exact link too (word for word, don\'t alter it) so they can see the precise scaled drawing for their own stand\'s dimensions.',
+    '- Custom aquarium and/or stand price quotes: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). Always tell the customer this is an estimate and staff will confirm the final price. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. If the result includes standDrawingUrl, always share that exact link too (word for word, don\'t alter it) so they can see the precise scaled drawing for their own stand\'s dimensions.',
     '- Delivery fee estimates: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. Always tell the customer this is an estimate and staff will confirm the final fee.',
     '- General conversation about aquariums, fish, and pets, related to what the store sells.',
+    '',
+    'AQUARIUM & STAND SAFETY RULES - understand these so you can explain and apply them confidently in conversation, not just react after the fact. compute_aquarium_quote always does the actual math and is the source of truth for exact numbers - never calculate or predict a safety change yourself, but you should recognize when one is likely so you can set expectations before quoting:',
+    '- Glass gets thicker, or tempered, automatically as size/volume grows: 3mm glass only works up to 24 inches in length and small volumes; anything bigger needs 6mm, 10mm, or 12mm. Any tank with width or height of 36 inches or more always requires tempered glass. Very large tanks (roughly 180+ gallons, or beyond about 72x30x30 inches) require 12mm glass.',
+    '- Rimless tanks (no top/bottom frame bracing) need extra glass thickness to stay structurally safe without that frame: minimum 6mm for a 10-15 gallon tank, minimum 10mm for a 30-100 gallon tank.',
+    '- Stand frames get a thicker tubular size automatically as the load/span grows: 10mm+ glass always needs a 2x2 stand frame; a stand over 30 inches long needs at least 1 1/2 x 1 1/2 tubular; a stand 49+ inches long AND 18+ inches wide always needs 2x2, no exceptions.',
+    '- These are structural safety requirements, not preferences - never agree to skip, downgrade, or "just risk it" even if the customer insists, says a smaller tank held up fine before, or asks you to quote the unsafe spec anyway. Politely hold the line, explain it protects them from a cracked tank or a collapsed stand, and note that the quote you give already reflects the safe spec.',
+    '- If you can tell upfront from the dimensions the customer gave that a rule above will apply (e.g. they want a 40 inch wide tank in 3mm), mention it before or while quoting rather than only after compute_aquarium_quote returns a safetyNotice/standNotice - so it never feels like a surprise price change.',
+    '- When a result DOES include a safetyNotice or standNotice, always explain it in your own plain, reassuring words (e.g. "since that\'s over 36 inches wide, we use tempered glass there for safety - already included in the price above") - never paste the raw notice text verbatim, and never let it read like an error message.',
     '',
     'WHAT IS OUT OF SCOPE:',
     '- Anything unrelated to the store (general trivia, coding help, medical/veterinary diagnosis). Politely decline and steer back to how you can help with the store.',
@@ -1018,28 +1033,6 @@ async function sendMessengerReply(psid: string, text: string, pageAccessToken: s
   }
 }
 
-// Same public asset order-now.html/index.html already show customers browsing the Stand category
-// (docs/order-now.html:432) - a reference photo of what an RS Pet Stop metal stand looks like, not
-// a per-dimension render (nothing in this codebase generates one). Sent as a follow-up attachment
-// whenever compute_aquarium_quote returns a stand - see the flag set in processMessage below.
-const STAND_REFERENCE_IMAGE_URL = 'https://rspetstop.com/icons/Dual%20Stand.jpg';
-
-async function sendMessengerImage(psid: string, imageUrl: string, pageAccessToken: string, graphVersion: string): Promise<void> {
-  const url = `https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      recipient: { id: psid },
-      message: { attachment: { type: 'image', payload: { url: imageUrl, is_reusable: true } } },
-      messaging_type: 'RESPONSE'
-    })
-  });
-  if (!res.ok) {
-    console.error(`Messenger Send API (image) failed (${res.status}): ${await res.text()}`);
-  }
-}
-
 async function isRateLimited(supabase: SupabaseClient, psid: string): Promise<boolean> {
   const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MINUTES * 60 * 1000).toISOString();
   const { count } = await supabase
@@ -1107,7 +1100,6 @@ async function processMessage(
   ];
 
   let finalText = "Sorry, I'm having trouble responding right now - a team member will follow up with you shortly.";
-  let includeStandImage = false;
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await anthropic.messages.create({
@@ -1140,15 +1132,6 @@ async function processMessage(
     for (const tool of toolUseBlocks) {
       const result = await executeTool(supabase, psid, tool.name, tool.input as Record<string, unknown>);
       toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: result });
-
-      if (tool.name === 'compute_aquarium_quote') {
-        try {
-          const parsed = JSON.parse(result);
-          if (parsed.ok && parsed.normalized?.stand) includeStandImage = true;
-        } catch {
-          // Not JSON (shouldn't happen - computeAquariumQuote always returns an object) - skip.
-        }
-      }
     }
     messages.push({ role: 'user', content: toolResults });
   }
@@ -1157,9 +1140,6 @@ async function processMessage(
   await supabase.from('ChatbotConversations').update({ LastMessageAtUtc: new Date().toISOString() }).eq('Psid', psid);
 
   await sendMessengerReply(psid, finalText, pageAccessToken, graphVersion);
-  if (includeStandImage) {
-    await sendMessengerImage(psid, STAND_REFERENCE_IMAGE_URL, pageAccessToken, graphVersion);
-  }
 }
 
 async function handlePost(req: Request): Promise<Response> {

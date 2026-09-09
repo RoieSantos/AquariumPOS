@@ -119,6 +119,12 @@
     return baseHeightInches + ((layerCount - 2) * incrementHeightInches);
   }
 
+  // Checks the mandatory 2x2 conditions (glass thickness, then length+width) BEFORE the softer
+  // "starting tubular is 1x1 and length > 30" upgrade - each rule below used to "return"
+  // immediately, so a stand starting at the default 1x1 tubular could match the softer 30" rule
+  // and get back 1.5x1.5 before ever reaching the mandatory checks, understating what a 49"+ x
+  // 18"+ (or 10mm+ glass) stand structurally requires. Checking strictest-first means the answer
+  // no longer depends on what tubular the caller happened to start from.
   function enforceStandTubularSafety(lengthInches, widthInches, glassThickness, tubular) {
     var normalizedTubular = normalizeTubular(tubular);
     var glassMm = extractGlassMm(glassThickness);
@@ -134,17 +140,6 @@
       };
     }
 
-    if (normalizedTubular === '1x1' && lengthInches > 30) {
-      return {
-        tubular: '1.5x1.5',
-        notice: {
-          title: 'Tubular size adjusted',
-          message: 'Length is greater than 30 inches - switching tubular to 1 1/2 x 1 1/2 for safety.',
-          updatedTubular: '1.5x1.5'
-        }
-      };
-    }
-
     if (lengthInches >= 49 && widthInches >= 18 && normalizedTubular !== '2x2') {
       return {
         tubular: '2x2',
@@ -152,6 +147,17 @@
           title: 'Tubular size adjusted',
           message: 'Length > 50 in and Width > 18 in - tubular set to 2 x 2 (mandatory).',
           updatedTubular: '2x2'
+        }
+      };
+    }
+
+    if (normalizedTubular === '1x1' && lengthInches > 30) {
+      return {
+        tubular: '1.5x1.5',
+        notice: {
+          title: 'Tubular size adjusted',
+          message: 'Length is greater than 30 inches - switching tubular to 1 1/2 x 1 1/2 for safety.',
+          updatedTubular: '1.5x1.5'
         }
       };
     }
