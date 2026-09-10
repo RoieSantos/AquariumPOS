@@ -34,8 +34,8 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
-        <!-- Relaunches the app after boot so tracking resumes without the driver opening it
-             themselves - see BootReceiver.java. -->
+        <!-- Starts DriverTrackingService directly after boot (no UI) so tracking resumes without
+             the driver opening the app themselves - see BootReceiver.java. -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -44,10 +44,33 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Start-only (never bound) foreground service owning GPS watching + HTTP reporting
+             independently of MainActivity/the WebView - see DriverTrackingService.java for why.
+             stopWithTask="false" is already the default for a started (non-bound-only) service,
+             declared explicitly here since it's the literal opposite of the bug being fixed. -->
+        <service
+            android:name=".DriverTrackingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location"
+            android:stopWithTask="false" />
     </application>
 
-    <!-- Permissions -->
+    <!-- Permissions. ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION/FOREGROUND_SERVICE/
+         FOREGROUND_SERVICE_LOCATION/POST_NOTIFICATIONS used to arrive automatically via
+         @capacitor-community/background-geolocation's and @capacitor/local-notifications' own
+         bundled manifests (Gradle manifest merger) - now hand-declared since both plugins were
+         removed in favor of DriverTrackingService/DriverTrackingPlugin. ACCESS_BACKGROUND_LOCATION
+         is still deliberately absent - see the "Android permissions" note in SETUP.md, the
+         foreground-service exemption still applies to this native service the same way it did to
+         the old plugin's. -->
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

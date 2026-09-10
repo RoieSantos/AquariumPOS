@@ -2,12 +2,21 @@
 
 Android app that RS Pet Stop delivery drivers install on their phone. There is no "Start
 Tracking" button - tracking begins automatically the moment the app opens with a saved login
-(a normal open, a resume, or the app auto-relaunching itself after the phone restarts - see
-`BootReceiver.java` and `startTracking()`/`init()` in `src/main.js`), and keeps sending GPS pings
-to Supabase even while backgrounded (e.g. the driver switched to Waze, or the screen is locked).
-The only way to turn it off is "Log Out" in the app. See
-[supabase_driver_locations_table.sql](../sql/supabase_driver_locations_table.sql) and the driver
-pin plotted on the portal's Delivery page (`docs/delivery.html`).
+(a normal open or a resume), and it runs in a standalone native Android service
+(`DriverTrackingService.java`) that's independent of the app's WebView/JS - it keeps sending GPS
+pings straight to Supabase even while backgrounded (Waze open, screen locked), after the phone
+restarts (`BootReceiver.java` starts the service directly, no UI needed), and even if the driver
+swipes the app away from the recent-apps switcher. The only way to turn it off is "Log Out" in the
+app. See [supabase_driver_locations_table.sql](../sql/supabase_driver_locations_table.sql) and the
+driver pin plotted on the portal's Delivery page (`docs/delivery.html`).
+
+**Why a custom native service instead of a plugin**: this app originally used
+`@capacitor-community/background-geolocation`, but that plugin deliberately stops tracking the
+instant the app is swiped away (its own GitHub issue #59 explains why - a location callback firing
+after the app process is torn down can crash Google Play Services, so the plugin's fix is to
+self-terminate on unbind rather than risk it). `DriverTrackingService` avoids that whole problem
+by never binding to the Activity in the first place and owning its own location callback thread
+and HTTP reporting, completely independent of the WebView being alive.
 
 **Worth knowing before rolling this out**: because tracking auto-resumes after every phone
 restart with no login step required, it runs continuously any time the phone is on - including
@@ -22,15 +31,10 @@ since it's a real difference from "only tracked while working."
   the Android SDK (accept the first-run setup wizard's defaults, or Settings ->
   Languages & Frameworks -> Android SDK).
 
-Two things in `capacitor.config.json` are already set correctly in this repo and don't need
-touching, but are worth knowing about since they're easy to accidentally undo:
-- `android.useLegacyBridge: true` - without this, `@capacitor-community/background-geolocation`
-  stops delivering updates after ~5 minutes backgrounded (see the plugin's own README).
-- `plugins.CapacitorHttp.enabled: true` - routes network requests (including every
-  `driver_update_location` call to Supabase) through native code instead of the WebView. Without
-  it, Android throttles WebView-originated HTTP requests after ~5 minutes backgrounded, so
-  location pings would silently stop reaching the server even though the GPS watcher itself is
-  still running - this is the single most important setting for this app's entire purpose.
+`capacitor.config.json`'s `plugins.CapacitorHttp.enabled: true` setting is no longer load-bearing
+for tracking itself (`DriverTrackingService` makes its own native HTTP calls, bypassing the
+WebView entirely) but is still harmless to leave in place - `verify_login`/`driver_stop_tracking`
+still legitimately run through the WebView while it's confirmed to be open and foregrounded.
 
 ## 2. Build the web assets and Android project
 
@@ -45,28 +49,26 @@ npx cap sync android
 
 `npx cap add android` only needs to run once - it generates the `android/` folder. Every time you
 change anything under `src/`, re-run `npm run sync` (build + `cap sync`) before reopening Android
-Studio.
+Studio. `cap sync` does **not** touch hand-written native files (`DriverTrackingService.java`,
+`DriverTrackingPlugin.java`, `BootReceiver.java`, `MainActivity.java`) or manual
+`AndroidManifest.xml`/`build.gradle`/`variables.gradle` edits - those are safe to keep across syncs.
 
-## 3. Android permissions - no manual manifest edits needed
+## 3. Android permissions - hand-declared in AndroidManifest.xml
 
-Checked directly in `node_modules/@capacitor-community/background-geolocation/android/src/main/AndroidManifest.xml`
-and `node_modules/@capacitor/local-notifications/android/src/main/AndroidManifest.xml`: both
-plugins already declare everything they need (`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
-`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS`, plus a couple
-notification-scheduling permissions) in their own bundled manifests. Gradle's manifest merger
-pulls all of this into the app automatically at build time - `android/app/src/main/AndroidManifest.xml`
-does not need to be hand-edited for permissions.
+Unlike before (when `@capacitor-community/background-geolocation` and `@capacitor/local-notifications`
+bundled their own manifests that Gradle merged in automatically), permissions are now explicitly
+declared in `android/app/src/main/AndroidManifest.xml` since those plugins were removed:
+`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`, `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS`. If you ever add a plugin back or change this
+service's permission needs, this file needs a matching manual edit now - nothing auto-merges them
+in anymore.
 
-Notably, neither plugin declares `ACCESS_BACKGROUND_LOCATION`. That's deliberate, not missing:
-the plugin runs a foreground service with a visible notification (`foregroundServiceType="location"`),
-and Android grants a foreground service the same location access as an app in active use, without
-needing that separate (and more sensitive/scrutinized) permission. Practically, this means the
-driver will only see "While using the app" as a location option, not "Allow all the time" - that's
-expected, and is sufficient as long as the "tracking active" notification stays visible (i.e. the
-driver doesn't force-stop the app).
-
-If you ever change which background-geolocation plugin/version this app uses, re-check its bundled
-manifest the same way before assuming any permission is missing.
+`ACCESS_BACKGROUND_LOCATION` is still deliberately absent. `DriverTrackingService` runs as a
+foreground service with a visible notification (`foregroundServiceType="location"`), and Android
+grants a foreground service the same location access as an app in active use, without needing that
+separate (and more sensitive/scrutinized) permission. Practically, this means the driver will only
+see "While using the app" as a location option, not "Allow all the time" - that's expected, and is
+sufficient as long as the "tracking active" notification stays visible.
 
 ## 4. Build and install on a driver's phone
 
@@ -84,11 +86,12 @@ manifest the same way before assuming any permission is missing.
   in the background).
 - Go to phone Settings -> Apps -> RS Pet Stop Driver -> Battery, and set it to **Unrestricted** so
   Android doesn't kill the background service to save power.
-- **Enable "autostart" for the app.** `BootReceiver.java` relaunches the app after the phone
-  restarts, but most phone brands sold in the Philippines block third-party apps from
-  auto-starting after boot by default, regardless of any code-level fix - this is a manufacturer
-  restriction, not a bug in this app. The driver needs to manually whitelist the app once, in
-  whichever menu their phone brand uses:
+- **Enable "autostart" for the app.** `BootReceiver.java` starts `DriverTrackingService` directly
+  after the phone restarts, but most phone brands sold in the Philippines block third-party apps
+  from auto-starting after boot by default, regardless of any code-level fix - this is a
+  manufacturer restriction, not a bug in this app, and it's a separate concern from swipe-away
+  survival (which `DriverTrackingService`'s design handles on its own - see below). The driver
+  needs to manually whitelist the app once, in whichever menu their phone brand uses:
   - **Xiaomi/Redmi/POCO (MIUI/HyperOS)**: Settings -> Apps -> Manage apps -> RS Pet Stop Driver ->
     Autostart -> enable.
   - **Realme/Oppo (ColorOS)**: Settings -> Battery -> App Battery Management -> RS Pet Stop Driver
@@ -109,9 +112,15 @@ manifest the same way before assuming any permission is missing.
    today's stops.
 3. Lock the phone screen (or open Waze/Google Maps and start navigating) and move around -
    confirm the pin keeps updating on the portal.
-4. **Restart the phone** (without opening the app manually afterward) and confirm the app
-   auto-relaunches and the pin resumes updating on the portal within a minute or two - this is the
-   part most likely to need the manufacturer-specific autostart toggle above.
-5. Tap "Log Out" on the phone and confirm the pin dims to reflect the stopped state, and that
+4. **Swipe the app away from Recents entirely** (this is the main point of the native rewrite) and
+   confirm the pin *keeps updating* on the portal for several minutes with the app fully closed,
+   not just backgrounded. If this doesn't hold on a particular phone, it's almost certainly the
+   OEM autostart/battery whitelist step above not being enabled on that device - test on more than
+   one phone brand if possible, since aggressive OEMs (Xiaomi/MIUI especially) can still kill the
+   whole app process on swipe-away despite everything above, in which case only the boot-restart
+   or a manual reopen recovers it.
+5. **Restart the phone** (without opening the app manually afterward) and confirm the pin resumes
+   updating on the portal within a minute or two - same OEM caveat as step 4 applies here too.
+6. Tap "Log Out" on the phone and confirm the pin dims to reflect the stopped state, and that
    restarting the phone again does *not* bring tracking back (since there's no session saved
    anymore).

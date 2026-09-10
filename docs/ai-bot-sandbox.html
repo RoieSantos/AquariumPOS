@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Bot Sandbox - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .sandbox-card {
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      max-width: 720px;
+      margin-top: 16px;
+    }
+    .sandbox-messages {
+      padding: 14px;
+      min-height: 320px;
+      max-height: 60vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .sandbox-msg {
+      max-width: 80%;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .sandbox-msg-user {
+      align-self: flex-end;
+      background: #1d4f91;
+      color: #fff;
+    }
+    .sandbox-msg-assistant {
+      align-self: flex-start;
+      background: #f0f2f6;
+      color: #1b355e;
+    }
+    .sandbox-empty-state {
+      padding: 30px 16px;
+      text-align: center;
+      color: var(--muted-text, #61738f);
+      font-size: 13px;
+    }
+    .sandbox-input-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--panel-border);
+    }
+    .sandbox-input-row textarea {
+      flex: 1;
+      resize: vertical;
+      min-height: 40px;
+    }
+    .sandbox-error {
+      padding: 0 14px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>AI Bot Sandbox</h1>
+    <p class="muted">Test the Messenger AI bot's real logic (search, order lookups, quotes, delivery scheduling) from the portal - no Facebook conversation needed, useful while Meta messaging is unavailable/restricted. Actions like scheduling a delivery, sending a photo, escalating to staff, or scheduling a follow-up are SIMULATED here - the bot tells you what it would have done, but nothing real is written or sent. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="sandboxContent" class="hidden">
+      <div class="toolbar">
+        <button class="btn btn-secondary btn-sm" id="resetSandboxBtn" type="button">Reset Conversation</button>
+      </div>
+
+      <div class="sandbox-card">
+        <div class="sandbox-messages" id="sandboxMessagesEl">
+          <div class="sandbox-empty-state">Loading...</div>
+        </div>
+        <div id="sandboxErrorEl" class="sandbox-error error-text hidden"></div>
+        <div class="sandbox-input-row">
+          <textarea id="sandboxInput" rows="2" placeholder="Type a test message as if you were a customer..."></textarea>
+          <button class="btn btn-primary" id="sandboxSendBtn" type="button">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/aiBotSandbox.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

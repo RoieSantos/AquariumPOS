@@ -13,4 +13,7 @@ ext {
     androidxJunitVersion = '1.2.1'
     androidxEspressoCoreVersion = '3.6.1'
     cordovaAndroidVersion = '10.1.1'
+    // For DriverTrackingService's FusedLocationProviderClient - previously pulled in transitively
+    // via @capacitor-community/background-geolocation's own gradle file (now removed).
+    playServicesLocationVersion = '21.3.0'
 }
