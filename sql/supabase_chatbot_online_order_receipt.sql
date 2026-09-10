@@ -22,6 +22,12 @@
 -- Same flat "one row per line, header fields repeated" shape as admin_get_delivery_receipt so the
 -- client can render it the same way - line_no IS NULL is the sentinel for "this order has no synced
 -- lines yet" so the header still renders.
+--
+-- v2: added note_print (OnlineOrders."NotePrint" - the order-level print note, e.g. general
+-- delivery instructions) and line_note (OnlineOrderLines."Note" - a per-product note, e.g. a custom
+-- aquarium's dimensions/sealant spec) per direct request to show "all the notes captured in the
+-- order" - same two note fields/same header-vs-per-line split admin_get_delivery_receipt already
+-- exposes to staff.
 
 drop function if exists public.public_get_online_order_receipt(text);
 
@@ -39,10 +45,12 @@ returns table(
   amount_paid numeric,
   discount numeric,
   balance numeric,
+  note_print text,
   line_no int,
   line_description text,
   line_quantity numeric,
-  line_amount numeric
+  line_amount numeric,
+  line_note text
 )
 language plpgsql
 security definer
@@ -60,6 +68,7 @@ declare
   v_amount_paid numeric;
   v_discount numeric;
   v_balance numeric;
+  v_note_print text;
   v_order_id text := trim(p_order_id);
   v_line record;
   v_line_no int := 0;
@@ -78,10 +87,11 @@ begin
       o."Status"
     )::text,
     w."Name"::text, w."Address"::text,
-    o."DeliveryFee", o."MoneyToCollect", o."AmountPaid", o."Discount", o."Balance"
+    o."DeliveryFee", o."MoneyToCollect", o."AmountPaid", o."Discount", o."Balance",
+    nullif(trim(o."NotePrint"::text), '')
     into v_order_date, v_customer_name, v_shipping_address, v_status_label,
          v_warehouse_name, v_warehouse_address,
-         v_delivery_fee, v_money_to_collect, v_amount_paid, v_discount, v_balance
+         v_delivery_fee, v_money_to_collect, v_amount_paid, v_discount, v_balance, v_note_print
   from public."OnlineOrders" o
   left join public."Warehouses" w on w."ID" = o."LocationID"
   where o."OrderID" = v_order_id
@@ -93,7 +103,8 @@ begin
 
   for v_line in
     select l."Description"::text as description, l."Quantity" as quantity,
-           coalesce(l."GrossAmount", l."NetAmount", l."Price" * l."Quantity") as amount
+           coalesce(l."GrossAmount", l."NetAmount", l."Price" * l."Quantity") as amount,
+           nullif(trim(l."Note"::text), '') as note
     from public."OnlineOrderLines" l
     where l."OrderID" = v_order_id
     order by l."LineID"
@@ -111,10 +122,12 @@ begin
     amount_paid := v_amount_paid;
     discount := v_discount;
     balance := v_balance;
+    note_print := v_note_print;
     line_no := v_line_no;
     line_description := v_line.description;
     line_quantity := v_line.quantity;
     line_amount := v_line.amount;
+    line_note := v_line.note;
     return next;
   end loop;
 
@@ -131,10 +144,12 @@ begin
     amount_paid := v_amount_paid;
     discount := v_discount;
     balance := v_balance;
+    note_print := v_note_print;
     line_no := null;
     line_description := null;
     line_quantity := null;
     line_amount := null;
+    line_note := null;
     return next;
   end if;
 end;

@@ -123,6 +123,14 @@
       text-align: right;
     }
 
+    .line-note {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 0 4px 6px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+
     .totals {
       margin-left: auto;
       width: 220px;
@@ -213,6 +221,10 @@
           <div class="field-label">Shipping Address</div>
           <div class="field-value" id="fieldShippingAddress"></div>
         </div>
+        <div style="grid-column: 1 / -1;" id="fieldNotePrintWrap">
+          <div class="field-label">Order Note</div>
+          <div class="field-value" id="fieldNotePrint"></div>
+        </div>
       </div>
 
       <table>
@@ -274,6 +286,14 @@
       document.getElementById('fieldWarehouse').textContent = header.warehouse_name || '';
       document.getElementById('fieldShippingAddress').textContent = header.shipping_address || 'Pickup / not applicable';
 
+      const notePrintWrap = document.getElementById('fieldNotePrintWrap');
+      if (header.note_print) {
+        document.getElementById('fieldNotePrint').textContent = header.note_print;
+        notePrintWrap.classList.remove('hidden');
+      } else {
+        notePrintWrap.classList.add('hidden');
+      }
+
       const realLines = rows.filter((r) => r.line_no !== null);
       const linesBody = document.getElementById('linesBody');
       linesBody.innerHTML = realLines.length === 0
@@ -284,6 +304,7 @@
               <td class="num">${r.line_quantity ?? ''}</td>
               <td class="num">${formatMoney(r.line_amount)}</td>
             </tr>
+            ${r.line_note ? `<tr><td colspan="3" class="line-note">Note: ${r.line_note}</td></tr>` : ''}
           `).join('');
 
       const totalsBox = document.getElementById('totalsBox');
