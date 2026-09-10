@@ -39,7 +39,10 @@
            single day's route (map) and stops (cards) at a time, with Prev/Next Day nav instead
            of a full month calendar - a driver only ever needs "today's route", not to browse
            other days or assign/print. Mirrors the "map on top, orders below" layout of a
-           reference food-delivery app's "Delivering..." screen. -->
+           reference food-delivery app's "Delivering..." screen. When viewing TODAY, #driverRouteMap
+           also shows a live yellow pin for each Delivery Team driver currently sharing GPS
+           location, updated over Supabase Realtime - see renderDayMap/plotDriverMarkers in
+           js/delivery.js and supabase_driver_locations_table.sql. -->
       <div id="driverRouteView" class="hidden">
         <div class="toolbar">
           <button class="btn btn-secondary btn-sm" id="driverPrevDayBtn" type="button">&larr; Prev Day</button>
@@ -114,6 +117,9 @@
               <tbody id="dayStopsTableBody"></tbody>
             </table>
           </div>
+          <!-- When this panel is opened for TODAY, #dayMap also shows a live yellow pin for each
+               Delivery Team driver currently sharing GPS location - see the same
+               renderDayMap/plotDriverMarkers logic noted on #driverRouteMap above. -->
           <div id="dayMap"></div>
         </div>
       </div>

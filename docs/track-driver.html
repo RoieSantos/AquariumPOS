@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RS Pet Stop - Live Driver Tracking</title>
+  <style>
+    :root {
+      --page-bg: #f4f7fb;
+      --panel-bg: #ffffff;
+      --panel-border: #d7e0ef;
+      --text-main: #1b355e;
+      --text-muted: #61738f;
+      --primary: #1d4f91;
+      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+      color: var(--text-main);
+    }
+
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .subtitle {
+      margin: 0 0 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      margin-bottom: 14px;
+      font-size: 13px;
+    }
+
+    .status-card strong {
+      color: var(--primary);
+    }
+
+    #map {
+      width: 100%;
+      height: 60vh;
+      min-height: 320px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      box-shadow: var(--shadow);
+      background: #e9edf3;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Live Driver Tracking</h1>
+    <p class="subtitle">TEST FEATURE - this shows whichever RS Pet Stop driver is currently on the road, not matched to a specific order yet.</p>
+
+    <div id="statusCard" class="status-card">Loading driver status...</div>
+    <div id="map" class="hidden"></div>
+  </div>
+
+  <!-- Same anon-key client every public page uses (order-now.html, sticker.html) - no login here,
+       this page is meant to be opened from a link the chatbot sends a customer on Messenger. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script>
+    // Pin dims to "stale" past this age, same threshold the staff Delivery page uses
+    // (DRIVER_LOCATION_STALE_MS in js/delivery.js) so both surfaces agree on what "stale" means.
+    const STALE_MS = 5 * 60 * 1000;
+    // Independent of the Realtime subscription below (belt-and-suspenders, same reasoning as the
+    // pg_cron safety nets elsewhere in this project) - re-fetches in case a change event is missed.
+    const POLL_INTERVAL_MS = 15000;
+
+    const statusCard = document.getElementById('statusCard');
+    const mapEl = document.getElementById('map');
+
+    let map = null;
+    let marker = null;
+    let googleMapsReadyPromise = null;
+    let latestDriver = null;
+    let realtimeChannel = null;
+
+    function loadGoogleMapsScript(apiKey) {
+      if (googleMapsReadyPromise) return googleMapsReadyPromise;
+
+      googleMapsReadyPromise = new Promise((resolve, reject) => {
+        if (!apiKey) {
+          reject(new Error('Google Maps is not configured yet.'));
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}`;
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed to load the Google Maps script.'));
+        document.head.appendChild(script);
+      });
+
+      return googleMapsReadyPromise;
+    }
+
+    function minutesAgoText(updatedAtUtc) {
+      const minutes = Math.max(0, Math.round((Date.now() - new Date(updatedAtUtc).getTime()) / 60000));
+      if (minutes < 1) return 'just now';
+      if (minutes === 1) return '1 minute ago';
+      return `${minutes} minutes ago`;
+    }
+
+    function renderStatus(driver) {
+      if (!driver) {
+        statusCard.innerHTML = 'No driver is currently out and tracking right now. Check back once your order is out for delivery!';
+        mapEl.classList.add('hidden');
+        return;
+      }
+
+      const stale = (Date.now() - new Date(driver.updated_at_utc).getTime()) > STALE_MS;
+      statusCard.innerHTML = `<strong>${driver.display_name || 'Driver'}</strong> is out for delivery.<br>Last update: ${minutesAgoText(driver.updated_at_utc)}${stale ? ' <span style="color:#b3492c;">(connection may be delayed)</span>' : ''}`;
+    }
+
+    function plotOrMoveMarker(driver) {
+      const position = { lat: Number(driver.latitude), lng: Number(driver.longitude) };
+
+      if (!map) {
+        map = new google.maps.Map(mapEl, { center: position, zoom: 14 });
+      } else {
+        map.panTo(position);
+      }
+
+      if (!marker) {
+        marker = new google.maps.Marker({ position, map, title: driver.display_name || 'Driver' });
+      } else {
+        marker.setPosition(position);
+      }
+
+      mapEl.classList.remove('hidden');
+    }
+
+    async function refresh() {
+      const { data, error } = await supabaseClient.rpc('public_get_active_driver_locations');
+      if (error) {
+        statusCard.textContent = 'Could not check driver status right now - please try again shortly.';
+        return;
+      }
+
+      const driver = (data || [])[0] || null;
+      latestDriver = driver;
+      renderStatus(driver);
+
+      if (!driver) return;
+
+      try {
+        const { data: apiKey, error: keyError } = await supabaseClient.rpc('public_get_google_maps_api_key');
+        if (keyError || !apiKey) return; // status text above still works without the map
+        await loadGoogleMapsScript(apiKey);
+        plotOrMoveMarker(driver);
+      } catch (err) {
+        console.error('Could not load the live map:', err);
+      }
+    }
+
+    // Keeps the "X minutes ago" text moving even between refreshes/realtime events.
+    function tickStatusText() {
+      if (latestDriver) renderStatus(latestDriver);
+    }
+
+    function subscribeToDriverLocations() {
+      if (realtimeChannel) return;
+      realtimeChannel = supabaseClient
+        .channel('track-driver-page')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'DriverLocations' }, () => refresh())
+        .subscribe();
+    }
+
+    refresh();
+    subscribeToDriverLocations();
+    setInterval(refresh, POLL_INTERVAL_MS);
+    setInterval(tickStatusText, 30000);
+  </script>
+</body>
+</html>

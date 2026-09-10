@@ -48,6 +48,13 @@ let warehouseById = {}; // WarehouseID -> {name, address, latitude, longitude, g
 let vendorByCode = {}; // VendorCode -> {name, address, contact_person, phone, email, latitude, longitude, geocode_status, geocoded_address}, from loadVendorLookup
 let dateVendorsByDate = {}; // 'YYYY-MM-DD' -> [{vendor_code, vendor_name}], from loadMonthDateVendors - per-date (not weekly recurring) Vendor tags, super-user-assignable
 
+// Live Driver Tracking - plotted onto dayMapInstance itself (see renderDayMap) rather than a
+// separate map, so the driver's current position shows up right alongside today's stops/route.
+let driverMarkers = {}; // username -> google.maps.Marker, attached to whichever map is dayMapInstance right now
+let driverLocationsChannel = null; // Supabase Realtime channel, subscribed once at init
+let dayMapDateKey = null; // date currently rendered on dayMapInstance - see renderDayMap/refreshDriverMarkers
+let companyLogoUrl = null; // public.CompanyInfo.LogoUrl (see loadCompanyLogoUrl/js/companyBranding.js) - used as the driver marker icon when set
+
 function toDateKey(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -915,6 +922,9 @@ const DRIVER_MAP_DARK_STYLE = [
 async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   const mapEl = document.getElementById(mapElId);
   const isDriverMap = mapElId === 'driverRouteMap';
+  const isToday = dateKey === toDateKey(new Date());
+
+  dayMapDateKey = dateKey;
 
   try {
     await loadGoogleMapsScript();
@@ -927,10 +937,14 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   const warehouseMarkers = await resolveFixedRouteWarehouseMarkers(dateKey);
   const vendorMarkers = await resolveFixedRouteVendorMarkers(dateKey);
   const dateVendorMarkers = await resolveDateVendorMarkers(dateKey);
+  // Live driver pins are only meaningful for TODAY's map - a driver's *current* location has no
+  // relationship to a day being browsed in the past/future (see plotDriverMarkers below).
+  const driverLocations = isToday ? await fetchDriverLocations() : [];
 
-  if (plottedStops.length === 0 && warehouseMarkers.length === 0 && vendorMarkers.length === 0 && dateVendorMarkers.length === 0) {
+  if (plottedStops.length === 0 && warehouseMarkers.length === 0 && vendorMarkers.length === 0 && dateVendorMarkers.length === 0 && driverLocations.length === 0) {
     mapEl.innerHTML = '<p class="muted" style="padding:12px;">No geocoded locations to show for this day yet.</p>';
     dayMapInstance = null;
+    clearDriverMarkers();
     return;
   }
 
@@ -1005,7 +1019,163 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
     });
   }
 
+  if (isToday) {
+    plotDriverMarkers(driverLocations).forEach((position) => bounds.extend(position));
+  } else {
+    clearDriverMarkers();
+  }
+
   dayMapInstance.fitBounds(bounds);
+}
+
+// ---------------------------------------------------------------------------
+// Live Driver Tracking - plotted directly onto whichever day map (dayMap or driverRouteMap) is
+// currently showing TODAY, rather than a separate map, so dispatchers see the driver's current
+// position right alongside today's stops/route. See renderDayMap above, which calls
+// fetchDriverLocations/plotDriverMarkers/clearDriverMarkers as part of its own render.
+
+const DRIVER_LOCATION_STALE_MS = 5 * 60 * 1000; // pin dims if no ping in 5 minutes
+
+function driverLocationStatusText(loc) {
+  const ageMs = Date.now() - new Date(loc.updated_at_utc).getTime();
+  if (!loc.is_tracking) return 'Stopped';
+  if (ageMs > DRIVER_LOCATION_STALE_MS) return `Last seen ${Math.round(ageMs / 60000)} min ago`;
+  return 'Live';
+}
+
+async function fetchDriverLocations() {
+  const { data, error } = await supabaseClient.rpc('admin_get_driver_locations', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    console.error('admin_get_driver_locations failed:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// Fallback truck glyph (white on a portal-blue circle, matching the route polyline's #1d4f91),
+// used only if General Setup hasn't uploaded a company logo yet - see loadCompanyLogoUrl.
+const DRIVER_TRUCK_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+  <circle cx="18" cy="18" r="17" fill="#1d4f91" stroke="#ffffff" stroke-width="2"/>
+  <g transform="translate(7,11)" fill="#ffffff">
+    <path d="M0 0h13v9H0z"/>
+    <path d="M13 3h4.5l3.5 3.5V9h-8z"/>
+    <circle cx="4" cy="12" r="2.3" fill="#1d4f91" stroke="#ffffff" stroke-width="1.3"/>
+    <circle cx="16.5" cy="12" r="2.3" fill="#1d4f91" stroke="#ffffff" stroke-width="1.3"/>
+  </g>
+</svg>`.trim();
+
+// public.CompanyInfo.LogoUrl - same table/column js/companyBranding.js reads for the printable
+// letterhead, readable directly via RLS with no RPC/session needed (see that file's header
+// comment). Not loaded via companyBranding.js itself since delivery.html doesn't otherwise need
+// its DOM-rendering helpers (renderCompanyLetterhead/applyAppBackground) - just this one field.
+async function loadCompanyLogoUrl() {
+  const { data, error } = await supabaseClient.from('CompanyInfo').select('"LogoUrl"').eq('"Id"', 1).limit(1);
+  if (error || !data || data.length === 0) return;
+  companyLogoUrl = data[0]['LogoUrl'] || null;
+}
+
+// Deferred into a function (rather than a top-level constant) since google.maps.Size/Point don't
+// exist until loadGoogleMapsScript() resolves, which happens before this is ever called.
+function driverMarkerIcon() {
+  if (companyLogoUrl) {
+    return {
+      url: companyLogoUrl,
+      scaledSize: new google.maps.Size(40, 40),
+      anchor: new google.maps.Point(20, 20)
+    };
+  }
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(DRIVER_TRUCK_SVG)}`,
+    scaledSize: new google.maps.Size(36, 36),
+    anchor: new google.maps.Point(18, 18)
+  };
+}
+
+// Adds/updates one marker per driver on dayMapInstance (creating it if new, moving it in place if
+// not - so a Realtime-triggered refresh doesn't recreate markers from scratch every ping) and
+// removes markers for drivers no longer returned. Returns the plotted positions so the caller can
+// extend its own bounds/fitBounds - this function never calls fitBounds itself, since it's also
+// used for live updates where re-fitting/re-zooming on every ping would be jarring.
+function plotDriverMarkers(locations) {
+  const seenUsernames = new Set();
+  const positions = [];
+
+  locations.forEach((loc) => {
+    seenUsernames.add(loc.username);
+    const position = { lat: Number(loc.latitude), lng: Number(loc.longitude) };
+    positions.push(position);
+
+    const stale = loc.is_tracking && (Date.now() - new Date(loc.updated_at_utc).getTime()) > DRIVER_LOCATION_STALE_MS;
+    // Dim stale/stopped drivers via opacity on the same truck icon rather than swapping icons.
+    const opacity = (!loc.is_tracking || stale) ? 0.45 : 1;
+    const title = `${loc.display_name || loc.username} (Driver) - ${driverLocationStatusText(loc)}`;
+
+    let marker = driverMarkers[loc.username];
+    if (!marker) {
+      marker = new google.maps.Marker({
+        position,
+        map: dayMapInstance,
+        title,
+        opacity,
+        zIndex: 999,
+        icon: driverMarkerIcon()
+      });
+      driverMarkers[loc.username] = marker;
+    } else {
+      marker.setMap(dayMapInstance);
+      marker.setPosition(position);
+      marker.setTitle(title);
+      marker.setOpacity(opacity);
+    }
+  });
+
+  Object.keys(driverMarkers).forEach((username) => {
+    if (!seenUsernames.has(username)) {
+      driverMarkers[username].setMap(null);
+      delete driverMarkers[username];
+    }
+  });
+
+  return positions;
+}
+
+function clearDriverMarkers() {
+  Object.values(driverMarkers).forEach((m) => m.setMap(null));
+  driverMarkers = {};
+}
+
+// Re-invoked on every Realtime change to DriverLocations - just moves the existing pin(s) on
+// whichever day map is currently showing TODAY, without re-running the full renderDayMap (which
+// also re-fetches warehouse/vendor markers - unnecessary just to move a driver).
+async function refreshDriverMarkers() {
+  if (!dayMapInstance || dayMapDateKey !== toDateKey(new Date())) return;
+  plotDriverMarkers(await fetchDriverLocations());
+}
+
+// First use of Supabase Realtime postgres_changes in this codebase (chat.js uses Broadcast
+// channels instead) - DriverLocations has its own permissive RLS select policy specifically so
+// this subscription can see row changes; see supabase_driver_locations_table.sql. Subscribed once
+// at page init (not gated behind any toggle) so a day map already open for today updates live.
+function subscribeToDriverLocations() {
+  if (driverLocationsChannel) return;
+
+  driverLocationsChannel = supabaseClient
+    .channel('driver-locations')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'DriverLocations' }, () => {
+      refreshDriverMarkers();
+    })
+    .subscribe();
+
+  window.addEventListener('beforeunload', () => {
+    supabaseClient.removeChannel(driverLocationsChannel);
+  });
 }
 
 async function removeStop(stopId, dateKey) {
@@ -1436,6 +1606,8 @@ function wireToolbarAndModal() {
   document.getElementById('setupContent').classList.remove('hidden');
 
   await loadGoogleMapsApiKey();
+  await loadCompanyLogoUrl();
+  subscribeToDriverLocations();
   await loadWarehouseLookup();
   await loadVendorLookup();
   await loadAndRenderRouteSchedule();

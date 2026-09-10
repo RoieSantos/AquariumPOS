@@ -592,10 +592,16 @@
               <option>Glass</option>
               <option>Acrylic</option>
               <option>Allum TopCover</option>
+              <option>Marine Plywood</option>
+              <option>Laminated Plywood</option>
             </select>
           </div>
           <div class="form-row hidden" id="standaloneStickerThicknessWrap">
             <label for="standaloneStickerThickness">Thickness</label>
+            <!-- Options are replaced at runtime by setStandaloneStickerVisibilityState() via
+                 CustomAquariumCalculator.getStickerThicknessOptions(type) - Rubber Matting/Glass
+                 get 3/6/10/12mm, Marine/Laminated Plywood get only 6/18mm. These are just the
+                 initial (Rubber Matting/Glass) options for pre-JS/no-JS rendering. -->
             <select id="standaloneStickerThickness">
               <option>3mm</option>
               <option selected>6mm</option>

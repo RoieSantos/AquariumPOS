@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GMA Conversations - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .inbox-grid {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 16px;
+      margin-top: 16px;
+      align-items: start;
+    }
+    @media (max-width: 800px) {
+      .inbox-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .inbox-list-card, .inbox-thread-card {
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .inbox-list-card {
+      max-height: 75vh;
+      overflow-y: auto;
+    }
+    .inbox-conv-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--panel-border);
+      cursor: pointer;
+    }
+    .inbox-conv-item:hover {
+      background: #f4f7fb;
+    }
+    .inbox-conv-item.active {
+      background: #eaf0fb;
+    }
+    .inbox-conv-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 3px;
+    }
+    .inbox-conv-psid {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main, #1b355e);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .inbox-conv-time {
+      font-size: 11px;
+      color: var(--muted-text, #61738f);
+      flex-shrink: 0;
+    }
+    .inbox-conv-preview {
+      font-size: 12px;
+      color: var(--muted-text, #61738f);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .inbox-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 10px;
+      margin-left: 6px;
+    }
+    .inbox-badge-escalated {
+      background: #fdecea;
+      color: #b3492c;
+    }
+    .inbox-badge-paused {
+      background: #fff4e0;
+      color: #8a5a00;
+    }
+    .inbox-thread-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .inbox-thread-messages {
+      padding: 14px;
+      max-height: 50vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .inbox-msg {
+      max-width: 75%;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .inbox-msg-user {
+      align-self: flex-start;
+      background: #f0f2f6;
+      color: #1b355e;
+    }
+    .inbox-msg-assistant {
+      align-self: flex-end;
+      background: #1d4f91;
+      color: #fff;
+    }
+    .inbox-msg-staff {
+      align-self: flex-end;
+      background: #1e9a59;
+      color: #fff;
+    }
+    .inbox-msg-sender {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      opacity: 0.85;
+      margin-bottom: 2px;
+    }
+    .inbox-empty-state {
+      padding: 30px 16px;
+      text-align: center;
+      color: var(--muted-text, #61738f);
+      font-size: 13px;
+    }
+    .inbox-reply-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--panel-border);
+    }
+    .inbox-reply-row textarea {
+      flex: 1;
+      resize: vertical;
+      min-height: 40px;
+    }
+    .inbox-reply-error {
+      padding: 0 14px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>GMA Conversations</h1>
+    <p class="muted">Our own inbox for the Facebook Messenger AI bot's conversations - no Pancake involved, same Messenger page underneath. Pause a conversation to stop the bot and reply yourself right here, or leave it running and just keep an eye on things. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="inboxContent" class="hidden">
+      <div class="toolbar">
+        <button class="btn btn-secondary btn-sm" id="refreshInboxBtn" type="button">Refresh</button>
+      </div>
+
+      <div class="inbox-grid">
+        <div class="inbox-list-card" id="conversationListEl">
+          <div class="inbox-empty-state">Loading conversations...</div>
+        </div>
+
+        <div class="inbox-thread-card">
+          <div class="inbox-thread-header" id="threadHeaderEl">
+            <span class="muted">Select a conversation to view its messages.</span>
+          </div>
+          <div class="inbox-thread-messages" id="threadMessagesEl"></div>
+          <div id="replyErrorEl" class="inbox-reply-error error-text hidden"></div>
+          <div class="inbox-reply-row hidden" id="replyRowEl">
+            <textarea id="replyInput" rows="2" placeholder="Type a reply to send on Messenger..."></textarea>
+            <button class="btn btn-primary" id="sendReplyBtn" type="button">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/gmaConversations.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

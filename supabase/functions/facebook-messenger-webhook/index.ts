@@ -22,6 +22,15 @@
 // as-is - this page's PSIDs have no relationship to that RPC's OrderNo values, so the bot always
 // asks the customer for their order number rather than trying to look one up by PSID/phone.
 //
+// Proactive follow-ups: see sql/supabase_chatbot_followup_settings.sql (on/off + delay knobs,
+// portal-editable from AI Bot Setup) and sql/supabase_chatbot_followups.sql (the ChatbotFollowUps
+// queue + detection columns). This file only ever REACTS to an inbound Messenger message; actually
+// sending a follow-up is supabase/functions/chatbot-followup-dispatcher's job, run on a pg_cron
+// timer. This file's role in the feature is: (1) track LastCustomerMessageAtUtc/LastBotMessageAtUtc/
+// AbandonedNudgeSentAtUtc/EscalatedAtUtc so the dispatcher can detect an abandoned or escalated
+// conversation, and (2) the schedule_follow_up tool, letting the bot itself queue a follow-up the
+// moment it promises a customer a callback.
+//
 // Always acks Facebook with 200 once the request's signature checks out, even if something later
 // fails internally (logged via console.error) - a non-200 makes Facebook redeliver the same event,
 // and a retry storm on a genuinely broken message is worse than silently dropping it. Dedup on
@@ -38,6 +47,9 @@ const MAX_TOKENS = 2048;
 const HISTORY_LIMIT = 20;
 const RATE_LIMIT_WINDOW_MINUTES = 5;
 const RATE_LIMIT_MAX_MESSAGES = 15;
+// Small pause before sending the reply so the bot doesn't feel instant/robotic, and so replies
+// aren't fired at Meta back-to-back-to-back during a burst of customer messages.
+const REPLY_DELAY_MS = 2000;
 // Both store branches (Amaya/GMA) are in the Philippines - hardcoded rather than a settings-page
 // field since there's no multi-timezone need today; change this constant if that ever changes.
 const STORE_TIMEZONE = 'Asia/Manila';
@@ -649,11 +661,11 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_order_status',
     description:
-      'Look up the status of a previously placed order by its order number (format AO-xxxxx). Never call this without an order number - if the customer only says "my order", ask them for the order number first.',
+      'Look up the status of a previously placed order by its order number. Works for either a portal Automated Order (format AO-xxxxx, e.g. from a custom quote) or a regular Online Order placed through Pancake/checkout - just pass whatever number the customer gives you, this tries both. An Online Order result also includes a receiptUrl link to a printable/PDF-saveable receipt page, for when the customer specifically asks for a receipt rather than just a status update. Never call this without an order number - if the customer only says "my order", ask them for the order number first.',
     input_schema: {
       type: 'object',
       properties: {
-        order_no: { type: 'string', description: 'The order number, e.g. AO-00001.' }
+        order_no: { type: 'string', description: 'The order number, e.g. AO-00001 or a Pancake Online Order ID.' }
       },
       required: ['order_no']
     }
@@ -705,6 +717,52 @@ const TOOLS: Anthropic.Tool[] = [
         destination_address: { type: 'string', description: 'The customer\'s full delivery address.' }
       },
       required: ['origin_location', 'destination_address']
+    }
+  },
+  {
+    name: 'send_item_image',
+    description:
+      'Sends a photo of a specific product to the customer on Messenger. Only call this AFTER the customer explicitly agrees to see a picture - when a customer asks about a product, first offer in your reply ("want me to send a photo?") and wait for them to say yes before calling this. Requires the item_code from a prior search_items or list_items_in_category result - never guess a code.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        item_code: { type: 'string', description: 'The item\'s code, from search_items or list_items_in_category.' }
+      },
+      required: ['item_code']
+    }
+  },
+  {
+    name: 'get_driver_location',
+    description:
+      'TEST TOOL - checks whether a delivery driver is currently out and tracking, and returns a live-updating tracking link plus how long ago their GPS last updated. Call this immediately whenever a customer asks where the driver is - never ask for an order number first, this tool has nothing to do with orders yet (it is not matched to any specific customer/order - it just reports whichever driver is currently tracking, for testing that GPS reporting works end-to-end). Share the liveTrackingUrl link (a page that keeps updating as the driver moves - tell the customer that) and minutesSinceUpdate directly in your reply; mapsUrl is a fallback snapshot pin only, mention it as an alternative, not the main link. Optionally pass destination_address (ask the customer for their delivery address first, only if they want an ETA) to also estimate driving distance/time from the driver\'s current position to that address. Never state an ETA without calling this tool first.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        destination_address: {
+          type: 'string',
+          description: 'Optional - a delivery address to estimate distance/ETA from the driver\'s current location to.'
+        }
+      }
+    }
+  },
+  {
+    name: 'schedule_follow_up',
+    description:
+      'Schedule a proactive follow-up message to be sent to this customer later, on Messenger, with no action needed from them first. Use this ONLY right after telling the customer in your reply that you will check back with them (e.g. "I\'ll follow up tomorrow once we confirm stock" or "let me check back with you in a bit") - never schedule one silently without saying so.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        hours_from_now: {
+          type: 'number',
+          description: 'How many hours from now to send the follow-up, e.g. 24 for "tomorrow", 2 for "in a couple hours". Clamped to between 1 and 168 (one week).'
+        },
+        reason: {
+          type: 'string',
+          description:
+            'What to follow up about and why, in plain language - this is read later by another AI call (not shown to the customer) to compose the actual follow-up message, so make it self-contained, e.g. "confirm whether the 20 gallon rimless tank is back in stock and the customer still wants it".'
+        }
+      },
+      required: ['hours_from_now', 'reason']
     }
   }
 ];
@@ -767,7 +825,8 @@ function buildCurrentTimeLine(timeZone: string): string {
 function buildSystemPrompt(
   storeInfo: Record<string, unknown> | null,
   companyInfo: Record<string, unknown> | null,
-  aiSettings: Record<string, unknown> | null
+  aiSettings: Record<string, unknown> | null,
+  followUpSettings: Record<string, unknown> | null
 ): string {
   const companyName = (companyInfo?.CompanyName as string) || 'RS Pet Stop';
   const botName = (aiSettings?.BotName as string) || `${companyName} Messenger Assistant`;
@@ -777,12 +836,13 @@ function buildSystemPrompt(
     'If a customer asks whether you are a bot, say plainly that you are an automated assistant, then keep helping.',
     '',
     'WHAT YOU CAN HELP WITH:',
-    '- Whether a product is in stock and its price (use the search_items or list_items_in_category tools - never guess).',
+    '- Whether a product is in stock and its price (use the search_items or list_items_in_category tools - never guess). When you tell a customer about a specific product, offer to send a photo of it ("want me to send you a photo?") - only call send_item_image after they say yes, using the item_code from that search result. Never send a photo unprompted, and never send more than one or two per exchange even if asked about several items at once - offer, then send only the one(s) they confirm.',
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
-    '- The status of a previously placed order, ONLY when the customer gives you their order number (format like AO-00001). If they ask about "my order" without a number, ask them for it first - never call get_order_status without one.',
+    '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Printed/To Ship/Shipped/Cancelled), and which branch/warehouse it was ordered from; for an Automated Order result, share its Pancake sync status plainly (e.g. still being processed vs. confirmed). There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
     '- Custom aquarium and/or stand price quotes: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). Always tell the customer this is an estimate and staff will confirm the final price. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
     '- Delivery fee estimates: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. Always tell the customer this is an estimate and staff will confirm the final fee.',
+    '- Where the delivery driver currently is (TEST feature): if a customer asks where the driver is, call get_driver_location right away and share the liveTrackingUrl link directly in your reply (mention that the page updates live as the driver moves), plus how many minutes since the last GPS update. Unlike order status, do NOT ask for an order number first - this tool is not matched to any order/customer yet, it just reports whichever driver is currently tracking, for testing that GPS reporting works.',
     '- General conversation about aquariums, fish, and pets, related to what the store sells.',
     '',
     'AQUARIUM & STAND SAFETY RULES - understand these so you can explain and apply them confidently in conversation, not just react after the fact. compute_aquarium_quote always does the actual math and is the source of truth for exact numbers - never calculate or predict a safety change yourself, but you should recognize when one is likely so you can set expectations before quoting:',
@@ -799,7 +859,19 @@ function buildSystemPrompt(
     'WHEN TO ESCALATE TO STAFF:',
     '- Refund requests, complaints, damaged/wrong items, price negotiation, or the customer explicitly asking for a human.',
     '- Call the escalate_to_staff tool, then let the customer know a team member will follow up with them in this same conversation.',
-    '',
+    ''
+  ];
+
+  if (followUpSettings?.CommittedEnabled) {
+    lines.push(
+      'PROACTIVE FOLLOW-UPS:',
+      '- If you tell a customer you\'ll check back with them later (stock confirmation, staff getting back to them, anything that needs time), call the schedule_follow_up tool right after saying so, with a clear reason and how many hours from now. A separate AI call sends that follow-up automatically - you will not be in the loop when it happens, so only promise what schedule_follow_up can actually cover, and never promise a follow-up without calling it.',
+      '- Don\'t schedule one for things you can already answer now (use the other tools instead), and don\'t schedule more than one open follow-up for the same thing.',
+      ''
+    );
+  }
+
+  lines.push(
     'GROUNDING RULES:',
     '- Never invent stock, price, order, aquarium quote, or delivery fee information - always use the tools.',
     '- If a tool returns nothing, say so plainly rather than guessing.',
@@ -808,7 +880,7 @@ function buildSystemPrompt(
     'FORMATTING:',
     '- Messenger renders plain text only - no markdown (no **bold**, no [links](url)).',
     '- Keep replies conversational and reasonably short, not bulleted essays.'
-  ];
+  );
 
   if (storeInfo) {
     lines.push('', 'STORE INFO:');
@@ -996,11 +1068,89 @@ async function computeDeliveryQuote(supabase: SupabaseClient, input: Record<stri
   };
 }
 
+// Backs the get_driver_location tool - a first pass at letting the chatbot answer "where is the
+// driver?" using the live GPS feed from driver-app/ (see supabase_driver_locations_table.sql).
+// Deliberately NOT tied to a specific order/customer yet (see that tool's description) - just
+// reports whichever driver(s) are currently tracking, per direct request to test this capability
+// before wiring it to real order/delivery-stop matching.
+async function computeDriverLocation(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data: rows, error } = await supabase.rpc('public_get_active_driver_locations');
+  if (error) return { error: `Could not check driver location: ${error.message}` };
+
+  const driver = (rows ?? [])[0] as
+    | { display_name: string; latitude: number; longitude: number; recorded_at_utc: string; updated_at_utc: string }
+    | undefined;
+  if (!driver) {
+    return { error: 'No driver is currently out and tracking right now.' };
+  }
+
+  const minutesSinceUpdate = Math.max(0, Math.round((Date.now() - new Date(driver.updated_at_utc).getTime()) / 60000));
+  const result: Record<string, unknown> = {
+    ok: true,
+    driverDisplayName: driver.display_name,
+    minutesSinceUpdate,
+    latitude: driver.latitude,
+    longitude: driver.longitude,
+    // Primary link to share - a real live-updating page (docs/track-driver.html, public/anon, no
+    // login) rather than a static coordinate snapshot, so the customer sees the driver actually
+    // move if they keep the page open. Backed by the same public_get_active_driver_locations RPC
+    // this tool itself calls, plus a Realtime subscription on DriverLocations for live updates.
+    liveTrackingUrl: 'https://rspetstop.com/track-driver.html',
+    // Secondary/fallback - a plain snapshot pin at the driver's position at the moment of this
+    // reply, in case the customer wants to open it directly in Google Maps/Waze instead.
+    mapsUrl: `https://www.google.com/maps?q=${driver.latitude},${driver.longitude}`
+  };
+
+  const destinationAddress = String(input.destination_address ?? '').trim();
+  if (!destinationAddress) {
+    return result;
+  }
+
+  const routesApiKey = Deno.env.get('GOOGLE_ROUTES_API_KEY');
+  if (!routesApiKey) {
+    result.etaError = 'Distance/ETA is not configured yet - just share the last-checked-in time.';
+    return result;
+  }
+
+  try {
+    const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': routesApiKey,
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters'
+      },
+      body: JSON.stringify({
+        origin: { location: { latLng: { latitude: driver.latitude, longitude: driver.longitude } } },
+        destination: { address: destinationAddress },
+        travelMode: 'DRIVE'
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      result.etaError = data?.error?.message || 'Could not calculate distance to that address.';
+      return result;
+    }
+    const route = data?.routes?.[0];
+    if (!route?.distanceMeters) {
+      result.etaError = 'Could not find a driving route to that address - ask the customer to double check it.';
+      return result;
+    }
+    result.distanceKm = Math.round((route.distanceMeters / 1000) * 10) / 10;
+    result.etaMinutes = Math.round(Number(String(route.duration ?? '0s').replace('s', '')) / 60);
+  } catch (err) {
+    result.etaError = err instanceof Error ? err.message : 'Could not reach the mapping service.';
+  }
+
+  return result;
+}
+
 async function executeTool(
   supabase: SupabaseClient,
   psid: string,
   name: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  followUpSettings: Record<string, unknown> | null
 ): Promise<string> {
   switch (name) {
     case 'search_items': {
@@ -1025,20 +1175,80 @@ async function executeTool(
     case 'get_order_status': {
       const orderNo = String(input.order_no ?? '').trim();
       if (!orderNo) return 'No order number provided.';
-      const { data, error } = await supabase.rpc('public_get_automated_order_status', { p_order_no: orderNo });
-      if (error) return `Lookup failed: ${error.message}`;
-      return data && data.length > 0 ? JSON.stringify(data[0]) : 'No order found with that number.';
+
+      const { data: automatedData, error: automatedError } = await supabase.rpc('public_get_automated_order_status', {
+        p_order_no: orderNo
+      });
+      if (automatedError) return `Lookup failed: ${automatedError.message}`;
+      if (automatedData && automatedData.length > 0) {
+        return JSON.stringify({ orderType: 'Automated Order', ...automatedData[0] });
+      }
+
+      // Not an Automated Order - try it as a regular Pancake Online Order instead (see
+      // supabase_chatbot_online_order_status_rpc.sql). Most customers' order numbers are this kind,
+      // not an AO-xxxxx one, so both are always checked rather than requiring the customer to know
+      // which system their order lives in.
+      const { data: onlineData, error: onlineError } = await supabase.rpc('public_get_online_order_status', {
+        p_order_id: orderNo
+      });
+      if (onlineError) return `Lookup failed: ${onlineError.message}`;
+      if (onlineData && onlineData.length > 0) {
+        const { data: lineData, error: lineError } = await supabase.rpc('public_get_online_order_lines', { p_order_id: orderNo });
+        if (lineError) return `Lookup failed: ${lineError.message}`;
+        // No image/PDF rendering exists in this stack (see supabase_chatbot_online_order_receipt.sql
+        // header) - the bot shares a link to a public, no-login receipt page instead, only when the
+        // customer actually asks for a receipt/proof of order, not on every status check.
+        const receiptUrl = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(String(onlineData[0].order_id))}`;
+        return JSON.stringify({ orderType: 'Online Order', ...onlineData[0], items: lineData ?? [], receiptUrl });
+      }
+
+      return 'No order found with that number.';
     }
     case 'escalate_to_staff': {
       const reason = String(input.reason ?? 'Customer requested human assistance.');
-      await supabase.from('ChatbotConversations').update({ Status: 'Escalated' }).eq('Psid', psid);
+      await supabase
+        .from('ChatbotConversations')
+        .update({ Status: 'Escalated', EscalatedAtUtc: new Date().toISOString(), EscalationCheckinSentAtUtc: null })
+        .eq('Psid', psid);
       await supabase.rpc('_telegram_send_message', { p_text: `Chatbot escalation (PSID ${psid}): ${reason}` });
       return 'Staff have been notified and will follow up with the customer directly in this conversation.';
+    }
+    case 'send_item_image': {
+      const itemCode = String(input.item_code ?? '').trim();
+      if (!itemCode) return 'No item code provided.';
+
+      const { data: imagesRaw, error } = await supabase.rpc('public_get_item_image', { p_code: itemCode });
+      if (error) return `Lookup failed: ${error.message}`;
+
+      const imageUrl = imagesRaw ? String(imagesRaw).split(',')[0].trim() : '';
+      if (!imageUrl) return 'No photo is on file for that item - let the customer know a photo isn\'t available yet.';
+
+      const pageAccessToken = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
+      const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
+      if (!pageAccessToken) return 'Photo sending is not configured right now.';
+
+      const sent = await sendMessengerImage(psid, imageUrl, pageAccessToken, graphVersion);
+      return sent ? 'Photo sent to the customer.' : 'Sending the photo failed - let the customer know and continue without it.';
     }
     case 'compute_aquarium_quote':
       return JSON.stringify(await computeAquariumQuote(supabase, input));
     case 'compute_delivery_quote':
       return JSON.stringify(await computeDeliveryQuote(supabase, input));
+    case 'get_driver_location':
+      return JSON.stringify(await computeDriverLocation(supabase, input));
+    case 'schedule_follow_up': {
+      if (!followUpSettings?.CommittedEnabled) {
+        return 'Follow-up scheduling is turned off in the store settings right now - do not promise a callback. Let the customer know a team member will follow up if needed, or just continue helping them now.';
+      }
+      const hours = Math.min(168, Math.max(1, Number(input.hours_from_now) || 24));
+      const reason = String(input.reason ?? 'Follow up with the customer as promised.').slice(0, 1000);
+      const dueAtUtc = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+      const { error } = await supabase
+        .from('ChatbotFollowUps')
+        .insert({ Psid: psid, FollowUpType: 'Committed', DueAtUtc: dueAtUtc, Reason: reason, Status: 'Pending' });
+      if (error) return `Could not schedule the follow-up: ${error.message}`;
+      return `Follow-up scheduled for about ${hours} hour(s) from now.`;
+    }
     default:
       return `Unknown tool: ${name}`;
   }
@@ -1056,6 +1266,28 @@ async function sendMessengerReply(psid: string, text: string, pageAccessToken: s
   if (!res.ok) {
     console.error(`Messenger Send API failed (${res.status}): ${await res.text()}`);
   }
+}
+
+// Backs the send_item_image tool - sent as its own Messenger message (Facebook has no "text with
+// inline image" concept), immediately when the tool runs rather than queued alongside the bot's
+// text reply. Returns false on failure so executeTool can tell Claude the send didn't actually
+// work, instead of the model wrongly assuring the customer a photo is on its way.
+async function sendMessengerImage(psid: string, imageUrl: string, pageAccessToken: string, graphVersion: string): Promise<boolean> {
+  const url = `https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: psid },
+      message: { attachment: { type: 'image', payload: { url: imageUrl, is_reusable: true } } },
+      messaging_type: 'RESPONSE'
+    })
+  });
+  if (!res.ok) {
+    console.error(`Messenger image send failed (${res.status}): ${await res.text()}`);
+    return false;
+  }
+  return true;
 }
 
 async function isRateLimited(supabase: SupabaseClient, psid: string): Promise<boolean> {
@@ -1091,6 +1323,21 @@ async function processMessage(
     console.error('Failed to record inbound chatbot message:', insertErr.message);
   }
 
+  // A fresh inbound message means any prior idle stretch is over - clears AbandonedNudgeSentAtUtc
+  // so chatbot-followup-dispatcher can detect the *next* idle stretch, if there is one.
+  await supabase
+    .from('ChatbotConversations')
+    .update({ LastCustomerMessageAtUtc: new Date().toISOString(), AbandonedNudgeSentAtUtc: null })
+    .eq('Psid', psid);
+
+  // Staff-controlled pause (docs/ai-bot-messages.html, set via admin_set_chatbot_conversation_paused
+  // - see supabase_chatbot_conversations_admin_inbox.sql) - independent of Status/Escalated, which
+  // never silences the bot on its own per direct confirmation. The message above is still recorded
+  // and LastCustomerMessageAtUtc still updates, so a paused conversation stays visible/current in
+  // the inbox - only the auto-reply itself is skipped, so staff can answer manually on Messenger.
+  const { data: pauseCheck } = await supabase.from('ChatbotConversations').select('IsPaused').eq('Psid', psid).maybeSingle();
+  if (pauseCheck?.IsPaused) return;
+
   if (await isRateLimited(supabase, psid)) {
     await sendMessengerReply(psid, "You're sending messages a bit fast - give me a moment to catch up!", pageAccessToken, graphVersion);
     return;
@@ -1103,14 +1350,20 @@ async function processMessage(
     .order('CreatedAtUtc', { ascending: false })
     .limit(HISTORY_LIMIT);
 
+  // 'staff' rows (a human's manual reply from docs/gma-conversations.html - see
+  // supabase_chatbot_staff_reply.sql) map to 'assistant' here - Claude's Messages API only accepts
+  // 'user'/'assistant' roles, and a staff reply plays the same conversational turn as a bot reply
+  // from the model's perspective. The DB keeps the real 'staff' value (for the inbox UI's own
+  // labeling/coloring) - only this Claude-facing mapping collapses the two.
   const messages: Anthropic.MessageParam[] = (historyRows ?? [])
     .reverse()
-    .map((row: { Role: string; Content: string }) => ({ role: row.Role as 'user' | 'assistant', content: row.Content }));
+    .map((row: { Role: string; Content: string }) => ({ role: row.Role === 'user' ? 'user' : 'assistant', content: row.Content }));
 
-  const [{ data: storeInfo }, { data: companyInfo }, { data: aiSettings }] = await Promise.all([
+  const [{ data: storeInfo }, { data: companyInfo }, { data: aiSettings }, { data: followUpSettings }] = await Promise.all([
     supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
     supabase.from('CompanyInfo').select('*').eq('Id', 1).maybeSingle(),
-    supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle()
+    supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle(),
+    supabase.from('ChatbotFollowUpSettings').select('*').eq('Id', 1).maybeSingle()
   ]);
 
   // Not type-annotated as Anthropic.TextBlockParam[] - structural typing against
@@ -1120,15 +1373,19 @@ async function processMessage(
   // different on every request - keeping it out of the cached block preserves the cache hit rate
   // for everything else.
   const systemBlocks = [
-    { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings), cache_control: { type: 'ephemeral' as const } },
+    { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
     { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) }
   ];
 
   let finalText = "Sorry, I'm having trouble responding right now - a team member will follow up with you shortly.";
 
+  // AiSettings.AiModel (portal-editable, see ai-bot-setup.html) overrides the env/default model
+  // when set, so the store owner can switch models without a code deploy.
+  const effectiveModel = (aiSettings?.AiModel as string | undefined)?.trim() || model;
+
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await anthropic.messages.create({
-      model,
+      model: effectiveModel,
       max_tokens: MAX_TOKENS,
       system: systemBlocks,
       thinking: { type: 'adaptive' },
@@ -1155,15 +1412,19 @@ async function processMessage(
     const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const tool of toolUseBlocks) {
-      const result = await executeTool(supabase, psid, tool.name, tool.input as Record<string, unknown>);
+      const result = await executeTool(supabase, psid, tool.name, tool.input as Record<string, unknown>, followUpSettings);
       toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: result });
     }
     messages.push({ role: 'user', content: toolResults });
   }
 
   await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: finalText });
-  await supabase.from('ChatbotConversations').update({ LastMessageAtUtc: new Date().toISOString() }).eq('Psid', psid);
+  await supabase
+    .from('ChatbotConversations')
+    .update({ LastMessageAtUtc: new Date().toISOString(), LastBotMessageAtUtc: new Date().toISOString() })
+    .eq('Psid', psid);
 
+  await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
   await sendMessengerReply(psid, finalText, pageAccessToken, graphVersion);
 }
 

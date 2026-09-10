@@ -1,0 +1,13 @@
+{
+  "appId": "com.rspetstop.driverapp",
+  "appName": "RS Pet Stop Driver",
+  "webDir": "www",
+  "android": {
+    "useLegacyBridge": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RS Pet Stop - Order Receipt</title>
+  <style>
+    :root {
+      --page-bg: #f4f7fb;
+      --panel-bg: #ffffff;
+      --panel-border: #d7e0ef;
+      --text-main: #1b355e;
+      --text-muted: #61738f;
+      --primary: #1d4f91;
+      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+      color: var(--text-main);
+    }
+
+    .page {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .receipt-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      padding: 20px;
+      font-size: 13px;
+    }
+
+    .letterhead {
+      text-align: center;
+      border-bottom: 1px solid var(--panel-border);
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+    }
+
+    .letterhead-logo {
+      max-height: 56px;
+      margin-bottom: 6px;
+    }
+
+    .letterhead-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .letterhead-line {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary);
+      text-align: center;
+    }
+
+    .status-pill {
+      display: block;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+      margin-bottom: 14px;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 16px;
+      margin-bottom: 14px;
+    }
+
+    .field-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-muted);
+    }
+
+    .field-value {
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 6px 4px;
+      border-bottom: 1px solid var(--panel-border);
+      font-size: 12px;
+    }
+
+    th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    td.num, th.num {
+      text-align: right;
+    }
+
+    .totals {
+      margin-left: auto;
+      width: 220px;
+    }
+
+    .totals-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      font-size: 13px;
+    }
+
+    .totals-row.balance {
+      border-top: 1px solid var(--panel-border);
+      margin-top: 4px;
+      padding-top: 6px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .toolbar {
+      text-align: center;
+      margin-top: 14px;
+    }
+
+    .toolbar button {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 18px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .subtitle {
+      margin: 0 0 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    @media print {
+      .toolbar, .subtitle {
+        display: none;
+      }
+      body {
+        background: #fff;
+      }
+      .receipt-card {
+        box-shadow: none;
+        border: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <p class="subtitle no-print">Order receipt - opened from a link shared by the RS Pet Stop Messenger assistant.</p>
+    <div id="statusMessage" class="receipt-card">Loading receipt...</div>
+    <div id="receiptCard" class="receipt-card hidden">
+      <div id="letterhead" class="letterhead hidden"></div>
+      <h1>Order Receipt</h1>
+      <span id="statusPill" class="status-pill"></span>
+
+      <div class="field-grid">
+        <div>
+          <div class="field-label">Order #</div>
+          <div class="field-value" id="fieldOrderId"></div>
+        </div>
+        <div>
+          <div class="field-label">Order Date</div>
+          <div class="field-value" id="fieldOrderDate"></div>
+        </div>
+        <div>
+          <div class="field-label">Customer</div>
+          <div class="field-value" id="fieldCustomerName"></div>
+        </div>
+        <div>
+          <div class="field-label">Branch</div>
+          <div class="field-value" id="fieldWarehouse"></div>
+        </div>
+        <div style="grid-column: 1 / -1;">
+          <div class="field-label">Shipping Address</div>
+          <div class="field-value" id="fieldShippingAddress"></div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>Item</th><th class="num">Qty</th><th class="num">Amount</th></tr>
+        </thead>
+        <tbody id="linesBody"></tbody>
+      </table>
+
+      <div class="totals" id="totalsBox"></div>
+
+      <div class="toolbar no-print">
+        <button type="button" onclick="window.print()">Print / Save as PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Same anon-key client every public page uses (order-now.html, track-driver.html) - no login
+       here, this page is meant to be opened from a link the chatbot sends a customer on Messenger. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script>
+    function formatMoney(value) {
+      return `₱ ${Number(value || 0).toFixed(2)}`;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      const d = new Date(`${dateStr}T00:00:00`);
+      if (Number.isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    async function renderLetterhead() {
+      const info = await fetchCompanyInfo();
+      if (!info) return;
+
+      const container = document.getElementById('letterhead');
+      const logoHtml = info['LogoUrl'] ? `<img class="letterhead-logo" src="${info['LogoUrl']}" alt="Logo">` : '';
+      const nameHtml = info['CompanyName'] ? `<div class="letterhead-name">${info['CompanyName']}</div>` : '';
+      const lines = [info['Address'], info['ContactNo']].filter(Boolean).map((l) => `<div class="letterhead-line">${l}</div>`).join('');
+
+      if (!logoHtml && !nameHtml && !lines) return;
+      container.innerHTML = logoHtml + nameHtml + lines;
+      container.classList.remove('hidden');
+    }
+
+    function renderReceipt(rows) {
+      const header = rows[0];
+      document.getElementById('statusMessage').classList.add('hidden');
+      document.getElementById('receiptCard').classList.remove('hidden');
+
+      document.getElementById('statusPill').textContent = header.status_label || '';
+      document.getElementById('fieldOrderId').textContent = header.order_id || '';
+      document.getElementById('fieldOrderDate').textContent = formatDate(header.order_date);
+      document.getElementById('fieldCustomerName').textContent = header.customer_name || '';
+      document.getElementById('fieldWarehouse').textContent = header.warehouse_name || '';
+      document.getElementById('fieldShippingAddress').textContent = header.shipping_address || 'Pickup / not applicable';
+
+      const realLines = rows.filter((r) => r.line_no !== null);
+      const linesBody = document.getElementById('linesBody');
+      linesBody.innerHTML = realLines.length === 0
+        ? '<tr><td colspan="3">No line items on this order.</td></tr>'
+        : realLines.map((r) => `
+            <tr>
+              <td>${r.line_description || ''}</td>
+              <td class="num">${r.line_quantity ?? ''}</td>
+              <td class="num">${formatMoney(r.line_amount)}</td>
+            </tr>
+          `).join('');
+
+      const totalsBox = document.getElementById('totalsBox');
+      const rowsHtml = [
+        ['Total', header.money_to_collect],
+        header.discount ? ['Discount', -Math.abs(header.discount)] : null,
+        header.delivery_fee ? ['Delivery Fee', header.delivery_fee] : null,
+        ['Amount Paid', header.amount_paid]
+      ].filter(Boolean).map(([label, value]) => `<div class="totals-row"><span>${label}</span><span>${formatMoney(value)}</span></div>`).join('');
+      totalsBox.innerHTML = rowsHtml + `<div class="totals-row balance"><span>Balance</span><span>${formatMoney(header.balance)}</span></div>`;
+    }
+
+    async function loadReceipt() {
+      const orderId = new URLSearchParams(window.location.search).get('order');
+      const statusEl = document.getElementById('statusMessage');
+      if (!orderId) {
+        statusEl.textContent = 'No order number given - open this page from the link the assistant shared.';
+        return;
+      }
+
+      const { data, error } = await supabaseClient.rpc('public_get_online_order_receipt', { p_order_id: orderId });
+      if (error) {
+        statusEl.textContent = 'Could not load this receipt right now - please try again shortly.';
+        return;
+      }
+      if (!data || data.length === 0) {
+        statusEl.textContent = `No order found matching "${orderId}".`;
+        return;
+      }
+
+      renderLetterhead();
+      renderReceipt(data);
+    }
+
+    loadReceipt();
+  </script>
+</body>
+</html>

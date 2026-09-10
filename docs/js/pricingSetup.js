@@ -162,6 +162,9 @@ function stickerThicknessLabel(row) {
   if (row.sticker_type === 'Rubber Matting') {
     return row.thickness ? `${row.thickness}mm` : 'Base / fallback';
   }
+  if (row.sticker_type === 'Marine Plywood' || row.sticker_type === 'Laminated Plywood') {
+    return row.thickness ? `${row.thickness}mm` : '<span class="muted">-</span>';
+  }
   return '<span class="muted">-</span>';
 }
 

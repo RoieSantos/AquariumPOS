@@ -54,7 +54,9 @@ alter table public."TubularPricingSetup" enable row level security;
 
 -- "Thickness" is null for flat-rate types (Plain/Tiles/Acrylic/Allum TopCover - one price
 -- regardless of thickness) and set for Rubber Matting's per-thickness rows (plus a Thickness=null
--- "base" row used as GetRubberPricePerSqInch's own fallback when thickness is blank/unknown).
+-- "base" row used as GetRubberPricePerSqInch's own fallback when thickness is blank/unknown), and
+-- also set for Marine Plywood/Laminated Plywood's 6mm/18mm rows (no Thickness=null base row for
+-- these two - the calculator falls back to their own hardcoded 6mm default instead).
 -- Glass is NOT a StickerType here - the Sticker calculator's "Glass" type reads GlassPricingSetup
 -- above instead, per the file header note on unifying the two.
 create table if not exists public."StickerPricingSetup" (
@@ -95,7 +97,11 @@ from (values
   ('Rubber Matting', '3', 26.00),
   ('Rubber Matting', '6', 32.00),
   ('Rubber Matting', '10', 45.00),
-  ('Rubber Matting', '12', 60.00)
+  ('Rubber Matting', '12', 60.00),
+  ('Marine Plywood', '6', 90.00),
+  ('Marine Plywood', '18', 185.00),
+  ('Laminated Plywood', '6', 125.00),
+  ('Laminated Plywood', '18', 210.00)
 ) as v(sticker_type, thickness, price)
 where not exists (select 1 from public."StickerPricingSetup");
 

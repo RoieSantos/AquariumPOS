@@ -232,9 +232,14 @@
             <option>Glass</option>
             <option>Acrylic</option>
             <option>Allum TopCover</option>
+            <option>Marine Plywood</option>
+            <option>Laminated Plywood</option>
           </select>
         </div>
 
+        <!-- Options are replaced at runtime by setVisibilityState() via
+             CustomAquariumCalculator.getStickerThicknessOptions(type) - see custom-aquarium-
+             calculator.js. These are just the initial (Rubber Matting/Glass) options. -->
         <div id="thicknessWrap" class="field hidden">
           <label for="thickness">Thickness</label>
           <select id="thickness">
@@ -399,9 +404,25 @@
       }).join('');
     }
 
+    function updateThicknessOptions() {
+      var type = byId('type').value;
+      var select = byId('thickness');
+      var options = window.CustomAquariumCalculator.getStickerThicknessOptions(type);
+      var current = select.value;
+
+      select.innerHTML = options.map(function (opt) {
+        return '<option' + (opt === current ? ' selected' : '') + '>' + opt + '</option>';
+      }).join('');
+
+      if (options.indexOf(current) < 0) {
+        select.value = options.indexOf('6mm') >= 0 ? '6mm' : options[0];
+      }
+    }
+
     function setVisibilityState() {
       var type = byId('type').value;
-      var showThickness = type === 'Rubber Matting' || type === 'Glass';
+      var showThickness = window.CustomAquariumCalculator.stickerTypeHasThickness(type);
+      updateThicknessOptions();
       byId('thicknessWrap').classList.toggle('hidden', !showThickness);
 
       var showRepair = type === 'Glass';

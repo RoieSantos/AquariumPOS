@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>RS Pet Stop Driver</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 24px; background: #0b1220; color: #e8edf7; }
+    .hidden { display: none !important; }
+    h1 { font-size: 20px; }
+    input {
+      width: 100%; box-sizing: border-box; padding: 12px; margin: 8px 0;
+      border-radius: 8px; border: 1px solid #28405c; background: #111a2c; color: #e8edf7; font-size: 16px;
+    }
+    button {
+      width: 100%; padding: 14px; margin-top: 12px; border-radius: 8px; border: none;
+      font-size: 16px; font-weight: bold; cursor: pointer;
+    }
+    #logoutBtn { background: #28405c; color: #e8edf7; }
+    .error-text { color: #f87171; margin-top: 8px; }
+    #statusText {
+      margin: 24px 0; padding: 16px; border-radius: 8px; background: #111a2c;
+      font-size: 14px; color: #cdd7ec; text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="loginScreen" class="screen hidden">
+    <h1>RS Pet Stop Driver</h1>
+    <form id="loginForm">
+      <input type="text" id="usernameInput" placeholder="Username" autocomplete="username" required />
+      <input type="password" id="passwordInput" placeholder="Password" autocomplete="current-password" required />
+      <button type="submit">Log In</button>
+      <p class="error-text hidden" id="loginError"></p>
+    </form>
+  </div>
+
+  <div id="trackingScreen" class="screen hidden">
+    <h1>Hi, <span id="driverName"></span></h1>
+    <!-- No Start/Stop buttons - tracking starts automatically whenever this screen shows (fresh
+         login, reopening the app, or the app auto-relaunching after a phone restart - see
+         BootReceiver.java and startTracking()/init() in src/main.js). Log Out is the only way to
+         turn it off. -->
+    <p id="statusText">Starting...</p>
+    <button id="logoutBtn" type="button">Log Out (stop tracking)</button>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

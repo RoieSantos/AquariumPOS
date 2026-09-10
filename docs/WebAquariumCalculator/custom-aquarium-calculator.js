@@ -477,6 +477,28 @@
   var RUBBER_STICKER_PRICE_PER_SQFT = { '3mm': 26, '6mm': 32, '10mm': 45, '12mm': 60 };
   var RUBBER_STICKER_BASE_PRICE_PER_SQFT = 85;
 
+  // Plywood types - Marine and Laminated, each only available in 6mm/18mm (unlike Rubber
+  // Matting/Glass's 3/6/10/12mm range), per direct request to add Plywood to the standalone
+  // sticker/accessory catalog.
+  var MARINE_PLYWOOD_PRICE_PER_SQFT = { '6mm': 90, '18mm': 185 };
+  var LAMINATED_PLYWOOD_PRICE_PER_SQFT = { '6mm': 125, '18mm': 210 };
+
+  var STANDARD_STICKER_THICKNESS_OPTIONS = ['3mm', '6mm', '10mm', '12mm'];
+  var PLYWOOD_THICKNESS_OPTIONS = ['6mm', '18mm'];
+
+  // Single source of truth for "which sticker Types are thickness-priced" and "which thicknesses
+  // are valid for that Type" - shared by the standalone sticker calculators (order-now.html and
+  // sticker.html) so their Thickness dropdown never drifts out of sync with what
+  // calculateStandaloneSticker below actually prices.
+  function stickerTypeHasThickness(type) {
+    return type === 'Rubber Matting' || type === 'Glass' || type === 'Marine Plywood' || type === 'Laminated Plywood';
+  }
+
+  function getStickerThicknessOptions(type) {
+    if (type === 'Marine Plywood' || type === 'Laminated Plywood') return PLYWOOD_THICKNESS_OPTIONS.slice();
+    return STANDARD_STICKER_THICKNESS_OPTIONS.slice();
+  }
+
   // Builds a sticker price lookup from StickerPricingSetup rows (public_get_sticker_pricing), same
   // "start from the hardcoded fallback, then override with whatever live rows matched" pattern as
   // buildGlassPriceLookup - a row for a type this function doesn't recognize is just ignored rather
@@ -485,6 +507,8 @@
     var flat = Object.assign({}, STICKER_PRICE_PER_SQFT);
     var rubber = Object.assign({}, RUBBER_STICKER_PRICE_PER_SQFT);
     var rubberBase = RUBBER_STICKER_BASE_PRICE_PER_SQFT;
+    var marinePlywood = Object.assign({}, MARINE_PLYWOOD_PRICE_PER_SQFT);
+    var laminatedPlywood = Object.assign({}, LAMINATED_PLYWOOD_PRICE_PER_SQFT);
     var items = Array.isArray(rows) ? rows : [];
 
     for (var i = 0; i < items.length; i += 1) {
@@ -502,22 +526,30 @@
         } else {
           rubberBase = price;
         }
+      } else if (type === 'Marine Plywood' && thicknessRaw) {
+        marinePlywood[normalizeGlass(thicknessRaw)] = price;
+      } else if (type === 'Laminated Plywood' && thicknessRaw) {
+        laminatedPlywood[normalizeGlass(thicknessRaw)] = price;
       } else if (Object.prototype.hasOwnProperty.call(flat, type)) {
         flat[type] = price;
       }
     }
 
-    return { flat: flat, rubber: rubber, rubberBase: rubberBase };
+    return { flat: flat, rubber: rubber, rubberBase: rubberBase, marinePlywood: marinePlywood, laminatedPlywood: laminatedPlywood };
   }
 
   function stickerPricePerSqFt(type, thickness, stickerLookup, glassLookup) {
     var flat = (stickerLookup && stickerLookup.flat) || STICKER_PRICE_PER_SQFT;
     var rubber = (stickerLookup && stickerLookup.rubber) || RUBBER_STICKER_PRICE_PER_SQFT;
     var rubberBase = (stickerLookup && stickerLookup.rubberBase) || RUBBER_STICKER_BASE_PRICE_PER_SQFT;
+    var marinePlywood = (stickerLookup && stickerLookup.marinePlywood) || MARINE_PLYWOOD_PRICE_PER_SQFT;
+    var laminatedPlywood = (stickerLookup && stickerLookup.laminatedPlywood) || LAMINATED_PLYWOOD_PRICE_PER_SQFT;
     var glass = glassLookup || DEFAULT_GLASS_PRICES;
 
     if (type === 'Rubber Matting') return rubber[thickness] || rubberBase;
     if (type === 'Glass') return glass[thickness] || glass['6mm'];
+    if (type === 'Marine Plywood') return marinePlywood[thickness] || marinePlywood['6mm'];
+    if (type === 'Laminated Plywood') return laminatedPlywood[thickness] || laminatedPlywood['6mm'];
     return flat[type] || flat['Plain Sticker'];
   }
 
@@ -533,7 +565,7 @@
     }
 
     var type = options.type || 'Plain Sticker';
-    var hasThickness = type === 'Rubber Matting' || type === 'Glass';
+    var hasThickness = stickerTypeHasThickness(type);
     var thickness = hasThickness ? (options.thickness || '6mm') : null;
     var isRepair = type === 'Glass' && Boolean(options.repair);
 
@@ -1026,6 +1058,8 @@
     calculateStandaloneStand: calculateStandaloneStand,
     calculateStandaloneFiltration: calculateStandaloneFiltration,
     calculateStandaloneSticker: calculateStandaloneSticker,
+    stickerTypeHasThickness: stickerTypeHasThickness,
+    getStickerThicknessOptions: getStickerThicknessOptions,
     enforceStandTubularSafety: enforceStandTubularSafety,
     getTubularThicknessInches: getTubularThicknessInches,
     computeStandBuiltLengthInches: computeStandBuiltLengthInches

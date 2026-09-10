@@ -2285,7 +2285,7 @@ function buildStandaloneStickerSpecText() {
   const length = document.getElementById('standaloneStickerLength').value;
   const width = document.getElementById('standaloneStickerWidth').value;
   const unit = document.getElementById('standaloneStickerUnit').value;
-  const hasThickness = type === 'Rubber Matting' || type === 'Glass';
+  const hasThickness = window.CustomAquariumCalculator.stickerTypeHasThickness(type);
   const isRepair = type === 'Glass' && document.getElementById('standaloneStickerRepair').checked;
 
   return `${type}${isRepair ? ' REPAIR' : ''}${hasThickness ? ` (${thickness})` : ''} ${length}${unit} x ${width}${unit}`;
@@ -2312,7 +2312,9 @@ const standaloneStickerTypeImageMap = {
   'Rubber Matting': 'icons/sticker-rubber-matting.jpg',
   'Glass': 'icons/sticker-glass.jpg',
   'Acrylic': 'icons/sticker-acrylic.jpg',
-  'Allum TopCover': 'icons/sticker-allum-topcover.jpg'
+  'Allum TopCover': 'icons/sticker-allum-topcover.jpg',
+  'Marine Plywood': 'icons/sticker-marine-plywood.jpg',
+  'Laminated Plywood': 'icons/sticker-laminated-plywood.jpg'
 };
 
 function updateStandaloneStickerTypeImage() {
@@ -2329,9 +2331,26 @@ function updateStandaloneStickerTypeImage() {
   img.src = path;
 }
 
+// Rubber Matting/Glass offer 3/6/10/12mm; Marine/Laminated Plywood only come in 6/18mm - keeps the
+// dropdown's options in sync with whatever CustomAquariumCalculator.calculateStandaloneSticker
+// actually prices, rather than duplicating that thickness list here.
+function updateStandaloneStickerThicknessOptions() {
+  const type = document.getElementById('standaloneStickerType').value;
+  const select = document.getElementById('standaloneStickerThickness');
+  const options = window.CustomAquariumCalculator.getStickerThicknessOptions(type);
+  const current = select.value;
+
+  select.innerHTML = options.map((opt) => `<option${opt === current ? ' selected' : ''}>${opt}</option>`).join('');
+
+  if (!options.includes(current)) {
+    select.value = options.includes('6mm') ? '6mm' : options[0];
+  }
+}
+
 function setStandaloneStickerVisibilityState() {
   const type = document.getElementById('standaloneStickerType').value;
-  const hasThickness = type === 'Rubber Matting' || type === 'Glass';
+  const hasThickness = window.CustomAquariumCalculator.stickerTypeHasThickness(type);
+  updateStandaloneStickerThicknessOptions();
   document.getElementById('standaloneStickerThicknessWrap').classList.toggle('hidden', !hasThickness);
 
   const showRepair = type === 'Glass';

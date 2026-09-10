@@ -18,7 +18,7 @@
 
   <div class="page">
     <h1>AI Bot Setup</h1>
-    <p class="muted">Controls what the Facebook Messenger AI assistant is named, how it talks, and what it's told about the store. Changes apply to the bot's very next reply - no redeploy needed. Only visible to super users.</p>
+    <p class="muted">Controls what the Facebook Messenger AI assistant is named, how it talks, what it's told about the store, and when it proactively follows up with customers. Changes apply to the bot's very next reply - no redeploy needed. Only visible to super users.</p>
 
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
@@ -41,6 +41,15 @@
         <div class="form-row">
           <label for="botNameInput">Bot Name</label>
           <input type="text" id="botNameInput" placeholder="e.g. RS Pet Stop Assistant" />
+        </div>
+        <div class="form-row">
+          <label for="aiModelInput">AI Model</label>
+          <select id="aiModelInput">
+            <option value="claude-sonnet-5">Claude Sonnet 5 (Recommended - balanced quality &amp; cost)</option>
+            <option value="claude-opus-5">Claude Opus 5 (Most capable - slower &amp; more expensive)</option>
+            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fastest &amp; cheapest - simpler answers)</option>
+          </select>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">Which AI model answers customer messages. Sonnet 5 is a good default; switch to Opus 5 if replies feel too simple, or Haiku 4.5 to cut cost on high message volume.</span>
         </div>
         <div class="form-row">
           <label for="communicationStyleInput">Communication Style</label>
@@ -95,6 +104,70 @@
       <div id="storeInfoError" class="error-text hidden"></div>
       <div style="margin-top:8px;">
         <button class="btn btn-success" id="saveStoreInfoBtn" type="button">Save Store Info</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Follow-Ups</h2>
+      </div>
+      <p class="muted">Teach the bot to proactively check back in on Messenger instead of only ever replying when a customer messages first. Each follow-up is composed fresh by the AI (using the directions below) rather than sent as fixed template text. Facebook only allows this within 24 hours of the customer's last message to the page - anything older is skipped automatically.</p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="followUpAbandonedEnabledInput" style="width:auto;" />
+            <span>Nudge customers who went quiet mid-conversation</span>
+          </label>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">If the bot replied and the customer never answered back, send one friendly check-in after this many minutes.</span>
+        </div>
+        <div class="form-row">
+          <label for="followUpAbandonedDelayInput">Delay (minutes)</label>
+          <input type="number" id="followUpAbandonedDelayInput" min="15" step="15" placeholder="e.g. 180" />
+        </div>
+
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="followUpEscalationEnabledInput" style="width:auto;" />
+            <span>Check in after a conversation was escalated to staff</span>
+          </label>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">After the bot hands a conversation to staff (complaints, refunds, etc.), have it check whether the customer already heard back.</span>
+        </div>
+        <div class="form-row">
+          <label for="followUpEscalationDelayInput">Delay (minutes)</label>
+          <input type="number" id="followUpEscalationDelayInput" min="15" step="15" placeholder="e.g. 1440" />
+        </div>
+
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="followUpPendingOrderEnabledInput" style="width:auto;" />
+            <span>Remind customers about unconfirmed orders</span>
+          </label>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">If an order placed through the bot is still sitting as "New" (not yet confirmed/paid), remind the customer and give them the order number.</span>
+        </div>
+        <div class="form-row">
+          <label for="followUpPendingOrderDelayInput">Delay (minutes)</label>
+          <input type="number" id="followUpPendingOrderDelayInput" min="15" step="15" placeholder="e.g. 720" />
+        </div>
+
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="followUpCommittedEnabledInput" style="width:auto;" />
+            <span>Let the bot schedule its own follow-ups</span>
+          </label>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">When the bot tells a customer mid-conversation "I'll check back with you tomorrow", it can queue that follow-up itself. Turn off to stop the bot from ever promising a callback.</span>
+        </div>
+
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="followUpDirectionsInput">Follow-Up Tone / Directions</label>
+          <textarea id="followUpDirectionsInput" rows="4" placeholder="e.g. Keep it to one short line, never follow up more than once a day, always end with an easy way to say no thanks."></textarea>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">Applied only when composing follow-up messages, on top of the bot's usual communication style above.</span>
+        </div>
+      </div>
+
+      <div id="followUpSettingsError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveFollowUpSettingsBtn" type="button">Save Follow-Up Settings</button>
       </div>
     </div>
   </div>
