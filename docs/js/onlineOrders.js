@@ -154,9 +154,15 @@ async function loadStatusSummary() {
 // aquarium it may need or require an attachment" - o.glass_thickness comes from
 // admin_list_online_orders() (see supabase_orders_sync_tables.sql), which scans that order's
 // synced lines for a 10mm/12mm mention. Blank when no such line was found.
+//
+// Clickable per direct request - "if there is an 10mm or 12mm glass can you make that field
+// clickable and show the cut glass for that glass order, this way we can see the glass cut and
+// from there we can convert it to PO". Links to glass-cut-list.html, which fetches this order's
+// live lines itself and parses the tank dimensions back out of the custom aquarium line's spec
+// text (see GlassCutList.parseAquariumLineSpec and buildCustomAquariumSpecText in orderNow.js).
 function glassBadgeHtml(order) {
   if (!order.glass_thickness) return '';
-  return `<span class="badge badge-glass" title="This order has a ${order.glass_thickness} glass custom aquarium line - it may need an attachment (see Online Order Lines).">${order.glass_thickness} glass</span>`;
+  return `<a class="badge badge-glass" href="glass-cut-list.html?order=${encodeURIComponent(order.order_id)}" title="This order has a ${order.glass_thickness} glass custom aquarium line - click to see its glass cut list.">${order.glass_thickness} glass</a>`;
 }
 
 // Flags an order with a "custom" line (custom aquarium/stand/sump/etc - see

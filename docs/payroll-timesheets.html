@@ -32,8 +32,15 @@
         <button class="btn btn-secondary btn-sm" id="nextWeekBtn" type="button">Next Week &raquo;</button>
         <button class="btn btn-primary" id="createRunFromTimesheetsBtn" type="button" style="margin-left:auto;">Create Payroll Run from This Week</button>
       </div>
-      <p class="muted">Type hours worked directly into each day's cell (e.g. "8"). Leave a cell blank for a day not worked - blank cells are skipped on save, not deleted (remove an existing entry via the list below instead).</p>
-      <div class="table-wrap" style="margin-bottom:12px;">
+      <p class="muted">Type hours worked directly into each day's cell (e.g. "8"). Leave a cell blank for a day not worked. Once a cell is saved it locks (grayed out) and can no longer be edited here - use the list below to correct an existing entry. The Cash Advance column is one amount per employee for the whole week (e.g. released every Thursday) - it's automatically deducted from that employee's next payroll run.</p>
+      <div id="bulkEntryError" class="error-text hidden"></div>
+      <div style="margin-bottom:12px;">
+        <button class="btn btn-success btn-sm" id="saveBulkEntryBtn" type="button">Save All</button>
+        <!-- Super User only - re-enables every locked cell in the currently-shown week so it can be
+             corrected and re-saved, without going through the All Entries list below. -->
+        <button class="btn btn-secondary btn-sm hidden" id="unlockEditingBtn" type="button">Unlock Editing (Super User)</button>
+      </div>
+      <div class="table-wrap" style="margin-bottom:24px;">
         <table>
           <thead id="bulkEntryTableHead"></thead>
           <tbody id="bulkEntryTableBody">
@@ -41,43 +48,44 @@
           </tbody>
         </table>
       </div>
-      <div id="bulkEntryError" class="error-text hidden"></div>
-      <div style="margin-bottom:24px;">
-        <button class="btn btn-success btn-sm" id="saveBulkEntryBtn" type="button">Save All</button>
-      </div>
 
       <div class="section-divider"></div>
       <div class="toolbar">
         <h2 style="margin:0;">All Entries</h2>
+        <!-- Collapsed by default - this is the correction/edit view (and the only way a
+             non-Super-User Payroll Officer can fix a locked grid cell), not the everyday one. -->
+        <button class="btn btn-secondary btn-sm" id="toggleAllEntriesBtn" type="button">Show All Entries</button>
       </div>
-      <div class="toolbar">
-        <select id="filterUsername" style="max-width:240px;">
-          <option value="">All employees</option>
-        </select>
-        <input type="date" id="filterDateStart" />
-        <span class="muted">to</span>
-        <input type="date" id="filterDateEnd" />
-        <button class="btn btn-secondary btn-sm" id="applyFiltersBtn" type="button">Filter</button>
-        <button class="btn btn-primary" id="newEntryBtn" type="button" style="margin-left:auto;">+ Add Single Entry</button>
-      </div>
+      <div id="allEntriesSection" class="hidden">
+        <div class="toolbar">
+          <select id="filterUsername" style="max-width:240px;">
+            <option value="">All employees</option>
+          </select>
+          <input type="date" id="filterDateStart" />
+          <span class="muted">to</span>
+          <input type="date" id="filterDateEnd" />
+          <button class="btn btn-secondary btn-sm" id="applyFiltersBtn" type="button">Filter</button>
+          <button class="btn btn-primary" id="newEntryBtn" type="button" style="margin-left:auto;">+ Add Single Entry</button>
+        </div>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Employee</th>
-              <th>Date</th>
-              <th>Hours Worked</th>
-              <th>Notes</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="timesheetTableBody">
-            <tr><td colspan="5" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Date</th>
+                <th>Hours Worked</th>
+                <th>Notes</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="timesheetTableBody">
+              <tr><td colspan="5" class="muted">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="timesheetPaginationBar"></div>
       </div>
-      <div id="timesheetPaginationBar"></div>
     </div>
   </div>
 

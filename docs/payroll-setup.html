@@ -99,11 +99,13 @@
       <div class="form-grid" style="margin-bottom:12px;">
         <div class="form-row">
           <label>Cash on Hand</label>
-          <div id="cashOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+          <!-- Clickable - opens the Payroll Ledger report filtered to every Cash-method entry
+               (Funding/Payroll/Cash Advance), per "i want to see the payroll ledger". -->
+          <a id="cashOnHandDisplay" href="payroll-ledger.html?method=Cash" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;" title="See every Cash funding entry and deduction on the Payroll Ledger">-</a>
         </div>
         <div class="form-row">
           <label>Digital (GCash) on Hand</label>
-          <div id="digitalOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+          <a id="digitalOnHandDisplay" href="payroll-ledger.html?method=Digital" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;" title="See every Digital funding entry and deduction on the Payroll Ledger">-</a>
         </div>
       </div>
 
@@ -129,21 +131,101 @@
         <button class="btn btn-success btn-sm" id="logFundingBtn" type="button">Log Funding Entry</button>
       </div>
 
-      <h3>Funding Journal</h3>
+      <div id="fundingJournalSection">
+        <div class="toolbar">
+          <h3 style="margin:0;">Funding Journal</h3>
+          <label for="journalMethodFilter" class="muted" style="margin-left:auto;">Method</label>
+          <select id="journalMethodFilter" style="max-width:200px;">
+            <option value="">All (Cash + Digital)</option>
+            <option value="Cash">Cash</option>
+            <option value="Digital">Digital (GCash)</option>
+          </select>
+        </div>
+        <div class="table-wrap" style="margin-bottom:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Employee</th>
+                <th>Method</th>
+                <th>Amount</th>
+                <th>Notes</th>
+                <th>Posted By</th>
+              </tr>
+            </thead>
+            <tbody id="fundingTableBody">
+              <tr><td colspan="7" class="muted">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="fundingPaginationBar" style="margin-bottom:24px;"></div>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="toolbar">
+        <h2 style="margin:0;">Cash Advances</h2>
+      </div>
+      <p class="muted">Log a Cash Advance the moment it's released (e.g. every Thursday). It sits as Outstanding until the employee's next payroll run is created, at which point every Outstanding advance for that employee is automatically pulled in as a Deduction line item and marked Applied.</p>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="advanceUsername">Employee</label>
+          <select id="advanceUsername"></select>
+        </div>
+        <div class="form-row">
+          <label for="advanceDate">Date</label>
+          <input type="date" id="advanceDate" />
+        </div>
+        <div class="form-row">
+          <label for="advanceAmount">Amount</label>
+          <input type="number" id="advanceAmount" min="0.01" step="0.01" />
+        </div>
+        <div class="form-row">
+          <label for="advanceMethod">Method</label>
+          <select id="advanceMethod">
+            <option value="Cash">Cash</option>
+            <option value="Digital">Digital (GCash)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="advanceNotes">Notes</label>
+          <input type="text" id="advanceNotes" />
+        </div>
+      </div>
+      <div id="advanceError" class="error-text hidden"></div>
+      <div style="margin-bottom:16px;">
+        <button class="btn btn-success btn-sm" id="logAdvanceBtn" type="button">Log Cash Advance</button>
+      </div>
+
+      <div class="toolbar">
+        <select id="filterAdvanceUsername" style="max-width:240px;">
+          <option value="">All employees</option>
+        </select>
+        <select id="filterAdvanceStatus" style="max-width:180px;">
+          <option value="">All statuses</option>
+          <option value="Outstanding">Outstanding</option>
+          <option value="Applied">Applied</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="applyAdvanceFiltersBtn" type="button">Filter</button>
+      </div>
       <div class="table-wrap" style="margin-bottom:24px;">
         <table>
           <thead>
             <tr>
               <th>Date</th>
-              <th>Type</th>
-              <th>Method</th>
+              <th>Employee</th>
+              <th>Employee No.</th>
               <th>Amount</th>
+              <th>Method</th>
               <th>Notes</th>
+              <th>Status</th>
               <th>Posted By</th>
+              <th>Actions</th>
             </tr>
           </thead>
-          <tbody id="fundingTableBody">
-            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          <tbody id="advanceTableBody">
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -166,6 +248,7 @@
               <th>Rate</th>
               <th>Payment Method</th>
               <th>Paid Rest Day</th>
+              <th>Outstanding CA</th>
               <th>Actions</th>
             </tr>
             <!-- Per-field filter row, Business Central style: free-text "contains" filters on the
@@ -220,11 +303,12 @@
                   <option value="6">Saturday</option>
                 </select>
               </th>
+              <th></th>
               <th><button class="btn btn-secondary btn-sm" id="clearFiltersBtn" type="button">Clear</button></th>
             </tr>
           </thead>
           <tbody id="employeeTableBody">
-            <tr><td colspan="10" class="muted">Loading...</td></tr>
+            <tr><td colspan="11" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -414,6 +498,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/pagination.js"></script>
   <script src="js/payrollSetup.js"></script>
   <script src="js/pwa.js"></script>
 </body>

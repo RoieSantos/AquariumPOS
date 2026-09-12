@@ -665,6 +665,11 @@ tr.clickable-row:hover {
 .badge-custom { background: #ffe9d6; color: #a15c1e; }
 .badge-vendor { background: #f3e5f9; color: #7a2f9e; }
 
+/* A badge used as a link (e.g. the Online Orders Glass badge -> glass-cut-list.html) - same look,
+   just without the browser's default link underline/color, with a hover cue that it's clickable. */
+a.badge { text-decoration: none; cursor: pointer; }
+a.badge:hover { text-decoration: underline; }
+
 /* Per-date Vendor assignments (docs/js/delivery.js's renderDateVendorsSection) - a small vertical
    list of vendor chip + muted detail line (address/contact person/phone, see vendorDetailText),
    replacing the flat .serial-tag-chips row now that each entry carries a second line of text. */

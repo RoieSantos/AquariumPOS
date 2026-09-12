@@ -5,6 +5,9 @@
 let currentSession = null;
 let allEmployees = [];
 let currentEmployees = [];
+let currentFundingPage = 1;
+let currentFundingPageSize = 50;
+let currentFundingMethodFilter = '';
 
 function formatCycle(cycle) {
   if (cycle === 'SemiMonthly') return '<span class="badge badge-primary">Semi-Monthly</span>';
@@ -52,7 +55,7 @@ function renderEmployeeRows(employees) {
     const message = allEmployees.length === 0
       ? 'No staff logins found.'
       : 'No employees match the current filters.';
-    tbody.innerHTML = `<tr><td colspan="10" class="muted">${message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="muted">${message}</td></tr>`;
     return;
   }
 
@@ -68,6 +71,7 @@ function renderEmployeeRows(employees) {
         <td>${formatRate(e)}</td>
         <td>${formatPaymentMethod(e.payment_method)}</td>
         <td>${formatPaidRestDay(e.paid_rest_day)}</td>
+        <td>${Number(e.outstanding_cash_advance) > 0 ? `<span class="badge badge-warning">${formatCurrency(e.outstanding_cash_advance)}</span>` : '<span class="muted">-</span>'}</td>
         <td><button class="btn btn-secondary btn-sm" data-edit-username="${e.username}" type="button">Edit</button></td>
       </tr>
     `)
@@ -76,7 +80,7 @@ function renderEmployeeRows(employees) {
 
 async function loadEmployees() {
   const tbody = document.getElementById('employeeTableBody');
-  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_employees', {
     p_admin_username: currentSession.username,
@@ -84,7 +88,7 @@ async function loadEmployees() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -360,18 +364,22 @@ function renderFundingRows(entries) {
   const tbody = document.getElementById('fundingTableBody');
 
   if (!entries || entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">No funding entries yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">No funding entries yet.</td></tr>';
     return;
   }
+
+  const entryTypeBadge = { Funding: 'badge-success', Payroll: 'badge-danger', CashAdvance: 'badge-warning' };
+  const entryTypeLabel = { CashAdvance: 'Cash Advance' };
 
   tbody.innerHTML = entries
     .map((f) => `
       <tr>
         <td>${f.posted_at_utc ? new Date(f.posted_at_utc).toLocaleString() : ''}</td>
-        <td><span class="badge ${f.entry_type === 'Funding' ? 'badge-success' : 'badge-neutral'}">${f.entry_type === 'Funding' ? 'Funding' : 'Payout'}</span></td>
+        <td><span class="badge ${entryTypeBadge[f.entry_type] || 'badge-neutral'}">${entryTypeLabel[f.entry_type] || f.entry_type}</span></td>
+        <td>${f.display_name || f.username || '<span class="muted">-</span>'}</td>
         <td>${f.method || ''}</td>
-        <td>${f.entry_type === 'Payout' ? '-' : ''}${formatCurrency(f.amount)}</td>
-        <td>${f.notes || ''}</td>
+        <td>${f.entry_type === 'Funding' ? '' : '-'}${formatCurrency(f.amount)}</td>
+        <td>${f.label || ''}${f.notes ? ` <span class="muted">(${f.notes})</span>` : ''}</td>
         <td>${f.posted_by || ''}</td>
       </tr>
     `)
@@ -380,21 +388,36 @@ function renderFundingRows(entries) {
 
 async function loadFundingJournal() {
   const tbody = document.getElementById('fundingTableBody');
-  tbody.innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
 
-  const { data, error } = await supabaseClient.rpc('admin_list_payroll_funding_entries', {
+  // p_funding_only:true restricts this to the three EntryTypes that carry a Method (Funding,
+  // Payroll, CashAdvance) - i.e. everything that makes up Cash on Hand/Digital on Hand - rather
+  // than every ledger row (which would also pull in each employee's per-run BasePay/Addition/
+  // Deduction/NetPay breakdown, out of place here).
+  const { data, error } = await supabaseClient.rpc('admin_list_payroll_ledger_entries', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
-    p_page: 1,
-    p_page_size: 50
+    p_page: currentFundingPage,
+    p_page_size: currentFundingPageSize,
+    p_method: currentFundingMethodFilter || null,
+    p_funding_only: true
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="6" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
   renderFundingRows(data);
+
+  renderPaginationBar(
+    document.getElementById('fundingPaginationBar'),
+    { page: currentFundingPage, pageSize: currentFundingPageSize, totalCount: data?.[0]?.total_count || 0 },
+    {
+      onPageChange: (newPage) => { currentFundingPage = newPage; loadFundingJournal(); },
+      onPageSizeChange: (newSize) => { currentFundingPageSize = newSize; currentFundingPage = 1; loadFundingJournal(); }
+    }
+  );
 }
 
 async function logFunding() {
@@ -504,6 +527,147 @@ async function saveCutoffSettings() {
   }
 }
 
+// Cash Advances (supabase_payroll_cash_advances.sql) - logged the moment released, auto-pulled
+// into the employee's next payroll run as a Deduction line item and marked Applied there.
+function populateAdvanceEmployeeSelects() {
+  const options = allEmployees
+    .map((e) => `<option value="${e.username}">${e.display_name || e.username}</option>`)
+    .join('');
+  document.getElementById('advanceUsername').innerHTML = options;
+  document.getElementById('filterAdvanceUsername').innerHTML = '<option value="">All employees</option>' + options;
+}
+
+function renderAdvanceRows(rows) {
+  const tbody = document.getElementById('advanceTableBody');
+
+  if (!rows || rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">No cash advances logged yet.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows
+    .map((a) => `
+      <tr>
+        <td>${formatDate(a.advance_date)}</td>
+        <td>${a.display_name || a.username}</td>
+        <td>${a.employee_no || ''}</td>
+        <td>${formatCurrency(a.amount)}</td>
+        <td>${formatPaymentMethod(a.method)}</td>
+        <td>${a.notes || ''}</td>
+        <td><span class="badge ${a.status === 'Outstanding' ? 'badge-warning' : 'badge-success'}">${a.status}</span></td>
+        <td>${a.created_by || ''}</td>
+        <td>${a.status === 'Outstanding' ? `<button class="btn btn-danger btn-sm" data-delete-advance-id="${a.advance_id}" type="button">Delete</button>` : ''}</td>
+      </tr>
+    `)
+    .join('');
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString();
+}
+
+function toDateInputValue(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+async function loadAdvances() {
+  const tbody = document.getElementById('advanceTableBody');
+  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+
+  const username = document.getElementById('filterAdvanceUsername').value || null;
+  const status = document.getElementById('filterAdvanceStatus').value || null;
+
+  const { data, error } = await supabaseClient.rpc('admin_list_cash_advances', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_username: username,
+    p_status: status,
+    p_page: 1,
+    p_page_size: 100
+  });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    return;
+  }
+
+  renderAdvanceRows(data);
+}
+
+async function logAdvance() {
+  const errorEl = document.getElementById('advanceError');
+  errorEl.classList.add('hidden');
+
+  const username = document.getElementById('advanceUsername').value;
+  const advanceDate = document.getElementById('advanceDate').value || null;
+  const amount = Number(document.getElementById('advanceAmount').value) || 0;
+  const method = document.getElementById('advanceMethod').value;
+  const notes = document.getElementById('advanceNotes').value.trim();
+
+  if (!advanceDate) {
+    errorEl.textContent = 'Date is required.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (amount <= 0) {
+    errorEl.textContent = 'Amount must be greater than zero.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const logBtn = document.getElementById('logAdvanceBtn');
+  logBtn.disabled = true;
+  logBtn.textContent = 'Logging...';
+
+  const { data, error } = await supabaseClient.rpc('admin_add_cash_advance', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_username: username,
+    p_advance_date: advanceDate,
+    p_amount: amount,
+    p_notes: notes || null,
+    p_method: method
+  });
+
+  logBtn.disabled = false;
+  logBtn.textContent = 'Log Cash Advance';
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result || !result.success) {
+    errorEl.textContent = error?.message || result?.message || 'Failed to log cash advance.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  document.getElementById('advanceAmount').value = '';
+  document.getElementById('advanceNotes').value = '';
+  await loadAdvances();
+  await loadEmployees();
+}
+
+async function deleteAdvance(advanceId) {
+  if (!confirm('Delete this cash advance?')) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_delete_cash_advance', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_advance_id: advanceId
+  });
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result || !result.success) {
+    alert(error?.message || result?.message || 'Failed to delete cash advance.');
+    return;
+  }
+
+  await loadAdvances();
+  await loadEmployees();
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -517,6 +681,9 @@ async function saveCutoffSettings() {
 
   document.getElementById('payrollSetupContent').classList.remove('hidden');
   await loadEmployees();
+  populateAdvanceEmployeeSelects();
+  document.getElementById('advanceDate').value = toDateInputValue(new Date());
+  await loadAdvances();
   await loadCutoffSettings();
   await loadFundBalances();
   await loadFundingJournal();
@@ -539,8 +706,20 @@ async function saveCutoffSettings() {
   document.getElementById('saveNewEmployeeBtn').addEventListener('click', saveNewEmployee);
 
   document.getElementById('logFundingBtn').addEventListener('click', logFunding);
+  document.getElementById('journalMethodFilter').addEventListener('change', (e) => {
+    currentFundingMethodFilter = e.target.value;
+    currentFundingPage = 1;
+    loadFundingJournal();
+  });
 
-  ['filterUsername', 'filterDisplayName', 'filterMonthlySalary'].forEach((id) => {
+  document.getElementById('logAdvanceBtn').addEventListener('click', logAdvance);
+  document.getElementById('applyAdvanceFiltersBtn').addEventListener('click', loadAdvances);
+  document.getElementById('advanceTableBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-delete-advance-id]');
+    if (btn) deleteAdvance(btn.getAttribute('data-delete-advance-id'));
+  });
+
+  ['filterUsername', 'filterEmployeeNo', 'filterDisplayName', 'filterMonthlySalary'].forEach((id) => {
     document.getElementById(id).addEventListener('input', applyFilters);
   });
   ['filterActive', 'filterPayCycle', 'filterPaymentMethod', 'filterPayType', 'filterPaidRestDay'].forEach((id) => {

@@ -40,9 +40,11 @@
            of a full month calendar - a driver only ever needs "today's route", not to browse
            other days or assign/print. Mirrors the "map on top, orders below" layout of a
            reference food-delivery app's "Delivering..." screen. When viewing TODAY, #driverRouteMap
-           also shows a live yellow pin for each Delivery Team driver currently sharing GPS
-           location, updated over Supabase Realtime - see renderDayMap/plotDriverMarkers in
-           js/delivery.js and supabase_driver_locations_table.sql. -->
+           also shows a pin (company logo, or a truck icon if none is set) for each Delivery Team
+           driver currently sharing GPS location, with a small green/amber/grey status dot badged
+           onto it (live/stale/stopped) - updated over Supabase Realtime plus a periodic sweep so
+           the badge still goes stale even without a new ping - see renderDayMap/plotDriverMarkers/
+           driverStatusCategory in js/delivery.js and supabase_driver_locations_table.sql. -->
       <div id="driverRouteView" class="hidden">
         <div class="toolbar">
           <button class="btn btn-secondary btn-sm" id="driverPrevDayBtn" type="button">&larr; Prev Day</button>
@@ -117,9 +119,9 @@
               <tbody id="dayStopsTableBody"></tbody>
             </table>
           </div>
-          <!-- When this panel is opened for TODAY, #dayMap also shows a live yellow pin for each
-               Delivery Team driver currently sharing GPS location - see the same
-               renderDayMap/plotDriverMarkers logic noted on #driverRouteMap above. -->
+          <!-- When this panel is opened for TODAY, #dayMap also shows a driver pin with a
+               live/stale/stopped status badge - see the same renderDayMap/plotDriverMarkers logic
+               noted on #driverRouteMap above. -->
           <div id="dayMap"></div>
         </div>
       </div>
@@ -221,6 +223,15 @@
         <div class="form-row walkin-extra-row hidden">
           <label for="noAddressNotesInput">Delivery Instructions</label>
           <textarea id="noAddressNotesInput" rows="2" placeholder="e.g. Cash on delivery, prefers evening drop-off"></textarea>
+        </div>
+        <!-- Overrides the "Print Note" column (note_print) - normally Pancake's own order-level
+             NotePrint, falling back to line-level item notes. Stored separately on
+             DeliveryStops."ManualNotePrint" (supabase_delivery_stop_manual_note_print.sql) and
+             substituted in everywhere note_print is shown/printed, without touching Pancake's own
+             OnlineOrders."NotePrint". -->
+        <div class="form-row walkin-extra-row hidden">
+          <label for="noAddressNotePrintInput">Print Note (shown on driver stop card + printed manifest/receipt)</label>
+          <textarea id="noAddressNotePrintInput" rows="2" placeholder="e.g. Custom sump holder, sticker plain black, butas sa glass para sadrain"></textarea>
         </div>
       </div>
 

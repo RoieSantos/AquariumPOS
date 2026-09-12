@@ -26,15 +26,17 @@
 
     <div id="payrollContent" class="hidden">
       <!-- Read-only reference - manage/log funding from Payroll Setup's Cash & Digital On Hand
-           section (supabase_payroll_funding_ledger.sql). -->
+           section. -->
       <div class="form-grid" style="margin-bottom:20px;">
         <div class="form-row">
           <label>Cash on Hand</label>
-          <div id="cashOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+          <!-- Clickable - opens the Payroll Ledger report filtered to every Cash-method entry
+               (Funding/Payroll/Cash Advance) behind this balance. -->
+          <a id="cashOnHandDisplay" href="payroll-ledger.html?method=Cash" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;">-</a>
         </div>
         <div class="form-row">
           <label>Digital (GCash) on Hand</label>
-          <div id="digitalOnHandDisplay" style="font-size:22px; font-weight:600;">-</div>
+          <a id="digitalOnHandDisplay" href="payroll-ledger.html?method=Digital" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;">-</a>
         </div>
         <div class="form-row" style="align-self:end;">
           <a class="btn btn-secondary btn-sm" href="payroll-setup.html">Log Funding / View Journal</a>

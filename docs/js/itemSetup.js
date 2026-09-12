@@ -508,6 +508,53 @@ async function saveFactboxCost() {
   savedEl.classList.remove('hidden');
 }
 
+async function saveFactboxWholesalePrice() {
+  if (!openFactboxCode) return;
+
+  const savedEl = document.getElementById('factboxWholesalePriceSaved');
+  const input = document.getElementById('factboxWholesalePriceInput');
+  const saveBtn = document.getElementById('factboxWholesalePriceSaveBtn');
+  savedEl.classList.add('hidden');
+
+  const raw = input.value.trim();
+  const wholesalePrice = raw === '' ? null : Number(raw);
+
+  if (wholesalePrice !== null && (!Number.isFinite(wholesalePrice) || wholesalePrice < 0)) {
+    window.alert('Enter a wholesale price of 0 or more, or leave it blank if not set.');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  const { error } = await supabaseClient.rpc('admin_set_item_wholesale_price', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: openFactboxCode,
+    p_wholesale_price: wholesalePrice
+  });
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = 'Save';
+
+  if (error) {
+    window.alert(error.message);
+    return;
+  }
+
+  const item = itemsByCode.get(openFactboxCode);
+  if (item) item.wholesale_price = wholesalePrice;
+
+  // Same in-place patch the Cost save does - keeps the cached row and the visible Wholesale
+  // Price cell (7th <td>, matching itemRowsHtml's column order) in step without a full reload.
+  const row = document.querySelector(`#itemTableBody tr[data-code="${openFactboxCode}"]`);
+  if (row) {
+    row.children[6].innerHTML = wholesalePrice === null ? '<span class="muted">-</span>' : formatMoney(wholesalePrice);
+  }
+
+  savedEl.classList.remove('hidden');
+}
+
 // "Hide from Order Now SET" toggle (factbox) - per "add a field to not show in the SET" request,
 // see supabase_item_hide_from_set.sql. Saves immediately on check/uncheck (no separate Save
 // button - a single checkbox doesn't need the confirm-before-save step the Vendor picker has).
@@ -557,6 +604,7 @@ function itemRowsHtml(items) {
         <td>${i.vendor_name || '<span class="muted">-</span>'}</td>
         <td style="text-align:right;">${i.cost === null || i.cost === undefined ? '<span class="muted">-</span>' : formatMoney(i.cost)}</td>
         <td style="text-align:right;">${formatMoney(i.price)}</td>
+        <td style="text-align:right;">${i.wholesale_price === null || i.wholesale_price === undefined ? '<span class="muted">-</span>' : formatMoney(i.wholesale_price)}</td>
         <td>${variantsCell}</td>
       </tr>
     `;
@@ -566,7 +614,7 @@ function itemRowsHtml(items) {
 
 async function loadItems() {
   const tbody = document.getElementById('itemTableBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading items...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading items...</td></tr>';
 
   const thisGeneration = ++loadGeneration;
 
@@ -582,7 +630,7 @@ async function loadItems() {
   if (thisGeneration !== loadGeneration) return; // a newer search/page request superseded this one
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -590,7 +638,7 @@ async function loadItems() {
   itemsByCode = new Map(rows.map((i) => [i.code, i]));
 
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="7" class="muted">No items found.</td></tr>'
+    ? '<tr><td colspan="8" class="muted">No items found.</td></tr>'
     : itemRowsHtml(rows);
 
   renderPaginationBar(
@@ -736,7 +784,6 @@ function renderItemCardGeneral(item) {
   document.getElementById('itemCardStatus').textContent = item.is_active === false ? 'Inactive' : 'Active';
 
   document.getElementById('itemCardPrice').textContent = formatMoney(item.price);
-  document.getElementById('itemCardWholesalePrice').textContent = formatMoney(item.wholesale_price);
   document.getElementById('itemCardRetailPrice').textContent = formatMoney(item.retail_price);
   document.getElementById('itemCardPromoPrice').textContent = formatMoney(item.promo_price);
 
@@ -779,6 +826,10 @@ async function openFactbox(code) {
   document.getElementById('factboxCostInput').value =
     item.cost === null || item.cost === undefined ? '' : Number(item.cost);
 
+  document.getElementById('factboxWholesalePriceSaved').classList.add('hidden');
+  document.getElementById('factboxWholesalePriceInput').value =
+    item.wholesale_price === null || item.wholesale_price === undefined ? '' : Number(item.wholesale_price);
+
   document.getElementById('factboxHideFromSetSaved').classList.add('hidden');
   document.getElementById('factboxHideFromSetCheckbox').checked = Boolean(item.hide_from_set);
 
@@ -811,10 +862,12 @@ function closeFactbox() {
 
 // Export to Excel / Import from Excel - per "so in the item setup can we export to excel so I can
 // add the vendor". Plain CSV, same convention as Vendor Setup's own Export/Import
-// (docs/js/vendorSetup.js) - Excel opens it natively, no extra library. Import only ever applies
-// the Vendor Code column (via admin_bulk_set_item_vendors, supabase_item_bulk_set_vendor.sql) -
-// Name/Category/Price are exported purely as read-only context so whoever's editing can see which
-// item is which, not meant to be edited/re-imported.
+// (docs/js/vendorSetup.js) - Excel opens it natively, no extra library. Import applies Vendor Code
+// (admin_bulk_set_item_vendors, supabase_item_bulk_set_vendor.sql), Cost, and Wholesale Price
+// (admin_bulk_set_item_costs / admin_bulk_set_item_wholesale_prices,
+// supabase_item_cost_and_po_line_cost.sql / supabase_item_wholesale_price.sql) - Name/Category/
+// Price are exported purely as read-only context so whoever's editing can see which item is which,
+// not meant to be edited/re-imported.
 
 function escapeCsvValue(value) {
   const str = value === null || value === undefined ? '' : String(value);
@@ -858,11 +911,21 @@ function parseCsv(text) {
   return rows.filter((r) => !(r.length === 1 && r[0].trim() === ''));
 }
 
-// Exports every item matching the CURRENT search, not just the page on screen - loops
+// Exports every item in the catalog, ignoring whatever search/category filter is currently on
+// screen - per "can we export everything on the table", the on-screen search box was silently
+// scoping the export down to a filtered subset, which read as rows going missing. Loops
 // admin_list_items at a large page size until exhausted, same pattern as vendorSetup.js's export.
+//
+// Page size is 200, not some larger round number - admin_list_items
+// (supabase_item_setup_category_filter.sql) silently clamps p_page_size to 200 server-side, and
+// the loop below decides it has reached the last page by checking whether a page came back
+// SHORTER than what it asked for. Asking for more than 200 meant every page came back "short"
+// (200 < requested), so the loop stopped after page 1 and any items past the first 200
+// (alphabetically by Name) never got exported - including, apparently, Stand/Sump. Matching the
+// actual server cap here makes that comparison correct again.
 async function exportItemsToExcel() {
   const btn = document.getElementById('exportItemsExcelBtn');
-  const exportPageSize = 500;
+  const exportPageSize = 200;
   const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Exporting...';
@@ -874,10 +937,10 @@ async function exportItemsToExcel() {
       const { data, error } = await supabaseClient.rpc('admin_list_items', {
         p_admin_username: currentSession.username,
         p_admin_password: currentSession.password,
-        p_search: currentSearch || null,
+        p_search: null,
         p_page: page,
         p_page_size: exportPageSize,
-        p_category_code: document.getElementById('itemCategoryFilter').value || null
+        p_category_code: null
       });
 
       if (error) {
@@ -891,20 +954,22 @@ async function exportItemsToExcel() {
     }
 
     if (allRows.length === 0) {
-      alert('No items to export for the current search.');
+      alert('No items to export.');
       return;
     }
 
-    // Cost sits next to Vendor Code because those are the two editable/re-importable columns -
-    // Name/Category/Price around them are read-only context. An uncosted item exports as an empty
-    // cell, not 0, so a round-trip re-import doesn't turn "not costed" into "costs nothing".
-    const headers = ['Item Code', 'Item Name', 'Category', 'Vendor Code', 'Vendor Name', 'Cost', 'Price'];
+    // Cost and Wholesale Price sit next to Vendor Code because those are the editable/re-importable
+    // columns - Name/Category/Price around them are read-only context. An uncosted/unset item
+    // exports as an empty cell, not 0, so a round-trip re-import doesn't turn "not set" into
+    // "is zero".
+    const headers = ['Item Code', 'Item Name', 'Category', 'Vendor Code', 'Vendor Name', 'Cost', 'Price', 'Wholesale Price'];
     const csvLines = [headers.map(escapeCsvValue).join(',')];
     allRows.forEach((i) => {
       csvLines.push([
         i.code, i.name, i.category_code, i.vendor_code, i.vendor_name,
         i.cost === null || i.cost === undefined ? '' : i.cost,
-        i.price
+        i.price,
+        i.wholesale_price === null || i.wholesale_price === undefined ? '' : i.wholesale_price
       ].map(escapeCsvValue).join(','));
     });
 
@@ -969,6 +1034,24 @@ function csvRowsToItemCostObjects(rows) {
     .map((r) => ({ item_code: at(r, itemCodeIdx), cost: at(r, costIdx) }));
 }
 
+// Same header-name mapping and "missing column vs blank cell" contract as the Cost mapper above,
+// for Wholesale Price.
+function csvRowsToItemWholesalePriceObjects(rows) {
+  if (rows.length === 0) return null;
+
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const itemCodeIdx = headers.indexOf('item code');
+  const priceIdx = headers.indexOf('wholesale price');
+
+  if (itemCodeIdx === -1 || priceIdx === -1) return null;
+
+  const at = (r, i) => (i > -1 ? (r[i] || '').trim() : '');
+
+  return rows.slice(1)
+    .filter((r) => r.some((v) => v.trim() !== ''))
+    .map((r) => ({ item_code: at(r, itemCodeIdx), wholesale_price: at(r, priceIdx) }));
+}
+
 async function importItemsFromExcel(file) {
   const btn = document.getElementById('importItemsExcelBtn');
   const originalLabel = btn.textContent;
@@ -992,8 +1075,10 @@ async function importItemsFromExcel(file) {
       return;
     }
 
-    // Null when the file has no "Cost" column - costs are then left completely alone.
+    // Null when the file has no "Cost"/"Wholesale Price" column - that field is then left
+    // completely alone.
     const costItems = csvRowsToItemCostObjects(rows);
+    const wholesalePriceItems = csvRowsToItemWholesalePriceObjects(rows);
 
     const { data, error } = await supabaseClient.rpc('admin_bulk_set_item_vendors', {
       p_admin_username: currentSession.username,
@@ -1030,6 +1115,26 @@ async function importItemsFromExcel(file) {
       }
     } else {
       messages.push('Costs - no "Cost" column in that file, so costs were left unchanged.');
+    }
+
+    // Same append-not-throw treatment as Costs - Vendors (and possibly Costs) are already applied
+    // by this point, so a Wholesale Price failure is reported alongside them, not thrown.
+    if (wholesalePriceItems) {
+      const { data: wholesaleData, error: wholesaleError } = await supabaseClient.rpc('admin_bulk_set_item_wholesale_prices', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_items: wholesalePriceItems
+      });
+
+      if (wholesaleError) {
+        messages.push(`Wholesale Prices - FAILED: ${wholesaleError.message}`);
+      } else {
+        const wholesaleResult = Array.isArray(wholesaleData) ? wholesaleData[0] : wholesaleData;
+        messages.push(`Wholesale Prices - updated: ${wholesaleResult?.updated_count ?? 0}, skipped: ${wholesaleResult?.skipped_count ?? 0}`);
+        skipped.push(...(wholesaleResult?.errors || []));
+      }
+    } else {
+      messages.push('Wholesale Prices - no "Wholesale Price" column in that file, so wholesale prices were left unchanged.');
     }
 
     const errorNote = skipped.length ? `\n\nSkipped:\n${skipped.join('\n')}` : '';
@@ -1097,6 +1202,7 @@ function wireFactbox() {
     await saveItemUom(input.closest('.item-uom-row').dataset.uomCode, qty);
   });
   document.getElementById('factboxCostSaveBtn').addEventListener('click', saveFactboxCost);
+  document.getElementById('factboxWholesalePriceSaveBtn').addEventListener('click', saveFactboxWholesalePrice);
   document.getElementById('factboxHideFromSetCheckbox').addEventListener('change', saveFactboxHideFromSet);
 }
 

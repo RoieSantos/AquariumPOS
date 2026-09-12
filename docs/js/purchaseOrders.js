@@ -2201,4 +2201,17 @@ async function createNewPurchaseOrder() {
 
   await Promise.all([loadNewPoVendorOptions(), loadNewPoWarehouseOptionsHtml()]);
   await loadPurchaseOrders();
+
+  // Handoff from the Glass Cut List page's "Create Purchase Order" button (see
+  // glass-cut-list.html) - sessionStorage rather than a query param so the summary text isn't
+  // capped by URL length or left sitting in the address bar. Only the New PO's free-text Notes
+  // field is prefilled; which catalog item/vendor/warehouse to order the glass from is left for
+  // whoever builds the PO to pick themselves.
+  const pendingGlassPoNotes = sessionStorage.getItem('pendingGlassPoNotes');
+  if (pendingGlassPoNotes) {
+    sessionStorage.removeItem('pendingGlassPoNotes');
+    await openNewPoModal();
+    document.getElementById('newPoNotes').value = pendingGlassPoNotes;
+    refreshNewPoGeneralSummary();
+  }
 })();

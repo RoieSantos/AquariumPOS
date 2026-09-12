@@ -635,7 +635,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'escalate_to_staff',
     description:
-      'Notify store staff that this conversation needs a human follow-up. Use for refund requests, complaints, damaged/wrong items, price negotiation, or when the customer explicitly asks for a person.',
+      'Notify store staff that this conversation needs a human follow-up. Use for refund requests, complaints, damaged/wrong items, or when the customer explicitly asks for a person. Do NOT use this just because a customer asked for a discount or a lower price - decline that yourself per the DISCOUNTS / PRICE CHANGES rule instead; only escalate if they turn it into a complaint or keep insisting after you\'ve declined.',
     input_schema: {
       type: 'object',
       properties: {
@@ -647,7 +647,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'compute_aquarium_quote',
     description:
-      'Compute a real price quote for a custom aquarium tank. Ask for length/width/height and glass thickness at minimum; ask about a matching stand only if the customer mentions wanting one. This gives an ESTIMATE - always tell the customer staff will confirm the final price. Never state a price for a custom tank without calling this tool first.',
+      'Compute a real price quote for a custom aquarium tank. Ask for length/width/height and glass thickness at minimum; ask about a matching stand only if the customer mentions wanting one. This is the store\'s own official pricing formula - the exact same one staff use - so state the result with confidence, not as a rough estimate. Never state a price for a custom tank without calling this tool first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -671,7 +671,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'compute_delivery_quote',
     description:
-      'Estimate the delivery fee from a store branch to a customer address. Ask which branch (Amaya or GMA) if not already known, and get the full delivery address. This gives an ESTIMATE only - the final fee is confirmed by staff. Never state a delivery fee without calling this tool first.',
+      'Compute the delivery fee from a store branch to a customer address, using the store\'s own official distance-based formula - the exact same one staff use. Ask which branch (Amaya or GMA) if not already known, and get the full delivery address. State the result with confidence, not as a rough estimate. Never state a delivery fee without calling this tool first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -679,6 +679,24 @@ export const TOOLS: Anthropic.Tool[] = [
         destination_address: { type: 'string', description: 'The customer\'s full delivery address.' }
       },
       required: ['origin_location', 'destination_address']
+    }
+  },
+  {
+    name: 'compute_lalamove_quote',
+    description:
+      'Gets a REAL Lalamove courier price quote (a live call to Lalamove\'s own API - always accurate, never a rough estimate) for a customer who wants to arrange their own Lalamove delivery, as opposed to the store\'s own truck (use compute_delivery_quote for that instead - ask the customer which they want if not already clear). QUOTE ONLY - this cannot actually book the Lalamove ride; if the customer wants to proceed, tell them staff will arrange the actual booking. Before calling, first work out and tell the customer in plain language what size vehicle to book based on what they are having delivered, then pass that as vehicle_type: MOTORCYCLE for a single small/light item (e.g. food, small accessories, a small filter); SEDAN for a few boxes or one small-to-medium item; MPV for a small aquarium/stand or several items; TRUCK330 (a small van/L300-style truck) for a medium-to-large aquarium or stand, or several bulky items; 2000KG_ALUMINUM (a 2-ton truck) for a very large aquarium/stand, multiple large items, or anything unusually bulky/heavy. If the customer asks for a different vehicle than you recommended, use theirs instead. Ask which branch (Amaya or GMA) and the full delivery address if not already known.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        origin_location: { type: 'string', enum: ['Amaya', 'GMA'], description: 'Which store branch the item ships from.' },
+        destination_address: { type: 'string', description: 'The customer\'s full delivery address.' },
+        vehicle_type: {
+          type: 'string',
+          enum: ['MOTORCYCLE', 'SEDAN', 'MPV', 'TRUCK330', '2000KG_ALUMINUM'],
+          description: 'The Lalamove vehicle class that fits what is being delivered - see this tool\'s own description for how to pick one.'
+        }
+      },
+      required: ['origin_location', 'destination_address', 'vehicle_type']
     }
   },
   {
@@ -740,6 +758,18 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'get_delivery_schedule_status',
+    description:
+      'Checks whether an Online Order already scheduled on the STORE\'S OWN TRUCK is out/scheduled for delivery TODAY, and if not, what date it IS scheduled for (or that it has no delivery date yet). ONLY call this after confirming with the customer that their delivery is the store\'s own truck, not a courier they arranged themselves (e.g. Lalamove) - for Lalamove, tell the customer to coordinate directly with their Lalamove rider instead, this tool has no visibility into that. Different from get_delivery_scheduling_options: that one is for booking a date on an order that ISN\'T scheduled yet; this one is for checking the status of one that already is (or finding out it isn\'t).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_no: { type: 'string', description: 'The Online Order number the customer wants a delivery status for.' }
+      },
+      required: ['order_no']
+    }
+  },
+  {
     name: 'schedule_delivery_date',
     description:
       'Books a specific delivery date for an Online Order, using the store\'s own truck. Only call this AFTER get_delivery_scheduling_options returned that order as eligible, AND after you have told the customer the delivery fee and the candidate dates and they have explicitly confirmed both the fee and one specific date. Never guess a date - only pass one of the candidate_date values get_delivery_scheduling_options actually returned.',
@@ -788,10 +818,11 @@ export function buildSystemPrompt(
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Printed/To Ship/Shipped/Cancelled), and which branch/warehouse it was ordered from; for an Automated Order result, share its Pancake sync status plainly (e.g. still being processed vs. confirmed). There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
-    '- Custom aquarium and/or stand price quotes: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). Always tell the customer this is an estimate and staff will confirm the final price. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
-    '- Delivery fee estimates: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. Always tell the customer this is an estimate and staff will confirm the final fee.',
-    '- Scheduling a delivery date for an existing Online Order: first ask (if not already clear) whether they want the store\'s OWN TRUCK to deliver it, as opposed to a courier they\'re arranging themselves (e.g. Lalamove) or picking it up - only continue if they say the store\'s own truck. Get their order number, then call get_delivery_scheduling_options. If it comes back not eligible, explain the reason in plain words (e.g. already scheduled, order not ready yet). If eligible, tell the customer the deliveryFee it returned - if deliveryFeeIsEstimate is true, say plainly this is an ESTIMATE and staff will confirm the final fee (same as compute_delivery_quote); if false, state it as the order\'s actual delivery fee - AND the candidateDates, and get them to explicitly confirm both the fee and one specific date before calling schedule_delivery_date. Never book a date they haven\'t confirmed, and never invent a date that wasn\'t in candidateDates. Once booked, let them know it\'s confirmed and staff will also see it on the schedule.',
-    '- Where the delivery driver currently is (TEST feature): if a customer asks where the driver is, call get_driver_location right away and share the liveTrackingUrl link directly in your reply (mention that the page updates live as the driver moves), plus how many minutes since the last GPS update. Unlike order status, do NOT ask for an order number first - this tool is not matched to any order/customer yet, it just reports whichever driver is currently tracking, for testing that GPS reporting works.',
+    '- Custom aquarium and/or stand price quotes: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
+    '- Delivery fees: first find out whether the customer wants the store\'s OWN TRUCK to deliver, or wants to arrange their own Lalamove courier - if it\'s not already clear which, ask. For the store\'s own truck: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. This is the store\'s own official distance-based formula - the same one staff use - so state it with confidence as the actual fee, not as a rough estimate pending staff confirmation. For Lalamove: ask which branch and the full delivery address, work out and tell the customer what size vehicle you recommend booking based on what they\'re having delivered (see compute_lalamove_quote\'s own description for how to pick one), then call compute_lalamove_quote with that vehicle type - this is a live quote straight from Lalamove\'s own system, so state the price with full confidence. Lalamove quoting is QUOTE ONLY - it cannot book the ride, so if the customer wants to proceed, tell them staff will arrange the actual Lalamove booking.',
+    '- Scheduling a delivery date for an existing Online Order: first ask (if not already clear) whether they want the store\'s OWN TRUCK to deliver it, as opposed to a courier they\'re arranging themselves (e.g. Lalamove) or picking it up - only continue if they say the store\'s own truck. Get their order number, then call get_delivery_scheduling_options. If it comes back not eligible, explain the reason in plain words (e.g. already scheduled, order not ready yet). If eligible, tell the customer the deliveryFee it returned with confidence as the actual fee (whether deliveryFeeIsEstimate is true - the same official formula as compute_delivery_quote - or false - the order\'s already-recorded fee, makes no difference to how confidently you state it) AND the candidateDates, and get them to explicitly confirm both the fee and one specific date before calling schedule_delivery_date. Never book a date they haven\'t confirmed, and never invent a date that wasn\'t in candidateDates. Once booked, let them know it\'s confirmed and staff will also see it on the schedule.',
+    '- Delivery whereabouts ("where is my delivery", "where is my order", "where is the driver with my stuff"): ALWAYS confirm first (if not already clear from the conversation) whether this is the STORE\'S OWN TRUCK delivering it, or a courier the customer arranged themselves (e.g. Lalamove) - never assume either way. If it\'s a Lalamove courier: explain plainly that the store can\'t track a Lalamove rider from here, and the customer needs to coordinate directly with their rider (through the Lalamove app, or whatever contact info Lalamove gave them). If it\'s the store\'s own truck: get their order number and call get_delivery_schedule_status. If it comes back scheduled for TODAY (is_today), tell them it\'s out for delivery today (mention the route_name if given), THEN call get_driver_location (TEST feature) and share its liveTrackingUrl (mention the page updates live as the driver moves) plus minutesSinceUpdate - if no driver is currently tracking, just tell the customer the truck is scheduled for today and a team member can give a more specific update. If scheduled_date is a different day, tell them that date instead. If for_delivery is false (not scheduled at all yet), let them know it hasn\'t been scheduled yet and offer to help schedule a date (see the delivery-scheduling item above) or that staff can confirm.',
+    '- (TEST) Only if a customer asks generically "where is the driver" with no order/delivery context at all (not tied to their own order), you may call get_driver_location directly without an order number - it just reports whichever driver is currently tracking, for testing GPS reporting end-to-end.',
     '- General conversation about aquariums, fish, and pets, related to what the store sells.',
     '',
     'AQUARIUM & STAND SAFETY RULES - understand these so you can explain and apply them confidently in conversation, not just react after the fact. compute_aquarium_quote always does the actual math and is the source of truth for exact numbers - never calculate or predict a safety change yourself, but you should recognize when one is likely so you can set expectations before quoting:',
@@ -805,8 +836,12 @@ export function buildSystemPrompt(
     'WHAT IS OUT OF SCOPE:',
     '- Anything unrelated to the store (general trivia, coding help, medical/veterinary diagnosis). Politely decline and steer back to how you can help with the store.',
     '',
+    'DISCOUNTS / PRICE CHANGES:',
+    '- If a customer asks for a discount, a lower price, price matching, or otherwise tries to negotiate a price, politely decline yourself - do not escalate to staff for this alone. Explain, in your own friendly words, that all prices are system-generated and you don\'t have permission to apply a discount or change a price. Stay warm and helpful about everything else in the conversation - this is just a firm, final no on the price itself.',
+    '- If the customer pushes back hard, gets upset, or turns it into a complaint after you\'ve declined, that becomes a complaint - escalate it per WHEN TO ESCALATE TO STAFF below.',
+    '',
     'WHEN TO ESCALATE TO STAFF:',
-    '- Refund requests, complaints, damaged/wrong items, price negotiation, or the customer explicitly asking for a human.',
+    '- Refund requests, complaints, damaged/wrong items, or the customer explicitly asking for a human.',
     '- Call the escalate_to_staff tool, then let the customer know a team member will follow up with them in this same conversation.',
     ''
   ];
@@ -1017,6 +1052,84 @@ export async function computeDeliveryQuote(supabase: SupabaseClient, input: Reco
   };
 }
 
+// Backs the compute_lalamove_quote tool - gets a REAL price from Lalamove's own Quotation API (via
+// the delivery-lalamove-quote Edge Function, the same signing proxy docs/js/deliveryQuote.js and
+// orderNow.js already use), rather than an in-house formula. Unlike computeDeliveryQuote (which
+// hands Google's Routes API a plain destination address string), Lalamove's API needs the
+// destination as resolved lat/lng, so this geocodes it first - reusing GOOGLE_ROUTES_API_KEY, since
+// Geocoding API is a standard Maps Platform API that's normally enabled alongside Routes API on the
+// same Google Cloud key.
+async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: number; lng: number } | null> {
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  const loc = data?.results?.[0]?.geometry?.location;
+  return loc ? { lat: loc.lat, lng: loc.lng } : null;
+}
+
+export async function computeLalamoveQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const location = String(input.origin_location ?? '').trim();
+  const destinationAddress = String(input.destination_address ?? '').trim();
+  const vehicleType = String(input.vehicle_type ?? '').trim();
+  if (!location || !destinationAddress || !vehicleType) {
+    return { error: 'Need a branch (Amaya or GMA), a delivery address, and a vehicle type.' };
+  }
+
+  const { data: warehouseRows } = await supabase.rpc('public_get_warehouse_location', { p_location: location });
+  const origin = warehouseRows?.[0] as { address: string; latitude: number; longitude: number } | undefined;
+  if (!origin) {
+    return { error: `No branch location found matching "${location}".` };
+  }
+
+  const routesApiKey = Deno.env.get('GOOGLE_ROUTES_API_KEY');
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!routesApiKey || !supabaseUrl || !serviceRoleKey) {
+    return { error: 'Lalamove quoting is not configured yet - ask staff to set this up.' };
+  }
+
+  let destLatLng: { lat: number; lng: number } | null;
+  try {
+    destLatLng = await geocodeAddress(destinationAddress, routesApiKey);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not reach the mapping service.' };
+  }
+  if (!destLatLng) {
+    return { error: 'Could not find that delivery address - ask the customer to double check it.' };
+  }
+
+  let quote: Record<string, unknown>;
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/delivery-lalamove-quote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceRoleKey}`, 'apikey': serviceRoleKey },
+      body: JSON.stringify({
+        origin: { lat: origin.latitude, lng: origin.longitude, address: origin.address },
+        destination: { lat: destLatLng.lat, lng: destLatLng.lng, address: destinationAddress },
+        serviceType: vehicleType
+      })
+    });
+    quote = await res.json();
+    if (!res.ok) {
+      return { error: (quote?.error as string) || 'Could not get a Lalamove quote for that route.' };
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not reach Lalamove.' };
+  }
+
+  const distanceMeters = quote.distanceMeters as number | null;
+  return {
+    ok: true,
+    originBranch: location,
+    originAddress: origin.address,
+    vehicleType: quote.serviceType,
+    requestedVehicleType: vehicleType,
+    distanceKm: distanceMeters != null ? Math.round((distanceMeters / 1000) * 10) / 10 : null,
+    total: quote.total,
+    currency: quote.currency || 'PHP'
+  };
+}
+
 // Backs the get_driver_location tool - a first pass at letting the chatbot answer "where is the
 // driver?" using the live GPS feed from driver-app/ (see supabase_driver_locations_table.sql).
 // Deliberately NOT tied to a specific order/customer yet (see that tool's description) - just
@@ -1217,6 +1330,8 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       return JSON.stringify(await computeAquariumQuote(supabase, input));
     case 'compute_delivery_quote':
       return JSON.stringify(await computeDeliveryQuote(supabase, input));
+    case 'compute_lalamove_quote':
+      return JSON.stringify(await computeLalamoveQuote(supabase, input));
     case 'get_driver_location':
       return JSON.stringify(await computeDriverLocation(supabase, input));
     case 'schedule_follow_up': {
@@ -1275,6 +1390,14 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         deliveryFeeIsEstimate,
         candidateDates: data.map((row: { candidate_date: string }) => row.candidate_date)
       });
+    }
+    case 'get_delivery_schedule_status': {
+      const orderNo = String(input.order_no ?? '').trim();
+      if (!orderNo) return 'No order number provided.';
+      const { data, error } = await supabase.rpc('public_get_delivery_schedule_status', { p_order_id: orderNo });
+      if (error) return `Lookup failed: ${error.message}`;
+      if (!data || data.length === 0 || !data[0].found) return 'No order found with that number.';
+      return JSON.stringify(data[0]);
     }
     case 'schedule_delivery_date': {
       const orderNo = String(input.order_no ?? '').trim();

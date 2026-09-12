@@ -38,6 +38,27 @@
           </select>
         </div>
         <div class="form-row">
+          <label for="filterEntryType">Entry Type</label>
+          <select id="filterEntryType">
+            <option value="">All Types</option>
+            <option value="Funding">Funding</option>
+            <option value="Payroll">Payroll</option>
+            <option value="CashAdvance">Cash Advance</option>
+            <option value="BasePay">Base Pay</option>
+            <option value="Addition">Addition</option>
+            <option value="Deduction">Deduction</option>
+            <option value="NetPay">Net Pay</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="filterMethod">Method</label>
+          <select id="filterMethod">
+            <option value="">All Methods</option>
+            <option value="Cash">Cash</option>
+            <option value="Digital">Digital (GCash)</option>
+          </select>
+        </div>
+        <div class="form-row">
           <label for="filterPeriodStart">Period From</label>
           <input type="date" id="filterPeriodStart" />
         </div>
@@ -47,6 +68,12 @@
         </div>
         <div class="form-row" style="align-self:end;">
           <button class="btn btn-primary btn-sm" id="applyFiltersBtn" type="button">Apply Filters</button>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-row" style="max-width:320px;">
+          <label for="filterSearch">Search</label>
+          <input type="text" id="filterSearch" placeholder="Search employee or label..." />
         </div>
       </div>
 
@@ -61,15 +88,17 @@
               <th>Entry Type</th>
               <th>Label</th>
               <th style="text-align:right;">Amount</th>
+              <th>Method</th>
               <th>Posted By</th>
               <th>Posted At</th>
             </tr>
           </thead>
           <tbody id="ledgerTableBody">
-            <tr><td colspan="7" class="muted">Loading...</td></tr>
+            <tr><td colspan="8" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
+      <div id="ledgerPaginationBar"></div>
     </div>
   </div>
 
@@ -78,6 +107,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/pagination.js"></script>
   <script src="js/payrollLedger.js"></script>
   <script src="js/pwa.js"></script>
 </body>

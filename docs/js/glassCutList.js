@@ -36,6 +36,52 @@
     return mm / MM_PER_INCH;
   }
 
+  var UNIT_TO_INCHES = {
+    'in': 1, 'inch': 1, 'inches': 1,
+    'cm': 1 / 2.54,
+    'ft': 12,
+    'mm': 1 / MM_PER_INCH
+  };
+
+  function unitToInches(value, unit) {
+    var factor = UNIT_TO_INCHES[String(unit || 'in').trim().toLowerCase()];
+    return toNumber(value) * (factor || 1);
+  }
+
+  // Pulls tank dimensions + glass thickness back out of a custom aquarium order line's Note text.
+  // Confirmed against a real order's Note field: "60L X 22W X 22H inches . 12MM BLACK SEALANT
+  // ( paki clean po ng paglagay ng sealant) WITH RIM" - each dimension carries its own L/W/H
+  // suffix rather than a plain "L x W x H" run, and the glass thickness sits on its own after the
+  // dimensions rather than next to the word "glass". A plain "72 x 24 x 18 Inches" run (the shape
+  // buildCustomAquariumSpecText() in docs/js/orderNow.js writes) is tried as a fallback in case a
+  // line was ever entered without the L/W/H suffixes. Lets the Glass Cut List page
+  // (docs/glass-cut-list.html) pull an order's real dimensions instead of someone retyping them
+  // by hand off the order screen. Returns null when neither shape matches.
+  function parseAquariumLineSpec(text) {
+    var source = String(text || '');
+
+    var suffixMatch = source.match(/([\d.]+)\s*L\s*[Xx]\s*([\d.]+)\s*W\s*[Xx]\s*([\d.]+)\s*H\b\s*(inches?|in\.?|cm|ft|mm)?/i);
+    var plainMatch = !suffixMatch && source.match(/([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches?|in|cm|ft|mm)\b/i);
+    var dimsMatch = suffixMatch || plainMatch;
+    if (!dimsMatch) return null;
+
+    var unit = dimsMatch[4] || 'in';
+
+    // The glass thickness sits AFTER the dimensions in the confirmed format ("... inches . 12MM
+    // ..."), so it's searched there first - that keeps a "mm" unit on the dimensions themselves
+    // (an edge case the fallback format allows) from ever being mistaken for the glass thickness.
+    var afterDims = source.slice(dimsMatch.index + dimsMatch[0].length);
+    var glassMatch = afterDims.match(/([\d.]+)\s*mm\b/i) || source.match(/([\d.]+)\s*mm\b/i);
+
+    return {
+      length: unitToInches(dimsMatch[1], unit),
+      width: unitToInches(dimsMatch[2], unit),
+      height: unitToInches(dimsMatch[3], unit),
+      unit: unit,
+      glass: glassMatch ? (glassMatch[1] + 'mm') : null
+    };
+  }
+
   function roundToFraction(value, denominator) {
     var d = denominator || DEFAULT_ROUNDING_DENOMINATOR;
     return Math.round(value * d) / d;
@@ -450,6 +496,8 @@
     buildCutList: buildCutList,
     renderSheetSvg: renderSheetSvg,
     formatInches: formatInches,
-    glassThicknessInches: glassThicknessInches
+    glassThicknessInches: glassThicknessInches,
+    unitToInches: unitToInches,
+    parseAquariumLineSpec: parseAquariumLineSpec
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -37,7 +37,9 @@ function renderEntryRows(entries) {
         <td>${e.entry_date || ''}</td>
         <td>${e.entry_time || ''}</td>
         <td>${formatMoney(e.net_amount)}</td>
-        <td><a href="expense-entry-lines.html?receipt=${encodeURIComponent(e.receipt_no)}">View</a></td>
+        <td>${(e.receipt_no || '').startsWith('EXP-')
+          ? '<span class="muted" title="Manual Expense Journal entry - no line items">Manual entry</span>'
+          : `<a href="expense-entry-lines.html?receipt=${encodeURIComponent(e.receipt_no)}">View</a>`}</td>
       </tr>
     `)
     .join('');

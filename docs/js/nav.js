@@ -112,6 +112,7 @@ function renderTopNav(activeLabel) {
   if (isSuperUser) {
     reports.push({ href: 'order-timing-dashboard.html', label: 'Order Timing' });
     reports.push({ href: 'expense-entries.html', label: 'Expenses' });
+    reports.push({ href: 'expense-journal.html', label: 'Expense Journal' });
     // Financials - super users only, matching the Expenses page it draws from. Both RPCs behind
     // these re-check with is_admin_authorized, so this gate is convenience, not the control.
     reports.push({ href: 'gl-entries.html', label: 'General Ledger' });

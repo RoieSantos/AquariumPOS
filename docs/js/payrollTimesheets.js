@@ -67,21 +67,26 @@ async function loadEmployeeOptionsOnce() {
   entrySelect.innerHTML = optionsHtml;
 }
 
-// Weekly grid: one row per active employee, one column per day (Mon-Sun) of the selected week.
-// Each cell is a plain hours number, pre-filled from any existing entry for that (employee, date).
-function renderWeekGrid(dates, existingByKey) {
+// Weekly grid: one row per active employee, one column per day (Mon-Sun) of the selected week,
+// plus one Cash Advance column (one amount per employee for the whole week, not per day - see
+// supabase_payroll_cash_advances_bulk_entry.sql). Each hours cell is pre-filled from any existing
+// timesheet entry; the Cash Advance cell is pre-filled from any Outstanding advance already dated
+// somewhere inside this week.
+function renderWeekGrid(dates, existingByKey, advanceByUsername) {
   const thead = document.getElementById('bulkEntryTableHead');
   const tbody = document.getElementById('bulkEntryTableBody');
 
   const headerCells = dates
     .map((d, i) => `<th>${WEEKDAY_LABELS[i]}<br /><span class="muted" style="font-weight:normal;">${d.getMonth() + 1}/${d.getDate()}</span></th>`)
     .join('');
-  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th>Total</th></tr>`;
+  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th>Total</th><th>Cash Advance</th><th>Method</th></tr>`;
 
   if (employeeOptions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="${dates.length + 2}" class="muted">No active employees found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${dates.length + 4}" class="muted">No active employees found.</td></tr>`;
     return;
   }
+
+  const lockedStyle = 'background:#e9ecef; color:#6c757d;';
 
   tbody.innerHTML = employeeOptions
     .map((e) => {
@@ -90,14 +95,26 @@ function renderWeekGrid(dates, existingByKey) {
           const key = `${e.username}|${toDateInputValue(d)}`;
           const existing = existingByKey[key];
           const value = existing ? existing.hours_worked : '';
-          return `<td><input type="number" class="bulk-hours" data-date="${toDateInputValue(d)}" min="0" max="24" step="0.5" value="${value}" style="width:70px;" /></td>`;
+          const locked = !!existing;
+          return `<td><input type="number" class="bulk-hours" data-date="${toDateInputValue(d)}" min="0" max="24" step="0.5" value="${value}" style="width:70px;${locked ? lockedStyle : ''}" ${locked ? 'disabled' : ''} /></td>`;
         })
         .join('');
+      const advance = advanceByUsername[e.username];
+      const caValue = advance ? advance.amount : '';
+      const caMethod = advance ? advance.method : 'Cash';
+      const caLocked = !!advance;
       return `
         <tr data-username="${e.username}">
           <td>${e.display_name || e.username}</td>
           ${cells}
           <td class="row-total muted">0.00</td>
+          <td><input type="number" class="bulk-ca" min="0" step="0.01" value="${caValue}" style="width:90px;${caLocked ? lockedStyle : ''}" placeholder="0.00" ${caLocked ? 'disabled' : ''} /></td>
+          <td>
+            <select class="bulk-ca-method" style="width:110px;${caLocked ? lockedStyle : ''}" ${caLocked ? 'disabled' : ''}>
+              <option value="Cash" ${caMethod === 'Cash' ? 'selected' : ''}>Cash</option>
+              <option value="Digital" ${caMethod === 'Digital' ? 'selected' : ''}>Digital (GCash)</option>
+            </select>
+          </td>
         </tr>
       `;
     })
@@ -131,18 +148,35 @@ async function loadWeekGrid() {
   const dates = weekDates(weekStart);
   renderWeekRangeLabel(dates);
 
-  const { data, error } = await supabaseClient.rpc('admin_list_timesheet_entries', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_username: null,
-    p_date_start: toDateInputValue(dates[0]),
-    p_date_end: toDateInputValue(dates[6]),
-    p_page: 1,
-    p_page_size: 500
-  });
+  const [{ data, error }, { data: advanceData, error: advanceError }] = await Promise.all([
+    supabaseClient.rpc('admin_list_timesheet_entries', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_username: null,
+      p_date_start: toDateInputValue(dates[0]),
+      p_date_end: toDateInputValue(dates[6]),
+      p_page: 1,
+      p_page_size: 500
+    }),
+    supabaseClient.rpc('admin_list_cash_advances', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_username: null,
+      p_status: 'Outstanding',
+      p_date_start: toDateInputValue(dates[0]),
+      p_date_end: toDateInputValue(dates[6]),
+      p_page: 1,
+      p_page_size: 500
+    })
+  ]);
 
   if (error) {
     errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (advanceError) {
+    errorEl.textContent = advanceError.message;
     errorEl.classList.remove('hidden');
     return;
   }
@@ -150,7 +184,21 @@ async function loadWeekGrid() {
   const existingByKey = {};
   (data || []).forEach((t) => { existingByKey[`${t.username}|${t.work_date}`] = t; });
 
-  renderWeekGrid(dates, existingByKey);
+  const advanceByUsername = {};
+  (advanceData || []).forEach((a) => { advanceByUsername[a.username] = { amount: a.amount, method: a.method }; });
+
+  renderWeekGrid(dates, existingByKey, advanceByUsername);
+}
+
+// Super User only - client-side re-enable of every locked cell in the grid as currently shown, so
+// a mistake can be corrected and re-saved without going through the All Entries list / Payroll
+// Setup's Cash Advances journal. Nothing is changed in the database until Save All is clicked again.
+function unlockEditing() {
+  document.querySelectorAll('#bulkEntryTableBody .bulk-hours:disabled, #bulkEntryTableBody .bulk-ca:disabled, #bulkEntryTableBody .bulk-ca-method:disabled').forEach((input) => {
+    input.disabled = false;
+    input.style.background = '';
+    input.style.color = '';
+  });
 }
 
 async function saveBulkEntry() {
@@ -158,37 +206,69 @@ async function saveBulkEntry() {
   errorEl.classList.add('hidden');
 
   const entries = [];
+  const caEntries = [];
   document.querySelectorAll('#bulkEntryTableBody tr[data-username]').forEach((row) => {
     const username = row.getAttribute('data-username');
-    row.querySelectorAll('.bulk-hours').forEach((input) => {
+    row.querySelectorAll('.bulk-hours:not(:disabled)').forEach((input) => {
       const hours = Number(input.value);
       if (!input.value || !(hours > 0)) return;
       entries.push({ username, work_date: input.getAttribute('data-date'), hours_worked: hours });
     });
+    const caInput = row.querySelector('.bulk-ca:not(:disabled)');
+    const caMethodInput = row.querySelector('.bulk-ca-method:not(:disabled)');
+    if (caInput) caEntries.push({ username, amount: Number(caInput.value) || 0, method: caMethodInput ? caMethodInput.value : 'Cash' });
   });
 
-  if (entries.length === 0) {
-    errorEl.textContent = 'No hours entered - fill in at least one cell.';
+  if (entries.length === 0 && caEntries.every((c) => !(c.amount > 0))) {
+    errorEl.textContent = 'Nothing entered - fill in at least one hours or cash advance cell.';
     errorEl.classList.remove('hidden');
     return;
   }
+
+  // Cells with data lock (gray out) once saved - see renderWeekGrid - so this is the one chance to
+  // change what's about to be submitted.
+  if (!confirm('Once saved this entry cannot be modified, continue saving?')) return;
 
   const saveBtn = document.getElementById('saveBulkEntryBtn');
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving...';
 
-  const { data, error } = await supabaseClient.rpc('admin_upsert_timesheet_entries_bulk', {
+  if (entries.length > 0) {
+    const { data, error } = await supabaseClient.rpc('admin_upsert_timesheet_entries_bulk', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_entries: entries
+    });
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (error || !result || !result.success) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save All';
+      errorEl.textContent = error?.message || result?.message || 'Failed to save timesheet entries.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+  }
+
+  // Cash Advance is a per-week amount, not per-day - a Thursday release date is assigned to any
+  // brand-new advance; an existing Outstanding advance already dated inside this week is updated
+  // (or removed, if its cell was cleared back to blank/0) instead of creating a duplicate.
+  const dates = weekDates(weekStart);
+  const { data: caData, error: caError } = await supabaseClient.rpc('admin_upsert_cash_advances_bulk', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
-    p_entries: entries
+    p_advance_date: toDateInputValue(dates[3]),
+    p_week_start: toDateInputValue(dates[0]),
+    p_week_end: toDateInputValue(dates[6]),
+    p_entries: caEntries
   });
 
   saveBtn.disabled = false;
   saveBtn.textContent = 'Save All';
 
-  const result = Array.isArray(data) ? data[0] : data;
-  if (error || !result || !result.success) {
-    errorEl.textContent = error?.message || result?.message || 'Failed to save timesheet entries.';
+  const caResult = Array.isArray(caData) ? caData[0] : caData;
+  if (caError || !caResult || !caResult.success) {
+    errorEl.textContent = caError?.message || caResult?.message || 'Failed to save cash advances.';
     errorEl.classList.remove('hidden');
     return;
   }
@@ -509,6 +589,7 @@ async function saveNewRun() {
   }
 
   document.getElementById('timesheetsContent').classList.remove('hidden');
+  document.getElementById('unlockEditingBtn').classList.toggle('hidden', !session.isSuperUser);
   await loadEmployeeOptionsOnce();
   await loadEntries();
   await loadCutoffSettingsOnce();
@@ -537,6 +618,14 @@ async function saveNewRun() {
     if (e.target.classList.contains('bulk-hours')) updateRowTotals();
   });
   document.getElementById('saveBulkEntryBtn').addEventListener('click', saveBulkEntry);
+  document.getElementById('unlockEditingBtn').addEventListener('click', unlockEditing);
+
+  document.getElementById('toggleAllEntriesBtn').addEventListener('click', (e) => {
+    const section = document.getElementById('allEntriesSection');
+    const willBecomeVisible = section.classList.contains('hidden');
+    section.classList.toggle('hidden', !willBecomeVisible);
+    e.target.textContent = willBecomeVisible ? 'Hide All Entries' : 'Show All Entries';
+  });
 
   document.getElementById('applyFiltersBtn').addEventListener('click', () => { currentPage = 1; loadEntries(); });
   document.getElementById('newEntryBtn').addEventListener('click', openNewEntryModal);

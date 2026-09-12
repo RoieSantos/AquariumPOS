@@ -48,7 +48,7 @@
           <button class="btn btn-secondary" id="importItemsExcelBtn" type="button">Import from Excel</button>
         </div>
       </div>
-      <p class="muted" style="font-size:12px; margin-top:-8px;">Export to Excel downloads the current item list with editable <strong>Vendor Code</strong> and <strong>Cost</strong> columns. Fill them in and use Import from Excel to bulk-update by Item Code - only those two columns are applied, everything else (Name/Category/Price) is read-only context. A blank cell clears that item's vendor or cost; if the file has no Cost column at all, costs are left untouched.</p>
+      <p class="muted" style="font-size:12px; margin-top:-8px;">Export to Excel downloads the entire item catalog (ignoring any search/category filter above) with editable <strong>Vendor Code</strong>, <strong>Cost</strong>, and <strong>Wholesale Price</strong> columns. Fill them in and use Import from Excel to bulk-update by Item Code - only those columns are applied, everything else (Name/Category/Price) is read-only context. A blank cell clears that item's vendor, cost, or wholesale price; if the file is missing one of those columns entirely, that field is left untouched.</p>
       <input type="file" id="importItemsExcelFileInput" class="hidden" accept=".csv" />
       <div class="table-wrap">
         <table>
@@ -60,11 +60,12 @@
               <th>Vendor</th>
               <th style="text-align:right;">Cost</th>
               <th style="text-align:right;">Price</th>
+              <th style="text-align:right;">Wholesale Price</th>
               <th>Variants</th>
             </tr>
           </thead>
           <tbody id="itemTableBody">
-            <tr><td colspan="7" class="muted">Loading...</td></tr>
+            <tr><td colspan="8" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -154,8 +155,15 @@
               <div id="itemCardPrice" class="muted"></div>
             </div>
             <div class="form-row">
-              <label>Wholesale Price</label>
-              <div id="itemCardWholesalePrice" class="muted"></div>
+              <label for="factboxWholesalePriceInput">Wholesale Price</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input type="number" id="factboxWholesalePriceInput" step="0.01" min="0" placeholder="Not set" style="flex:1;" />
+                <button class="btn btn-secondary btn-sm" id="factboxWholesalePriceSaveBtn" type="button">Save</button>
+              </div>
+              <div class="muted" style="margin-top:4px; font-size:12px;">
+                What this item sells for to wholesale customers. Blank if not set.
+              </div>
+              <div id="factboxWholesalePriceSaved" class="muted hidden" style="margin-top:4px;">Saved.</div>
             </div>
             <div class="form-row">
               <label>Retail Price</label>

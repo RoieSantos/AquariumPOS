@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Expense Journal - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Expense Journal</h1>
+    <p class="muted">
+      Log a manual expense straight from the portal - for spending that never goes through the
+      desktop POS's Expense checkout. Only visible to super users.
+    </p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <div class="form-group">
+        <div class="form-group-title">Add Expense</div>
+        <div id="addEntryError" class="error-text hidden"></div>
+        <form id="addEntryForm">
+          <div class="form-grid">
+            <div class="form-row">
+              <label for="entryCategoryInput">Category</label>
+              <input type="text" id="entryCategoryInput" list="entryCategoryOptions" placeholder="e.g. Utilities" required />
+              <datalist id="entryCategoryOptions"></datalist>
+            </div>
+            <div class="form-row">
+              <label for="entryDescriptionInput">Description</label>
+              <input type="text" id="entryDescriptionInput" placeholder="What was this for?" />
+            </div>
+            <div class="form-row">
+              <label for="entryAmountInput">Amount</label>
+              <input type="number" id="entryAmountInput" min="0.01" step="0.01" placeholder="0.00" required />
+            </div>
+            <div class="form-row">
+              <label for="entryDateInput">Date</label>
+              <input type="date" id="entryDateInput" />
+            </div>
+            <div class="form-row">
+              <label for="entryWarehouseInput">Warehouse</label>
+              <select id="entryWarehouseInput" required><option value="">Loading...</option></select>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="addEntryBtn" type="submit">Add Expense</button>
+        </form>
+      </div>
+
+      <div class="form-group">
+        <div class="form-group-title" style="display:flex; justify-content:space-between; align-items:center; border-bottom:none; padding-bottom:0;">
+          <span>Manage Categories</span>
+          <button class="btn btn-secondary btn-sm" id="toggleManageCategoriesBtn" type="button">Show</button>
+        </div>
+        <div id="manageCategoriesPanel" class="hidden">
+          <p class="muted" style="margin-top:0;">
+            Add a category here to make it available above right away, before any expense uses it.
+            Categories already used on a real entry show up as suggestions automatically and don't
+            need to be added here.
+          </p>
+          <div id="addCategoryError" class="error-text hidden"></div>
+          <form id="addCategoryForm">
+            <div class="form-grid">
+              <div class="form-row">
+                <label for="categoryCodeInput">Code</label>
+                <input type="text" id="categoryCodeInput" placeholder="e.g. UTIL" maxlength="50" required />
+              </div>
+              <div class="form-row">
+                <label for="categoryDescriptionInput">Description</label>
+                <input type="text" id="categoryDescriptionInput" placeholder="e.g. Utilities Expense" maxlength="200" required />
+              </div>
+            </div>
+            <button class="btn btn-primary" id="addCategoryBtn" type="submit">Add Category</button>
+          </form>
+          <div class="table-wrap" style="margin-top:14px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Description</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="categoryTableBody">
+                <tr><td colspan="3" class="muted">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Shown only if arriving from a Dashboard "Expense This Month"/"Expense Today" card
+           (?period=month|today). -->
+      <p class="muted hidden" id="activeFilterNote"></p>
+      <div class="toolbar">
+        <h2 style="margin:0;">Journal Entries</h2>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <input type="text" id="entrySearchInput" placeholder="Search by category, description, warehouse, or added by..." style="max-width:360px;" />
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Receipt No</th>
+              <th>Date</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th>Warehouse</th>
+              <th>Amount</th>
+              <th>Added By</th>
+              <th>Added At</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="entryTableBody">
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="entryPaginationBar"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/expenseJournal.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

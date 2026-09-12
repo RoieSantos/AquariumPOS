@@ -9,6 +9,7 @@ let currentRun = null;
 let currentLines = [];
 let currentLineItems = [];
 let activeLineId = null;
+let activeLine = null;
 
 function formatCurrency(amount) {
   const value = Number(amount) || 0;
@@ -78,14 +79,16 @@ function renderLedgerRows(entries) {
     return;
   }
 
-  const entryTypeBadge = { BasePay: 'badge-neutral', Addition: 'badge-success', Deduction: 'badge-danger', NetPay: 'badge-primary' };
+  // 'Payroll' rows are the run's aggregate Cash/Digital payout, posted once per method at
+  // Finalize (see admin_finalize_payroll_run) - not tied to any one employee, hence the fallback.
+  const entryTypeBadge = { BasePay: 'badge-neutral', Addition: 'badge-success', Deduction: 'badge-danger', NetPay: 'badge-primary', Payroll: 'badge-danger' };
 
   tbody.innerHTML = entries
     .map((e) => `
       <tr>
-        <td>${e.display_name || e.username}</td>
+        <td>${e.display_name || e.username || '<span class="muted">-</span>'}</td>
         <td><span class="badge ${entryTypeBadge[e.entry_type] || 'badge-neutral'}">${e.entry_type}</span></td>
-        <td>${e.label}</td>
+        <td>${e.label}${e.method ? ` (${e.method})` : ''}</td>
         <td style="text-align:right;">${formatCurrency(e.amount)}</td>
       </tr>
     `)
@@ -115,15 +118,19 @@ function renderLineRows(lines) {
   const tbody = document.getElementById('lineTableBody');
 
   if (!lines || lines.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">No employees on this run.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">No employees on this run.</td></tr>';
     return;
   }
+
+  const hasDaysWorked = (l) => l.days_worked !== null && l.days_worked !== undefined;
 
   tbody.innerHTML = lines
     .map((l) => `
       <tr>
         <td>${l.display_name || l.username}</td>
         <td>${formatCurrency(l.base_pay)}</td>
+        <td>${hasDaysWorked(l) ? formatCurrency(l.daily_rate) : '<span class="muted">-</span>'}</td>
+        <td>${hasDaysWorked(l) ? formatDays(l.days_worked) : '<span class="muted">-</span>'}</td>
         <td>${formatCurrency(l.additions_total)}</td>
         <td>${formatCurrency(l.deductions_total)}</td>
         <td><strong>${formatCurrency(l.net_pay)}</strong></td>
@@ -156,7 +163,7 @@ async function loadRun() {
 
 async function loadLines() {
   const tbody = document.getElementById('lineTableBody');
-  tbody.innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_run_lines', {
     p_admin_username: currentSession.username,
@@ -165,7 +172,7 @@ async function loadLines() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="6" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -210,12 +217,39 @@ function classifyLineItems(items) {
   };
 }
 
-function renderLineSummary(basePay, items) {
+function formatDays(days) {
+  return (Number(days) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// line is null when the Base Pay field was just hand-overridden via Save Base Pay - at that point
+// the stored day-rate x days-worked breakdown no longer matches the officer's typed-in number, so
+// fall back to a plain figure instead of showing a stale formula.
+function renderLineSummary(basePay, items, line) {
   const c = classifyLineItems(items);
   const grossPay = basePay - c.absent + c.overtime;
   const netPay = grossPay + c.otherAdditions - c.otherDeductions;
 
-  document.getElementById('summaryBasePay').textContent = formatCurrency(basePay);
+  const hasDaysWorked = line && line.days_worked !== null && line.days_worked !== undefined;
+  // More than one entry means the period crossed a calendar month boundary (Weekly only) and was
+  // priced with two different daily rates - break those out instead of showing one blended number.
+  const breakdown = hasDaysWorked && Array.isArray(line.daily_rate_breakdown) ? line.daily_rate_breakdown : [];
+  const isBlended = breakdown.length > 1;
+
+  document.getElementById('summaryDaysWorkedRow').classList.toggle('hidden', !hasDaysWorked);
+  document.getElementById('summaryBreakdownRow').classList.toggle('hidden', !isBlended);
+  if (hasDaysWorked) {
+    document.getElementById('summaryBasePay').textContent = isBlended
+      ? `${formatCurrency(basePay)} (blended - see below)`
+      : `${formatCurrency(line.daily_rate)} x ${formatDays(line.days_worked)} day(s) = ${formatCurrency(basePay)}`;
+    document.getElementById('summaryDaysWorked').textContent = `${formatDays(line.days_worked)} day(s)`;
+    if (isBlended) {
+      document.getElementById('summaryBreakdownContent').innerHTML = breakdown
+        .map((b) => `${b.month}: ${formatDays(b.days_worked)} day(s) x ${formatCurrency(b.daily_rate)} = ${formatCurrency(b.subtotal)}`)
+        .join('<br>');
+    }
+  } else {
+    document.getElementById('summaryBasePay').textContent = formatCurrency(basePay);
+  }
   document.getElementById('summaryOvertime').textContent = formatCurrency(c.overtime);
   document.getElementById('summaryAbsent').textContent = c.absent > 0 ? `-${formatCurrency(c.absent)}` : formatCurrency(0);
   document.getElementById('summaryGrossPay').textContent = formatCurrency(grossPay);
@@ -241,7 +275,7 @@ async function loadLineItems(lineId) {
 
   currentLineItems = data || [];
   renderLineItemRows(currentLineItems);
-  renderLineSummary(Number(document.getElementById('lineBasePay').value) || 0, currentLineItems);
+  renderLineSummary(Number(document.getElementById('lineBasePay').value) || 0, currentLineItems, activeLine);
 }
 
 async function openLineModal(lineId) {
@@ -249,6 +283,7 @@ async function openLineModal(lineId) {
   if (!line) return;
 
   activeLineId = lineId;
+  activeLine = line;
   document.getElementById('lineModalTitle').textContent = `Payroll Line - ${line.display_name || line.username}`;
   document.getElementById('lineBasePay').value = Number(line.base_pay) || 0;
   document.getElementById('lineBasePay').disabled = isRunFinalized();
@@ -282,7 +317,7 @@ async function saveBasePay() {
     return;
   }
 
-  renderLineSummary(basePay, currentLineItems);
+  renderLineSummary(basePay, currentLineItems, null);
   await loadLines();
   await loadFundingRequirement();
 }

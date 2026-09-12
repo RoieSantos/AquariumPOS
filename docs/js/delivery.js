@@ -760,6 +760,11 @@ function showDayDetail(dateKey) {
         // the "no address"/walk-in confirmation prompt in confirmAssign() ends up, since it's
         // never written back to OnlineOrders.ShippingAddress (a Pancake-synced field).
         const displayAddress = isPlaceholderAddress(s.shipping_address) ? (s.geocoded_address || '') : s.shipping_address;
+        // "(manually entered)" fires either from the new is_manual_address flag (supabase_delivery_
+        // stop_manual_address.sql - shipping_address IS the override once ManualAddress is set, real
+        // Pancake address or not) or the older placeholder+geocoded_address combination, kept for
+        // stops saved before that migration that only ever got a GeocodedAddress cache.
+        const isManuallyEnteredAddress = s.is_manual_address || (isPlaceholderAddress(s.shipping_address) && s.geocoded_address);
         // Per "can you add the note_print on the stops so the driver can see" - Pancake's own
         // print note (falls back to line-level notes, see admin_list_delivery_stops' note_print
         // column, supabase_delivery_tables.sql), rendered in its own "Print Note" column,
@@ -771,7 +776,7 @@ function showDayDetail(dateKey) {
           <td>${s.customer_name || ''}</td>
           <td>${s.route_name || ''}</td>
           <td>${s.status || ''}</td>
-          <td>${displayAddress}${isPlaceholderAddress(s.shipping_address) && s.geocoded_address ? ' <span class="muted">(manually entered)</span>' : ''}</td>
+          <td>${displayAddress}${isManuallyEnteredAddress ? ' <span class="muted">(manually entered)</span>' : ''}</td>
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
           <td>${s.note_print || ''}</td>
@@ -917,6 +922,65 @@ const DRIVER_MAP_DARK_STYLE = [
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#060b14' }] }
 ];
 
+// Small floating chip showing an order's ID beside its pin on the admin calendar's map (per "the
+// red pin its an order id from customer.. can you add a small order ID beside the pin") - a plain
+// google.maps.Marker `label` draws text centered inside the pin itself, which is too cramped for
+// an order id, so this instead anchors a small HTML chip to the map's overlay pane, positioned
+// just above-right of the pin's head. Re-created on every renderDayMap() call along with the
+// markers - no manual cleanup needed since renderDayMap wipes mapEl.innerHTML (which includes the
+// map's overlay panes this attaches into) before rebuilding.
+//
+// Built lazily (not as a top-level `class ... extends google.maps.OverlayView`) because
+// google.maps doesn't exist yet when this file first parses - the Maps script is only injected
+// later, on demand, by loadGoogleMapsScript() above. A top-level `extends google.maps.OverlayView`
+// would throw as soon as this script loads, breaking the whole page.
+let OrderIdLabelOverlayClass = null;
+function getOrderIdLabelOverlayClass() {
+  if (!OrderIdLabelOverlayClass) {
+    OrderIdLabelOverlayClass = class extends google.maps.OverlayView {
+      constructor(position, text) {
+        super();
+        this.position = position;
+        this.text = text;
+      }
+
+      onAdd() {
+        const div = document.createElement('div');
+        div.style.position = 'absolute';
+        div.style.transform = 'translate(10px, -34px)';
+        div.style.background = '#ffffff';
+        div.style.border = '1px solid #dc2626';
+        div.style.borderRadius = '4px';
+        div.style.padding = '1px 5px';
+        div.style.fontSize = '11px';
+        div.style.fontWeight = '600';
+        div.style.color = '#111827';
+        div.style.whiteSpace = 'nowrap';
+        div.style.pointerEvents = 'none';
+        div.textContent = this.text;
+        this.div = div;
+        this.getPanes().overlayMouseTarget.appendChild(div);
+      }
+
+      draw() {
+        const point = this.getProjection()?.fromLatLngToDivPixel(this.position);
+        if (point && this.div) {
+          this.div.style.left = `${point.x}px`;
+          this.div.style.top = `${point.y}px`;
+        }
+      }
+
+      onRemove() {
+        if (this.div) {
+          this.div.parentNode.removeChild(this.div);
+          this.div = null;
+        }
+      }
+    };
+  }
+  return OrderIdLabelOverlayClass;
+}
+
 // mapElId defaults to the admin day-detail panel's map ('dayMap'); the Driver Route View passes
 // 'driverRouteMap' to reuse this same marker/bounds logic for its single-day map.
 async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
@@ -1004,6 +1068,13 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
       icon: isDriverMap ? 'https://maps.google.com/mapfiles/ms/icons/ltblue-dot.png' : undefined
     });
     bounds.extend(position);
+
+    // Order id chip beside the pin - admin calendar map only (see OrderIdLabelOverlay above); the
+    // driver map already shows this via the tooltip/marker title and doesn't need the extra chip.
+    if (!isDriverMap && s.order_id) {
+      const OrderIdLabelOverlay = getOrderIdLabelOverlayClass();
+      new OrderIdLabelOverlay(new google.maps.LatLng(position.lat, position.lng), String(s.order_id)).setMap(dayMapInstance);
+    }
   });
 
   // Per "the driver can view the per day route" - a straight-line path connecting the day's
@@ -1034,12 +1105,26 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
 // position right alongside today's stops/route. See renderDayMap above, which calls
 // fetchDriverLocations/plotDriverMarkers/clearDriverMarkers as part of its own render.
 
-const DRIVER_LOCATION_STALE_MS = 5 * 60 * 1000; // pin dims if no ping in 5 minutes
+const DRIVER_LOCATION_STALE_MS = 5 * 60 * 1000; // pin's badge turns amber if no ping in 5 minutes
+
+// 'live' (green badge) / 'stale' (amber - tracking on, but no ping in a while) / 'stopped' (grey -
+// driver_stop_tracking was called, e.g. the driver logged out). Shared by the badge color and the
+// tooltip text below so the two can never disagree with each other.
+function driverStatusCategory(loc) {
+  if (!loc.is_tracking) return 'stopped';
+  const ageMs = Date.now() - new Date(loc.updated_at_utc).getTime();
+  return ageMs > DRIVER_LOCATION_STALE_MS ? 'stale' : 'live';
+}
+
+const DRIVER_STATUS_BADGE_COLORS = { live: '#22c55e', stale: '#f59e0b', stopped: '#9ca3af' };
 
 function driverLocationStatusText(loc) {
-  const ageMs = Date.now() - new Date(loc.updated_at_utc).getTime();
-  if (!loc.is_tracking) return 'Stopped';
-  if (ageMs > DRIVER_LOCATION_STALE_MS) return `Last seen ${Math.round(ageMs / 60000)} min ago`;
+  const category = driverStatusCategory(loc);
+  if (category === 'stopped') return 'Stopped';
+  if (category === 'stale') {
+    const ageMs = Date.now() - new Date(loc.updated_at_utc).getTime();
+    return `Last seen ${Math.round(ageMs / 60000)} min ago`;
+  }
   return 'Live';
 }
 
@@ -1058,17 +1143,15 @@ async function fetchDriverLocations() {
 }
 
 // Fallback truck glyph (white on a portal-blue circle, matching the route polyline's #1d4f91),
-// used only if General Setup hasn't uploaded a company logo yet - see loadCompanyLogoUrl.
-const DRIVER_TRUCK_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
-  <circle cx="18" cy="18" r="17" fill="#1d4f91" stroke="#ffffff" stroke-width="2"/>
-  <g transform="translate(7,11)" fill="#ffffff">
-    <path d="M0 0h13v9H0z"/>
-    <path d="M13 3h4.5l3.5 3.5V9h-8z"/>
-    <circle cx="4" cy="12" r="2.3" fill="#1d4f91" stroke="#ffffff" stroke-width="1.3"/>
-    <circle cx="16.5" cy="12" r="2.3" fill="#1d4f91" stroke="#ffffff" stroke-width="1.3"/>
-  </g>
-</svg>`.trim();
+// used only if General Setup hasn't uploaded a company logo yet - see loadCompanyLogoUrl. Sized to
+// sit inside the same 44x44 badge frame as the logo version below.
+const DRIVER_TRUCK_GLYPH_SVG = `
+<g transform="translate(9,13)" fill="#ffffff">
+  <path d="M0 0h13v9H0z"/>
+  <path d="M13 3h4.5l3.5 3.5V9h-8z"/>
+  <circle cx="4" cy="12" r="2.3" fill="#1d4f91" stroke="#ffffff" stroke-width="1.3"/>
+  <circle cx="16.5" cy="12" r="2.3" fill="#1d4f91" stroke="#ffffff" stroke-width="1.3"/>
+</g>`.trim();
 
 // public.CompanyInfo.LogoUrl - same table/column js/companyBranding.js reads for the printable
 // letterhead, readable directly via RLS with no RPC/session needed (see that file's header
@@ -1078,23 +1161,112 @@ async function loadCompanyLogoUrl() {
   const { data, error } = await supabaseClient.from('CompanyInfo').select('"LogoUrl"').eq('"Id"', 1).limit(1);
   if (error || !data || data.length === 0) return;
   companyLogoUrl = data[0]['LogoUrl'] || null;
+  if (companyLogoUrl) await buildDriverLogoCompositeIcons();
 }
 
+// url -> loaded <img>, so a failed/loading image never gets embedded into a Google Maps marker
+// icon (which silently shows nothing useful for a broken image reference).
+function loadImageElement(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    // Needed so the canvas draw below isn't a "tainted canvas" once toDataURL() is called -
+    // requires the image response to allow cross-origin reads, which Supabase Storage's public
+    // buckets do by default. If this specific logo URL doesn't, the catch in
+    // buildDriverLogoCompositeIcons falls back to the plain truck icon instead of failing loudly.
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+    img.src = url;
+  });
+}
+
+// One composited PNG data URL per status color, built once (not per-marker-per-render) and cached
+// here - driverMarkerIcon() just looks these up. Drawn on a <canvas> rather than referencing the
+// logo via an inline SVG <image href> because a data-URI SVG used as a Maps marker icon is loaded
+// in "image context", where browsers block it from fetching any external resource it references -
+// the logo would never actually appear. A canvas has no such restriction (once cross-origin
+// loading succeeds, see loadImageElement above).
+let driverLogoCompositeUrls = null; // { live, stale, stopped } -> data:image/png URL, or null if unbuilt/failed
+
+async function buildDriverLogoCompositeIcons() {
+  try {
+    const img = await loadImageElement(companyLogoUrl);
+    const urls = {};
+    for (const category of Object.keys(DRIVER_STATUS_BADGE_COLORS)) {
+      urls[category] = renderDriverLogoBadgeCanvas(img, DRIVER_STATUS_BADGE_COLORS[category]);
+    }
+    driverLogoCompositeUrls = urls;
+  } catch (err) {
+    console.error('Could not composite the company logo for driver markers - falling back to the truck icon.', err);
+    driverLogoCompositeUrls = null;
+  }
+}
+
+function renderDriverLogoBadgeCanvas(img, badgeColor) {
+  const size = 44;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, 19, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+
+  // Clip to a circle and draw the logo cropped to a square from its center (like CSS
+  // object-fit: cover) so non-square logos don't get squashed.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, 18, 0, Math.PI * 2);
+  ctx.clip();
+  const side = Math.min(img.naturalWidth, img.naturalHeight);
+  const sx = (img.naturalWidth - side) / 2;
+  const sy = (img.naturalHeight - side) / 2;
+  ctx.drawImage(img, sx, sy, side, side, 2, 2, size - 4, size - 4);
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(34, 34, 7, 0, Math.PI * 2);
+  ctx.fillStyle = badgeColor;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
+
+  return canvas.toDataURL('image/png');
+}
+
+// Builds the driver pin as one composite icon: the company logo (or the truck glyph, if no logo
+// is set, or if the logo failed to load/composite) inside a circular frame, with a small colored
+// status dot badged onto the bottom-right corner - green/amber/grey for live/stale/stopped (see
+// driverStatusCategory) - so status reads at a glance on the map itself, the way an "online" dot
+// reads on a chat avatar, rather than only being available by hovering for the marker's tooltip.
+//
 // Deferred into a function (rather than a top-level constant) since google.maps.Size/Point don't
 // exist until loadGoogleMapsScript() resolves, which happens before this is ever called.
-function driverMarkerIcon() {
-  if (companyLogoUrl) {
+function driverMarkerIcon(loc) {
+  const category = driverStatusCategory(loc);
+
+  if (driverLogoCompositeUrls?.[category]) {
     return {
-      url: companyLogoUrl,
-      scaledSize: new google.maps.Size(40, 40),
-      anchor: new google.maps.Point(20, 20)
+      url: driverLogoCompositeUrls[category],
+      scaledSize: new google.maps.Size(44, 44),
+      anchor: new google.maps.Point(22, 22)
     };
   }
 
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <circle cx="20" cy="20" r="19" fill="#1d4f91" stroke="#ffffff" stroke-width="2"/>
+  ${DRIVER_TRUCK_GLYPH_SVG}
+  <circle cx="34" cy="34" r="7" fill="${DRIVER_STATUS_BADGE_COLORS[category]}" stroke="#ffffff" stroke-width="2"/>
+</svg>`.trim();
+
   return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(DRIVER_TRUCK_SVG)}`,
-    scaledSize: new google.maps.Size(36, 36),
-    anchor: new google.maps.Point(18, 18)
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(44, 44),
+    anchor: new google.maps.Point(22, 22)
   };
 }
 
@@ -1112,27 +1284,21 @@ function plotDriverMarkers(locations) {
     const position = { lat: Number(loc.latitude), lng: Number(loc.longitude) };
     positions.push(position);
 
-    const stale = loc.is_tracking && (Date.now() - new Date(loc.updated_at_utc).getTime()) > DRIVER_LOCATION_STALE_MS;
-    // Dim stale/stopped drivers via opacity on the same truck icon rather than swapping icons.
-    const opacity = (!loc.is_tracking || stale) ? 0.45 : 1;
     const title = `${loc.display_name || loc.username} (Driver) - ${driverLocationStatusText(loc)}`;
+    // Re-built on every call (not just marker creation) since the status badge can change - e.g.
+    // a driver going from "live" to "stale" - purely from time passing, with no new location row
+    // to trigger a normal update. See the periodic refreshDriverMarkers() call in init() below.
+    const icon = driverMarkerIcon(loc);
 
     let marker = driverMarkers[loc.username];
     if (!marker) {
-      marker = new google.maps.Marker({
-        position,
-        map: dayMapInstance,
-        title,
-        opacity,
-        zIndex: 999,
-        icon: driverMarkerIcon()
-      });
+      marker = new google.maps.Marker({ position, map: dayMapInstance, title, icon, zIndex: 999 });
       driverMarkers[loc.username] = marker;
     } else {
       marker.setMap(dayMapInstance);
       marker.setPosition(position);
       marker.setTitle(title);
-      marker.setOpacity(opacity);
+      marker.setIcon(icon);
     }
   });
 
@@ -1157,6 +1323,13 @@ function clearDriverMarkers() {
 async function refreshDriverMarkers() {
   if (!dayMapInstance || dayMapDateKey !== toDateKey(new Date())) return;
   plotDriverMarkers(await fetchDriverLocations());
+}
+
+// A driver going quiet mid-route (phone died, lost signal, OEM killed the background service)
+// never produces a DriverLocations row change - nothing would otherwise re-render their badge
+// from green to amber. This periodic sweep is what catches that, purely from time passing.
+function startDriverMarkerStaleCheck() {
+  setInterval(refreshDriverMarkers, 60000);
 }
 
 // First use of Supabase Realtime postgres_changes in this codebase (chat.js uses Broadcast
@@ -1305,10 +1478,17 @@ function closeAssignModal() {
 // argument name, an ambiguous overload, a schema-cache that hadn't picked up a just-run migration
 // yet) looked identical to success: the stop existed, nothing on screen said otherwise, and the
 // manual details just never appeared. Per "it never fill in the stops address and customer".
-async function geocodeAndSaveStop(stopId, address, details = null) {
+// setManualAddress: true only from openFixStopDetails ("Edit Details" - a staff member actually
+// typed this address). Left false for the routine auto-geocode at stop creation and for "Retry
+// Map" (both just re-geocode whatever address is already showing, not a new manual entry) - see
+// supabase_delivery_stop_manual_address.sql for why that distinction matters (a real Pancake
+// address can still legitimately change later; a manual override should only freeze it once
+// someone has actually corrected it by hand).
+async function geocodeAndSaveStop(stopId, address, details = null, { setManualAddress = false } = {}) {
   const customerName = details?.customerName || null;
   const phone = details?.phone || null;
   const notes = details?.notes || null;
+  const notePrint = details?.notePrint || null;
 
   if (!address || !address.trim()) {
     const { error } = await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
@@ -1321,7 +1501,9 @@ async function geocodeAndSaveStop(stopId, address, details = null) {
       p_geocode_status: 'failed',
       p_customer_name: customerName,
       p_contact_number: phone,
-      p_notes: notes
+      p_notes: notes,
+      p_note_print: notePrint,
+      p_set_manual_address: setManualAddress
     });
     if (error) {
       console.error('admin_update_delivery_stop_geocode failed:', error);
@@ -1355,7 +1537,9 @@ async function geocodeAndSaveStop(stopId, address, details = null) {
           p_geocode_status: 'ok',
           p_customer_name: customerName,
           p_contact_number: phone,
-          p_notes: notes
+          p_notes: notes,
+          p_note_print: notePrint,
+          p_set_manual_address: setManualAddress
         })
       : await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
           p_admin_username: currentSession.username,
@@ -1367,7 +1551,9 @@ async function geocodeAndSaveStop(stopId, address, details = null) {
           p_geocode_status: 'failed',
           p_customer_name: customerName,
           p_contact_number: phone,
-          p_notes: notes
+          p_notes: notes,
+          p_note_print: notePrint,
+          p_set_manual_address: setManualAddress
         });
 
     if (error) {
@@ -1394,12 +1580,13 @@ let noAddressResolve = null;
 // title/message/prefill* let openFixStopDetails (below) reuse this same modal as a general "edit
 // an existing stop's details" tool, with its own wording and the values it already has typed in
 // rather than blank boxes.
-function openNoAddressModal(orderId, { askDetails = false, title, message, prefillAddress = '', prefillName = '', prefillPhone = '', prefillNotes = '' } = {}) {
+function openNoAddressModal(orderId, { askDetails = false, title, message, prefillAddress = '', prefillName = '', prefillPhone = '', prefillNotes = '', prefillNotePrint = '' } = {}) {
   document.getElementById('noAddressOrderId').textContent = orderId;
   document.getElementById('noAddressInput').value = prefillAddress || '';
   document.getElementById('noAddressNameInput').value = prefillName || '';
   document.getElementById('noAddressPhoneInput').value = prefillPhone || '';
   document.getElementById('noAddressNotesInput').value = prefillNotes || '';
+  document.getElementById('noAddressNotePrintInput').value = prefillNotePrint || '';
   document.querySelectorAll('.walkin-extra-row').forEach((row) => row.classList.toggle('hidden', !askDetails));
 
   // The walk-in wording explains WHY these extra fields are being asked for (Pancake's own
@@ -1423,11 +1610,12 @@ function closeNoAddressModal(proceed) {
   const customerName = document.getElementById('noAddressNameInput').value.trim();
   const phone = document.getElementById('noAddressPhoneInput').value.trim();
   const notes = document.getElementById('noAddressNotesInput').value.trim();
+  const notePrint = document.getElementById('noAddressNotePrintInput').value.trim();
   document.getElementById('noAddressModal').classList.add('hidden');
 
   if (noAddressResolve) {
     noAddressResolve(proceed
-      ? { address: address || null, customerName: customerName || null, phone: phone || null, notes: notes || null }
+      ? { address: address || null, customerName: customerName || null, phone: phone || null, notes: notes || null, notePrint: notePrint || null }
       : undefined);
     noAddressResolve = null;
   }
@@ -1453,11 +1641,12 @@ async function openFixStopDetails(stop) {
     prefillAddress: currentAddress || '',
     prefillName: stop.customer_name || '',
     prefillPhone: stop.contact_number || '',
-    prefillNotes: stop.notes || ''
+    prefillNotes: stop.notes || '',
+    prefillNotePrint: stop.note_print || ''
   });
   if (manualDetails === undefined) return; // cancelled
 
-  const saved = await geocodeAndSaveStop(stop.stop_id, manualDetails.address, manualDetails);
+  const saved = await geocodeAndSaveStop(stop.stop_id, manualDetails.address, manualDetails, { setManualAddress: true });
   if (!saved) return; // geocodeAndSaveStop already alerted why
 
   await renderMonth(currentYear, currentMonth);
@@ -1499,7 +1688,12 @@ async function confirmAssign() {
   let detailsForStop = null;
 
   const needsWalkInDetails = isWalkInPlaceholderOrder(matchedOrder);
-  if (needsWalkInDetails || isPlaceholderAddress(addressForGeocode)) {
+  // Tracks whether addressForGeocode ends up being something a staff member actually typed (via
+  // the prompt below) rather than Pancake's own ShippingAddress - passed through to
+  // geocodeAndSaveStop as setManualAddress so a genuinely manual address sticks as an override
+  // (supabase_delivery_stop_manual_address.sql), the same as an "Edit Details" edit would.
+  const manuallyEnteredAddress = needsWalkInDetails || isPlaceholderAddress(addressForGeocode);
+  if (manuallyEnteredAddress) {
     const manualDetails = await openNoAddressModal(selectedOrderId, { askDetails: needsWalkInDetails });
     if (manualDetails === undefined) return; // cancelled
     addressForGeocode = manualDetails.address;
@@ -1529,7 +1723,7 @@ async function confirmAssign() {
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);
 
-  await geocodeAndSaveStop(stopId, addressForGeocode, detailsForStop);
+  await geocodeAndSaveStop(stopId, addressForGeocode, detailsForStop, { setManualAddress: manuallyEnteredAddress });
 
   await renderMonth(currentYear, currentMonth);
   showDayDetail(deliveryDate);
@@ -1608,6 +1802,7 @@ function wireToolbarAndModal() {
   await loadGoogleMapsApiKey();
   await loadCompanyLogoUrl();
   subscribeToDriverLocations();
+  startDriverMarkerStaleCheck();
   await loadWarehouseLookup();
   await loadVendorLookup();
   await loadAndRenderRouteSchedule();

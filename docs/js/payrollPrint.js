@@ -56,12 +56,30 @@ function renderRows(payslip) {
   const sum = (arr) => arr.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const grossPay = Number(payslip.base_pay) - sum(absentItems) + sum(overtimeItems);
 
+  const formatDays = (days) => (Number(days) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const hasDaysWorked = payslip.days_worked !== null && payslip.days_worked !== undefined;
+  // More than one entry means the period crossed a calendar month boundary (Weekly only) and was
+  // priced with two different daily rates - break those out on their own rows instead of showing
+  // one blended number next to Base Pay.
+  const breakdown = hasDaysWorked && Array.isArray(payslip.daily_rate_breakdown) ? payslip.daily_rate_breakdown : [];
+  const isBlended = breakdown.length > 1;
+  const daysWorkedLabel = hasDaysWorked && !isBlended
+    ? `${formatDays(payslip.days_worked)} day(s) x ${formatCurrency(payslip.daily_rate)}`
+    : '';
+
   tbody.innerHTML = `
     <tr>
       <td>Base Pay</td>
-      <td></td>
+      <td>${daysWorkedLabel}</td>
       <td style="text-align:right;">${formatCurrency(payslip.base_pay)}</td>
     </tr>
+    ${breakdown.map((b) => `
+      <tr>
+        <td></td>
+        <td>${b.month}: ${formatDays(b.days_worked)} day(s) x ${formatCurrency(b.daily_rate)}</td>
+        <td style="text-align:right;">${formatCurrency(b.subtotal)}</td>
+      </tr>
+    `).join('')}
     ${overtimeItems.map(itemRow).join('')}
     ${absentItems.map(itemRow).join('')}
     <tr>

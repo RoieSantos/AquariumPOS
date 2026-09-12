@@ -63,6 +63,25 @@
       Retaso. Use Print for a shop copy.
     </p>
 
+    <div class="cut-panel hidden" id="orderContextPanel">
+      <h2>Order <span id="orderContextId"></span></h2>
+      <p class="muted" id="orderContextNote" style="margin-top:0;"></p>
+      <div id="orderLinePickerWrap" class="hidden" style="margin-bottom:10px;">
+        <label for="orderLinePicker" style="display:block; font-size:12px; margin-bottom:4px; color:#475569;">This order has more than one custom aquarium line - pick one:</label>
+        <select id="orderLinePicker"></select>
+      </div>
+      <div class="no-print" style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a class="btn btn-secondary btn-sm" id="viewOrderLinesLink" href="#">View Order Lines</a>
+        <button type="button" class="btn btn-secondary btn-sm hidden" id="saveCutSheetBtn">Save Cut Sheet to Order</button>
+        <button type="button" class="btn btn-primary btn-sm" id="createPoFromCutBtn">Create Purchase Order</button>
+      </div>
+      <p class="muted hidden" id="saveCutSheetNote" style="margin:10px 0 0;"></p>
+    </div>
+    <div class="cut-panel hidden" id="orderContextErrorPanel">
+      <p class="error-text" id="orderContextErrorText" style="margin:0;"></p>
+      <ul id="orderContextErrorLines" class="muted" style="margin:10px 0 0; padding-left:18px; font-size:13px;"></ul>
+    </div>
+
     <div class="cut-form">
       <div>
         <label for="tankLength">Tank length (in)</label>
@@ -139,6 +158,241 @@
       renderTopNav('Glass Cut List');
 
       const f = GlassCutList.formatInches;
+
+      // ?order=<OrderID> handoff from the Online Orders list's clickable Glass badge (see
+      // glassBadgeHtml in js/onlineOrders.js). Fetches that order's live lines the same way
+      // online-order-lines.html does, then parses the tank dimensions back out of whichever
+      // line's spec text matches a custom aquarium build (GlassCutList.parseAquariumLineSpec) so
+      // the form below is prefilled instead of retyped by hand off the order screen.
+      const orderIdParam = new URLSearchParams(window.location.search).get('order');
+      const ATTACHMENTS_BUCKET = 'online-order-line-attachments';
+      let orderContextLines = [];
+      let selectedLineIndex = 0;
+
+      function escapeHtmlLocal(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+      }
+
+      function applyParsedSpec(spec) {
+        if (!spec) return;
+        document.getElementById('tankLength').value = Math.round(spec.length * 100) / 100;
+        document.getElementById('tankWidth').value = Math.round(spec.width * 100) / 100;
+        document.getElementById('tankHeight').value = Math.round(spec.height * 100) / 100;
+
+        const glassSelect = document.getElementById('glassThickness');
+        if (spec.glass && Array.from(glassSelect.options).some((o) => o.value === spec.glass)) {
+          glassSelect.value = spec.glass;
+        }
+
+        render();
+      }
+
+      async function loadOrderContext(orderId) {
+        document.getElementById('orderContextPanel').classList.remove('hidden');
+        document.getElementById('orderContextId').textContent = orderId;
+        document.getElementById('viewOrderLinesLink').href = `online-order-lines.html?order=${encodeURIComponent(orderId)}`;
+
+        const { data, error } = await supabaseClient.rpc('admin_get_online_order_detail_live', {
+          p_admin_username: session.username,
+          p_admin_password: session.password,
+          p_order_id: orderId
+        });
+
+        if (error) {
+          document.getElementById('orderContextErrorPanel').classList.remove('hidden');
+          document.getElementById('orderContextErrorText').textContent = `Could not load order ${orderId}: ${error.message}`;
+          return;
+        }
+
+        const lines = (data || []).filter((l) => l.line_id);
+        const customer = lines[0] && lines[0].customer_name;
+        document.getElementById('orderContextNote').textContent = customer
+          ? `${customer} - showing the glass panels for this order's custom aquarium line(s).`
+          : `Showing the glass panels for this order's custom aquarium line(s).`;
+
+        // The tank dimensions are typed into the line's own NOTE (Pancake's per-item note field,
+        // filled in by buildCustomAquariumSpecText()'s spec text at checkout - see orderNow.js) -
+        // not the description, which is just the catalog product/variation name. Description and
+        // item_code are still searched as a fallback in case a line was ever built differently.
+        const matches = lines
+          .map((l) => ({
+            line: l,
+            spec: GlassCutList.parseAquariumLineSpec(l.note || '') ||
+              GlassCutList.parseAquariumLineSpec(`${l.description || ''} ${l.item_code || ''}`)
+          }))
+          .filter((m) => m.spec);
+
+        if (matches.length === 0) {
+          document.getElementById('orderContextErrorPanel').classList.remove('hidden');
+          document.getElementById('orderContextErrorText').textContent =
+            `Order ${orderId} has a glass line, but its dimensions couldn't be read automatically - enter them manually below. Here's the raw text each line actually has (Note / Description / Item Code), so this can be fixed if it's just a format mismatch:`;
+          document.getElementById('orderContextErrorLines').innerHTML = lines
+            .map((l) => `<li><strong>${escapeHtmlLocal(l.item_code || l.line_id)}</strong> - Note: "${escapeHtmlLocal(l.note || '(blank)')}" - Description: "${escapeHtmlLocal(l.description || '(blank)')}"</li>`)
+            .join('');
+          return;
+        }
+        document.getElementById('orderContextErrorPanel').classList.add('hidden');
+        document.getElementById('orderContextErrorLines').innerHTML = '';
+
+        orderContextLines = matches;
+        selectedLineIndex = 0;
+
+        const pickerWrap = document.getElementById('orderLinePickerWrap');
+        const picker = document.getElementById('orderLinePicker');
+        if (matches.length > 1) {
+          picker.innerHTML = matches
+            .map((m, i) => `<option value="${i}">${escapeHtmlLocal(m.line.note || m.line.description || m.line.item_code || ('Line ' + (i + 1)))}</option>`)
+            .join('');
+          pickerWrap.classList.remove('hidden');
+          picker.onchange = () => {
+            selectedLineIndex = Number(picker.value);
+            applyParsedSpec(orderContextLines[selectedLineIndex].spec);
+          };
+        } else {
+          pickerWrap.classList.add('hidden');
+        }
+
+        // Only offered when a line actually has a Pancake line_id to hang the attachment off of
+        // (see attachmentCellHtml's same "No line ID" gate in onlineOrderLines.js).
+        document.getElementById('saveCutSheetBtn').classList.toggle('hidden', !matches[0].line.line_id);
+
+        applyParsedSpec(matches[0].spec);
+      }
+
+      // Rasterizes a rendered cut-sheet SVG to a PNG Blob - the attachments bucket only accepts
+      // image/pdf mime types (see supabase_online_order_line_attachments.sql), not image/svg+xml.
+      function svgStringToPngBlob(svgString) {
+        return new Promise((resolve, reject) => {
+          const dimsMatch = svgString.match(/width="(\d+(?:\.\d+)?)" height="(\d+(?:\.\d+)?)"/);
+          const width = dimsMatch ? Math.ceil(Number(dimsMatch[1])) : 800;
+          const height = dimsMatch ? Math.ceil(Number(dimsMatch[2])) : 600;
+
+          const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(svgBlob);
+          const img = new Image();
+
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+            URL.revokeObjectURL(url);
+            canvas.toBlob((blob) => {
+              if (blob) resolve(blob); else reject(new Error('Could not render the cut sheet as an image.'));
+            }, 'image/png');
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('Could not load the generated cut sheet.'));
+          };
+          img.src = url;
+        });
+      }
+
+      // Same three-step signed-upload flow as handleUploadAttachment() in onlineOrderLines.js -
+      // re-verify staff, get a one-time signed upload token for this exact line, upload the bytes
+      // straight to Storage with it, then record the row. See supabase_online_order_line_
+      // attachments.sql's header comment for why it's three calls instead of one direct write.
+      async function uploadCutSheetAttachment(lineId, fileName, blob) {
+        const file = new File([blob], fileName, { type: 'image/png' });
+
+        const { data: uploadRows, error: signError } = await supabaseClient.rpc('admin_create_online_order_line_attachment_upload', {
+          p_admin_username: session.username,
+          p_admin_password: session.password,
+          p_order_id: orderIdParam,
+          p_line_id: lineId,
+          p_file_name: fileName
+        });
+
+        const uploadInfo = uploadRows && uploadRows[0];
+        if (signError || !uploadInfo) {
+          throw new Error(signError ? signError.message : 'Could not start the upload.');
+        }
+
+        const { error: uploadError } = await supabaseClient.storage
+          .from(ATTACHMENTS_BUCKET)
+          .uploadToSignedUrl(uploadInfo.storage_path, uploadInfo.upload_token, file);
+        if (uploadError) throw new Error(uploadError.message);
+
+        const { error: recordError } = await supabaseClient.rpc('admin_record_online_order_line_attachment', {
+          p_admin_username: session.username,
+          p_admin_password: session.password,
+          p_order_id: orderIdParam,
+          p_line_id: lineId,
+          p_file_name: fileName,
+          p_storage_path: uploadInfo.storage_path,
+          p_public_url: uploadInfo.public_url
+        });
+        if (recordError) throw new Error(recordError.message);
+      }
+
+      // "Save Cut Sheet to Order" - renders every nested sheet currently on screen to a PNG and
+      // attaches it to the selected custom aquarium line, the same per-line Attachments a picture
+      // uploaded from Online Order Lines would create - so the cut sheet is tagged onto the order
+      // itself instead of only existing in this tab, and shows up wherever that line's
+      // attachments are already reviewed.
+      document.getElementById('saveCutSheetBtn').addEventListener('click', async () => {
+        const selected = orderContextLines[selectedLineIndex];
+        if (!selected || !selected.line.line_id) return;
+
+        const opts = readForm();
+        const result = GlassCutList.buildCutList(opts);
+        if (result.oversized.length > 0 || result.sheets.length === 0) {
+          alert('Fix the "Cannot nest" panels above before saving a cut sheet.');
+          return;
+        }
+
+        const btn = document.getElementById('saveCutSheetBtn');
+        const note = document.getElementById('saveCutSheetNote');
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        note.classList.add('hidden');
+
+        try {
+          for (let i = 0; i < result.sheets.length; i += 1) {
+            const caption = `Order ${orderIdParam} - Sheet ${i + 1} of ${result.sheets.length} - ${opts.glass} - tank ${f(opts.length)} x ${f(opts.width)} x ${f(opts.height)}`;
+            const svg = GlassCutList.renderSheetSvg(result.sheets[i], { caption: caption });
+            const blob = await svgStringToPngBlob(svg);
+            const fileName = `glass-cut-order-${orderIdParam}-sheet-${i + 1}-of-${result.sheets.length}.png`;
+            await uploadCutSheetAttachment(selected.line.line_id, fileName, blob);
+          }
+
+          btn.textContent = 'Save Cut Sheet to Order';
+          note.textContent = `Saved ${result.sheets.length} sheet(s) as attachment(s) on this line.`;
+          note.classList.remove('hidden');
+        } catch (err) {
+          alert(`Could not save the cut sheet to this order: ${err.message}`);
+          btn.textContent = 'Save Cut Sheet to Order';
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      document.getElementById('createPoFromCutBtn').addEventListener('click', () => {
+        const opts = readForm();
+        const result = GlassCutList.buildCutList(opts);
+        const totalSqFt = result.panels
+          .reduce((sum, p) => sum + ((p.width * p.height * p.qty) / 144), 0);
+
+        // Handed off via sessionStorage rather than a query param - purchase-orders.html reads
+        // this once on load, drops it into the New Purchase Order modal's free-text Notes field,
+        // and clears it. Only Notes is prefilled: which catalog item/vendor/warehouse to order
+        // the glass from is a judgment call for whoever builds the PO, not something to guess at
+        // here.
+        const summary = [
+          orderIdParam ? `Glass for Online Order ${orderIdParam}` : 'Glass cut list',
+          `${opts.glass} glass - tank ${f(opts.length)}" x ${f(opts.width)}" x ${f(opts.height)}"`,
+          `${result.sheets.length} stock sheet(s) at ${f(opts.sheetWidth)}" x ${f(opts.sheetHeight)}" - ${totalSqFt.toFixed(2)} sq ft total`
+        ].join(' - ');
+
+        sessionStorage.setItem('pendingGlassPoNotes', summary);
+        window.location.href = 'purchase-orders.html';
+      });
 
       function readForm() {
         return {
@@ -240,6 +494,10 @@
 
       render();
       runSelfTest();
+
+      if (orderIdParam) {
+        loadOrderContext(orderIdParam);
+      }
     })();
   </script>
   <script src="js/pwa.js"></script>
