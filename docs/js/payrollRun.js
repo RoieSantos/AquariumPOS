@@ -326,7 +326,13 @@ async function saveBasePay() {
   await loadFundingRequirement();
 }
 
+// Guards against the auto-save triggers below (blur + Enter can both fire for the same entry)
+// double-submitting the same line item while the first save is still in flight.
+let isAddingLineItem = false;
+
 async function addLineItem() {
+  if (isAddingLineItem) return;
+
   const errorEl = document.getElementById('lineItemError');
   errorEl.classList.add('hidden');
 
@@ -334,6 +340,9 @@ async function addLineItem() {
   const label = document.getElementById('newItemLabel').value.trim();
   const amount = Number(document.getElementById('newItemAmount').value);
 
+  if (!label || !amount || amount <= 0) return;
+
+  isAddingLineItem = true;
   const addBtn = document.getElementById('addLineItemBtn');
   addBtn.disabled = true;
 
@@ -347,6 +356,7 @@ async function addLineItem() {
   });
 
   addBtn.disabled = false;
+  isAddingLineItem = false;
 
   const result = Array.isArray(data) ? data[0] : data;
   if (error || !result || !result.success) {
@@ -360,6 +370,34 @@ async function addLineItem() {
   await loadLineItems(activeLineId);
   await loadLines();
   await loadFundingRequirement();
+}
+
+// Auto-save the Addition/Deduction being typed - per "once the user add a addition and deduction
+// manually can you auto save it" - so leaving the Amount field (tab/click away) or pressing Enter
+// in either field commits it immediately, without needing a separate click on "+ Add Line Item".
+// addLineItem() itself already no-ops until both Label and a positive Amount are present, so this
+// is safe to call opportunistically on every blur.
+function wireLineItemAutoSave() {
+  const labelInput = document.getElementById('newItemLabel');
+  const amountInput = document.getElementById('newItemAmount');
+
+  amountInput.addEventListener('blur', addLineItem);
+  amountInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addLineItem();
+    }
+  });
+  labelInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (amountInput.value) {
+        addLineItem();
+      } else {
+        amountInput.focus();
+      }
+    }
+  });
 }
 
 async function deleteLineItem(itemId) {
@@ -452,6 +490,7 @@ async function deleteRun() {
   );
   document.getElementById('saveBasePayBtn').addEventListener('click', saveBasePay);
   document.getElementById('addLineItemBtn').addEventListener('click', addLineItem);
+  wireLineItemAutoSave();
   document.getElementById('lineItemTableBody').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-delete-item-id]');
     if (btn) deleteLineItem(btn.getAttribute('data-delete-item-id'));
