@@ -22,6 +22,8 @@
     logout();
   });
 
+  await initBiometricSection(session);
+
   document.getElementById('changePasswordForm').addEventListener('submit', async (event) => {
     event.preventDefault();
 
@@ -70,8 +72,95 @@
     // stale cached password here would lock the user out on their very next click.
     setPortalSession({ ...session, password: newPassword, mustChangePassword: false });
 
+    // Keep this device's Face ID / fingerprint sign-in (if enabled) working with the new
+    // password instead of silently starting to fail on the stale one.
+    updateBiometricPassword(session.username, newPassword);
+
     successEl.textContent = 'Password changed. Redirecting...';
     successEl.classList.remove('hidden');
     setTimeout(() => { window.location.href = 'dashboard.html'; }, 800);
   });
 })();
+
+/**
+ * Shows this device's current Face ID / fingerprint enrollment status for the logged-in
+ * account and lets them turn it on/off. Hidden entirely on devices without a platform
+ * authenticator (e.g. a desktop browser with no fingerprint reader/webcam biometric).
+ *
+ * Gated on device authorization (see webauthnAuth.js) - per "I only want to use the single
+ * phone", an ordinary employee can never turn this on for themselves on an arbitrary device.
+ * Only a super user can authorize a NEW device (and only while physically holding it, since
+ * authorization is a local flag with no remote/admin-panel equivalent); once a device is
+ * authorized, any employee logged in on it can enable their own Face ID/fingerprint there.
+ */
+async function initBiometricSection(session) {
+  const card = document.getElementById('biometricCard');
+  if (!(await isBiometricAvailable())) return;
+  card.classList.remove('hidden');
+
+  const statusEl = document.getElementById('biometricStatus');
+  const toggleBtn = document.getElementById('biometricToggleBtn');
+  const errorEl = document.getElementById('biometricError');
+  const deauthorizeWrap = document.getElementById('biometricDeauthorizeWrap');
+  const deauthorizeLink = document.getElementById('biometricDeauthorizeLink');
+
+  function render() {
+    const deviceAuthorized = isDeviceAuthorizedForBiometrics();
+
+    if (!deviceAuthorized) {
+      deauthorizeWrap.classList.add('hidden');
+      if (session.isSuperUser) {
+        statusEl.textContent = 'This device is not authorized for Face ID / fingerprint sign-in yet.';
+        toggleBtn.textContent = 'Authorize This Device';
+        toggleBtn.classList.remove('hidden');
+      } else {
+        statusEl.textContent = 'Face ID / fingerprint sign-in is not set up on this device. Ask a manager to authorize it here first.';
+        toggleBtn.classList.add('hidden');
+      }
+      return;
+    }
+
+    const enrolled = !!getBiometricCredentialForUsername(session.username);
+    statusEl.textContent = enrolled
+      ? 'Face ID / fingerprint sign-in is enabled for your account on this device.'
+      : 'Sign in faster next time using Face ID or your fingerprint on this device.';
+    toggleBtn.textContent = enrolled ? 'Turn Off' : 'Enable';
+    toggleBtn.classList.remove('hidden');
+    deauthorizeWrap.classList.toggle('hidden', !session.isSuperUser);
+  }
+  render();
+
+  toggleBtn.addEventListener('click', async () => {
+    errorEl.classList.add('hidden');
+
+    if (!isDeviceAuthorizedForBiometrics()) {
+      authorizeDeviceForBiometrics();
+      render();
+      return;
+    }
+
+    const enrolled = !!getBiometricCredentialForUsername(session.username);
+    if (enrolled) {
+      removeBiometricCredential(session.username);
+      render();
+      return;
+    }
+
+    toggleBtn.disabled = true;
+    toggleBtn.textContent = 'Setting up...';
+    const result = await enrollBiometricCredential(session.username, session.password, session.displayName);
+    toggleBtn.disabled = false;
+
+    if (!result.success) {
+      errorEl.textContent = result.message;
+      errorEl.classList.remove('hidden');
+    }
+    render();
+  });
+
+  deauthorizeLink.addEventListener('click', (event) => {
+    event.preventDefault();
+    revokeDeviceBiometricAuthorization();
+    render();
+  });
+}

@@ -19,6 +19,9 @@
       <h1 style="text-align:center;">RS Pet Stop Portal</h1>
       <p class="muted" style="text-align:center; margin-top:-8px;">Staff sign in</p>
 
+      <button type="button" id="biometricLoginBtn" class="btn btn-primary hidden" style="width:100%; margin-bottom:16px;">Sign In with Face ID / Fingerprint</button>
+      <p id="biometricDivider" class="muted hidden" style="text-align:center; margin:-8px 0 16px;">or sign in with password</p>
+
       <form id="loginForm">
         <div class="form-row">
           <label for="username">Username</label>
@@ -42,6 +45,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
+  <script src="js/webauthnAuth.js"></script>
   <script src="js/companyBranding.js"></script>
   <script>
     (function () {
@@ -52,6 +56,37 @@
     })();
 
     applyLoginBackground();
+
+    (async function initBiometricLogin() {
+      const hasEnrollment = getStoredBiometricCredentials().length > 0;
+      if (!hasEnrollment || !(await isBiometricAvailable())) return;
+
+      document.getElementById('biometricLoginBtn').classList.remove('hidden');
+      document.getElementById('biometricDivider').classList.remove('hidden');
+    })();
+
+    document.getElementById('biometricLoginBtn').addEventListener('click', async (event) => {
+      const errorEl = document.getElementById('loginError');
+      errorEl.classList.add('hidden');
+
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = 'Waiting for Face ID / Fingerprint...';
+
+      const result = await loginWithBiometric();
+
+      btn.disabled = false;
+      btn.textContent = 'Sign In with Face ID / Fingerprint';
+
+      if (!result.success) {
+        errorEl.textContent = result.message;
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      const session = getPortalSession();
+      window.location.href = session?.mustChangePassword ? 'change-password.html' : 'dashboard.html';
+    });
 
     document.getElementById('loginForm').addEventListener('submit', async (event) => {
       event.preventDefault();
