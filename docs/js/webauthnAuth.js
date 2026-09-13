@@ -11,30 +11,70 @@
 // Credentials are stored in localStorage (not sessionStorage) so enrollment survives closing
 // the browser/tab - the whole point is not re-typing a password on this device.
 //
-// Device authorization gate: per "I only want to use the single phone", enrollment (Enable
-// Face ID/fingerprint in change-password.html) is blocked until a super user has explicitly
-// authorized THIS device. Otherwise nothing would stop an employee from logging in with their
-// password on their own personal phone and self-enrolling their own face there - which would
-// defeat the point of tying attendance/login to one physical shop device. Authorization is a
-// device-local flag (like the credentials themselves), flipped once by a manager physically
-// holding the shop phone; it is not something an ordinary employee account can grant itself.
+// Device authorization gate: per "I only want to use the single phone" / "I want a specific
+// device to be able to do login, how can we distinct that sole device" - a website has no
+// access to a real hardware id (browsers deliberately block IMEI/serial/MAC for privacy), so
+// the only way to identify "this one shop phone" is a random id WE issue and store in its
+// localStorage, registered server-side (see supabase_staff_time_clock.sql's
+// StaffAuthorizedDevices table) by a Super User while physically holding that phone.
+//
+// This is enforced by the BACKEND, not just the browser: record_time_punch() re-checks the
+// device id against StaffAuthorizedDevices on every single call. The checks in this file
+// (isTimeClockDeviceAuthorized/enrollBiometricCredential's gate) are only there to show the
+// right UI before someone tries - even if a client-side check were bypassed entirely, an
+// unauthorized device's punches would still be rejected server-side.
 
 const BIOMETRIC_CREDENTIALS_KEY = 'portal_biometric_credentials';
-const DEVICE_AUTHORIZED_KEY = 'portal_biometric_device_authorized';
+const DEVICE_ID_KEY = 'portal_device_id';
 
-function isDeviceAuthorizedForBiometrics() {
-  return localStorage.getItem(DEVICE_AUTHORIZED_KEY) === 'true';
+function getOrCreateDeviceId() {
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
 }
 
-function authorizeDeviceForBiometrics() {
-  localStorage.setItem(DEVICE_AUTHORIZED_KEY, 'true');
+async function isTimeClockDeviceAuthorized() {
+  const { data, error } = await supabaseClient.rpc('is_time_clock_device_authorized', {
+    p_device_id: getOrCreateDeviceId()
+  });
+  return !error && data === true;
 }
 
-// Also wipes every employee's enrolled credential on this device - once a device is no longer
-// "the shop phone", any biometric sign-in previously set up on it should stop working too.
-function revokeDeviceBiometricAuthorization() {
-  localStorage.removeItem(DEVICE_AUTHORIZED_KEY);
-  saveBiometricCredentials([]);
+/**
+ * Registers this device (identified by its locally-stored device id) as authorized for Time
+ * In/Out, using the calling Super User's own already-verified session credentials - only
+ * callable meaningfully by someone standing at the device, since there is no remote equivalent.
+ */
+async function authorizeTimeClockDevice(adminUsername, adminPassword, deviceLabel) {
+  const { data, error } = await supabaseClient.rpc('authorize_time_clock_device', {
+    p_admin_username: adminUsername,
+    p_admin_password: adminPassword,
+    p_device_id: getOrCreateDeviceId(),
+    p_device_label: deviceLabel || null
+  });
+  if (error) return { success: false, message: error.message || 'Could not authorize this device.' };
+  const result = Array.isArray(data) ? data[0] : data;
+  return result || { success: false, message: 'Could not authorize this device.' };
+}
+
+/**
+ * Revokes this device's authorization and wipes every employee's enrolled Face ID/fingerprint
+ * credential on it - once a device is no longer "the shop phone", biometric sign-in previously
+ * set up on it should stop working too.
+ */
+async function revokeTimeClockDevice(adminUsername, adminPassword) {
+  const { data, error } = await supabaseClient.rpc('revoke_time_clock_device', {
+    p_admin_username: adminUsername,
+    p_admin_password: adminPassword,
+    p_device_id: getOrCreateDeviceId()
+  });
+  if (error) return { success: false, message: error.message || 'Could not deauthorize this device.' };
+  const result = Array.isArray(data) ? data[0] : data;
+  if (result?.success) saveBiometricCredentials([]);
+  return result || { success: false, message: 'Could not deauthorize this device.' };
 }
 
 function base64UrlEncode(buffer) {
@@ -85,7 +125,7 @@ async function isBiometricAvailable() {
  * verify_login() RPC. Overwrites any prior enrollment for the same username on this device.
  */
 async function enrollBiometricCredential(username, password, displayName) {
-  if (!isDeviceAuthorizedForBiometrics()) {
+  if (!(await isTimeClockDeviceAuthorized())) {
     return { success: false, message: 'A manager needs to authorize this device for Face ID / fingerprint sign-in first.' };
   }
   if (!(await isBiometricAvailable())) {
@@ -219,7 +259,8 @@ async function punchTimeClock(punchType) {
   const { data, error } = await supabaseClient.rpc('record_time_punch', {
     p_username: identified.entry.username,
     p_password: identified.entry.password,
-    p_punch_type: punchType
+    p_punch_type: punchType,
+    p_device_id: getOrCreateDeviceId()
   });
 
   if (error) {

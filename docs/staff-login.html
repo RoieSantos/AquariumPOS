@@ -66,6 +66,10 @@
     (async function initBiometricLogin() {
       const hasEnrollment = getStoredBiometricCredentials().length > 0;
       if (!hasEnrollment || !(await isBiometricAvailable())) return;
+      // Backend-verified, not just a client-side guess - covers the rare case where a device was
+      // revoked directly in the database (rather than via change-password.html's Deauthorize
+      // link, which already wipes local enrollments as part of that flow).
+      if (!(await isTimeClockDeviceAuthorized())) return;
 
       document.getElementById('timeClockSection').classList.remove('hidden');
       document.getElementById('biometricDivider').classList.remove('hidden');

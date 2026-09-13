@@ -87,11 +87,12 @@
  * account and lets them turn it on/off. Hidden entirely on devices without a platform
  * authenticator (e.g. a desktop browser with no fingerprint reader/webcam biometric).
  *
- * Gated on device authorization (see webauthnAuth.js) - per "I only want to use the single
- * phone", an ordinary employee can never turn this on for themselves on an arbitrary device.
- * Only a super user can authorize a NEW device (and only while physically holding it, since
- * authorization is a local flag with no remote/admin-panel equivalent); once a device is
- * authorized, any employee logged in on it can enable their own Face ID/fingerprint there.
+ * Gated on device authorization, checked against the BACKEND (StaffAuthorizedDevices - see
+ * supabase_staff_time_clock.sql), not just a client-side flag - per "how can we distinct that
+ * sole device / how can I know the device is authorized in the backend". An ordinary employee
+ * can never authorize a device for themselves; only a Super User can, and only while physically
+ * holding it (there is no remote/admin-panel equivalent). Once authorized, any employee logged
+ * in on that device can enable their own Face ID/fingerprint there.
  */
 async function initBiometricSection(session) {
   const card = document.getElementById('biometricCard');
@@ -104,9 +105,9 @@ async function initBiometricSection(session) {
   const deauthorizeWrap = document.getElementById('biometricDeauthorizeWrap');
   const deauthorizeLink = document.getElementById('biometricDeauthorizeLink');
 
-  function render() {
-    const deviceAuthorized = isDeviceAuthorizedForBiometrics();
+  let deviceAuthorized = false;
 
+  function render() {
     if (!deviceAuthorized) {
       deauthorizeWrap.classList.add('hidden');
       if (session.isSuperUser) {
@@ -128,14 +129,27 @@ async function initBiometricSection(session) {
     toggleBtn.classList.remove('hidden');
     deauthorizeWrap.classList.toggle('hidden', !session.isSuperUser);
   }
-  render();
+
+  async function refresh() {
+    deviceAuthorized = await isTimeClockDeviceAuthorized();
+    render();
+  }
+  await refresh();
 
   toggleBtn.addEventListener('click', async () => {
     errorEl.classList.add('hidden');
 
-    if (!isDeviceAuthorizedForBiometrics()) {
-      authorizeDeviceForBiometrics();
-      render();
+    if (!deviceAuthorized) {
+      const label = window.prompt('Label this device (e.g. "Front Counter Phone") - optional:', '') || null;
+      toggleBtn.disabled = true;
+      toggleBtn.textContent = 'Authorizing...';
+      const result = await authorizeTimeClockDevice(session.username, session.password, label);
+      toggleBtn.disabled = false;
+      if (!result.success) {
+        errorEl.textContent = result.message;
+        errorEl.classList.remove('hidden');
+      }
+      await refresh();
       return;
     }
 
@@ -158,9 +172,14 @@ async function initBiometricSection(session) {
     render();
   });
 
-  deauthorizeLink.addEventListener('click', (event) => {
+  deauthorizeLink.addEventListener('click', async (event) => {
     event.preventDefault();
-    revokeDeviceBiometricAuthorization();
-    render();
+    errorEl.classList.add('hidden');
+    const result = await revokeTimeClockDevice(session.username, session.password);
+    if (!result.success) {
+      errorEl.textContent = result.message;
+      errorEl.classList.remove('hidden');
+    }
+    await refresh();
   });
 }
