@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Payslips - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <div class="toolbar">
+      <div>
+        <h1 style="margin-bottom:4px;">My Payslips</h1>
+        <p class="muted">Your finalized pay for every completed payroll run.</p>
+      </div>
+    </div>
+
+    <div id="payslipsError" class="error-text hidden"></div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Pay Cycle</th>
+            <th>Period</th>
+            <th>Pay Date</th>
+            <th style="text-align:right;">Base Pay</th>
+            <th style="text-align:right;">Additions</th>
+            <th style="text-align:right;">Deductions</th>
+            <th style="text-align:right;">Net Pay</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="payslipTableBody">
+          <tr><td colspan="8" class="muted">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/myPayslips.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

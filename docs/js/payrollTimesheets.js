@@ -520,6 +520,25 @@ function updateCutoffRowVisibility() {
   document.getElementById('weeklyAutofillRow').classList.toggle('hidden', payCycle !== 'Weekly');
 }
 
+// Runs whichever autofill matches the currently selected Pay Cycle - wired to every field that
+// feeds that computation (Pay Cycle/Cutoff/Month, or the Weekly pay date) so Period Start/End/Pay
+// Date are always kept in sync automatically, per "add validation on all fields that it will
+// automatically autofill dates - this will avoid manual clicking of Autofill Dates". The buttons
+// stay in the markup as a harmless manual re-trigger, but nothing depends on clicking them anymore.
+function autofillForCurrentCycle() {
+  const payCycle = document.getElementById('newRunPayCycle').value;
+  if (payCycle === 'Weekly') {
+    autofillWeeklyDates();
+  } else {
+    autofillDates();
+  }
+}
+
+function handlePayCycleChange() {
+  updateCutoffRowVisibility();
+  autofillForCurrentCycle();
+}
+
 // Defaults to the week currently shown in the grid, since that's almost always the week whose
 // hours the officer just finished entering.
 // Per "cannot do create payroll run if there are timesheets pending to save" - typed-but-unsaved
@@ -633,7 +652,10 @@ async function saveNewRun() {
     document.getElementById('newRunModal').classList.add('hidden')
   );
   document.getElementById('saveRunBtn').addEventListener('click', saveNewRun);
-  document.getElementById('newRunPayCycle').addEventListener('change', updateCutoffRowVisibility);
+  document.getElementById('newRunPayCycle').addEventListener('change', handlePayCycleChange);
+  document.getElementById('newRunCutoff').addEventListener('change', autofillDates);
+  document.getElementById('newRunTargetMonth').addEventListener('change', autofillDates);
+  document.getElementById('newRunWeeklyPayDate').addEventListener('change', autofillWeeklyDates);
   document.getElementById('autofillDatesBtn').addEventListener('click', autofillDates);
   document.getElementById('autofillWeeklyDatesBtn').addEventListener('click', autofillWeeklyDates);
   document.getElementById('bulkEntryTableBody').addEventListener('input', (e) => {

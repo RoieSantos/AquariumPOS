@@ -19,6 +19,7 @@ function renderTopNav(activeLabel) {
         <div class="topnav-links" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
           <a class="topnav-link${activeLabel === 'Delivery' ? ' active' : ''}" href="delivery.html">Delivery</a>
+          <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
       </div>
@@ -37,6 +38,7 @@ function renderTopNav(activeLabel) {
         <div class="topnav-links" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
           <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">Online Orders</a>
+          <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
       </div>
@@ -57,7 +59,12 @@ function renderTopNav(activeLabel) {
   // Dashboard stands alone (not part of any group) since it's the one link everyone reaches for
   // first. Everything else is bucketed by function so the nav reads as a handful of menus instead
   // of a wall of ~20 flat tabs - see the .topnav-group/.topnav-group-menu styles in css/styles.css.
-  const standalone = [{ href: 'dashboard.html', label: 'Dashboard' }];
+  // My Payslips stands alone too (not bucketed under Admin) - it's a personal self-service page
+  // every login can use, not a functional/admin grouping.
+  const standalone = [
+    { href: 'dashboard.html', label: 'Dashboard' },
+    { href: 'my-payslips.html', label: 'My Payslips' }
+  ];
 
   const orders = [];
   if (!isSalesOnlyUser) {

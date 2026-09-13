@@ -187,6 +187,25 @@ function updateCutoffRowVisibility() {
   document.getElementById('weeklyAutofillRow').classList.toggle('hidden', payCycle !== 'Weekly');
 }
 
+function handlePayCycleChange() {
+  updateCutoffRowVisibility();
+  autofillForCurrentCycle();
+}
+
+// Runs whichever autofill matches the currently selected Pay Cycle - wired to every field that
+// feeds that computation (Pay Cycle/Cutoff/Month, or the Weekly pay date) so Period Start/End/Pay
+// Date are always kept in sync automatically, per "add validation on all fields that it will
+// automatically autofill dates - this will avoid manual clicking of Autofill Dates". The buttons
+// stay in the markup as a harmless manual re-trigger, but nothing depends on clicking them anymore.
+function autofillForCurrentCycle() {
+  const payCycle = document.getElementById('newRunPayCycle').value;
+  if (payCycle === 'Weekly') {
+    autofillWeeklyDates();
+  } else {
+    autofillDates();
+  }
+}
+
 function openNewRunModal() {
   document.getElementById('newRunPayCycle').value = 'SemiMonthly';
   document.getElementById('newRunCutoff').value = 'A';
@@ -199,6 +218,7 @@ function openNewRunModal() {
   document.getElementById('newRunError').classList.add('hidden');
   updateCutoffRowVisibility();
   document.getElementById('newRunModal').classList.remove('hidden');
+  autofillForCurrentCycle();
 }
 
 async function saveNewRun() {
@@ -263,7 +283,10 @@ async function saveNewRun() {
     document.getElementById('newRunModal').classList.add('hidden')
   );
   document.getElementById('saveRunBtn').addEventListener('click', saveNewRun);
-  document.getElementById('newRunPayCycle').addEventListener('change', updateCutoffRowVisibility);
+  document.getElementById('newRunPayCycle').addEventListener('change', handlePayCycleChange);
+  document.getElementById('newRunCutoff').addEventListener('change', autofillDates);
+  document.getElementById('newRunTargetMonth').addEventListener('change', autofillDates);
+  document.getElementById('newRunWeeklyPayDate').addEventListener('change', autofillWeeklyDates);
   document.getElementById('autofillDatesBtn').addEventListener('click', autofillDates);
   document.getElementById('autofillWeeklyDatesBtn').addEventListener('click', autofillWeeklyDates);
 })();

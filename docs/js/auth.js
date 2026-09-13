@@ -79,7 +79,11 @@ const PASSWORD_CHANGE_EXEMPT_PAGES = ['change-password.html', 'staff-login.html'
 // allowed too, but only shows a single "Go to Delivery" link there (#deliveryTeamGoToDeliveryBtn,
 // see dashboard.html/js/dashboard.js) instead of the real dashboard content - per "can you atleast
 // show a button first, the delivery button, on the dashboard" rather than a silent hard redirect.
-const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
+// my-payslips.html/my-payslip-print.html added to both lists below per "each employee has login
+// i want a portion there that they can access their pay / payslips" - self-service payslips
+// (supabase_payroll_self_service_payslips.sql) are for every employee, including these two
+// otherwise-locked-down roles, not just Payroll Officers/Super Users.
+const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
 // Same exclusive-lockdown shape as Delivery Team above, per "create me a field in the user setup
 // 'Online Order Staff' - when this is tick the user will only see Orders Printed that to be Ship."
@@ -87,7 +91,7 @@ const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-
 // there - locking it out would break the one workflow this role exists for. dashboard.html is
 // allowed but only shows a "Go to Online Orders" link (#onlineOrderStaffGoToOrdersBtn, see
 // dashboard.html/js/dashboard.js), same pattern as Delivery Team's dashboard landing.
-const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-lines.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
+const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-lines.html', 'dashboard.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
 function currentPageFileName() {
   return (window.location.pathname.split('/').pop() || '').toLowerCase();
