@@ -32,6 +32,34 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
 }
 
+// Live-updates docs/gma-conversations.html for any OTHER open staff tab (the sender's own tab
+// already refreshes locally on a successful send) - same channel/pattern as facebook-messenger-
+// webhook's broadcastGmaEvent, duplicated here rather than shared since these are two independent
+// Edge Functions. See that file's comment for why Broadcast (not postgres_changes).
+async function broadcastGmaEvent(supabase: ReturnType<typeof createClient>, psid: string): Promise<void> {
+  try {
+    const channel = supabase.channel('gma-inbox');
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const timer = setTimeout(finish, 3000);
+      channel.subscribe((status: string) => {
+        if (status === 'SUBSCRIBED' && !settled) {
+          clearTimeout(timer);
+          channel.send({ type: 'broadcast', event: 'new_message', payload: { psid } }).finally(finish);
+        }
+      });
+    });
+    await channel.unsubscribe();
+  } catch (err) {
+    console.error('Failed to broadcast GMA inbox event:', err instanceof Error ? err.message : err);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS });
@@ -80,6 +108,8 @@ Deno.serve(async (req) => {
     // is safe to relay as-is, same as every other admin_* RPC's error handling in the portal JS.
     return jsonResponse({ error: dbError.message }, 400);
   }
+
+  await broadcastGmaEvent(supabase, psid);
 
   try {
     const res = await fetch(`https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`, {

@@ -58,13 +58,16 @@ function renderRows(payslip) {
 
   const formatDays = (days) => (Number(days) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const hasDaysWorked = payslip.days_worked !== null && payslip.days_worked !== undefined;
+  // Hourly's "days worked" is really hours worked - same DaysWorked/DailyRate columns, just a
+  // different unit for display (see supabase_payroll_hourly_days_worked_display.sql).
+  const unitLabel = payslip.pay_type === 'Hourly' ? 'hrs' : 'day(s)';
   // More than one entry means the period crossed a calendar month boundary (Weekly only) and was
   // priced with two different daily rates - break those out on their own rows instead of showing
   // one blended number next to Base Pay.
   const breakdown = hasDaysWorked && Array.isArray(payslip.daily_rate_breakdown) ? payslip.daily_rate_breakdown : [];
   const isBlended = breakdown.length > 1;
   const daysWorkedLabel = hasDaysWorked && !isBlended
-    ? `${formatDays(payslip.days_worked)} day(s) x ${formatCurrency(payslip.daily_rate)}`
+    ? `${formatDays(payslip.days_worked)} ${unitLabel} x ${formatCurrency(payslip.daily_rate)}`
     : '';
 
   tbody.innerHTML = `

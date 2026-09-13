@@ -236,19 +236,19 @@
         <button class="btn btn-primary btn-sm" id="newEmployeeBtn" type="button">+ New Employee</button>
       </div>
       <div class="table-wrap">
-        <table>
+        <table id="employeeTable">
           <thead>
             <tr>
-              <th>Username</th>
-              <th>Employee No.</th>
-              <th>Display Name</th>
-              <th>Active</th>
-              <th>Pay Cycle</th>
-              <th>Pay Type</th>
-              <th>Rate</th>
-              <th>Payment Method</th>
-              <th>Paid Rest Day</th>
-              <th>Outstanding CA</th>
+              <th class="sortable-th" data-sort="username">Username<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="employee_no">Employee No.<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="display_name">Display Name<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="is_active">Active<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="pay_cycle">Pay Cycle<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="pay_type">Pay Type<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="rate">Rate<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="payment_method">Payment Method<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="has_paid_rest_day">Paid Rest Day<span class="sort-indicator"></span></th>
+              <th class="sortable-th" data-sort="outstanding_cash_advance">Outstanding CA<span class="sort-indicator"></span></th>
               <th>Actions</th>
             </tr>
             <!-- Per-field filter row, Business Central style: free-text "contains" filters on the
@@ -293,14 +293,8 @@
               <th>
                 <select id="filterPaidRestDay" style="width:100%; font-size:12px; padding:4px 6px;">
                   <option value="">All</option>
-                  <option value="none">None</option>
-                  <option value="0">Sunday</option>
-                  <option value="1">Monday</option>
-                  <option value="2">Tuesday</option>
-                  <option value="3">Wednesday</option>
-                  <option value="4">Thursday</option>
-                  <option value="5">Friday</option>
-                  <option value="6">Saturday</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
                 </select>
               </th>
               <th></th>
@@ -356,17 +350,10 @@
           <input type="number" id="editProfileDailyRate" min="0" step="0.01" value="0" />
         </div>
         <div class="form-row">
-          <label for="editProfilePaidRestDay">Paid Rest Day</label>
-          <select id="editProfilePaidRestDay">
-            <option value="">None - every blank day is Absent</option>
-            <option value="0">Sunday</option>
-            <option value="1">Monday</option>
-            <option value="2">Tuesday</option>
-            <option value="3">Wednesday</option>
-            <option value="4">Thursday</option>
-            <option value="5">Friday</option>
-            <option value="6">Saturday</option>
-          </select>
+          <label for="editProfilePaidRestDay" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="editProfilePaidRestDay" style="width:auto;" />
+            Has Paid Rest Day (adds a day's worth of salary to each payrun)
+          </label>
         </div>
         <div class="form-row">
           <label for="editProfilePaymentMethod">Payment Method</label>
@@ -471,17 +458,10 @@
           <input type="number" id="newEmployeeDailyRate" min="0" step="0.01" value="0" />
         </div>
         <div class="form-row">
-          <label for="newEmployeePaidRestDay">Paid Rest Day</label>
-          <select id="newEmployeePaidRestDay">
-            <option value="">None - every blank day is Absent</option>
-            <option value="0">Sunday</option>
-            <option value="1">Monday</option>
-            <option value="2">Tuesday</option>
-            <option value="3">Wednesday</option>
-            <option value="4">Thursday</option>
-            <option value="5">Friday</option>
-            <option value="6">Saturday</option>
-          </select>
+          <label for="newEmployeePaidRestDay" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="newEmployeePaidRestDay" style="width:auto;" />
+            Has Paid Rest Day (adds a day's worth of salary to each payrun)
+          </label>
         </div>
       </div>
 

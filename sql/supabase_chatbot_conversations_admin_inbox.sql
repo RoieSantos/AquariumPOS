@@ -13,8 +13,10 @@
 -- AI Bot Setup.
 
 alter table public."ChatbotConversations" add column if not exists "IsPaused" boolean not null default false;
+alter table public."ChatbotConversations" add column if not exists "CustomerName" varchar(255);
 
 comment on column public."ChatbotConversations"."IsPaused" is 'When true, supabase/functions/facebook-messenger-webhook skips generating an AI reply for this Psid (message is still logged) - set from docs/gma-conversations.html.';
+comment on column public."ChatbotConversations"."CustomerName" is 'Customer''s Facebook profile name (first_name + last_name), fetched via the Graph API User Profile lookup by supabase/functions/facebook-messenger-webhook the first time it sees a message from this Psid without one cached yet - self-heals for older rows too, not just brand-new conversations.';
 
 -- ---------------------------------------------------------------------------
 -- admin_list_chatbot_conversations: one row per customer conversation, newest activity first,
@@ -23,6 +25,13 @@ comment on column public."ChatbotConversations"."IsPaused" is 'When true, supaba
 
 drop function if exists public.admin_list_chatbot_conversations(text, text, int, int);
 
+-- page_id: surfaced alongside psid so the portal can show/copy this conversation's own identity
+-- (PageId + '_' + Psid, the same "{page_id}_{psid}" convention used elsewhere - see
+-- supabase_automated_orders_tables.sql) - GMA runs on its own separate Facebook Page from the
+-- Pancake-connected one, so there is no automatic join to OnlineOrders; this is reference-only,
+-- for staff to eyeball/copy while manually looking a customer up. customer_name: their real
+-- Facebook name, if fetched yet - lets the inbox list show a name instead of a bare Psid, and
+-- prefills the "+ New Order" form's Customer Name field.
 create or replace function public.admin_list_chatbot_conversations(
   p_admin_username text,
   p_admin_password text,
@@ -31,6 +40,8 @@ create or replace function public.admin_list_chatbot_conversations(
 )
 returns table(
   psid text,
+  page_id text,
+  customer_name text,
   status text,
   is_paused boolean,
   last_message_at_utc timestamptz,
@@ -54,6 +65,8 @@ begin
   return query
     select
       c."Psid"::text,
+      c."PageId"::text,
+      c."CustomerName"::text,
       c."Status"::text,
       c."IsPaused",
       c."LastMessageAtUtc",

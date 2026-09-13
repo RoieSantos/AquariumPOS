@@ -123,14 +123,15 @@ function renderLineRows(lines) {
   }
 
   const hasDaysWorked = (l) => l.days_worked !== null && l.days_worked !== undefined;
+  const unitLabel = (l) => l.pay_type === 'Hourly' ? 'hr' : 'day';
 
   tbody.innerHTML = lines
     .map((l) => `
       <tr>
         <td>${l.display_name || l.username}</td>
         <td>${formatCurrency(l.base_pay)}</td>
-        <td>${hasDaysWorked(l) ? formatCurrency(l.daily_rate) : '<span class="muted">-</span>'}</td>
-        <td>${hasDaysWorked(l) ? formatDays(l.days_worked) : '<span class="muted">-</span>'}</td>
+        <td>${hasDaysWorked(l) ? `${formatCurrency(l.daily_rate)}/${unitLabel(l)}` : '<span class="muted">-</span>'}</td>
+        <td>${hasDaysWorked(l) ? `${formatDays(l.days_worked)} ${unitLabel(l)}${l.pay_type === 'Hourly' ? 's' : '(s)'}` : '<span class="muted">-</span>'}</td>
         <td>${formatCurrency(l.additions_total)}</td>
         <td>${formatCurrency(l.deductions_total)}</td>
         <td><strong>${formatCurrency(l.net_pay)}</strong></td>
@@ -230,6 +231,9 @@ function renderLineSummary(basePay, items, line) {
   const netPay = grossPay + c.otherAdditions - c.otherDeductions;
 
   const hasDaysWorked = line && line.days_worked !== null && line.days_worked !== undefined;
+  // Hourly's "days worked" is really hours worked - same DaysWorked/DailyRate columns, just a
+  // different unit for display (see supabase_payroll_hourly_days_worked_display.sql).
+  const unitLabel = line && line.pay_type === 'Hourly' ? 'hrs' : 'day(s)';
   // More than one entry means the period crossed a calendar month boundary (Weekly only) and was
   // priced with two different daily rates - break those out instead of showing one blended number.
   const breakdown = hasDaysWorked && Array.isArray(line.daily_rate_breakdown) ? line.daily_rate_breakdown : [];
@@ -240,8 +244,8 @@ function renderLineSummary(basePay, items, line) {
   if (hasDaysWorked) {
     document.getElementById('summaryBasePay').textContent = isBlended
       ? `${formatCurrency(basePay)} (blended - see below)`
-      : `${formatCurrency(line.daily_rate)} x ${formatDays(line.days_worked)} day(s) = ${formatCurrency(basePay)}`;
-    document.getElementById('summaryDaysWorked').textContent = `${formatDays(line.days_worked)} day(s)`;
+      : `${formatCurrency(line.daily_rate)} x ${formatDays(line.days_worked)} ${unitLabel} = ${formatCurrency(basePay)}`;
+    document.getElementById('summaryDaysWorked').textContent = `${formatDays(line.days_worked)} ${unitLabel}`;
     if (isBlended) {
       document.getElementById('summaryBreakdownContent').innerHTML = breakdown
         .map((b) => `${b.month}: ${formatDays(b.days_worked)} day(s) x ${formatCurrency(b.daily_rate)} = ${formatCurrency(b.subtotal)}`)

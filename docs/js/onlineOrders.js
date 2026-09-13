@@ -173,6 +173,14 @@ function customBadgeHtml(order) {
   return `<span class="badge badge-custom" title="This order has a custom-built line - it may need a Production Member assigned.">Custom</span>`;
 }
 
+// Flags an order that was created from a GMA conversation (docs/gma-conversations.html's "+ New
+// Order", see admin_list_online_orders' is_gma_order comment in supabase_orders_sync_tables.sql) -
+// links back to the originating Automated Order request for the full conversation/line detail.
+function gmaBadgeHtml(order) {
+  if (!order.is_gma_order) return '';
+  return `<a class="badge badge-purple" href="automated-orders.html?order=${encodeURIComponent(order.gma_order_no || '')}" title="Created from a GMA conversation - click to see the originating request.">GMA Page</a>`;
+}
+
 // "Assigned To" dropdown (Production Member roster only, see loadProductionMembers) - change is
 // handled by the delegated listener wired to .assign-production-select in init() below.
 function assignSelectHtml(order) {
@@ -232,7 +240,7 @@ function orderRowsHtml(orders) {
         <td>${o.confirmed_by || ''}</td>
         <td>${o.created_by || ''}</td>
         <td>${assignSelectHtml(o)}</td>
-        <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)}</td>
+        <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${o.note_print || ''}</td>
         ${hidePriceColumns ? '' : `<td>${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.warehouse_name || o.location_id || ''}</td>
@@ -259,7 +267,7 @@ function orderCardHtml(o) {
     <div class="order-card" data-order-id="${o.order_id}">
       <div class="order-card-top">
         <span class="order-card-id">#${o.order_id || ''}</span>
-        ${glassBadgeHtml(o)} ${customBadgeHtml(o)}
+        ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}
       </div>
       <div class="order-card-customer">${o.customer_name || 'No name on order'}</div>
       <div class="order-card-grid">

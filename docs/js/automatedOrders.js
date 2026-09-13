@@ -343,5 +343,14 @@ function wireOrderFilters() {
     if (event.target.id === 'orderModal') closeOrderModal();
   });
 
-  await loadOrders('', '');
+  // Deep link from the Online Orders "GMA Page" badge (js/onlineOrders.js's gmaBadgeHtml) -
+  // ?order=AO-xxxxx pre-fills the search box with that exact order and opens its detail modal.
+  const orderNoParam = new URLSearchParams(window.location.search).get('order');
+  if (orderNoParam) {
+    document.getElementById('orderSearchInput').value = orderNoParam;
+    await loadOrders(orderNoParam, '');
+    await openOrderModal(orderNoParam);
+  } else {
+    await loadOrders('', '');
+  }
 })();

@@ -60,12 +60,17 @@ const REPLY_DELAY_MS = 2000;
 // field since there's no multi-timezone need today; change this constant if that ever changes.
 const STORE_TIMEZONE = 'Asia/Manila';
 
+interface FacebookAttachment {
+  type?: string;
+  payload?: { url?: string };
+}
+
 interface FacebookWebhookBody {
   entry?: Array<{
     messaging?: Array<{
       sender?: { id: string };
       recipient?: { id: string };
-      message?: { mid: string; text?: string; is_echo?: boolean };
+      message?: { mid: string; text?: string; is_echo?: boolean; attachments?: FacebookAttachment[] };
     }>;
   }>;
 }
@@ -123,6 +128,175 @@ async function sendMessengerReply(psid: string, text: string, pageAccessToken: s
   }
 }
 
+// User Profile API lookup - Facebook's webhook payload never includes the sender's name, only
+// their Psid, so this is the only way to get it. Best-effort: swallows any failure (missing
+// permission, deactivated profile, transient error) and just leaves CustomerName null rather than
+// blocking the reply - the next inbound message tries again since the caller only calls this when
+// CustomerName is still unset.
+async function fetchFacebookProfileName(psid: string, pageAccessToken: string, graphVersion: string): Promise<string | null> {
+  try {
+    const url = `https://graph.facebook.com/${graphVersion}/${psid}?fields=first_name,last_name&access_token=${pageAccessToken}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const body = await res.json();
+    const name = [body.first_name, body.last_name].filter(Boolean).join(' ').trim();
+    return name || null;
+  } catch (err) {
+    console.error('Failed to fetch Facebook profile name:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+// Downloads an inbound image attachment (e.g. a GCash payment screenshot) and re-hosts it in our
+// own private 'chatbot-attachments' Storage bucket (see sql/supabase_chatbot_message_attachments.
+// sql), rather than just keeping Facebook's own CDN url - that url isn't guaranteed to stay valid
+// indefinitely, and the GMA Conversations inbox needs something durable to display. Only ever
+// called for type:'image' attachments (video/audio/file/location are left alone entirely - still
+// "out of v1 scope", same cut as before this existed). Best-effort: any failure here just means
+// the attachment is dropped (falls back to text-only handling, or the whole event is dropped if
+// there was no text either) - never blocks the rest of message processing.
+async function storeChatbotAttachment(supabase: SupabaseClient, psid: string, sourceUrl: string): Promise<{ path: string; signedUrl: string; base64: string; contentType: string } | null> {
+  try {
+    const res = await fetch(sourceUrl);
+    if (!res.ok) return null;
+
+    const contentType = res.headers.get('content-type') || 'image/jpeg';
+    const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : contentType.includes('gif') ? 'gif' : 'jpg';
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const path = `${psid}/${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('chatbot-attachments')
+      .upload(path, bytes, { contentType, upsert: false });
+    if (uploadError) {
+      console.error('Failed to upload chatbot attachment:', uploadError.message);
+      return null;
+    }
+
+    // 60-day expiry to match ChatbotMessages' own retention window (cron_cleanup_old_chatbot_
+    // messages deletes both the row and the Storage object well before this URL would expire).
+    const { data: signedData, error: signError } = await supabase.storage
+      .from('chatbot-attachments')
+      .createSignedUrl(path, 60 * 60 * 24 * 60);
+    if (signError || !signedData?.signedUrl) {
+      console.error('Failed to sign chatbot attachment URL:', signError?.message);
+      return null;
+    }
+
+    // base64-encode the bytes we already have in memory, so extractPaymentDetails (below) can hand
+    // this straight to Claude's vision input without re-downloading the image from Facebook's CDN a
+    // second time. Chunked to stay under String.fromCharCode's argument-count limit on large images.
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    const base64 = btoa(binary);
+
+    return { path, signedUrl: signedData.signedUrl, base64, contentType };
+  } catch (err) {
+    console.error('Failed to store chatbot attachment:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+interface DetectedPayment {
+  amount: number | null;
+  method: string | null;
+  reference: string | null;
+  senderName: string | null;
+}
+
+// Vision pass over a stored image attachment: is this a payment screenshot (GCash/Maya/bank
+// transfer receipt) the customer sent, and if so what does it say? Purely a SUGGESTION surfaced to
+// staff in the GMA Conversations inbox (a "Use in Add Payment" button that pre-fills the existing
+// Add Payment form, admin_add_automated_order_payment) - never posted as a real payment
+// automatically, since a misread amount or reference would corrupt an actual money record. Best-
+// effort: any failure (bad JSON, API error, low confidence) just means no suggestion is shown - the
+// photo itself is still saved and visible either way.
+async function extractPaymentDetails(anthropic: Anthropic, model: string, base64: string, contentType: string): Promise<DetectedPayment | null> {
+  try {
+    const mediaType = (contentType.includes('png') ? 'image/png' : contentType.includes('webp') ? 'image/webp' : contentType.includes('gif') ? 'image/gif' : 'image/jpeg') as
+      | 'image/jpeg'
+      | 'image/png'
+      | 'image/gif'
+      | 'image/webp';
+
+    const res = await anthropic.messages.create({
+      model,
+      max_tokens: 300,
+      temperature: 0,
+      system:
+        'You look at a single photo a customer sent to a pet store\'s Messenger chat and decide if it is a payment screenshot (e.g. GCash, Maya/PayMaya, bank transfer, or similar receipt/confirmation screen). Respond with ONLY a JSON object, no markdown code fences, no other text, in exactly this shape: {"is_payment_screenshot": boolean, "amount": number or null, "reference": string or null, "method": string or null, "sender_name": string or null}. "method" must be one of "GCash", "Maya", "Bank Transfer", "Other", or null. If the image is not a payment screenshot, or you are not reasonably confident, set is_payment_screenshot to false and leave the other fields null.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+            { type: 'text', text: 'Is this a payment screenshot? Extract the details as instructed.' }
+          ]
+        }
+      ]
+    });
+
+    const block = res.content.find((b) => b.type === 'text');
+    if (!block || block.type !== 'text') return null;
+
+    const cleaned = block.text.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (!parsed?.is_payment_screenshot) return null;
+
+    const amount = typeof parsed.amount === 'number' && Number.isFinite(parsed.amount) ? parsed.amount : null;
+    return {
+      amount,
+      method: typeof parsed.method === 'string' ? parsed.method : null,
+      reference: typeof parsed.reference === 'string' ? parsed.reference : null,
+      senderName: typeof parsed.sender_name === 'string' ? parsed.sender_name : null
+    };
+  } catch (err) {
+    console.error('Failed to extract payment details from attachment:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+// Live-updates docs/gma-conversations.html (the GMA Conversations inbox) without polling - fired
+// after every ChatbotMessages insert (inbound customer message, bot reply, or a staff reply via
+// chatbot-staff-reply) so any open browser tab refreshes instantly. Broadcast, not postgres_changes
+// - ChatbotConversations/ChatbotMessages have zero anon RLS policies (this app uses its own staff
+// username/password auth, not Supabase Auth, so everything else goes through is_admin_authorized-
+// gated RPCs instead of direct table reads), and a postgres_changes subscription is gated by that
+// same RLS - it would just never fire. Broadcast sidesteps that: it's channel-based, not
+// table-read-based, so the service-role client here can freely push into the same channel name the
+// browser subscribes to. Mirrors docs/js/chat.js's chatInboxBroadcast - the only other place in
+// this codebase already doing Realtime Broadcast - which found the same thing: send() only works
+// once the channel is actually SUBSCRIBED, so this subscribes, sends, and tears down every call
+// rather than holding a channel open across invocations (this function runs fresh per request).
+// Best-effort: never lets a broadcast failure affect the real work (message already saved either
+// way) - a missed live-update just means staff sees it on their next manual Refresh instead.
+async function broadcastGmaEvent(supabase: SupabaseClient, psid: string): Promise<void> {
+  try {
+    const channel = supabase.channel('gma-inbox');
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const timer = setTimeout(finish, 3000);
+      channel.subscribe((status: string) => {
+        if (status === 'SUBSCRIBED' && !settled) {
+          clearTimeout(timer);
+          channel.send({ type: 'broadcast', event: 'new_message', payload: { psid } }).finally(finish);
+        }
+      });
+    });
+    await channel.unsubscribe();
+  } catch (err) {
+    console.error('Failed to broadcast GMA inbox event:', err instanceof Error ? err.message : err);
+  }
+}
+
 async function isRateLimited(supabase: SupabaseClient, psid: string): Promise<boolean> {
   const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MINUTES * 60 * 1000).toISOString();
   const { count } = await supabase
@@ -142,19 +316,62 @@ async function processMessage(
   graphVersion: string,
   pageId: string,
   psid: string,
-  text: string,
-  mid: string
+  text: string | undefined,
+  mid: string,
+  attachments: FacebookAttachment[] | undefined
 ): Promise<void> {
   // Insert-if-missing only - LastMessageAtUtc/Status are updated below, never overwritten here.
   await supabase.from('ChatbotConversations').upsert({ Psid: psid, PageId: pageId }, { onConflict: 'Psid', ignoreDuplicates: true });
 
+  // Only the FIRST image attachment is stored - Facebook's FacebookMessageId unique index only
+  // allows one ChatbotMessages row per mid, so multiple attachments on one event can't each get
+  // their own row without violating that constraint. In practice a customer sending several
+  // photos almost always does so as separate messages/events (each with its own mid) anyway, so
+  // this only ever discards anything in the rare multi-attachment-in-one-event case.
+  const imageAttachment = attachments?.find((a) => a.type === 'image' && a.payload?.url);
+  let attachmentPath: string | null = null;
+  let attachmentUrl: string | null = null;
+  let attachmentType: string | null = null;
+  let detectedPayment: DetectedPayment | null = null;
+
+  if (imageAttachment?.payload?.url) {
+    const stored = await storeChatbotAttachment(supabase, psid, imageAttachment.payload.url);
+    if (stored) {
+      attachmentPath = stored.path;
+      attachmentUrl = stored.signedUrl;
+      attachmentType = 'image';
+      detectedPayment = await extractPaymentDetails(anthropic, model, stored.base64, stored.contentType);
+    }
+  }
+
+  const trimmedText = text?.trim() || '';
+  // A stored photo with no caption still needs SOME Content (ChatbotMessages.Content is NOT
+  // NULL) - a placeholder that reads sensibly in the GMA inbox thread even without the actual
+  // image rendering (e.g. if AttachmentUrl ever fails to load).
+  const messageContent = trimmedText || (attachmentUrl ? '[Photo]' : '');
+  if (!messageContent) return; // no text and no attachment we could store - nothing to record
+
   const { error: insertErr } = await supabase
     .from('ChatbotMessages')
-    .insert({ Psid: psid, Role: 'user', Content: text, FacebookMessageId: mid });
+    .insert({
+      Psid: psid,
+      Role: 'user',
+      Content: messageContent,
+      FacebookMessageId: mid,
+      AttachmentPath: attachmentPath,
+      AttachmentUrl: attachmentUrl,
+      AttachmentType: attachmentType,
+      DetectedPaymentAmount: detectedPayment?.amount ?? null,
+      DetectedPaymentMethod: detectedPayment?.method ?? null,
+      DetectedPaymentReference: detectedPayment?.reference ?? null,
+      DetectedPaymentSenderName: detectedPayment?.senderName ?? null
+    });
   if (insertErr) {
     if (insertErr.code === '23505') return; // Facebook redelivered a message we already processed.
     console.error('Failed to record inbound chatbot message:', insertErr.message);
   }
+
+  await broadcastGmaEvent(supabase, psid);
 
   // A fresh inbound message means any prior idle stretch is over - clears AbandonedNudgeSentAtUtc
   // so chatbot-followup-dispatcher can detect the *next* idle stretch, if there is one.
@@ -168,8 +385,37 @@ async function processMessage(
   // never silences the bot on its own per direct confirmation. The message above is still recorded
   // and LastCustomerMessageAtUtc still updates, so a paused conversation stays visible/current in
   // the inbox - only the auto-reply itself is skipped, so staff can answer manually on Messenger.
-  const { data: pauseCheck } = await supabase.from('ChatbotConversations').select('IsPaused').eq('Psid', psid).maybeSingle();
-  if (pauseCheck?.IsPaused) return;
+  const { data: convState } = await supabase.from('ChatbotConversations').select('IsPaused, CustomerName').eq('Psid', psid).maybeSingle();
+
+  // Backfills CustomerName for both brand-new conversations and older ones that predate this
+  // column - runs regardless of pause state so a paused conversation still gets a name attached.
+  if (!convState?.CustomerName) {
+    const fetchedName = await fetchFacebookProfileName(psid, pageAccessToken, graphVersion);
+    if (fetchedName) {
+      await supabase.from('ChatbotConversations').update({ CustomerName: fetchedName }).eq('Psid', psid);
+    }
+  }
+
+  if (convState?.IsPaused) return;
+
+  // A photo with no caption has nothing for Claude to meaningfully respond to (no product/order
+  // question to answer) - acknowledge it and hand off to staff (who can see it inline in the GMA
+  // Conversations inbox, e.g. to verify a GCash payment screenshot) rather than running a full AI
+  // turn over a placeholder "[Photo]" prompt.
+  if (!trimmedText && attachmentUrl) {
+    const ack = detectedPayment?.amount != null
+      ? `Thanks for the payment screenshot! I see an amount of ₱${detectedPayment.amount.toFixed(2)}${detectedPayment.reference ? ` (Ref: ${detectedPayment.reference})` : ''} - our team will confirm and log it shortly. \u{1F60A}`
+      : "Thanks for sending that! Someone from our team will take a look and follow up if needed. \u{1F60A}";
+    await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: ack });
+    await supabase
+      .from('ChatbotConversations')
+      .update({ LastMessageAtUtc: new Date().toISOString(), LastBotMessageAtUtc: new Date().toISOString() })
+      .eq('Psid', psid);
+    await broadcastGmaEvent(supabase, psid);
+    await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
+    await sendMessengerReply(psid, ack, pageAccessToken, graphVersion);
+    return;
+  }
 
   if (await isRateLimited(supabase, psid)) {
     await sendMessengerReply(psid, "You're sending messages a bit fast - give me a moment to catch up!", pageAccessToken, graphVersion);
@@ -232,6 +478,7 @@ async function processMessage(
     .from('ChatbotConversations')
     .update({ LastMessageAtUtc: new Date().toISOString(), LastBotMessageAtUtc: new Date().toISOString() })
     .eq('Psid', psid);
+  await broadcastGmaEvent(supabase, psid);
 
   await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
   await sendMessengerReply(psid, finalText, pageAccessToken, graphVersion);
@@ -275,13 +522,16 @@ async function handlePost(req: Request): Promise<Response> {
       for (const evt of entry.messaging ?? []) {
         if (evt.message?.is_echo) continue; // the page's own message, echoed back - skip to avoid a reply loop
         const text = evt.message?.text;
+        const attachments = evt.message?.attachments;
         const psid = evt.sender?.id;
         const pageId = evt.recipient?.id;
         const mid = evt.message?.mid;
-        if (!text || !psid || !pageId || !mid) continue; // read receipts, postbacks, attachments - out of v1 scope
+        // A message needs text AND/OR an image attachment to be worth processing - read receipts,
+        // postbacks, and non-image attachments (video/audio/file/location) are still out of scope.
+        if ((!text && !(attachments && attachments.length > 0)) || !psid || !pageId || !mid) continue;
 
         try {
-          await processMessage(supabase, anthropic, model, pageAccessToken, graphVersion, pageId, psid, text, mid);
+          await processMessage(supabase, anthropic, model, pageAccessToken, graphVersion, pageId, psid, text, mid, attachments);
         } catch (err) {
           console.error('Error processing Messenger event:', err instanceof Error ? err.message : err);
         }

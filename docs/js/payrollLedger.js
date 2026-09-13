@@ -53,7 +53,7 @@ function renderLedgerRows(entries) {
   const summaryEl = document.getElementById('ledgerSummary');
 
   if (!entries || entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="muted">No ledger entries match these filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">No ledger entries match these filters.</td></tr>';
     summaryEl.textContent = '';
     return;
   }
@@ -66,6 +66,7 @@ function renderLedgerRows(entries) {
     .map((e) => `
       <tr>
         <td>${e.period_start === e.period_end ? formatDate(e.period_start) : `${formatDate(e.period_start)} - ${formatDate(e.period_end)}`}</td>
+        <td>${e.employee_no || ''}</td>
         <td>${e.display_name || e.username || '<span class="muted">-</span>'}</td>
         <td><span class="badge ${entryTypeBadge[e.entry_type] || 'badge-neutral'}">${entryTypeLabel[e.entry_type] || e.entry_type}</span></td>
         <td>${e.label}${e.notes ? ` <span class="muted">(${e.notes})</span>` : ''}</td>
@@ -89,7 +90,7 @@ function renderLedgerRows(entries) {
 
 async function loadLedger() {
   const tbody = document.getElementById('ledgerTableBody');
-  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
 
   const thisGeneration = ++loadGeneration;
 
@@ -116,7 +117,7 @@ async function loadLedger() {
   if (thisGeneration !== loadGeneration) return; // a newer filter/page request superseded this one
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
     document.getElementById('ledgerSummary').textContent = '';
     return;
   }

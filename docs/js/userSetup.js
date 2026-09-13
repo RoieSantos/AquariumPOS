@@ -138,7 +138,7 @@ function openNewUserModal() {
   document.getElementById('newUserMonthlySalary').value = 0;
   document.getElementById('newUserPayType').value = 'Salary';
   document.getElementById('newUserDailyRate').value = 0;
-  document.getElementById('newUserPaidRestDay').value = '';
+  document.getElementById('newUserPaidRestDay').checked = false;
   togglePayTypeRows('newUser');
   document.getElementById('newUserError').classList.add('hidden');
   document.getElementById('newUserModal').classList.remove('hidden');
@@ -173,7 +173,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserMonthlySalary').value = Number(user.monthly_salary) || 0;
   document.getElementById('editUserPayType').value = user.pay_type || 'Salary';
   document.getElementById('editUserDailyRate').value = Number(user.daily_rate) || 0;
-  document.getElementById('editUserPaidRestDay').value = user.paid_rest_day === null || user.paid_rest_day === undefined ? '' : String(user.paid_rest_day);
+  document.getElementById('editUserPaidRestDay').checked = !!user.has_paid_rest_day;
   togglePayTypeRows('editUser');
   document.getElementById('editUserError').classList.add('hidden');
   document.getElementById('editUserModal').classList.remove('hidden');
@@ -208,8 +208,7 @@ async function saveEditUser() {
   const monthlySalary = Number(document.getElementById('editUserMonthlySalary').value) || 0;
   const payType = document.getElementById('editUserPayType').value || 'Salary';
   const dailyRate = Number(document.getElementById('editUserDailyRate').value) || 0;
-  const paidRestDayRaw = document.getElementById('editUserPaidRestDay').value;
-  const paidRestDay = paidRestDayRaw === '' ? null : Number(paidRestDayRaw);
+  const hasPaidRestDay = document.getElementById('editUserPaidRestDay').checked;
 
   if (newPassword && newPassword.length < 6) {
     errorEl.textContent = 'New password must be at least 6 characters.';
@@ -248,7 +247,7 @@ async function saveEditUser() {
     p_is_payroll_officer: isPayrollOfficer,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay,
+    p_has_paid_rest_day: hasPaidRestDay,
     p_employee_no: employeeNo || null
   });
 
@@ -294,8 +293,7 @@ async function saveNewUser() {
   const monthlySalary = Number(document.getElementById('newUserMonthlySalary').value) || 0;
   const payType = document.getElementById('newUserPayType').value || 'Salary';
   const dailyRate = Number(document.getElementById('newUserDailyRate').value) || 0;
-  const paidRestDayRaw = document.getElementById('newUserPaidRestDay').value;
-  const paidRestDay = paidRestDayRaw === '' ? null : Number(paidRestDayRaw);
+  const hasPaidRestDay = document.getElementById('newUserPaidRestDay').checked;
 
   if (!username) {
     errorEl.textContent = 'Username is required.';
@@ -338,7 +336,7 @@ async function saveNewUser() {
     p_is_payroll_officer: isPayrollOfficer,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay,
+    p_has_paid_rest_day: hasPaidRestDay,
     p_employee_no: employeeNo || null
   });
 

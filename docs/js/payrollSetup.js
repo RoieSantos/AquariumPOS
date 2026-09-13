@@ -8,6 +8,12 @@ let currentEmployees = [];
 let currentFundingPage = 1;
 let currentFundingPageSize = 50;
 let currentFundingMethodFilter = '';
+// Per "let the user sort this list manual applied for all fields shown (employee setup" - click
+// any Employees table header to sort by it, click again to flip direction. No default sort (the
+// RPC's own DisplayName/Username order) until a header is actually clicked, same "manual" pattern
+// as Stock On Hand's sortable columns (docs/js/stockOnHand.js).
+let sortColumn = null;
+let sortDirection = 'asc';
 
 function formatCycle(cycle) {
   if (cycle === 'SemiMonthly') return '<span class="badge badge-primary">Semi-Monthly</span>';
@@ -30,13 +36,11 @@ function formatPayType(payType) {
   return payType === 'Hourly' ? '<span class="badge badge-primary">Hourly</span>' : '<span class="badge badge-neutral">Salary</span>';
 }
 
-const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-// Null means every blank day in a period counts as Absent (supabase_payroll_absent_day_deduction.sql);
-// a weekday here is excused from that entirely (supabase_payroll_paid_rest_day.sql).
-function formatPaidRestDay(paidRestDay) {
-  if (paidRestDay === null || paidRestDay === undefined) return '<span class="muted">None</span>';
-  return `<span class="badge badge-neutral">${WEEKDAY_NAMES[paidRestDay] || paidRestDay}</span>`;
+// A day's worth of salary is added to each payrun when true (supabase_payroll_paid_rest_day_boolean.sql).
+function formatPaidRestDay(hasPaidRestDay) {
+  return hasPaidRestDay
+    ? '<span class="badge badge-success">Yes</span>'
+    : '<span class="muted">No</span>';
 }
 
 // Salary shows Monthly Salary; Hourly shows Base Pay is computed from Timesheets (Daily Rate / 8 x
@@ -70,7 +74,7 @@ function renderEmployeeRows(employees) {
         <td>${formatPayType(e.pay_type)}</td>
         <td>${formatRate(e)}</td>
         <td>${formatPaymentMethod(e.payment_method)}</td>
-        <td>${formatPaidRestDay(e.paid_rest_day)}</td>
+        <td>${formatPaidRestDay(e.has_paid_rest_day)}</td>
         <td>${Number(e.outstanding_cash_advance) > 0 ? `<span class="badge badge-warning">${formatCurrency(e.outstanding_cash_advance)}</span>` : '<span class="muted">-</span>'}</td>
         <td><button class="btn btn-secondary btn-sm" data-edit-username="${e.username}" type="button">Edit</button></td>
       </tr>
@@ -176,12 +180,47 @@ function applyFilters() {
     if (!numericMatches(e.pay_type === 'Hourly' ? e.daily_rate : e.monthly_salary, salaryFilter)) return false;
     if (paymentMethodFilter === 'none' && e.payment_method) return false;
     if (paymentMethodFilter && paymentMethodFilter !== 'none' && e.payment_method !== paymentMethodFilter) return false;
-    if (paidRestDayFilter === 'none' && (e.paid_rest_day !== null && e.paid_rest_day !== undefined)) return false;
-    if (paidRestDayFilter && paidRestDayFilter !== 'none' && String(e.paid_rest_day) !== paidRestDayFilter) return false;
+    if (paidRestDayFilter === 'yes' && !e.has_paid_rest_day) return false;
+    if (paidRestDayFilter === 'no' && e.has_paid_rest_day) return false;
     return true;
   });
 
-  renderEmployeeRows(filtered);
+  renderEmployeeRows(sortEmployees(filtered));
+  updateSortIndicators();
+}
+
+// "rate" isn't a real field on the row - it's whichever of daily_rate/monthly_salary the Rate
+// column actually displays (see formatRate), so sorting by it needs the same pay_type branch.
+const NUMERIC_SORT_COLUMNS = new Set(['outstanding_cash_advance']);
+const BOOLEAN_SORT_COLUMNS = new Set(['is_active', 'has_paid_rest_day']);
+
+function sortEmployees(employees) {
+  if (!sortColumn) return employees;
+  const factor = sortDirection === 'asc' ? 1 : -1;
+
+  return [...employees].sort((a, b) => {
+    if (sortColumn === 'rate') {
+      const av = a.pay_type === 'Hourly' ? Number(a.daily_rate) || 0 : Number(a.monthly_salary) || 0;
+      const bv = b.pay_type === 'Hourly' ? Number(b.daily_rate) || 0 : Number(b.monthly_salary) || 0;
+      return (av - bv) * factor;
+    }
+    if (NUMERIC_SORT_COLUMNS.has(sortColumn)) {
+      return ((Number(a[sortColumn]) || 0) - (Number(b[sortColumn]) || 0)) * factor;
+    }
+    if (BOOLEAN_SORT_COLUMNS.has(sortColumn)) {
+      return ((a[sortColumn] ? 1 : 0) - (b[sortColumn] ? 1 : 0)) * factor;
+    }
+    const av = (a[sortColumn] || '').toString().toLowerCase();
+    const bv = (b[sortColumn] || '').toString().toLowerCase();
+    return av.localeCompare(bv) * factor;
+  });
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll('#employeeTable .sortable-th').forEach((th) => {
+    const indicator = th.querySelector('.sort-indicator');
+    indicator.textContent = th.dataset.sort === sortColumn ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+  });
 }
 
 // Salary shows Monthly Salary; Hourly shows Daily Rate instead - only one is ever relevant.
@@ -201,7 +240,7 @@ function openEditProfileModal(username) {
   document.getElementById('editProfileMonthlySalary').value = Number(employee.monthly_salary) || 0;
   document.getElementById('editProfilePayType').value = employee.pay_type || 'Salary';
   document.getElementById('editProfileDailyRate').value = Number(employee.daily_rate) || 0;
-  document.getElementById('editProfilePaidRestDay').value = employee.paid_rest_day === null || employee.paid_rest_day === undefined ? '' : String(employee.paid_rest_day);
+  document.getElementById('editProfilePaidRestDay').checked = !!employee.has_paid_rest_day;
   togglePayTypeRows('editProfile');
   document.getElementById('editProfilePaymentMethod').value = employee.payment_method || '';
   document.getElementById('editProfileActive').checked = employee.is_active !== false;
@@ -221,8 +260,7 @@ async function saveProfile() {
   const paymentMethod = document.getElementById('editProfilePaymentMethod').value || null;
   const payType = document.getElementById('editProfilePayType').value || 'Salary';
   const dailyRate = Number(document.getElementById('editProfileDailyRate').value) || 0;
-  const paidRestDayRaw = document.getElementById('editProfilePaidRestDay').value;
-  const paidRestDay = paidRestDayRaw === '' ? null : Number(paidRestDayRaw);
+  const hasPaidRestDay = document.getElementById('editProfilePaidRestDay').checked;
 
   const saveBtn = document.getElementById('saveProfileBtn');
   saveBtn.disabled = true;
@@ -238,7 +276,7 @@ async function saveProfile() {
     p_payment_method: paymentMethod,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay,
+    p_has_paid_rest_day: hasPaidRestDay,
     p_employee_no: employeeNo || null
   });
 
@@ -271,7 +309,7 @@ function openNewEmployeeModal() {
   document.getElementById('newEmployeeMonthlySalary').value = 0;
   document.getElementById('newEmployeePayType').value = 'Salary';
   document.getElementById('newEmployeeDailyRate').value = 0;
-  document.getElementById('newEmployeePaidRestDay').value = '';
+  document.getElementById('newEmployeePaidRestDay').checked = false;
   togglePayTypeRows('newEmployee');
   document.getElementById('newEmployeeError').classList.add('hidden');
   document.getElementById('newEmployeeModal').classList.remove('hidden');
@@ -295,8 +333,7 @@ async function saveNewEmployee() {
   const monthlySalary = Number(document.getElementById('newEmployeeMonthlySalary').value) || 0;
   const payType = document.getElementById('newEmployeePayType').value || 'Salary';
   const dailyRate = Number(document.getElementById('newEmployeeDailyRate').value) || 0;
-  const paidRestDayRaw = document.getElementById('newEmployeePaidRestDay').value;
-  const paidRestDay = paidRestDayRaw === '' ? null : Number(paidRestDayRaw);
+  const hasPaidRestDay = document.getElementById('newEmployeePaidRestDay').checked;
 
   if (!username) {
     errorEl.textContent = 'Username is required.';
@@ -329,7 +366,7 @@ async function saveNewEmployee() {
     p_monthly_salary: monthlySalary,
     p_pay_type: payType,
     p_daily_rate: dailyRate,
-    p_paid_rest_day: paidRestDay,
+    p_has_paid_rest_day: hasPaidRestDay,
     p_employee_no: employeeNo || null
   });
 
@@ -717,6 +754,15 @@ async function deleteAdvance(advanceId) {
   document.getElementById('advanceTableBody').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-delete-advance-id]');
     if (btn) deleteAdvance(btn.getAttribute('data-delete-advance-id'));
+  });
+
+  document.querySelectorAll('#employeeTable .sortable-th').forEach((th) => {
+    th.addEventListener('click', () => {
+      const column = th.dataset.sort;
+      sortDirection = sortColumn === column && sortDirection === 'asc' ? 'desc' : 'asc';
+      sortColumn = column;
+      applyFilters();
+    });
   });
 
   ['filterUsername', 'filterEmployeeNo', 'filterDisplayName', 'filterMonthlySalary'].forEach((id) => {

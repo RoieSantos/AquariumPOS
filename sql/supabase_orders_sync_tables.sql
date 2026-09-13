@@ -291,6 +291,8 @@ returns table(
   has_custom_line boolean,
   assigned_production_member text,
   assigned_production_member_name text,
+  is_gma_order boolean,
+  gma_order_no text,
   total_count bigint
 )
 language plpgsql
@@ -327,6 +329,14 @@ begin
                and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
            ),
            o."AssignedProductionMember"::text, spm."DisplayName"::text,
+           -- GMA-conversation-originated flag: joined by matching this AutomatedOrders row's own
+           -- captured receipt_no (supabase_gma_conversation_orders.sql - same field Pancake gives
+           -- back on order creation, no live Pancake call needed here) against this synced order's
+           -- OrderID, rather than anything derived from OnlineOrders.Page_ID/Conversation_ID -
+           -- those are always the Pancake-connected page's own ids regardless of an order's real
+           -- origin, since GMA runs on a separate, unconnected Facebook Page.
+           (select ao."GmaPsid" is not null from public."AutomatedOrders" ao where ao."PancakeReceiptNo" = o."OrderID" limit 1),
+           (select ao."OrderNo"::text from public."AutomatedOrders" ao where ao."PancakeReceiptNo" = o."OrderID" and ao."GmaPsid" is not null limit 1),
            count(*) over()
     from public."OnlineOrders" o
     left join public."Warehouses" w on w."ID" = o."LocationID"

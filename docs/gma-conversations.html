@@ -13,19 +13,33 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
   <style>
+    /* This page benefits from more width than the portal's default 1200px cap - the three-column
+       inbox (list/thread/customer panel) gets cramped otherwise, especially the Create Order tab's
+       form + item table. Overrides styles.css's .page rule by appearing later in source order. */
+    .page {
+      max-width: 1600px;
+    }
     .inbox-grid {
       display: grid;
-      grid-template-columns: 320px 1fr;
+      grid-template-columns: 320px 1fr 400px;
       gap: 16px;
       margin-top: 16px;
       align-items: start;
+    }
+    @media (max-width: 1300px) {
+      .inbox-grid {
+        grid-template-columns: 320px 1fr;
+      }
+      .inbox-customer-card {
+        grid-column: 1 / -1;
+      }
     }
     @media (max-width: 800px) {
       .inbox-grid {
         grid-template-columns: 1fr;
       }
     }
-    .inbox-list-card, .inbox-thread-card {
+    .inbox-list-card, .inbox-thread-card, .inbox-customer-card {
       background: #fff;
       border: 1px solid var(--panel-border);
       border-radius: 8px;
@@ -33,8 +47,232 @@
       overflow: hidden;
     }
     .inbox-list-card {
-      max-height: 75vh;
+      max-height: 80vh;
       overflow-y: auto;
+    }
+    .inbox-customer-card {
+      /* No internal max-height/scroll - a data-entry form shouldn't be squeezed into a tiny
+         scrollable box; the whole page scrolls instead, same as the Create Order tab's fields
+         being taller than one screenful. */
+      padding: 12px 14px;
+    }
+    .inbox-customer-card h3 {
+      font-size: 13px;
+      margin: 0 0 8px;
+    }
+    .inbox-customer-id {
+      font-size: 11px;
+      color: var(--muted-text, #61738f);
+      word-break: break-all;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .inbox-customer-search {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .inbox-customer-search input {
+      flex: 1;
+      min-width: 0;
+    }
+    .inbox-order-item {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--panel-border);
+      font-size: 12px;
+    }
+    .inbox-order-item:last-child {
+      border-bottom: none;
+    }
+    .inbox-order-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      font-weight: 600;
+    }
+    .inbox-order-meta {
+      color: var(--muted-text, #61738f);
+      margin-top: 2px;
+    }
+    .inbox-payment-row {
+      display: flex;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .inbox-payment-row input, .inbox-payment-row select {
+      padding: 4px 6px;
+      font-size: 11px;
+    }
+    .inbox-payment-row input[type="number"] {
+      width: 70px;
+    }
+    .inbox-payment-list {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--muted-text, #61738f);
+    }
+    .panel-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--panel-border);
+      margin: 0 0 14px;
+    }
+    .panel-tab-btn {
+      flex: 1;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 8px 4px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted-text, #61738f);
+      cursor: pointer;
+    }
+    .panel-tab-btn:hover {
+      color: var(--text-main, #1b355e);
+    }
+    .panel-tab-btn.active {
+      color: var(--primary, #1d4f91);
+      border-bottom-color: var(--primary, #1d4f91);
+    }
+    .product-search-wrap {
+      position: relative;
+      margin-bottom: 14px;
+    }
+    .product-search-results {
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 0;
+      right: 0;
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      max-height: 220px;
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .product-search-result-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .product-search-result-item:last-child {
+      border-bottom: none;
+    }
+    .product-search-result-item:hover {
+      background: #f4f7fb;
+    }
+    .product-search-result-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .product-search-result-price {
+      flex-shrink: 0;
+      color: var(--muted-text, #61738f);
+    }
+    .phone-match-warning {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      background: #fff3d6;
+      color: #8a5a00;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11px;
+      margin-bottom: 10px;
+    }
+    .phone-match-warning button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .matched-customer-card {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #f4f7fb;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 14px;
+      font-size: 12px;
+    }
+    .matched-customer-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--primary, #1d4f91);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .matched-customer-meta {
+      color: var(--muted-text, #61738f);
+    }
+    .new-order-lines-table {
+      width: 100%;
+      margin-bottom: 0;
+    }
+    .new-order-lines-table th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted-text, #61738f);
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .new-order-lines-table td {
+      font-size: 13px;
+    }
+    .new-order-lines-table .line-qty-input {
+      width: 48px;
+      padding: 4px 6px;
+      font-size: 12px;
+    }
+    .new-order-lines-table .line-price-input {
+      width: 72px;
+      padding: 4px 6px;
+      font-size: 12px;
+    }
+    .new-order-lines-table .line-remove-btn {
+      width: 24px;
+      height: 24px;
+      line-height: 22px;
+      padding: 0;
+      border-radius: 50%;
+      text-align: center;
+      font-weight: 700;
+    }
+    .new-order-total-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #eaf0fb;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-top: 10px;
+    }
+    .new-order-total-bar .new-order-total-label {
+      font-size: 13px;
+      color: var(--muted-text, #61738f);
+      font-weight: 600;
+    }
+    .new-order-total-bar .new-order-total-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-main, #1b355e);
     }
     .inbox-conv-item {
       padding: 10px 12px;
@@ -114,6 +352,31 @@
       font-size: 13px;
       line-height: 1.4;
       white-space: pre-wrap;
+    }
+    .inbox-msg-image {
+      display: block;
+      max-width: 100%;
+      max-height: 220px;
+      border-radius: 8px;
+      margin-bottom: 4px;
+    }
+    .inbox-payment-detected {
+      margin-top: 6px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #fff8e1;
+      border: 1px solid #f2d98a;
+      color: #6b5107;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: normal;
+    }
+    .inbox-payment-detected-title {
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .inbox-payment-detected .btn {
+      margin-top: 6px;
     }
     .inbox-msg-user {
       align-self: flex-start;
@@ -195,6 +458,10 @@
             <textarea id="replyInput" rows="2" placeholder="Type a reply to send on Messenger..."></textarea>
             <button class="btn btn-primary" id="sendReplyBtn" type="button">Send</button>
           </div>
+        </div>
+
+        <div class="inbox-customer-card" id="customerPanelEl">
+          <div class="inbox-empty-state">Select a conversation to look up orders.</div>
         </div>
       </div>
     </div>

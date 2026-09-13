@@ -522,6 +522,18 @@ function updateCutoffRowVisibility() {
 
 // Defaults to the week currently shown in the grid, since that's almost always the week whose
 // hours the officer just finished entering.
+// Per "cannot do create payroll run if there are timesheets pending to save" - typed-but-unsaved
+// grid cells are only ever sitting in this page's own <input> elements (locked/disabled cells are
+// already-saved data, so they're excluded), never in the run itself - a run created right now would
+// simply miss whatever hasn't been clicked "Save All" yet, which reads as data silently dropped.
+function hasPendingTimesheetChanges() {
+  const hoursPending = Array.from(document.querySelectorAll('#bulkEntryTableBody .bulk-hours:not(:disabled)'))
+    .some((input) => input.value !== '' && Number(input.value) > 0);
+  const caPending = Array.from(document.querySelectorAll('#bulkEntryTableBody .bulk-ca:not(:disabled)'))
+    .some((input) => Number(input.value) > 0);
+  return hoursPending || caPending;
+}
+
 function openNewRunModal() {
   const dates = weekDates(weekStart);
   const sunday = dates[6];
@@ -606,7 +618,17 @@ async function saveNewRun() {
     loadWeekGrid();
   });
 
-  document.getElementById('createRunFromTimesheetsBtn').addEventListener('click', openNewRunModal);
+  document.getElementById('createRunFromTimesheetsBtn').addEventListener('click', () => {
+    const errorEl = document.getElementById('bulkEntryError');
+    if (hasPendingTimesheetChanges()) {
+      errorEl.textContent = 'You have unsaved hours or cash advance entries in the grid below - click Save All first before creating a payroll run.';
+      errorEl.classList.remove('hidden');
+      errorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    errorEl.classList.add('hidden');
+    openNewRunModal();
+  });
   document.getElementById('closeNewRunBtn').addEventListener('click', () =>
     document.getElementById('newRunModal').classList.add('hidden')
   );

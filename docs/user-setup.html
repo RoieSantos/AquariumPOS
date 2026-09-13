@@ -214,17 +214,10 @@
           <input type="number" id="newUserDailyRate" min="0" step="0.01" value="0" />
         </div>
         <div class="form-row">
-          <label for="newUserPaidRestDay">Paid Rest Day</label>
-          <select id="newUserPaidRestDay">
-            <option value="">None - every blank day is Absent</option>
-            <option value="0">Sunday</option>
-            <option value="1">Monday</option>
-            <option value="2">Tuesday</option>
-            <option value="3">Wednesday</option>
-            <option value="4">Thursday</option>
-            <option value="5">Friday</option>
-            <option value="6">Saturday</option>
-          </select>
+          <label for="newUserPaidRestDay" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="newUserPaidRestDay" style="width:auto;" />
+            Has Paid Rest Day (adds a day's worth of salary to each payrun)
+          </label>
         </div>
       </div>
 
@@ -380,17 +373,10 @@
           <input type="number" id="editUserDailyRate" min="0" step="0.01" value="0" />
         </div>
         <div class="form-row">
-          <label for="editUserPaidRestDay">Paid Rest Day</label>
-          <select id="editUserPaidRestDay">
-            <option value="">None - every blank day is Absent</option>
-            <option value="0">Sunday</option>
-            <option value="1">Monday</option>
-            <option value="2">Tuesday</option>
-            <option value="3">Wednesday</option>
-            <option value="4">Thursday</option>
-            <option value="5">Friday</option>
-            <option value="6">Saturday</option>
-          </select>
+          <label for="editUserPaidRestDay" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="editUserPaidRestDay" style="width:auto;" />
+            Has Paid Rest Day (adds a day's worth of salary to each payrun)
+          </label>
         </div>
       </div>
 
