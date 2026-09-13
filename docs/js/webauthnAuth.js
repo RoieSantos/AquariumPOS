@@ -151,10 +151,12 @@ function updateBiometricPassword(username, newPassword) {
 }
 
 /**
- * Prompts the device's Face ID / fingerprint sensor, then replays the matched account's
- * cached username/password through the exact same attemptLogin() used by the password form.
+ * Prompts the device's Face ID / fingerprint sensor and resolves which enrolled account (if
+ * any) it matched, without doing anything else - shared by loginWithBiometric() (full portal
+ * sign-in) and punchTimeClock() (a Time In/Out attendance punch), which each do something
+ * different with the identified account.
  */
-async function loginWithBiometric() {
+async function identifyBiometricAccount() {
   const enrolled = getStoredBiometricCredentials();
   if (enrolled.length === 0) {
     return { success: false, message: 'Face ID / fingerprint sign-in has not been set up on this device yet.' };
@@ -185,11 +187,55 @@ async function loginWithBiometric() {
     return { success: false, message: 'This Face ID / fingerprint is not linked to an account on this device.' };
   }
 
-  const result = await attemptLogin(entry.username, entry.password);
+  return { success: true, entry };
+}
+
+/**
+ * Prompts the device's Face ID / fingerprint sensor, then replays the matched account's
+ * cached username/password through the exact same attemptLogin() used by the password form.
+ */
+async function loginWithBiometric() {
+  const identified = await identifyBiometricAccount();
+  if (!identified.success) return identified;
+
+  const result = await attemptLogin(identified.entry.username, identified.entry.password);
   if (!result.success) {
     // Most likely cause: the password was changed elsewhere (e.g. by an admin) since this
     // device's biometric sign-in was set up - fall back to the password form.
     return { success: false, message: 'Saved sign-in details are out of date. Please sign in with your password.' };
   }
   return result;
+}
+
+/**
+ * Prompts Face ID / fingerprint, identifies the employee from the credential matched on this
+ * device, and records a Time In/Out attendance punch (see supabase_staff_time_clock.sql) -
+ * independent of whether that employee is currently logged into the portal on this device.
+ */
+async function punchTimeClock(punchType) {
+  const identified = await identifyBiometricAccount();
+  if (!identified.success) return identified;
+
+  const { data, error } = await supabaseClient.rpc('record_time_punch', {
+    p_username: identified.entry.username,
+    p_password: identified.entry.password,
+    p_punch_type: punchType
+  });
+
+  if (error) {
+    return { success: false, message: error.message || 'Could not record the time punch.' };
+  }
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result || !result.success) {
+    return { success: false, message: result?.message || 'Could not record the time punch.' };
+  }
+
+  return {
+    success: true,
+    message: result.message,
+    username: identified.entry.username,
+    displayName: identified.entry.displayName,
+    punchAtUtc: result.punch_at_utc
+  };
 }

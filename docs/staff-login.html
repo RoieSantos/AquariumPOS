@@ -19,7 +19,13 @@
       <h1 style="text-align:center;">RS Pet Stop Portal</h1>
       <p class="muted" style="text-align:center; margin-top:-8px;">Staff sign in</p>
 
-      <button type="button" id="biometricLoginBtn" class="btn btn-primary hidden" style="width:100%; margin-bottom:16px;">Sign In with Face ID / Fingerprint</button>
+      <div id="timeClockSection" class="hidden" style="margin-bottom:16px;">
+        <div style="display:flex; gap:12px;">
+          <button type="button" id="timeInBtn" class="btn btn-primary" style="flex:1;">Time In</button>
+          <button type="button" id="timeOutBtn" class="btn btn-secondary" style="flex:1;">Time Out</button>
+        </div>
+        <div id="timeClockMessage" class="hidden" style="text-align:center; margin-top:12px;"></div>
+      </div>
       <p id="biometricDivider" class="muted hidden" style="text-align:center; margin:-8px 0 16px;">or sign in with password</p>
 
       <form id="loginForm">
@@ -61,31 +67,75 @@
       const hasEnrollment = getStoredBiometricCredentials().length > 0;
       if (!hasEnrollment || !(await isBiometricAvailable())) return;
 
-      document.getElementById('biometricLoginBtn').classList.remove('hidden');
+      document.getElementById('timeClockSection').classList.remove('hidden');
       document.getElementById('biometricDivider').classList.remove('hidden');
     })();
 
-    document.getElementById('biometricLoginBtn').addEventListener('click', async (event) => {
-      const errorEl = document.getElementById('loginError');
-      errorEl.classList.add('hidden');
+    function formatPunchTime(isoString) {
+      try {
+        return new Date(isoString).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      } catch {
+        return '';
+      }
+    }
 
+    function showTimeClockMessage(text, isError) {
+      const messageEl = document.getElementById('timeClockMessage');
+      messageEl.textContent = text;
+      messageEl.className = isError ? 'error-text' : 'success-text';
+    }
+
+    // "Time In" also opens a normal portal session (via loginWithBiometric, which shares the
+    // same Face ID prompt) and redirects to the dashboard - an employee starting their shift may
+    // still need the portal itself, not just to log the punch.
+    document.getElementById('timeInBtn').addEventListener('click', async (event) => {
       const btn = event.target;
       btn.disabled = true;
       btn.textContent = 'Waiting for Face ID / Fingerprint...';
 
-      const result = await loginWithBiometric();
+      const punch = await punchTimeClock('In');
 
-      btn.disabled = false;
-      btn.textContent = 'Sign In with Face ID / Fingerprint';
-
-      if (!result.success) {
-        errorEl.textContent = result.message;
-        errorEl.classList.remove('hidden');
+      if (!punch.success) {
+        btn.disabled = false;
+        btn.textContent = 'Time In';
+        showTimeClockMessage(punch.message, true);
         return;
       }
 
+      showTimeClockMessage(`${punch.displayName || punch.username} timed in at ${formatPunchTime(punch.punchAtUtc)}.`, false);
+
+      const loginResult = await loginWithBiometric();
+      btn.disabled = false;
+      btn.textContent = 'Time In';
+      if (!loginResult.success) return; // punch already recorded; portal sign-in is a bonus, not required
+
       const session = getPortalSession();
       window.location.href = session?.mustChangePassword ? 'change-password.html' : 'dashboard.html';
+    });
+
+    // "Time Out" just records the punch and, if this device happens to have an active portal
+    // session for that same employee, signs them out too - it does not sign anyone in.
+    document.getElementById('timeOutBtn').addEventListener('click', async (event) => {
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = 'Waiting for Face ID / Fingerprint...';
+
+      const punch = await punchTimeClock('Out');
+
+      btn.disabled = false;
+      btn.textContent = 'Time Out';
+
+      if (!punch.success) {
+        showTimeClockMessage(punch.message, true);
+        return;
+      }
+
+      showTimeClockMessage(`${punch.displayName || punch.username} timed out at ${formatPunchTime(punch.punchAtUtc)}.`, false);
+
+      const session = getPortalSession();
+      if (session && session.username === punch.username) {
+        sessionStorage.removeItem(PORTAL_SESSION_KEY);
+      }
     });
 
     document.getElementById('loginForm').addEventListener('submit', async (event) => {
