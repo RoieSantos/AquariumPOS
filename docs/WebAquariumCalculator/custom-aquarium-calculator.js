@@ -270,6 +270,15 @@
     var sumpHolder = Boolean(stand.sumpHolder);
     var standUnit = stand.unit || defaultUnit || 'Inches';
     var sumpWidthInches = sumpHolder ? toInches(stand.sumpWidth, standUnit) : 0;
+
+    // Mirrors calculateStandaloneStand's own Sump Holder Width check below - a checked Sump Holder
+    // with no width would otherwise price as a plain stand (computeStandRetailPrice only adds the
+    // sump holder cost when sumpWidthFeet > 0), silently under-quoting a feature the customer
+    // thinks they're getting.
+    if (sumpHolder && !(sumpWidthInches > 0)) {
+      return { error: 'Please enter a Sump Holder Width greater than 0, or uncheck Sump Holder.' };
+    }
+
     var computed = computeStandRetailPrice(
       inchesToFeet(lengthInches),
       inchesToFeet(widthInches),
@@ -846,6 +855,14 @@
     var finalPricePerSqFt = basePricePerSqFt;
     var glassAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
     var standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows);
+    if (standCalculation && standCalculation.error) {
+      return {
+        ok: false,
+        error: standCalculation.error,
+        autoChangeTo: null
+      };
+    }
+
     var components = {
       glass: 0,
       highStrip: 0,

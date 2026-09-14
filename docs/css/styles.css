@@ -1023,6 +1023,10 @@ a.badge:hover { text-decoration: underline; }
   background: linear-gradient(135deg, #4a90d9 0%, #173f74 100%);
 }
 
+.finance-card.finance-payroll {
+  background: linear-gradient(135deg, #2a9d8f 0%, #264653 100%);
+}
+
 .finance-card .finance-value.placeholder {
   font-size: 22px;
   font-weight: 700;

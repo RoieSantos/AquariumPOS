@@ -335,6 +335,36 @@ async function loadPurchaseSummary(session) {
     `${monthLabel} · ${poCount} ${poWord} so far${uncostedNote}`;
 }
 
+// "Payroll This Month" card, sourced from admin_get_payroll_month_summary()
+// (supabase_payroll_month_summary.sql) - per "after the finalize payroll run i want to show it
+// here .. so I can track how much is the salary spent for this month." Sums NetPay ledger rows
+// (take-home pay) posted at Finalize time, for runs whose Pay Date falls in the current month -
+// same Asia/Manila month boundary as the other finance cards.
+async function loadPayrollSummary(session) {
+  if (!session.password) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_payroll_month_summary', {
+    p_admin_username: session.username,
+    p_admin_password: session.password
+  });
+
+  if (error || !data) {
+    console.error('admin_get_payroll_month_summary failed:', error);
+    return;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return;
+
+  const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  document.getElementById('statMonthPayroll').textContent = formatCurrency(row.month_payroll);
+
+  const empCount = row.month_payroll_employee_count || 0;
+  const empWord = empCount === 1 ? 'employee' : 'employees';
+  document.getElementById('statMonthPayrollSub').textContent =
+    `${monthLabel} · ${empCount} ${empWord} paid so far`;
+}
+
 async function loadStatusSummary(session) {
   if (!session.password) {
     // Stale session from before login started capturing the password - just leave the
@@ -523,6 +553,7 @@ async function loadNotifications(session) {
     await loadFinancialSummary(session);
     await loadExpenseSummary(session);
     await loadPurchaseSummary(session);
+    await loadPayrollSummary(session);
   }
 
   // Per "if the user is a sales user show the dashboard sales by confirmation" - Sales Users

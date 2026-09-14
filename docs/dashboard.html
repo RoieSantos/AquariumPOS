@@ -101,6 +101,17 @@
           <div class="finance-value" id="statTotalPurchase">-</div>
           <div class="finance-sub" id="statTotalPurchaseSub">Posted purchase orders, current month to date</div>
         </a>
+        <!-- Per "after the finalize payroll run i want to show it here .. so I can track how much
+             is the salary spent for this month" - sum of Net Pay across every run finalized with a
+             Pay Date in the current month (see admin_get_payroll_month_summary). Shown to Payroll
+             Officers too, not just Super Users, alongside the rest of this grid's own gating. -->
+        <a class="finance-card finance-payroll" href="payroll-ledger.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">💵</span> Payroll This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthPayroll">-</div>
+          <div class="finance-sub" id="statMonthPayrollSub">Net pay, finalized runs paid this month</div>
+        </a>
       </div>
 
       <h3 class="finance-section-heading">Daily</h3>

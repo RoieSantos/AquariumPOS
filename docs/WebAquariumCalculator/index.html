@@ -62,6 +62,24 @@
       grid-column: span 2;
     }
 
+    #detailsSummaryCard {
+      grid-column: span 3;
+    }
+
+    .summary-details {
+      font-size: 12px;
+      line-height: 1.7;
+      color: #20395f;
+    }
+
+    .summary-details div {
+      margin-bottom: 2px;
+    }
+
+    .summary-details strong {
+      color: #132d52;
+    }
+
     .card h2,
     .drawing-card h2 {
       margin: 0 0 12px;
@@ -330,7 +348,8 @@
         grid-template-columns: 1fr;
       }
 
-      #sumpExtrasCard {
+      #sumpExtrasCard,
+      #detailsSummaryCard {
         grid-column: span 1;
       }
 
@@ -543,6 +562,16 @@
           <label for="specialNote">Special note</label>
           <textarea id="specialNote"></textarea>
         </div>
+      </section>
+
+      <!-- Persistent "see all details of the customized product" summary - every input that
+           affects price/drawing gets its own line here so staff can read (or screenshot) the full
+           spec at a glance to share with a customer, instead of re-checking the form fields above.
+           Always visible and kept in sync from calculateAquarium(), same pattern as stand.html's
+           #summaryDetails. -->
+      <section id="detailsSummaryCard" class="card">
+        <h2>Summary</h2>
+        <div id="detailsSummary" class="summary-details">Enter aquarium details to see a summary.</div>
       </section>
     </div>
 
@@ -1308,6 +1337,100 @@
       renderSafetyBanner(result);
     }
 
+    var DETAILS_TUBULAR_LABELS = { '1x1': '1" x 1"', '1.5x1.5': '1 1/2" x 1 1/2"', '2x2': '2" x 2"' };
+
+    // Persistent "see all details of the customized product" summary (#detailsSummaryCard) - every
+    // input that affects price/drawing gets its own line here so staff can read (or screenshot) the
+    // full spec at a glance to share with a customer, instead of re-checking the form fields above.
+    // Same row-list pattern as stand.html's renderSummaryDetails. Called from calculateAquarium()
+    // after every run, so it stays live as the form changes.
+    function renderDetailsSummary(result) {
+      var host = byId('detailsSummary');
+
+      if (!result || !result.ok) {
+        host.innerHTML = 'Enter aquarium details to see a summary.';
+        return;
+      }
+
+      var n = result.normalized;
+      var c = result.components;
+
+      var glassBits = [n.glassThickness];
+      if (n.temperedGlass) glassBits.push('Tempered');
+      if (byId('lowIron').checked) glassBits.push('Low Iron');
+      if (n.rimless) glassBits.push('Rimless');
+
+      var rows = [
+        ['Build type', n.option],
+        ['Dimensions (in)', 'L: ' + n.lengthInches.toFixed(1) + ' x W: ' + n.widthInches.toFixed(1) + ' x H: ' + n.heightInches.toFixed(1)],
+        ['Volume', result.gallons.toFixed(1) + ' gallons'],
+        ['Glass', glassBits.join(', ')]
+      ];
+
+      if (byId('sealant').value) {
+        rows.push(['Sealant', byId('sealant').value]);
+      }
+
+      var extras = [];
+      if (byId('aio').checked) extras.push('AIO (All-In-One)');
+      if (byId('highStrip').checked) extras.push('High Strip');
+      if (byId('enclosure').checked) extras.push('Enclosure');
+      if (byId('aquascape').checked) extras.push('Aquascape service');
+      if (extras.length > 0) {
+        rows.push(['Add-ons', extras.join(', ')]);
+      }
+
+      if (n.sump) {
+        rows.push(['Filtration Sump', n.sump.type]);
+        rows.push(['Sump Dimensions (in)', n.sump.lengthInches.toFixed(1) + ' x ' + n.sump.widthInches.toFixed(1) + ' x ' + n.sump.heightInches.toFixed(1)]);
+
+        var sumpExtras = [];
+        if (byId('piping').checked) sumpExtras.push('Set of piping');
+        if (byId('overflowBox').checked) sumpExtras.push('Overflow box');
+        if (byId('filterMedias').checked) sumpExtras.push('Filter medias' + (n.sump.filterMediaKg ? ' (' + n.sump.filterMediaKg + ' kg)' : ''));
+        if (byId('submersibleLight').checked) sumpExtras.push('Submersible light');
+        if (byId('submersiblePump').checked) sumpExtras.push('Submersible pump');
+        if (byId('allumTopCover').checked) sumpExtras.push('Allum top cover');
+        if (sumpExtras.length > 0) {
+          rows.push(['Sump Includes', sumpExtras.join(', ')]);
+        }
+      }
+
+      if (n.stand) {
+        rows.push(['Stand', 'Layers: ' + n.stand.layers + ' | Tubular: ' + (DETAILS_TUBULAR_LABELS[n.stand.tubular] || n.stand.tubular) + ' | Height: ' + n.stand.heightInches.toFixed(1) + '"']);
+
+        var standExtras = [];
+        if (n.stand.stainless) standExtras.push('Stainless');
+        if (n.stand.cabinet) standExtras.push('Cabinet');
+        if (n.stand.sumpHolder) standExtras.push('Sump holder (' + n.stand.sumpWidth.toFixed(1) + '" width)');
+        if (standExtras.length > 0) {
+          rows.push(['Stand Options', standExtras.join(', ')]);
+        }
+      }
+
+      if (byId('stickerBackground').checked) {
+        rows.push(['Sticker Background', byId('stickerBackgroundType').value + (byId('allSides').checked ? ', all sides' : '')]);
+      }
+      if (byId('stickerBottom').checked) {
+        rows.push(['Sticker Bottom', byId('stickerBottomType').value]);
+      }
+
+      var note = byId('specialNote').value.trim();
+      if (note) {
+        rows.push(['Special Note', note]);
+      }
+
+      rows.push(['Aquarium Price', result.aquariumOnlyPrice.toFixed(2)]);
+      if (n.stand) {
+        rows.push(['Stand Price', c.stand.toFixed(2)]);
+      }
+      rows.push(['Total Price', result.totalPrice.toFixed(2)]);
+
+      host.innerHTML = rows.map(function (r) {
+        return '<div><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
+      }).join('');
+    }
+
     function renderSafetyBanner(result) {
       safetyBanner.className = 'status-banner hidden';
       safetyBanner.textContent = '';
@@ -1506,9 +1629,11 @@
         if (typeof window.refreshStandDrawing === 'function') {
           window.refreshStandDrawing(result);
         }
+        renderDetailsSummary(result);
       } catch (error) {
         lastResult = null;
         renderSummary({ ok: false, error: error.message });
+        renderDetailsSummary(null);
         drawPlaceholder('Unable to load pricing data.');
       }
     }
@@ -2250,5 +2375,6 @@
       });
     })();
   </script>
+
 </body>
 </html>
