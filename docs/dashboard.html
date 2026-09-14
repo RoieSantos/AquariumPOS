@@ -112,6 +112,18 @@
           <div class="finance-value" id="statMonthPayroll">-</div>
           <div class="finance-sub" id="statMonthPayrollSub">Net pay, finalized runs paid this month</div>
         </a>
+        <!-- "Projected Profit = Total sales - (Expense + total purchase + payroll)" - computed
+             client-side in js/dashboard.js from those same four cards' numbers once all are
+             loaded, no new RPC needed. "Total Sales" here is exactly the "Total Sales This Month"
+             card's own figure (online orders only) - NOT combined with Walk-In Sales. Not a
+             link - it's a derived figure, not a report page. -->
+        <div class="finance-card finance-profit" id="profitCard">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">📊</span> Projected Profit This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthProfit">-</div>
+          <div class="finance-sub" id="statMonthProfitSub">Sales - Expense - Purchase - Payroll</div>
+        </div>
       </div>
 
       <h3 class="finance-section-heading">Daily</h3>

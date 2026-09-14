@@ -13,6 +13,12 @@
 // captured at login (session.password, see auth.js) the same way the Online Orders page
 // does, so no re-unlock prompt is needed here either.
 
+// Running tallies for the "Projected Profit This Month" card - each load*Summary function below
+// fills in its own slice as it resolves, and renderProfitCard() (called after all of them finish)
+// combines them. Kept as plain numbers (not read back from the DOM) so the math isn't sensitive to
+// formatCurrency's string formatting.
+const monthlyTotals = { sales: 0, expense: 0, purchase: 0, payroll: 0 };
+
 // Light/Dark buttons that call js/theme.js's setPortalTheme - the theme itself is applied on
 // every portal page by theme.js at load time (from localStorage), these two buttons are just the
 // only UI that ever changes the saved choice, per "have like a dark motif and light motif button
@@ -91,6 +97,10 @@ async function loadFinancialSummary(session) {
 
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return;
+
+  // "Total Sales" for the profit card is exactly the "Total Sales This Month" card's own figure
+  // (online orders only, row.month_sales) - per explicit correction, NOT combined with Walk-In.
+  monthlyTotals.sales = Number(row.month_sales) || 0;
 
   document.getElementById('statAmountToReceive').textContent = formatCurrency(row.amount_to_receive);
   document.getElementById('statMonthSales').textContent = formatCurrency(row.month_sales);
@@ -281,6 +291,8 @@ async function loadExpenseSummary(session) {
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return;
 
+  monthlyTotals.expense = Number(row.month_expense) || 0;
+
   const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const todayLabel = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -317,6 +329,8 @@ async function loadPurchaseSummary(session) {
 
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return;
+
+  monthlyTotals.purchase = Number(row.month_purchase) || 0;
 
   const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   document.getElementById('statTotalPurchase').textContent = formatCurrency(row.month_purchase);
@@ -356,6 +370,8 @@ async function loadPayrollSummary(session) {
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return;
 
+  monthlyTotals.payroll = Number(row.month_payroll) || 0;
+
   const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   document.getElementById('statMonthPayroll').textContent = formatCurrency(row.month_payroll);
 
@@ -363,6 +379,23 @@ async function loadPayrollSummary(session) {
   const empWord = empCount === 1 ? 'employee' : 'employees';
   document.getElementById('statMonthPayrollSub').textContent =
     `${monthLabel} · ${empCount} ${empWord} paid so far`;
+}
+
+// "Projected Profit This Month" card - "Projected Profit = Total sales - (Expense + total
+// purchase + payroll)", where Total Sales is exactly the "Total Sales This Month" card's own
+// figure (online orders only) - explicitly NOT combined with Walk-In Sales, confirmed after an
+// initial version that did combine them produced a materially wrong number. Purely a client-side
+// combination of the four numbers already loaded above - call this only after all four
+// load*Summary calls have resolved, so monthlyTotals is fully populated (a call before then would
+// just show ₱0.00 minus whatever happened to load first).
+function renderProfitCard() {
+  const profit = monthlyTotals.sales - monthlyTotals.expense - monthlyTotals.purchase - monthlyTotals.payroll;
+  document.getElementById('statMonthProfit').textContent = formatCurrency(profit);
+  document.getElementById('profitCard').classList.toggle('finance-loss', profit < 0);
+
+  const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  document.getElementById('statMonthProfitSub').textContent =
+    `${monthLabel} · ${formatCurrency(monthlyTotals.sales)} sales - ${formatCurrency(monthlyTotals.expense)} expense - ${formatCurrency(monthlyTotals.purchase)} purchase - ${formatCurrency(monthlyTotals.payroll)} payroll`;
 }
 
 async function loadStatusSummary(session) {
@@ -554,6 +587,7 @@ async function loadNotifications(session) {
     await loadExpenseSummary(session);
     await loadPurchaseSummary(session);
     await loadPayrollSummary(session);
+    renderProfitCard();
   }
 
   // Per "if the user is a sales user show the dashboard sales by confirmation" - Sales Users

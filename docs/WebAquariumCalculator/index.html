@@ -456,6 +456,16 @@
             </select>
           </div>
 
+          <div class="field">
+            <label for="standHeightOverride">Height Override (in, 0 = Auto)</label>
+            <input id="standHeightOverride" type="number" value="0" min="0" step="0.01">
+          </div>
+
+          <div class="field">
+            <label for="standFooting">Footing (in)</label>
+            <input id="standFooting" type="number" value="3" min="0" step="0.5">
+          </div>
+
           <div class="checkbox-stack">
             <label class="checkbox-row"><input id="standStainless" type="checkbox">Stainless</label>
             <label class="checkbox-row"><input id="standCabinet" type="checkbox">Cabinet</label>
@@ -606,6 +616,10 @@
       <div class="canvas-wrap">
         <canvas id="standCanvas" width="720" height="260"></canvas>
       </div>
+      <details>
+        <summary>Stand price breakdown</summary>
+        <pre id="standBreakdownPre">Run a calculation to see the breakdown.</pre>
+      </details>
     </section>
 
     <!-- Glass cut sheet - the layout the production team otherwise draws by hand for every
@@ -1231,6 +1245,8 @@
           enabled: byId('standEnabled').checked,
           layers: byId('standLayers').value,
           tubular: byId('standTubular').value,
+          height: byId('standHeightOverride').value,
+          footingInches: byId('standFooting').value,
           stainless: byId('standStainless').checked,
           cabinet: byId('standCabinet').checked,
           sumpHolder: byId('standSumpHolder').checked,
@@ -1330,7 +1346,7 @@
       priceLine.innerHTML = '<strong>Price:</strong> ' + result.totalPrice.toFixed(2);
       dimensionsLine.textContent = 'Dimensions (in): L: ' + result.normalized.lengthInches.toFixed(1) + ' x W: ' + result.normalized.widthInches.toFixed(1) + ' x H: ' + result.normalized.heightInches.toFixed(1);
       if (result.normalized.stand && result.normalized.stand.enabled) {
-        byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in';
+        byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in | Footing: ' + result.normalized.stand.footingInches.toFixed(1) + ' in';
       } else {
         byId('standInfo').textContent = 'Stand uses the aquarium length and width as its footprint.';
       }
@@ -1397,7 +1413,7 @@
       }
 
       if (n.stand) {
-        rows.push(['Stand', 'Layers: ' + n.stand.layers + ' | Tubular: ' + (DETAILS_TUBULAR_LABELS[n.stand.tubular] || n.stand.tubular) + ' | Height: ' + n.stand.heightInches.toFixed(1) + '"']);
+        rows.push(['Stand', 'Layers: ' + n.stand.layers + ' | Tubular: ' + (DETAILS_TUBULAR_LABELS[n.stand.tubular] || n.stand.tubular) + ' | Height: ' + n.stand.heightInches.toFixed(1) + '" | Footing: ' + n.stand.footingInches.toFixed(1) + '"']);
 
         var standExtras = [];
         if (n.stand.stainless) standExtras.push('Stainless');
@@ -1646,7 +1662,7 @@
 
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
-        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
+        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
         'sumpUnit', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'pumpPrice', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
@@ -1748,10 +1764,10 @@
        customer configuring an aquarium+stand together can see what they're paying for, not just a
        price. Ported from stand.html's drawStand (itself ported from docs/js/orderNow.js's
        drawCustomStandOnActiveCanvas) - deliberately its own canvas/script block, shares no state
-       with the pricing script above, same pattern as the Glass Cut Sheet block below. The embedded
-       stand add-on used by this page's own calculateCustomAquarium has no footingInches field
-       (unlike the standalone Stand calculator) - footingInches is fixed at STAND_FOOTING_INCHES
-       purely for the visual leg stub below the bottom shelf; it never affects price. -->
+       with the pricing script above, same pattern as the Glass Cut Sheet block below. Like the
+       standalone Stand calculator, Height and Footing are both customizable (#standHeightOverride/
+       #standFooting - see calculateStand in custom-aquarium-calculator.js) - footing is
+       display-only (the drawing's Gap/Built Length figures), it never affects price. -->
   <script>
     (function () {
       var standCanvas = document.getElementById('standCanvas');
@@ -1766,6 +1782,9 @@
       })();
 
       var STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
+      // Fallback only - dims.footingInches (see refreshStandDrawing below) already carries the
+      // resolved value (customizable via #standFooting, defaults to this same 3in in
+      // calculateStand) for every real result; this covers the placeholder/no-result case.
       var STAND_FOOTING_INCHES = 3;
 
       function round1(value) {
@@ -1907,7 +1926,9 @@
         var lengthIn = Math.max(1, Number(dims.lengthInches) || 1);
         var widthIn = Math.max(1, Number(dims.widthInches) || 1);
         var totalHeightIn = Math.max(1, Number(dims.heightInches) || 1);
-        var footingIn = STAND_FOOTING_INCHES;
+        var footingIn = dims.footingInches !== undefined && dims.footingInches !== null
+          ? Math.max(0, Number(dims.footingInches) || 0)
+          : STAND_FOOTING_INCHES;
         var heightIn = Math.max(0, totalHeightIn - footingIn);
         var layers = Math.max(2, Math.round(Number(dims.layers) || 2));
 
@@ -2165,6 +2186,7 @@
       // stand-specific fields).
       window.refreshStandDrawing = function (result) {
         var standCard = document.getElementById('standDrawingCard');
+        var breakdownPre = document.getElementById('standBreakdownPre');
         var n = result && result.normalized;
         var stand = n && n.stand;
 
@@ -2175,11 +2197,16 @@
           lengthInches: n.lengthInches,
           widthInches: n.widthInches,
           heightInches: stand.heightInches,
+          footingInches: stand.footingInches,
           layers: stand.layers,
           tubular: stand.tubular,
           sumpHolder: stand.sumpHolder,
           sumpWidth: stand.sumpWidth
         });
+
+        // stand.breakdown is already a newline-joined string (see computeStandRetailPrice in
+        // custom-aquarium-calculator.js), not an array.
+        breakdownPre.textContent = stand.breakdown || 'No breakdown available.';
       };
     })();
   </script>

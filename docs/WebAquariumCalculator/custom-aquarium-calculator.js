@@ -264,7 +264,7 @@
     var layers = Math.max(2, Math.round(Number(stand.layers) || 2));
     var tubularSafety = enforceStandTubularSafety(lengthInches, widthInches, glassThickness, stand.tubular || '1x1');
     var tubular = tubularSafety.tubular;
-    var standHeightInches = getStandHeightInches(layers, tubular);
+    var autoHeightInches = getStandHeightInches(layers, tubular);
     var stainless = Boolean(stand.stainless);
     var cabinet = Boolean(stand.cabinet);
     var sumpHolder = Boolean(stand.sumpHolder);
@@ -278,6 +278,20 @@
     if (sumpHolder && !(sumpWidthInches > 0)) {
       return { error: 'Please enter a Sump Holder Width greater than 0, or uncheck Sump Holder.' };
     }
+
+    // Height is auto-computed from layers/tubular by default, but (same as
+    // calculateStandaloneStand) can be overridden - only used when explicitly provided and
+    // positive. The value entered is the TOTAL floor-to-top height (footing already included),
+    // fed to the pricing formula as-is - no need to add footing again.
+    var standHeightInches = Number(stand.height) > 0 ? toInches(stand.height, standUnit) : autoHeightInches;
+
+    // Footing (short leg stub below the bottom shelf) - customizable per direct request, same
+    // "defaults to STAND_FOOTING_INCHES when left blank/invalid, never negative" rule as
+    // calculateStandaloneStand. Display only (the drawing's Gap/Built Length figures) - it never
+    // affects price, which always runs off the full floor-to-top standHeightInches above.
+    var footingInches = stand.footingInches !== undefined && stand.footingInches !== null && stand.footingInches !== ''
+      ? Math.max(0, Number(stand.footingInches) || 0)
+      : STAND_FOOTING_INCHES;
 
     var computed = computeStandRetailPrice(
       inchesToFeet(lengthInches),
@@ -303,6 +317,7 @@
       sumpWidth: round2(sumpWidthInches),
       unit: standUnit,
       heightInches: round2(standHeightInches),
+      footingInches: round2(footingInches),
       notice: tubularSafety.notice
     };
   }

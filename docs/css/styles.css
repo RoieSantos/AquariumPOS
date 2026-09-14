@@ -1027,6 +1027,15 @@ a.badge:hover { text-decoration: underline; }
   background: linear-gradient(135deg, #2a9d8f 0%, #264653 100%);
 }
 
+.finance-card.finance-profit {
+  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  cursor: default;
+}
+
+.finance-card.finance-profit.finance-loss {
+  background: linear-gradient(135deg, #cb356b 0%, #bd3f32 100%);
+}
+
 .finance-card .finance-value.placeholder {
   font-size: 22px;
   font-weight: 700;

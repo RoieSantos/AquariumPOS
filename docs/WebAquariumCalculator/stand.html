@@ -1027,7 +1027,9 @@
       var total = result.totalPrice * qty;
       priceValue.textContent = total.toFixed(2) + (qty > 1 ? ' (' + result.totalPrice.toFixed(2) + ' x ' + qty + ')' : '');
 
-      breakdownPre.textContent = (result.breakdown || []).join('\n') || 'No breakdown available.';
+      // result.breakdown is already a newline-joined string (built by
+      // computeStandRetailPrice/computeStandRetailPrice's own breakdown.join('\n')), not an array.
+      breakdownPre.textContent = result.breakdown || 'No breakdown available.';
     }
 
     function attachHandlers() {
