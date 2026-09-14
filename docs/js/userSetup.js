@@ -54,7 +54,7 @@ function renderUserRows(users) {
   const tbody = document.getElementById('userTableBody');
 
   if (!users || users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="19" class="muted">No staff logins found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="20" class="muted">No staff logins found.</td></tr>';
     return;
   }
 
@@ -71,6 +71,7 @@ function renderUserRows(users) {
         <td><span class="badge ${u.is_delivery_team ? 'badge-success' : 'badge-neutral'}">${u.is_delivery_team ? 'Yes' : 'No'}</span></td>
         <td><span class="badge ${u.is_online_order_staff ? 'badge-success' : 'badge-neutral'}">${u.is_online_order_staff ? 'Yes' : 'No'}</span></td>
         <td><span class="badge ${u.is_payroll_officer ? 'badge-success' : 'badge-neutral'}">${u.is_payroll_officer ? 'Yes' : 'No'}</span></td>
+        <td><span class="badge ${u.is_store_manager ? 'badge-success' : 'badge-neutral'}">${u.is_store_manager ? 'Yes' : 'No'}</span></td>
         <td>${formatMonthlyTarget(u.monthly_sales_target)}</td>
         <td><span class="badge ${u.must_change_password ? 'badge-warning' : 'badge-neutral'}">${u.must_change_password ? 'Required' : 'No'}</span></td>
         <td><span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
@@ -87,7 +88,7 @@ function renderUserRows(users) {
 
 async function loadUsers() {
   const tbody = document.getElementById('userTableBody');
-  tbody.innerHTML = '<tr><td colspan="19" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="20" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_staff_users', {
     p_admin_username: currentSession.username,
@@ -97,7 +98,7 @@ async function loadUsers() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="19" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="20" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -125,6 +126,7 @@ function openNewUserModal() {
   document.getElementById('newUserOnlineOrderStaff').checked = false;
   document.getElementById('newUserProductionMember').checked = false;
   document.getElementById('newUserPayrollOfficer').checked = false;
+  document.getElementById('newUserStoreManager').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
   document.getElementById('newUserEmployeeNo').value = '';
@@ -159,6 +161,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserOnlineOrderStaff').checked = !!user.is_online_order_staff;
   document.getElementById('editUserProductionMember').checked = !!user.is_production_member;
   document.getElementById('editUserPayrollOfficer').checked = !!user.is_payroll_officer;
+  document.getElementById('editUserStoreManager').checked = !!user.is_store_manager;
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
@@ -194,6 +197,7 @@ async function saveEditUser() {
   const isOnlineOrderStaff = document.getElementById('editUserOnlineOrderStaff').checked;
   const isProductionMember = document.getElementById('editUserProductionMember').checked;
   const isPayrollOfficer = document.getElementById('editUserPayrollOfficer').checked;
+  const isStoreManager = document.getElementById('editUserStoreManager').checked;
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
@@ -248,7 +252,8 @@ async function saveEditUser() {
     p_pay_type: payType,
     p_daily_rate: dailyRate,
     p_has_paid_rest_day: hasPaidRestDay,
-    p_employee_no: employeeNo || null
+    p_employee_no: employeeNo || null,
+    p_is_store_manager: isStoreManager
   });
 
   saveBtn.disabled = false;
@@ -280,6 +285,7 @@ async function saveNewUser() {
   const isOnlineOrderStaff = document.getElementById('newUserOnlineOrderStaff').checked;
   const isProductionMember = document.getElementById('newUserProductionMember').checked;
   const isPayrollOfficer = document.getElementById('newUserPayrollOfficer').checked;
+  const isStoreManager = document.getElementById('newUserStoreManager').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
   const employeeNo = document.getElementById('newUserEmployeeNo').value.trim();
@@ -337,7 +343,8 @@ async function saveNewUser() {
     p_pay_type: payType,
     p_daily_rate: dailyRate,
     p_has_paid_rest_day: hasPaidRestDay,
-    p_employee_no: employeeNo || null
+    p_employee_no: employeeNo || null,
+    p_is_store_manager: isStoreManager
   });
 
   saveBtn.disabled = false;

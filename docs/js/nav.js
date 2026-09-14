@@ -47,6 +47,25 @@ function renderTopNav(activeLabel) {
     return;
   }
 
+  // Same lockdown shape, for a plain account with none of the permission checkboxes ticked - per
+  // "why it can see all the buttons? it suppose to be My payslips only right?" js/auth.js's
+  // requireAuth() only allows dashboard.html (shows just a "Go to My Payslips" link, see
+  // js/dashboard.js), my-payslips.html, and my-payslip-print.html for this group.
+  if (session && hasNoPortalPermission(session)) {
+    nav.innerHTML = `
+      <div class="topnav-inner">
+        <span class="topnav-brand">RS Pet Stop Portal</span>
+        <div class="topnav-links" id="topnavLinks">
+          <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
+          <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
+          <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
+        </div>
+      </div>
+    `;
+    wireLogoutButton('logoutBtn');
+    return;
+  }
+
   // Per "Sales User dont need to see transfer orders and other related notification for
   // transfers - Remove Serial Tracker/Reports/Customer Aquarium" - a Sales User who is NOT also
   // a super user gets a trimmed top nav too, same set dropped as the dashboard's nav-card grid
@@ -55,6 +74,13 @@ function renderTopNav(activeLabel) {
   const isSalesOnlyUser = session?.isSalesUser && !session?.isSuperUser;
   const isSuperUser = !!session?.isSuperUser;
   const isPayrollOfficer = !!session?.isPayrollOfficer;
+  // Store Manager (supabase_staff_users_store_manager_field.sql) gets a curated subset of each
+  // group below - Transfer Orders but not Posted Transfers, Delivery but not Delivery Quote,
+  // Serial Tracker/Inventory Summary/Stock On Hand but not Purchase Orders, no Reports/Admin group
+  // at all - per the exact list in "Store manager, This permission can access...". Enforced
+  // server-side too via js/auth.js's requireAuth() STORE_MANAGER_ALLOWED_PAGES, so hiding these
+  // links is convenience, not the control.
+  const isStoreManager = !!session?.isStoreManager;
 
   // Dashboard stands alone (not part of any group) since it's the one link everyone reaches for
   // first. Everything else is bucketed by function so the nav reads as a handful of menus instead
@@ -67,7 +93,9 @@ function renderTopNav(activeLabel) {
   ];
 
   const orders = [];
-  if (!isSalesOnlyUser) {
+  if (isStoreManager) {
+    orders.push({ href: 'transfer-orders.html', label: 'Transfer Orders' });
+  } else if (!isSalesOnlyUser) {
     orders.push({ href: 'transfer-orders.html', label: 'Transfer Orders' });
     orders.push({ href: 'posted-transfer-orders.html', label: 'Posted Transfers' });
   }
@@ -77,10 +105,10 @@ function renderTopNav(activeLabel) {
     orders.push({ href: 'advance-orders.html', label: 'Advance Orders' });
   }
 
-  const delivery = [
-    { href: 'delivery.html', label: 'Delivery' },
-    { href: 'delivery-quote.html', label: 'Delivery Quote' },
-  ];
+  const delivery = [{ href: 'delivery.html', label: 'Delivery' }];
+  if (!isStoreManager) {
+    delivery.push({ href: 'delivery-quote.html', label: 'Delivery Quote' });
+  }
   if (isSuperUser) {
     delivery.push({ href: 'delivery-setup.html', label: 'Delivery Setup' });
   }
@@ -100,8 +128,10 @@ function renderTopNav(activeLabel) {
   // visible to Sales-only users too.
   inventory.push({ href: 'inventory-summary.html', label: 'Inventory Summary' });
   inventory.push({ href: 'stock-on-hand.html', label: 'Stock On Hand' });
-  inventory.push({ href: 'purchase-orders.html', label: 'Purchase Orders' });
-  inventory.push({ href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });
+  if (!isStoreManager) {
+    inventory.push({ href: 'purchase-orders.html', label: 'Purchase Orders' });
+    inventory.push({ href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });
+  }
   if (isSuperUser) {
     inventory.push({ href: 'warehouse-setup.html', label: 'Warehouse Setup' });
     inventory.push({ href: 'item-setup.html', label: 'Item Setup' });
@@ -111,7 +141,7 @@ function renderTopNav(activeLabel) {
   }
 
   const reports = [];
-  if (!isSalesOnlyUser) {
+  if (!isSalesOnlyUser && !isStoreManager) {
     reports.push({ href: 'reports.html', label: 'Reports' });
     reports.push({ href: 'top-selling-items.html', label: 'Top Selling Items' });
     reports.push({ href: 'customer-aquarium.html', label: 'Customer Aquarium' });

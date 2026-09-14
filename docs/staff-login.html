@@ -57,7 +57,7 @@
     (function () {
       const existingSession = getPortalSession();
       if (existingSession) {
-        window.location.href = existingSession.mustChangePassword ? 'change-password.html' : 'dashboard.html';
+        window.location.href = existingSession.mustChangePassword ? 'change-password.html' : getDefaultLandingPage(existingSession);
       }
     })();
 
@@ -114,7 +114,7 @@
       if (!loginResult.success) return; // punch already recorded; portal sign-in is a bonus, not required
 
       const session = getPortalSession();
-      window.location.href = session?.mustChangePassword ? 'change-password.html' : 'dashboard.html';
+      window.location.href = session?.mustChangePassword ? 'change-password.html' : getDefaultLandingPage(session);
     });
 
     // "Time Out" just records the punch and, if this device happens to have an active portal
@@ -166,7 +166,7 @@
       }
 
       const session = getPortalSession();
-      window.location.href = session?.mustChangePassword ? 'change-password.html' : 'dashboard.html';
+      window.location.href = session?.mustChangePassword ? 'change-password.html' : getDefaultLandingPage(session);
     });
   </script>
   <script src="js/pwa.js"></script>

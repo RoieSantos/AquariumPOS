@@ -127,6 +127,7 @@ function renderRows(payslip) {
 
   document.getElementById('printTitle').textContent = `Payslip - ${payslip.display_name || payslip.username}`;
   document.getElementById('printSubtitle').textContent = `Printed: ${new Date().toLocaleString()}`;
+  document.getElementById('preparedByName').textContent = payslip.prepared_by || '';
   renderSummary(payslip);
   renderRows(payslip);
 })();

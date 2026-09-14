@@ -78,7 +78,7 @@
 
     successEl.textContent = 'Password changed. Redirecting...';
     successEl.classList.remove('hidden');
-    setTimeout(() => { window.location.href = 'dashboard.html'; }, 800);
+    setTimeout(() => { window.location.href = getDefaultLandingPage(getPortalSession()); }, 800);
   });
 })();
 

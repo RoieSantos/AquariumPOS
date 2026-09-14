@@ -484,6 +484,15 @@ async function loadNotifications(session) {
     return;
   }
 
+  // Same pattern again, for a plain account with none of the permission checkboxes ticked - per
+  // "why it can see all the buttons? it suppose to be My payslips only right?"
+  if (hasNoPortalPermission(session)) {
+    document.getElementById('welcomeText').textContent = "Here's your shortcut to My Payslips.";
+    document.getElementById('noPermissionLanding').classList.remove('hidden');
+    document.getElementById('dashboardMainContent').classList.add('hidden');
+    return;
+  }
+
   wirePushNotificationButton(session);
   maybeShowPushLoginPrompt(session);
 

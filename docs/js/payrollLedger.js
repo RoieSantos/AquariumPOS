@@ -141,7 +141,8 @@ async function loadLedger() {
   renderTopNav('Payroll Ledger');
 
   if (!session.isSuperUser && !session.isPayrollOfficer) {
-    document.getElementById('notAuthorizedBox').classList.remove('hidden');
+    // Per "if a user dont have permission just show them payslips by default" - see payroll.js.
+    window.location.href = 'my-payslips.html';
     return;
   }
 

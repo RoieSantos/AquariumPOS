@@ -46,6 +46,15 @@
       <a class="btn btn-primary" id="onlineOrderStaffGoToOrdersBtn" href="online-orders.html" style="font-size:16px; padding:14px 28px;">Go to Online Orders</a>
     </div>
 
+    <!-- Plain accounts (no permission checkboxes ticked in User Setup) land here instead of the
+         full dashboard below - same pattern as deliveryTeamLanding/onlineOrderStaffLanding above
+         (see js/dashboard.js's init() and js/auth.js's requireAuth()). -->
+    <div class="hidden" id="noPermissionLanding" style="text-align:center; padding:60px 20px;">
+      <div style="font-size:48px; margin-bottom:12px;">🧾</div>
+      <p class="muted" style="margin-bottom:20px;">Your account is set up for My Payslips only.</p>
+      <a class="btn btn-primary" id="noPermissionGoToPayslipsBtn" href="my-payslips.html" style="font-size:16px; padding:14px 28px;">Go to My Payslips</a>
+    </div>
+
     <div id="dashboardMainContent">
     <!-- Hidden per request - the push-notification opt-in flow (js/pushNotifications.js) is
          still wired up and still reachable via the login prompt modal below, this just removes

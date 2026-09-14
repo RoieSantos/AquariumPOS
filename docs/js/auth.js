@@ -57,7 +57,9 @@ async function attemptLogin(username, password) {
     isSerialAdmin: !!result.is_serial_admin,
     isDeliveryTeam: !!result.is_delivery_team,
     isOnlineOrderStaff: !!result.is_online_order_staff,
+    isProductionMember: !!result.is_production_member,
     isPayrollOfficer: !!result.is_payroll_officer,
+    isStoreManager: !!result.is_store_manager,
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -93,6 +95,43 @@ const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-
 // dashboard.html/js/dashboard.js), same pattern as Delivery Team's dashboard landing.
 const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-lines.html', 'dashboard.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
+// Same exclusive-lockdown shape as Delivery Team/Online Order Staff, but broader - per "Store
+// manager, This permission can access Delivery calendar, Payslips, Serial tracker, inventory
+// Summary, Stock on hand, Transfer Orders, Calculators, online Orders, Automated Orders"
+// (supabase_staff_users_store_manager_field.sql). Unlike the two single-page roles above, this
+// confines the account to a whole ALLOWLIST rather than one hard redirect target - dashboard.html
+// shows the normal (trimmed) dashboard, not a single-button landing block, since there's a real
+// multi-page nav to use (see js/nav.js's isStoreManager branch). Includes each named area's
+// necessary companion/print/drill-down pages (e.g. online-order-lines.html for Online Orders'
+// "View" link, transfer-order-print*.html for Transfer Orders' print buttons) - without those,
+// clicking into a normal workflow from an allowed page would immediately bounce them out.
+const STORE_MANAGER_ALLOWED_PAGES = [
+  'dashboard.html', 'change-password.html', 'staff-login.html',
+  'my-payslips.html', 'my-payslip-print.html',
+  'delivery.html',
+  'serial-tracker.html', 'inventory-summary.html',
+  'stock-on-hand.html', 'stock-on-hand-print.html',
+  'transfer-orders.html', 'transfer-order-print.html', 'transfer-order-print-production.html',
+  'stand-calculator.html', 'aquarium-calculator.html', 'sticker-calculator.html', 'glass-cut-list.html',
+  'online-orders.html', 'online-order-lines.html',
+  'automated-orders.html'
+];
+
+// Same exclusive-lockdown shape as Delivery Team/Online Order Staff above, for a "plain" account
+// with NONE of the permission checkboxes ticked in User Setup - per "why it can see all the
+// buttons? it suppose to be My payslips only right?" A plain login otherwise has nothing checked
+// that grants it any specific page, so (unlike a Sales User, Super User, Serial Admin, Delivery
+// Team, or Online Order Staff account) there is no other portal function it's actually meant to
+// use - My Payslips is the one thing built for it. dashboard.html stays reachable, but only shows
+// a "Go to My Payslips" link there (#noPermissionGoToPayslipsBtn, see dashboard.html/js/
+// dashboard.js), same pattern as the other two roles' dashboard landing.
+function hasNoPortalPermission(session) {
+  return !session.isSuperUser && !session.isPayrollOfficer && !session.isSalesUser &&
+    !session.isSerialAdmin && !session.isDeliveryTeam && !session.isOnlineOrderStaff &&
+    !session.isProductionMember && !session.isStoreManager;
+}
+const NO_PERMISSION_ALLOWED_PAGES = ['my-payslips.html', 'my-payslip-print.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
+
 function currentPageFileName() {
   return (window.location.pathname.split('/').pop() || '').toLowerCase();
 }
@@ -126,6 +165,25 @@ async function requireAuth() {
 
   if (refreshed.isOnlineOrderStaff && !ONLINE_ORDER_STAFF_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'online-orders.html';
+    return null;
+  }
+
+  // Same "regardless of any other flag" lockdown as Delivery Team/Online Order Staff above, just
+  // against a multi-page allowlist instead of one page - per "Store manager, This permission can
+  // access Delivery calendar, Payslips, Serial tracker, inventory Summary, Stock on hand, Transfer
+  // Orders, Calculators, online Orders, Automated Orders." Redirects to dashboard.html (their real,
+  // if trimmed, home) rather than one specific page, since there's no single "the" Store Manager page.
+  if (refreshed.isStoreManager && !STORE_MANAGER_ALLOWED_PAGES.includes(currentPageFileName())) {
+    window.location.href = 'dashboard.html';
+    return null;
+  }
+
+  // Same lockdown shape, for a plain account with none of the permission checkboxes ticked -
+  // per "why it can see all the buttons? it suppose to be My payslips only right?" Checked after
+  // the two role-specific locks above (mutually exclusive with both, since either flag already
+  // makes hasNoPortalPermission false).
+  if (hasNoPortalPermission(refreshed) && !NO_PERMISSION_ALLOWED_PAGES.includes(currentPageFileName())) {
+    window.location.href = 'my-payslips.html';
     return null;
   }
 
@@ -240,7 +298,9 @@ async function refreshPortalSession(session) {
       isSerialAdmin: !!result.is_serial_admin,
       isDeliveryTeam: !!result.is_delivery_team,
       isOnlineOrderStaff: !!result.is_online_order_staff,
+      isProductionMember: !!result.is_production_member,
       isPayrollOfficer: !!result.is_payroll_officer,
+      isStoreManager: !!result.is_store_manager,
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);
@@ -248,6 +308,18 @@ async function refreshPortalSession(session) {
   } catch {
     return session;
   }
+}
+
+// Where a session lands after signing in (or finishing a forced password change) with no more
+// specific destination in mind - per "if the user is only active without any permission just show
+// the payslips": a plain account with none of the flags below has nothing useful on the full
+// Dashboard (no admin/sales/serial tooling), and isn't Delivery Team/Online Order Staff either
+// (those already get their own dedicated dashboard.html landing block, unaffected by this - they
+// still land on dashboard.html, which then shows that block). Land everyone else on My Payslips
+// instead, since that's the one thing built specifically for a plain employee login.
+function getDefaultLandingPage(session) {
+  if (!session) return 'dashboard.html';
+  return hasNoPortalPermission(session) ? 'my-payslips.html' : 'dashboard.html';
 }
 
 function logout() {

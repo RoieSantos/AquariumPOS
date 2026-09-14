@@ -2321,6 +2321,13 @@ body.hide-price-columns .price-col {
   height: 40px;
 }
 
+/* Printed name sitting above a signature line (e.g. the payroll officer who prepared a payslip) -
+   the line itself still serves as the physical/pen signature space underneath it. */
+.print-signature-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
 .print-signature-label {
   margin-top: 6px;
   font-size: 13px;

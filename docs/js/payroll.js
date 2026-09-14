@@ -269,7 +269,11 @@ async function saveNewRun() {
   renderTopNav('Payroll');
 
   if (!session.isSuperUser && !session.isPayrollOfficer) {
-    document.getElementById('notAuthorizedBox').classList.remove('hidden');
+    // Per "if a user dont have permission just show them payslips by default" - a plain employee
+    // (no Payroll Officer/Super User flag) landing on an admin Payroll page has nothing useful to
+    // do here, but they DO have their own My Payslips page (supabase_payroll_self_service_
+    // payslips.sql) - send them there instead of leaving them on a dead-end "no access" message.
+    window.location.href = 'my-payslips.html';
     return;
   }
 
