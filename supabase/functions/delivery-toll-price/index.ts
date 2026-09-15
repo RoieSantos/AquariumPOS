@@ -3,6 +3,10 @@
 // (routes.googleapis.com) does not send CORS headers for browser callers, so it can't be hit
 // directly from client-side JS the way Geocoder/DirectionsService/DistanceMatrixService are (those
 // run through the maps/api/js script tag, which sidesteps CORS entirely) - hence this thin proxy.
+// Optional `waypoints` (every intermediate stop before the final destination) is forwarded as
+// Routes API `intermediates`, per deliveryQuote.js's multi-location "Add Location" quotes - the
+// tollInfo returned still covers the whole route (origin through every waypoint to destination),
+// not per-leg, matching how resolveTollFee applies it as one flat amount for the whole trip.
 //
 // Uses its own server-side secret (GOOGLE_ROUTES_API_KEY) rather than the browser
 // GOOGLE_MAPS_API_KEY from PortalSettings, because that key is typically HTTP-referrer-restricted
@@ -47,15 +51,17 @@ Deno.serve(async (req) => {
 
   let origin: { lat: number; lng: number };
   let destination: { lat: number; lng: number };
+  let waypoints: { lat: number; lng: number }[] = [];
   try {
     const body = await req.json();
     origin = body.origin;
     destination = body.destination;
+    waypoints = Array.isArray(body.waypoints) ? body.waypoints : [];
     if (!origin || !destination || typeof origin.lat !== 'number' || typeof destination.lat !== 'number') {
       throw new Error('missing/invalid origin or destination');
     }
   } catch {
-    return jsonResponse({ error: 'Body must be JSON: { origin: {lat,lng}, destination: {lat,lng} }.' }, 400);
+    return jsonResponse({ error: 'Body must be JSON: { origin: {lat,lng}, destination: {lat,lng}, waypoints?: {lat,lng}[] }.' }, 400);
   }
 
   try {
@@ -69,6 +75,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
         destination: { location: { latLng: { latitude: destination.lat, longitude: destination.lng } } },
+        intermediates: waypoints.map((w) => ({ location: { latLng: { latitude: w.lat, longitude: w.lng } } })),
         travelMode: 'DRIVE',
         extraComputations: ['TOLLS']
       })

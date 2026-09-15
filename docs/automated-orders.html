@@ -12,6 +12,17 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    /* Per direct follow-up request - surfaces AutomatedOrderLines."Notes" (staff-entered per-line
+       note, see sql/supabase_gma_conversation_order_line_notes.sql) under the item name in this
+       order detail modal's Items table. */
+    .modal-line-note {
+      margin-top: 2px;
+      font-size: 12px;
+      color: var(--muted-text, #61738f);
+      font-style: italic;
+    }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>

@@ -111,6 +111,16 @@ async function loadJobOrder(stopId) {
   }
 
   orderHeader = data[0];
+
+  // Pre-fill the Job Description from whatever's already sitting in this stop's Notes (e.g. a
+  // dispatcher's "FIX 75g Aquarium leak" scheduling note) so staff aren't starting from a blank
+  // box every time they reopen this page - they can just edit/add to it before printing. Only on
+  // initial load (never overwrites something already typed into the textarea this session).
+  const jobDescriptionInput = document.getElementById('jobDescriptionInput');
+  if (!jobDescriptionInput.value && orderHeader.stop_notes) {
+    jobDescriptionInput.value = orderHeader.stop_notes;
+  }
+
   renderJobOrder();
 }
 
@@ -134,7 +144,21 @@ async function loadJobOrder(stopId) {
     return;
   }
 
-  document.getElementById('printBtn').addEventListener('click', () => window.print());
+  document.getElementById('printBtn').addEventListener('click', async () => {
+    // Best-effort - a failed save here shouldn't stop the physical copy from printing, since
+    // that's still the thing the driver/customer actually needs right now.
+    try {
+      await supabaseClient.rpc('admin_append_delivery_stop_job_order_note', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_stop_id: stopId,
+        p_job_description: document.getElementById('jobDescriptionInput').value
+      });
+    } catch (err) {
+      console.error('admin_append_delivery_stop_job_order_note failed:', err);
+    }
+    window.print();
+  });
   document.getElementById('jobDescriptionInput').addEventListener('input', renderJobOrder);
 
   companyInfo = await fetchCompanyInfo();

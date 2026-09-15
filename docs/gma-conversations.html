@@ -83,12 +83,89 @@
       font-size: 13px;
       margin: 0 0 8px;
     }
-    .inbox-customer-id {
+    /* Header redesign - per direct request for a cleaner right panel: an avatar (initials, same idea
+       as .matched-customer-card's) instead of a bare name, so this panel reads as "who you're
+       talking to" at a glance rather than a plain label. */
+    .inbox-customer-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .inbox-customer-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--primary, #1d4f91);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .inbox-customer-header-name {
+      min-width: 0;
+    }
+    .inbox-customer-header-name h3 {
+      margin: 0;
+      font-size: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .inbox-customer-header-sub {
       font-size: 11px;
       color: var(--muted-text, #61738f);
+    }
+    /* Small-caps icon labels, replacing the bare <h3> section headers this panel used to use
+       throughout - matches the reply toolbar's own stroke-icon language. */
+    .inbox-section-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--primary, #1d4f91);
+      background: #e2ecfb;
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin: 18px 0 10px;
+    }
+    .inbox-section-label:first-child {
+      margin-top: 0;
+    }
+    .inbox-section-label svg {
+      flex-shrink: 0;
+      color: var(--primary, #1d4f91);
+    }
+    .inbox-customer-id {
+      font-size: 11px;
+      background: #fafbfc;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .inbox-customer-id > div {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .inbox-customer-id span {
+      color: var(--muted-text, #61738f);
+      flex-shrink: 0;
+    }
+    .inbox-customer-id code {
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
       word-break: break-all;
-      margin-bottom: 12px;
-      line-height: 1.5;
+      text-align: right;
     }
     .inbox-customer-search {
       display: flex;
@@ -99,64 +176,356 @@
       flex: 1;
       min-width: 0;
     }
+    /* Order cards - per direct request for a cleaner look, replacing the old plain
+       text-line-per-field layout with a bordered card, a status badge (same .badge-* vocabulary as
+       Automated Orders/Online Orders elsewhere in the portal, not a bespoke color set) and a small
+       labeled-stat row instead of a "Total: x | Paid: y | Balance: z" text line. */
     .inbox-order-item {
-      padding: 8px 0;
-      border-bottom: 1px solid var(--panel-border);
+      margin-bottom: 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      background: #fafbfc;
       font-size: 12px;
+      transition: box-shadow 0.12s ease;
+      /* .inbox-order-top's colored background below fills this full width/height - clipping it here
+         means it automatically picks up this card's rounded corners (all 4 when collapsed, since
+         it's the only child then; just the top 2 once .inbox-order-details appears below it) without
+         needing separate expanded/collapsed CSS for the header's own corners. */
+      overflow: hidden;
+    }
+    .inbox-order-item:hover {
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
     }
     .inbox-order-item:last-child {
-      border-bottom: none;
+      margin-bottom: 0;
     }
+    /* Per direct follow-up request ("i want this to be expandable... at first show the order no and
+       status... hide the rest") - the whole card now collapses to just this top row by default; the
+       rest (.inbox-order-details below) only exists in the DOM once expanded. Colored background
+       (same blue as .inbox-section-label) per direct follow-up request for "color on the actual
+       order header too" - padding moved here from .inbox-order-item (now 0) so the color only
+       covers this row, not the expanded details below.
+    */
     .inbox-order-top {
       display: flex;
       justify-content: space-between;
-      gap: 6px;
+      align-items: center;
+      gap: 8px;
       font-weight: 600;
+      cursor: pointer;
+      background: #e2ecfb;
+      padding: 10px 12px;
+    }
+    .inbox-order-top-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .inbox-order-chevron {
+      flex-shrink: 0;
+      color: var(--muted-text, #61738f);
+      transition: transform 0.15s ease;
+    }
+    .inbox-order-item.expanded .inbox-order-chevron {
+      transform: rotate(90deg);
+    }
+    .inbox-order-top a {
+      font-size: 13px;
+    }
+    .inbox-order-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: flex-end;
+      flex-shrink: 0;
+    }
+    /* Status badge is an actual <select> here (see orderStatusSelectHtml in gmaConversations.js) so
+       staff can change an order's status right from the conversation panel, same as the standalone
+       Automated Orders admin page - stripped down to look like the plain .badge pill it replaces. */
+    select.inbox-order-status-select {
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      appearance: none;
+      -webkit-appearance: none;
+      padding-right: 18px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2361738f' stroke-width='2'%3E%3Cpath d='M6 8l4 4 4-4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 4px center;
+      background-size: 10px;
+    }
+    select.inbox-order-status-select:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .inbox-order-details {
+      margin-top: 10px;
+      padding: 10px 12px 12px;
+      border-top: 1px dashed var(--panel-border);
+    }
+    .inbox-order-detail-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted-text, #61738f);
+      margin: 12px 0 6px;
+    }
+    .inbox-order-detail-label:first-of-type {
+      margin-top: 2px;
+    }
+    .inbox-order-line-row, .inbox-order-payment-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11.5px;
+      padding: 4px 0;
+      border-bottom: 1px dashed var(--panel-border);
+    }
+    .inbox-order-line-row:last-child, .inbox-order-payment-row:last-child {
+      border-bottom: none;
+    }
+    .inbox-order-pancake-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 11.5px;
+    }
+    .inbox-order-pancake-row a {
+      font-size: 11.5px;
     }
     .inbox-order-meta {
       color: var(--muted-text, #61738f);
-      margin-top: 2px;
+      margin-top: 4px;
+    }
+    .inbox-order-stats {
+      display: flex;
+      gap: 16px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--panel-border);
+    }
+    .inbox-order-stat {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .inbox-order-stat-label {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted-text, #61738f);
+    }
+    .inbox-order-stat-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-main, #1b355e);
+    }
+    .inbox-order-stat-value.balance-due {
+      color: #c0392b;
+    }
+    .inbox-order-stat-value.balance-clear {
+      color: #1e824c;
     }
     .inbox-payment-row {
       display: flex;
-      gap: 4px;
-      margin-top: 6px;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--panel-border);
     }
     .inbox-payment-row input, .inbox-payment-row select {
-      padding: 4px 6px;
+      padding: 5px 7px;
       font-size: 11px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-family: inherit;
     }
     .inbox-payment-row input[type="number"] {
       width: 70px;
+    }
+    .inbox-payment-row button {
+      margin-left: auto;
+    }
+    .inbox-payment-row .inbox-payment-cancel {
+      margin-left: 0;
+    }
+    /* Collapsed default state of the payment form above (see renderConversationOrderCards in
+       gmaConversations.js) - a slim, low-emphasis toggle rather than the full form shown per order
+       by default. */
+    .inbox-add-payment-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      width: 100%;
+      margin-top: 10px;
+      padding-top: 10px;
+      border: none;
+      border-top: 1px dashed var(--panel-border);
+      background: none;
+      color: var(--primary, #1d4f91);
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .inbox-add-payment-toggle:hover {
+      text-decoration: underline;
+    }
+    .btn-text {
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--muted-text, #61738f);
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .btn-text:hover {
+      color: var(--text-main, #1b355e);
+      text-decoration: underline;
     }
     .inbox-payment-list {
       margin-top: 4px;
       font-size: 11px;
       color: var(--muted-text, #61738f);
     }
+    /* Segmented-pill tabs - per direct request for a cleaner look, replacing the old plain
+       underline tabs with a rounded gray track (same idea as a native iOS/macOS segmented control). */
     .panel-tabs {
       display: flex;
-      gap: 4px;
-      border-bottom: 1px solid var(--panel-border);
-      margin: 0 0 14px;
+      gap: 3px;
+      background: #f0f2f5;
+      border-radius: 10px;
+      padding: 3px;
+      margin: 0 0 16px;
     }
     .panel-tab-btn {
       flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
       background: none;
       border: none;
-      border-bottom: 2px solid transparent;
+      border-radius: 8px;
       padding: 8px 4px;
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 600;
       color: var(--muted-text, #61738f);
       cursor: pointer;
+      transition: background 0.12s ease, color 0.12s ease;
     }
     .panel-tab-btn:hover {
       color: var(--text-main, #1b355e);
     }
     .panel-tab-btn.active {
+      background: #fff;
       color: var(--primary, #1d4f91);
-      border-bottom-color: var(--primary, #1d4f91);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    }
+    .panel-tab-btn svg {
+      flex-shrink: 0;
+    }
+    /* Create Order form sections - per direct request, upgrades the shared portal .form-group/
+       .form-group-title (a bare underlined label, see css/styles.css) into an actual bordered card
+       with an icon, scoped to just this panel so every other page using those same classes elsewhere
+       in the portal is unaffected. */
+    .inbox-customer-card .form-group {
+      background: #fafbfc;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .inbox-customer-card .form-group-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted-text, #61738f);
+      border-bottom: none;
+      margin-bottom: 12px;
+      padding-bottom: 0;
+      font-weight: 700;
+    }
+    .inbox-customer-card .form-group-title svg {
+      color: var(--primary, #1d4f91);
+      flex-shrink: 0;
+    }
+    /* Pickup/Delivery segmented toggle, replacing the old plain <select> - a hidden #newOrderFulfillment
+       input still carries the actual value so submitNewOrder/etc. don't need to change. */
+    .fulfillment-toggle {
+      display: flex;
+      gap: 3px;
+      background: #eef0f2;
+      border-radius: 8px;
+      padding: 3px;
+    }
+    .fulfillment-toggle-btn {
+      flex: 1;
+      border: none;
+      border-radius: 6px;
+      background: none;
+      padding: 7px 4px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--muted-text, #61738f);
+      cursor: pointer;
+    }
+    .fulfillment-toggle-btn.active {
+      background: #fff;
+      color: var(--primary, #1d4f91);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    /* Qty +/- stepper, replacing the bare number input in the line-items table. */
+    .qty-stepper {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .qty-step-btn {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: #fff;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      padding: 0;
+      color: var(--text-main, #1b355e);
+    }
+    .qty-step-btn:hover {
+      background: #f0f2f5;
+    }
+    .qty-stepper .line-qty-input {
+      width: 34px;
+      text-align: center;
+      padding: 4px 2px;
+    }
+    /* Keeps the total + Create/Clear buttons in view while scrolling a long item list - this panel
+       scrolls independently (see .inbox-customer-card's own overflow-y), so without this a long cart
+       could scroll the Create button out of reach. -12px offset/margin matches the card's own
+       padding, so the bar sits flush with the visible bottom edge instead of floating mid-padding. */
+    .inbox-order-sticky-footer {
+      position: sticky;
+      bottom: -12px;
+      margin: 16px -14px -12px;
+      padding: 10px 14px 12px;
+      background: #fff;
+      border-top: 1px solid var(--panel-border);
+    }
+    .inbox-order-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 10px;
     }
     .product-search-wrap {
       position: relative;
@@ -258,6 +627,55 @@
     }
     .new-order-lines-table td {
       font-size: 13px;
+    }
+    /* Per direct follow-up request - a per-line note that syncs to Pancake and prints on that
+       item's line the same way the item name already does (see orderStatusSelectHtml's sibling,
+       addProductToOrder/renderNewOrderLines in gmaConversations.js, and _push_automated_order_to_
+       pancake's 'note' field in sql/supabase_gma_conversation_order_line_notes.sql). A small pencil
+       icon next to the item name opens lineNoteModal (a proper textarea popup). Kept as a tiny inline
+       icon rather than a full-width text preview - a preview of the note text was wide enough to
+       wrap the row and overlap the qty/price columns next to it. */
+    .new-order-lines-table .line-note-btn {
+      display: inline-block;
+      margin-left: 6px;
+      width: 20px;
+      height: 20px;
+      line-height: 18px;
+      padding: 0;
+      border-radius: 50%;
+      border: 1px solid var(--panel-border);
+      background: #fff;
+      color: var(--muted-text, #61738f);
+      cursor: pointer;
+      text-align: center;
+      font-size: 11px;
+      vertical-align: middle;
+    }
+    .new-order-lines-table .line-note-btn.has-note {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: #fff;
+    }
+    #lineNoteModal .modal-panel {
+      max-width: 460px;
+    }
+    #lineNoteModal textarea {
+      width: 100%;
+      min-height: 140px;
+      resize: vertical;
+      font-size: 13px;
+      padding: 8px 10px;
+      box-sizing: border-box;
+    }
+    #lineNoteModal .line-note-modal-item {
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    #lineNoteModal .line-note-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
     }
     .new-order-lines-table .line-qty-input {
       width: 48px;
@@ -1392,6 +1810,24 @@
         <div class="inbox-customer-card" id="customerPanelEl">
           <div class="inbox-empty-state">Select a conversation to look up orders.</div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-line note popup for the Create Order tab's product table (renderNewOrderLines in
+       gmaConversations.js) - a proper textarea instead of typing directly into the cramped table
+       cell. Whatever's typed here is sent to Pancake's line 'note' field verbatim, unmodified. -->
+  <div class="modal-backdrop hidden" id="lineNoteModal">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2>Line Note</h2>
+        <button class="btn btn-secondary btn-sm" id="closeLineNoteModalBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <div class="line-note-modal-item" id="lineNoteModalItemName"></div>
+      <textarea id="lineNoteModalTextarea" placeholder="Note for Pancake (optional) - sent exactly as typed..."></textarea>
+      <div class="line-note-modal-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="lineNoteModalCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="lineNoteModalSaveBtn">Save Note</button>
       </div>
     </div>
   </div>

@@ -179,7 +179,10 @@ async function openOrderModal(orderNo) {
   document.getElementById('modalLinesBody').innerHTML = (lines || [])
     .map((l) => `
       <tr>
-        <td>${l.item_name}</td>
+        <td>
+          ${l.item_name}
+          ${l.notes ? `<div class="modal-line-note">Note: ${l.notes}</div>` : ''}
+        </td>
         <td>${l.quantity}</td>
         <td>${formatMoney(l.price)}</td>
         <td>${formatMoney(l.quantity * l.price)}</td>

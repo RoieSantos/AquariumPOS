@@ -726,6 +726,36 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'create_order',
+    description:
+      'Places a REAL order for the customer, right now. Only ever call this after ALL of the following are true: (1) the customer has ALREADY sent proof of a downpayment or full payment (a payment screenshot - check the conversation for a prior message acknowledging one; never on a verbal promise to pay later), (2) you know exactly which items and quantities they want, using ONLY item_code values returned by a prior search_items or list_items_in_category call - never invent, guess, or reuse a code from a different conversation, (3) you have a name for them (offer to use CUSTOMER\'S FACEBOOK NAME if it\'s known - see the system prompt - rather than always asking them to type it), a valid PH mobile number, and their address (never ask "pickup or delivery" - just ask for the address to save; always pass fulfillment_type as Delivery). Ask for whatever is still missing before calling this, do not guess it. Also never call this if the conversation shows an order was already placed/created earlier - there can only be one order per conversation; if one already exists, tell the customer staff already have their order and will confirm shortly instead of calling this again. After a successful call, tell the customer their order number and that staff will review and confirm it shortly - do NOT invent your own itemized receipt text, the system sends that separately.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        customer_name: { type: 'string', description: 'The name to put on the order - either the customer\'s confirmed Facebook name, or whatever name they gave instead.' },
+        customer_phone: { type: 'string', description: 'A valid PH mobile number, e.g. 09171234567.' },
+        customer_email: { type: 'string', description: 'Optional.' },
+        fulfillment_type: { type: 'string', enum: ['Pickup', 'Delivery'], description: 'Always pass Delivery - never ask the customer to choose, just collect their address below.' },
+        delivery_address: { type: 'string', description: 'The customer\'s address - always ask for and save this.' },
+        location: { type: 'string', enum: ['Amaya', 'GMA'], description: 'Which branch fulfills this order. Ask if not already clear; defaults to Amaya if you truly cannot tell.' },
+        items: {
+          type: 'array',
+          description: 'One entry per distinct item. item_code MUST come from a prior search_items or list_items_in_category result in THIS conversation - never invented.',
+          items: {
+            type: 'object',
+            properties: {
+              item_code: { type: 'string' },
+              quantity: { type: 'integer' }
+            },
+            required: ['item_code', 'quantity']
+          }
+        },
+        notes: { type: 'string', description: 'Optional - anything else staff should know about this order.' }
+      },
+      required: ['customer_name', 'customer_phone', 'fulfillment_type', 'location', 'items']
+    }
+  },
+  {
     name: 'schedule_follow_up',
     description:
       'Schedule a proactive follow-up message to be sent to this customer later, on Messenger, with no action needed from them first. Use this ONLY right after telling the customer in your reply that you will check back with them (e.g. "I\'ll follow up tomorrow once we confirm stock" or "let me check back with you in a bit") - never schedule one silently without saying so.',
@@ -818,7 +848,7 @@ export function buildSystemPrompt(
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Printed/To Ship/Shipped/Cancelled), and which branch/warehouse it was ordered from; for an Automated Order result, share its Pancake sync status plainly (e.g. still being processed vs. confirmed). There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
-    '- Custom aquarium and/or stand price quotes: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
+    '- Custom aquarium and/or stand price quotes: if the customer only gives a GALLON size (e.g. "50 gallon", "75g") rather than asking for something custom (specific length/width/height, rimless, tempered, low iron, etc.), FIRST use search_items (try both "<N>g" and "<N> gallon", e.g. search_items("50g")) to check whether a ready-made standard aquarium of that size is already in the catalog and in stock - if one is, offer that real product first (its actual name/price/stock, and offer to send a photo) instead of jumping to a custom quote. Only fall back to compute_aquarium_quote if no matching standard item exists, the customer explicitly wants custom dimensions/spec, or they say they don\'t want the standard one you offered. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
     '- Delivery fees: first find out whether the customer wants the store\'s OWN TRUCK to deliver, or wants to arrange their own Lalamove courier - if it\'s not already clear which, ask. For the store\'s own truck: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. This is the store\'s own official distance-based formula - the same one staff use - so state it with confidence as the actual fee, not as a rough estimate pending staff confirmation. For Lalamove: ask which branch and the full delivery address, work out and tell the customer what size vehicle you recommend booking based on what they\'re having delivered (see compute_lalamove_quote\'s own description for how to pick one), then call compute_lalamove_quote with that vehicle type - this is a live quote straight from Lalamove\'s own system, so state the price with full confidence. Lalamove quoting is QUOTE ONLY - it cannot book the ride, so if the customer wants to proceed, tell them staff will arrange the actual Lalamove booking.',
     '- Scheduling a delivery date for an existing Online Order: first ask (if not already clear) whether they want the store\'s OWN TRUCK to deliver it, as opposed to a courier they\'re arranging themselves (e.g. Lalamove) or picking it up - only continue if they say the store\'s own truck. Get their order number, then call get_delivery_scheduling_options. If it comes back not eligible, explain the reason in plain words (e.g. already scheduled, order not ready yet). If eligible, tell the customer the deliveryFee it returned with confidence as the actual fee (whether deliveryFeeIsEstimate is true - the same official formula as compute_delivery_quote - or false - the order\'s already-recorded fee, makes no difference to how confidently you state it) AND the candidateDates, and get them to explicitly confirm both the fee and one specific date before calling schedule_delivery_date. Never book a date they haven\'t confirmed, and never invent a date that wasn\'t in candidateDates. Once booked, let them know it\'s confirmed and staff will also see it on the schedule.',
     '- Delivery whereabouts ("where is my delivery", "where is my order", "where is the driver with my stuff"): ALWAYS confirm first (if not already clear from the conversation) whether this is the STORE\'S OWN TRUCK delivering it, or a courier the customer arranged themselves (e.g. Lalamove) - never assume either way. If it\'s a Lalamove courier: explain plainly that the store can\'t track a Lalamove rider from here, and the customer needs to coordinate directly with their rider (through the Lalamove app, or whatever contact info Lalamove gave them). If it\'s the store\'s own truck: get their order number and call get_delivery_schedule_status. If it comes back scheduled for TODAY (is_today), tell them it\'s out for delivery today (mention the route_name if given), THEN call get_driver_location (TEST feature) and share its liveTrackingUrl (mention the page updates live as the driver moves) plus minutesSinceUpdate - if no driver is currently tracking, just tell the customer the truck is scheduled for today and a team member can give a more specific update. If scheduled_date is a different day, tell them that date instead. If for_delivery is false (not scheduled at all yet), let them know it hasn\'t been scheduled yet and offer to help schedule a date (see the delivery-scheduling item above) or that staff can confirm.',
@@ -835,6 +865,14 @@ export function buildSystemPrompt(
     '',
     'WHAT IS OUT OF SCOPE:',
     '- Anything unrelated to the store (general trivia, coding help, medical/veterinary diagnosis). Politely decline and steer back to how you can help with the store.',
+    '',
+    'PLACING ORDERS:',
+    '- You CAN place a real order yourself with the create_order tool, but ONLY once every one of these is true: the customer has confirmed the exact items and quantities they want (matched to real item_code values from a search_items or list_items_in_category result in THIS conversation - never invent or guess a code), you have a name, a valid PH mobile number, and an address for them, AND they have ALREADY sent proof of a downpayment or full payment (a payment screenshot) that this conversation has acknowledged. Ask for whatever is still missing rather than guessing or assuming.',
+    '- Name: if CUSTOMER\'S FACEBOOK NAME is given below, ask the customer if you can just use that name for the order (e.g. "Can I use your Facebook name, {name}, for this order?") - if they say yes, use it as customer_name without asking them to type it out. If they say no, or no Facebook name is known, ask what name to use instead.',
+    '- Address: never ask the customer whether this is "pickup or delivery" - just ask for their address so it can be saved on the order, then always pass fulfillment_type as Delivery.',
+    '- Never call create_order on a verbal promise to pay "later" or "after" - only once payment proof has actually been sent and acknowledged earlier in this same conversation.',
+    '- If the conversation already shows an existing order, don\'t assume a new payment or a new item discussion belongs to that same order OR is automatically a new one - ASK the customer which it is (e.g. "Is this for your existing order, or a new one?") and only call create_order for a second order after they clearly say it\'s a new/separate purchase. If they mean the existing order, don\'t call create_order at all - just let them know staff will apply it/follow up.',
+    '- After a successful create_order call, briefly tell the customer their order number and that staff will review and confirm it shortly - don\'t write your own itemized receipt, a separate detailed one may already be sent.',
     '',
     'DISCOUNTS / PRICE CHANGES:',
     '- If a customer asks for a discount, a lower price, price matching, or otherwise tries to negotiate a price, politely decline yourself - do not escalate to staff for this alone. Explain, in your own friendly words, that all prices are system-generated and you don\'t have permission to apply a discount or change a price. Stay warm and helpful about everything else in the conversation - this is just a firm, final no on the price itself.',
@@ -1232,6 +1270,11 @@ export async function sendMessengerImage(psid: string, imageUrl: string, pageAcc
 export interface ExecuteToolParams {
   supabase: SupabaseClient;
   psid: string;
+  // The Facebook Page this conversation belongs to - only actually used by create_order (stored on
+  // AutomatedOrders.GmaPageId, the same column staff-created GMA Conversations orders use). Every
+  // other tool only ever needs psid. Optional/blank in the sandbox (docs/ai-bot-sandbox.html),
+  // where create_order is always simulated anyway - see chatbot-sandbox-reply/index.ts.
+  pageId?: string;
   name: string;
   input: Record<string, unknown>;
   followUpSettings: Record<string, unknown> | null;
@@ -1243,7 +1286,7 @@ export interface ExecuteToolParams {
 }
 
 export async function executeTool(params: ExecuteToolParams): Promise<string> {
-  const { supabase, psid, name, input, followUpSettings, simulate = false, pageAccessToken, graphVersion } = params;
+  const { supabase, psid, pageId, name, input, followUpSettings, simulate = false, pageAccessToken, graphVersion } = params;
   switch (name) {
     case 'search_items': {
       const query = String(input.query ?? '').trim();
@@ -1273,7 +1316,10 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       });
       if (automatedError) return `Lookup failed: ${automatedError.message}`;
       if (automatedData && automatedData.length > 0) {
-        return JSON.stringify({ orderType: 'Automated Order', ...automatedData[0] });
+        // Portal-rendered receipt, NOT Pancake's own order link - per direct decision, the bot
+        // never shares Pancake's link with customers (see supabase_automated_order_portal_receipt.sql).
+        const receiptUrl = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`;
+        return JSON.stringify({ orderType: 'Automated Order', ...automatedData[0], receiptUrl });
       }
 
       // Not an Automated Order - try it as a regular Pancake Online Order instead (see
@@ -1334,6 +1380,121 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       return JSON.stringify(await computeLalamoveQuote(supabase, input));
     case 'get_driver_location':
       return JSON.stringify(await computeDriverLocation(supabase, input));
+    case 'create_order': {
+      const customerName = String(input.customer_name ?? '').trim();
+      const customerPhoneRaw = String(input.customer_phone ?? '').trim();
+      const customerEmail = String(input.customer_email ?? '').trim();
+      const fulfillmentType = String(input.fulfillment_type ?? '').trim();
+      const deliveryAddress = String(input.delivery_address ?? '').trim();
+      const location = String(input.location ?? '').trim() || 'Amaya';
+      const notes = String(input.notes ?? '').trim();
+      const items = Array.isArray(input.items) ? (input.items as Array<{ item_code?: string; quantity?: number }>) : [];
+
+      if (!customerName) return 'Cannot place the order - customer_name is required. Ask the customer for it.';
+      const phoneDigits = customerPhoneRaw.replace(/[^0-9]/g, '');
+      if (!/^(09\d{9}|639\d{9})$/.test(phoneDigits)) {
+        return 'Cannot place the order - customer_phone must be a valid PH mobile number (e.g. 09171234567). Ask the customer for it again.';
+      }
+      if (fulfillmentType !== 'Pickup' && fulfillmentType !== 'Delivery') {
+        return 'Cannot place the order - fulfillment_type must be Pickup or Delivery.';
+      }
+      if (fulfillmentType === 'Delivery' && !deliveryAddress) {
+        return 'Cannot place the order - a delivery_address is required when fulfillment_type is Delivery.';
+      }
+      if (items.length === 0) return 'Cannot place the order - at least one item is required.';
+
+      if (simulate) {
+        return `SANDBOX MODE - no real order was created. If this were live, an order for ${customerName} with ${items.length} item(s) would be placed and pushed to Pancake.`;
+      }
+      if (!pageId) return 'Cannot place the order right now - missing conversation context. Let the customer know staff will place it manually.';
+
+      // A prior order already existing for this conversation is deliberately NOT blocked here - a
+      // real customer legitimately can come back to buy something else in the same Messenger
+      // thread. Per direct instruction, deciding whether a new payment belongs to an existing order
+      // or a genuinely new one is handled by ASKING the customer (the payment-clarification flow in
+      // facebook-messenger-webhook/index.ts, which only calls this tool for a "new" order AFTER
+      // that's been explicitly confirmed) rather than a hard refusal here. The PLACING ORDERS system
+      // prompt rules carry the same "ask, don't assume" responsibility for the general conversation
+      // path (when this tool is reached without going through a payment screenshot).
+
+      // Item name/price are ALWAYS looked up from the real catalog here, never trusted from the
+      // model - an AI-guessed item_code or price is exactly the kind of input that needs
+      // independent server-side verification, same discipline as every other order-creation path
+      // in this codebase (see sql/supabase_submit_automated_order_price_validation.sql's header).
+      const codes = [...new Set(items.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
+      if (codes.length === 0) return 'Cannot place the order - no valid item_code values were given.';
+
+      const { data: catalogItems, error: itemsError } = await supabase
+        .from('Items')
+        .select('Code, Name, RetailPrice, Price, CategoryCode')
+        .in('Code', codes)
+        .eq('IsActive', true);
+      if (itemsError) return `Could not validate items: ${itemsError.message}`;
+
+      type CatalogItem = { Code: string; Name: string; RetailPrice: number | null; Price: number | null; CategoryCode: string | null };
+      const catalogByCode = new Map<string, CatalogItem>((catalogItems ?? []).map((it: CatalogItem) => [it.Code, it]));
+      const unknownCodes = codes.filter((c) => !catalogByCode.has(c));
+      if (unknownCodes.length > 0) {
+        return `These item_code value(s) don't match a real, active catalog item: ${unknownCodes.join(', ')}. Use search_items or list_items_in_category to find the correct code - never invent one.`;
+      }
+
+      let estimatedTotal = 0;
+      const orderLines = items.map((it) => {
+        const catalogItem = catalogByCode.get(String(it.item_code ?? '').trim())!;
+        const quantity = Math.max(1, Math.trunc(Number(it.quantity) || 1));
+        const price = Number(catalogItem.RetailPrice ?? catalogItem.Price ?? 0);
+        estimatedTotal += quantity * price;
+        return { CategoryCode: catalogItem.CategoryCode, ItemCode: catalogItem.Code, ItemName: catalogItem.Name, Quantity: quantity, Price: price };
+      });
+
+      const { data: orderNoData, error: orderNoError } = await supabase.rpc('_next_no_series_number', {
+        p_series_code: 'AUTOMATED-ORDER',
+        p_scope_key: ''
+      });
+      if (orderNoError || !orderNoData) return `Could not place the order: ${orderNoError?.message || 'no order number was issued'}.`;
+      const orderNo = String(orderNoData);
+
+      const { error: insertOrderError } = await supabase.from('AutomatedOrders').insert({
+        OrderNo: orderNo,
+        CustomerName: customerName,
+        CustomerPhone: customerPhoneRaw,
+        CustomerEmail: customerEmail || null,
+        FulfillmentType: fulfillmentType,
+        DeliveryAddress: fulfillmentType === 'Delivery' ? deliveryAddress : null,
+        Notes: notes || null,
+        Status: 'New',
+        EstimatedTotal: estimatedTotal,
+        Location: location,
+        GmaPsid: psid,
+        GmaPageId: pageId,
+        UpdatedBy: 'AI Bot'
+      });
+      if (insertOrderError) return `Could not place the order: ${insertOrderError.message}`;
+
+      const { error: insertLinesError } = await supabase
+        .from('AutomatedOrderLines')
+        .insert(orderLines.map((l) => ({ ...l, OrderNo: orderNo })));
+      if (insertLinesError) return `Order ${orderNo} was created but its items could not be saved (${insertLinesError.message}) - tell the customer staff will fix this manually.`;
+
+      // Same push helper every other order-creation path uses - never raises (retries internally,
+      // writes PancakeSyncStatus/PancakeSyncError onto the row on failure), so re-select the row
+      // afterward to report the real outcome rather than trusting this call's own (always-empty)
+      // error.
+      await supabase.rpc('_push_automated_order_to_pancake', { p_order_no: orderNo });
+      const { data: pushedOrder } = await supabase
+        .from('AutomatedOrders')
+        .select('PancakeSyncStatus, PancakeSyncError')
+        .eq('OrderNo', orderNo)
+        .maybeSingle();
+
+      return JSON.stringify({
+        ok: true,
+        orderNo,
+        estimatedTotal,
+        pancakeSyncStatus: pushedOrder?.PancakeSyncStatus ?? null,
+        pancakeSyncError: pushedOrder?.PancakeSyncError ?? null
+      });
+    }
     case 'schedule_follow_up': {
       if (!followUpSettings?.CommittedEnabled) {
         return 'Follow-up scheduling is turned off in the store settings right now - do not promise a callback. Let the customer know a team member will follow up if needed, or just continue helping them now.';
@@ -1434,6 +1595,9 @@ export interface RunChatbotTurnParams {
   anthropic: Anthropic;
   model: string;
   psid: string;
+  // See ExecuteToolParams.pageId - only create_order actually uses it. Optional/blank in the
+  // sandbox, where create_order is always simulated regardless.
+  pageId?: string;
   messages: Anthropic.MessageParam[];
   followUpSettings: Record<string, unknown> | null;
   systemBlocks: unknown;
@@ -1446,7 +1610,7 @@ export interface RunChatbotTurnParams {
 // loading/saving and any Facebook-specific side effects (sending the final reply, updating
 // ChatbotConversations) stay in each caller, since those differ between the two.
 export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<string> {
-  const { supabase, anthropic, model, psid, messages, followUpSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion } = params;
+  const { supabase, anthropic, model, psid, pageId, messages, followUpSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion } = params;
   let finalText = "Sorry, I'm having trouble responding right now - a team member will follow up with you shortly.";
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
@@ -1481,6 +1645,7 @@ export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<stri
       const result = await executeTool({
         supabase,
         psid,
+        pageId,
         name: tool.name,
         input: tool.input as Record<string, unknown>,
         followUpSettings,

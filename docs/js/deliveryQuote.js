@@ -1,7 +1,12 @@
 // Delivery Quote page logic (any active staff, same trust tier as Delivery - see js/delivery.js).
-// Lets staff pick a From location (a saved Warehouse, or a one-off address) and a To address,
-// then estimates driving distance/time via the Google Maps Distance Matrix service and computes
-// price = DELIVERY_BASE_FEE + DELIVERY_RATE_PER_KM * distance_km + toll fee.
+// Lets staff pick a From location (a saved Warehouse, or a one-off address) and one or more To
+// locations (js/delivery.js's #toStopsList "Location 1, 2, ..." rows, per "From Store to Location
+// 1 to location 2, let the user add how many location do they want to deliver"), then estimates
+// the whole route's driving distance/time via the Google Maps Directions service (getMultiStopRoute)
+// and computes price = DELIVERY_BASE_FEE + DELIVERY_RATE_PER_KM * total_distance_km + toll fee -
+// one base fee and one toll charge for the whole trip, not per stop, same as a real delivery run.
+// Lalamove mode is unchanged and stays single-stop only (its booking flow assumes exactly one
+// sender/recipient pair) - wireForm collapses back to one stop whenever that method is selected.
 // DELIVERY_BASE_FEE/DELIVERY_RATE_PER_KM/DELIVERY_TOLL_FEE live in public.PortalSettings (edited
 // from general-setup.html) alongside GOOGLE_MAPS_API_KEY - reused here via the same
 // admin_get_public_portal_setting RPC.
@@ -18,6 +23,12 @@ let googleMapsApiKey = null;
 let deliveryBaseFee = null;
 let deliveryRatePerKm = null;
 let deliveryTollFee = 0; // optional - defaults to 0 (no surcharge) if DELIVERY_TOLL_FEE isn't set
+// Per "if its multiple location can you add a 50% markup?" - applied to the base fee + distance
+// subtotal (not the toll, a pass-through actual cost) whenever a quote has more than one "To"
+// stop. Configurable like the other delivery pricing settings (General Setup, "Visible to all
+// staff") via DELIVERY_MULTI_STOP_MARKUP_PERCENT, but defaults to 50 so it works out of the box
+// without that key needing to be set first.
+let deliveryMultiStopMarkupPercent = 50;
 let warehousesById = {}; // warehouse id -> row from staff_search_warehouses
 
 async function loadGoogleMapsApiKey() {
@@ -36,7 +47,7 @@ async function loadGoogleMapsApiKey() {
 }
 
 async function loadDeliveryPricingSettings() {
-  const [baseFeeResult, ratePerKmResult, tollFeeResult] = await Promise.all([
+  const [baseFeeResult, ratePerKmResult, tollFeeResult, multiStopMarkupResult] = await Promise.all([
     supabaseClient.rpc('admin_get_public_portal_setting', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -51,16 +62,23 @@ async function loadDeliveryPricingSettings() {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_setting_key: 'DELIVERY_TOLL_FEE'
+    }),
+    supabaseClient.rpc('admin_get_public_portal_setting', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_setting_key: 'DELIVERY_MULTI_STOP_MARKUP_PERCENT'
     })
   ]);
 
   if (baseFeeResult.error) console.error('admin_get_public_portal_setting (DELIVERY_BASE_FEE) failed:', baseFeeResult.error);
   if (ratePerKmResult.error) console.error('admin_get_public_portal_setting (DELIVERY_RATE_PER_KM) failed:', ratePerKmResult.error);
   if (tollFeeResult.error) console.error('admin_get_public_portal_setting (DELIVERY_TOLL_FEE) failed:', tollFeeResult.error);
+  if (multiStopMarkupResult.error) console.error('admin_get_public_portal_setting (DELIVERY_MULTI_STOP_MARKUP_PERCENT) failed:', multiStopMarkupResult.error);
 
   deliveryBaseFee = baseFeeResult.data != null && baseFeeResult.data !== '' ? Number(baseFeeResult.data) : null;
   deliveryRatePerKm = ratePerKmResult.data != null && ratePerKmResult.data !== '' ? Number(ratePerKmResult.data) : null;
   deliveryTollFee = tollFeeResult.data != null && tollFeeResult.data !== '' ? Number(tollFeeResult.data) : 0;
+  deliveryMultiStopMarkupPercent = multiStopMarkupResult.data != null && multiStopMarkupResult.data !== '' ? Number(multiStopMarkupResult.data) : 50;
 }
 
 function loadGoogleMapsScript() {
@@ -198,46 +216,53 @@ async function resolveFromLocation() {
   return { lat: Number(warehouse.latitude), lng: Number(warehouse.longitude), label: warehouse.name };
 }
 
-// Distance Matrix, not the Geocoder-only pattern used elsewhere in this app, is the piece that
-// actually turns two points into a driving distance/time. Uses the browser-side
-// google.maps.DistanceMatrixService (loaded as part of the same Maps JavaScript API script as
-// Geocoder) rather than the REST distancematrix/json endpoint, which has no CORS support and
-// would need a server-side proxy to call from here.
-function getDrivingDistance(origin, destination) {
+// Turns an origin plus an ordered list of stops (1 or more {lat,lng} points, the last one being
+// the final destination and every one before it a waypoint) into a single driving route via
+// DirectionsService - used for both the classic single-stop quote and the "add a location" multi-
+// stop route (js/delivery.js's Job Order/Delivery Receipt printouts are unrelated - this is only
+// this page's own routing). Returns the full DirectionsResult so callers can read routes[0].legs
+// (one leg per origin/stop-to-stop hop, in order) for per-leg or summed distance/duration, and so
+// the same result can be handed straight to a DirectionsRenderer for the map polyline.
+function getMultiStopRoute(origin, stops) {
   return loadGoogleMapsScript().then(() => {
-    const service = new google.maps.DistanceMatrixService();
+    const directionsService = new google.maps.DirectionsService();
+    const destination = stops[stops.length - 1];
+    const waypoints = stops.slice(0, -1).map((s) => ({ location: { lat: s.lat, lng: s.lng }, stopover: true }));
+
     return new Promise((resolve, reject) => {
-      service.getDistanceMatrix({
-        origins: [origin],
-        destinations: [destination],
-        travelMode: 'DRIVING',
-        unitSystem: google.maps.UnitSystem.METRIC
-      }, (response, status) => {
-        if (status !== 'OK') {
-          // REQUEST_DENIED here almost always means the Distance Matrix API itself isn't enabled
-          // (or billing isn't set up) for this Google Maps API key - Geocoding/Maps JavaScript API
-          // being enabled (used elsewhere in the portal) doesn't imply Distance Matrix is too.
+      directionsService.route({
+        origin: { lat: origin.lat, lng: origin.lng },
+        destination: { lat: destination.lat, lng: destination.lng },
+        waypoints,
+        optimizeWaypoints: false,
+        travelMode: google.maps.TravelMode.DRIVING
+      }, (result, status) => {
+        if (status !== 'OK' || !result.routes || !result.routes[0]) {
+          // REQUEST_DENIED here almost always means the Directions API itself isn't enabled (or
+          // billing isn't set up) for this Google Maps API key - Geocoding/Maps JavaScript API
+          // being enabled (used elsewhere in the portal) doesn't imply Directions is too.
           const hint = status === 'REQUEST_DENIED'
-            ? ' Check that the Distance Matrix API is enabled (and billing is active) for this Google Maps API key in Google Cloud Console.'
+            ? ' Check that the Directions API is enabled (and billing is active) for this Google Maps API key in Google Cloud Console.'
             : '';
-          reject(new Error(`Could not calculate driving distance (${status}).${hint}`));
+          reject(new Error(`Could not calculate a driving route for these stops (${status}).${hint}`));
           return;
         }
-
-        const element = response?.rows?.[0]?.elements?.[0];
-        if (!element || element.status !== 'OK') {
-          reject(new Error(`No driving route found between those two locations (${element?.status || 'unknown'}).`));
-          return;
-        }
-
-        resolve({
-          distanceMeters: element.distance.value,
-          distanceText: element.distance.text,
-          durationText: element.duration.text
-        });
+        resolve(result);
       });
     });
   });
+}
+
+function sumRouteLegs(route, key) {
+  return route.legs.reduce((sum, leg) => sum + leg[key].value, 0);
+}
+
+function formatDurationSeconds(totalSeconds) {
+  const totalMinutes = Math.round(totalSeconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} min${minutes === 1 ? '' : 's'}`;
+  return `${hours} hour${hours === 1 ? '' : 's'} ${minutes} min${minutes === 1 ? '' : 's'}`;
 }
 
 // Detects whether the default driving route uses a toll road at all, by requesting the same
@@ -248,15 +273,20 @@ function getDrivingDistance(origin, destination) {
 // coverage for Philippine expressways, so it can't be trusted for an actual peso amount, but road
 // network data (what this comparison relies on) is solid everywhere DirectionsService works.
 // Requires the Directions API to be enabled for GOOGLE_MAPS_API_KEY, separately from Distance
-// Matrix/Places/Geocoding.
-function routeUsesTolls(origin, destination) {
+// Matrix/Places/Geocoding. waypoints (plain {lat,lng}[], every intermediate stop before the final
+// destination) lets a multi-location quote check the whole route at once instead of leg-by-leg -
+// any toll usage anywhere along it is enough to apply the flat fee once for the whole trip.
+function routeUsesTolls(origin, destination, waypoints = []) {
   return loadGoogleMapsScript().then(() => {
     const directionsService = new google.maps.DirectionsService();
+    const routeWaypoints = waypoints.map((w) => ({ location: { lat: w.lat, lng: w.lng }, stopover: true }));
 
     const requestRoute = (avoidTolls) => new Promise((resolve, reject) => {
       directionsService.route({
         origin,
         destination,
+        waypoints: routeWaypoints,
+        optimizeWaypoints: false,
         travelMode: google.maps.TravelMode.DRIVING,
         avoidTolls
       }, (result, status) => {
@@ -269,9 +299,8 @@ function routeUsesTolls(origin, destination) {
     });
 
     return Promise.all([requestRoute(false), requestRoute(true)]).then(([normalRoute, noTollRoute]) => {
-      const normalLeg = normalRoute.legs[0];
-      const noTollLeg = noTollRoute.legs[0];
-      return normalLeg.distance.value !== noTollLeg.distance.value || normalLeg.duration.value !== noTollLeg.duration.value;
+      return sumRouteLegs(normalRoute, 'distance') !== sumRouteLegs(noTollRoute, 'distance')
+        || sumRouteLegs(normalRoute, 'duration') !== sumRouteLegs(noTollRoute, 'duration');
     });
   });
 }
@@ -281,7 +310,7 @@ function routeUsesTolls(origin, destination) {
 // support so it can't be called directly from browser JS. Throws if the function isn't deployed
 // yet/unreachable or the request otherwise fails - resolveTollFee below is what catches that and
 // falls back cleanly, so this function stays a plain "give me the answer or an error" call.
-async function fetchGoogleTollPrice(origin, destination) {
+async function fetchGoogleTollPrice(origin, destination, waypoints = []) {
   const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-toll-price`, {
     method: 'POST',
     headers: {
@@ -289,7 +318,7 @@ async function fetchGoogleTollPrice(origin, destination) {
       'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
       'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
     },
-    body: JSON.stringify({ origin, destination })
+    body: JSON.stringify({ origin, destination, waypoints })
   });
 
   if (!response.ok) {
@@ -306,9 +335,9 @@ async function fetchGoogleTollPrice(origin, destination) {
 // case, and whenever the Edge Function itself isn't reachable (e.g. not deployed yet), falls back
 // to the route-shape toll detection + flat DELIVERY_TOLL_FEE (source: 'flat') as the safety net,
 // per "our truck is always using toll fee" rather than silently undercharging.
-async function resolveTollFee(origin, destination) {
+async function resolveTollFee(origin, destination, waypoints = []) {
   try {
-    const googleToll = await fetchGoogleTollPrice(origin, destination);
+    const googleToll = await fetchGoogleTollPrice(origin, destination, waypoints);
     if (googleToll.hasTollInfo && googleToll.estimatedPrice > 0) {
       return { amount: googleToll.estimatedPrice, detected: true, source: 'google' };
     }
@@ -319,7 +348,7 @@ async function resolveTollFee(origin, destination) {
   if (!(deliveryTollFee > 0)) return { amount: 0, detected: null, source: 'none' };
 
   try {
-    const usesToll = await routeUsesTolls(origin, destination);
+    const usesToll = await routeUsesTolls(origin, destination, waypoints);
     return { amount: usesToll ? deliveryTollFee : 0, detected: usesToll, source: 'flat' };
   } catch (err) {
     console.error('Could not detect toll road usage, defaulting to applying the configured toll fee:', err);
@@ -335,9 +364,9 @@ const DEFAULT_MAP_ZOOM = 6;
 
 let quoteMapInstance = null;
 let fromMarker = null;
-let toMarker = null;
+let toMarkers = []; // one per "Location N" stop row, in order
+let routeRenderer = null; // google.maps.DirectionsRenderer - the driving-route polyline for the in-house multi-stop path
 let resolvedFromOtherLocation = null; // {lat, lng, address} from Places Autocomplete on fromOtherInput
-let resolvedToLocation = null; // {lat, lng, address} from Places Autocomplete on toAddressInput
 
 // Created once (not per-quote like the old renderQuoteMap) so the map persists across From/To
 // changes instead of being torn down and rebuilt on every Get Quote click.
@@ -353,18 +382,39 @@ async function ensureQuoteMap() {
 function refitMap() {
   if (!quoteMapInstance) return;
 
-  if (fromMarker && toMarker) {
-    const bounds = new google.maps.LatLngBounds();
-    bounds.extend(fromMarker.getPosition());
-    bounds.extend(toMarker.getPosition());
-    quoteMapInstance.fitBounds(bounds);
-  } else if (fromMarker) {
-    quoteMapInstance.setCenter(fromMarker.getPosition());
+  const markers = [fromMarker, ...toMarkers].filter(Boolean);
+  if (markers.length === 0) return;
+
+  if (markers.length === 1) {
+    quoteMapInstance.setCenter(markers[0].getPosition());
     quoteMapInstance.setZoom(14);
-  } else if (toMarker) {
-    quoteMapInstance.setCenter(toMarker.getPosition());
-    quoteMapInstance.setZoom(14);
+    return;
   }
+
+  const bounds = new google.maps.LatLngBounds();
+  markers.forEach((m) => bounds.extend(m.getPosition()));
+  quoteMapInstance.fitBounds(bounds);
+}
+
+// Draws the actual driving route (all stops in order) as a polyline once an in-house quote has
+// computed it via getMultiStopRoute - suppressMarkers/preserveViewport are both true since the
+// numbered pin markers (setToMarkers) and viewport (refitMap) are already handled separately here.
+async function renderRoutePolyline(directionsResult) {
+  await ensureQuoteMap();
+  if (!routeRenderer) {
+    routeRenderer = new google.maps.DirectionsRenderer({
+      map: quoteMapInstance,
+      suppressMarkers: true,
+      preserveViewport: true
+    });
+  }
+  routeRenderer.setDirections(directionsResult);
+}
+
+// Cleared for the Lalamove path (which has no multi-stop route to draw) so a stale in-house
+// polyline never lingers after switching Delivery Method.
+function clearRoutePolyline() {
+  if (routeRenderer) routeRenderer.setDirections({ routes: [] });
 }
 
 // Reverse-geocodes a dragged pin's drop position, writes it into the matching text field/cache so
@@ -389,14 +439,19 @@ async function handleFromMarkerDragEnd(latLng) {
   getQuote();
 }
 
-async function handleToMarkerDragEnd(latLng) {
+// stopIndex ties the dragged pin back to its own "Location N" row/input (js/delivery.js's
+// isPlaceholderAddress-style single-To assumption doesn't apply here - each stop is independent).
+async function handleToMarkerDragEnd(stopIndex, latLng) {
   const lat = latLng.lat();
   const lng = latLng.lng();
   const address = (await reverseGeocode(lat, lng)) || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
 
-  resolvedToLocation = { lat, lng, address };
-  document.getElementById('toAddressInput').value = address;
-  if (toMarker) toMarker.setTitle(`To: ${address}`);
+  const input = stopRowsEls()[stopIndex]?.querySelector('.to-stop-input');
+  if (input) {
+    input._resolvedLocation = { lat, lng, address };
+    input.value = address;
+  }
+  if (toMarkers[stopIndex]) toMarkers[stopIndex].setTitle(`Location ${stopIndex + 1}: ${address}`);
 
   getQuote();
 }
@@ -423,21 +478,27 @@ async function setFromMarker(loc) {
   refitMap();
 }
 
-async function setToMarker(loc) {
+// Replaces every "To" marker on each call (rather than diffing) - simplest correct behavior given
+// stops can be added/removed/reordered between calls, and there are normally only a handful of
+// them. Each pin is labeled with its stop number so it reads the same way as the "Location N"
+// rows in the form.
+async function setToMarkers(stops) {
   await ensureQuoteMap();
-  if (toMarker) toMarker.setMap(null);
+  toMarkers.forEach((m) => m.setMap(null));
+  toMarkers = [];
 
-  if (!loc) {
-    toMarker = null;
-  } else {
-    toMarker = new google.maps.Marker({
+  stops.forEach((loc, i) => {
+    const marker = new google.maps.Marker({
       position: { lat: loc.lat, lng: loc.lng },
       map: quoteMapInstance,
-      title: `To: ${loc.label}`,
+      label: String(i + 1),
+      title: `Location ${i + 1}: ${loc.label}`,
       draggable: true
     });
-    toMarker.addListener('dragend', () => handleToMarkerDragEnd(toMarker.getPosition()));
-  }
+    marker.addListener('dragend', () => handleToMarkerDragEnd(i, marker.getPosition()));
+    toMarkers.push(marker);
+  });
+
   refitMap();
 }
 
@@ -474,6 +535,77 @@ function wirePlacesAutocomplete(inputEl, onPlaceSelected) {
       });
     });
   }).catch((err) => console.error('Failed to initialize address suggestions:', err));
+}
+
+// Per "From Store to Location 1 to location 2, let the user add how many location do they want to
+// deliver" - #toStopsList holds one row per delivery stop, each just an address input with its own
+// Autocomplete + a Remove button (hidden while it's the only row left, since there must always be
+// at least one destination). Order in the DOM is the delivery order used for pricing/routing.
+function stopRowsEls() {
+  return Array.from(document.querySelectorAll('#toStopsList .delivery-quote-stop-row'));
+}
+
+function renumberStopRows() {
+  stopRowsEls().forEach((row, i) => {
+    row.querySelector('.delivery-quote-stop-label').textContent = `Location ${i + 1}`;
+  });
+}
+
+function updateStopRemoveButtons() {
+  const rows = stopRowsEls();
+  rows.forEach((row) => {
+    row.querySelector('.to-stop-remove-btn').classList.toggle('hidden', rows.length <= 1);
+  });
+}
+
+function addStopRow(prefillAddress) {
+  const list = document.getElementById('toStopsList');
+  const row = document.createElement('div');
+  row.className = 'delivery-quote-stop-row';
+  row.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:8px;';
+  row.innerHTML = `
+    <span class="muted delivery-quote-stop-label" style="min-width:82px;">Location</span>
+    <input type="text" class="to-stop-input" placeholder="e.g. 456 Sample Ave, Makati City" style="flex:1;" />
+    <button class="btn btn-danger btn-sm to-stop-remove-btn hidden" type="button" title="Remove this location">Remove</button>
+  `;
+  list.appendChild(row);
+
+  const input = row.querySelector('.to-stop-input');
+  if (prefillAddress) input.value = prefillAddress;
+
+  // Same "typing invalidates the cached Autocomplete pick" convention as fromOtherInput/the old
+  // single toAddressInput - _resolvedLocation lives on the input element itself rather than in a
+  // parallel array, so it stays correct no matter how rows get added/removed/reordered around it.
+  input.addEventListener('input', () => { input._resolvedLocation = null; });
+  input.addEventListener('blur', () => { if (input.value.trim()) getQuote(); });
+  wirePlacesAutocomplete(input, (loc) => {
+    input._resolvedLocation = loc;
+    getQuote();
+  });
+
+  row.querySelector('.to-stop-remove-btn').addEventListener('click', () => {
+    row.remove();
+    renumberStopRows();
+    updateStopRemoveButtons();
+    getQuote();
+  });
+
+  renumberStopRows();
+  updateStopRemoveButtons();
+}
+
+// Mirrors resolveFromLocation's "Other address" branch - reuses a cached Autocomplete pick when
+// the text hasn't changed since, otherwise falls back to a fresh Geocoder call.
+async function resolveToStop(input) {
+  const address = input.value.trim();
+
+  if (input._resolvedLocation && input._resolvedLocation.address === address) {
+    return { lat: input._resolvedLocation.lat, lng: input._resolvedLocation.lng, label: address };
+  }
+
+  const location = await geocodeAddress(address);
+  if (!location) throw new Error(`Could not find "${address}" on the map. Try a more specific address.`);
+  return { lat: location.lat(), lng: location.lng(), label: address };
 }
 
 function formatCurrency(amount) {
@@ -544,27 +676,40 @@ async function fetchLalamoveQuote(origin, destination, serviceType) {
   return body; // { quotationId, expiresAt, serviceType, total, currency, priceBreakdown, distanceMeters, isSandbox }
 }
 
-// In-house pricing path (existing base fee + rate/km + toll behavior), split out of getQuote so
-// it can sit alongside runLalamoveQuote below - see wireForm's deliveryMethodSelect handling for
-// how the two are chosen between.
-async function runInHouseQuote(from, to) {
+// In-house pricing path (base fee + rate/km + toll, applied once per whole trip - not per leg -
+// over the full route distance), split out of getQuote so it can sit alongside runLalamoveQuote
+// below. `stops` is 1+ resolved {lat,lng,label} locations in delivery order (Location 1, 2, ...);
+// per "From Store to Location 1 to location 2 ... the price will adjust accordingly", the whole
+// multi-stop route is priced as one trip via getMultiStopRoute, same as the original single-To
+// path just generalized to N legs instead of always exactly 1.
+async function runInHouseQuote(from, stops) {
   if (deliveryBaseFee == null || deliveryRatePerKm == null) {
     throw new Error('Delivery pricing isn\'t configured yet - set DELIVERY_BASE_FEE and DELIVERY_RATE_PER_KM in General Setup.');
   }
 
   const origin = { lat: from.lat, lng: from.lng };
-  const destination = { lat: to.lat, lng: to.lng };
+  const destination = { lat: stops[stops.length - 1].lat, lng: stops[stops.length - 1].lng };
+  const intermediateStops = stops.slice(0, -1).map((s) => ({ lat: s.lat, lng: s.lng }));
 
-  const [{ distanceMeters, distanceText, durationText }, toll] = await Promise.all([
-    getDrivingDistance(origin, destination),
-    resolveTollFee(origin, destination)
+  const [routeResult, toll] = await Promise.all([
+    getMultiStopRoute(origin, stops.map((s) => ({ lat: s.lat, lng: s.lng }))),
+    resolveTollFee(origin, destination, intermediateStops)
   ]);
 
+  const route = routeResult.routes[0];
+  const distanceMeters = sumRouteLegs(route, 'distance');
+  const durationSeconds = sumRouteLegs(route, 'duration');
   const distanceKm = distanceMeters / 1000;
-  const price = deliveryBaseFee + deliveryRatePerKm * distanceKm + toll.amount;
+  const subtotal = deliveryBaseFee + deliveryRatePerKm * distanceKm;
 
-  document.getElementById('resultDistance').textContent = distanceText;
-  document.getElementById('resultDuration').textContent = durationText;
+  // Per "if its multiple location can you add a 50% markup?" - applied to the base fee + distance
+  // subtotal only, not the toll (a pass-through actual cost, not delivery service pricing).
+  const isMultiStop = stops.length > 1;
+  const markupAmount = isMultiStop ? subtotal * (deliveryMultiStopMarkupPercent / 100) : 0;
+  const price = subtotal + markupAmount + toll.amount;
+
+  document.getElementById('resultDistance').textContent = `${distanceKm.toFixed(2)} km`;
+  document.getElementById('resultDuration').textContent = formatDurationSeconds(durationSeconds);
   document.getElementById('resultTollUsed').textContent = toll.detected === null ? 'Unknown' : (toll.detected ? 'Yes' : 'No');
   document.getElementById('resultPrice').textContent = formatCurrency(price);
 
@@ -577,8 +722,12 @@ async function runInHouseQuote(from, to) {
   } else if (toll.detected === false) {
     tollPart = ' (no toll road detected on this route)';
   }
+  const markupPart = isMultiStop ? ` + ${deliveryMultiStopMarkupPercent}% multi-stop markup (${formatCurrency(markupAmount)})` : '';
+  const routeLabel = [from.label, ...stops.map((s) => s.label)].join(' → ');
   document.getElementById('resultBreakdown').textContent =
-    `${formatCurrency(deliveryBaseFee)} base fee + ${formatCurrency(deliveryRatePerKm)}/km x ${distanceKm.toFixed(2)} km${tollPart}, from ${from.label} to ${to.label}.`;
+    `${formatCurrency(deliveryBaseFee)} base fee + ${formatCurrency(deliveryRatePerKm)}/km x ${distanceKm.toFixed(2)} km${markupPart}${tollPart}, route: ${routeLabel}.`;
+
+  await renderRoutePolyline(routeResult);
 }
 
 let lastLalamoveQuote = null; // {quotationId, expiresAt, stops: [{stopId}, {stopId}], isSandbox} - needed to book
@@ -783,9 +932,20 @@ async function getQuote() {
 
   const method = document.getElementById('deliveryMethodSelect').value;
 
-  const toAddress = document.getElementById('toAddressInput').value.trim();
-  if (!toAddress) {
-    errorEl.textContent = 'Enter a To (delivery) address.';
+  // Blank rows are skipped rather than treated as errors - e.g. clicking "+ Add Location" and not
+  // having typed into it yet shouldn't block quoting on whatever's already filled in.
+  const stopInputs = stopRowsEls().map((row) => row.querySelector('.to-stop-input')).filter((input) => input.value.trim());
+  if (stopInputs.length === 0) {
+    errorEl.textContent = 'Enter at least one delivery address.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  // Lalamove booking only ever deals with exactly 2 stops (sender/recipient) - wireForm's
+  // deliveryMethodSelect handler already collapses back to a single row when Lalamove is picked,
+  // this is just a defensive backstop in case that state ever gets out of sync.
+  if (method === 'lalamove' && stopInputs.length > 1) {
+    errorEl.textContent = 'Lalamove quotes only support a single delivery address - remove the extra locations, or switch to In-House Delivery.';
     errorEl.classList.remove('hidden');
     return;
   }
@@ -797,21 +957,17 @@ async function getQuote() {
     const from = await resolveFromLocation();
     await setFromMarker(from);
 
-    // Same cached-Autocomplete-pick shortcut as resolveFromLocation's "Other address" branch.
-    let to;
-    if (resolvedToLocation && resolvedToLocation.address === toAddress) {
-      to = { lat: resolvedToLocation.lat, lng: resolvedToLocation.lng, label: toAddress };
-    } else {
-      const toLocation = await geocodeAddress(toAddress);
-      if (!toLocation) throw new Error(`Could not find "${toAddress}" on the map. Try a more specific address.`);
-      to = { lat: toLocation.lat(), lng: toLocation.lng(), label: toAddress };
+    const stops = [];
+    for (const input of stopInputs) {
+      stops.push(await resolveToStop(input));
     }
-    await setToMarker(to);
+    await setToMarkers(stops);
 
     if (method === 'lalamove') {
-      await runLalamoveQuote(from, to);
+      await runLalamoveQuote(from, stops[0]);
+      clearRoutePolyline();
     } else {
-      await runInHouseQuote(from, to);
+      await runInHouseQuote(from, stops);
     }
     resultEl.classList.remove('hidden');
   } catch (err) {
@@ -826,7 +982,6 @@ async function getQuote() {
 function wireForm() {
   const fromSelect = document.getElementById('fromWarehouseSelect');
   const fromOtherInput = document.getElementById('fromOtherInput');
-  const toAddressInput = document.getElementById('toAddressInput');
   const deliveryMethodSelect = document.getElementById('deliveryMethodSelect');
 
   const lalamoveOnlyRowIds = [
@@ -843,6 +998,19 @@ function wireForm() {
     const isLalamove = e.target.value === 'lalamove';
     document.getElementById('lalamoveSandboxNote').classList.toggle('hidden', !isLalamove);
     lalamoveOnlyRowIds.forEach((id) => document.getElementById(id).classList.toggle('hidden', !isLalamove));
+
+    // Lalamove booking only ever supports one sender/recipient pair - collapse back down to a
+    // single stop rather than letting an invalid combination sit in the form (see the defensive
+    // check in getQuote too).
+    document.getElementById('addStopBtn').classList.toggle('hidden', isLalamove);
+    document.getElementById('lalamoveMultiStopNote').classList.toggle('hidden', !isLalamove);
+    if (isLalamove) {
+      const rows = stopRowsEls();
+      for (let i = rows.length - 1; i >= 1; i--) rows[i].remove();
+      renumberStopRows();
+      updateStopRemoveButtons();
+    }
+
     if (isLalamove) await loadLalamoveVehicleTypes();
     getQuote();
   });
@@ -887,17 +1055,14 @@ function wireForm() {
   // Cleared on every keystroke so a stale Autocomplete pick never gets reused after the user
   // edits the text further - resolveFromLocation/getQuote fall back to Geocoder when this is null.
   fromOtherInput.addEventListener('input', () => { resolvedFromOtherLocation = null; });
-  toAddressInput.addEventListener('input', () => { resolvedToLocation = null; });
 
   // Blur (not 'input') re-quotes once the user finishes typing a manual address without picking
   // an Autocomplete suggestion - picking a suggestion already re-quotes immediately via the
-  // wirePlacesAutocomplete callbacks below, so this only covers the "typed it and tabbed/clicked
-  // away" path. Per "make sure that we change every field the price will be auto populated".
+  // wirePlacesAutocomplete callback below, so this only covers the "typed it and tabbed/clicked
+  // away" path. Per "make sure that we change every field the price will be auto populated". Each
+  // "Location N" stop row gets the equivalent input/blur/Autocomplete wiring inline in addStopRow.
   fromOtherInput.addEventListener('blur', () => {
     if (fromSelect.value === '__other__' && fromOtherInput.value.trim()) getQuote();
-  });
-  toAddressInput.addEventListener('blur', () => {
-    if (toAddressInput.value.trim()) getQuote();
   });
 
   wirePlacesAutocomplete(fromOtherInput, (loc) => {
@@ -908,14 +1073,7 @@ function wireForm() {
     }
   });
 
-  wirePlacesAutocomplete(toAddressInput, (loc) => {
-    resolvedToLocation = loc;
-    setToMarker({ ...loc, label: loc.address });
-    // Per "once the To Delivery has been clicked, auto Get Quote" - picking a suggestion is
-    // itself a strong enough signal to price it immediately, no separate button press needed.
-    getQuote();
-  });
-
+  document.getElementById('addStopBtn').addEventListener('click', () => addStopRow());
   document.getElementById('getQuoteBtn').addEventListener('click', getQuote);
 }
 
@@ -942,6 +1100,7 @@ function wireForm() {
     document.getElementById('pricingNotConfigured').classList.remove('hidden');
   }
 
+  addStopRow();
   wireForm();
 
   // Show the map immediately on open, per "show the map directly upon open Delivery Quote" -

@@ -325,7 +325,7 @@
         return;
       }
 
-      const { data, error } = await supabaseClient.rpc('public_get_online_order_receipt', { p_order_id: orderId });
+      const { data, error } = await supabaseClient.rpc('public_get_order_receipt', { p_order_no: orderId });
       if (error) {
         statusEl.textContent = 'Could not load this receipt right now - please try again shortly.';
         return;

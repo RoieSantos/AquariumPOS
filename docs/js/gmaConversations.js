@@ -213,14 +213,18 @@ function renderMessages(rows) {
       ? `<a href="${escapeHtml(m.attachment_url)}" target="_blank" rel="noopener"><img class="inbox-msg-image" src="${escapeHtml(m.attachment_url)}" alt="Photo sent by customer"></a>`
       : '';
     const textHtml = showText ? escapeHtml(m.content) : '';
+    const paymentApplied = !!m.detected_payment_applied_at_utc;
     const paymentHtml = hasDetectedPayment
       ? '<div class="inbox-payment-detected">' +
-        '<div class="inbox-payment-detected-title">Detected Payment (unconfirmed)</div>' +
+        `<div class="inbox-payment-detected-title">Detected Payment (${paymentApplied ? 'confirmed' : 'unconfirmed'})</div>` +
         `<div>Amount: ${Number(m.detected_payment_amount).toFixed(2)}</div>` +
         (m.detected_payment_method ? `<div>Method: ${escapeHtml(m.detected_payment_method)}</div>` : '') +
         (m.detected_payment_reference ? `<div>Ref: ${escapeHtml(m.detected_payment_reference)}</div>` : '') +
         (m.detected_payment_sender_name ? `<div>From: ${escapeHtml(m.detected_payment_sender_name)}</div>` : '') +
-        `<button type="button" class="btn btn-secondary btn-sm inbox-use-payment-btn" data-amount="${Number(m.detected_payment_amount)}" data-method="${escapeHtml(m.detected_payment_method || '')}" data-reference="${escapeHtml(m.detected_payment_reference || '')}">Use in Add Payment</button>` +
+        (m.detected_payment_at_text ? `<div>Paid on screenshot: ${escapeHtml(m.detected_payment_at_text)}</div>` : '') +
+        (paymentApplied
+          ? ''
+          : `<button type="button" class="btn btn-secondary btn-sm inbox-use-payment-btn" data-message-id="${m.message_id}" data-amount="${Number(m.detected_payment_amount)}" data-method="${escapeHtml(m.detected_payment_method || '')}" data-reference="${escapeHtml(m.detected_payment_reference || '')}">Use in Add Payment</button>`) +
         '</div>'
       : '';
     const bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${imageHtml}${textHtml}${paymentHtml}</div>`;
@@ -238,7 +242,12 @@ function renderMessages(rows) {
 
   messagesEl.querySelectorAll('.inbox-use-payment-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      useDetectedPayment(parseFloat(btn.dataset.amount) || null, btn.dataset.method || null, btn.dataset.reference || null);
+      useDetectedPayment(
+        parseFloat(btn.dataset.amount) || null,
+        btn.dataset.method || null,
+        btn.dataset.reference || null,
+        btn.dataset.messageId ? Number(btn.dataset.messageId) : null
+      );
     });
   });
 
@@ -253,10 +262,16 @@ function renderMessages(rows) {
 // order rows are actually in the DOM.
 let pendingDetectedPayment = null;
 
-function useDetectedPayment(amount, method, reference) {
+// Most recent detected payment for the open conversation that staff hasn't confirmed yet (null if
+// none, or if the latest one was already applied) - set by loadMessages below, and applied
+// automatically by openConversation so the Information tab's order panel is already pre-filled and
+// flagged the moment staff opens the conversation, no click on the message bubble required.
+let latestDetectedPayment = null;
+
+function useDetectedPayment(amount, method, reference, messageId) {
   const conv = conversations.find((c) => c.psid === selectedPsid);
   if (!conv) return;
-  pendingDetectedPayment = { amount, method, reference };
+  pendingDetectedPayment = { amount, method, reference, messageId: messageId ?? null };
   activeCustomerTab = 'info';
   renderCustomerPanel(conv);
 }
@@ -277,7 +292,18 @@ async function loadMessages(psid) {
     return;
   }
 
-  renderMessages(data || []);
+  const rows = data || [];
+  renderMessages(rows);
+
+  // Walk backwards (rows are oldest-first) for the latest still-unconfirmed detection.
+  latestDetectedPayment = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const m = rows[i];
+    if (m.detected_payment_amount != null && !m.detected_payment_applied_at_utc) {
+      latestDetectedPayment = { amount: m.detected_payment_amount, method: m.detected_payment_method, reference: m.detected_payment_reference, messageId: m.message_id };
+      break;
+    }
+  }
 }
 
 async function openConversation(psid) {
@@ -300,8 +326,22 @@ async function openConversation(psid) {
   // whoever was open before.
   activeCustomerTab = 'info';
   newOrderLines = [];
+  conversationOrders = [];
+  conversationOrdersConv = null;
+  expandedOrderNos = new Set();
+  expandedPaymentOrderNos = new Set();
+  latestDetectedPayment = null;
+  flaggedOrderNo = null;
+  activeDetectedPaymentMessageId = null;
   renderCustomerPanel(conv);
   await loadMessages(psid);
+
+  // If the latest inbound photo detected an unconfirmed payment, pre-fill and flag it right away -
+  // same effect as staff clicking "Use in Add Payment" on the message bubble, just automatic so
+  // nobody has to scroll the thread looking for it.
+  if (latestDetectedPayment) {
+    useDetectedPayment(latestDetectedPayment.amount, latestDetectedPayment.method, latestDetectedPayment.reference, latestDetectedPayment.messageId);
+  }
 }
 
 // Right-panel layout (Information / Create Order tabs, inline order form, phone-match lookup)
@@ -313,15 +353,90 @@ async function openConversation(psid) {
 // automatically via admin_list_automated_orders_by_gma_conversation, no searching needed.
 let activeCustomerTab = 'info';
 
+// Same badge vocabulary as Automated Orders (docs/js/automatedOrders.js) - reused rather than
+// inventing a separate color set, so a status reads the same way everywhere in the portal.
+const ORDER_STATUS_BADGE_CLASS = {
+  New: 'badge-primary',
+  Contacted: 'badge-warning',
+  Confirmed: 'badge-purple',
+  Completed: 'badge-success',
+  Cancelled: 'badge-danger'
+};
+const PANCAKE_SYNC_BADGE_CLASS = {
+  Synced: 'badge-success',
+  Failed: 'badge-danger',
+  Pending: 'badge-neutral'
+};
+
+// Same vocabulary/colors as the Online Orders status-summary-bar (docs/online-orders.html) - this
+// is the REAL fulfillment status of the synced Pancake order (once one exists), a completely
+// different lifecycle from AutomatedOrders.Status above. Read-only here (see admin_list_automated_
+// orders_by_gma_conversation's online_order_status column, sql/supabase_gma_conversation_online_
+// order_status.sql) - unlike the editable AutomatedOrders status select, this can't be freely set
+// (admin_update_online_order_status only allows manually moving Printed -> To Ship; everything else
+// is driven by the background Pancake sync), so there's no select/RPC wiring for it here.
+const ONLINE_ORDER_STATUS_BADGE_CLASS = {
+  Confirmed: 'badge-primary',
+  Printed: 'badge-warning',
+  'To Ship': 'badge-purple',
+  Shipped: 'badge-success',
+  Cancelled: 'badge-danger'
+};
+
+// Per direct follow-up request ("this status I dont want... just show the actual status from
+// pancake") - replaces the old editable AutomatedOrders status select entirely. While an order
+// hasn't synced to Pancake yet there's nothing real to show, so this falls back to the push-attempt
+// badge (Pending/Failed); once synced, it shows the LIVE Pancake status (fetched up front for every
+// order by loadConversationOrders, not lazily on expand, since this now renders on the collapsed
+// card too) instead of the generic "Synced".
+function pancakeStatusBadgeHtml(o) {
+  if (o.pancake_sync_status !== 'Synced') return pancakeSyncBadgeHtml(o.pancake_sync_status);
+
+  const live = orderPancakeStatusCache.get(o.order_no);
+  if (!live || live === 'loading') return '<span class="badge badge-neutral">Checking Pancake...</span>';
+  if (live.error) return `<span class="badge badge-danger" title="${escapeHtml(live.error)}">Pancake error</span>`;
+
+  const cls = ONLINE_ORDER_STATUS_BADGE_CLASS[live.status] || (live.status === 'New' ? 'badge-primary' : 'badge-neutral');
+  return `<span class="badge ${cls}">${escapeHtml(live.status || 'Unknown')}</span>`;
+}
+
+function orderStatusBadgeHtml(status) {
+  const cls = ORDER_STATUS_BADGE_CLASS[status] || 'badge-neutral';
+  return `<span class="badge ${cls}">${escapeHtml(status || 'New')}</span>`;
+}
+
+function pancakeSyncBadgeHtml(status) {
+  if (!status) return '';
+  const cls = PANCAKE_SYNC_BADGE_CLASS[status] || 'badge-neutral';
+  return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
+}
+
+function customerInitials(name) {
+  return (name || '?').trim().charAt(0).toUpperCase() || '?';
+}
+
 function renderCustomerPanel(conv) {
   newOrderConv = conv;
   const panelEl = document.getElementById('customerPanelEl');
+  const name = conv.customer_name || 'Unknown Customer';
 
   panelEl.innerHTML = `
-    <h3>${escapeHtml(conv.customer_name || 'Unknown Customer')}</h3>
+    <div class="inbox-customer-header">
+      <div class="inbox-customer-avatar">${escapeHtml(customerInitials(name))}</div>
+      <div class="inbox-customer-header-name">
+        <h3>${escapeHtml(name)}</h3>
+        <div class="inbox-customer-header-sub">Messenger customer</div>
+      </div>
+    </div>
     <div class="panel-tabs">
-      <button type="button" class="panel-tab-btn${activeCustomerTab === 'info' ? ' active' : ''}" data-tab="info">Information</button>
-      <button type="button" class="panel-tab-btn${activeCustomerTab === 'create' ? ' active' : ''}" data-tab="create">Create Order</button>
+      <button type="button" class="panel-tab-btn${activeCustomerTab === 'info' ? ' active' : ''}" data-tab="info">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="7.3"/><path d="M10 9.2v4.4" stroke-linecap="round"/><circle cx="10" cy="6.5" r="0.9" fill="currentColor" stroke="none"/></svg>
+        Information
+      </button>
+      <button type="button" class="panel-tab-btn${activeCustomerTab === 'create' ? ' active' : ''}" data-tab="create">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 3.5h2l1.4 8.4a1.5 1.5 0 0 0 1.48 1.26h6.24a1.5 1.5 0 0 0 1.47-1.2L16.5 6.5h-11" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="16.5" r="1" fill="currentColor" stroke="none"/><circle cx="14" cy="16.5" r="1" fill="currentColor" stroke="none"/></svg>
+        Create Order
+      </button>
     </div>
     <div id="panelTabBody"></div>
   `;
@@ -345,15 +460,26 @@ function renderInformationTab(conv) {
   const conversationId = `${conv.page_id || ''}_${conv.psid}`;
 
   bodyEl.innerHTML = `
-    <div class="inbox-customer-id">
-      PSID: ${escapeHtml(conv.psid)}<br>
-      Page ID: ${escapeHtml(conv.page_id || '(unknown)')}<br>
-      Conversation ID: ${escapeHtml(conversationId)}
+    <div class="inbox-section-label">
+      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M3 7.5h14" /></svg>
+      <span>Conversation details</span>
     </div>
-    <h3>Orders From This Conversation</h3>
+    <div class="inbox-customer-id">
+      <div><span>PSID</span><code>${escapeHtml(conv.psid)}</code></div>
+      <div><span>Page ID</span><code>${escapeHtml(conv.page_id || '(unknown)')}</code></div>
+      <div><span>Conversation ID</span><code>${escapeHtml(conversationId)}</code></div>
+    </div>
+
+    <div class="inbox-section-label">
+      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5.5h12M4 10h12M4 14.5h8" stroke-linecap="round"/></svg>
+      <span>Orders from this conversation</span>
+    </div>
     <div id="conversationOrdersEl" class="inbox-empty-state">Loading...</div>
 
-    <h3>Look Up Other Orders</h3>
+    <div class="inbox-section-label">
+      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="5"/><path d="M12.5 12.5 17 17" stroke-linecap="round"/></svg>
+      <span>Look up other orders</span>
+    </div>
     <div class="inbox-customer-search">
       <input type="text" id="customerOrderSearchInput" placeholder="Customer name or phone...">
       <button class="btn btn-secondary btn-sm" id="customerOrderSearchBtn" type="button">Search</button>
@@ -392,58 +518,411 @@ async function loadConversationOrders(conv) {
   }
 
   const orders = data || [];
+  conversationOrders = orders;
+  conversationOrdersConv = conv;
+
   if (orders.length === 0) {
     listEl.className = 'inbox-empty-state';
     listEl.textContent = 'No orders created from this conversation yet.';
+    // Nothing to prefill/flag without an order - clear it here too, or it would wrongly get
+    // applied to whichever order gets created next.
+    if (pendingDetectedPayment) {
+      alert(`Detected a payment screenshot (amount: ${pendingDetectedPayment.amount ?? '?'}), but this conversation has no orders yet. Create an order first, then use Add Payment manually.`);
+      pendingDetectedPayment = null;
+    }
     return;
   }
 
-  listEl.className = '';
-  listEl.innerHTML = orders.map((o) => `
-    <div class="inbox-order-item">
-      <div class="inbox-order-top">
-        <a href="online-order-lines.html?order=${encodeURIComponent(o.order_no)}">${escapeHtml(o.order_no)}</a>
-        <span>${escapeHtml(o.status || '')}</span>
-      </div>
-      <div class="inbox-order-meta">${escapeHtml(o.customer_name || '')} - ${escapeHtml(o.fulfillment_type || '')}</div>
-      <div class="inbox-order-meta">Total: ${Number(o.estimated_total || 0).toFixed(2)} | Paid: ${Number(o.amount_paid || 0).toFixed(2)} | Balance: ${Number(o.balance || 0).toFixed(2)}</div>
-      <div class="inbox-order-meta">Pancake: ${escapeHtml(o.pancake_sync_status || '')}</div>
-      <div class="inbox-payment-row">
-        <input type="number" min="0.01" step="0.01" placeholder="Amount" id="payAmount-${escapeHtml(o.order_no)}">
-        <select id="payMethod-${escapeHtml(o.order_no)}">
-          <option value="Cash">Cash</option>
-          <option value="GCash">GCash</option>
-          <option value="Bank Transfer">Bank Transfer</option>
-          <option value="Other">Other</option>
-        </select>
-        <input type="text" placeholder="Reference (optional)" id="payRef-${escapeHtml(o.order_no)}">
-        <button class="btn btn-secondary btn-sm" type="button" data-order="${escapeHtml(o.order_no)}">Add Payment</button>
-      </div>
-    </div>
-  `).join('');
+  // A detected-payment screenshot needs to prefill and scroll to its target order's payment form
+  // (below), so that order's card AND payment form are opened up-front rather than left collapsed
+  // and unreachable. flaggedOrderNo is set here (before the render below) so the "Payment to
+  // confirm" badge shows up in the same pass.
+  if (pendingDetectedPayment) {
+    expandedOrderNos.add(orders[0].order_no);
+    expandedPaymentOrderNos.add(orders[0].order_no);
+    flaggedOrderNo = orders[0].order_no;
+    activeDetectedPaymentMessageId = pendingDetectedPayment.messageId ?? null;
+  }
 
-  listEl.querySelectorAll('.inbox-payment-row button').forEach((btn) => {
-    btn.addEventListener('click', () => addOrderPayment(btn.dataset.order, conv));
+  listEl.className = '';
+  renderConversationOrderCards();
+  orders.forEach((o) => {
+    if (expandedOrderNos.has(o.order_no)) loadOrderExpandedDetails(o.order_no);
   });
+  // Fire-and-forget: the real Pancake status now shows on the COLLAPSED card too (per direct
+  // follow-up request replacing the old editable status select), so it can't wait for a card to be
+  // expanded the way lines/payments do - fetch every synced order's live status up front instead.
+  fetchLivePancakeStatuses(orders);
 
   if (pendingDetectedPayment) {
-    if (orders.length === 0) {
-      alert(`Detected a payment screenshot (amount: ${pendingDetectedPayment.amount ?? '?'}), but this conversation has no orders yet. Create an order first, then use Add Payment manually.`);
-    } else {
-      const target = orders[0];
-      const amountInput = document.getElementById(`payAmount-${target.order_no}`);
-      const methodSelect = document.getElementById(`payMethod-${target.order_no}`);
-      const refInput = document.getElementById(`payRef-${target.order_no}`);
-      if (amountInput && pendingDetectedPayment.amount !== null) amountInput.value = pendingDetectedPayment.amount;
-      if (methodSelect && pendingDetectedPayment.method) {
-        const matched = Array.from(methodSelect.options).find((o) => o.value.toLowerCase() === pendingDetectedPayment.method.toLowerCase());
-        if (matched) methodSelect.value = matched.value;
-      }
-      if (refInput && pendingDetectedPayment.reference) refInput.value = pendingDetectedPayment.reference;
-      amountInput?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const target = orders[0];
+    const amountInput = document.getElementById(`payAmount-${target.order_no}`);
+    const methodSelect = document.getElementById(`payMethod-${target.order_no}`);
+    const refInput = document.getElementById(`payRef-${target.order_no}`);
+    if (amountInput && pendingDetectedPayment.amount !== null) amountInput.value = pendingDetectedPayment.amount;
+    if (methodSelect && pendingDetectedPayment.method) {
+      const matched = Array.from(methodSelect.options).find((o) => o.value.toLowerCase() === pendingDetectedPayment.method.toLowerCase());
+      if (matched) methodSelect.value = matched.value;
     }
+    if (refInput && pendingDetectedPayment.reference) refInput.value = pendingDetectedPayment.reference;
+    amountInput?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     pendingDetectedPayment = null;
   }
+}
+
+// Fetches admin_get_gma_order_pancake_status for every synced order not already cached, in
+// parallel, then re-renders once. Safe to call repeatedly (e.g. every loadConversationOrders
+// refresh after adding a payment) - already-cached orders are skipped, and this coexists fine with
+// loadOrderExpandedDetails's own narrower per-order fetch (same cache, same has()-before-set guard,
+// so whichever runs first just wins and the other no-ops).
+async function fetchLivePancakeStatuses(orders) {
+  const targets = orders.filter((o) => o.pancake_sync_status === 'Synced' && !orderPancakeStatusCache.has(o.order_no));
+  if (targets.length === 0) return;
+
+  targets.forEach((o) => orderPancakeStatusCache.set(o.order_no, 'loading'));
+  renderConversationOrderCards();
+
+  await Promise.all(targets.map(async (o) => {
+    const { data, error } = await supabaseClient.rpc('admin_get_gma_order_pancake_status', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_no: o.order_no
+    });
+    orderPancakeStatusCache.set(o.order_no, error ? { error: error.message } : { status: data?.[0]?.pancake_status || null });
+  }));
+
+  renderConversationOrderCards();
+}
+
+// Per direct follow-up request ("i want this to be expandable... at first show the order no and
+// status... hide the rest... show products, payment, address etc when clicked") - each card now
+// collapses to just its order number + status badges by default, expanding on click to reveal
+// everything else. Products/payment history are lazy-loaded the first time a card is expanded (not
+// returned by admin_list_automated_orders_by_gma_conversation itself) and cached by OrderNo - a
+// globally unique key, so no need to scope the cache per-conversation - via the already-existing
+// admin_list_automated_order_lines (supabase_automated_orders_tables.sql) and
+// admin_list_automated_order_payments (supabase_gma_conversation_orders.sql) RPCs.
+//
+// State/render both live at module level (conversationOrders/conversationOrdersConv, mirroring
+// newOrderLines elsewhere in this file) rather than threaded through every function's parameters -
+// simpler once payment-add/cache-invalidate/toggle all need to trigger the same re-render.
+let conversationOrders = [];
+let conversationOrdersConv = null;
+let expandedOrderNos = new Set();
+let expandedPaymentOrderNos = new Set();
+let orderLinesCache = new Map();
+let orderPaymentsCache = new Map();
+// Live Pancake status per order (fetched on demand, see loadOrderExpandedDetails below) - NOT the
+// same as o.online_order_status (a mirror of the periodic Pancake -> OnlineOrders sync, which
+// deliberately skips orders still 'new' in Pancake - see supabase_pancake_manual_sync.sql). This
+// hits Pancake's API directly instead, so it works for a freshly-pushed, not-yet-confirmed order
+// too - the exact state a GMA order starts in.
+let orderPancakeStatusCache = new Map();
+
+// order_no currently showing the "Payment to confirm" badge (the target of the auto/manual
+// detected-payment prefill above) and the ChatbotMessages.Id it came from - cleared once staff
+// actually submits that payment (see addOrderPayment), which also marks the message applied server-
+// side (admin_mark_chatbot_payment_applied) so the flag doesn't reappear next time this conversation
+// is opened.
+let flaggedOrderNo = null;
+let activeDetectedPaymentMessageId = null;
+
+function orderLinesHtml(orderNo) {
+  const lines = orderLinesCache.get(orderNo);
+  if (!lines || lines === 'loading') return '<div class="inbox-empty-state">Loading...</div>';
+  if (lines.error) return `<div class="inbox-empty-state error-text">${escapeHtml(lines.error)}</div>`;
+  if (lines.length === 0) return '<div class="inbox-empty-state">No items.</div>';
+  return lines.map((l) => `
+    <div class="inbox-order-line-row">
+      <span>${escapeHtml(l.item_name)} &times;${l.quantity}</span>
+      <span>${(Number(l.price) * Number(l.quantity)).toFixed(2)}</span>
+    </div>
+  `).join('');
+}
+
+function orderPaymentsHtml(orderNo) {
+  const payments = orderPaymentsCache.get(orderNo);
+  if (!payments || payments === 'loading') return '<div class="inbox-empty-state">Loading...</div>';
+  if (payments.error) return `<div class="inbox-empty-state error-text">${escapeHtml(payments.error)}</div>`;
+  if (payments.length === 0) return '<div class="inbox-empty-state">No payments recorded yet.</div>';
+  return payments.map((p) => `
+    <div class="inbox-order-payment-row">
+      <span>${escapeHtml(p.method || '')}${p.reference ? ' &middot; ' + escapeHtml(p.reference) : ''}</span>
+      <span>${Number(p.amount).toFixed(2)}</span>
+    </div>
+  `).join('');
+}
+
+// Expanded-card Pancake row: just the real order id/link (already in `o`, no extra fetch needed -
+// same fields automatedOrders.js's pancakeBadgeWithLinkHtml uses) and, only while the live status is
+// 'New' or 'Confirmed', the one matching write action - the status itself is shown once, on the
+// collapsed card's top badge (pancakeStatusBadgeHtml), not repeated here. Only rendered once
+// PancakeSyncStatus is 'Synced' (before that there's no Pancake order to check at all).
+function pancakeLiveStatusHtml(o) {
+  if (o.pancake_sync_status !== 'Synced') return '';
+
+  const idLink = o.pancake_order_id && o.pancake_order_link
+    ? `<a href="${o.pancake_order_link}" target="_blank" rel="noopener" title="Open this order in Pancake">#${escapeHtml(o.pancake_order_id)} &#8599;</a>`
+    : '';
+
+  const live = orderPancakeStatusCache.get(o.order_no);
+  const liveOk = live && live !== 'loading' && !live.error;
+  const confirmBtnHtml = liveOk && live.status === 'New'
+    ? `<button type="button" class="btn btn-secondary btn-sm inbox-confirm-pancake-btn" data-order="${escapeHtml(o.order_no)}">Confirm in Pancake</button>`
+    : '';
+  // Per direct follow-up request: once confirmed, staff can cancel it too - same single-transition
+  // narrowness as Confirm (only Confirmed -> Cancelled, nothing else, enforced server-side).
+  const cancelBtnHtml = liveOk && live.status === 'Confirmed'
+    ? `<button type="button" class="btn btn-secondary btn-sm inbox-cancel-pancake-btn" data-order="${escapeHtml(o.order_no)}">Cancel in Pancake</button>`
+    : '';
+
+  if (!idLink && !confirmBtnHtml && !cancelBtnHtml) return '';
+
+  return `
+    <div class="inbox-order-detail-label">Pancake</div>
+    <div class="inbox-order-pancake-row">
+      ${idLink}
+      ${confirmBtnHtml}
+      ${cancelBtnHtml}
+    </div>
+  `;
+}
+
+function orderAddressHtml(o) {
+  const rows = [`<div><span>Phone</span><span>${escapeHtml(o.customer_phone || '-')}</span></div>`];
+  if (o.customer_email) rows.push(`<div><span>Email</span><span>${escapeHtml(o.customer_email)}</span></div>`);
+  if (o.fulfillment_type === 'Delivery') {
+    rows.push(`<div><span>Address</span><span>${escapeHtml(o.delivery_address || '(not provided)')}</span></div>`);
+  } else if (o.location) {
+    rows.push(`<div><span>Pickup at</span><span>${escapeHtml(o.location)}</span></div>`);
+  }
+  if (o.notes) rows.push(`<div><span>Notes</span><span>${escapeHtml(o.notes)}</span></div>`);
+  return `<div class="inbox-customer-id">${rows.join('')}</div>`;
+}
+
+function renderConversationOrderCards() {
+  const listEl = document.getElementById('conversationOrdersEl');
+  if (!listEl) return;
+  const orders = conversationOrders;
+
+  listEl.innerHTML = orders.map((o) => {
+    const balance = Number(o.balance || 0);
+    const cardExpanded = expandedOrderNos.has(o.order_no);
+    const paymentExpanded = expandedPaymentOrderNos.has(o.order_no);
+    return `
+    <div class="inbox-order-item${cardExpanded ? ' expanded' : ''}">
+      <div class="inbox-order-top" data-order="${escapeHtml(o.order_no)}">
+        <div class="inbox-order-top-left">
+          <svg class="inbox-order-chevron" viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <a href="online-order-lines.html?order=${encodeURIComponent(o.order_no)}">${escapeHtml(o.order_no)}</a>
+        </div>
+        <div class="inbox-order-badges">
+          ${pancakeStatusBadgeHtml(o)}
+          ${o.order_no === flaggedOrderNo ? '<span class="badge badge-danger">Payment to confirm</span>' : ''}
+          ${o.status === 'New' && o.receipt_confirmed_at_utc ? '<span class="badge badge-success">Customer confirmed - ready for Order ID</span>' : ''}
+        </div>
+      </div>
+      ${cardExpanded ? `
+      <div class="inbox-order-details">
+        <div class="inbox-order-meta">${escapeHtml(o.customer_name || '')} - ${escapeHtml(o.fulfillment_type || '')}</div>
+        <div class="inbox-order-stats">
+          <div class="inbox-order-stat">
+            <span class="inbox-order-stat-label">Total</span>
+            <span class="inbox-order-stat-value">${Number(o.estimated_total || 0).toFixed(2)}</span>
+          </div>
+          <div class="inbox-order-stat">
+            <span class="inbox-order-stat-label">Paid</span>
+            <span class="inbox-order-stat-value">${Number(o.amount_paid || 0).toFixed(2)}</span>
+          </div>
+          <div class="inbox-order-stat">
+            <span class="inbox-order-stat-label">Balance</span>
+            <span class="inbox-order-stat-value ${balance > 0 ? 'balance-due' : 'balance-clear'}">${balance.toFixed(2)}</span>
+          </div>
+        </div>
+
+        <div class="inbox-order-detail-label">Products</div>
+        <div class="inbox-order-lines">${orderLinesHtml(o.order_no)}</div>
+
+        ${pancakeLiveStatusHtml(o)}
+
+        <div class="inbox-order-detail-label">${o.fulfillment_type === 'Delivery' ? 'Delivery details' : 'Pickup details'}</div>
+        ${orderAddressHtml(o)}
+
+        <div class="inbox-order-detail-label">Payments</div>
+        <div class="inbox-order-payments">${orderPaymentsHtml(o.order_no)}</div>
+        ${paymentExpanded ? `
+        <div class="inbox-payment-row">
+          <input type="number" min="0.01" step="0.01" placeholder="Amount" id="payAmount-${escapeHtml(o.order_no)}">
+          <select id="payMethod-${escapeHtml(o.order_no)}">
+            <option value="Cash">Cash</option>
+            <option value="GCash">GCash</option>
+            <option value="BDO">BDO</option>
+            <option value="Metrobank">Metrobank</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+            <option value="Other">Other</option>
+          </select>
+          <input type="text" placeholder="Reference (optional)" id="payRef-${escapeHtml(o.order_no)}">
+          <button type="button" class="btn-text inbox-payment-cancel" data-order="${escapeHtml(o.order_no)}">Cancel</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-order="${escapeHtml(o.order_no)}">Add Payment</button>
+        </div>
+        ` : `
+        <button type="button" class="inbox-add-payment-toggle" data-order="${escapeHtml(o.order_no)}">
+          <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 4.5v11M4.5 10h11" stroke-linecap="round"/></svg>
+          Add Payment
+        </button>
+        `}
+      </div>
+      ` : ''}
+    </div>
+  `;
+  }).join('');
+
+  listEl.querySelectorAll('.inbox-order-top').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('a') || e.target.closest('select')) return;
+      toggleOrderCardExpanded(row.dataset.order);
+    });
+  });
+  listEl.querySelectorAll('.inbox-payment-row button[data-order]:not(.inbox-payment-cancel)').forEach((btn) => {
+    btn.addEventListener('click', () => addOrderPayment(btn.dataset.order, conversationOrdersConv));
+  });
+  listEl.querySelectorAll('.inbox-payment-cancel').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      expandedPaymentOrderNos.delete(btn.dataset.order);
+      renderConversationOrderCards();
+    });
+  });
+  listEl.querySelectorAll('.inbox-add-payment-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      expandedPaymentOrderNos.add(btn.dataset.order);
+      renderConversationOrderCards();
+    });
+  });
+  listEl.querySelectorAll('.inbox-confirm-pancake-btn').forEach((btn) => {
+    btn.addEventListener('click', () => confirmOrderInPancake(btn.dataset.order, btn));
+  });
+  listEl.querySelectorAll('.inbox-cancel-pancake-btn').forEach((btn) => {
+    btn.addEventListener('click', () => cancelOrderInPancake(btn.dataset.order, btn));
+  });
+}
+
+function toggleOrderCardExpanded(orderNo) {
+  if (expandedOrderNos.has(orderNo)) {
+    expandedOrderNos.delete(orderNo);
+    renderConversationOrderCards();
+    return;
+  }
+  expandedOrderNos.add(orderNo);
+  renderConversationOrderCards();
+  loadOrderExpandedDetails(orderNo);
+}
+
+async function loadOrderExpandedDetails(orderNo) {
+  const needsLines = !orderLinesCache.has(orderNo);
+  const needsPayments = !orderPaymentsCache.has(orderNo);
+  // Only worth checking Pancake at all once the order has actually been pushed there - see
+  // pancakeLiveStatusHtml's own matching gate.
+  const order = conversationOrders.find((o) => o.order_no === orderNo);
+  const needsPancake = order?.pancake_sync_status === 'Synced' && !orderPancakeStatusCache.has(orderNo);
+  if (!needsLines && !needsPayments && !needsPancake) return;
+
+  if (needsLines) orderLinesCache.set(orderNo, 'loading');
+  if (needsPayments) orderPaymentsCache.set(orderNo, 'loading');
+  if (needsPancake) orderPancakeStatusCache.set(orderNo, 'loading');
+  if (expandedOrderNos.has(orderNo)) renderConversationOrderCards();
+
+  const [linesRes, paymentsRes, pancakeRes] = await Promise.all([
+    needsLines
+      ? supabaseClient.rpc('admin_list_automated_order_lines', {
+          p_admin_username: currentSession.username,
+          p_admin_password: currentSession.password,
+          p_order_no: orderNo
+        })
+      : Promise.resolve(null),
+    needsPayments
+      ? supabaseClient.rpc('admin_list_automated_order_payments', {
+          p_admin_username: currentSession.username,
+          p_admin_password: currentSession.password,
+          p_order_no: orderNo
+        })
+      : Promise.resolve(null),
+    needsPancake
+      ? supabaseClient.rpc('admin_get_gma_order_pancake_status', {
+          p_admin_username: currentSession.username,
+          p_admin_password: currentSession.password,
+          p_order_no: orderNo
+        })
+      : Promise.resolve(null)
+  ]);
+
+  if (linesRes) orderLinesCache.set(orderNo, linesRes.error ? { error: linesRes.error.message } : (linesRes.data || []));
+  if (paymentsRes) orderPaymentsCache.set(orderNo, paymentsRes.error ? { error: paymentsRes.error.message } : (paymentsRes.data || []));
+  if (pancakeRes) {
+    orderPancakeStatusCache.set(orderNo, pancakeRes.error
+      ? { error: pancakeRes.error.message }
+      : { status: pancakeRes.data?.[0]?.pancake_status || null });
+  }
+
+  // The card may have been collapsed again by the time this resolves - only re-render if it's
+  // still expanded, so a quick expand/collapse/expand doesn't fight itself with stale renders.
+  if (expandedOrderNos.has(orderNo)) renderConversationOrderCards();
+}
+
+// Called from the "Confirm in Pancake" button (pancakeLiveStatusHtml) - only ever shown while the
+// live-fetched status is 'New', matching admin_confirm_gma_order_in_pancake's own server-side guard
+// (it refuses to run against any order that isn't currently 'New' in Pancake, same conservative
+// "no free-form status editor" philosophy as admin_update_online_order_status's To-Ship-only gate).
+async function confirmOrderInPancake(orderNo, btn) {
+  if (!confirm(`Confirm order ${orderNo} in Pancake? This notifies Pancake directly and cannot be undone from here.`)) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Confirming...';
+
+  const { error } = await supabaseClient.rpc('admin_confirm_gma_order_in_pancake', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo
+  });
+
+  if (error) {
+    alert(`Could not confirm in Pancake: ${error.message}`);
+    btn.disabled = false;
+    btn.textContent = 'Confirm in Pancake';
+    return;
+  }
+
+  // Force a fresh live fetch rather than trusting the RPC's own return value, so the badge reflects
+  // exactly what Pancake now reports.
+  orderPancakeStatusCache.delete(orderNo);
+  await loadOrderExpandedDetails(orderNo);
+}
+
+// Called from the "Cancel in Pancake" button - only ever shown while the live-fetched status is
+// 'Confirmed', matching admin_cancel_gma_order_in_pancake's own server-side guard. Per direct
+// follow-up request. Note: the Cancelled status token this RPC sends to Pancake is an unverified
+// guess (see that function's own header comment) - if Pancake rejects it, the alert below will show
+// Pancake's real error message so the actual code can be found the same way Confirm's was.
+async function cancelOrderInPancake(orderNo, btn) {
+  if (!confirm(`Cancel order ${orderNo} in Pancake? This notifies Pancake directly and cannot be undone from here.`)) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Cancelling...';
+
+  const { error } = await supabaseClient.rpc('admin_cancel_gma_order_in_pancake', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo
+  });
+
+  if (error) {
+    alert(`Could not cancel in Pancake: ${error.message}`);
+    btn.disabled = false;
+    btn.textContent = 'Cancel in Pancake';
+    return;
+  }
+
+  orderPancakeStatusCache.delete(orderNo);
+  await loadOrderExpandedDetails(orderNo);
 }
 
 async function addOrderPayment(orderNo, conv) {
@@ -457,7 +936,7 @@ async function addOrderPayment(orderNo, conv) {
     return;
   }
 
-  const { error } = await supabaseClient.rpc('admin_add_automated_order_payment', {
+  const { data, error } = await supabaseClient.rpc('admin_add_automated_order_payment', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_order_no: orderNo,
@@ -471,6 +950,33 @@ async function addOrderPayment(orderNo, conv) {
     return;
   }
 
+  // The payment itself is always recorded above regardless of this - Pancake sync is best-effort
+  // (see admin_add_automated_order_payment in sql/supabase_gma_conversation_payment_pancake_sync.sql).
+  const pancakeSyncError = (data || [])[0]?.pancake_sync_error;
+  if (pancakeSyncError) {
+    alert(`Payment recorded, but could not flow it to Pancake: ${pancakeSyncError}. It can be added on the Pancake order manually.`);
+  }
+
+  // This payment came from a flagged detection - mark that message applied so the "Payment to
+  // confirm" badge and the message bubble's own "Use in Add Payment" button don't come back next
+  // time this conversation is opened.
+  if (activeDetectedPaymentMessageId && orderNo === flaggedOrderNo) {
+    await supabaseClient.rpc('admin_mark_chatbot_payment_applied', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_message_id: activeDetectedPaymentMessageId
+    });
+    flaggedOrderNo = null;
+    activeDetectedPaymentMessageId = null;
+    await loadMessages(conv.psid);
+  }
+
+  // Payment history is stale now - drop the cache entry so orderPaymentsHtml shows "Loading..."
+  // until loadOrderExpandedDetails (triggered below, via loadConversationOrders) refetches it. The
+  // form itself collapses back to the toggle, same as a fresh card - nothing left sitting in it to
+  // resubmit by accident.
+  orderPaymentsCache.delete(orderNo);
+  expandedPaymentOrderNos.delete(orderNo);
   await loadConversationOrders(conv);
 }
 
@@ -510,16 +1016,24 @@ async function searchCustomerOrders() {
   }
 
   resultsEl.className = '';
-  resultsEl.innerHTML = orders.map((o) => `
+  resultsEl.innerHTML = orders.map((o) => {
+    const balance = Number(o.balance || 0);
+    return `
     <div class="inbox-order-item">
       <div class="inbox-order-top">
         <a href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">${escapeHtml(o.order_id)}</a>
-        <span>${escapeHtml(o.status || '')}</span>
+        <div class="inbox-order-badges">${orderStatusBadgeHtml(o.status)}</div>
       </div>
       <div class="inbox-order-meta">${escapeHtml(o.customer_name || '')} - ${o.order_date || ''}</div>
-      <div class="inbox-order-meta">Balance: ${Number(o.balance || 0).toFixed(2)}</div>
+      <div class="inbox-order-stats">
+        <div class="inbox-order-stat">
+          <span class="inbox-order-stat-label">Balance</span>
+          <span class="inbox-order-stat-value ${balance > 0 ? 'balance-due' : 'balance-clear'}">${balance.toFixed(2)}</span>
+        </div>
+      </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 // Create Order tab - creates a real AutomatedOrders row stamped with this conversation's
@@ -530,6 +1044,7 @@ async function searchCustomerOrders() {
 // submit) so flipping to Information and back doesn't lose an in-progress cart.
 let newOrderConv = null;
 let newOrderLines = [];
+let lineNoteModalIndex = null;
 let productSearchDebounce = null;
 let productSearchResultsCache = [];
 let phoneMatchDebounce = null;
@@ -541,7 +1056,10 @@ function renderCreateOrderTab(conv) {
     <p class="error-text hidden" id="newOrderError"></p>
 
     <div class="form-group">
-      <div class="form-group-title">Customer</div>
+      <div class="form-group-title">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="6.5" r="3"/><path d="M3.5 16.5c0-3.3 2.9-5.5 6.5-5.5s6.5 2.2 6.5 5.5" stroke-linecap="round"/></svg>
+        Customer
+      </div>
       <div class="form-grid">
         <div class="form-row">
           <label>Name</label>
@@ -569,10 +1087,11 @@ function renderCreateOrderTab(conv) {
       <div class="form-grid">
         <div class="form-row">
           <label>Fulfillment</label>
-          <select id="newOrderFulfillment">
-            <option value="Pickup">Pickup</option>
-            <option value="Delivery">Delivery</option>
-          </select>
+          <div class="fulfillment-toggle" id="newOrderFulfillmentToggle">
+            <button type="button" class="fulfillment-toggle-btn active" data-value="Pickup">Pickup</button>
+            <button type="button" class="fulfillment-toggle-btn" data-value="Delivery">Delivery</button>
+          </div>
+          <input type="hidden" id="newOrderFulfillment" value="Pickup">
         </div>
         <div class="form-row hidden" id="newOrderDeliveryAddressRow">
           <label>Delivery Address</label>
@@ -586,7 +1105,14 @@ function renderCreateOrderTab(conv) {
     </div>
 
     <div class="form-group">
-      <div class="form-group-title">Product</div>
+      <div class="form-group-title">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M3 6.5 10 3l7 3.5-7 3.5-7-3.5Z" stroke-linejoin="round" stroke-linecap="round" />
+          <path d="M3 6.5v7L10 17l7-3.5v-7" stroke-linejoin="round" stroke-linecap="round" />
+          <path d="M10 10v7" stroke-linecap="round" />
+        </svg>
+        Product
+      </div>
       <div class="product-search-wrap">
         <input type="text" id="productSearchInput" placeholder="Search product by name...">
         <div id="productSearchResults" class="product-search-results hidden"></div>
@@ -596,16 +1122,45 @@ function renderCreateOrderTab(conv) {
         <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
         <tbody id="newOrderLinesBody"></tbody>
       </table>
+    </div>
 
+    <div class="form-group">
+      <div class="form-group-title">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="5" width="15" height="10" rx="1.5"/><path d="M2.5 8.5h15" stroke-linecap="round"/></svg>
+        Payment (optional)
+      </div>
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Amount</label>
+          <input type="number" min="0.01" step="0.01" id="newOrderPayAmount" placeholder="0.00">
+        </div>
+        <div class="form-row">
+          <label>Method</label>
+          <select id="newOrderPayMethod">
+            <option value="Cash">Cash</option>
+            <option value="GCash">GCash</option>
+            <option value="BDO">BDO</option>
+            <option value="Metrobank">Metrobank</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:0;">
+        <label>Reference (optional)</label>
+        <input type="text" id="newOrderPayReference">
+      </div>
+    </div>
+
+    <div class="inbox-order-sticky-footer">
       <div class="new-order-total-bar">
         <span class="new-order-total-label">Order Total</span>
         <span class="new-order-total-value" id="newOrderTotalEl">0.00</span>
       </div>
-    </div>
-
-    <div style="display:flex; gap:10px; justify-content:flex-end;">
-      <button type="button" class="btn btn-secondary" id="newOrderClearBtn">Clear</button>
-      <button type="button" class="btn btn-primary" id="newOrderSubmitBtn">Create</button>
+      <div class="inbox-order-actions">
+        <button type="button" class="btn btn-secondary" id="newOrderClearBtn">Clear</button>
+        <button type="button" class="btn btn-primary" id="newOrderSubmitBtn">Create</button>
+      </div>
     </div>
   `;
 
@@ -618,8 +1173,12 @@ function renderCreateOrderTab(conv) {
     renderCreateOrderTab(conv);
   });
   document.getElementById('newOrderSubmitBtn').addEventListener('click', submitNewOrder);
-  document.getElementById('newOrderFulfillment').addEventListener('change', (e) => {
-    document.getElementById('newOrderDeliveryAddressRow').classList.toggle('hidden', e.target.value !== 'Delivery');
+  document.querySelectorAll('#newOrderFulfillmentToggle .fulfillment-toggle-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#newOrderFulfillmentToggle .fulfillment-toggle-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      document.getElementById('newOrderFulfillment').value = btn.dataset.value;
+      document.getElementById('newOrderDeliveryAddressRow').classList.toggle('hidden', btn.dataset.value !== 'Delivery');
+    });
   });
 
   const phoneInput = document.getElementById('newOrderCustomerPhone');
@@ -757,7 +1316,8 @@ function addProductToOrder(item) {
       item_code: item.code,
       item_name: item.name,
       price: Number(item.price || 0),
-      quantity: 1
+      quantity: 1,
+      note: ''
     });
   }
 
@@ -789,8 +1349,17 @@ function renderNewOrderLines() {
 
   bodyEl.innerHTML = newOrderLines.map((line, index) => `
     <tr data-row="${index}">
-      <td>${escapeHtml(line.item_name)}</td>
-      <td><input type="number" class="line-qty-input" data-index="${index}" value="${line.quantity}" min="1" step="1"></td>
+      <td>
+        ${escapeHtml(line.item_name)}
+        <button type="button" class="line-note-btn${line.note ? ' has-note' : ''}" data-index="${index}" title="${line.note ? escapeHtml(line.note) : 'Add a note'}">&#9998;</button>
+      </td>
+      <td>
+        <div class="qty-stepper">
+          <button type="button" class="qty-step-btn" data-index="${index}" data-dir="-1" title="Decrease">&minus;</button>
+          <input type="number" class="line-qty-input" data-index="${index}" value="${line.quantity}" min="1" step="1">
+          <button type="button" class="qty-step-btn" data-index="${index}" data-dir="1" title="Increase">&plus;</button>
+        </div>
+      </td>
       <td><input type="number" class="line-price-input" data-index="${index}" value="${line.price}" min="0" step="0.01"></td>
       <td class="line-total-cell">${(line.price * line.quantity).toFixed(2)}</td>
       <td><button type="button" class="btn btn-secondary line-remove-btn" title="Remove this item" data-index="${index}">&times;</button></td>
@@ -808,6 +1377,56 @@ function renderNewOrderLines() {
   bodyEl.querySelectorAll('.line-price-input').forEach((input) => {
     input.addEventListener('input', () => updateLineField(parseInt(input.dataset.index, 10), 'price', input.value));
   });
+  bodyEl.querySelectorAll('.line-note-btn').forEach((btn) => {
+    btn.addEventListener('click', () => openLineNoteModal(parseInt(btn.dataset.index, 10)));
+  });
+  bodyEl.querySelectorAll('.qty-step-btn').forEach((btn) => {
+    btn.addEventListener('click', () => stepLineQuantity(parseInt(btn.dataset.index, 10), parseInt(btn.dataset.dir, 10)));
+  });
+}
+
+function openLineNoteModal(index) {
+  const line = newOrderLines[index];
+  if (!line) return;
+  lineNoteModalIndex = index;
+  document.getElementById('lineNoteModalItemName').textContent = line.item_name;
+  document.getElementById('lineNoteModalTextarea').value = line.note || '';
+  document.getElementById('lineNoteModal').classList.remove('hidden');
+  document.getElementById('lineNoteModalTextarea').focus();
+}
+
+function closeLineNoteModal() {
+  lineNoteModalIndex = null;
+  document.getElementById('lineNoteModal').classList.add('hidden');
+}
+
+// Whatever's typed here is sent to Pancake's line 'note' field exactly as-is (see
+// _push_automated_order_to_pancake in sql/supabase_gma_conversation_order_line_notes.sql) - no
+// trimming/prefixing, per direct instruction.
+function saveLineNoteModal() {
+  const line = newOrderLines[lineNoteModalIndex];
+  if (line) {
+    line.note = document.getElementById('lineNoteModalTextarea').value;
+    renderNewOrderLines();
+  }
+  closeLineNoteModal();
+}
+
+// Used by the +/- stepper buttons only - typing directly into the qty input still goes through
+// updateLineField above (which deliberately avoids re-rendering the row, so it doesn't steal focus
+// mid-keystroke). A button click has no focus to preserve, so this just re-syncs that one row's
+// input/total directly.
+function stepLineQuantity(index, delta) {
+  const line = newOrderLines[index];
+  if (!line) return;
+  line.quantity = Math.max(line.quantity + delta, 1);
+
+  const row = document.querySelector(`#newOrderLinesBody tr[data-row="${index}"]`);
+  if (row) {
+    row.querySelector('.line-qty-input').value = line.quantity;
+    row.querySelector('.line-total-cell').textContent = (line.price * line.quantity).toFixed(2);
+  }
+  updateOrderTotal();
 }
 
 function updateLineField(index, field, rawValue) {
@@ -863,6 +1482,27 @@ async function submitNewOrder() {
   }
 
   const result = (data || [])[0];
+
+  const payAmount = parseFloat(document.getElementById('newOrderPayAmount').value);
+  if (result && payAmount > 0) {
+    const { data: payData, error: payError } = await supabaseClient.rpc('admin_add_automated_order_payment', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_no: result.order_no,
+      p_amount: payAmount,
+      p_method: document.getElementById('newOrderPayMethod').value,
+      p_reference: document.getElementById('newOrderPayReference').value.trim() || null
+    });
+    if (payError) {
+      alert(`Order ${result.order_no} was created, but the payment could not be recorded: ${payError.message}. Add it manually from the order's Add Payment form.`);
+    } else {
+      const pancakeSyncError = (payData || [])[0]?.pancake_sync_error;
+      if (pancakeSyncError) {
+        alert(`Order ${result.order_no} and its payment were recorded, but the payment could not flow to Pancake: ${pancakeSyncError}. It can be added on the Pancake order manually.`);
+      }
+    }
+  }
+
   newOrderLines = [];
   activeCustomerTab = 'info';
   renderCustomerPanel(newOrderConv);
@@ -2174,6 +2814,9 @@ async function handleGmaInboxEvent(payload) {
   document.getElementById('addMediaLibraryBtn').addEventListener('click', () => document.getElementById('mediaLibraryFileInput').click());
   document.getElementById('mediaLibraryFileInput').addEventListener('change', onMediaLibraryFileChange);
   document.getElementById('useMediaLibrarySelectionBtn').addEventListener('click', useMediaLibrarySelection);
+  document.getElementById('closeLineNoteModalBtn').addEventListener('click', closeLineNoteModal);
+  document.getElementById('lineNoteModalCancelBtn').addEventListener('click', closeLineNoteModal);
+  document.getElementById('lineNoteModalSaveBtn').addEventListener('click', saveLineNoteModal);
   document.getElementById('addQuickReplyBtn').addEventListener('click', addQuickReply);
   document.getElementById('manageQuickRepliesBtn').addEventListener('click', openManageQuickRepliesModal);
   document.getElementById('closeManageQuickRepliesBtn').addEventListener('click', closeManageQuickRepliesModal);

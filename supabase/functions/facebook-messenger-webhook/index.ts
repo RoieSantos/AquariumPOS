@@ -234,6 +234,7 @@ interface DetectedPayment {
   method: string | null;
   reference: string | null;
   senderName: string | null;
+  paymentDateText: string | null;
 }
 
 // Vision pass over a stored image attachment: is this a payment screenshot (GCash/Maya/bank
@@ -253,10 +254,9 @@ async function extractPaymentDetails(anthropic: Anthropic, model: string, base64
 
     const res = await anthropic.messages.create({
       model,
-      max_tokens: 300,
-      temperature: 0,
+      max_tokens: 400,
       system:
-        'You look at a single photo a customer sent to a pet store\'s Messenger chat and decide if it is a payment screenshot (e.g. GCash, Maya/PayMaya, bank transfer, or similar receipt/confirmation screen). Respond with ONLY a JSON object, no markdown code fences, no other text, in exactly this shape: {"is_payment_screenshot": boolean, "amount": number or null, "reference": string or null, "method": string or null, "sender_name": string or null}. "method" must be one of "GCash", "Maya", "Bank Transfer", "Other", or null. If the image is not a payment screenshot, or you are not reasonably confident, set is_payment_screenshot to false and leave the other fields null.',
+        'You look at a single photo a customer sent to a pet store\'s Messenger chat and decide if it is a payment screenshot (e.g. GCash, Maya/PayMaya, bank transfer, or similar receipt/confirmation screen). Respond with ONLY a JSON object, no markdown code fences, no other text, in exactly this shape: {"is_payment_screenshot": boolean, "amount": number or null, "reference": string or null, "method": string or null, "sender_name": string or null, "payment_date_text": string or null}. "method" must be one of "GCash", "Maya", "Bank Transfer", "Other", or null. "payment_date_text" is the payment\'s date/time EXACTLY as displayed on the screenshot (e.g. "Nov 15, 2025 3:42 PM") - copy it verbatim, do not reformat/convert/guess a timezone; null if no date/time is visible. If the image is not a payment screenshot, or you are not reasonably confident, set is_payment_screenshot to false and leave the other fields null.',
       messages: [
         {
           role: 'user',
@@ -269,10 +269,30 @@ async function extractPaymentDetails(anthropic: Anthropic, model: string, base64
     });
 
     const block = res.content.find((b) => b.type === 'text');
-    if (!block || block.type !== 'text') return null;
+    if (!block || block.type !== 'text') {
+      console.error('Payment vision pass returned no text block; stop_reason:', res.stop_reason);
+      return null;
+    }
 
-    const cleaned = block.text.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-    const parsed = JSON.parse(cleaned);
+    // Extract the {...} substring rather than assuming the whole response is pure JSON - despite
+    // the "ONLY a JSON object" instruction, the model occasionally prefaces it with a stray word or
+    // sentence (e.g. when the image contains partially-redacted personal/financial info), which
+    // would otherwise fail JSON.parse and silently drop a real detection.
+    const rawText = block.text.trim();
+    const jsonStart = rawText.indexOf('{');
+    const jsonEnd = rawText.lastIndexOf('}');
+    if (jsonStart === -1 || jsonEnd === -1 || jsonEnd < jsonStart) {
+      console.error('Payment vision pass returned no JSON object. Raw response:', rawText);
+      return null;
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(rawText.slice(jsonStart, jsonEnd + 1));
+    } catch (parseErr) {
+      console.error('Payment vision pass returned unparseable JSON:', parseErr instanceof Error ? parseErr.message : parseErr, 'Raw response:', rawText);
+      return null;
+    }
     if (!parsed?.is_payment_screenshot) return null;
 
     const amount = typeof parsed.amount === 'number' && Number.isFinite(parsed.amount) ? parsed.amount : null;
@@ -280,12 +300,262 @@ async function extractPaymentDetails(anthropic: Anthropic, model: string, base64
       amount,
       method: typeof parsed.method === 'string' ? parsed.method : null,
       reference: typeof parsed.reference === 'string' ? parsed.reference : null,
-      senderName: typeof parsed.sender_name === 'string' ? parsed.sender_name : null
+      senderName: typeof parsed.sender_name === 'string' ? parsed.sender_name : null,
+      paymentDateText: typeof parsed.payment_date_text === 'string' ? parsed.payment_date_text : null
     };
   } catch (err) {
     console.error('Failed to extract payment details from attachment:', err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+interface OrderSummaryLine {
+  itemName: string;
+  quantity: number;
+}
+
+interface OrderSummary {
+  orderNo: string;
+  status: string;
+  totalProducts: number;
+  estimatedTotal: number;
+  balance: number;
+  lines: OrderSummaryLine[];
+  // Portal-rendered receipt page, NOT Pancake's own order_link - per direct decision, the bot
+  // never shares the Pancake link with customers. Built client-side from orderNo (no DB column
+  // needed) since docs/online-order-receipt.html's public_get_order_receipt RPC (see
+  // sql/supabase_automated_order_portal_receipt.sql) reads straight from AutomatedOrders by
+  // OrderNo - works the instant an order is created, with no dependency on it having synced back
+  // from Pancake into OnlineOrders yet.
+  receiptUrl: string;
+}
+
+// Looks up the customer's most recent Automated Order created from THIS GMA conversation (matches
+// admin_list_automated_orders_by_gma_conversation's own GmaPsid+GmaPageId/CreatedAtUtc-desc
+// convention - sql/supabase_gma_conversation_order_details.sql), so a payment-screenshot ack can
+// include a real order summary instead of a generic "thanks". Returns null if the conversation has
+// no order yet (e.g. customer paid before staff turned the chat into an order) - the caller falls
+// back to the plain ack in that case. Reads tables directly via the service-role client, same as
+// the rest of this file - no admin_* RPC needed since there's no staff username/password here.
+async function findLatestOrderSummary(supabase: SupabaseClient, psid: string, pageId: string): Promise<OrderSummary | null> {
+  const { data: order } = await supabase
+    .from('AutomatedOrders')
+    .select('OrderNo, EstimatedTotal, Status')
+    .eq('GmaPsid', psid)
+    .eq('GmaPageId', pageId)
+    .order('CreatedAtUtc', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!order) return null;
+
+  const [{ data: lines }, { data: payments }] = await Promise.all([
+    supabase.from('AutomatedOrderLines').select('ItemName, Quantity').eq('OrderNo', order.OrderNo),
+    supabase.from('AutomatedOrderPayments').select('Amount').eq('OrderNo', order.OrderNo)
+  ]);
+
+  const totalProducts = (lines ?? []).reduce((sum: number, l: { Quantity: number }) => sum + (l.Quantity ?? 0), 0);
+  const amountPaid = (payments ?? []).reduce((sum: number, p: { Amount: number }) => sum + Number(p.Amount ?? 0), 0);
+  const estimatedTotal = Number(order.EstimatedTotal ?? 0);
+  const orderLines = (lines ?? []).map((l: { ItemName: string; Quantity: number }) => ({ itemName: l.ItemName, quantity: l.Quantity ?? 0 }));
+
+  return {
+    orderNo: order.OrderNo,
+    status: order.Status ?? 'New',
+    totalProducts,
+    estimatedTotal,
+    balance: estimatedTotal - amountPaid,
+    lines: orderLines,
+    receiptUrl: `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(order.OrderNo)}`
+  };
+}
+
+// Renders the itemized "🛒 Products:" block shared by both the payment-screenshot receipt and the
+// confirmation-request message below, so the two stay in sync automatically.
+function formatOrderLines(lines: OrderSummaryLine[]): string {
+  return lines.map((l) => `  - ${l.itemName} x${l.quantity}`).join('\n');
+}
+
+// Loose intent check for "yes, everything's correct" replies to the receipt-confirmation prompt
+// below - deliberately narrow (whole-message match, not a substring search) so an unrelated message
+// that happens to contain "ok" somewhere doesn't get misread as a confirmation. Covers common
+// English/Tagalog affirmatives customers actually type; anything else (a correction, a question,
+// "no wait...") falls through to the normal AI turn instead of being treated as a confirmation.
+function isAffirmativeReply(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/[.!?]+$/, '');
+  return /^(yes+|yep|yup|yeah|correct|that'?s correct|all correct|tama|tama po|sige|sige po|oo|oo po|opo|confirm|confirmed|ok|okay|okay po|ok po|right|all good|good to go)$/.test(normalized);
+}
+
+// Classifies a reply to "is this payment for your existing order, or a new one?" (asked - see
+// below - whenever a payment screenshot arrives and this conversation already has a prior order,
+// rather than silently guessing which one it's for, per direct instruction). Deliberately narrow
+// keyword matching; anything it can't confidently read returns null, which falls through to the
+// normal AI turn instead of the bot guessing wrong.
+function classifyOrderClarificationReply(text: string): 'existing' | 'new' | null {
+  const normalized = text.trim().toLowerCase();
+  if (/\b(new|bago|different|iba|separate|another|panibago)\b/.test(normalized)) return 'new';
+  if (/\b(existing|same|current|that order|this order|my order|dati|yun na|meron na|old order)\b/.test(normalized) || /\bao-\d+\b/i.test(normalized)) return 'existing';
+  return null;
+}
+
+// Shared by every ack path below (the plain no-caption ack, and both branches of the payment-
+// clarification reply) - saves/broadcasts/sends one assistant message the same way every time:
+// optionally flags an order as awaiting the "reply YES" receipt confirmation, inserts the
+// ChatbotMessages row, bumps ChatbotConversations' timestamps, broadcasts for the live inbox, then
+// actually sends it via Messenger and records delivery status.
+async function sendAckMessage(
+  supabase: SupabaseClient,
+  psid: string,
+  pageAccessToken: string,
+  graphVersion: string,
+  ack: string,
+  confirmationRequestedOrderNo: string | null
+): Promise<void> {
+  if (confirmationRequestedOrderNo) {
+    await supabase
+      .from('AutomatedOrders')
+      .update({ ReceiptConfirmationRequestedAtUtc: new Date().toISOString() })
+      .eq('OrderNo', confirmationRequestedOrderNo);
+  }
+  const { data: ackRow } = await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: ack }).select('Id').single();
+  await supabase
+    .from('ChatbotConversations')
+    .update({ LastMessageAtUtc: new Date().toISOString(), LastBotMessageAtUtc: new Date().toISOString() })
+    .eq('Psid', psid);
+  await broadcastGmaEvent(supabase, psid);
+  await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
+  const delivered = await sendMessengerReply(psid, ack, pageAccessToken, graphVersion);
+  if (ackRow?.Id) {
+    await supabase.from('ChatbotMessages').update({ DeliveryStatus: delivered ? 'Sent' : 'Failed' }).eq('Id', ackRow.Id);
+    await broadcastGmaEvent(supabase, psid);
+  }
+}
+
+// Builds the itemized-receipt-and-ask (New, unconfirmed order) or plain summary (any other status)
+// ack text for a known order + payment - shared by the no-caption path (a freshly auto-created
+// order) and the payment-clarification "existing" branch (the customer said this payment is for
+// their existing order after all), so both stay in sync automatically.
+function buildOrderPaymentAck(orderSummary: OrderSummary, paymentLine: string): { ack: string; confirmationRequestedOrderNo: string | null } {
+  // Portal-rendered receipt (docs/online-order-receipt.html), NOT Pancake's own order_link - per
+  // direct decision, the bot never shares Pancake's link with customers. Always present (built
+  // from orderNo, no sync dependency - see the OrderSummary.receiptUrl comment above).
+  const receiptLinkLine = `\n📄 Order Confirmation: ${orderSummary.receiptUrl}\n`;
+  if (orderSummary.status === 'New') {
+    return {
+      confirmationRequestedOrderNo: orderSummary.orderNo,
+      ack: 'Thanks for the payment! Here\'s your order confirmation receipt - please check everything below:\n\n' +
+        `📋 Order No: ${orderSummary.orderNo}\n` +
+        `🛒 Products:\n${formatOrderLines(orderSummary.lines)}\n` +
+        `💰 Total amount: ₱${orderSummary.estimatedTotal.toFixed(2)}\n` +
+        `💳 Payment: ${paymentLine}\n` +
+        `📌 Balance remaining: ₱${orderSummary.balance.toFixed(2)}\n` +
+        receiptLinkLine + '\n' +
+        'Is everything above correct? Reply YES to confirm so our team can finalize your order. \u{1F60A}'
+    };
+  }
+  return {
+    confirmationRequestedOrderNo: null,
+    ack: 'Thanks for the payment screenshot! Here\'s your order summary:\n\n' +
+      `📋 Order No: ${orderSummary.orderNo}\n` +
+      `🛒 Products:\n${formatOrderLines(orderSummary.lines)}\n` +
+      `💰 Total amount: ₱${orderSummary.estimatedTotal.toFixed(2)}\n` +
+      `💳 Payment: ${paymentLine}\n` +
+      `📌 Balance remaining: ₱${orderSummary.balance.toFixed(2)}\n` +
+      receiptLinkLine + '\n' +
+      'Our team will verify this shortly! \u{1F60A}'
+  };
+}
+
+// Its own uncached system block, same reasoning as buildCurrentTimeLine (differs per conversation,
+// so keeping it out of the cached persona block preserves the cache hit rate for everything else).
+// Lets create_order's "offer to use their Facebook name" behavior (chatbot-engine.ts's PLACING
+// ORDERS rules) actually work - ChatbotConversations.CustomerName (fetchFacebookProfileName, set
+// earlier in processMessage) was never otherwise surfaced to Claude at all.
+function buildCustomerNameLine(customerName: string | null | undefined): string {
+  return customerName
+    ? `CUSTOMER'S FACEBOOK NAME: ${customerName}`
+    : "CUSTOMER'S FACEBOOK NAME: unknown - ask for a name instead.";
+}
+
+// Its own uncached system block, used only by attemptAutoCreateOrderFromPayment below. A dedicated
+// block (rather than appending to the last message's content, which was this function's original
+// approach) works correctly regardless of what the customer's actual last message was - a photo
+// with no caption (the normal case), or a plain text "new"/"existing" reply to the payment-
+// clarification question (facebook-messenger-webhook/index.ts's PendingPaymentClarification* flow),
+// where the payment being described isn't the literal last message at all.
+function buildDetectedPaymentLine(detectedPayment: DetectedPayment): string {
+  return `DETECTED PAYMENT: The customer has sent proof of payment - ₱${detectedPayment.amount?.toFixed(2)} via ${detectedPayment.method || 'an unspecified method'}` +
+    `${detectedPayment.reference ? `, Ref: ${detectedPayment.reference}` : ''}${detectedPayment.paymentDateText ? `, dated ${detectedPayment.paymentDateText}` : ''}. ` +
+    'If you already know the customer\'s full name, phone number, address, and exact items/quantities (real item_code values only, from this conversation) call create_order now. Otherwise ask the customer for whatever is still missing.';
+}
+
+// Called from the no-caption/payment-screenshot ack path (below) ONLY when this conversation has no
+// order yet - lets the bot place one itself (the create_order tool, chatbot-engine.ts) rather than
+// always falling back to a plain "our team will confirm" ack, per direct request. Runs one bounded,
+// full AI turn (same persona/tools/rules as a normal reply, via runChatbotTurn) rather than a
+// separate bespoke extraction pass, so Claude's own judgment (does it actually know the items,
+// customer details, and has payment really been sent?) decides whether to call create_order - never
+// forced or assumed here. The caller re-checks findLatestOrderSummary afterward rather than trusting
+// a return value from the tool call itself, since that's the same ground truth every other part of
+// this file already uses.
+async function attemptAutoCreateOrderFromPayment(
+  supabase: SupabaseClient,
+  anthropic: Anthropic,
+  model: string,
+  pageAccessToken: string,
+  graphVersion: string,
+  psid: string,
+  pageId: string,
+  detectedPayment: DetectedPayment,
+  customerName: string | null | undefined
+): Promise<{ created: boolean; finalText: string }> {
+  // Captured BEFORE the AI turn so success can be judged by "did the order number actually change"
+  // rather than merely "does an order exist now" - this function can be called when an order
+  // ALREADY exists (the payment-clarification "new" branch above), where the latter check would
+  // always be true regardless of whether create_order actually ran.
+  const orderBefore = await findLatestOrderSummary(supabase, psid, pageId);
+
+  const { data: historyRows } = await supabase
+    .from('ChatbotMessages')
+    .select('Role, Content')
+    .eq('Psid', psid)
+    .order('CreatedAtUtc', { ascending: false })
+    .limit(HISTORY_LIMIT);
+
+  const messages: Anthropic.MessageParam[] = (historyRows ?? [])
+    .reverse()
+    .map((row: { Role: string; Content: string }) => ({ role: row.Role === 'user' ? 'user' : 'assistant', content: row.Content }));
+
+  const [{ data: storeInfo }, { data: companyInfo }, { data: aiSettings }, { data: followUpSettings }] = await Promise.all([
+    supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
+    supabase.from('CompanyInfo').select('*').eq('Id', 1).maybeSingle(),
+    supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle(),
+    supabase.from('ChatbotFollowUpSettings').select('*').eq('Id', 1).maybeSingle()
+  ]);
+
+  const systemBlocks = [
+    { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
+    { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
+    { type: 'text' as const, text: buildCustomerNameLine(customerName) },
+    { type: 'text' as const, text: buildDetectedPaymentLine(detectedPayment) }
+  ];
+  const effectiveModel = (aiSettings?.AiModel as string | undefined)?.trim() || model;
+
+  const finalText = await runChatbotTurn({
+    supabase,
+    anthropic,
+    model: effectiveModel,
+    psid,
+    pageId,
+    messages,
+    followUpSettings,
+    systemBlocks,
+    simulate: false,
+    pageAccessToken,
+    graphVersion
+  });
+
+  const orderAfter = await findLatestOrderSummary(supabase, psid, pageId);
+  return { created: orderAfter !== null && orderAfter.orderNo !== orderBefore?.orderNo, finalText };
 }
 
 // Live-updates docs/gma-conversations.html (the GMA Conversations inbox) without polling - fired
@@ -393,7 +663,8 @@ async function processMessage(
       DetectedPaymentAmount: detectedPayment?.amount ?? null,
       DetectedPaymentMethod: detectedPayment?.method ?? null,
       DetectedPaymentReference: detectedPayment?.reference ?? null,
-      DetectedPaymentSenderName: detectedPayment?.senderName ?? null
+      DetectedPaymentSenderName: detectedPayment?.senderName ?? null,
+      DetectedPaymentAtText: detectedPayment?.paymentDateText ?? null
     });
   if (insertErr) {
     if (insertErr.code === '23505') return; // Facebook redelivered a message we already processed.
@@ -427,26 +698,186 @@ async function processMessage(
 
   if (convState?.IsPaused) return;
 
+  // Reply to a pending "is this payment for your existing order, or a new one?" question (asked
+  // below whenever a payment screenshot arrives and this conversation already has a prior order -
+  // per direct instruction, rather than silently assuming it belongs to that order). Checked before
+  // the receipt-confirmation reply below since it's asked at an earlier point in the exchange.
+  if (trimmedText) {
+    const { data: convClarification } = await supabase
+      .from('ChatbotConversations')
+      .select('PendingPaymentClarificationOrderNo, PendingPaymentClarificationAmount, PendingPaymentClarificationMethod, PendingPaymentClarificationReference, PendingPaymentClarificationRequestedAtUtc')
+      .eq('Psid', psid)
+      .maybeSingle();
+
+    if (convClarification?.PendingPaymentClarificationOrderNo && convClarification.PendingPaymentClarificationRequestedAtUtc) {
+      // Same staleness guard as the receipt-confirmation reply below - only the very first customer
+      // message since this was asked counts as answering it.
+      const { count: repliesSinceAsk } = await supabase
+        .from('ChatbotMessages')
+        .select('Id', { count: 'exact', head: true })
+        .eq('Psid', psid)
+        .eq('Role', 'user')
+        .gt('CreatedAtUtc', convClarification.PendingPaymentClarificationRequestedAtUtc);
+
+      if (repliesSinceAsk === 1) {
+        const classification = classifyOrderClarificationReply(trimmedText);
+        if (classification) {
+          await supabase
+            .from('ChatbotConversations')
+            .update({
+              PendingPaymentClarificationOrderNo: null,
+              PendingPaymentClarificationAmount: null,
+              PendingPaymentClarificationMethod: null,
+              PendingPaymentClarificationReference: null,
+              PendingPaymentClarificationRequestedAtUtc: null
+            })
+            .eq('Psid', psid);
+
+          const paymentLine = `₱${Number(convClarification.PendingPaymentClarificationAmount).toFixed(2)} via ${convClarification.PendingPaymentClarificationMethod || 'payment'}` +
+            `${convClarification.PendingPaymentClarificationReference ? ` (Ref: ${convClarification.PendingPaymentClarificationReference})` : ''} - To be confirmed by staff`;
+
+          if (classification === 'existing') {
+            const orderSummary = await findLatestOrderSummary(supabase, psid, pageId);
+            const { ack, confirmationRequestedOrderNo } = orderSummary
+              ? buildOrderPaymentAck(orderSummary, paymentLine)
+              : { ack: 'Got it - thanks! Our team will apply this payment and follow up shortly. \u{1F60A}', confirmationRequestedOrderNo: null };
+            await sendAckMessage(supabase, psid, pageAccessToken, graphVersion, ack, confirmationRequestedOrderNo);
+          } else {
+            // 'new' - same auto-create attempt the no-caption path uses, fed the ORIGINAL detected
+            // payment (this reply is just "new", not the screenshot itself).
+            const detectedPayment: DetectedPayment = {
+              amount: convClarification.PendingPaymentClarificationAmount,
+              method: convClarification.PendingPaymentClarificationMethod,
+              reference: convClarification.PendingPaymentClarificationReference,
+              senderName: null,
+              paymentDateText: null
+            };
+            const autoCreateResult = await attemptAutoCreateOrderFromPayment(
+              supabase, anthropic, model, pageAccessToken, graphVersion, psid, pageId, detectedPayment, convState?.CustomerName
+            );
+            const newOrderSummary = autoCreateResult.created ? await findLatestOrderSummary(supabase, psid, pageId) : null;
+            const { ack, confirmationRequestedOrderNo } = newOrderSummary
+              ? buildOrderPaymentAck(newOrderSummary, paymentLine)
+              : { ack: autoCreateResult.finalText || `Thanks! I see ${paymentLine} - our team will confirm and log it shortly. \u{1F60A}`, confirmationRequestedOrderNo: null };
+            await sendAckMessage(supabase, psid, pageAccessToken, graphVersion, ack, confirmationRequestedOrderNo);
+          }
+          return;
+        }
+      }
+    }
+  }
+
+  // Reply to a pending "is your order receipt correct?" prompt (see ReceiptConfirmationRequestedAtUtc
+  // above, set when the itemized receipt was sent) - checked before the normal AI turn so a simple
+  // "yes" doesn't need a full Claude round trip and can't get misrouted into unrelated small talk.
+  // Only ever intercepts an exact affirmative reply (isAffirmativeReply) on the customer's MOST
+  // RECENT order while it's still 'New' and genuinely awaiting exactly this confirmation; anything
+  // else (a correction, a question, "no") falls through to the normal AI-driven conversation below.
+  if (trimmedText) {
+    const { data: pendingOrder } = await supabase
+      .from('AutomatedOrders')
+      .select('OrderNo, Status, ReceiptConfirmationRequestedAtUtc, ReceiptConfirmedAtUtc')
+      .eq('GmaPsid', psid)
+      .eq('GmaPageId', pageId)
+      .order('CreatedAtUtc', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Guards against a STALE match: without this, an old unconfirmed order's receipt prompt (e.g.
+    // the customer never replied, then came back days/messages later and happened to say "opo"/"ok"
+    // to something completely unrelated) would wrongly get treated as confirming it. Only counts as
+    // "awaiting" when this inbound message is the very FIRST customer reply since
+    // ReceiptConfirmationRequestedAtUtc was set - i.e. nothing else was said in between.
+    let isFirstReplySincePrompt = false;
+    if (pendingOrder?.ReceiptConfirmationRequestedAtUtc) {
+      const { count: repliesSincePrompt } = await supabase
+        .from('ChatbotMessages')
+        .select('Id', { count: 'exact', head: true })
+        .eq('Psid', psid)
+        .eq('Role', 'user')
+        .gt('CreatedAtUtc', pendingOrder.ReceiptConfirmationRequestedAtUtc);
+      isFirstReplySincePrompt = repliesSincePrompt === 1; // just this current message
+    }
+
+    if (
+      pendingOrder &&
+      pendingOrder.Status === 'New' &&
+      pendingOrder.ReceiptConfirmationRequestedAtUtc &&
+      !pendingOrder.ReceiptConfirmedAtUtc &&
+      isFirstReplySincePrompt &&
+      isAffirmativeReply(trimmedText)
+    ) {
+      // This IS the "pass to staff for order id confirmation" step: staff already see every 'New'
+      // order in GMA Conversations, but ReceiptConfirmedAtUtc now flags this one as customer-
+      // confirmed and ready, surfaced as a badge on its order card (renderConversationOrderCards in
+      // js/gmaConversations.js) right next to the existing Confirm-in-Pancake button.
+      await supabase
+        .from('AutomatedOrders')
+        .update({ ReceiptConfirmedAtUtc: new Date().toISOString() })
+        .eq('OrderNo', pendingOrder.OrderNo);
+
+      const confirmAck = `Perfect, thanks for confirming Order No: ${pendingOrder.OrderNo}! \u{2705} We've passed it to our team to finalize - you'll hear from us shortly.`;
+      await sendAckMessage(supabase, psid, pageAccessToken, graphVersion, confirmAck, null);
+      return;
+    }
+  }
+
   // A photo with no caption has nothing for Claude to meaningfully respond to (no product/order
   // question to answer) - acknowledge it and hand off to staff (who can see it inline in the GMA
   // Conversations inbox, e.g. to verify a GCash payment screenshot) rather than running a full AI
   // turn over a placeholder "[Photo]" prompt.
   if (!trimmedText && attachmentUrl) {
-    const ack = detectedPayment?.amount != null
-      ? `Thanks for the payment screenshot! I see an amount of ₱${detectedPayment.amount.toFixed(2)}${detectedPayment.reference ? ` (Ref: ${detectedPayment.reference})` : ''} - our team will confirm and log it shortly. \u{1F60A}`
-      : "Thanks for sending that! Someone from our team will take a look and follow up if needed. \u{1F60A}";
-    const { data: ackRow } = await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: ack }).select('Id').single();
-    await supabase
-      .from('ChatbotConversations')
-      .update({ LastMessageAtUtc: new Date().toISOString(), LastBotMessageAtUtc: new Date().toISOString() })
-      .eq('Psid', psid);
-    await broadcastGmaEvent(supabase, psid);
-    await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
-    const ackDelivered = await sendMessengerReply(psid, ack, pageAccessToken, graphVersion);
-    if (ackRow?.Id) {
-      await supabase.from('ChatbotMessages').update({ DeliveryStatus: ackDelivered ? 'Sent' : 'Failed' }).eq('Id', ackRow.Id);
-      await broadcastGmaEvent(supabase, psid);
+    let ack: string;
+    let confirmationRequestedOrderNo: string | null = null;
+    if (detectedPayment?.amount != null) {
+      const existingOrderSummary = await findLatestOrderSummary(supabase, psid, pageId);
+
+      if (existingOrderSummary) {
+        // A prior order already exists for this conversation - per direct instruction, ASK the
+        // customer whether this payment is for that order or a new one, rather than silently
+        // assuming either way (assuming "existing" would wrongly attach an unrelated new purchase's
+        // payment to an old order; assuming "new" would wrongly spin up a duplicate for what's
+        // really just a balance payment). PendingPaymentClarification* on ChatbotConversations
+        // remembers the detected payment until the customer answers (handled above, before the
+        // receipt-confirmation reply check).
+        ack = `Just to confirm - I see you already have Order No: ${existingOrderSummary.orderNo}. Is this payment for that order, or is it for a NEW order you're asking about? \u{1F60A}`;
+        await supabase
+          .from('ChatbotConversations')
+          .update({
+            PendingPaymentClarificationOrderNo: existingOrderSummary.orderNo,
+            PendingPaymentClarificationAmount: detectedPayment.amount,
+            PendingPaymentClarificationMethod: detectedPayment.method,
+            PendingPaymentClarificationReference: detectedPayment.reference,
+            PendingPaymentClarificationRequestedAtUtc: new Date().toISOString()
+          })
+          .eq('Psid', psid);
+      } else {
+        // No order exists for this conversation yet - let the bot try to place one itself (the
+        // create_order tool, chatbot-engine.ts) using whatever items/customer details are already
+        // established in the conversation, now that a downpayment/payment has actually arrived.
+        // Runs a full AI turn (not a canned reply) specifically so Claude can judge whether it has
+        // everything required; falls through to the plain ack below if it doesn't.
+        const paymentLine = `₱${detectedPayment.amount.toFixed(2)} via ${detectedPayment.method || 'payment'}${detectedPayment.reference ? ` (Ref: ${detectedPayment.reference})` : ''} - To be confirmed by staff`;
+        const autoCreateResult = await attemptAutoCreateOrderFromPayment(
+          supabase, anthropic, model, pageAccessToken, graphVersion, psid, pageId, detectedPayment, convState?.CustomerName
+        );
+        const newOrderSummary = autoCreateResult.created ? await findLatestOrderSummary(supabase, psid, pageId) : null;
+
+        if (newOrderSummary) {
+          ({ ack, confirmationRequestedOrderNo } = buildOrderPaymentAck(newOrderSummary, paymentLine));
+        } else if (autoCreateResult.finalText) {
+          // The bot tried to place an order itself and couldn't (missing info, or it judged the
+          // conversation wasn't ready) - Claude's own reply already explains what's still needed, so
+          // use that instead of the generic ack.
+          ack = autoCreateResult.finalText;
+        } else {
+          ack = `Thanks for the payment screenshot! I see ${paymentLine} - our team will confirm and log it shortly. \u{1F60A}`;
+        }
+      }
+    } else {
+      ack = "Thanks for sending that! Someone from our team will take a look and follow up if needed. \u{1F60A}";
     }
+    await sendAckMessage(supabase, psid, pageAccessToken, graphVersion, ack, confirmationRequestedOrderNo);
     return;
   }
 
@@ -486,7 +917,8 @@ async function processMessage(
   // for everything else.
   const systemBlocks = [
     { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
-    { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) }
+    { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
+    { type: 'text' as const, text: buildCustomerNameLine(convState?.CustomerName) }
   ];
 
   // AiSettings.AiModel (portal-editable, see ai-bot-setup.html) overrides the env/default model
@@ -498,6 +930,7 @@ async function processMessage(
     anthropic,
     model: effectiveModel,
     psid,
+    pageId,
     messages,
     followUpSettings,
     systemBlocks,
