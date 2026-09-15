@@ -205,6 +205,10 @@
           <div class="field-label">Order #</div>
           <div class="field-value" id="fieldOrderId"></div>
         </div>
+        <div id="fieldPancakeOrderIdWrap">
+          <div class="field-label">Online Order ID</div>
+          <div class="field-value" id="fieldPancakeOrderId"></div>
+        </div>
         <div>
           <div class="field-label">Order Date</div>
           <div class="field-value" id="fieldOrderDate"></div>
@@ -281,6 +285,13 @@
 
       document.getElementById('statusPill').textContent = header.status_label || '';
       document.getElementById('fieldOrderId').textContent = header.order_id || '';
+      const pancakeIdWrap = document.getElementById('fieldPancakeOrderIdWrap');
+      if (header.pancake_order_id && header.pancake_order_id !== header.order_id) {
+        document.getElementById('fieldPancakeOrderId').textContent = `#${header.pancake_order_id}`;
+        pancakeIdWrap.classList.remove('hidden');
+      } else {
+        pancakeIdWrap.classList.add('hidden');
+      }
       document.getElementById('fieldOrderDate').textContent = formatDate(header.order_date);
       document.getElementById('fieldCustomerName').textContent = header.customer_name || '';
       document.getElementById('fieldWarehouse').textContent = header.warehouse_name || '';

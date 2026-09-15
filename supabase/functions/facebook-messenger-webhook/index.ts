@@ -316,6 +316,9 @@ interface OrderSummaryLine {
 
 interface OrderSummary {
   orderNo: string;
+  // Pancake's own short order id (AutomatedOrders.PancakeOrderId, e.g. "91364") - null until the
+  // order has synced to Pancake. Just the id, never the order_link - see receiptUrl below.
+  pancakeOrderId: string | null;
   status: string;
   totalProducts: number;
   estimatedTotal: number;
@@ -340,7 +343,7 @@ interface OrderSummary {
 async function findLatestOrderSummary(supabase: SupabaseClient, psid: string, pageId: string): Promise<OrderSummary | null> {
   const { data: order } = await supabase
     .from('AutomatedOrders')
-    .select('OrderNo, EstimatedTotal, Status')
+    .select('OrderNo, EstimatedTotal, Status, PancakeOrderId')
     .eq('GmaPsid', psid)
     .eq('GmaPageId', pageId)
     .order('CreatedAtUtc', { ascending: false })
@@ -360,6 +363,7 @@ async function findLatestOrderSummary(supabase: SupabaseClient, psid: string, pa
 
   return {
     orderNo: order.OrderNo,
+    pancakeOrderId: order.PancakeOrderId ?? null,
     status: order.Status ?? 'New',
     totalProducts,
     estimatedTotal,
@@ -439,11 +443,15 @@ function buildOrderPaymentAck(orderSummary: OrderSummary, paymentLine: string): 
   // direct decision, the bot never shares Pancake's link with customers. Always present (built
   // from orderNo, no sync dependency - see the OrderSummary.receiptUrl comment above).
   const receiptLinkLine = `\n📄 Order Confirmation: ${orderSummary.receiptUrl}\n`;
+  // Only the id (e.g. "#91364"), never Pancake's order_link. Null until the order has synced -
+  // omitted rather than shown blank in that case.
+  const onlineOrderIdLine = orderSummary.pancakeOrderId ? `🧾 Online Order ID: #${orderSummary.pancakeOrderId}\n` : '';
   if (orderSummary.status === 'New') {
     return {
       confirmationRequestedOrderNo: orderSummary.orderNo,
       ack: 'Thanks for the payment! Here\'s your order confirmation receipt - please check everything below:\n\n' +
         `📋 Order No: ${orderSummary.orderNo}\n` +
+        onlineOrderIdLine +
         `🛒 Products:\n${formatOrderLines(orderSummary.lines)}\n` +
         `💰 Total amount: ₱${orderSummary.estimatedTotal.toFixed(2)}\n` +
         `💳 Payment: ${paymentLine}\n` +
@@ -456,6 +464,7 @@ function buildOrderPaymentAck(orderSummary: OrderSummary, paymentLine: string): 
     confirmationRequestedOrderNo: null,
     ack: 'Thanks for the payment screenshot! Here\'s your order summary:\n\n' +
       `📋 Order No: ${orderSummary.orderNo}\n` +
+      onlineOrderIdLine +
       `🛒 Products:\n${formatOrderLines(orderSummary.lines)}\n` +
       `💰 Total amount: ₱${orderSummary.estimatedTotal.toFixed(2)}\n` +
       `💳 Payment: ${paymentLine}\n` +
