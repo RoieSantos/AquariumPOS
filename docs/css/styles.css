@@ -2450,6 +2450,19 @@ body.hide-price-columns .price-col {
   white-space: nowrap;
 }
 
+/* Job Order print layout (docs/job-order.html) - the free-text Job Description block the staff
+   member types into the on-page textarea before printing (see js/jobOrder.js); min-height keeps
+   the printed box a usable writing/reading area even when the typed description is short. */
+.delivery-receipt-jobdesc-label {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.delivery-receipt-jobdesc-body {
+  min-height: 90px;
+  white-space: pre-line;
+}
+
 /* Invoice print layout (docs/invoice.html) - an itemized alternative to the plain Delivery
    Receipt above, for the same stop. Reuses every .delivery-receipt-* class as-is (none of them
    are actually delivery-specific); these are just the pieces the Delivery Receipt didn't need. */

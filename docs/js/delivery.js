@@ -783,6 +783,7 @@ function showDayDetail(dateKey) {
           <td>
             <button class="btn btn-secondary btn-sm" data-print-stop-id="${s.stop_id}" type="button">Print</button>
             <button class="btn btn-secondary btn-sm" data-print-invoice-stop-id="${s.stop_id}" type="button">Print Invoice</button>
+            <button class="btn btn-secondary btn-sm" data-print-joborder-stop-id="${s.stop_id}" type="button">Print Job Order</button>
             <button class="btn btn-secondary btn-sm" data-edit-stop-id="${s.stop_id}" type="button" title="Fix this stop's customer name/address">Edit Details</button>
             ${s.geocode_status !== 'ok' ? `<button class="btn btn-secondary btn-sm" data-retry-geocode-id="${s.stop_id}" data-retry-geocode-address="${encodeURIComponent(displayAddress)}" type="button">Retry Map</button>` : ''}
             ${currentSession.isSuperUser ? `<button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button>` : ''}
@@ -815,6 +816,12 @@ function showDayDetail(dateKey) {
   tbody.querySelectorAll('button[data-print-invoice-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => {
       window.open(`invoice.html?stop=${encodeURIComponent(btn.dataset.printInvoiceStopId)}`, '_blank');
+    });
+  });
+
+  tbody.querySelectorAll('button[data-print-joborder-stop-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      window.open(`job-order.html?stop=${encodeURIComponent(btn.dataset.printJoborderStopId)}`, '_blank');
     });
   });
 
