@@ -85,7 +85,11 @@ const PASSWORD_CHANGE_EXEMPT_PAGES = ['change-password.html', 'staff-login.html'
 // i want a portion there that they can access their pay / payslips" - self-service payslips
 // (supabase_payroll_self_service_payslips.sql) are for every employee, including these two
 // otherwise-locked-down roles, not just Payroll Officers/Super Users.
-const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'dashboard.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
+// delivery-receipt.html/invoice.html/job-order.html added too - all three are opened directly
+// from buttons on delivery.html's Stops table (js/delivery.js), so leaving them out would let a
+// Delivery Team account see the calendar but get bounced back to it the moment they clicked
+// Print/Print Invoice/Print Job Order.
+const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'delivery-receipt.html', 'invoice.html', 'job-order.html', 'dashboard.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
 // Same exclusive-lockdown shape as Delivery Team above, per "create me a field in the user setup
 // 'Online Order Staff' - when this is tick the user will only see Orders Printed that to be Ship."
@@ -108,7 +112,7 @@ const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-li
 const STORE_MANAGER_ALLOWED_PAGES = [
   'dashboard.html', 'change-password.html', 'staff-login.html',
   'my-payslips.html', 'my-payslip-print.html',
-  'delivery.html',
+  'delivery.html', 'delivery-receipt.html', 'invoice.html', 'job-order.html',
   'serial-tracker.html', 'inventory-summary.html',
   'stock-on-hand.html', 'stock-on-hand-print.html',
   'transfer-orders.html', 'transfer-order-print.html', 'transfer-order-print-production.html',
