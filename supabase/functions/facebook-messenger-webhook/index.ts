@@ -71,6 +71,7 @@ interface FacebookWebhookBody {
       sender?: { id: string };
       recipient?: { id: string };
       message?: { mid: string; text?: string; is_echo?: boolean; attachments?: FacebookAttachment[] };
+      read?: { watermark: number };
     }>;
   }>;
 }
@@ -114,7 +115,9 @@ function handleGet(req: Request): Response {
   return new Response('Forbidden', { status: 403 });
 }
 
-async function sendMessengerReply(psid: string, text: string, pageAccessToken: string, graphVersion: string): Promise<void> {
+// Returns whether Facebook actually accepted the message, so callers can record DeliveryStatus
+// ('Sent'/'Failed') on the ChatbotMessages row - see processMessage below.
+async function sendMessengerReply(psid: string, text: string, pageAccessToken: string, graphVersion: string): Promise<boolean> {
   const url = `https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`;
   const res = await fetch(url, {
     method: 'POST',
@@ -125,6 +128,32 @@ async function sendMessengerReply(psid: string, text: string, pageAccessToken: s
   });
   if (!res.ok) {
     console.error(`Messenger Send API failed (${res.status}): ${await res.text()}`);
+    return false;
+  }
+  return true;
+}
+
+// Marks every one of our own messages up to the customer's read watermark as seen - fired from a
+// Messenger 'read' webhook event (requires the message_reads field to be checked under Messenger >
+// Settings > Webhooks in the App Dashboard). Facebook's watermark is "the customer has read
+// everything up to this timestamp", so it can mark several messages seen at once, not just the
+// latest.
+async function handleReadReceipt(supabase: SupabaseClient, psid: string | undefined, watermarkMs: number | undefined): Promise<void> {
+  if (!psid || !watermarkMs) return;
+  try {
+    const watermarkIso = new Date(watermarkMs).toISOString();
+    const { error } = await supabase
+      .from('ChatbotMessages')
+      .update({ SeenAtUtc: watermarkIso })
+      .eq('Psid', psid)
+      .in('Role', ['assistant', 'staff'])
+      .is('SeenAtUtc', null)
+      .lte('CreatedAtUtc', watermarkIso);
+    if (!error) {
+      await broadcastGmaEvent(supabase, psid);
+    }
+  } catch (err) {
+    console.error('Failed to record read receipt:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -406,14 +435,18 @@ async function processMessage(
     const ack = detectedPayment?.amount != null
       ? `Thanks for the payment screenshot! I see an amount of ₱${detectedPayment.amount.toFixed(2)}${detectedPayment.reference ? ` (Ref: ${detectedPayment.reference})` : ''} - our team will confirm and log it shortly. \u{1F60A}`
       : "Thanks for sending that! Someone from our team will take a look and follow up if needed. \u{1F60A}";
-    await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: ack });
+    const { data: ackRow } = await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: ack }).select('Id').single();
     await supabase
       .from('ChatbotConversations')
       .update({ LastMessageAtUtc: new Date().toISOString(), LastBotMessageAtUtc: new Date().toISOString() })
       .eq('Psid', psid);
     await broadcastGmaEvent(supabase, psid);
     await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
-    await sendMessengerReply(psid, ack, pageAccessToken, graphVersion);
+    const ackDelivered = await sendMessengerReply(psid, ack, pageAccessToken, graphVersion);
+    if (ackRow?.Id) {
+      await supabase.from('ChatbotMessages').update({ DeliveryStatus: ackDelivered ? 'Sent' : 'Failed' }).eq('Id', ackRow.Id);
+      await broadcastGmaEvent(supabase, psid);
+    }
     return;
   }
 
@@ -473,7 +506,7 @@ async function processMessage(
     graphVersion
   });
 
-  await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: finalText });
+  const { data: replyRow } = await supabase.from('ChatbotMessages').insert({ Psid: psid, Role: 'assistant', Content: finalText }).select('Id').single();
   await supabase
     .from('ChatbotConversations')
     .update({ LastMessageAtUtc: new Date().toISOString(), LastBotMessageAtUtc: new Date().toISOString() })
@@ -481,7 +514,11 @@ async function processMessage(
   await broadcastGmaEvent(supabase, psid);
 
   await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
-  await sendMessengerReply(psid, finalText, pageAccessToken, graphVersion);
+  const replyDelivered = await sendMessengerReply(psid, finalText, pageAccessToken, graphVersion);
+  if (replyRow?.Id) {
+    await supabase.from('ChatbotMessages').update({ DeliveryStatus: replyDelivered ? 'Sent' : 'Failed' }).eq('Id', replyRow.Id);
+    await broadcastGmaEvent(supabase, psid);
+  }
 }
 
 async function handlePost(req: Request): Promise<Response> {
@@ -520,14 +557,24 @@ async function handlePost(req: Request): Promise<Response> {
 
     for (const entry of body.entry ?? []) {
       for (const evt of entry.messaging ?? []) {
+        if (evt.read) {
+          // Read receipt (requires the message_reads field checked under Messenger > Settings >
+          // Webhooks) - not a message, handled separately and doesn't go through processMessage.
+          try {
+            await handleReadReceipt(supabase, evt.sender?.id, evt.read.watermark);
+          } catch (err) {
+            console.error('Error processing read receipt:', err instanceof Error ? err.message : err);
+          }
+          continue;
+        }
         if (evt.message?.is_echo) continue; // the page's own message, echoed back - skip to avoid a reply loop
         const text = evt.message?.text;
         const attachments = evt.message?.attachments;
         const psid = evt.sender?.id;
         const pageId = evt.recipient?.id;
         const mid = evt.message?.mid;
-        // A message needs text AND/OR an image attachment to be worth processing - read receipts,
-        // postbacks, and non-image attachments (video/audio/file/location) are still out of scope.
+        // A message needs text AND/OR an image attachment to be worth processing - postbacks and
+        // non-image attachments (video/audio/file/location) are still out of scope.
         if ((!text && !(attachments && attachments.length > 0)) || !psid || !pageId || !mid) continue;
 
         try {

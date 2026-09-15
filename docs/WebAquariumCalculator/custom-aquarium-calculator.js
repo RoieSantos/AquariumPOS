@@ -932,7 +932,19 @@
         heightInches: sumpHeightInches
       };
 
-      if (sumpLengthInches > 0 && sumpWidthInches > 0 && sumpHeightInches > 0) {
+      // Mirrors the Stand's Sump Holder Width check above - covers both sump types (Undersump and
+      // Overhead Sump both go through this same branch), since leaving a dimension blank/zero used
+      // to silently skip every sump cost (glass, filter media, overflow box, light, pump) instead
+      // of flagging it, under-quoting a feature the customer thinks they're getting.
+      if (!(sumpLengthInches > 0 && sumpWidthInches > 0 && sumpHeightInches > 0)) {
+        return {
+          ok: false,
+          error: 'Please enter valid positive Sump Length, Width and Height, or uncheck Filtration sump.',
+          autoChangeTo: null
+        };
+      }
+
+      {
         var sumpAreaSqFt = getGlassAreaSqFt(sumpLengthInches, sumpWidthInches, sumpHeightInches);
         var sumpPricePerSqFt = basePricePerSqFt;
         if (isTempered) {

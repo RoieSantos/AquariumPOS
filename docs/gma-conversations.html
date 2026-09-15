@@ -15,9 +15,11 @@
   <style>
     /* This page benefits from more width than the portal's default 1200px cap - the three-column
        inbox (list/thread/customer panel) gets cramped otherwise, especially the Create Order tab's
-       form + item table. Overrides styles.css's .page rule by appearing later in source order. */
+       form + item table. Overrides styles.css's .page rule by appearing later in source order.
+       Per direct request to widen the default view further - nearly edge-to-edge instead of a fixed
+       cap that leaves large empty margins on wide monitors, while keeping a little breathing room. */
     .page {
-      max-width: 1600px;
+      max-width: calc(100vw - 40px);
     }
     .inbox-grid {
       display: grid;
@@ -39,21 +41,42 @@
         grid-template-columns: 1fr;
       }
     }
-    .inbox-list-card, .inbox-thread-card, .inbox-customer-card {
+    .inbox-list-wrap, .inbox-thread-card, .inbox-customer-card {
       background: #fff;
       border: 1px solid var(--panel-border);
       border-radius: 8px;
       box-shadow: var(--shadow);
       overflow: hidden;
     }
-    .inbox-list-card {
+    .inbox-list-wrap {
+      display: flex;
+      flex-direction: column;
       max-height: 80vh;
+    }
+    .inbox-list-search {
+      flex-shrink: 0;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .inbox-list-search input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 7px 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .inbox-list-card {
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
     }
     .inbox-customer-card {
-      /* No internal max-height/scroll - a data-entry form shouldn't be squeezed into a tiny
-         scrollable box; the whole page scrolls instead, same as the Create Order tab's fields
-         being taller than one screenful. */
+      /* Per direct request: scrolls independently (matching .inbox-list-card) so the conversation
+         list/thread stay put while only this panel (often the tallest - Create Order's full form)
+         moves - the opposite of the earlier "let the whole page scroll" choice. */
+      max-height: 80vh;
+      overflow-y: auto;
       padding: 12px 14px;
     }
     .inbox-customer-card h3 {
@@ -341,17 +364,20 @@
       padding: 14px;
       max-height: 50vh;
       overflow-y: auto;
+      overflow-x: hidden;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 2px;
     }
     .inbox-msg {
       max-width: 75%;
-      padding: 8px 12px;
-      border-radius: 12px;
+      padding: 6px 12px;
+      border-radius: 14px;
       font-size: 13px;
       line-height: 1.4;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .inbox-msg-image {
       display: block;
@@ -378,18 +404,68 @@
     .inbox-payment-detected .btn {
       margin-top: 6px;
     }
-    .inbox-msg-user {
+    .inbox-date-divider {
+      text-align: center;
+      margin: 10px 0;
+    }
+    .inbox-date-divider span {
+      display: inline-block;
+      padding: 3px 12px;
+      border-radius: 12px;
+      background: rgba(127, 127, 127, 0.12);
+      font-size: 11px;
+      color: var(--muted, #6b7280);
+    }
+    .inbox-msg-meta {
+      margin: 3px 4px 0;
+      font-size: 10.5px;
+      opacity: 0.65;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      white-space: normal;
+    }
+    .inbox-msg-status-failed {
+      color: #c0392b;
+      font-weight: 600;
+      opacity: 1;
+    }
+    .inbox-msg-status-seen {
+      color: #2563eb;
+    }
+    /* Row wrapper: holds the optional sender label, the bubble, and the optional meta line, all
+       aligned to whichever side the bubble itself belongs on - lets the label/meta sit OUTSIDE the
+       colored bubble (small, subtle, page-background text) instead of eating into its padding,
+       matching how Messenger itself shows timestamps outside the message rather than inside it. */
+    .inbox-msg-row {
+      display: flex;
+      flex-direction: column;
+      /* Capped in px, not just %, so bubbles don't sprawl wide on a big screen - a short sentence
+         should wrap into a few narrow lines like real Messenger, not stretch out to 75% of a wide
+         desktop panel. */
+      max-width: min(75%, 380px);
+    }
+    .inbox-msg-row-user {
       align-self: flex-start;
+      align-items: flex-start;
+    }
+    .inbox-msg-row-assistant,
+    .inbox-msg-row-staff {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+    .inbox-msg {
+      max-width: 100%;
+    }
+    .inbox-msg-user {
       background: #f0f2f6;
       color: #1b355e;
     }
     .inbox-msg-assistant {
-      align-self: flex-end;
       background: #1d4f91;
       color: #fff;
     }
     .inbox-msg-staff {
-      align-self: flex-end;
       background: #1e9a59;
       color: #fff;
     }
@@ -397,8 +473,11 @@
       display: block;
       font-size: 10px;
       font-weight: 700;
-      opacity: 0.85;
-      margin-bottom: 2px;
+      opacity: 0.6;
+      margin: 0 4px 2px;
+    }
+    .inbox-msg-row.inbox-msg-group-start {
+      margin-top: 10px;
     }
     .inbox-empty-state {
       padding: 30px 16px;
@@ -407,18 +486,780 @@
       font-size: 13px;
     }
     .inbox-reply-row {
+      position: relative;
       display: flex;
-      gap: 8px;
+      flex-direction: column;
+      gap: 6px;
       padding: 10px 14px;
       border-top: 1px solid var(--panel-border);
     }
     .inbox-reply-row textarea {
-      flex: 1;
-      resize: vertical;
+      width: 100%;
+      box-sizing: border-box;
+      resize: none;
       min-height: 40px;
+      max-height: 220px;
+      overflow-y: hidden;
+      border: none;
+      outline: none;
+      font-size: 14px;
+      font-family: inherit;
+      padding: 4px 2px;
+    }
+    /* Shown when a quick reply with one or more photos has been picked (see useQuickReply in
+       gmaConversations.js) - per direct request, choosing a quick reply now loads it into the
+       textbox for review/editing instead of sending immediately, so its photo(s) can't just be sent
+       silently in the background; this strip makes clear photo(s) will go out along with whatever
+       text is typed, until Send is pressed or they're removed (each individually). */
+    .inbox-reply-pending-attachment {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 2px;
+      flex-wrap: wrap;
+    }
+    .inbox-reply-pending-attachment span {
+      font-size: 12px;
+      color: var(--muted-text, #61738f);
+    }
+    .inbox-reply-pending-thumbs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    /* Product list lookup panel - per direct request, mirrors Pancake's own "search products, check
+       several, send the list" panel: search box + a checkbox list (thumbnail/name/stock/price per
+       row) + a Send button that delivers the checked items to the customer as one reply (each
+       product's photo, then a composed text line per item - see sendProductList in
+       gmaConversations.js). Same floating-popover shape as .inbox-quick-replies-panel, kept as its
+       own class since the two are structurally different beyond that (list is checkboxes here, not
+       click-to-send rows) and only one is ever open at a time. */
+    .inbox-product-lookup-panel {
+      position: absolute;
+      right: 10px;
+      bottom: calc(100% + 6px);
+      width: 380px;
+      max-width: calc(100vw - 40px);
+      max-height: 440px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      overflow: hidden;
+      z-index: 5;
+    }
+    .inbox-product-lookup-search {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .inbox-product-lookup-search input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 7px 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .inbox-product-lookup-list {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 120px;
+    }
+    .inbox-product-lookup-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--panel-border);
+      cursor: pointer;
+    }
+    .inbox-product-lookup-row:last-child {
+      border-bottom: none;
+    }
+    .inbox-product-lookup-row:hover {
+      background: #f5f6f8;
+    }
+    .inbox-product-lookup-row input[type="checkbox"] {
+      flex-shrink: 0;
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+    .inbox-product-lookup-thumb {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      object-fit: cover;
+      border: 1px solid var(--panel-border);
+      flex-shrink: 0;
+    }
+    .inbox-product-lookup-thumb-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      background: #eef0f2;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .inbox-product-lookup-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+    .inbox-product-lookup-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .inbox-product-lookup-sku {
+      font-size: 10.5px;
+      color: var(--muted-text, #61738f);
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .inbox-product-lookup-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11.5px;
+      color: var(--muted-text, #61738f);
+    }
+    .inbox-product-lookup-stock.out-of-stock {
+      color: #c0392b;
+    }
+    .inbox-product-lookup-price {
+      font-weight: 600;
+      color: #1c1e21;
+    }
+    .inbox-product-lookup-parent {
+      cursor: pointer;
+    }
+    .inbox-product-lookup-chevron {
+      flex-shrink: 0;
+      width: 15px;
+      text-align: center;
+      color: var(--muted-text, #61738f);
+      font-size: 11px;
+    }
+    .inbox-product-lookup-variants {
+      background: #fafbfc;
+    }
+    .inbox-product-lookup-variant-row {
+      padding-left: 33px;
+    }
+    .inbox-product-lookup-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-top: 1px solid var(--panel-border);
+    }
+    /* Media library panel - per direct request ("a compilation of images and videos saved so they
+       can resend it to the customer when needed"), a Quick-Reply-like picker but plain photos/videos
+       with no label/text, browsed as a thumbnail grid instead of a list. Same floating-popover shape
+       as .inbox-product-lookup-panel. */
+    .inbox-media-library-panel {
+      position: absolute;
+      right: 10px;
+      bottom: calc(100% + 6px);
+      width: 420px;
+      max-width: calc(100vw - 40px);
+      max-height: 440px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      overflow: hidden;
+      z-index: 5;
+    }
+    .inbox-media-library-grid {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 120px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+      gap: 8px;
+      padding: 10px;
+    }
+    .inbox-media-library-item {
+      position: relative;
+      width: 76px;
+      height: 76px;
+      cursor: pointer;
+    }
+    .inbox-media-library-item img,
+    .inbox-media-library-item .inbox-media-library-video-placeholder {
+      width: 76px;
+      height: 76px;
+      border-radius: 8px;
+      object-fit: cover;
+      border: 2px solid var(--panel-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #eef0f2;
+      font-size: 22px;
+      box-sizing: border-box;
+    }
+    .inbox-media-library-item.selected img,
+    .inbox-media-library-item.selected .inbox-media-library-video-placeholder {
+      border-color: #1877f2;
+    }
+    .inbox-media-library-item-check {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid var(--panel-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: #1877f2;
+      font-weight: 700;
+    }
+    .inbox-media-library-item:not(.selected) .inbox-media-library-item-check {
+      display: none;
+    }
+    .inbox-media-library-item-remove {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: none;
+      background: #c0392b;
+      color: #fff;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    /* Shared "small thumbnail with a removable x overlay" look, reused by the pending-attachment
+       strip above, the Manage Quick Replies add/edit form, and its results table. */
+    .qr-image-thumb-wrap {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+    }
+    .qr-image-thumb-wrap img {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      object-fit: cover;
+      border: 1px solid var(--panel-border);
+      display: block;
+    }
+    .qr-image-thumb-video-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      background: #eef0f2;
+      border: 1px solid var(--panel-border);
+      font-size: 14px;
+    }
+    .qr-image-thumb-remove {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: none;
+      background: #c0392b;
+      color: #fff;
+      cursor: pointer;
+      font-size: 11px;
+      line-height: 1;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    /* Icon toolbar under the textarea, same position/idea as Meta's own composer row (mic/sticker/
+       image/quick-reply/like icons along the bottom) - only the one icon we actually support so
+       far (Quick reply), plus our own Send button at the far right. */
+    .inbox-reply-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    .inbox-icon-btn {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: none;
+      background: transparent;
+      color: #65676b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+    }
+    .inbox-icon-btn:hover {
+      background: #f0f2f5;
+    }
+    .inbox-icon-btn.active {
+      background: #e7f3ff;
+      color: #1877f2;
+    }
+    /* Replaces the old text "Send" button - per direct request, Enter sends whatever's typed, and
+       this filled thumbs-up (matching Messenger's own composer) is now the only explicit button
+       left in this row, for sending a like on its own. */
+    .inbox-like-btn {
+      border-radius: 8px;
+      background: #1877f2;
+      color: #fff;
+    }
+    .inbox-like-btn:hover {
+      background: #166fe0;
+    }
+    .inbox-like-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    /* Custom dark tooltip (matches Meta's own hover tooltip) rather than the plain browser
+       default - shown above the icon, with a small downward-pointing arrow. */
+    .inbox-icon-btn[data-tooltip]::after,
+    .inbox-icon-btn[data-tooltip]::before {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s ease;
+    }
+    .inbox-icon-btn[data-tooltip]::after {
+      content: attr(data-tooltip);
+      bottom: 130%;
+      background: #1c1e21;
+      color: #fff;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .inbox-icon-btn[data-tooltip]::before {
+      content: '';
+      bottom: 122%;
+      border: 5px solid transparent;
+      border-top-color: #1c1e21;
+    }
+    .inbox-icon-btn[data-tooltip]:hover::after,
+    .inbox-icon-btn[data-tooltip]:hover::before {
+      opacity: 1;
+    }
+    /* Floating popover above the toolbar icon (like Meta's own quick-reply picker) - a staff-
+       managed, fully customizable library of canned messages: pick one to send it immediately, or
+       manage the list (add/delete) right there. */
+    .inbox-quick-replies-panel {
+      position: absolute;
+      right: 10px;
+      bottom: calc(100% + 6px);
+      width: 420px;
+      max-width: calc(100vw - 40px);
+      max-height: 400px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      overflow: hidden;
+      z-index: 5;
+    }
+    .inbox-quick-replies-header {
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    /* Opens the full-page manage modal below - the popover itself stays a quick add/send list,
+       editing an existing entry's label/message/photo only happens in that larger view. */
+    .inbox-quick-replies-manage-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      border: none;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted-text, #61738f);
+      cursor: pointer;
+    }
+    .inbox-quick-replies-manage-btn:hover {
+      background: #eef0f2;
+      color: #1c1e21;
+    }
+    /* Manage Quick Replies modal - full list + add/edit form, reusing the shared .modal-backdrop/
+       .modal-panel pattern (see docs/css/styles.css) already used across the portal. Per direct
+       request, made near-fullscreen (rather than the standard capped modal size) so the whole
+       library is visible at once without a lot of internal scrolling. */
+    #manageQuickRepliesModal {
+      padding: 20px 16px;
+    }
+    .manage-quick-replies-panel {
+      max-width: 1600px;
+      width: 100%;
+      height: calc(100vh - 40px);
+      display: flex;
+      flex-direction: column;
+    }
+    .manage-quick-replies-panel > .toolbar {
+      flex-shrink: 0;
+    }
+    .manage-quick-reply-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      flex-shrink: 0;
+    }
+    .manage-quick-reply-form h3 {
+      margin: 0 0 4px;
+      font-size: 14px;
+    }
+    .manage-quick-reply-form input[type="text"],
+    .manage-quick-reply-form textarea {
+      padding: 7px 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      resize: vertical;
+      width: 100%;
+    }
+    .manage-qr-image-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .manage-qr-form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .manage-qr-bulk-import {
+      flex-shrink: 0;
+      margin-bottom: 16px;
+    }
+    .manage-qr-bulk-import-body {
+      margin-top: 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .manage-qr-bulk-import-example {
+      background: #f5f6f8;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11.5px;
+      color: var(--muted-text, #61738f);
+      white-space: pre-wrap;
+      margin: 0;
+      font-family: inherit;
+    }
+    .manage-qr-bulk-import-body textarea {
+      padding: 7px 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-family: inherit;
+      resize: vertical;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #bulkImportSuccess {
+      font-size: 12px;
+      color: #1a7f37;
+    }
+    .manage-quick-replies-table-wrap {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    .manage-qr-row-thumb {
+      width: 24px;
+      height: 24px;
+      border-radius: 5px;
+      object-fit: cover;
+      display: block;
+    }
+    .manage-qr-row-thumb-wrap {
+      position: relative;
+      display: inline-block;
+    }
+    .manage-qr-row-thumb-count {
+      position: absolute;
+      bottom: -4px;
+      right: -4px;
+      background: #1877f2;
+      color: #fff;
+      font-size: 9px;
+      line-height: 1;
+      padding: 2px 3px;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+    .manage-qr-row-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      white-space: nowrap;
+    }
+    .manage-qr-row-actions button {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted-text, #61738f);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .manage-qr-row-actions button:hover {
+      background: #eef0f2;
+      color: #1c1e21;
+    }
+    .manage-qr-row-actions .manage-qr-delete-btn:hover {
+      background: #ffe3e0;
+      color: #c0392b;
+    }
+    /* Table layout matching Meta's own "Quick reply template" picker (Shortcut / Topic /
+       Message columns, numbered rows) per direct request to mirror that UI. */
+    .inbox-quick-replies-list {
+      overflow-y: auto;
+      max-height: 240px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .inbox-quick-replies-list table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .inbox-quick-replies-list thead th {
+      position: sticky;
+      top: 0;
+      background: #f5f6f8;
+      text-align: left;
+      font-weight: 600;
+      color: var(--muted-text, #61738f);
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .inbox-quick-replies-list tbody tr {
+      cursor: pointer;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .inbox-quick-replies-list tbody tr:last-child {
+      border-bottom: none;
+    }
+    .inbox-quick-replies-list tbody tr:hover {
+      background: #f5f6f8;
+    }
+    .inbox-quick-replies-list td {
+      padding: 7px 8px;
+      vertical-align: middle;
+    }
+    .inbox-quick-reply-index {
+      color: var(--muted-text, #61738f);
+      width: 18px;
+    }
+    .inbox-quick-reply-shortcut {
+      font-weight: 700;
+      color: #1877f2;
+      white-space: nowrap;
+    }
+    .inbox-quick-reply-topic {
+      width: 28px;
+    }
+    .inbox-quick-reply-thumb {
+      display: block;
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+      object-fit: cover;
+    }
+    .inbox-quick-reply-thumb-wrap {
+      position: relative;
+      display: inline-block;
+    }
+    .inbox-quick-reply-thumb-count {
+      position: absolute;
+      bottom: -3px;
+      right: -3px;
+      background: #1877f2;
+      color: #fff;
+      font-size: 8px;
+      line-height: 1;
+      padding: 1px 3px;
+      border-radius: 5px;
+      font-weight: 700;
+    }
+    .inbox-quick-reply-topic-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+      background: #eef0f2;
+      color: #8a8d91;
+      font-size: 12px;
+    }
+    .inbox-quick-reply-message {
+      max-width: 0; /* forces the ellipsis to respect the table's own column width, not content */
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted-text, #61738f);
+    }
+    .inbox-quick-reply-delete {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: none;
+      background: transparent;
+      color: #8a8d91;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      opacity: 0;
+    }
+    .inbox-quick-replies-list tbody tr:hover .inbox-quick-reply-delete {
+      opacity: 1;
+    }
+    .inbox-quick-reply-delete:hover {
+      background: #ffe3e0;
+      color: #c0392b;
+    }
+    .inbox-quick-replies-add {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px;
+    }
+    .inbox-quick-replies-add input[type="text"],
+    .inbox-quick-replies-add textarea {
+      padding: 6px 9px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-family: inherit;
+      resize: vertical;
+    }
+    .inbox-quick-replies-add input[type="file"] {
+      font-size: 11.5px;
     }
     .inbox-reply-error {
       padding: 0 14px 10px;
+    }
+
+    /* Per direct request: the whole inbox fits within one viewport, no outer page scroll - each
+       column manages its own internal scroll instead (list/thread already did per-column via
+       max-height; this makes them fill the EXACT remaining space below the header/toolbar,
+       whatever that is, rather than a guessed 80vh/50vh that leaves a gap or gets cut off).
+       Scoped to wider screens only - at the 800px breakpoint above, the grid collapses to a single
+       stacked column, where a fixed-height/no-scroll shell would make the page unusable instead of
+       just scrolling normally, so mobile keeps the original page-scroll behavior. */
+    @media (min-width: 801px) {
+      html, body {
+        height: 100%;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #topnav {
+        flex-shrink: 0;
+      }
+      .page {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+      #inboxContent {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .toolbar {
+        flex-shrink: 0;
+      }
+      .inbox-grid {
+        flex: 1;
+        min-height: 0;
+      }
+      .inbox-list-wrap,
+      .inbox-customer-card {
+        max-height: none;
+        height: 100%;
+      }
+      .inbox-thread-card {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .inbox-thread-header,
+      .inbox-reply-error,
+      .inbox-reply-row {
+        flex-shrink: 0;
+      }
+      .inbox-thread-messages {
+        flex: 1;
+        max-height: none;
+      }
     }
   </style>
 </head>
@@ -426,9 +1267,6 @@
   <div id="topnav"></div>
 
   <div class="page">
-    <h1>GMA Conversations</h1>
-    <p class="muted">Our own inbox for the Facebook Messenger AI bot's conversations - no Pancake involved, same Messenger page underneath. Pause a conversation to stop the bot and reply yourself right here, or leave it running and just keep an eye on things. Only visible to super users.</p>
-
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
@@ -441,11 +1279,18 @@
     <div id="inboxContent" class="hidden">
       <div class="toolbar">
         <button class="btn btn-secondary btn-sm" id="refreshInboxBtn" type="button">Refresh</button>
+        <button class="btn btn-secondary btn-sm" id="importHistoryBtn" type="button">Import Facebook History</button>
+        <span id="importHistoryStatus" class="muted hidden"></span>
       </div>
 
       <div class="inbox-grid">
-        <div class="inbox-list-card" id="conversationListEl">
-          <div class="inbox-empty-state">Loading conversations...</div>
+        <div class="inbox-list-wrap">
+          <div class="inbox-list-search">
+            <input type="text" id="conversationSearchInput" placeholder="Search conversations..." />
+          </div>
+          <div class="inbox-list-card" id="conversationListEl">
+            <div class="inbox-empty-state">Loading conversations...</div>
+          </div>
         </div>
 
         <div class="inbox-thread-card">
@@ -455,14 +1300,161 @@
           <div class="inbox-thread-messages" id="threadMessagesEl"></div>
           <div id="replyErrorEl" class="inbox-reply-error error-text hidden"></div>
           <div class="inbox-reply-row hidden" id="replyRowEl">
+            <div class="inbox-quick-replies-panel hidden" id="quickRepliesPanel">
+              <div class="inbox-quick-replies-header">
+                <span>Quick reply template</span>
+                <button type="button" class="inbox-quick-replies-manage-btn" id="manageQuickRepliesBtn" title="Manage quick replies">
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M13.5 2.5 17 6l-9.5 9.5-4 1 1-4Z" stroke-linejoin="round" stroke-linecap="round" />
+                  </svg>
+                </button>
+              </div>
+              <div class="inbox-quick-replies-list" id="quickRepliesList">
+                <div class="inbox-empty-state">Loading...</div>
+              </div>
+              <div class="inbox-quick-replies-add">
+                <input type="text" id="newQuickReplyLabel" placeholder="Label (e.g. Thank you)" />
+                <textarea id="newQuickReplyText" rows="2" placeholder="Message to send (optional if you attach a photo)..."></textarea>
+                <input type="file" id="newQuickReplyImage" accept="image/png,image/jpeg,image/webp,image/gif" />
+                <div id="quickRepliesAddError" class="error-text hidden"></div>
+                <button class="btn btn-secondary btn-sm" id="addQuickReplyBtn" type="button">+ Add Quick Reply</button>
+              </div>
+            </div>
+            <div class="inbox-product-lookup-panel hidden" id="productLookupPanel">
+              <div class="inbox-quick-replies-header"><span>Product list</span></div>
+              <div class="inbox-product-lookup-search">
+                <input type="text" id="productLookupSearchInput" placeholder="Search products..." />
+              </div>
+              <div class="inbox-product-lookup-list" id="productLookupList">
+                <div class="inbox-empty-state">Type to search products...</div>
+              </div>
+              <div class="inbox-product-lookup-footer">
+                <span class="muted" id="productLookupSelectedCount">0 selected</span>
+                <button type="button" class="btn btn-primary btn-sm" id="sendProductListBtn">Send</button>
+              </div>
+            </div>
+            <div class="inbox-media-library-panel hidden" id="mediaLibraryPanel">
+              <div class="inbox-quick-replies-header">
+                <span>Media library</span>
+                <button type="button" class="btn btn-secondary btn-sm" id="addMediaLibraryBtn" style="margin-left:auto;">+ Add</button>
+              </div>
+              <input type="file" id="mediaLibraryFileInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime" multiple class="hidden" />
+              <div id="mediaLibraryError" class="error-text hidden" style="padding:0 10px;"></div>
+              <div class="inbox-media-library-grid" id="mediaLibraryGrid">
+                <div class="inbox-empty-state">Loading...</div>
+              </div>
+              <div class="inbox-product-lookup-footer">
+                <span class="muted" id="mediaLibrarySelectedCount">0 selected</span>
+                <button type="button" class="btn btn-primary btn-sm" id="useMediaLibrarySelectionBtn">Add to reply</button>
+              </div>
+            </div>
+            <div class="inbox-reply-pending-attachment hidden" id="pendingAttachmentEl">
+              <div class="inbox-reply-pending-thumbs" id="pendingAttachmentList"></div>
+              <span>Attached - will send with this reply</span>
+            </div>
             <textarea id="replyInput" rows="2" placeholder="Type a reply to send on Messenger..."></textarea>
-            <button class="btn btn-primary" id="sendReplyBtn" type="button">Send</button>
+            <div class="inbox-reply-toolbar">
+              <input type="file" id="attachmentFileInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime" multiple class="hidden" />
+              <button type="button" class="inbox-icon-btn" id="toggleAttachmentBtn" data-tooltip="Attach photo">
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M13.5 5.5 7.8 11.2a2.5 2.5 0 0 0 3.54 3.54l6.2-6.2a4.5 4.5 0 1 0-6.36-6.37L4.9 8.46a6.5 6.5 0 0 0 9.19 9.19" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button type="button" class="inbox-icon-btn" id="toggleMediaLibraryBtn" data-tooltip="Media library">
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke-linejoin="round" />
+                  <circle cx="7" cy="8" r="1.4" />
+                  <path d="M3 14.5 7.5 10l3 3 2.5-2.5 4 4" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button type="button" class="inbox-icon-btn" id="toggleProductLookupBtn" data-tooltip="Product list">
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M3 6.5 10 3l7 3.5-7 3.5-7-3.5Z" stroke-linejoin="round" stroke-linecap="round" />
+                  <path d="M3 6.5v7L10 17l7-3.5v-7" stroke-linejoin="round" stroke-linecap="round" />
+                  <path d="M10 10v7" stroke-linecap="round" />
+                </svg>
+              </button>
+              <button type="button" class="inbox-icon-btn" id="toggleQuickRepliesBtn" data-tooltip="Quick reply">
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M2 9.5C2 5.36 5.36 2 9.5 2S17 5.36 17 9.5 13.64 17 9.5 17c-1.02 0-1.99-.2-2.87-.58L3 17.5l1.1-3.4A7.44 7.44 0 0 1 2 9.5Z" stroke-linejoin="round" />
+                  <path d="M6.3 9.5h.01M9.5 9.5h.01M12.7 9.5h.01" stroke-linecap="round" />
+                </svg>
+              </button>
+              <button type="button" class="inbox-icon-btn inbox-like-btn" id="likeBtn" data-tooltip="Send a like">
+                <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M6.5 8.5v9H3.8a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6.5Zm0 0 3.2-6.1a1.8 1.8 0 0 1 3.36 1.14L12 7h3.2a2 2 0 0 1 1.94 2.5l-1.8 6.2A2 2 0 0 1 13.4 17.2H9A2.5 2.5 0 0 1 6.5 14.7V8.5Z" stroke-linejoin="round" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
         <div class="inbox-customer-card" id="customerPanelEl">
           <div class="inbox-empty-state">Select a conversation to look up orders.</div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Quick Replies - the pencil in the popover header opens this: the full list with
+       Edit/Delete per row plus an add/edit form, since the popover itself only supports quick add +
+       click-to-send (no way to edit an existing entry's label/message/photo there). -->
+  <div class="modal-backdrop hidden" id="manageQuickRepliesModal">
+    <div class="modal-panel manage-quick-replies-panel">
+      <div class="toolbar">
+        <h2>Manage Quick Replies</h2>
+        <button class="btn btn-secondary btn-sm" id="closeManageQuickRepliesBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+
+      <div class="manage-quick-reply-form">
+        <h3 id="manageQrFormTitle">Add Quick Reply</h3>
+        <input type="text" id="manageQrLabel" placeholder="Label (e.g. Thank you)" />
+        <textarea id="manageQrMessage" rows="3" placeholder="Message to send (optional if you attach a photo)..."></textarea>
+        <div class="manage-qr-image-row" id="manageQrImagesRow"></div>
+        <input type="file" id="manageQrImage" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
+        <div id="manageQrError" class="error-text hidden"></div>
+        <div class="manage-qr-form-actions">
+          <button type="button" class="btn btn-secondary btn-sm hidden" id="manageQrCancelEditBtn">Cancel Edit</button>
+          <button type="button" class="btn btn-primary btn-sm" id="manageQrSaveBtn">+ Add Quick Reply</button>
+        </div>
+      </div>
+
+      <!-- Confirmed Pancake's public API has no endpoint to list/export a page's saved Quick Reply
+           content (only a SEND endpoint exists - see supabase_debug_pancake_quick_reply_endpoints.
+           sql and https://developer.pancake.biz/#/), so getting them out of Pancake means copying
+           each one by hand - this at least lets several be pasted in and created at once instead of
+           one form submission per item. Text only; a photo still needs the form above, per entry. -->
+      <div class="manage-qr-bulk-import">
+        <button type="button" class="btn btn-secondary btn-sm" id="toggleBulkImportBtn">Bulk Import (paste multiple at once)</button>
+        <div class="manage-qr-bulk-import-body hidden" id="bulkImportBody">
+          <p class="muted" style="font-size:12px; margin:0;">Paste one or more below - separate each entry with a line containing just <code>---</code>:</p>
+          <pre class="manage-qr-bulk-import-example">Label: OrderPolicy
+Message: Your message text here, can
+span multiple lines.
+---
+Label: Thank you
+Message: Thank you for reaching out!</pre>
+          <textarea id="bulkImportText" rows="8" placeholder="Label: ...
+Message: ...
+---
+Label: ...
+Message: ..."></textarea>
+          <div id="bulkImportError" class="error-text hidden"></div>
+          <div id="bulkImportSuccess" class="hidden"></div>
+          <div class="manage-qr-form-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="cancelBulkImportBtn">Cancel</button>
+            <button type="button" class="btn btn-primary btn-sm" id="runBulkImportBtn">Import All</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap manage-quick-replies-table-wrap">
+        <table>
+          <thead>
+            <tr><th></th><th>Shortcut</th><th>Photo</th><th>Message</th><th></th></tr>
+          </thead>
+          <tbody id="manageQuickRepliesList"></tbody>
+        </table>
       </div>
     </div>
   </div>

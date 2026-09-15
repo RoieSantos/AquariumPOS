@@ -1,0 +1,20 @@
+-- Supports supabase/functions/facebook-conversations-backfill - a manual, admin-triggered, one-
+-- time (safe to re-run) import of conversation history that already exists on the RSPetStop GMA
+-- Facebook Page from BEFORE facebook-messenger-webhook existed, or from customers who weren't
+-- added as a Tester during Meta App Review (see chat history around 2026-09-14: while the app is
+-- in Development Mode, the live webhook only fires for people with a role on the app - this
+-- backfill is the "catch up on everyone else, once Advanced Access is approved" path).
+--
+-- No new tables/columns needed - this reuses ChatbotConversations/ChatbotMessages exactly as they
+-- are (see supabase_chatbot_conversations_tables.sql, supabase_chatbot_message_attachments.sql),
+-- deduping on the same "FacebookMessageId" unique index the live webhook already relies on, so
+-- re-running the backfill (or overlapping with messages the live webhook has already captured)
+-- never creates duplicates.
+--
+-- The only SQL-side change: is_admin_authorized() (supabase_staff_users_table.sql) already exists
+-- and already re-verifies the caller's username+password against StaffUsers - it just wasn't
+-- previously callable directly from an Edge Function (every other caller only used it INSIDE
+-- another SECURITY DEFINER function). Grant it to anon so facebook-conversations-backfill can use
+-- it as a lightweight auth check before doing any Graph API work, same trust tier as every other
+-- admin_*-gated feature in this codebase (password re-verified on every call, no stored session).
+grant execute on function public.is_admin_authorized(text, text) to anon;

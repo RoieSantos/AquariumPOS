@@ -425,6 +425,11 @@
             <option>Black</option>
           </select>
         </div>
+
+        <div class="field">
+          <label for="quantity">Quantity</label>
+          <input id="quantity" type="number" value="1" min="1" step="1">
+        </div>
       </section>
 
       <section class="card">
@@ -459,6 +464,7 @@
           <div class="field">
             <label for="standHeightOverride">Height Override (in, 0 = Auto)</label>
             <input id="standHeightOverride" type="number" value="0" min="0" step="0.01">
+            <div id="standHeightInfo" class="summary-small" style="margin-top: 4px;">Total height: -</div>
           </div>
 
           <div class="field">
@@ -512,6 +518,11 @@
             </select>
           </div>
 
+          <div class="field">
+            <label for="sumpQuantity">Sump Quantity</label>
+            <input id="sumpQuantity" type="number" value="1" min="1" step="1">
+          </div>
+
           <div class="checkbox-stack">
             <label class="checkbox-row"><input id="piping" type="checkbox">Set of Piping</label>
             <label class="checkbox-row"><input id="overflowBox" type="checkbox">Overflow Box</label>
@@ -523,19 +534,31 @@
         </div>
 
         <div id="sumpPriceInputs" class="hidden" style="margin-top: 12px;">
-          <div class="field">
-            <label for="lightItemSelect">Light Item</label>
-            <select id="lightItemSelect">
-              <option value="0">Loading items...</option>
-            </select>
-            <input id="lightPrice" type="hidden" value="0">
+          <div class="inline-field">
+            <div class="field">
+              <label for="lightItemSelect">Light Item</label>
+              <select id="lightItemSelect">
+                <option value="0">Loading items...</option>
+              </select>
+              <input id="lightPrice" type="hidden" value="0">
+            </div>
+            <div class="field">
+              <label for="lightQuantity">Qty</label>
+              <input id="lightQuantity" type="number" value="1" min="1" step="1">
+            </div>
           </div>
-          <div class="field">
-            <label for="pumpItemSelect">Pump Item</label>
-            <select id="pumpItemSelect">
-              <option value="0">Loading items...</option>
-            </select>
-            <input id="pumpPrice" type="hidden" value="0">
+          <div class="inline-field">
+            <div class="field">
+              <label for="pumpItemSelect">Pump Item</label>
+              <select id="pumpItemSelect">
+                <option value="0">Loading items...</option>
+              </select>
+              <input id="pumpPrice" type="hidden" value="0">
+            </div>
+            <div class="field">
+              <label for="pumpQuantity">Qty</label>
+              <input id="pumpQuantity" type="number" value="1" min="1" step="1">
+            </div>
           </div>
         </div>
       </section>
@@ -694,8 +717,110 @@
       lastAutoNoticeSignature: ''
     };
 
+    // Tracks Sump Type/enabled across enforceOptionRules calls so the Sump Dimensions default
+    // fill (see enforceOptionRules below) only fires right when Filtration sump gets checked or
+    // its Type is switched - not on every unrelated field edit, which used to fight the user's own
+    // typing in Sump Length/Width/Height and make those fields effectively read-only.
+    var sumpAutoFillState = {
+      sumpEnabled: false,
+      sumpType: null
+    };
+
     function byId(id) {
       return document.getElementById(id);
+    }
+
+    // Quantity is a pure display/order multiplier, same as stand.html's own #qty - the pricing
+    // engine (calculateCustomAquarium) always prices a single aquarium; every price shown to
+    // staff/customer multiplies that by this.
+    function getAquariumQuantity() {
+      return Math.max(1, Math.round(Number(byId('quantity').value) || 1));
+    }
+
+    // How many sump units are in the quote (e.g. two identical sumps servicing one large tank).
+    // Only meaningful while Filtration sump is enabled - see computeQuotedTotal below for how it
+    // combines with the aquarium Quantity above.
+    function getSumpQuantity() {
+      return Math.max(1, Math.round(Number(byId('sumpQuantity').value) || 1));
+    }
+
+    // How many of the selected Light/Pump item go into ONE sump (e.g. two submersible lights per
+    // sump). buildPayload folds this straight into the flat lightPrice/pumpPrice total it sends
+    // the pricing engine (see below), so a sump with 2 lights already prices as 2x the item's own
+    // price - and since Sump Quantity above multiplies the whole sump (marginal cost, lights/pumps
+    // included), N sumps x M lights each composes correctly with no extra wiring.
+    function getLightQuantity() {
+      return Math.max(1, Math.round(Number(byId('lightQuantity').value) || 1));
+    }
+
+    function getPumpQuantity() {
+      return Math.max(1, Math.round(Number(byId('pumpQuantity').value) || 1));
+    }
+
+    // The sump's own cost isn't a clean standalone number the way the Stand's is - sumpGlass and
+    // several other sump components get folded into calculatedPrice BEFORE the
+    // Undersump/Overhead/AIO/Low Iron multipliers apply (see calculateCustomAquarium), so a naive
+    // sum of result.components would under-count what an extra sump actually costs. Getting the
+    // true marginal cost of ONE sump means diffing against the same build with the sump switched
+    // off - cheap since calculateCustomAquarium is a pure, synchronous, already-loaded-pricing
+    // calculation, just called twice.
+    function computeSumpUnitPrice(result, payload) {
+      if (!result || !result.ok || !payload.filtrationSump || !payload.filtrationSump.enabled) {
+        return { sumpUnitPrice: 0, baseTotalPrice: result && result.ok ? result.totalPrice : 0 };
+      }
+
+      var noSumpPayload = Object.assign({}, payload, {
+        filtrationSump: Object.assign({}, payload.filtrationSump, { enabled: false })
+      });
+      var noSumpResult = window.CustomAquariumCalculator.calculateCustomAquarium(noSumpPayload);
+
+      if (!noSumpResult || !noSumpResult.ok) {
+        // Option === 'Complete setup' forces hasFiltrationSump true regardless of the enabled
+        // flag, so the "no sump" recalculation still includes it and the diff comes out 0 - sump
+        // is a mandatory part of that bundle, not something Sump Quantity can multiply.
+        return { sumpUnitPrice: 0, baseTotalPrice: result.totalPrice };
+      }
+
+      return { sumpUnitPrice: result.totalPrice - noSumpResult.totalPrice, baseTotalPrice: noSumpResult.totalPrice };
+    }
+
+    // Combines the aquarium Quantity (#quantity) and Sump Quantity (#sumpQuantity) multipliers
+    // into the final quoted total: the per-aquarium price already includes exactly one sump (as
+    // priced by calculateCustomAquarium), so each additional sump adds sumpUnitPrice, and the
+    // whole per-aquarium assembly (aquarium + all its sumps + stand) is then multiplied by how
+    // many aquariums are in the quote.
+    function computeQuotedTotal(result) {
+      var aquariumQty = getAquariumQuantity();
+      // Sump Quantity only has an effect while a sump is actually part of this build - otherwise
+      // it's an inert leftover form value (the field doesn't reset itself when Filtration sump
+      // gets unchecked) and must not appear in the price breakdown text at all.
+      var sumpEnabled = Boolean(result.normalized && result.normalized.sump);
+      var sumpQty = sumpEnabled ? getSumpQuantity() : 1;
+      var sumpUnitPrice = result.sumpUnitPrice || 0;
+      var baseTotal = typeof result.sumpBaseTotalPrice === 'number' ? result.sumpBaseTotalPrice : result.totalPrice;
+      var perAquariumTotal = baseTotal + sumpUnitPrice * sumpQty;
+
+      return {
+        aquariumQty: aquariumQty,
+        sumpQty: sumpQty,
+        sumpEnabled: sumpEnabled,
+        sumpUnitPrice: sumpUnitPrice,
+        perAquariumTotal: perAquariumTotal,
+        grandTotal: perAquariumTotal * aquariumQty
+      };
+    }
+
+    // Short suffix for the price line/alerts, e.g. " (2400.00 x 4 aquariums, 300.00 x 2 sumps
+    // each)" - omitted entirely when both quantities are 1 so the common case stays unchanged.
+    function formatQuoteBreakdown(q) {
+      var parts = [];
+      if (q.aquariumQty > 1) {
+        parts.push(q.perAquariumTotal.toFixed(2) + ' x ' + q.aquariumQty + ' aquariums');
+      }
+      if (q.sumpEnabled && q.sumpQty > 1) {
+        parts.push(q.sumpUnitPrice.toFixed(2) + ' x ' + q.sumpQty + ' sumps' + (q.aquariumQty > 1 ? ' each' : ''));
+      }
+      return parts.length > 0 ? ' (' + parts.join(', ') + ')' : '';
     }
 
     function stickerTypeValue(id) {
@@ -863,16 +988,33 @@
           ruleNoticeState.lowIronGlassAutoFix = false;
         }
 
-        byId('sumpUnit').value = byId('unit').value;
-
         if (sumpEnabled.checked) {
           var sumpType = byId('sumpType').value;
-          var sumpDefault = convertInchesToSelectedUnit(sumpType === 'Undersump' ? 18 : 6, byId('sumpUnit').value);
-          trySetFieldValue('sumpWidth', sumpDefault);
-          trySetFieldValue('sumpHeight', sumpDefault);
-          if (sumpType === 'Overhead Sump') {
-            byId('sumpLength').value = byId('length').value;
+          // Only pre-fill Sump Dimensions with the standard size right when Filtration sump gets
+          // checked or its Type is switched - once the sump is up and running, the user is free to
+          // type their own Length/Width/Height without every keystroke elsewhere reverting them.
+          var sumpJustEnabled = !sumpAutoFillState.sumpEnabled;
+          var sumpTypeJustChanged = sumpAutoFillState.sumpEnabled && sumpAutoFillState.sumpType !== sumpType;
+
+          if (sumpJustEnabled || sumpTypeJustChanged) {
+            var sumpDefault = convertInchesToSelectedUnit(sumpType === 'Undersump' ? 18 : 6, byId('sumpUnit').value);
+            trySetFieldValue('sumpWidth', sumpDefault);
+            trySetFieldValue('sumpHeight', sumpDefault);
+            if (sumpType === 'Overhead Sump') {
+              // Sump has its own independent Unit of Measure (#sumpUnit) - convert through inches
+              // rather than copying the raw value, since a straight copy would silently
+              // misinterpret the aquarium's length as being in the sump's unit whenever the two
+              // differ (e.g. an aquarium in Inches with a sump set to CM).
+              var aquariumLengthInches = window.CustomAquariumCalculator.toInches(byId('length').value, byId('unit').value);
+              byId('sumpLength').value = convertInchesToSelectedUnit(aquariumLengthInches, byId('sumpUnit').value);
+            }
           }
+
+          sumpAutoFillState.sumpEnabled = true;
+          sumpAutoFillState.sumpType = sumpType;
+        } else {
+          sumpAutoFillState.sumpEnabled = false;
+          sumpAutoFillState.sumpType = null;
         }
       } finally {
         suppressUiSync = false;
@@ -1238,8 +1380,8 @@
           piping: byId('piping').checked,
           overflowBox: byId('overflowBox').checked,
           allumTopCover: byId('allumTopCover').checked,
-          lightPrice: byId('submersibleLight').checked ? byId('lightPrice').value : 0,
-          pumpPrice: byId('submersiblePump').checked ? byId('pumpPrice').value : 0
+          lightPrice: byId('submersibleLight').checked ? (Number(byId('lightPrice').value) || 0) * getLightQuantity() : 0,
+          pumpPrice: byId('submersiblePump').checked ? (Number(byId('pumpPrice').value) || 0) * getPumpQuantity() : 0
         },
         stand: {
           enabled: byId('standEnabled').checked,
@@ -1342,13 +1484,18 @@
         return;
       }
 
+      var q = computeQuotedTotal(result);
+
       volumeLine.innerHTML = '<strong>Volume:</strong> ' + result.gallons.toFixed(1) + ' gallons';
-      priceLine.innerHTML = '<strong>Price:</strong> ' + result.totalPrice.toFixed(2);
+      priceLine.innerHTML = '<strong>Price:</strong> ' + q.grandTotal.toFixed(2) + formatQuoteBreakdown(q);
       dimensionsLine.textContent = 'Dimensions (in): L: ' + result.normalized.lengthInches.toFixed(1) + ' x W: ' + result.normalized.widthInches.toFixed(1) + ' x H: ' + result.normalized.heightInches.toFixed(1);
       if (result.normalized.stand && result.normalized.stand.enabled) {
         byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in | Footing: ' + result.normalized.stand.footingInches.toFixed(1) + ' in';
+        var heightIsOverride = Number(byId('standHeightOverride').value) > 0;
+        byId('standHeightInfo').textContent = 'Total height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in' + (heightIsOverride ? ' (override)' : ' (auto, from layers/tubular)');
       } else {
         byId('standInfo').textContent = 'Stand uses the aquarium length and width as its footprint.';
+        byId('standHeightInfo').textContent = 'Total height: -';
       }
       renderSafetyBanner(result);
     }
@@ -1376,12 +1523,18 @@
       if (byId('lowIron').checked) glassBits.push('Low Iron');
       if (n.rimless) glassBits.push('Rimless');
 
+      var q = computeQuotedTotal(result);
+
       var rows = [
         ['Build type', n.option],
         ['Dimensions (in)', 'L: ' + n.lengthInches.toFixed(1) + ' x W: ' + n.widthInches.toFixed(1) + ' x H: ' + n.heightInches.toFixed(1)],
         ['Volume', result.gallons.toFixed(1) + ' gallons'],
         ['Glass', glassBits.join(', ')]
       ];
+
+      if (q.aquariumQty > 1) {
+        rows.push(['Quantity', String(q.aquariumQty)]);
+      }
 
       if (byId('sealant').value) {
         rows.push(['Sealant', byId('sealant').value]);
@@ -1404,11 +1557,16 @@
         if (byId('piping').checked) sumpExtras.push('Set of piping');
         if (byId('overflowBox').checked) sumpExtras.push('Overflow box');
         if (byId('filterMedias').checked) sumpExtras.push('Filter medias' + (n.sump.filterMediaKg ? ' (' + n.sump.filterMediaKg + ' kg)' : ''));
-        if (byId('submersibleLight').checked) sumpExtras.push('Submersible light');
-        if (byId('submersiblePump').checked) sumpExtras.push('Submersible pump');
+        if (byId('submersibleLight').checked) sumpExtras.push('Submersible light' + (getLightQuantity() > 1 ? ' x' + getLightQuantity() : ''));
+        if (byId('submersiblePump').checked) sumpExtras.push('Submersible pump' + (getPumpQuantity() > 1 ? ' x' + getPumpQuantity() : ''));
         if (byId('allumTopCover').checked) sumpExtras.push('Allum top cover');
         if (sumpExtras.length > 0) {
           rows.push(['Sump Includes', sumpExtras.join(', ')]);
+        }
+
+        if (q.sumpQty > 1) {
+          rows.push(['Sump Quantity', String(q.sumpQty)]);
+          rows.push(['Sump Price (per sump)', q.sumpUnitPrice.toFixed(2)]);
         }
       }
 
@@ -1440,7 +1598,7 @@
       if (n.stand) {
         rows.push(['Stand Price', c.stand.toFixed(2)]);
       }
-      rows.push(['Total Price', result.totalPrice.toFixed(2)]);
+      rows.push(['Total Price', q.grandTotal.toFixed(2) + formatQuoteBreakdown(q)]);
 
       host.innerHTML = rows.map(function (r) {
         return '<div><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
@@ -1637,7 +1795,13 @@
         enforceOptionRules(false);
         setVisibilityState();
         await ensureGlassPricingLoaded();
-        var result = window.CustomAquariumCalculator.calculateCustomAquarium(buildPayload());
+        var payload = buildPayload();
+        var result = window.CustomAquariumCalculator.calculateCustomAquarium(payload);
+        if (result && result.ok) {
+          var sumpPricing = computeSumpUnitPrice(result, payload);
+          result.sumpUnitPrice = sumpPricing.sumpUnitPrice;
+          result.sumpBaseTotalPrice = sumpPricing.baseTotalPrice;
+        }
         lastResult = result;
         syncCalculatedStateToUi(result, Boolean(showAlerts));
         renderSummary(result);
@@ -1661,10 +1825,10 @@
         });
 
       [
-        'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
+        'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
         'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
-        'sumpUnit', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
-        'pumpPrice', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
+        'sumpUnit', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
+        'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
         var eventName = byId(id).tagName === 'INPUT' && (byId(id).type === 'number' || byId(id).type === 'text' || byId(id).tagName === 'TEXTAREA')
           ? 'input'
@@ -1674,10 +1838,6 @@
           setVisibilityState();
           calculateAquarium(true);
         });
-      });
-
-      byId('unit').addEventListener('change', function () {
-        byId('sumpUnit').value = byId('unit').value;
       });
 
       byId('lightItemSelect').addEventListener('change', function () {
@@ -1700,7 +1860,9 @@
           return;
         }
 
-        window.alert('Web demo only. Add to sale would use the current total: ' + lastResult.totalPrice.toFixed(2));
+        var q = computeQuotedTotal(lastResult);
+        var totalText = q.grandTotal.toFixed(2) + formatQuoteBreakdown(q);
+        window.alert('Web demo only. Add to sale would use the current total: ' + totalText);
       });
     }
 
