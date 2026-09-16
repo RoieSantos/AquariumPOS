@@ -726,9 +726,22 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'save_customer_info',
+    description:
+      'Saves whatever the customer just told you about themselves (name and/or phone number and/or address) to their permanent customer record for this Page - independent of placing an order. Call this AS SOON AS the customer gives you any of these, even if they are just chatting and haven\'t ordered anything yet (e.g. they type their name because you asked, or mention their address in passing) - don\'t wait for create_order to be the only place this gets saved. Pass only the field(s) they actually just gave; never guess or invent a value for a field they didn\'t mention.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The customer\'s name, exactly as they gave it (or confirmed using their Facebook name).' },
+        phone: { type: 'string', description: 'A valid PH mobile number, e.g. 09171234567.' },
+        address: { type: 'string', description: 'Their home/delivery address.' }
+      }
+    }
+  },
+  {
     name: 'create_order',
     description:
-      'Places a REAL order for the customer, right now. Only ever call this after ALL of the following are true: (1) the customer has ALREADY sent proof of a downpayment or full payment (a payment screenshot - check the conversation for a prior message acknowledging one; never on a verbal promise to pay later), (2) you know exactly which items and quantities they want, using ONLY item_code values returned by a prior search_items or list_items_in_category call - never invent, guess, or reuse a code from a different conversation, (3) you have a name for them (offer to use CUSTOMER\'S FACEBOOK NAME if it\'s known - see the system prompt - rather than always asking them to type it), a valid PH mobile number, and their address (never ask "pickup or delivery" - just ask for the address to save; always pass fulfillment_type as Delivery). Ask for whatever is still missing before calling this, do not guess it. Also never call this if the conversation shows an order was already placed/created earlier - there can only be one order per conversation; if one already exists, tell the customer staff already have their order and will confirm shortly instead of calling this again. After a successful call, tell the customer their order number and that staff will review and confirm it shortly - do NOT invent your own itemized receipt text, the system sends that separately.',
+      'Places a REAL order for the customer, right now. Only ever call this after ALL of the following are true: (1) the customer has ALREADY sent proof of a downpayment or full payment (a payment screenshot - check the conversation for a prior message acknowledging one; never on a verbal promise to pay later), (2) you know exactly which items and quantities they want, using ONLY item_code values returned by a prior search_items or list_items_in_category call - never invent, guess, or reuse a code from a different conversation, (3) you have a name for them (offer to use CUSTOMER\'S FACEBOOK NAME if it\'s known - see the system prompt - rather than always asking them to type it), a valid PH mobile number, and their address (never ask "pickup or delivery" - just ask for the address to save; always pass fulfillment_type as Delivery). Ask for whatever is still missing before calling this, do not guess it. See the PLACING ORDERS system prompt rules for whether this is a second/new order for a conversation that already has one. After a successful call, tell the customer their order number (and Online Order ID - see PLACING ORDERS) and that staff will review and confirm it shortly - do NOT invent your own itemized receipt text, the system sends that separately.',
     input_schema: {
       type: 'object',
       properties: {
@@ -740,17 +753,19 @@ export const TOOLS: Anthropic.Tool[] = [
         location: { type: 'string', enum: ['Amaya', 'GMA'], description: 'Which branch fulfills this order. Ask if not already clear; defaults to Amaya if you truly cannot tell.' },
         items: {
           type: 'array',
-          description: 'One entry per distinct item. item_code MUST come from a prior search_items or list_items_in_category result in THIS conversation - never invented.',
+          description: 'One entry per distinct item. item_code MUST come from a prior search_items or list_items_in_category result in THIS conversation - never invented - EXCEPT for a custom-built aquarium/stand, which has no real catalog price: use the literal item_code "CUSTOM-AQUARIUM" or "CUSTOM-STAND" for that line instead (see those fields\' own descriptions).',
           items: {
             type: 'object',
             properties: {
-              item_code: { type: 'string' },
-              quantity: { type: 'integer' }
+              item_code: { type: 'string', description: 'A real catalog code from search_items/list_items_in_category, OR the literal string "CUSTOM-AQUARIUM"/"CUSTOM-STAND" for a custom-built one (never a made-up code).' },
+              quantity: { type: 'integer' },
+              custom_price: { type: 'number', description: 'REQUIRED when item_code is "CUSTOM-AQUARIUM" or "CUSTOM-STAND", ignored otherwise: the exact total price already confirmed with the customer from an earlier compute_aquarium_quote call in THIS conversation (aquariumDrawingUrl\'s totalPrice, or the stand-only price) - never a number you calculate, estimate, or round yourself.' },
+              notes: { type: 'string', description: 'Optional per-item note. REQUIRED when item_code is "CUSTOM-AQUARIUM" or "CUSTOM-STAND": the full build spec (dimensions, glass thickness, tempered/rimless, sealant color, stand tubular size/layers) exactly as confirmed with the customer - this is what tells staff/the workshop what to actually build, since the product tag alone doesn\'t carry it.' }
             },
             required: ['item_code', 'quantity']
           }
         },
-        notes: { type: 'string', description: 'Optional - anything else staff should know about this order.' }
+        notes: { type: 'string', description: 'Optional - anything else staff should know about this order as a whole (not item-specific - use each item\'s own notes for that).' }
       },
       required: ['customer_name', 'customer_phone', 'fulfillment_type', 'location', 'items']
     }
@@ -866,13 +881,20 @@ export function buildSystemPrompt(
     'WHAT IS OUT OF SCOPE:',
     '- Anything unrelated to the store (general trivia, coding help, medical/veterinary diagnosis). Politely decline and steer back to how you can help with the store.',
     '',
+    'CUSTOMER INFO (CRM):',
+    '- Whenever the customer tells you their name, contact number, and/or address - for ANY reason, not just while placing an order (e.g. you asked so you could pass it to staff, or they mention it in passing) - call save_customer_info right away with whatever field(s) they just gave. This keeps a permanent record so they don\'t have to repeat themselves next time they message. Don\'t wait for create_order to be the only place this gets saved, and don\'t call it with a guessed/invented value for something they didn\'t actually say.',
+    '',
+    'CONFIRMATION LANGUAGE:',
+    '- Never say "Confirmed" (or anything that reads like the order/purchase is confirmed) about a price, quote, dimension, or spec while you\'re still gathering details, before payment, or before create_order has actually been called - the customer hasn\'t confirmed an ORDER at that point, only a number or a choice. Reserve "Confirmed"/"confirmed order" wording strictly for the one real moment it happens: the customer\'s reply to your post-create_order receipt (see PLACING ORDERS below). While quoting or asking follow-up questions (like sealant color), acknowledge plainly instead, e.g. "Got it - that\'s ₱557.22 for the 22x12x10 3mm aquarium. Ano po sealant color..." NOT "Confirmed, ₱557.22...".',
+    '',
     'PLACING ORDERS:',
     '- You CAN place a real order yourself with the create_order tool, but ONLY once every one of these is true: the customer has confirmed the exact items and quantities they want (matched to real item_code values from a search_items or list_items_in_category result in THIS conversation - never invent or guess a code), you have a name, a valid PH mobile number, and an address for them, AND they have ALREADY sent proof of a downpayment or full payment (a payment screenshot) that this conversation has acknowledged. Ask for whatever is still missing rather than guessing or assuming.',
     '- Name: if CUSTOMER\'S FACEBOOK NAME is given below, ask the customer if you can just use that name for the order (e.g. "Can I use your Facebook name, {name}, for this order?") - if they say yes, use it as customer_name without asking them to type it out. If they say no, or no Facebook name is known, ask what name to use instead.',
     '- Address: never ask the customer whether this is "pickup or delivery" - just ask for their address so it can be saved on the order, then always pass fulfillment_type as Delivery.',
     '- Never call create_order on a verbal promise to pay "later" or "after" - only once payment proof has actually been sent and acknowledged earlier in this same conversation.',
     '- If the conversation already shows an existing order, don\'t assume a new payment or a new item discussion belongs to that same order OR is automatically a new one - ASK the customer which it is (e.g. "Is this for your existing order, or a new one?") and only call create_order for a second order after they clearly say it\'s a new/separate purchase. If they mean the existing order, don\'t call create_order at all - just let them know staff will apply it/follow up.',
-    '- After a successful create_order call, briefly tell the customer their order number and that staff will review and confirm it shortly - don\'t write your own itemized receipt, a separate detailed one may already be sent.',
+    '- A custom-built aquarium/stand (see the custom quote rules above) CAN go through create_order too, not just staff manual processing - it is NOT a reason to fall back to sharing payment details for manual handling. For that line, set item_code to the literal "CUSTOM-AQUARIUM" or "CUSTOM-STAND", custom_price to the EXACT total the customer already confirmed from your earlier compute_aquarium_quote call (never a number you calculate or round yourself), and notes to the full confirmed build spec (dimensions, unit, glass thickness, tempered/rimless, sealant color, and stand tubular size/layers if a stand is included) - that note is what tells staff/the workshop what to actually build, so never leave it vague or blank.',
+    '- After a successful create_order call, your reply IS the customer\'s receipt - there is no separate automatic message for this path, so compose all of the following yourself: (1) their order number AND, if the result\'s onlineOrderId is not null, their Online Order ID too (e.g. "Order No: AO-00008, Online Order ID: #91364") - if onlineOrderId is null, just share the order number, (2) a quick recap of what was ordered (items/qty) and the total, (3) the result\'s receiptUrl, introduced as their order receipt (e.g. "Here\'s your receipt: {receiptUrl}") - NEVER share a Pancake order_link, only this receiptUrl, (4) explicitly ask them to confirm everything above is correct, e.g. "Is everything correct? Reply YES to confirm." Do not skip the confirmation ask - staff treat that reply as the customer confirming the order.',
     '',
     'DISCOUNTS / PRICE CHANGES:',
     '- If a customer asks for a discount, a lower price, price matching, or otherwise tries to negotiate a price, politely decline yourself - do not escalate to staff for this alone. Explain, in your own friendly words, that all prices are system-generated and you don\'t have permission to apply a discount or change a price. Stay warm and helpful about everything else in the conversation - this is just a firm, final no on the price itself.',
@@ -1380,6 +1402,28 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       return JSON.stringify(await computeLalamoveQuote(supabase, input));
     case 'get_driver_location':
       return JSON.stringify(await computeDriverLocation(supabase, input));
+    case 'save_customer_info': {
+      const name = String(input.name ?? '').trim();
+      const phone = String(input.phone ?? '').trim();
+      const address = String(input.address ?? '').trim();
+      if (!name && !phone && !address) return 'Nothing to save - name, phone, and address were all empty.';
+
+      if (simulate) {
+        return `SANDBOX MODE - no real record was saved. If this were live, this would be saved to the customer record: ${JSON.stringify({ name: name || undefined, phone: phone || undefined, address: address || undefined })}`;
+      }
+
+      const update: Record<string, unknown> = {};
+      if (name) {
+        update.CustomerName = name;
+        update.CustomerNameSource = 'CustomerProvided';
+      }
+      if (phone) update.CustomerPhone = phone;
+      if (address) update.CustomerAddress = address;
+
+      const { error } = await supabase.from('ChatbotConversations').update(update).eq('Psid', psid);
+      if (error) return `Could not save that: ${error.message}`;
+      return 'Saved to the customer record.';
+    }
     case 'create_order': {
       const customerName = String(input.customer_name ?? '').trim();
       const customerPhoneRaw = String(input.customer_phone ?? '').trim();
@@ -1388,7 +1432,9 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const deliveryAddress = String(input.delivery_address ?? '').trim();
       const location = String(input.location ?? '').trim() || 'Amaya';
       const notes = String(input.notes ?? '').trim();
-      const items = Array.isArray(input.items) ? (input.items as Array<{ item_code?: string; quantity?: number }>) : [];
+      const items = Array.isArray(input.items)
+        ? (input.items as Array<{ item_code?: string; quantity?: number; custom_price?: number; notes?: string }>)
+        : [];
 
       if (!customerName) return 'Cannot place the order - customer_name is required. Ask the customer for it.';
       const phoneDigits = customerPhoneRaw.replace(/[^0-9]/g, '');
@@ -1421,30 +1467,96 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       // model - an AI-guessed item_code or price is exactly the kind of input that needs
       // independent server-side verification, same discipline as every other order-creation path
       // in this codebase (see sql/supabase_submit_automated_order_price_validation.sql's header).
-      const codes = [...new Set(items.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
-      if (codes.length === 0) return 'Cannot place the order - no valid item_code values were given.';
+      //
+      // EXCEPT a custom-built aquarium/stand ("CUSTOM-AQUARIUM"/"CUSTOM-STAND"), which has no real
+      // catalog price to verify against - its price comes from the customer-confirmed
+      // compute_aquarium_quote result already relayed in this conversation (custom_price), same
+      // trust level that tool's own number already carries. This line is still tagged to a REAL
+      // Items row (matching docs/js/orderNow.js's own customer-facing wizard convention - see
+      // ItemCode: null / CategoryCode: 'CUSTOM-AQUARIUM' there and _push_automated_order_to_pancake's
+      // Name-based fallback match), just with its price/spec supplied here instead of read from
+      // that row's own (placeholder) RetailPrice/Price.
+      const CUSTOM_ITEM_CODES = new Set(['CUSTOM-AQUARIUM', 'CUSTOM-STAND']);
+      const customItems = items.filter((it) => CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
+      const catalogCodedItems = items.filter((it) => !CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
 
-      const { data: catalogItems, error: itemsError } = await supabase
-        .from('Items')
-        .select('Code, Name, RetailPrice, Price, CategoryCode')
-        .in('Code', codes)
-        .eq('IsActive', true);
-      if (itemsError) return `Could not validate items: ${itemsError.message}`;
+      for (const it of customItems) {
+        const tag = String(it.item_code ?? '').trim().toUpperCase();
+        if (!(Number(it.custom_price) > 0)) {
+          return `Cannot place the order - ${tag} needs a custom_price greater than 0 (the total already confirmed via compute_aquarium_quote).`;
+        }
+        if (!String(it.notes ?? '').trim()) {
+          return `Cannot place the order - ${tag} needs a notes value with the full confirmed build spec (dimensions, glass thickness, etc.).`;
+        }
+      }
+
+      const codes = [...new Set(catalogCodedItems.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
+      if (codes.length === 0 && customItems.length === 0) return 'Cannot place the order - no valid item_code values were given.';
 
       type CatalogItem = { Code: string; Name: string; RetailPrice: number | null; Price: number | null; CategoryCode: string | null };
-      const catalogByCode = new Map<string, CatalogItem>((catalogItems ?? []).map((it: CatalogItem) => [it.Code, it]));
-      const unknownCodes = codes.filter((c) => !catalogByCode.has(c));
-      if (unknownCodes.length > 0) {
-        return `These item_code value(s) don't match a real, active catalog item: ${unknownCodes.join(', ')}. Use search_items or list_items_in_category to find the correct code - never invent one.`;
+      const catalogByCode = new Map<string, CatalogItem>();
+
+      if (codes.length > 0) {
+        const { data: catalogItems, error: itemsError } = await supabase
+          .from('Items')
+          .select('Code, Name, RetailPrice, Price, CategoryCode')
+          .in('Code', codes)
+          .eq('IsActive', true);
+        if (itemsError) return `Could not validate items: ${itemsError.message}`;
+        for (const it of (catalogItems ?? []) as CatalogItem[]) catalogByCode.set(it.Code, it);
+        const unknownCodes = codes.filter((c) => !catalogByCode.has(c));
+        if (unknownCodes.length > 0) {
+          return `These item_code value(s) don't match a real, active catalog item: ${unknownCodes.join(', ')}. Use search_items or list_items_in_category to find the correct code - never invent one.`;
+        }
+      }
+
+      // Sanity-check the two custom placeholder rows actually exist in the catalog (they back
+      // Items."Name" - see the block comment above) - a missing/renamed row should fail loudly
+      // here rather than silently producing an unmatched Pancake push later.
+      const customTagsNeeded = [...new Set(customItems.map((it) => String(it.item_code ?? '').trim().toUpperCase()))];
+      if (customTagsNeeded.length > 0) {
+        const { data: customCatalogRows, error: customItemsError } = await supabase
+          .from('Items')
+          .select('Name')
+          .in('Name', customTagsNeeded)
+          .eq('IsActive', true);
+        if (customItemsError) return `Could not validate items: ${customItemsError.message}`;
+        const foundNames = new Set((customCatalogRows ?? []).map((r: { Name: string }) => r.Name));
+        const missingTags = customTagsNeeded.filter((t) => !foundNames.has(t));
+        if (missingTags.length > 0) {
+          return `Cannot place the order - the catalog has no active "${missingTags.join('", "')}" product to tag a custom line to. Tell the customer staff will process this manually.`;
+        }
       }
 
       let estimatedTotal = 0;
       const orderLines = items.map((it) => {
-        const catalogItem = catalogByCode.get(String(it.item_code ?? '').trim())!;
+        const tag = String(it.item_code ?? '').trim().toUpperCase();
         const quantity = Math.max(1, Math.trunc(Number(it.quantity) || 1));
+
+        if (CUSTOM_ITEM_CODES.has(tag)) {
+          const price = Number(it.custom_price) || 0;
+          estimatedTotal += quantity * price;
+          return {
+            CategoryCode: tag,
+            ItemCode: null,
+            ItemName: tag === 'CUSTOM-STAND' ? 'Custom Stand' : 'Custom Aquarium',
+            Quantity: quantity,
+            Price: price,
+            Notes: String(it.notes ?? '').trim() || null
+          };
+        }
+
+        const catalogItem = catalogByCode.get(String(it.item_code ?? '').trim())!;
         const price = Number(catalogItem.RetailPrice ?? catalogItem.Price ?? 0);
         estimatedTotal += quantity * price;
-        return { CategoryCode: catalogItem.CategoryCode, ItemCode: catalogItem.Code, ItemName: catalogItem.Name, Quantity: quantity, Price: price };
+        return {
+          CategoryCode: catalogItem.CategoryCode,
+          ItemCode: catalogItem.Code,
+          ItemName: catalogItem.Name,
+          Quantity: quantity,
+          Price: price,
+          Notes: String(it.notes ?? '').trim() || null
+        };
       });
 
       const { data: orderNoData, error: orderNoError } = await supabase.rpc('_next_no_series_number', {
@@ -1471,6 +1583,15 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       });
       if (insertOrderError) return `Could not place the order: ${insertOrderError.message}`;
 
+      // Feeds the CRM too - a customer who goes straight to ordering without an earlier
+      // save_customer_info call still ends up on file for next time. Never raises past this
+      // point - a CRM write failure must not undo/block the order that was just placed. Address
+      // is only included when this order actually had one (Delivery) - a Pickup order leaves any
+      // previously-saved CRM address alone rather than clobbering it with null.
+      const crmUpdate: Record<string, unknown> = { CustomerName: customerName, CustomerNameSource: 'CustomerProvided', CustomerPhone: customerPhoneRaw };
+      if (fulfillmentType === 'Delivery' && deliveryAddress) crmUpdate.CustomerAddress = deliveryAddress;
+      await supabase.from('ChatbotConversations').update(crmUpdate).eq('Psid', psid);
+
       const { error: insertLinesError } = await supabase
         .from('AutomatedOrderLines')
         .insert(orderLines.map((l) => ({ ...l, OrderNo: orderNo })));
@@ -1483,16 +1604,32 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       await supabase.rpc('_push_automated_order_to_pancake', { p_order_no: orderNo });
       const { data: pushedOrder } = await supabase
         .from('AutomatedOrders')
-        .select('PancakeSyncStatus, PancakeSyncError')
+        .select('PancakeSyncStatus, PancakeSyncError, PancakeOrderId')
         .eq('OrderNo', orderNo)
         .maybeSingle();
+
+      // Marks this order as awaiting the customer's confirmation reply to the message you're about
+      // to send (see the PLACING ORDERS rule for what that message must contain) - the webhook's
+      // reply-interception logic (facebook-messenger-webhook/index.ts) picks up a later "yes" reply
+      // against this exact timestamp (same isAffirmativeReply/staleness-guard mechanism the
+      // deterministic payment-screenshot receipt already uses - sql/supabase_gma_conversation_
+      // receipt_confirmation.sql), so staff still see the "customer confirmed" badge in GMA
+      // Conversations even though THIS reply is composed by you, not the deterministic ack.
+      await supabase.from('AutomatedOrders').update({ ReceiptConfirmationRequestedAtUtc: new Date().toISOString() }).eq('OrderNo', orderNo);
 
       return JSON.stringify({
         ok: true,
         orderNo,
         estimatedTotal,
         pancakeSyncStatus: pushedOrder?.PancakeSyncStatus ?? null,
-        pancakeSyncError: pushedOrder?.PancakeSyncError ?? null
+        pancakeSyncError: pushedOrder?.PancakeSyncError ?? null,
+        // The customer-facing "Online Order ID" (e.g. "91364") - share THIS alongside orderNo, not
+        // orderNo alone, per direct instruction. Null if the push above failed/hasn't resolved yet.
+        onlineOrderId: pushedOrder?.PancakeOrderId ?? null,
+        // Portal-rendered receipt (docs/online-order-receipt.html), NOT Pancake's own order_link -
+        // per direct decision, never share that. See the PLACING ORDERS rule - share this AND ask
+        // for confirmation in your reply, don't just mention the order number.
+        receiptUrl: `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`
       });
     }
     case 'schedule_follow_up': {
