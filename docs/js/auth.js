@@ -102,7 +102,8 @@ const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-li
 // Same exclusive-lockdown shape as Delivery Team/Online Order Staff, but broader - per "Store
 // manager, This permission can access Delivery calendar, Payslips, Serial tracker, inventory
 // Summary, Stock on hand, Transfer Orders, Calculators, online Orders, Automated Orders"
-// (supabase_staff_users_store_manager_field.sql). Unlike the two single-page roles above, this
+// (supabase_staff_users_store_manager_field.sql) - later extended to also include Delivery Quote
+// per "can you show the Delivery Quote too". Unlike the two single-page roles above, this
 // confines the account to a whole ALLOWLIST rather than one hard redirect target - dashboard.html
 // shows the normal (trimmed) dashboard, not a single-button landing block, since there's a real
 // multi-page nav to use (see js/nav.js's isStoreManager branch). Includes each named area's
@@ -112,7 +113,7 @@ const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-li
 const STORE_MANAGER_ALLOWED_PAGES = [
   'dashboard.html', 'change-password.html', 'staff-login.html',
   'my-payslips.html', 'my-payslip-print.html',
-  'delivery.html', 'delivery-receipt.html', 'invoice.html', 'job-order.html',
+  'delivery.html', 'delivery-receipt.html', 'delivery-quote.html', 'invoice.html', 'job-order.html',
   'serial-tracker.html', 'inventory-summary.html',
   'stock-on-hand.html', 'stock-on-hand-print.html',
   'transfer-orders.html', 'transfer-order-print.html', 'transfer-order-print-production.html',

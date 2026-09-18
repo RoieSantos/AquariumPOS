@@ -326,6 +326,7 @@ async function openConversation(psid) {
   // whoever was open before.
   activeCustomerTab = 'info';
   newOrderLines = [];
+  editingOrder = null;
   conversationOrders = [];
   conversationOrdersConv = null;
   expandedOrderNos = new Set();
@@ -634,7 +635,10 @@ function orderLinesHtml(orderNo) {
   if (lines.length === 0) return '<div class="inbox-empty-state">No items.</div>';
   return lines.map((l) => `
     <div class="inbox-order-line-row">
-      <span>${escapeHtml(l.item_name)} &times;${l.quantity}</span>
+      <div>
+        <div>${escapeHtml(l.item_name)} &times;${l.quantity}</div>
+        <div class="inbox-order-line-variant">Variation ID: ${l.variation_id ? escapeHtml(l.variation_id) : 'no Pancake match'}</div>
+      </div>
       <span>${(Number(l.price) * Number(l.quantity)).toFixed(2)}</span>
     </div>
   `).join('');
@@ -714,7 +718,7 @@ function renderConversationOrderCards() {
       <div class="inbox-order-top" data-order="${escapeHtml(o.order_no)}">
         <div class="inbox-order-top-left">
           <svg class="inbox-order-chevron" viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <a href="online-order-lines.html?order=${encodeURIComponent(o.order_no)}">${escapeHtml(o.order_no)}</a>
+          <a href="automated-orders.html?order=${encodeURIComponent(o.order_no)}">${escapeHtml(o.order_no)}</a>
         </div>
         <div class="inbox-order-badges">
           ${pancakeStatusBadgeHtml(o)}
@@ -738,6 +742,22 @@ function renderConversationOrderCards() {
             <span class="inbox-order-stat-label">Balance</span>
             <span class="inbox-order-stat-value ${balance > 0 ? 'balance-due' : 'balance-clear'}">${balance.toFixed(2)}</span>
           </div>
+        </div>
+
+        ${o.status !== 'Completed' && o.status !== 'Cancelled' ? `
+        <div class="inbox-order-edit-row">
+          <button type="button" class="btn btn-secondary btn-sm inbox-edit-order-btn" data-order="${escapeHtml(o.order_no)}">Edit Order</button>
+        </div>
+        ` : ''}
+
+        <div class="inbox-order-print-row">
+          <a href="online-order-receipt.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Order Confirmation</a>
+          <a href="gma-order-invoice.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Invoice</a>
+        </div>
+        <div class="inbox-order-send-row">
+          <span>Send to customer:</span>
+          <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="confirmation">Order Confirmation</button>
+          <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="invoice">Invoice</button>
         </div>
 
         <div class="inbox-order-detail-label">Products</div>
@@ -797,6 +817,12 @@ function renderConversationOrderCards() {
       expandedPaymentOrderNos.add(btn.dataset.order);
       renderConversationOrderCards();
     });
+  });
+  listEl.querySelectorAll('.inbox-send-receipt-btn').forEach((btn) => {
+    btn.addEventListener('click', () => sendReceiptToCustomer(btn.dataset.order, btn.dataset.kind, btn));
+  });
+  listEl.querySelectorAll('.inbox-edit-order-btn').forEach((btn) => {
+    btn.addEventListener('click', () => editOrder(btn.dataset.order, btn));
   });
   listEl.querySelectorAll('.inbox-confirm-pancake-btn').forEach((btn) => {
     btn.addEventListener('click', () => confirmOrderInPancake(btn.dataset.order, btn));
@@ -866,6 +892,44 @@ async function loadOrderExpandedDetails(orderNo) {
   // The card may have been collapsed again by the time this resolves - only re-render if it's
   // still expanded, so a quick expand/collapse/expand doesn't fight itself with stale renders.
   if (expandedOrderNos.has(orderNo)) renderConversationOrderCards();
+}
+
+// Switches the panel to the Create Order tab in "edit mode" for an already-created order - per
+// direct follow-up request ("if the order is created can we modify it still?"). Re-fetches the
+// order's lines fresh (rather than trusting orderLinesCache, which may be stale if this order's
+// card hasn't been expanded/reloaded recently) so the prefilled cart always matches the database.
+// See editingOrderNo/renderCreateOrderTab below for how the form itself switches into edit mode, and
+// admin_update_automated_order (supabase_gma_conversation_order_edit.sql) for the save path.
+async function editOrder(orderNo, btn) {
+  const order = conversationOrders.find((o) => o.order_no === orderNo);
+  if (!order) return;
+
+  if (btn) btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_list_automated_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo
+  });
+  if (btn) btn.disabled = false;
+
+  if (error) {
+    alert(`Could not load this order's items: ${error.message}`);
+    return;
+  }
+
+  editingOrder = order;
+  newOrderLines = (data || []).map((l) => ({
+    category_code: l.category_code || null,
+    item_code: l.item_code || null,
+    item_name: l.item_name,
+    price: Number(l.price) || 0,
+    quantity: Number(l.quantity) || 1,
+    note: l.notes || null,
+    variation_id: l.variation_id || null
+  }));
+
+  activeCustomerTab = 'create';
+  renderCustomerPanel(conversationOrdersConv);
 }
 
 // Called from the "Confirm in Pancake" button (pancakeLiveStatusHtml) - only ever shown while the
@@ -980,6 +1044,23 @@ async function addOrderPayment(orderNo, conv) {
   await loadConversationOrders(conv);
 }
 
+// Per direct follow-up request - lets staff send the customer a link to either printable document
+// (docs/online-order-receipt.html's plain "Order Confirmation", or docs/online-order-invoice.html's
+// more formal "Invoice" - both public/no-login, safe to hand straight to a customer, unlike the
+// staff-only docs/gma-order-invoice.html this same order card also links to for printing). Goes
+// through the same sendMessageToCustomer used by the reply composer (targets whichever conversation
+// is currently open - every order in this list belongs to it), so it's logged/broadcast/refreshed
+// exactly like any other staff reply, not a separate one-off send path.
+async function sendReceiptToCustomer(orderNo, kind, btn) {
+  const isInvoice = kind === 'invoice';
+  const link = `https://rspetstop.com/${isInvoice ? 'online-order-invoice.html' : 'online-order-receipt.html'}?order=${encodeURIComponent(orderNo)}`;
+  const message = `Here's your ${isInvoice ? 'invoice' : 'order receipt'} for Order No: ${orderNo}\n${link}`;
+
+  if (btn) btn.disabled = true;
+  await sendMessageToCustomer(message, []);
+  if (btn) btn.disabled = false;
+}
+
 async function searchCustomerOrders() {
   const input = document.getElementById('customerOrderSearchInput');
   const resultsEl = document.getElementById('customerOrderResultsEl');
@@ -1044,6 +1125,10 @@ async function searchCustomerOrders() {
 // submit) so flipping to Information and back doesn't lose an in-progress cart.
 let newOrderConv = null;
 let newOrderLines = [];
+// Set by editOrder() (see above) to the full AutomatedOrders row (from conversationOrders) being
+// edited - switches renderCreateOrderTab/submitNewOrder into "edit an existing order" mode instead
+// of "create a new order". Null in the normal create flow.
+let editingOrder = null;
 let lineNoteModalIndex = null;
 let productSearchDebounce = null;
 let productSearchResultsCache = [];
@@ -1054,6 +1139,13 @@ function renderCreateOrderTab(conv) {
 
   bodyEl.innerHTML = `
     <p class="error-text hidden" id="newOrderError"></p>
+
+    ${editingOrder ? `
+    <div class="inbox-order-edit-banner">
+      <span>Editing order ${escapeHtml(editingOrder.order_no)}</span>
+      <button type="button" class="btn-text" id="cancelEditOrderBtn">Cancel edit</button>
+    </div>
+    ` : ''}
 
     <div class="form-group">
       <div class="form-group-title">
@@ -1117,6 +1209,10 @@ function renderCreateOrderTab(conv) {
         <input type="text" id="productSearchInput" placeholder="Search product by name...">
         <div id="productSearchResults" class="product-search-results hidden"></div>
       </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        <button type="button" class="btn btn-secondary btn-sm" id="openCustomQuoteBtn">+ Custom Aquarium / Stand Quote</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="openCustomStickerBtn">+ Custom Stickers / Accessories</button>
+      </div>
 
       <table class="new-order-lines-table">
         <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
@@ -1158,21 +1254,53 @@ function renderCreateOrderTab(conv) {
         <span class="new-order-total-value" id="newOrderTotalEl">0.00</span>
       </div>
       <div class="inbox-order-actions">
-        <button type="button" class="btn btn-secondary" id="newOrderClearBtn">Clear</button>
-        <button type="button" class="btn btn-primary" id="newOrderSubmitBtn">Create</button>
+        <button type="button" class="btn btn-secondary" id="newOrderClearBtn">${editingOrder ? 'Reset' : 'Clear'}</button>
+        <button type="button" class="btn btn-primary" id="newOrderSubmitBtn">${editingOrder ? 'Save Changes' : 'Create'}</button>
       </div>
     </div>
   `;
 
-  // Prefilled from their Facebook profile name (ChatbotConversations.CustomerName - see
-  // fetchFacebookProfileName in the webhook), not authoritative - staff can still edit it.
-  document.getElementById('newOrderCustomerName').value = conv.customer_name || '';
+  if (editingOrder) {
+    // Prefills every field this same form lets staff set on creation - admin_update_automated_order
+    // fully replaces the order's header/lines with whatever's submitted, so anything left blank here
+    // would actually clear it server-side, not just leave it unchanged.
+    document.getElementById('newOrderCustomerName').value = editingOrder.customer_name || '';
+    document.getElementById('newOrderCustomerPhone').value = editingOrder.customer_phone || '';
+    document.getElementById('newOrderCustomerEmail').value = editingOrder.customer_email || '';
+    document.getElementById('newOrderLocation').value = editingOrder.location || 'Amaya';
+    document.getElementById('newOrderNotes').value = editingOrder.notes || '';
+    if (editingOrder.fulfillment_type === 'Delivery') {
+      document.querySelectorAll('#newOrderFulfillmentToggle .fulfillment-toggle-btn').forEach((b) => b.classList.toggle('active', b.dataset.value === 'Delivery'));
+      document.getElementById('newOrderFulfillment').value = 'Delivery';
+      document.getElementById('newOrderDeliveryAddressRow').classList.remove('hidden');
+      document.getElementById('newOrderDeliveryAddress').value = editingOrder.delivery_address || '';
+    }
+  } else {
+    // Prefilled from their Facebook profile name (ChatbotConversations.CustomerName - see
+    // fetchFacebookProfileName in the webhook), not authoritative - staff can still edit it.
+    document.getElementById('newOrderCustomerName').value = conv.customer_name || '';
+  }
 
   document.getElementById('newOrderClearBtn').addEventListener('click', () => {
+    if (editingOrder) {
+      // "Reset" while editing re-fetches the order's lines fresh from the database, discarding any
+      // unsaved tweaks (added/removed/changed lines) - doesn't touch the database itself, unlike a
+      // real cancel, which also leaves edit mode entirely.
+      editOrder(editingOrder.order_no);
+      return;
+    }
     newOrderLines = [];
     renderCreateOrderTab(conv);
   });
+  document.getElementById('cancelEditOrderBtn')?.addEventListener('click', () => {
+    editingOrder = null;
+    newOrderLines = [];
+    activeCustomerTab = 'info';
+    renderCustomerPanel(conv);
+  });
   document.getElementById('newOrderSubmitBtn').addEventListener('click', submitNewOrder);
+  document.getElementById('openCustomQuoteBtn').addEventListener('click', openCustomQuoteModal);
+  document.getElementById('openCustomStickerBtn').addEventListener('click', openCustomStickerModal);
   document.querySelectorAll('#newOrderFulfillmentToggle .fulfillment-toggle-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#newOrderFulfillmentToggle .fulfillment-toggle-btn').forEach((b) => b.classList.toggle('active', b === btn));
@@ -1306,25 +1434,109 @@ async function runProductSearch(term) {
   });
 }
 
+// Per direct follow-up request (screenshot of this exact search box): a product WITH variants
+// (color/size/etc - has_variants, see sql/supabase_chatbot_search_items_variants.sql) opens the
+// variant picker modal instead of adding the generic parent product straight away - staff need to
+// choose which specific one before it's added.
 function addProductToOrder(item) {
-  const existing = newOrderLines.find((line) => line.item_code === item.code);
+  if (item.has_variants) {
+    openVariantPickerModal(item);
+    return;
+  }
+  addOrderLineFromProduct(item, null);
+}
+
+// Shared by addProductToOrder (no variants) and selectVariantForOrder (a variant WAS chosen) -
+// variant is null for a plain product add. Naming ("Product (Variant - SKU)") and the SKU-appended-
+// when-present rule match resolveProductLookupEntry's own variant handling in the reply composer's
+// separate Product List panel, for the same reason it exists there: VariantName alone is frequently
+// IDENTICAL across a product's variants (e.g. two sealant colors), only the SKU actually
+// distinguishes them.
+function addOrderLineFromProduct(item, variant) {
+  const variantLabel = variant ? (variant.sku ? `${variant.variant_name} - ${variant.sku}` : variant.variant_name) : null;
+  const itemName = variant ? `${item.name} (${variantLabel})` : item.name;
+  const price = variant ? Number(variant.price || 0) : Number(item.price || 0);
+  const variationId = variant ? variant.variation_id : null;
+
+  // Dedupe by the specific variant when one was chosen (two different variants of the same product
+  // must stay separate lines) - falls back to item_code for a plain product add, same as before.
+  const dedupeKey = variationId || item.code;
+  const existing = newOrderLines.find((line) => (line.variation_id || line.item_code) === dedupeKey);
   if (existing) {
     existing.quantity += 1;
   } else {
     newOrderLines.push({
       category_code: item.category_code,
       item_code: item.code,
-      item_name: item.name,
-      price: Number(item.price || 0),
+      item_name: itemName,
+      price,
       quantity: 1,
-      note: ''
+      note: '',
+      variation_id: variationId
     });
   }
 
   const searchInput = document.getElementById('productSearchInput');
-  searchInput.value = '';
-  document.getElementById('productSearchResults').classList.add('hidden');
+  if (searchInput) searchInput.value = '';
+  document.getElementById('productSearchResults')?.classList.add('hidden');
   renderNewOrderLines();
+}
+
+let variantPickerProduct = null;
+
+async function openVariantPickerModal(item) {
+  variantPickerProduct = item;
+  document.getElementById('variantPickerProductName').textContent = item.name;
+  const listEl = document.getElementById('variantPickerList');
+  listEl.innerHTML = '<div class="inbox-empty-state">Loading...</div>';
+  document.getElementById('variantPickerModal').classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('public_list_item_variants', { p_item_code: item.code });
+
+  // Superseded by a newer open call (staff clicked a different product) while this was in flight.
+  if (variantPickerProduct !== item) return;
+
+  if (error) {
+    listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+
+  const variants = data || [];
+  if (variants.length === 0) {
+    listEl.innerHTML = '<div class="inbox-empty-state">No variants found for this product.</div>';
+    return;
+  }
+
+  listEl.innerHTML = variants.map((v, index) => {
+    const inStock = Number(v.quantity_in_stock || 0) > 0;
+    return `
+      <div class="variant-picker-row" data-index="${index}">
+        <div class="variant-picker-row-info">
+          <div class="variant-picker-row-name">${escapeHtml(v.variant_name)}</div>
+          ${v.sku ? `<div class="variant-picker-row-sku">${escapeHtml(v.sku)}</div>` : ''}
+        </div>
+        <div class="variant-picker-row-meta">
+          <div class="variant-picker-row-price">${Number(v.price || 0).toFixed(2)}</div>
+          <div class="${inStock ? '' : 'out-of-stock'}">${inStock ? `${v.quantity_in_stock} left` : 'Out of stock'}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  listEl.querySelectorAll('.variant-picker-row').forEach((row) => {
+    row.addEventListener('click', () => selectVariantForOrder(variants[parseInt(row.dataset.index, 10)]));
+  });
+}
+
+function closeVariantPickerModal() {
+  variantPickerProduct = null;
+  document.getElementById('variantPickerModal').classList.add('hidden');
+}
+
+function selectVariantForOrder(variant) {
+  if (!variantPickerProduct) return;
+  addOrderLineFromProduct(variantPickerProduct, variant);
+  closeVariantPickerModal();
 }
 
 function removeNewOrderLine(index) {
@@ -1450,6 +1662,468 @@ function updateOrderTotal() {
   totalEl.textContent = total.toFixed(2);
 }
 
+// Custom Aquarium/Stand quote - per direct follow-up request, lets staff quote a custom build right
+// from the conversation and drop it straight into the order being built, instead of only being
+// reachable via the separate, disconnected Aquarium Calculator nav page (which explicitly saves
+// nothing - "Client-side calculator only"). Uses the EXACT same pricing engine the AI bot's own
+// compute_aquarium_quote tool calls (WebAquariumCalculator/custom-aquarium-calculator.js's
+// calculateCustomAquarium, loaded as a plain global - window.CustomAquariumCalculator - via a
+// <script> tag, same as docs/order-now.html) and the same public_get_glass_pricing/public_get_
+// tubular_pricing RPCs, so this quotes identically to both of those, not a third re-implementation.
+let customQuoteResult = null;
+
+function openCustomQuoteModal() {
+  document.getElementById('customQuoteModal').classList.remove('hidden');
+  document.getElementById('customQuoteError').classList.add('hidden');
+  document.getElementById('customQuoteResult').classList.add('hidden');
+  document.getElementById('customQuoteResult').innerHTML = '';
+  document.getElementById('addCustomQuoteToSaleBtn').classList.add('hidden');
+  customQuoteResult = null;
+}
+
+function closeCustomQuoteModal() {
+  document.getElementById('customQuoteModal').classList.add('hidden');
+}
+
+function toggleCustomQuoteStandFields() {
+  const enabled = document.getElementById('customQuoteStandEnabled').checked;
+  document.getElementById('customQuoteStandFields').classList.toggle('hidden', !enabled);
+}
+
+function toggleCustomQuoteSumpFields() {
+  const enabled = document.getElementById('customQuoteSumpEnabled').checked;
+  document.getElementById('customQuoteSumpFields').classList.toggle('hidden', !enabled);
+}
+
+function toggleCustomQuoteStandSumpWidth() {
+  const enabled = document.getElementById('customQuoteStandSumpHolder').checked;
+  document.getElementById('customQuoteStandSumpWidthWrap').classList.toggle('hidden', !enabled);
+}
+
+function toggleCustomQuoteStickerBgFields() {
+  const enabled = document.getElementById('customQuoteStickerBgEnabled').checked;
+  document.getElementById('customQuoteStickerBgFields').classList.toggle('hidden', !enabled);
+}
+
+function toggleCustomQuoteStickerBottomFields() {
+  const enabled = document.getElementById('customQuoteStickerBottomEnabled').checked;
+  document.getElementById('customQuoteStickerBottomFields').classList.toggle('hidden', !enabled);
+}
+
+// Matches the wording the bot itself is instructed to give a customer (dimensions, unit, glass
+// thickness, tempered/rimless/etc) - see PLACING ORDERS' custom-item notes rule in chatbot-engine.ts
+// - so a staff-created custom line reads the same way as a bot-created one. Extended (per direct
+// request) to cover almost every field the calculator supports, not just the AI bot's own subset -
+// AIO/Enclosure/Aquascape Service/Filtration Sump/Stickers are all folded into the aquarium's own
+// totalPrice by calculateCustomAquarium (only the Stand is a separate price - see
+// customStandSpecText), so they show up here as spec text rather than as extra order lines.
+function customAquariumSpecText(result) {
+  const n = result.normalized;
+  const bits = [`${n.lengthInches}x${n.widthInches}x${n.heightInches}in`, n.glassThickness];
+  if (n.temperedGlass) bits.push('Tempered');
+  if (document.getElementById('customQuoteLowIron').checked) bits.push('Low-Iron');
+  if (n.rimless) bits.push('Rimless');
+  if (document.getElementById('customQuoteHighStrip').checked) bits.push('High Strip');
+  if (document.getElementById('customQuoteAio').checked) bits.push('AIO');
+  if (document.getElementById('customQuoteEnclosure').checked) bits.push('Enclosure');
+  if (document.getElementById('customQuoteAquascape').checked) bits.push('Aquascape Service');
+  if (n.sump) bits.push(`${n.sump.type} Filtration`);
+  if (document.getElementById('customQuoteStickerBgEnabled').checked) {
+    const bgType = document.getElementById('customQuoteStickerBgType');
+    bits.push(`${bgType.selectedOptions[0].textContent} Background${document.getElementById('customQuoteStickerBgAllSides').checked ? ' (All Sides)' : ''}`);
+  }
+  if (document.getElementById('customQuoteStickerBottomEnabled').checked) {
+    const bottomType = document.getElementById('customQuoteStickerBottomType');
+    bits.push(`${bottomType.selectedOptions[0].textContent} Bottom`);
+  }
+  return bits.join(', ');
+}
+
+function customStandSpecText(result) {
+  const stand = result.normalized.stand;
+  if (!stand) return '';
+  const tubularLabel = { '1x1': '1x1', '1.5x1.5': '1 1/2x1 1/2', '2x2': '2x2' }[stand.tubular] || stand.tubular;
+  const bits = [`${stand.layers}-Layer ${tubularLabel} Tubular${stand.stainless ? ' (Stainless)' : ''}`, `${stand.heightInches}in height`];
+  if (stand.cabinet) bits.push('Cabinet');
+  if (stand.sumpHolder) bits.push(`Sump Holder (${stand.sumpWidth}in)`);
+  return bits.join(', ');
+}
+
+// Same query param construction as chatbot-engine.ts's computeAquariumQuote (aquariumDrawingUrl) -
+// lets staff see the exact same visual diagram the bot would share with a customer for this quote.
+function buildAquariumDrawingUrl(result) {
+  const n = result.normalized;
+  const params = new URLSearchParams({
+    length: String(n.lengthInches),
+    width: String(n.widthInches),
+    height: String(n.heightInches),
+    unit: 'Inches',
+    glass: String(n.glassThickness)
+  });
+  if (n.temperedGlass) params.set('tempered', '1');
+  if (n.rimless) params.set('rimless', '1');
+  if (document.getElementById('customQuoteHighStrip').checked) params.set('highStrip', '1');
+  if (n.stand) {
+    params.set('standEnabled', '1');
+    params.set('standLayers', String(n.stand.layers));
+    params.set('standTubular', String(n.stand.tubular));
+    if (n.stand.stainless) params.set('standStainless', '1');
+  }
+  return `https://rspetstop.com/WebAquariumCalculator/index.html?${params.toString()}`;
+}
+
+async function calculateCustomQuote() {
+  const errorEl = document.getElementById('customQuoteError');
+  const resultEl = document.getElementById('customQuoteResult');
+  const addBtn = document.getElementById('addCustomQuoteToSaleBtn');
+  const calcBtn = document.getElementById('calculateCustomQuoteBtn');
+  errorEl.classList.add('hidden');
+  resultEl.classList.add('hidden');
+  addBtn.classList.add('hidden');
+  customQuoteResult = null;
+
+  const length = parseFloat(document.getElementById('customQuoteLength').value);
+  const width = parseFloat(document.getElementById('customQuoteWidth').value);
+  const height = parseFloat(document.getElementById('customQuoteHeight').value);
+  if (!(length > 0) || !(width > 0) || !(height > 0)) {
+    errorEl.textContent = 'Enter a valid length, width, and height.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const unit = document.getElementById('customQuoteUnit').value;
+  const standEnabled = document.getElementById('customQuoteStandEnabled').checked;
+  const sumpEnabled = document.getElementById('customQuoteSumpEnabled').checked;
+  const stickerBgEnabled = document.getElementById('customQuoteStickerBgEnabled').checked;
+  const stickerBottomEnabled = document.getElementById('customQuoteStickerBottomEnabled').checked;
+
+  calcBtn.disabled = true;
+  try {
+    const [
+      { data: glassRows, error: glassError },
+      { data: tubularRows, error: tubularError },
+      { data: stickerRows, error: stickerError }
+    ] = await Promise.all([
+      supabaseClient.rpc('public_get_glass_pricing'),
+      supabaseClient.rpc('public_get_tubular_pricing'),
+      supabaseClient.rpc('public_get_sticker_pricing')
+    ]);
+    if (glassError || tubularError || stickerError) throw glassError || tubularError || stickerError;
+
+    const result = window.CustomAquariumCalculator.calculateCustomAquarium({
+      unit,
+      length,
+      width,
+      height,
+      glassThickness: document.getElementById('customQuoteGlass').value,
+      temperedGlass: document.getElementById('customQuoteTempered').checked,
+      lowIron: document.getElementById('customQuoteLowIron').checked,
+      rimless: document.getElementById('customQuoteRimless').checked,
+      highStrip: document.getElementById('customQuoteHighStrip').checked,
+      aio: document.getElementById('customQuoteAio').checked,
+      enclosure: document.getElementById('customQuoteEnclosure').checked,
+      aquascapeService: document.getElementById('customQuoteAquascape').checked,
+      option: 'Aquarium only',
+      filtrationSump: sumpEnabled
+        ? {
+            enabled: true,
+            type: document.getElementById('customQuoteSumpType').value,
+            length: document.getElementById('customQuoteSumpLength').value,
+            width: document.getElementById('customQuoteSumpWidth').value,
+            height: document.getElementById('customQuoteSumpHeight').value,
+            unit,
+            filterMedias: document.getElementById('customQuoteSumpFilterMedias').checked,
+            overflowBox: document.getElementById('customQuoteSumpOverflowBox').checked,
+            piping: document.getElementById('customQuoteSumpPiping').checked,
+            allumTopCover: document.getElementById('customQuoteSumpAllumTopCover').checked
+          }
+        : { enabled: false },
+      stand: standEnabled
+        ? {
+            enabled: true,
+            layers: parseInt(document.getElementById('customQuoteStandLayers').value, 10) || 2,
+            tubular: document.getElementById('customQuoteStandTubular').value,
+            stainless: document.getElementById('customQuoteStandStainless').checked,
+            cabinet: document.getElementById('customQuoteStandCabinet').checked,
+            sumpHolder: document.getElementById('customQuoteStandSumpHolder').checked,
+            sumpWidth: document.getElementById('customQuoteStandSumpWidth').value,
+            height: document.getElementById('customQuoteStandHeight').value,
+            footingInches: document.getElementById('customQuoteStandFooting').value,
+            unit
+          }
+        : { enabled: false },
+      stickerBackground: stickerBgEnabled
+        ? {
+            enabled: true,
+            type: document.getElementById('customQuoteStickerBgType').value,
+            allSides: document.getElementById('customQuoteStickerBgAllSides').checked
+          }
+        : { enabled: false },
+      stickerBottom: stickerBottomEnabled
+        ? { enabled: true, type: document.getElementById('customQuoteStickerBottomType').value }
+        : { enabled: false },
+      glassPricingSetupRows: glassRows || [],
+      glassPricingUom: 'MM',
+      tubularPricingSetupRows: tubularRows || [],
+      stickerPricingSetupRows: stickerRows || []
+    });
+
+    if (!result.ok) {
+      errorEl.textContent = result.error || 'Could not compute a quote for those dimensions.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    customQuoteResult = result;
+    renderCustomQuoteResult(result);
+  } catch (err) {
+    errorEl.textContent = err?.message || 'Could not compute a quote right now.';
+    errorEl.classList.remove('hidden');
+  } finally {
+    calcBtn.disabled = false;
+  }
+}
+
+// Sub-lines shown "(included)" - they're already folded into the Aquarium price above by
+// calculateCustomAquarium (only the Stand is ever priced separately), so this is a transparency
+// breakdown, not extra charges to add on top.
+const CUSTOM_QUOTE_ADDON_LABELS = [
+  ['highStrip', 'High Strip'],
+  ['sumpGlass', 'Sump Glass'],
+  ['filterMedia', 'Filter Media'],
+  ['overflowBox', 'Overflow Box'],
+  ['piping', 'Piping'],
+  ['allumTopCover', 'Allum Top Cover'],
+  ['stickerBackground', 'Sticker Background'],
+  ['stickerBottom', 'Sticker Bottom'],
+  ['aquascapeService', 'Aquascape Service']
+];
+
+function renderCustomQuoteResult(result) {
+  const resultEl = document.getElementById('customQuoteResult');
+  const stand = result.normalized.stand;
+  const c = result.components || {};
+  const addonLines = CUSTOM_QUOTE_ADDON_LABELS
+    .filter(([key]) => Number(c[key]) > 0)
+    .map(([key, label]) => `<div class="custom-quote-line"><span>&nbsp;&nbsp;${label} (included)</span><span>${Number(c[key]).toFixed(2)}</span></div>`)
+    .join('');
+
+  resultEl.innerHTML = `
+    ${result.safetyNotice ? `<div class="custom-quote-notice">${escapeHtml(result.safetyNotice.message)}</div>` : ''}
+    ${result.standNotice ? `<div class="custom-quote-notice">${escapeHtml(result.standNotice)}</div>` : ''}
+    <div class="custom-quote-line"><span>Aquarium (${result.gallons} gal)</span><span>${(stand ? result.aquariumOnlyPrice : result.totalPrice).toFixed(2)}</span></div>
+    ${addonLines}
+    ${stand ? `<div class="custom-quote-line"><span>Stand</span><span>${Number(c.stand || 0).toFixed(2)}</span></div>` : ''}
+    <div class="custom-quote-line custom-quote-total"><span>Total</span><span>${result.totalPrice.toFixed(2)}</span></div>
+    <a href="${buildAquariumDrawingUrl(result)}" target="_blank" rel="noopener">View Drawing &#8599;</a>
+  `;
+  resultEl.classList.remove('hidden');
+  document.getElementById('addCustomQuoteToSaleBtn').classList.remove('hidden');
+}
+
+// Adds the quoted aquarium (and, if included, the stand) as its own line - same item_code/notes
+// convention the AI bot's own create_order handling already uses for a custom build (see
+// chatbot-engine.ts's create_order case and PLACING ORDERS system prompt rule), which
+// _push_automated_order_to_pancake already knows how to map to a real Pancake product (there's a
+// catalog Items row seeded for CUSTOM-AQUARIUM/CUSTOM-STAND specifically for this) - no new backend
+// handling needed for these lines to sync correctly.
+function addCustomQuoteToSale() {
+  if (!customQuoteResult) return;
+  const result = customQuoteResult;
+  const stand = result.normalized.stand;
+  const aquariumSpec = customAquariumSpecText(result);
+
+  newOrderLines.push({
+    category_code: null,
+    item_code: 'CUSTOM-AQUARIUM',
+    item_name: `Custom Aquarium (${aquariumSpec})`,
+    price: stand ? result.aquariumOnlyPrice : result.totalPrice,
+    quantity: 1,
+    note: aquariumSpec,
+    variation_id: null
+  });
+
+  if (stand) {
+    const standSpec = customStandSpecText(result);
+    newOrderLines.push({
+      category_code: null,
+      item_code: 'CUSTOM-STAND',
+      item_name: `Custom Stand (${standSpec})`,
+      price: Number(result.components.stand || 0),
+      quantity: 1,
+      note: standSpec,
+      variation_id: null
+    });
+  }
+
+  renderNewOrderLines();
+  closeCustomQuoteModal();
+}
+
+// Second "+" quote button in the Create Order tab, for the desktop POS app's other "CUSTOM
+// STICKERS" action button (accessories/stickers/mats/covers with no aquarium attached) - same
+// shared pricing engine (calculateStandaloneSticker) and field set as docs/WebAquariumCalculator/
+// sticker.html (the reference implementation), and the same CategoryCode = 'CUSTOM-STICKER'
+// convention docs/js/orderNow.js's Customize > Accessories/Stickers flow already uses
+// (buildStandaloneStickerCartLine) - see supabase_diagnose_custom_sticker_item.sql for the matching
+// Items catalog row this needs before it'll push to Pancake successfully.
+let customStickerResult = null;
+// Cached once per page load (same "load once, reuse" pattern as orderNow.js's
+// ensureGlassPricingLoaded) rather than refetched on every keystroke, now that fields auto-calculate
+// on change instead of waiting for a manual Calculate click.
+let customStickerPricingRows = null;
+let customStickerGlassPricingRows = null;
+let customStickerPricingLoadPromise = null;
+let customStickerCalcDebounce = null;
+
+function ensureCustomStickerPricingLoaded() {
+  if (customStickerPricingLoadPromise) return customStickerPricingLoadPromise;
+  customStickerPricingLoadPromise = Promise.all([
+    supabaseClient.rpc('public_get_sticker_pricing'),
+    supabaseClient.rpc('public_get_glass_pricing')
+  ]).then(([stickerRes, glassRes]) => {
+    customStickerPricingRows = stickerRes.data || [];
+    customStickerGlassPricingRows = glassRes.data || [];
+  }).catch(() => {
+    customStickerPricingRows = [];
+    customStickerGlassPricingRows = [];
+  });
+  return customStickerPricingLoadPromise;
+}
+
+function openCustomStickerModal() {
+  document.getElementById('customStickerModal').classList.remove('hidden');
+  document.getElementById('customStickerError').classList.add('hidden');
+  document.getElementById('customStickerResult').classList.add('hidden');
+  document.getElementById('customStickerResult').innerHTML = '';
+  document.getElementById('addCustomStickerToSaleBtn').classList.add('hidden');
+  customStickerResult = null;
+  updateCustomStickerVisibility();
+  ensureCustomStickerPricingLoaded();
+}
+
+function closeCustomStickerModal() {
+  document.getElementById('customStickerModal').classList.add('hidden');
+}
+
+// Rubber Matting/Glass/Marine Plywood/Laminated Plywood are thickness-priced (with Marine/Laminated
+// Plywood only coming in 6/18mm, unlike the other two's 3/6/10/12mm range) - Repair only applies to
+// Glass. Mirrors sticker.html's setVisibilityState/updateThicknessOptions exactly, reusing the same
+// stickerTypeHasThickness/getStickerThicknessOptions helpers so this dropdown never drifts out of
+// sync with what calculateStandaloneSticker actually prices.
+function updateCustomStickerVisibility() {
+  const type = document.getElementById('customStickerType').value;
+  const showThickness = window.CustomAquariumCalculator.stickerTypeHasThickness(type);
+  document.getElementById('customStickerThicknessRow').classList.toggle('hidden', !showThickness);
+
+  const select = document.getElementById('customStickerThickness');
+  const options = window.CustomAquariumCalculator.getStickerThicknessOptions(type);
+  const current = select.value;
+  select.innerHTML = options.map((opt) => `<option${opt === current ? ' selected' : ''}>${opt}</option>`).join('');
+  if (options.indexOf(current) < 0) {
+    select.value = options.indexOf('6mm') >= 0 ? '6mm' : options[0];
+  }
+
+  const showRepair = type === 'Glass';
+  document.getElementById('customStickerRepairRow').classList.toggle('hidden', !showRepair);
+  if (!showRepair) document.getElementById('customStickerRepair').checked = false;
+}
+
+function customStickerSpecText(result) {
+  const n = result.normalized;
+  const hasThickness = window.CustomAquariumCalculator.stickerTypeHasThickness(n.type);
+  return `${n.type}${n.isRepair ? ' REPAIR' : ''}${hasThickness ? ` (${n.thickness})` : ''} ${n.lengthInches}in x ${n.widthInches}in`;
+}
+
+async function calculateCustomSticker() {
+  const errorEl = document.getElementById('customStickerError');
+  const resultEl = document.getElementById('customStickerResult');
+  const addBtn = document.getElementById('addCustomStickerToSaleBtn');
+  errorEl.classList.add('hidden');
+  resultEl.classList.add('hidden');
+  addBtn.classList.add('hidden');
+  customStickerResult = null;
+
+  const length = parseFloat(document.getElementById('customStickerLength').value);
+  const width = parseFloat(document.getElementById('customStickerWidth').value);
+  if (!(length > 0) || !(width > 0)) {
+    errorEl.textContent = 'Enter a valid length and width.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    await ensureCustomStickerPricingLoaded();
+
+    const result = window.CustomAquariumCalculator.calculateStandaloneSticker({
+      length,
+      width,
+      unit: document.getElementById('customStickerUnit').value,
+      type: document.getElementById('customStickerType').value,
+      thickness: document.getElementById('customStickerThickness').value,
+      repair: document.getElementById('customStickerRepair').checked,
+      stickerPricingSetupRows: customStickerPricingRows || [],
+      glassPricingSetupRows: customStickerGlassPricingRows || [],
+      glassPricingUom: 'MM'
+    });
+
+    if (!result.ok) {
+      errorEl.textContent = result.error || 'Could not compute a quote for those dimensions.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    customStickerResult = result;
+    renderCustomStickerResult(result);
+  } catch (err) {
+    errorEl.textContent = err?.message || 'Could not compute a quote right now.';
+    errorEl.classList.remove('hidden');
+  }
+}
+
+// Auto-validates/recalculates on every field change (per direct follow-up request) instead of
+// requiring a manual Calculate click - debounced for the number inputs (length/width/qty) so rapid
+// keystrokes don't each trigger their own calculation, immediate for the type/thickness/unit/repair
+// controls since those only ever fire on a discrete change, not per-keystroke.
+function autoCalculateCustomSticker() {
+  clearTimeout(customStickerCalcDebounce);
+  customStickerCalcDebounce = setTimeout(calculateCustomSticker, 300);
+}
+
+function renderCustomStickerResult(result) {
+  const resultEl = document.getElementById('customStickerResult');
+  const qty = Math.max(1, Math.round(Number(document.getElementById('customStickerQty').value) || 1));
+
+  resultEl.innerHTML = `
+    <div class="custom-quote-line"><span>${escapeHtml(customStickerSpecText(result))}</span><span>${result.totalPrice.toFixed(2)}</span></div>
+    <div class="custom-quote-line"><span>Area</span><span>${result.normalized.areaSqFt.toFixed(2)} sq ft</span></div>
+    ${qty > 1 ? `<div class="custom-quote-line"><span>Quantity</span><span>&times;${qty}</span></div>` : ''}
+    <div class="custom-quote-line custom-quote-total"><span>Total</span><span>${(result.totalPrice * qty).toFixed(2)}</span></div>
+  `;
+  resultEl.classList.remove('hidden');
+  document.getElementById('addCustomStickerToSaleBtn').classList.remove('hidden');
+}
+
+function addCustomStickerToSale() {
+  if (!customStickerResult) return;
+  const result = customStickerResult;
+  const qty = Math.max(1, Math.round(Number(document.getElementById('customStickerQty').value) || 1));
+  const spec = customStickerSpecText(result);
+
+  newOrderLines.push({
+    category_code: 'CUSTOM-STICKER',
+    item_code: null,
+    item_name: `Custom Accessory/Sticker - ${spec}`,
+    price: result.totalPrice,
+    quantity: qty,
+    note: spec,
+    variation_id: null
+  });
+
+  renderNewOrderLines();
+  closeCustomStickerModal();
+}
+
 async function submitNewOrder() {
   const errorEl = document.getElementById('newOrderError');
   errorEl.classList.add('hidden');
@@ -1458,11 +2132,9 @@ async function submitNewOrder() {
   const submitBtn = document.getElementById('newOrderSubmitBtn');
   submitBtn.disabled = true;
 
-  const { data, error } = await supabaseClient.rpc('admin_create_gma_conversation_order', {
+  const commonFields = {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
-    p_psid: newOrderConv.psid,
-    p_page_id: newOrderConv.page_id,
     p_customer_name: document.getElementById('newOrderCustomerName').value.trim(),
     p_customer_phone: document.getElementById('newOrderCustomerPhone').value.trim(),
     p_customer_email: document.getElementById('newOrderCustomerEmail').value.trim() || null,
@@ -1471,7 +2143,15 @@ async function submitNewOrder() {
     p_notes: document.getElementById('newOrderNotes').value.trim() || null,
     p_location: document.getElementById('newOrderLocation').value,
     p_lines: newOrderLines
-  });
+  };
+
+  // admin_update_automated_order (edit) and admin_create_gma_conversation_order (new) return
+  // different column sets (estimated_total vs pancake_order_id) - order_no/pancake_sync_status/
+  // pancake_sync_error are the only ones both share, which is all the post-save handling below
+  // actually needs.
+  const { data, error } = editingOrder
+    ? await supabaseClient.rpc('admin_update_automated_order', { ...commonFields, p_order_no: editingOrder.order_no })
+    : await supabaseClient.rpc('admin_create_gma_conversation_order', { ...commonFields, p_psid: newOrderConv.psid, p_page_id: newOrderConv.page_id });
 
   submitBtn.disabled = false;
 
@@ -1494,7 +2174,7 @@ async function submitNewOrder() {
       p_reference: document.getElementById('newOrderPayReference').value.trim() || null
     });
     if (payError) {
-      alert(`Order ${result.order_no} was created, but the payment could not be recorded: ${payError.message}. Add it manually from the order's Add Payment form.`);
+      alert(`Order ${result.order_no} was saved, but the payment could not be recorded: ${payError.message}. Add it manually from the order's Add Payment form.`);
     } else {
       const pancakeSyncError = (payData || [])[0]?.pancake_sync_error;
       if (pancakeSyncError) {
@@ -1503,11 +2183,26 @@ async function submitNewOrder() {
     }
   }
 
+  const wasEditing = Boolean(editingOrder);
   newOrderLines = [];
+  editingOrder = null;
   activeCustomerTab = 'info';
-  renderCustomerPanel(newOrderConv);
-  if (result && result.pancake_sync_status === 'Failed') {
-    alert(`Order ${result.order_no} was created, but the Pancake push failed: ${result.pancake_sync_error || '(no error detail)'}. It can be retried from the Automated Orders page.`);
+
+  if (wasEditing) {
+    // Local cache would otherwise still show the pre-edit lines/totals until the card is
+    // collapsed and re-expanded - drop it so re-expanding (forced right below, via
+    // renderCustomerPanel -> renderInformationTab -> loadConversationOrders) fetches fresh.
+    orderLinesCache.delete(result.order_no);
+    expandedOrderNos.add(result.order_no);
+    renderCustomerPanel(conversationOrdersConv);
+    if (result.pancake_sync_status === 'Stale') {
+      alert(`Order ${result.order_no} was updated, but it had already synced to Pancake - the live Pancake order was NOT changed automatically. ${result.pancake_sync_error || ''}`);
+    }
+  } else {
+    renderCustomerPanel(newOrderConv);
+    if (result && result.pancake_sync_status === 'Failed') {
+      alert(`Order ${result.order_no} was created, but the Pancake push failed: ${result.pancake_sync_error || '(no error detail)'}. It can be retried from the Automated Orders page.`);
+    }
   }
 }
 
@@ -2814,6 +3509,31 @@ async function handleGmaInboxEvent(payload) {
   document.getElementById('addMediaLibraryBtn').addEventListener('click', () => document.getElementById('mediaLibraryFileInput').click());
   document.getElementById('mediaLibraryFileInput').addEventListener('change', onMediaLibraryFileChange);
   document.getElementById('useMediaLibrarySelectionBtn').addEventListener('click', useMediaLibrarySelection);
+  document.getElementById('closeVariantPickerModalBtn').addEventListener('click', closeVariantPickerModal);
+  document.getElementById('closeCustomQuoteModalBtn').addEventListener('click', closeCustomQuoteModal);
+  document.getElementById('cancelCustomQuoteBtn').addEventListener('click', closeCustomQuoteModal);
+  document.getElementById('customQuoteStandEnabled').addEventListener('change', toggleCustomQuoteStandFields);
+  document.getElementById('customQuoteSumpEnabled').addEventListener('change', toggleCustomQuoteSumpFields);
+  document.getElementById('customQuoteStandSumpHolder').addEventListener('change', toggleCustomQuoteStandSumpWidth);
+  document.getElementById('customQuoteStickerBgEnabled').addEventListener('change', toggleCustomQuoteStickerBgFields);
+  document.getElementById('customQuoteStickerBottomEnabled').addEventListener('change', toggleCustomQuoteStickerBottomFields);
+  document.getElementById('calculateCustomQuoteBtn').addEventListener('click', calculateCustomQuote);
+  document.getElementById('addCustomQuoteToSaleBtn').addEventListener('click', addCustomQuoteToSale);
+  document.getElementById('closeCustomStickerModalBtn').addEventListener('click', closeCustomStickerModal);
+  document.getElementById('cancelCustomStickerBtn').addEventListener('click', closeCustomStickerModal);
+  document.getElementById('customStickerType').addEventListener('change', () => {
+    updateCustomStickerVisibility();
+    autoCalculateCustomSticker();
+  });
+  ['customStickerThickness', 'customStickerUnit'].forEach((id) => {
+    document.getElementById(id).addEventListener('change', autoCalculateCustomSticker);
+  });
+  document.getElementById('customStickerRepair').addEventListener('change', autoCalculateCustomSticker);
+  ['customStickerLength', 'customStickerWidth', 'customStickerQty'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', autoCalculateCustomSticker);
+  });
+  document.getElementById('calculateCustomStickerBtn').addEventListener('click', calculateCustomSticker);
+  document.getElementById('addCustomStickerToSaleBtn').addEventListener('click', addCustomStickerToSale);
   document.getElementById('closeLineNoteModalBtn').addEventListener('click', closeLineNoteModal);
   document.getElementById('lineNoteModalCancelBtn').addEventListener('click', closeLineNoteModal);
   document.getElementById('lineNoteModalSaveBtn').addEventListener('click', saveLineNoteModal);

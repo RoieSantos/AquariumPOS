@@ -750,7 +750,7 @@ export const TOOLS: Anthropic.Tool[] = [
         customer_email: { type: 'string', description: 'Optional.' },
         fulfillment_type: { type: 'string', enum: ['Pickup', 'Delivery'], description: 'Always pass Delivery - never ask the customer to choose, just collect their address below.' },
         delivery_address: { type: 'string', description: 'The customer\'s address - always ask for and save this.' },
-        location: { type: 'string', enum: ['Amaya', 'GMA'], description: 'Which branch fulfills this order. Ask if not already clear; defaults to Amaya if you truly cannot tell.' },
+        location: { type: 'string', enum: ['Amaya', 'GMA'], description: 'Which branch fulfills this order. Ask if not already clear; if you truly cannot tell, use the DEFAULT BRANCH given in your instructions.' },
         items: {
           type: 'array',
           description: 'One entry per distinct item. item_code MUST come from a prior search_items or list_items_in_category result in THIS conversation - never invented - EXCEPT for a custom-built aquarium/stand, which has no real catalog price: use the literal item_code "CUSTOM-AQUARIUM" or "CUSTOM-STAND" for that line instead (see those fields\' own descriptions).',
@@ -934,6 +934,11 @@ export function buildSystemPrompt(
     if (storeInfo.PickupLocations) lines.push(`Pickup locations: ${storeInfo.PickupLocations}`);
     if (storeInfo.AdditionalNotes) lines.push(`Additional notes: ${storeInfo.AdditionalNotes}`);
   }
+  // Set on the AI Bot Setup page (ChatbotAiSettings.DefaultLocation) - lets staff change which
+  // branch create_order falls back to without a code deploy. Defaults to GMA (this bot's own page)
+  // rather than Amaya - see supabase_chatbot_ai_settings_default_location.sql.
+  const defaultLocation = (aiSettings?.DefaultLocation as string | undefined)?.trim() || 'GMA';
+  lines.push('', `DEFAULT BRANCH: ${defaultLocation} - use this for create_order's "location" field whenever the customer hasn't told you which branch (Amaya or GMA) fulfills their order, rather than guessing.`);
   if (companyInfo) {
     lines.push('', 'COMPANY INFO:');
     if (companyInfo.Address) lines.push(`Address: ${companyInfo.Address}`);
@@ -1300,6 +1305,9 @@ export interface ExecuteToolParams {
   name: string;
   input: Record<string, unknown>;
   followUpSettings: Record<string, unknown> | null;
+  // Only create_order's location fallback reads this (aiSettings.DefaultLocation) - see
+  // buildSystemPrompt's DEFAULT BRANCH line, which is the primary way Claude learns this same value.
+  aiSettings?: Record<string, unknown> | null;
   // When true (docs/ai-bot-sandbox.html testing), every side-effecting case below skips its real
   // action and returns a "SANDBOX MODE" description instead - see this file's header comment.
   simulate?: boolean;
@@ -1308,7 +1316,7 @@ export interface ExecuteToolParams {
 }
 
 export async function executeTool(params: ExecuteToolParams): Promise<string> {
-  const { supabase, psid, pageId, name, input, followUpSettings, simulate = false, pageAccessToken, graphVersion } = params;
+  const { supabase, psid, pageId, name, input, followUpSettings, aiSettings, simulate = false, pageAccessToken, graphVersion } = params;
   switch (name) {
     case 'search_items': {
       const query = String(input.query ?? '').trim();
@@ -1430,7 +1438,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const customerEmail = String(input.customer_email ?? '').trim();
       const fulfillmentType = String(input.fulfillment_type ?? '').trim();
       const deliveryAddress = String(input.delivery_address ?? '').trim();
-      const location = String(input.location ?? '').trim() || 'Amaya';
+      const location = String(input.location ?? '').trim() || String(aiSettings?.DefaultLocation ?? '').trim() || 'GMA';
       const notes = String(input.notes ?? '').trim();
       const items = Array.isArray(input.items)
         ? (input.items as Array<{ item_code?: string; quantity?: number; custom_price?: number; notes?: string }>)
@@ -1737,6 +1745,7 @@ export interface RunChatbotTurnParams {
   pageId?: string;
   messages: Anthropic.MessageParam[];
   followUpSettings: Record<string, unknown> | null;
+  aiSettings?: Record<string, unknown> | null;
   systemBlocks: unknown;
   simulate?: boolean;
   pageAccessToken?: string;
@@ -1747,7 +1756,7 @@ export interface RunChatbotTurnParams {
 // loading/saving and any Facebook-specific side effects (sending the final reply, updating
 // ChatbotConversations) stay in each caller, since those differ between the two.
 export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<string> {
-  const { supabase, anthropic, model, psid, pageId, messages, followUpSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion } = params;
+  const { supabase, anthropic, model, psid, pageId, messages, followUpSettings, aiSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion } = params;
   let finalText = "Sorry, I'm having trouble responding right now - a team member will follow up with you shortly.";
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
@@ -1786,6 +1795,7 @@ export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<stri
         name: tool.name,
         input: tool.input as Record<string, unknown>,
         followUpSettings,
+        aiSettings,
         simulate,
         pageAccessToken,
         graphVersion

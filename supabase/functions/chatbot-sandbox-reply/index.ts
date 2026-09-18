@@ -127,6 +127,7 @@ Deno.serve(async (req) => {
       psid: `${SANDBOX_PSID_PREFIX}${adminUsername}`,
       messages,
       followUpSettings,
+      aiSettings,
       systemBlocks,
       simulate: true
     });

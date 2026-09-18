@@ -75,11 +75,12 @@ function renderTopNav(activeLabel) {
   const isSuperUser = !!session?.isSuperUser;
   const isPayrollOfficer = !!session?.isPayrollOfficer;
   // Store Manager (supabase_staff_users_store_manager_field.sql) gets a curated subset of each
-  // group below - Transfer Orders but not Posted Transfers, Delivery but not Delivery Quote,
-  // Serial Tracker/Inventory Summary/Stock On Hand but not Purchase Orders, no Reports/Admin group
-  // at all - per the exact list in "Store manager, This permission can access...". Enforced
-  // server-side too via js/auth.js's requireAuth() STORE_MANAGER_ALLOWED_PAGES, so hiding these
-  // links is convenience, not the control.
+  // group below - Transfer Orders but not Posted Transfers, Delivery (now including Delivery
+  // Quote - see js/auth.js's STORE_MANAGER_ALLOWED_PAGES), Serial Tracker/Inventory Summary/Stock
+  // On Hand but not Purchase Orders, no Reports/Admin group at all - per the exact list in "Store
+  // manager, This permission can access...". Enforced server-side too via js/auth.js's
+  // requireAuth() STORE_MANAGER_ALLOWED_PAGES, so hiding these links is convenience, not the
+  // control.
   const isStoreManager = !!session?.isStoreManager;
 
   // Dashboard stands alone (not part of any group) since it's the one link everyone reaches for
@@ -105,10 +106,10 @@ function renderTopNav(activeLabel) {
     orders.push({ href: 'advance-orders.html', label: 'Advance Orders' });
   }
 
-  const delivery = [{ href: 'delivery.html', label: 'Delivery' }];
-  if (!isStoreManager) {
-    delivery.push({ href: 'delivery-quote.html', label: 'Delivery Quote' });
-  }
+  const delivery = [
+    { href: 'delivery.html', label: 'Delivery' },
+    { href: 'delivery-quote.html', label: 'Delivery Quote' }
+  ];
   if (isSuperUser) {
     delivery.push({ href: 'delivery-setup.html', label: 'Delivery Setup' });
   }

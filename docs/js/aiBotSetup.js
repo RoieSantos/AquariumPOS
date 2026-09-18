@@ -26,6 +26,7 @@ async function loadAiSettings() {
   document.getElementById('communicationStyleInput').value = (info && info['CommunicationStyle']) || '';
   document.getElementById('greetingMessageInput').value = (info && info['GreetingMessage']) || '';
   document.getElementById('customDirectionsInput').value = (info && info['CustomDirections']) || '';
+  document.getElementById('defaultLocationInput').value = (info && info['DefaultLocation']) || 'GMA';
 }
 
 async function saveAiSettings() {
@@ -42,7 +43,8 @@ async function saveAiSettings() {
       p_communication_style: document.getElementById('communicationStyleInput').value.trim() || null,
       p_greeting_message: document.getElementById('greetingMessageInput').value.trim() || null,
       p_custom_directions: document.getElementById('customDirectionsInput').value.trim() || null,
-      p_ai_model: document.getElementById('aiModelInput').value || null
+      p_ai_model: document.getElementById('aiModelInput').value || null,
+      p_default_location: document.getElementById('defaultLocationInput').value || null
     });
 
     if (error) {

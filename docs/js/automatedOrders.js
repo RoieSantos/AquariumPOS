@@ -158,6 +158,8 @@ async function openOrderModal(orderNo) {
 
   const order = orders[0];
   document.getElementById('modalOrderNo').textContent = order.order_no;
+  document.getElementById('modalOrderConfirmationLink').href = `online-order-receipt.html?order=${encodeURIComponent(order.order_no)}`;
+  document.getElementById('modalInvoiceLink').href = `gma-order-invoice.html?order=${encodeURIComponent(order.order_no)}`;
   document.getElementById('modalCustomerName').textContent = order.customer_name || '';
   document.getElementById('modalCustomerPhone').textContent = order.customer_phone || '';
   document.getElementById('modalCustomerEmail').textContent = order.customer_email || '-';

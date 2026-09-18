@@ -714,7 +714,8 @@
       temperedMandatory: false,
       aioGlassAutoFix: false,
       lowIronGlassAutoFix: false,
-      lastAutoNoticeSignature: ''
+      lastAutoNoticeSignature: '',
+      wasCompleteSetup: false
     };
 
     // Tracks Sump Type/enabled across enforceOptionRules calls so the Sump Dimensions default
@@ -924,8 +925,15 @@
 
         if (isCompleteSetup) {
           sumpEnabled.checked = true;
-          byId('sumpType').value = 'Overhead Sump';
+          // Only default Sump Type to Overhead Sump right when Complete setup gets selected
+          // (matching MainForm.cs's optionComboBox.SelectedIndexChanged) - forcing it on every
+          // enforceOptionRules call fought the user's own Sump Type selection, since changing
+          // that dropdown itself triggers this same function and would instantly snap it back.
+          if (!ruleNoticeState.wasCompleteSetup) {
+            byId('sumpType').value = 'Overhead Sump';
+          }
         }
+        ruleNoticeState.wasCompleteSetup = isCompleteSetup;
 
         if (sumpEnabled.checked) {
           aio.disabled = true;
@@ -1339,8 +1347,11 @@
       var selectedOption = byId('option').value;
 
       if (selectedOption === 'Complete setup') {
+        // Complete setup mandates a sump, but NOT which type - defaulting Sump Type here too
+        // (on top of enforceOptionRules' one-time default) re-forced it back to Overhead Sump
+        // on every call, which fights the user's own Sump Type selection since this runs right
+        // after enforceOptionRules on every change, including the Sump Type dropdown's own.
         byId('sumpEnabled').checked = true;
-        byId('sumpType').value = 'Overhead Sump';
         sumpEnabled = true;
       }
 

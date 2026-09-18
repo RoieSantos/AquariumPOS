@@ -55,6 +55,14 @@
           <label for="communicationStyleInput">Communication Style</label>
           <input type="text" id="communicationStyleInput" placeholder="e.g. Friendly and casual, occasional emoji, keeps replies short" />
         </div>
+        <div class="form-row">
+          <label for="defaultLocationInput">Default Branch</label>
+          <select id="defaultLocationInput">
+            <option value="GMA">GMA</option>
+            <option value="Amaya">Amaya</option>
+          </select>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">Which branch the bot uses for a new order when the customer hasn't said Amaya or GMA. Ask which branch it's for - this is just the fallback if it truly can't tell.</span>
+        </div>
         <div class="form-row" style="grid-column: 1 / -1;">
           <label for="greetingMessageInput">Greeting Message</label>
           <input type="text" id="greetingMessageInput" placeholder="e.g. Hi! Welcome to RS Pet Stop - how can I help you today?" />

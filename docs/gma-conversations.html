@@ -264,6 +264,61 @@
       padding: 10px 12px 12px;
       border-top: 1px dashed var(--panel-border);
     }
+    /* Per direct follow-up request - "Order Confirmation" opens the existing public receipt page
+       (docs/online-order-receipt.html, already supports AO-xxxxx orders); "Invoice" opens the new
+       staff-only docs/gma-order-invoice.html - both plain links to a printable page in a new tab,
+       each page has its own Print button, so nothing more is needed here than the links themselves. */
+    .inbox-order-print-row {
+      display: flex;
+      gap: 14px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--panel-border);
+      font-size: 11.5px;
+    }
+    .inbox-order-print-row a {
+      color: var(--primary, #1d4f91);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .inbox-order-print-row a:hover {
+      text-decoration: underline;
+    }
+    .inbox-order-send-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 11.5px;
+    }
+    .inbox-order-send-row > span {
+      color: var(--muted-text, #61738f);
+    }
+    .inbox-order-send-row .btn-text {
+      color: var(--primary, #1d4f91);
+      font-weight: 600;
+    }
+    .inbox-order-send-row .btn-text:hover {
+      color: var(--primary, #1d4f91);
+    }
+    .inbox-order-edit-row {
+      margin-top: 10px;
+    }
+    .inbox-order-edit-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: #eef3fb;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--primary, #1d4f91);
+    }
     .inbox-order-detail-label {
       font-size: 10px;
       font-weight: 700;
@@ -278,6 +333,7 @@
     .inbox-order-line-row, .inbox-order-payment-row {
       display: flex;
       justify-content: space-between;
+      align-items: flex-start;
       gap: 8px;
       font-size: 11.5px;
       padding: 4px 0;
@@ -285,6 +341,14 @@
     }
     .inbox-order-line-row:last-child, .inbox-order-payment-row:last-child {
       border-bottom: none;
+    }
+    /* The Pancake VariationId this line will sync as - per direct follow-up request, so staff can
+       cross-check against Pancake directly instead of only ever seeing the plain item name. */
+    .inbox-order-line-variant {
+      font-size: 10px;
+      color: var(--muted-text, #61738f);
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
+      margin-top: 1px;
     }
     .inbox-order-pancake-row {
       display: flex;
@@ -676,6 +740,128 @@
       justify-content: flex-end;
       gap: 8px;
       margin-top: 12px;
+    }
+    .variant-picker-panel {
+      max-width: 480px;
+    }
+    .variant-picker-product-name {
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .variant-picker-list {
+      max-height: 360px;
+      overflow-y: auto;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+    }
+    .variant-picker-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--panel-border);
+      cursor: pointer;
+    }
+    .variant-picker-row:last-child {
+      border-bottom: none;
+    }
+    .variant-picker-row:hover {
+      background: #f5f6f8;
+    }
+    .variant-picker-row-info {
+      min-width: 0;
+    }
+    .variant-picker-row-name {
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .variant-picker-row-sku {
+      font-size: 10.5px;
+      color: var(--muted-text, #61738f);
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    }
+    .variant-picker-row-meta {
+      flex-shrink: 0;
+      text-align: right;
+      font-size: 11.5px;
+      color: var(--muted-text, #61738f);
+    }
+    .variant-picker-row-meta .variant-picker-row-price {
+      font-weight: 700;
+      color: var(--text-main, #1b355e);
+    }
+    .variant-picker-row-meta .out-of-stock {
+      color: #c0392b;
+    }
+    .custom-quote-panel {
+      max-width: 620px;
+      max-height: 88vh;
+      overflow-y: auto;
+    }
+    .custom-quote-section-label {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-muted);
+      border-top: 1px solid var(--panel-border);
+      margin-top: 14px;
+      padding-top: 12px;
+    }
+    .custom-quote-checkbox-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 14px;
+      padding-top: 8px;
+      font-size: 13px;
+    }
+    .custom-quote-checkbox-row label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 400;
+    }
+    .custom-quote-result {
+      background: #fafbfc;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    .custom-quote-notice {
+      background: #fff4e0;
+      color: #8a5a00;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      margin-bottom: 8px;
+      white-space: pre-line;
+    }
+    .custom-quote-line {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+    }
+    .custom-quote-line.custom-quote-total {
+      border-top: 1px solid var(--panel-border);
+      margin-top: 4px;
+      padding-top: 6px;
+      font-weight: 700;
+      color: var(--text-main, #1b355e);
+    }
+    .custom-quote-result a {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--primary, #1d4f91);
+    }
+    .custom-quote-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
     }
     .new-order-lines-table .line-qty-input {
       width: 48px;
@@ -1817,6 +2003,286 @@
   <!-- Per-line note popup for the Create Order tab's product table (renderNewOrderLines in
        gmaConversations.js) - a proper textarea instead of typing directly into the cramped table
        cell. Whatever's typed here is sent to Pancake's line 'note' field verbatim, unmodified. -->
+  <!-- Per direct follow-up request: when a product search result has variants (color/size/etc -
+       see public_search_items' has_variants flag), addProductToOrder opens this instead of adding
+       the generic parent product straight away, so staff pick the SPECIFIC variant that actually
+       syncs to Pancake (supabase_gma_conversation_order_line_variant_selection.sql). -->
+  <div class="modal-backdrop hidden" id="variantPickerModal">
+    <div class="modal-panel variant-picker-panel">
+      <div class="toolbar">
+        <h2>Choose a Variant</h2>
+        <button class="btn btn-secondary btn-sm" id="closeVariantPickerModalBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <div class="variant-picker-product-name" id="variantPickerProductName"></div>
+      <div class="variant-picker-list" id="variantPickerList">
+        <div class="inbox-empty-state">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per direct follow-up request: lets staff quote a custom-built aquarium/stand right from the
+       Create Order tab (same pricing engine the AI bot itself uses - WebAquariumCalculator/custom-
+       aquarium-calculator.js's calculateCustomAquarium, loaded below - and the same public_get_
+       glass_pricing/public_get_tubular_pricing RPCs), then add the result straight into the order
+       currently being built (addCustomQuoteToSale pushes into newOrderLines) instead of only being
+       reachable via the separate, unconnected Aquarium Calculator nav page. -->
+  <div class="modal-backdrop hidden" id="customQuoteModal">
+    <div class="modal-panel custom-quote-panel">
+      <div class="toolbar">
+        <h2>Custom Aquarium / Stand Quote</h2>
+        <button class="btn btn-secondary btn-sm" id="closeCustomQuoteModalBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Length</label>
+          <input type="number" id="customQuoteLength" min="0" step="0.1">
+        </div>
+        <div class="form-row">
+          <label>Width</label>
+          <input type="number" id="customQuoteWidth" min="0" step="0.1">
+        </div>
+        <div class="form-row">
+          <label>Height</label>
+          <input type="number" id="customQuoteHeight" min="0" step="0.1">
+        </div>
+        <div class="form-row">
+          <label>Unit</label>
+          <select id="customQuoteUnit">
+            <option value="Inches">Inches</option>
+            <option value="CM">CM</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Glass Thickness</label>
+          <select id="customQuoteGlass">
+            <option value="3mm">3mm</option>
+            <option value="6mm" selected>6mm</option>
+            <option value="10mm">10mm</option>
+            <option value="12mm">12mm</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Options</label>
+          <div class="custom-quote-checkbox-row">
+            <label><input type="checkbox" id="customQuoteTempered"> Tempered</label>
+            <label><input type="checkbox" id="customQuoteLowIron"> Low Iron</label>
+            <label><input type="checkbox" id="customQuoteRimless"> Rimless</label>
+            <label><input type="checkbox" id="customQuoteHighStrip"> High Strip</label>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Add-ons</label>
+          <div class="custom-quote-checkbox-row">
+            <label><input type="checkbox" id="customQuoteAio"> All-In-One (AIO)</label>
+            <label><input type="checkbox" id="customQuoteEnclosure"> Enclosure</label>
+            <label><input type="checkbox" id="customQuoteAquascape"> Aquascape Service</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="custom-quote-section-label">Filtration Sump</div>
+      <div class="form-row">
+        <label><input type="checkbox" id="customQuoteSumpEnabled"> Include a filtration sump</label>
+      </div>
+      <div class="form-grid hidden" id="customQuoteSumpFields">
+        <div class="form-row">
+          <label>Sump Type</label>
+          <select id="customQuoteSumpType">
+            <option value="Undersump" selected>Undersump</option>
+            <option value="Overhead Sump">Overhead Sump</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Sump Length</label>
+          <input type="number" id="customQuoteSumpLength" min="0" step="0.1">
+        </div>
+        <div class="form-row">
+          <label>Sump Width</label>
+          <input type="number" id="customQuoteSumpWidth" min="0" step="0.1">
+        </div>
+        <div class="form-row">
+          <label>Sump Height</label>
+          <input type="number" id="customQuoteSumpHeight" min="0" step="0.1">
+        </div>
+        <div class="form-row">
+          <label>&nbsp;</label>
+          <div class="custom-quote-checkbox-row">
+            <label><input type="checkbox" id="customQuoteSumpFilterMedias"> Filter Medias</label>
+            <label><input type="checkbox" id="customQuoteSumpOverflowBox"> Overflow Box</label>
+            <label><input type="checkbox" id="customQuoteSumpPiping"> Piping</label>
+            <label><input type="checkbox" id="customQuoteSumpAllumTopCover"> Allum Top Cover</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="custom-quote-section-label">Stand</div>
+      <div class="form-row">
+        <label><input type="checkbox" id="customQuoteStandEnabled"> Include a matching stand</label>
+      </div>
+      <div class="form-grid hidden" id="customQuoteStandFields">
+        <div class="form-row">
+          <label>Layers</label>
+          <select id="customQuoteStandLayers">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Tubular</label>
+          <select id="customQuoteStandTubular">
+            <option value="1x1">1 x 1 in</option>
+            <option value="1.5x1.5">1 1/2 x 1 1/2 in</option>
+            <option value="2x2">2 x 2 in</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Height (override)</label>
+          <input type="number" id="customQuoteStandHeight" min="0" step="0.1" placeholder="Auto">
+        </div>
+        <div class="form-row">
+          <label>Footing (in)</label>
+          <input type="number" id="customQuoteStandFooting" min="0" step="0.5" value="3">
+        </div>
+        <div class="form-row">
+          <label>&nbsp;</label>
+          <div class="custom-quote-checkbox-row">
+            <label><input type="checkbox" id="customQuoteStandStainless"> Stainless</label>
+            <label><input type="checkbox" id="customQuoteStandCabinet"> Cabinet</label>
+            <label><input type="checkbox" id="customQuoteStandSumpHolder"> Sump Holder</label>
+          </div>
+        </div>
+        <div class="form-row hidden" id="customQuoteStandSumpWidthWrap">
+          <label>Sump Holder Width</label>
+          <input type="number" id="customQuoteStandSumpWidth" min="0" step="0.1">
+        </div>
+      </div>
+
+      <div class="custom-quote-section-label">Stickers</div>
+      <div class="form-row">
+        <label><input type="checkbox" id="customQuoteStickerBgEnabled"> Sticker Background</label>
+      </div>
+      <div class="form-grid hidden" id="customQuoteStickerBgFields">
+        <div class="form-row">
+          <label>Type</label>
+          <select id="customQuoteStickerBgType">
+            <option value="plain">Plain Sticker</option>
+            <option value="tiles">Sticker Tiles</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>&nbsp;</label>
+          <label><input type="checkbox" id="customQuoteStickerBgAllSides"> All Sides</label>
+        </div>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="customQuoteStickerBottomEnabled"> Sticker Bottom</label>
+      </div>
+      <div class="form-grid hidden" id="customQuoteStickerBottomFields">
+        <div class="form-row">
+          <label>Type</label>
+          <select id="customQuoteStickerBottomType">
+            <option value="plain">Plain Sticker</option>
+            <option value="tiles">Sticker Tiles</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="customQuoteError" class="error-text hidden"></div>
+      <button type="button" class="btn btn-secondary btn-sm" id="calculateCustomQuoteBtn">Calculate</button>
+
+      <div class="custom-quote-result hidden" id="customQuoteResult"></div>
+
+      <div class="custom-quote-modal-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="cancelCustomQuoteBtn">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm hidden" id="addCustomQuoteToSaleBtn">Add to Sale</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per direct follow-up request: a second "+" quote button alongside Custom Aquarium/Stand for
+       the desktop POS app's other "CUSTOM STICKERS" action - accessories/stickers/mats/covers with
+       no aquarium attached (Tiles/Plain/Rubber Matting/Glass/Acrylic/Allum TopCover/Marine+Laminated
+       Plywood). Same shared pricing engine (calculateStandaloneSticker), same CategoryCode =
+       'CUSTOM-STICKER' convention already used by docs/js/orderNow.js's Customize > Accessories/
+       Stickers flow (buildStandaloneStickerCartLine) and by docs/WebAquariumCalculator/sticker.html's
+       field set/options - see supabase_diagnose_custom_sticker_item.sql for the matching Items
+       catalog row this needs before it'll push to Pancake successfully. -->
+  <div class="modal-backdrop hidden" id="customStickerModal">
+    <div class="modal-panel custom-quote-panel">
+      <div class="toolbar">
+        <h2>Custom Stickers / Accessories Quote</h2>
+        <button class="btn btn-secondary btn-sm" id="closeCustomStickerModalBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Type</label>
+          <select id="customStickerType">
+            <option>Tiles Sticker</option>
+            <option>Plain Sticker</option>
+            <option>Rubber Matting</option>
+            <option>Glass</option>
+            <option>Acrylic</option>
+            <option>Allum TopCover</option>
+            <option>Marine Plywood</option>
+            <option>Laminated Plywood</option>
+          </select>
+        </div>
+        <div class="form-row hidden" id="customStickerThicknessRow">
+          <label>Thickness</label>
+          <select id="customStickerThickness">
+            <option>3mm</option>
+            <option selected>6mm</option>
+            <option>10mm</option>
+            <option>12mm</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row hidden" id="customStickerRepairRow">
+        <label><input type="checkbox" id="customStickerRepair"> Repair (2.5x price)</label>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label>Length</label>
+          <input type="number" id="customStickerLength" min="0" step="0.01">
+        </div>
+        <div class="form-row">
+          <label>Width</label>
+          <input type="number" id="customStickerWidth" min="0" step="0.01">
+        </div>
+        <div class="form-row">
+          <label>Unit</label>
+          <select id="customStickerUnit">
+            <option>Inches</option>
+            <option>CM</option>
+            <option>Ft</option>
+            <option>MM</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Quantity</label>
+          <input type="number" id="customStickerQty" min="1" step="1" value="1">
+        </div>
+      </div>
+
+      <div id="customStickerError" class="error-text hidden"></div>
+      <button type="button" class="btn btn-secondary btn-sm" id="calculateCustomStickerBtn">Calculate</button>
+
+      <div class="custom-quote-result hidden" id="customStickerResult"></div>
+
+      <div class="custom-quote-modal-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="cancelCustomStickerBtn">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm hidden" id="addCustomStickerToSaleBtn">Add to Sale</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="lineNoteModal">
     <div class="modal-panel">
       <div class="toolbar">
@@ -1900,6 +2366,7 @@ Message: ..."></textarea>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
+  <script src="WebAquariumCalculator/custom-aquarium-calculator.js"></script>
   <script src="js/gmaConversations.js"></script>
   <script src="js/pwa.js"></script>
 </body>
