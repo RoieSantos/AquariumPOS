@@ -461,31 +461,37 @@ function renderInformationTab(conv) {
   const conversationId = `${conv.page_id || ''}_${conv.psid}`;
 
   bodyEl.innerHTML = `
-    <div class="inbox-section-label">
-      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M3 7.5h14" /></svg>
-      <span>Conversation details</span>
-    </div>
-    <div class="inbox-customer-id">
-      <div><span>PSID</span><code>${escapeHtml(conv.psid)}</code></div>
-      <div><span>Page ID</span><code>${escapeHtml(conv.page_id || '(unknown)')}</code></div>
-      <div><span>Conversation ID</span><code>${escapeHtml(conversationId)}</code></div>
+    <div class="inbox-panel-section">
+      <div class="inbox-section-label">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M3 7.5h14" /></svg>
+        <span>Conversation details</span>
+      </div>
+      <div class="inbox-customer-id">
+        <div><span>PSID</span><code>${escapeHtml(conv.psid)}</code></div>
+        <div><span>Page ID</span><code>${escapeHtml(conv.page_id || '(unknown)')}</code></div>
+        <div><span>Conversation ID</span><code>${escapeHtml(conversationId)}</code></div>
+      </div>
     </div>
 
-    <div class="inbox-section-label">
-      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5.5h12M4 10h12M4 14.5h8" stroke-linecap="round"/></svg>
-      <span>Orders from this conversation</span>
+    <div class="inbox-panel-section">
+      <div class="inbox-section-label">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5.5h12M4 10h12M4 14.5h8" stroke-linecap="round"/></svg>
+        <span>Orders from this conversation</span>
+      </div>
+      <div id="conversationOrdersEl" class="inbox-empty-state">Loading...</div>
     </div>
-    <div id="conversationOrdersEl" class="inbox-empty-state">Loading...</div>
 
-    <div class="inbox-section-label">
-      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="5"/><path d="M12.5 12.5 17 17" stroke-linecap="round"/></svg>
-      <span>Look up other orders</span>
+    <div class="inbox-panel-section">
+      <div class="inbox-section-label">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="5"/><path d="M12.5 12.5 17 17" stroke-linecap="round"/></svg>
+        <span>Look up other orders</span>
+      </div>
+      <div class="inbox-customer-search">
+        <input type="text" id="customerOrderSearchInput" placeholder="Customer name or phone...">
+        <button class="btn btn-secondary btn-sm" id="customerOrderSearchBtn" type="button">Search</button>
+      </div>
+      <div id="customerOrderResultsEl" class="inbox-empty-state">Not linked to a customer record - search by name or phone.</div>
     </div>
-    <div class="inbox-customer-search">
-      <input type="text" id="customerOrderSearchInput" placeholder="Customer name or phone...">
-      <button class="btn btn-secondary btn-sm" id="customerOrderSearchBtn" type="button">Search</button>
-    </div>
-    <div id="customerOrderResultsEl" class="inbox-empty-state">Not linked to a customer record - search by name or phone.</div>
   `;
 
   document.getElementById('customerOrderSearchBtn').addEventListener('click', searchCustomerOrders);
@@ -683,7 +689,6 @@ function pancakeLiveStatusHtml(o) {
   if (!idLink && !confirmBtnHtml && !cancelBtnHtml) return '';
 
   return `
-    <div class="inbox-order-detail-label">Pancake</div>
     <div class="inbox-order-pancake-row">
       ${idLink}
       ${confirmBtnHtml}
@@ -701,7 +706,7 @@ function orderAddressHtml(o) {
     rows.push(`<div><span>Pickup at</span><span>${escapeHtml(o.location)}</span></div>`);
   }
   if (o.notes) rows.push(`<div><span>Notes</span><span>${escapeHtml(o.notes)}</span></div>`);
-  return `<div class="inbox-customer-id">${rows.join('')}</div>`;
+  return `<div class="inbox-order-kv">${rows.join('')}</div>`;
 }
 
 function renderConversationOrderCards() {
@@ -713,6 +718,7 @@ function renderConversationOrderCards() {
     const balance = Number(o.balance || 0);
     const cardExpanded = expandedOrderNos.has(o.order_no);
     const paymentExpanded = expandedPaymentOrderNos.has(o.order_no);
+    const pancakeHtml = cardExpanded ? pancakeLiveStatusHtml(o) : '';
     return `
     <div class="inbox-order-item${cardExpanded ? ' expanded' : ''}">
       <div class="inbox-order-top" data-order="${escapeHtml(o.order_no)}">
@@ -729,68 +735,84 @@ function renderConversationOrderCards() {
       ${cardExpanded ? `
       <div class="inbox-order-details">
         <div class="inbox-order-meta">${escapeHtml(o.customer_name || '')} - ${escapeHtml(o.fulfillment_type || '')}</div>
-        <div class="inbox-order-stats">
-          <div class="inbox-order-stat">
-            <span class="inbox-order-stat-label">Total</span>
-            <span class="inbox-order-stat-value">${Number(o.estimated_total || 0).toFixed(2)}</span>
-          </div>
-          <div class="inbox-order-stat">
-            <span class="inbox-order-stat-label">Paid</span>
-            <span class="inbox-order-stat-value">${Number(o.amount_paid || 0).toFixed(2)}</span>
-          </div>
-          <div class="inbox-order-stat">
-            <span class="inbox-order-stat-label">Balance</span>
-            <span class="inbox-order-stat-value ${balance > 0 ? 'balance-due' : 'balance-clear'}">${balance.toFixed(2)}</span>
+
+        <div class="inbox-order-subsection">
+          <div class="inbox-order-stats">
+            <div class="inbox-order-stat">
+              <span class="inbox-order-stat-label">Total</span>
+              <span class="inbox-order-stat-value">${Number(o.estimated_total || 0).toFixed(2)}</span>
+            </div>
+            <div class="inbox-order-stat">
+              <span class="inbox-order-stat-label">Paid</span>
+              <span class="inbox-order-stat-value">${Number(o.amount_paid || 0).toFixed(2)}</span>
+            </div>
+            <div class="inbox-order-stat">
+              <span class="inbox-order-stat-label">Balance</span>
+              <span class="inbox-order-stat-value ${balance > 0 ? 'balance-due' : 'balance-clear'}">${balance.toFixed(2)}</span>
+            </div>
           </div>
         </div>
 
-        ${o.status !== 'Completed' && o.status !== 'Cancelled' ? `
-        <div class="inbox-order-edit-row">
-          <button type="button" class="btn btn-secondary btn-sm inbox-edit-order-btn" data-order="${escapeHtml(o.order_no)}">Edit Order</button>
+        <div class="inbox-order-subsection">
+          <div class="inbox-order-detail-label">Actions</div>
+          ${o.status !== 'Completed' && o.status !== 'Cancelled' ? `
+          <div class="inbox-order-edit-row">
+            <button type="button" class="btn btn-secondary btn-sm inbox-edit-order-btn" data-order="${escapeHtml(o.order_no)}">Edit Order</button>
+          </div>
+          ` : ''}
+          <div class="inbox-order-print-row">
+            <a href="online-order-receipt.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Order Confirmation</a>
+            <a href="gma-order-invoice.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Invoice</a>
+          </div>
+          <div class="inbox-order-send-row">
+            <span>Send to customer:</span>
+            <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="confirmation">Order Confirmation</button>
+            <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="invoice">Invoice</button>
+          </div>
+        </div>
+
+        <div class="inbox-order-subsection">
+          <div class="inbox-order-detail-label">Products</div>
+          <div class="inbox-order-lines">${orderLinesHtml(o.order_no)}</div>
+        </div>
+
+        ${pancakeHtml ? `
+        <div class="inbox-order-subsection">
+          <div class="inbox-order-detail-label">Pancake</div>
+          ${pancakeHtml}
         </div>
         ` : ''}
 
-        <div class="inbox-order-print-row">
-          <a href="online-order-receipt.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Order Confirmation</a>
-          <a href="gma-order-invoice.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Invoice</a>
-        </div>
-        <div class="inbox-order-send-row">
-          <span>Send to customer:</span>
-          <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="confirmation">Order Confirmation</button>
-          <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="invoice">Invoice</button>
+        <div class="inbox-order-subsection">
+          <div class="inbox-order-detail-label">${o.fulfillment_type === 'Delivery' ? 'Delivery details' : 'Pickup details'}</div>
+          ${orderAddressHtml(o)}
         </div>
 
-        <div class="inbox-order-detail-label">Products</div>
-        <div class="inbox-order-lines">${orderLinesHtml(o.order_no)}</div>
-
-        ${pancakeLiveStatusHtml(o)}
-
-        <div class="inbox-order-detail-label">${o.fulfillment_type === 'Delivery' ? 'Delivery details' : 'Pickup details'}</div>
-        ${orderAddressHtml(o)}
-
-        <div class="inbox-order-detail-label">Payments</div>
-        <div class="inbox-order-payments">${orderPaymentsHtml(o.order_no)}</div>
-        ${paymentExpanded ? `
-        <div class="inbox-payment-row">
-          <input type="number" min="0.01" step="0.01" placeholder="Amount" id="payAmount-${escapeHtml(o.order_no)}">
-          <select id="payMethod-${escapeHtml(o.order_no)}">
-            <option value="Cash">Cash</option>
-            <option value="GCash">GCash</option>
-            <option value="BDO">BDO</option>
-            <option value="Metrobank">Metrobank</option>
-            <option value="Bank Transfer">Bank Transfer</option>
-            <option value="Other">Other</option>
-          </select>
-          <input type="text" placeholder="Reference (optional)" id="payRef-${escapeHtml(o.order_no)}">
-          <button type="button" class="btn-text inbox-payment-cancel" data-order="${escapeHtml(o.order_no)}">Cancel</button>
-          <button class="btn btn-secondary btn-sm" type="button" data-order="${escapeHtml(o.order_no)}">Add Payment</button>
+        <div class="inbox-order-subsection">
+          <div class="inbox-order-detail-label">Payments</div>
+          <div class="inbox-order-payments">${orderPaymentsHtml(o.order_no)}</div>
+          ${paymentExpanded ? `
+          <div class="inbox-payment-row">
+            <input type="number" min="0.01" step="0.01" placeholder="Amount" id="payAmount-${escapeHtml(o.order_no)}">
+            <select id="payMethod-${escapeHtml(o.order_no)}">
+              <option value="Cash">Cash</option>
+              <option value="GCash">GCash</option>
+              <option value="BDO">BDO</option>
+              <option value="Metrobank">Metrobank</option>
+              <option value="Bank Transfer">Bank Transfer</option>
+              <option value="Other">Other</option>
+            </select>
+            <input type="text" placeholder="Reference (optional)" id="payRef-${escapeHtml(o.order_no)}">
+            <button type="button" class="btn-text inbox-payment-cancel" data-order="${escapeHtml(o.order_no)}">Cancel</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-order="${escapeHtml(o.order_no)}">Add Payment</button>
+          </div>
+          ` : `
+          <button type="button" class="inbox-add-payment-toggle" data-order="${escapeHtml(o.order_no)}">
+            <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 4.5v11M4.5 10h11" stroke-linecap="round"/></svg>
+            Add Payment
+          </button>
+          `}
         </div>
-        ` : `
-        <button type="button" class="inbox-add-payment-toggle" data-order="${escapeHtml(o.order_no)}">
-          <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 4.5v11M4.5 10h11" stroke-linecap="round"/></svg>
-          Add Payment
-        </button>
-        `}
       </div>
       ` : ''}
     </div>
@@ -1254,7 +1276,7 @@ function renderCreateOrderTab(conv) {
         <span class="new-order-total-value" id="newOrderTotalEl">0.00</span>
       </div>
       <div class="inbox-order-actions">
-        <button type="button" class="btn btn-secondary" id="newOrderClearBtn">${editingOrder ? 'Reset' : 'Clear'}</button>
+        ${editingOrder ? '' : '<button type="button" class="btn btn-secondary" id="newOrderClearBtn">Clear</button>'}
         <button type="button" class="btn btn-primary" id="newOrderSubmitBtn">${editingOrder ? 'Save Changes' : 'Create'}</button>
       </div>
     </div>
@@ -1281,14 +1303,7 @@ function renderCreateOrderTab(conv) {
     document.getElementById('newOrderCustomerName').value = conv.customer_name || '';
   }
 
-  document.getElementById('newOrderClearBtn').addEventListener('click', () => {
-    if (editingOrder) {
-      // "Reset" while editing re-fetches the order's lines fresh from the database, discarding any
-      // unsaved tweaks (added/removed/changed lines) - doesn't touch the database itself, unlike a
-      // real cancel, which also leaves edit mode entirely.
-      editOrder(editingOrder.order_no);
-      return;
-    }
+  document.getElementById('newOrderClearBtn')?.addEventListener('click', () => {
     newOrderLines = [];
     renderCreateOrderTab(conv);
   });

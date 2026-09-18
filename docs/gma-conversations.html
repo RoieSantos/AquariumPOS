@@ -78,6 +78,10 @@
       max-height: 80vh;
       overflow-y: auto;
       padding: 12px 14px;
+      /* Per direct follow-up request ("better coloration so the separation is noticeable") - the
+         panel itself is now a tinted backdrop so the white section cards below (.form-group/
+         .inbox-panel-section) actually pop instead of blending into a near-identical off-white. */
+      background: #eef2f8;
     }
     .inbox-customer-card h3 {
       font-size: 13px;
@@ -166,6 +170,29 @@
       font-family: ui-monospace, "SF Mono", Consolas, monospace;
       word-break: break-all;
       text-align: right;
+    }
+    /* Per direct follow-up request for better visual separation in the right panel: the Information
+       tab's three groups (conversation details / orders / other-orders search) used to just be a
+       colored label followed by bare content, running straight into the next group with nothing but
+       that label to tell them apart. Wraps each in the same bordered-card treatment the Create Order
+       tab's .form-group sections already use, so both tabs read with the same visual language and
+       each group is unambiguously its own block while scrolling a long list of orders. */
+    .inbox-panel-section {
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 3px rgba(20, 40, 80, 0.07);
+    }
+    .inbox-panel-section:last-child {
+      margin-bottom: 0;
+    }
+    .inbox-panel-section .inbox-section-label {
+      margin: 0 0 12px;
+    }
+    .inbox-panel-section .inbox-empty-state {
+      padding: 16px 4px;
     }
     .inbox-customer-search {
       display: flex;
@@ -264,6 +291,22 @@
       padding: 10px 12px 12px;
       border-top: 1px dashed var(--panel-border);
     }
+    /* Per direct follow-up request ("you see how its not separated") - the expanded card used to be
+       one continuous list of rows told apart only by thin dashed lines, all sitting on the same
+       background. Each logical group (stats/actions/products/delivery/payments) is now its own
+       white, bordered "subsection" box - same pop-off-the-backdrop treatment as the main panel's own
+       .form-group/.inbox-panel-section cards, just one size down - so the eye can immediately tell
+       where one group ends and the next begins instead of scanning a wall of text. */
+    .inbox-order-subsection {
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-top: 10px;
+    }
+    .inbox-order-subsection:first-child {
+      margin-top: 0;
+    }
     /* Per direct follow-up request - "Order Confirmation" opens the existing public receipt page
        (docs/online-order-receipt.html, already supports AO-xxxxx orders); "Invoice" opens the new
        staff-only docs/gma-order-invoice.html - both plain links to a printable page in a new tab,
@@ -271,9 +314,6 @@
     .inbox-order-print-row {
       display: flex;
       gap: 14px;
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px dashed var(--panel-border);
       font-size: 11.5px;
     }
     .inbox-order-print-row a {
@@ -283,6 +323,14 @@
     }
     .inbox-order-print-row a:hover {
       text-decoration: underline;
+    }
+    /* Only shown a top divider when an Edit Order button sits above it in the same Actions box
+       (see .inbox-order-edit-row below) - with no button above, this is the box's first row and
+       needs no divider of its own. */
+    .inbox-order-edit-row + .inbox-order-print-row {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--panel-border);
     }
     .inbox-order-send-row {
       display: flex;
@@ -302,9 +350,6 @@
     .inbox-order-send-row .btn-text:hover {
       color: var(--primary, #1d4f91);
     }
-    .inbox-order-edit-row {
-      margin-top: 10px;
-    }
     .inbox-order-edit-banner {
       display: flex;
       align-items: center;
@@ -319,16 +364,15 @@
       font-weight: 600;
       color: var(--primary, #1d4f91);
     }
+    /* Now used as a subsection box's own header (sits at its top, box border does the separating -
+       see .inbox-order-subsection above) rather than a bare label floating between dashed lines. */
     .inbox-order-detail-label {
       font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.04em;
       color: var(--muted-text, #61738f);
-      margin: 12px 0 6px;
-    }
-    .inbox-order-detail-label:first-of-type {
-      margin-top: 2px;
+      margin: 0 0 8px;
     }
     .inbox-order-line-row, .inbox-order-payment-row {
       display: flex;
@@ -360,6 +404,24 @@
     .inbox-order-pancake-row a {
       font-size: 11.5px;
     }
+    /* Key/value rows used inside a subsection box (Delivery/Pickup details) - same row shape as
+       .inbox-customer-id's own rows, but without that class's own box chrome (background/border),
+       since the parent .inbox-order-subsection already supplies that here. */
+    .inbox-order-kv {
+      font-size: 11.5px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .inbox-order-kv > div {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .inbox-order-kv span:first-child {
+      color: var(--muted-text, #61738f);
+      flex-shrink: 0;
+    }
     .inbox-order-meta {
       color: var(--muted-text, #61738f);
       margin-top: 4px;
@@ -367,9 +429,6 @@
     .inbox-order-stats {
       display: flex;
       gap: 16px;
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px dashed var(--panel-border);
     }
     .inbox-order-stat {
       display: flex;
@@ -498,24 +557,30 @@
        with an icon, scoped to just this panel so every other page using those same classes elsewhere
        in the portal is unaffected. */
     .inbox-customer-card .form-group {
-      background: #fafbfc;
+      background: #fff;
       border: 1px solid var(--panel-border);
       border-radius: 10px;
       padding: 14px;
       margin-bottom: 14px;
+      box-shadow: 0 1px 3px rgba(20, 40, 80, 0.07);
     }
+    /* Same full-width colored label bar as .inbox-section-label (Information tab) - per direct
+       follow-up request, unifying the two tabs' section headers so both read with equally
+       noticeable separation instead of this one being a plain gray line with no visual weight. */
     .inbox-customer-card .form-group-title {
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 11.5px;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      color: var(--muted-text, #61738f);
-      border-bottom: none;
-      margin-bottom: 12px;
-      padding-bottom: 0;
+      font-size: 11px;
       font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--primary, #1d4f91);
+      background: #e2ecfb;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border-bottom: none;
+      margin: 0 0 12px;
     }
     .inbox-customer-card .form-group-title svg {
       color: var(--primary, #1d4f91);
