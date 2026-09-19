@@ -55,6 +55,7 @@
       <div class="status-summary-bar" id="statusSummaryBar">
         <button type="button" class="status-summary-pill" data-status="Confirmed"><span class="badge badge-primary">Confirmed</span> <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
         <button type="button" class="status-summary-pill" data-status="Printed"><span class="badge badge-warning">Printed</span> <span class="status-summary-count" id="statusCountPrinted">-</span></button>
+        <button type="button" class="status-summary-pill" data-status="Assigned"><span class="badge badge-glass">Assigned</span> <span class="status-summary-count" id="statusCountAssigned">-</span></button>
         <button type="button" class="status-summary-pill" data-status="To Ship"><span class="badge badge-purple">To Ship</span> <span class="status-summary-count" id="statusCountToShip">-</span></button>
         <button type="button" class="status-summary-pill" data-status="Shipped"><span class="badge badge-success">Shipped</span> <span class="status-summary-count" id="statusCountShipped">-</span></button>
         <button type="button" class="status-summary-pill" data-status="Cancelled"><span class="badge badge-danger">Cancelled</span> <span class="status-summary-count" id="statusCountCancelled">-</span></button>
@@ -99,6 +100,7 @@
         <div class="grouped-tabs" id="groupedTabs">
           <button type="button" class="grouped-tab-btn active" data-status="Confirmed">Confirmed<span class="grouped-tab-count" id="groupCountConfirmed">0</span></button>
           <button type="button" class="grouped-tab-btn" data-status="Printed">Printed<span class="grouped-tab-count" id="groupCountPrinted">0</span></button>
+          <button type="button" class="grouped-tab-btn" data-status="Assigned">Assigned<span class="grouped-tab-count" id="groupCountAssigned">0</span></button>
           <button type="button" class="grouped-tab-btn" data-status="To Ship">To Ship<span class="grouped-tab-count" id="groupCountToShip">0</span></button>
         </div>
         <p class="muted hidden" id="groupedOrdersNote"></p>
@@ -154,6 +156,25 @@
       <div id="viewSerialsModalLines"></div>
       <div style="display:flex; justify-content:flex-end; margin-top:20px;">
         <button type="button" class="btn btn-secondary" id="viewSerialsModalCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- "TO-SHIP" button (js/onlineOrders.js) - routes to either the GMA Page's Graph API or
+       Pancake's own conversation API depending on where the order came from, resolved by
+       admin_get_online_order_messaging_route (sql/supabase_online_order_send_message.sql) right
+       when this modal opens, and prefilled with the local POS's own To-Ship message via
+       admin_render_online_order_to_ship_message (same file). Plain textarea + Send, same shape as
+       the ship-serial/view-serials modals above rather than a bespoke design. -->
+  <div id="sendOrderMessageModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:520px;">
+      <h3 style="margin:0 0 6px;">Send To-Ship Message to Customer</h3>
+      <p class="muted" id="sendOrderMessageSub" style="margin:0 0 16px;"></p>
+      <textarea id="sendOrderMessageText" rows="5" style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--panel-border); border-radius:6px; font-family:inherit; font-size:13px;" placeholder="Type your message..."></textarea>
+      <p class="error-text hidden" id="sendOrderMessageError" style="margin-top:12px;"></p>
+      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
+        <button type="button" class="btn btn-secondary" id="sendOrderMessageCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="sendOrderMessageSendBtn">Send</button>
       </div>
     </div>
   </div>

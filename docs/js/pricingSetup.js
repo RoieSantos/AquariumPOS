@@ -237,6 +237,74 @@ async function saveStickerPricing(row) {
   await loadStickerPricing();
 }
 
+// ---- Aquarium Extras Pricing (currently just "Hole") ----
+
+async function loadAquariumExtraPricing() {
+  const tbody = document.getElementById('aquariumExtraPricingTableBody');
+  tbody.innerHTML = '<tr><td colspan="5" class="muted">Loading...</td></tr>';
+
+  const { data, error } = await supabaseClient.rpc('admin_list_aquarium_extra_pricing', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="5" class="error-text">${escapeHtml(error.message)}</td></tr>`;
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">No rows yet.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data
+    .map((row) => `
+      <tr data-feature-key="${escapeHtml(row.feature_key)}">
+        <td>${escapeHtml(row.feature_key)}</td>
+        <td><input type="number" min="0" step="0.01" value="${row.price}" class="pricing-input" style="max-width:120px;" /></td>
+        <td>${formatUpdated(row)}</td>
+        <td>${escapeHtml(row.updated_by) || '<span class="muted">-</span>'}</td>
+        <td><button class="btn btn-success btn-sm" type="button" data-action="save">Save</button></td>
+      </tr>
+    `)
+    .join('');
+
+  tbody.querySelectorAll('button[data-action="save"]').forEach((btn) => {
+    btn.addEventListener('click', () => saveAquariumExtraPricing(btn.closest('tr')));
+  });
+}
+
+async function saveAquariumExtraPricing(row) {
+  const featureKey = row.dataset.featureKey;
+  const input = row.querySelector('.pricing-input');
+  const price = Number(input.value);
+  if (!(price >= 0)) {
+    alert('Enter a valid non-negative price.');
+    return;
+  }
+
+  const btn = row.querySelector('button[data-action="save"]');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  const { error } = await supabaseClient.rpc('admin_upsert_aquarium_extra_pricing', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_feature_key: featureKey,
+    p_price: price
+  });
+
+  if (error) {
+    alert(`Failed to save: ${error.message}`);
+    btn.disabled = false;
+    btn.textContent = 'Save';
+    return;
+  }
+
+  await loadAquariumExtraPricing();
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -261,8 +329,10 @@ async function saveStickerPricing(row) {
   document.getElementById('refreshGlassBtn').addEventListener('click', loadGlassPricing);
   document.getElementById('refreshTubularBtn').addEventListener('click', loadTubularPricing);
   document.getElementById('refreshStickerBtn').addEventListener('click', loadStickerPricing);
+  document.getElementById('refreshAquariumExtraBtn').addEventListener('click', loadAquariumExtraPricing);
 
   await loadGlassPricing();
   await loadTubularPricing();
   await loadStickerPricing();
+  await loadAquariumExtraPricing();
 })();

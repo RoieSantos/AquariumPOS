@@ -1,9 +1,14 @@
-// Messenger-style DM widget - floating bubble present on every authenticated page (mounted by
+// Messenger-style chat widget - floating bubble present on every authenticated page (mounted by
 // nav.js's renderTopNav so no per-page wiring is needed). See supabase_portal_chat_tables.sql for
 // the schema/RPCs and its header comment for why message delivery uses Realtime Broadcast
 // (per-conversation channels) instead of postgres_changes.
 //
-// Groups are not built yet - DMs only for now (see chat conversation with the user about scope).
+// Groups (supabase_portal_chat_groups_and_alice.sql's create_group_conversation) and Alice, the AI
+// bot, as an addressable contact (same file - a StaffUsers row 'alice' that shows up in the normal
+// directory) were added per "i want alice and the GC to live only in the portal" - DM her directly
+// (always replies) or add her to a group and type "@Alice" (only replies when mentioned there,
+// never to ordinary staff chatter). See supabase/functions/portal-chat-alice-reply for the actual
+// reply logic - it runs in `simulate: true` mode, so nothing said to her here is a real action.
 
 let chatSession = null;
 let chatDirectory = []; // [{ username, display_name }] - everyone else, cached for the lifetime of the tab
@@ -16,6 +21,20 @@ let chatInboxChannel = null;
 const chatConversationChannels = new Map(); // conversationId -> RealtimeChannel
 const chatReceipts = new Map(); // conversationId -> { deliveredUpTo: iso|null, seenUpTo: iso|null } for the OTHER participant
 const chatLastMineAt = new Map(); // conversationId -> ISO timestamp of the last message *I* sent in it
+const chatConversationHasAlice = new Map(); // conversationId -> boolean, refreshed each time a thread is opened
+const chatConversationIsGroup = new Map(); // conversationId -> boolean, so send-time logic doesn't need to re-find it in chatConversations
+let chatNewMode = 'dm'; // 'dm' | 'group' - which tab is active in the "New" view
+const chatSelectedGroupMembers = new Set(); // usernames picked so far while chatNewMode === 'group'
+const ALICE_USERNAME = 'alice';
+const ALICE_MENTION_RE = /@alice\b/i;
+
+// @mention autocomplete for the open thread's input - per "when I put @ there are no users to be
+// tagged", so staff can actually find/tag Alice (or each other) instead of having to know to type
+// her exact username from memory.
+let chatMentionCandidates = []; // [{ username, displayName }] - members of the OPEN conversation, minus me
+let chatMentionMatches = []; // currently filtered subset shown in the dropdown
+let chatMentionStartIndex = -1; // index of the triggering '@' in the input's current value
+let chatMentionHighlightIndex = 0;
 
 function chatOtherDisplayName(username) {
   if (!username) return 'Someone';
@@ -49,6 +68,22 @@ function chatEscapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text ?? '';
   return div.innerHTML;
+}
+
+// Escapes first (so a message can never inject markup), then turns bare URLs into real links -
+// per "can you make the link clickable always", since Alice's quote replies often end with a
+// drawing/preview link (see chatbot-engine.ts's compute_aquarium_quote tool) that was previously
+// just inert text staff had to manually copy.
+function chatLinkify(text) {
+  const escaped = chatEscapeHtml(text);
+  return escaped.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
+    // Trailing sentence punctuation (a period ending the message, a closing parenthesis, etc.)
+    // is more often prose than part of the URL - keep it outside the link.
+    const trailingMatch = match.match(/[.,!?;:)\]]+$/);
+    const trailing = trailingMatch ? trailingMatch[0] : '';
+    const url = trailing ? match.slice(0, -trailing.length) : match;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>${trailing}`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +190,7 @@ function chatHandleIncomingMessage(conversationId, message) {
   }
 
   if (isOpenAndVisible) {
-    chatAppendMessageBubble(message);
+    chatAppendMessageBubble(message, chatConversationIsGroup.get(conversationId));
     chatMarkConversationRead(conversationId);
   }
 }
@@ -236,21 +271,32 @@ function chatBuildWidgetShell() {
         </div>
         <div id="chatThreadMessages" class="chat-widget-body chat-thread-messages"></div>
         <div id="chatThreadReceipt" class="chat-thread-receipt"></div>
+        <div id="chatMentionDropdown" class="chat-mention-dropdown hidden"></div>
         <form id="chatThreadForm" class="chat-thread-input-row">
-          <input id="chatThreadInput" type="text" placeholder="Type a message..." maxlength="4000" autocomplete="off" />
+          <input id="chatThreadInput" type="text" placeholder="Type a message... (@ to mention)" maxlength="4000" autocomplete="off" />
           <button type="submit" class="btn btn-primary btn-sm">Send</button>
         </form>
       </div>
       <div id="chatNewView" class="chat-view hidden">
         <div class="chat-widget-header">
           <button id="chatNewBackBtn" class="chat-icon-btn" type="button" title="Back">←</button>
-          <span>New Message</span>
+          <span>New</span>
           <button id="chatNewCloseBtn" class="chat-icon-btn" type="button" title="Close">✕</button>
+        </div>
+        <div class="chat-new-tabs">
+          <button type="button" class="chat-new-tab active" data-mode="dm">Message</button>
+          <button type="button" class="chat-new-tab" data-mode="group">Group</button>
+        </div>
+        <div id="chatGroupNameRow" class="chat-widget-search hidden">
+          <input id="chatGroupNameInput" type="text" placeholder="Group name (e.g. Sales Team)" autocomplete="off" />
         </div>
         <div class="chat-widget-search">
           <input id="chatDirectorySearch" type="text" placeholder="Search staff..." autocomplete="off" />
         </div>
         <div id="chatDirectoryList" class="chat-widget-body"></div>
+        <div id="chatGroupCreateRow" class="chat-thread-input-row hidden">
+          <button id="chatCreateGroupBtn" class="btn btn-primary btn-sm" type="button" style="width:100%;">Create Group</button>
+        </div>
       </div>
     </div>
   `;
@@ -265,6 +311,24 @@ function chatBuildWidgetShell() {
   document.getElementById('chatNewBtn').addEventListener('click', chatShowNewView);
   document.getElementById('chatDirectorySearch').addEventListener('input', chatRenderDirectoryList);
   document.getElementById('chatThreadForm').addEventListener('submit', chatHandleSendMessage);
+  document.getElementById('chatThreadInput').addEventListener('input', chatHandleThreadInputForMentions);
+  document.getElementById('chatThreadInput').addEventListener('keydown', chatHandleThreadInputKeydown);
+  document.getElementById('chatThreadInput').addEventListener('blur', () => setTimeout(chatHideMentionDropdown, 150));
+  document.getElementById('chatCreateGroupBtn').addEventListener('click', chatCreateGroup);
+  document.querySelectorAll('.chat-new-tab').forEach((btn) => {
+    btn.addEventListener('click', () => chatSetNewMode(btn.dataset.mode));
+  });
+}
+
+function chatSetNewMode(mode) {
+  chatNewMode = mode;
+  chatSelectedGroupMembers.clear();
+  document.querySelectorAll('.chat-new-tab').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+  document.getElementById('chatGroupNameRow').classList.toggle('hidden', mode !== 'group');
+  document.getElementById('chatGroupCreateRow').classList.toggle('hidden', mode !== 'group');
+  chatRenderDirectoryList();
 }
 
 function chatOpenPanel() {
@@ -276,6 +340,7 @@ function chatOpenPanel() {
 function chatClosePanel() {
   document.getElementById('chatWidgetPanel').classList.add('hidden');
   chatOpenConversationId = null;
+  chatHideMentionDropdown();
 }
 
 function chatShowListView() {
@@ -283,13 +348,15 @@ function chatShowListView() {
   document.getElementById('chatListView').classList.remove('hidden');
   document.getElementById('chatThreadView').classList.add('hidden');
   document.getElementById('chatNewView').classList.add('hidden');
+  chatHideMentionDropdown();
 }
 
 function chatShowNewView() {
   document.getElementById('chatListView').classList.add('hidden');
   document.getElementById('chatNewView').classList.remove('hidden');
   document.getElementById('chatDirectorySearch').value = '';
-  chatRenderDirectoryList();
+  document.getElementById('chatGroupNameInput').value = '';
+  chatSetNewMode('dm');
 }
 
 // ---------------------------------------------------------------------------
@@ -339,12 +406,15 @@ function chatRenderDirectoryList() {
     return;
   }
 
+  const isGroupMode = chatNewMode === 'group';
+
   container.innerHTML = filtered
     .map((u) => {
       const isOnline = chatOnlineUsernames.has(u.username);
+      const checked = chatSelectedGroupMembers.has(u.username);
       return `
-        <div class="chat-conv-item" data-username="${chatEscapeHtml(u.username)}">
-          <span class="chat-avatar-dot${isOnline ? ' chat-online' : ''}"></span>
+        <div class="chat-conv-item${isGroupMode && checked ? ' chat-conv-selected' : ''}" data-username="${chatEscapeHtml(u.username)}">
+          ${isGroupMode ? `<input type="checkbox" ${checked ? 'checked' : ''} tabindex="-1" style="pointer-events:none;" />` : `<span class="chat-avatar-dot${isOnline ? ' chat-online' : ''}"></span>`}
           <div class="chat-conv-text">
             <div class="chat-conv-name">${chatEscapeHtml(u.display_name)}</div>
           </div>
@@ -354,8 +424,61 @@ function chatRenderDirectoryList() {
     .join('');
 
   container.querySelectorAll('.chat-conv-item').forEach((el) => {
-    el.addEventListener('click', () => chatStartConversationWith(el.dataset.username));
+    el.addEventListener('click', () => {
+      if (isGroupMode) {
+        chatToggleGroupMember(el.dataset.username);
+      } else {
+        chatStartConversationWith(el.dataset.username);
+      }
+    });
   });
+}
+
+function chatToggleGroupMember(username) {
+  if (chatSelectedGroupMembers.has(username)) {
+    chatSelectedGroupMembers.delete(username);
+  } else {
+    chatSelectedGroupMembers.add(username);
+  }
+  chatRenderDirectoryList();
+}
+
+async function chatCreateGroup() {
+  const nameInput = document.getElementById('chatGroupNameInput');
+  const name = nameInput.value.trim();
+  const members = Array.from(chatSelectedGroupMembers);
+
+  if (members.length === 0) {
+    alert('Pick at least one other person for the group.');
+    return;
+  }
+  if (!name) {
+    alert('Give the group a name.');
+    return;
+  }
+
+  const btn = document.getElementById('chatCreateGroupBtn');
+  btn.disabled = true;
+  try {
+    const { data: conversationId, error } = await supabaseClient.rpc('create_group_conversation', {
+      p_username: chatSession.username,
+      p_password: chatSession.password,
+      p_name: name,
+      p_member_usernames: members
+    });
+    if (error) throw new Error(error.message);
+
+    chatJoinConversationChannel(conversationId);
+    members.forEach((username) => {
+      if (username !== ALICE_USERNAME) chatInboxBroadcast(username, { type: 'new_conversation', conversationId });
+    });
+    await chatLoadConversations();
+    chatOpenThread(conversationId);
+  } catch (err) {
+    alert(err.message || 'Could not create that group.');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function chatStartConversationWith(username) {
@@ -435,10 +558,19 @@ async function chatOpenThread(conversationId) {
     chatApplyReceipt(conversationId, 'seenUpTo', otherMember.LastReadAtUtc);
   }
 
+  const conv = chatConversations.find((c) => c.conversation_id === conversationId);
+  const isGroup = Boolean(conv?.is_group);
+  chatConversationIsGroup.set(conversationId, isGroup);
+  chatConversationHasAlice.set(conversationId, (memberRows || []).some((m) => m.Username === ALICE_USERNAME));
+  chatMentionCandidates = (memberRows || [])
+    .map((m) => m.Username)
+    .filter((u) => u !== chatSession.username)
+    .map((u) => ({ username: u, displayName: chatOtherDisplayName(u) }));
+
   messagesEl.innerHTML = '';
   let lastMineAt = null;
   (data || []).forEach((m) => {
-    chatAppendMessageBubble({ senderUsername: m.SenderUsername, body: m.Body, createdAtUtc: m.CreatedAtUtc });
+    chatAppendMessageBubble({ senderUsername: m.SenderUsername, body: m.Body, createdAtUtc: m.CreatedAtUtc }, isGroup);
     if (m.SenderUsername === chatSession.username) lastMineAt = m.CreatedAtUtc;
   });
   if (lastMineAt) chatLastMineAt.set(conversationId, lastMineAt);
@@ -448,15 +580,19 @@ async function chatOpenThread(conversationId) {
   document.getElementById('chatThreadInput').focus();
 }
 
-function chatAppendMessageBubble(message) {
+function chatAppendMessageBubble(message, isGroup) {
   const messagesEl = document.getElementById('chatThreadMessages');
   if (!messagesEl) return;
 
   const mine = message.senderUsername === chatSession.username;
   const bubble = document.createElement('div');
   bubble.className = `chat-msg${mine ? ' chat-msg-mine' : ' chat-msg-theirs'}`;
+  // Sender name label only makes sense in a group (a DM's "theirs" bubble is obviously the other
+  // person) - and only on messages that aren't mine.
+  const senderLabel = isGroup && !mine ? `<div class="chat-msg-sender">${chatEscapeHtml(chatOtherDisplayName(message.senderUsername))}</div>` : '';
   bubble.innerHTML = `
-    <div class="chat-msg-bubble">${chatEscapeHtml(message.body)}</div>
+    ${senderLabel}
+    <div class="chat-msg-bubble">${chatLinkify(message.body)}</div>
     <div class="chat-msg-time">${chatFormatTime(message.createdAtUtc)}</div>
   `;
   messagesEl.appendChild(bubble);
@@ -489,6 +625,96 @@ async function chatMarkConversationRead(conversationId) {
   });
 }
 
+function chatHideMentionDropdown() {
+  chatMentionStartIndex = -1;
+  chatMentionMatches = [];
+  document.getElementById('chatMentionDropdown').classList.add('hidden');
+}
+
+function chatRenderMentionDropdown() {
+  const dropdown = document.getElementById('chatMentionDropdown');
+  dropdown.innerHTML = chatMentionMatches
+    .map((c, i) => `<div class="chat-mention-item${i === chatMentionHighlightIndex ? ' chat-mention-active' : ''}" data-username="${chatEscapeHtml(c.username)}">${chatEscapeHtml(c.displayName)}</div>`)
+    .join('');
+  dropdown.classList.remove('hidden');
+
+  dropdown.querySelectorAll('.chat-mention-item').forEach((el) => {
+    // mousedown (not click) fires before the input loses focus, so selecting an item doesn't first
+    // blur-and-close the dropdown out from under the click.
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      chatInsertMention(el.dataset.username);
+    });
+  });
+}
+
+function chatHandleThreadInputForMentions() {
+  const input = document.getElementById('chatThreadInput');
+  const value = input.value;
+  const caret = input.selectionStart;
+  const uptoCaret = value.slice(0, caret);
+  const atIndex = uptoCaret.lastIndexOf('@');
+
+  // No '@' before the caret, or whitespace already typed after it (mention token finished/abandoned)
+  // ends the mention - and requiring '@' to be at the very start or right after whitespace keeps
+  // this from firing on things like an email address pasted into the message.
+  const charBeforeAt = atIndex > 0 ? uptoCaret[atIndex - 1] : ' ';
+  if (atIndex === -1 || /\s/.test(uptoCaret.slice(atIndex + 1)) || !/\s/.test(charBeforeAt)) {
+    chatHideMentionDropdown();
+    return;
+  }
+
+  const query = uptoCaret.slice(atIndex + 1).toLowerCase();
+  chatMentionMatches = chatMentionCandidates.filter((c) =>
+    c.username.toLowerCase().includes(query) || c.displayName.toLowerCase().includes(query)
+  );
+
+  if (chatMentionMatches.length === 0) {
+    chatHideMentionDropdown();
+    return;
+  }
+
+  chatMentionStartIndex = atIndex;
+  chatMentionHighlightIndex = 0;
+  chatRenderMentionDropdown();
+}
+
+function chatHandleThreadInputKeydown(evt) {
+  if (chatMentionStartIndex === -1 || chatMentionMatches.length === 0) return;
+
+  if (evt.key === 'ArrowDown') {
+    evt.preventDefault();
+    chatMentionHighlightIndex = (chatMentionHighlightIndex + 1) % chatMentionMatches.length;
+    chatRenderMentionDropdown();
+  } else if (evt.key === 'ArrowUp') {
+    evt.preventDefault();
+    chatMentionHighlightIndex = (chatMentionHighlightIndex - 1 + chatMentionMatches.length) % chatMentionMatches.length;
+    chatRenderMentionDropdown();
+  } else if (evt.key === 'Enter' || evt.key === 'Tab') {
+    evt.preventDefault();
+    chatInsertMention(chatMentionMatches[chatMentionHighlightIndex].username);
+  } else if (evt.key === 'Escape') {
+    chatHideMentionDropdown();
+  }
+}
+
+function chatInsertMention(username) {
+  const input = document.getElementById('chatThreadInput');
+  const value = input.value;
+  const caret = input.selectionStart;
+  const before = value.slice(0, chatMentionStartIndex);
+  const after = value.slice(caret);
+  // Inserts the raw username (e.g. "@alice"), not the display name - display names can contain
+  // spaces/parentheses ("Alice (AI Assistant)") which would break re-parsing the token later, and
+  // usernames are exactly what ALICE_MENTION_RE/the server-side re-check match against anyway.
+  const inserted = `@${username} `;
+  input.value = `${before}${inserted}${after}`;
+  const newCaret = before.length + inserted.length;
+  input.setSelectionRange(newCaret, newCaret);
+  chatHideMentionDropdown();
+  input.focus();
+}
+
 async function chatHandleSendMessage(evt) {
   evt.preventDefault();
   const input = document.getElementById('chatThreadInput');
@@ -496,7 +722,9 @@ async function chatHandleSendMessage(evt) {
   if (!body || !chatOpenConversationId) return;
 
   input.value = '';
+  chatHideMentionDropdown();
   const conversationId = chatOpenConversationId;
+  const isGroup = Boolean(chatConversationIsGroup.get(conversationId));
   const nowIso = new Date().toISOString();
 
   const { error } = await supabaseClient.from('ChatMessages').insert({
@@ -512,7 +740,7 @@ async function chatHandleSendMessage(evt) {
   }
 
   const message = { senderUsername: chatSession.username, body, createdAtUtc: nowIso };
-  chatAppendMessageBubble(message);
+  chatAppendMessageBubble(message, isGroup);
   chatLastMineAt.set(conversationId, nowIso);
   chatRenderReceiptStatus(conversationId);
 
@@ -526,6 +754,60 @@ async function chatHandleSendMessage(evt) {
 
   chatJoinConversationChannel(conversationId);
   chatConversationChannels.get(conversationId)?.send({ type: 'broadcast', event: 'message', payload: message });
+
+  // Alice: a 1:1 DM with her always gets a reply; in a group she's a member of, only when
+  // explicitly @mentioned - never for ordinary staff back-and-forth. The Edge Function re-checks
+  // both conditions server-side too (see portal-chat-alice-reply), this is just to avoid firing an
+  // unnecessary request most of the time.
+  const hasAlice = chatConversationHasAlice.get(conversationId);
+  const shouldAskAlice = hasAlice && (!isGroup || ALICE_MENTION_RE.test(body));
+  if (shouldAskAlice) {
+    chatRequestAliceReply(conversationId, isGroup);
+  }
+}
+
+async function chatRequestAliceReply(conversationId, isGroup) {
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/portal-chat-alice-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: chatSession.username,
+        admin_password: chatSession.password,
+        conversation_id: conversationId
+      })
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.reply) return;
+
+    const nowIso = new Date().toISOString();
+    const message = { senderUsername: ALICE_USERNAME, body: result.reply, createdAtUtc: nowIso };
+
+    if (chatOpenConversationId === conversationId) {
+      chatAppendMessageBubble(message, isGroup);
+    }
+    chatLastMineAt.delete(conversationId); // her reply resets "Sent/Delivered/Seen" tracking for MY last message
+    chatRenderReceiptStatus(conversationId);
+
+    const conv = chatConversations.find((c) => c.conversation_id === conversationId);
+    if (conv) {
+      conv.last_message = result.reply;
+      conv.last_message_at = nowIso;
+      conv.last_message_sender = ALICE_USERNAME;
+      conv.unread = chatOpenConversationId !== conversationId;
+    }
+    chatRenderConversationList();
+    chatUpdateBubbleBadge();
+
+    chatConversationChannels.get(conversationId)?.send({ type: 'broadcast', event: 'message', payload: message });
+  } catch (err) {
+    console.error('Chat: Alice reply failed', err);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -977,6 +977,16 @@ async function confirmOrderInPancake(orderNo, btn) {
     return;
   }
 
+  // Let the customer know right away, with a link to their order confirmation (same public
+  // receipt page/URL pattern as sendReceiptToCustomer's 'receipt' kind) - best-effort like
+  // sendReceiptToCustomer/addOrderPayment's Pancake sync: the Pancake confirm above is the part
+  // that must not fail silently, so a send failure here doesn't block or alert on top of it.
+  const receiptLink = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`;
+  await sendMessageToCustomer(
+    `Your order has been confirmed, Please see receipt for your reference. We will keep you posted on the status of your order. Any concerns please let us know :) #HFK\n${receiptLink}`,
+    []
+  );
+
   // Force a fresh live fetch rather than trusting the RPC's own return value, so the badge reflects
   // exactly what Pancake now reports.
   orderPancakeStatusCache.delete(orderNo);

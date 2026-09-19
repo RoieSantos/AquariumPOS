@@ -666,6 +666,7 @@ function showConfirmModal(message, confirmLabel, cancelLabel) {
 let glassPricingSetupRows = [];
 let tubularPricingSetupRows = [];
 let stickerPricingSetupRows = [];
+let extraPricingSetupRows = [];
 let pricingSetupLoadPromise = null;
 
 function ensureGlassPricingLoaded() {
@@ -673,17 +674,20 @@ function ensureGlassPricingLoaded() {
   pricingSetupLoadPromise = Promise.all([
     supabaseClient.rpc('public_get_glass_pricing'),
     supabaseClient.rpc('public_get_tubular_pricing'),
-    supabaseClient.rpc('public_get_sticker_pricing')
+    supabaseClient.rpc('public_get_sticker_pricing'),
+    supabaseClient.rpc('public_get_aquarium_extra_pricing')
   ])
-    .then(([glassResult, tubularResult, stickerResult]) => {
+    .then(([glassResult, tubularResult, stickerResult, extraResult]) => {
       glassPricingSetupRows = Array.isArray(glassResult.data) ? glassResult.data : [];
       tubularPricingSetupRows = Array.isArray(tubularResult.data) ? tubularResult.data : [];
       stickerPricingSetupRows = Array.isArray(stickerResult.data) ? stickerResult.data : [];
+      extraPricingSetupRows = Array.isArray(extraResult.data) ? extraResult.data : [];
     })
     .catch(() => {
       glassPricingSetupRows = [];
       tubularPricingSetupRows = [];
       stickerPricingSetupRows = [];
+      extraPricingSetupRows = [];
     });
   return pricingSetupLoadPromise;
 }
@@ -707,6 +711,8 @@ function buildCustomPayload() {
     highStrip: document.getElementById('customHighStrip').checked,
     aquascapeService: document.getElementById('customAquascape').checked,
     enclosure: document.getElementById('customEnclosure').checked,
+    holeCount: document.getElementById('customHoleCount').value,
+    dividerCount: document.getElementById('customDividerCount').value,
     filtrationSump: {
       enabled: filtrationEnabled,
       type: document.getElementById('sumpType').value,
@@ -725,7 +731,8 @@ function buildCustomPayload() {
     glassPricingSetupRows: glassPricingSetupRows,
     glassPricingUom: 'MM',
     tubularPricingSetupRows: tubularPricingSetupRows,
-    stickerPricingSetupRows: stickerPricingSetupRows
+    stickerPricingSetupRows: stickerPricingSetupRows,
+    extraPricingSetupRows: extraPricingSetupRows
   };
 }
 
@@ -1595,6 +1602,13 @@ function renderCustomAquariumSummary() {
     .map(([label]) => `<div><strong>${label}:</strong> Yes</div>`)
     .join('');
 
+  const holeCount = Number(document.getElementById('customHoleCount').value) || 0;
+  const dividerCount = Number(document.getElementById('customDividerCount').value) || 0;
+  const countsHtml = [
+    holeCount > 0 ? `<div><strong>Hole for Aquarium:</strong> ${holeCount}</div>` : '',
+    dividerCount > 0 ? `<div><strong>Divider:</strong> ${dividerCount}</div>` : ''
+  ].join('');
+
   summaryEl.innerHTML = `
     <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
     <div><strong>Unit of Measure:</strong> ${unit}</div>
@@ -1602,6 +1616,7 @@ function renderCustomAquariumSummary() {
     <div><strong>Sealant Color:</strong> ${sealant}</div>
     <div><strong>Edge:</strong> ${rimless}</div>
     ${optionsHtml ? `<div class="dims-summary-options-grid">${optionsHtml}</div>` : ''}
+    ${countsHtml ? `<div class="dims-summary-options-grid">${countsHtml}</div>` : ''}
   `;
 }
 
@@ -1660,6 +1675,10 @@ function buildCustomAquariumSpecText() {
   if (document.getElementById('customHighStrip').checked) opts.push('High Strip');
   if (document.getElementById('customAquascape').checked) opts.push('Aquascape Service');
   if (document.getElementById('customEnclosure').checked) opts.push('Enclosure');
+  const holeCount = Number(document.getElementById('customHoleCount').value) || 0;
+  if (holeCount > 0) opts.push(`Hole x${holeCount}`);
+  const dividerCount = Number(document.getElementById('customDividerCount').value) || 0;
+  if (dividerCount > 0) opts.push(`Divider x${dividerCount}`);
 
   const optsText = opts.length ? `, ${opts.join(', ')}` : '';
   return `${length} x ${width} x ${height} ${unit}, ${glass} glass, ${sealant} sealant, ${edge}${optsText}`;
@@ -3103,6 +3122,8 @@ function resetCustomAquariumBuilder() {
   document.getElementById('customUnit').value = '';
   document.getElementById('customGlass').value = '6mm';
   document.getElementById('customSealant').value = '';
+  document.getElementById('customHoleCount').value = '0';
+  document.getElementById('customDividerCount').value = '0';
 
   ['customAio', 'customLowIron', 'customTempered', 'customRimless', 'customHighStrip', 'customAquascape', 'customEnclosure']
     .forEach((id) => { document.getElementById(id).checked = false; document.getElementById(id).disabled = false; });
@@ -4253,6 +4274,9 @@ async function runDeliveryEstimate() {
     .forEach((id) => document.getElementById(id).addEventListener('change', () => {
       enforceGlassThicknessRules().then(updateCustomPriceEstimate);
     }));
+  ['customHoleCount', 'customDividerCount'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => updateCustomPriceEstimate());
+  });
   document.getElementById('viewCartBtn').addEventListener('click', () => { renderCart(); goToStep(3); });
   document.getElementById('cartAddMoreBtn').addEventListener('click', () => goToStep(currentCategoryLabel ? 2 : 1));
   document.getElementById('cartContinueBtn').addEventListener('click', () => {

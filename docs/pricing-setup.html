@@ -18,7 +18,7 @@
 
   <div class="page">
     <h1>Pricing Setup</h1>
-    <p class="muted">Glass, Stand Tubular, and Accessory/Sticker prices used by the Aquarium/Stand/Sticker calculators - the Portal calculators and Order Now both read these live, so a change here shows up in both places right away. Only visible to super users.</p>
+    <p class="muted">Glass, Stand Tubular, Accessory/Sticker, and Aquarium Extras prices used by the Aquarium/Stand/Sticker calculators - the Portal calculators and Order Now both read these live, so a change here shows up in both places right away. Only visible to super users.</p>
 
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
@@ -103,6 +103,30 @@
           </thead>
           <tbody id="stickerPricingTableBody">
             <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Aquarium Extras Pricing</h2>
+        <button class="btn btn-secondary btn-sm" id="refreshAquariumExtraBtn" type="button" style="margin-left:auto;">Refresh</button>
+      </div>
+      <p class="muted">Flat per-item prices for aquarium add-ons - used by Order Now's Aquarium builder. Divider isn't listed here - it's always priced from the Glass Thickness table above (height x width, +20%), not its own rate.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Price (&#8369;)</th>
+              <th>Last Updated</th>
+              <th>Updated By</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="aquariumExtraPricingTableBody">
+            <tr><td colspan="5" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>

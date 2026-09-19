@@ -261,6 +261,16 @@
           <label class="checkbox-row"><input type="checkbox" id="customAquascape" /> Aquascape Service</label>
           <label class="checkbox-row"><input type="checkbox" id="customEnclosure" /> Enclosure (Best for reptile keepers)</label>
         </div>
+        <div class="form-grid" style="margin-top:12px;">
+          <div class="form-row">
+            <label for="customHoleCount">Hole for Aquarium (qty)</label>
+            <input type="number" id="customHoleCount" value="0" step="1" min="0" />
+          </div>
+          <div class="form-row">
+            <label for="customDividerCount">Divider (qty)</label>
+            <input type="number" id="customDividerCount" value="0" step="1" min="0" />
+          </div>
+        </div>
       </div>
       <div class="rule-notice" id="customRubberMattingNote">Good to know: rubber matting is included on the bottom of every tank at no extra charge.
         <div class="field-example-links">
@@ -1004,6 +1014,96 @@
         </div>
       </div>
 
+      <div class="help-section-title">How We Quote Delivery</div>
+      <div class="help-step">
+        <span class="help-step-icon">🚚</span>
+        <div>
+          <div class="help-step-title">Our own truck</div>
+          <div class="help-step-text">A flat base fee, plus a per-kilometer rate for the driving distance from whichever branch (Amaya or GMA) is fulfilling your order to your delivery address, plus any toll fee detected along that route. This is calculated instantly as soon as you enter your address.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">🛵</span>
+        <div>
+          <div class="help-step-title">Lalamove</div>
+          <div class="help-step-text">If you'd rather book your own courier, we can pull a live price quote directly from Lalamove for your chosen vehicle type (motorcycle, car, van, etc.), based on their real-time rates for that route - not our own formula.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">💡</span>
+        <div>
+          <div class="help-step-text">Either way, delivery is quoted before you submit your order, so you always know the total cost upfront. Just need a quote without ordering? Use the "Estimate the fee" link on our homepage.</div>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <span class="help-step-icon">🛵</span>
+        <div>
+          <div class="help-step-title">Advisable Mode of Transportation</div>
+          <div class="help-step-text">
+            <p>For a complete setup (aquarium + stand + sump/filtration), as a general guide:</p>
+            <div class="transport-table-wrap">
+              <table class="transport-table">
+                <thead>
+                  <tr>
+                    <th>Complete Setup Of</th>
+                    <th>Mode of Transport</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>10 to 25 gallons</td><td><span class="transport-badge">Sedan</span></td></tr>
+                  <tr><td>30 to 50 gallons</td><td><span class="transport-badge">MPV</span></td></tr>
+                  <tr><td>50 to 100 gallons</td><td><span class="transport-badge">L300</span></td></tr>
+                  <tr><td>120 to 200 gallons</td><td><span class="transport-badge">Closed Van / In-house</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="margin-top:10px;">And for an aquarium only (no stand/sump), which is lighter and more compact:</p>
+            <div class="transport-table-wrap">
+              <table class="transport-table">
+                <thead>
+                  <tr>
+                    <th>Aquarium Only</th>
+                    <th>Mode of Transport</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>Betta tanks up to 20 gallons</td><td><span class="transport-badge">Motorcycle</span></td></tr>
+                  <tr><td>25 to 50 gallons</td><td><span class="transport-badge">Sedan</span></td></tr>
+                  <tr><td>60 to 75 gallons</td><td><span class="transport-badge">MPV</span></td></tr>
+                  <tr><td>90 to 120 gallons</td><td><span class="transport-badge">L300</span></td></tr>
+                  <tr><td>Monster tanks</td><td><span class="transport-badge">In-house delivery</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="margin-top:8px;"><strong>Disclaimer:</strong> these guides are based on our own experience and are a starting point only, not a guarantee. The final vehicle choice is up to you as the customer, and Lalamove ultimately matches your booking to whichever rider/driver accepts it, who has the final say on whether your item(s) fit their vehicle.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="help-section-title">Safety Rules We Auto-Check</div>
+      <div class="help-step">
+        <span class="help-step-icon">🛡️</span>
+        <div>
+          <div class="help-step-title">Tempered glass</div>
+          <div class="help-step-text">Mandatory whenever your aquarium's width or height is 36 inches or more - if you haven't picked it, we'll turn it on for you automatically.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">🛡️</span>
+        <div>
+          <div class="help-step-title">Minimum glass thickness</div>
+          <div class="help-step-text">AIO (All-In-One) setups can't use 3mm glass - we'll bump it up to 6mm. Low Iron + Tempered glass together always need at least 10mm - we'll bump it up if a thinner thickness was selected.</div>
+        </div>
+      </div>
+      <div class="help-step">
+        <span class="help-step-icon">🛡️</span>
+        <div>
+          <div class="help-step-title">Stand tubular size</div>
+          <div class="help-step-text">A 10mm+ glass aquarium always requires a 2x2 stand, and so does any stand 49 inches or more in length with 18 inches or more in width - these are structural minimums, not preferences, so we upgrade the tubular size automatically when needed.</div>
+        </div>
+      </div>
+
       <div style="display:flex; justify-content:flex-end; margin-top:16px;">
         <button type="button" class="btn btn-secondary" id="helpModalCloseBtn">Close</button>
       </div>
@@ -1026,5 +1126,6 @@
   <script src="js/companyBranding.js"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js"></script>
   <script src="js/orderNow.js"></script>
+  <script src="js/chatWidget.js" defer></script>
 </body>
 </html>

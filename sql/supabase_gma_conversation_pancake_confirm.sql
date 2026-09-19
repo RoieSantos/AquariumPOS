@@ -154,10 +154,14 @@ declare
   v_current_status text;
   v_patch_response extensions.http_response;
   v_patch_attempt int;
+  v_confirmed_by_name text;
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
   end if;
+
+  select coalesce(nullif(trim("DisplayName"), ''), "Username") into v_confirmed_by_name
+  from public."StaffUsers" where "Username" = p_admin_username;
 
   select "PancakeReceiptNo" into v_receipt_no from public."AutomatedOrders" where "OrderNo" = p_order_no;
   if not found then
@@ -236,6 +240,32 @@ begin
     -- huge/HTML.
     raise exception 'Pancake rejected the confirm (HTTP %): %', v_patch_response.status, left(coalesce(v_patch_response.content, '(no body)'), 500);
   end if;
+
+  -- Records WHO actually confirmed this order in OUR system - per direct request: "if an order is
+  -- coming from GMA branch and confirmed by the staff from GMA, please add their name in the
+  -- confirmed by. use their name on the portal". Pancake's own status_history (what admin_list_
+  -- online_orders' ConfirmedBy is normally read from via pancake_extract_created_confirmed_by,
+  -- see supabase_pancake_manual_sync.sql) has no name for a status change made through this API
+  -- call - no logged-in Pancake user performed it, unlike a change made through Pancake's own UI -
+  -- so that sync would otherwise leave ConfirmedBy blank forever for every GMA order confirmed
+  -- this way, which is exactly the blank column the Orders page was showing.
+  --
+  -- INSERT ... ON CONFLICT (not a plain UPDATE) - a GMA order can still have no OnlineOrders row
+  -- at all at the exact moment staff hit Confirm here (that row only appears once the background
+  -- cron sync or a portal page view has pulled this order in from Pancake), and a plain UPDATE
+  -- would silently touch 0 rows in that case, leaving this permanently unrecorded once the sync
+  -- later creates the row with Pancake's own (nameless) data. Every other column is left for that
+  -- sync to fill in as normal - this only ever stakes a claim on ConfirmedBy/ConfirmedAtUtc.
+  -- coalesce(existing, new) on conflict keeps this from clobbering a name/timestamp that's already
+  -- there; safe against being overwritten by a LATER sync too, since that sync's own upsert only
+  -- ever replaces these two columns when Pancake's status_history gives it a non-null value
+  -- (coalesce(excluded, existing) there - see supabase_pancake_manual_sync.sql), and Pancake never
+  -- has one for this transition.
+  insert into public."OnlineOrders" ("OrderID", "ConfirmedBy", "ConfirmedAtUtc")
+  values (v_receipt_no, v_confirmed_by_name, now())
+  on conflict ("OrderID") do update
+  set "ConfirmedBy" = coalesce(public."OnlineOrders"."ConfirmedBy", excluded."ConfirmedBy"),
+      "ConfirmedAtUtc" = coalesce(public."OnlineOrders"."ConfirmedAtUtc", excluded."ConfirmedAtUtc");
 
   if v_bank_payments is not null then
     begin

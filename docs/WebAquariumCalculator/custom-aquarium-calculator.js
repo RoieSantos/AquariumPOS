@@ -14,6 +14,13 @@
   };
 
   // Last-resort fallback only, same reasoning as DEFAULT_GLASS_PRICES above - see
+  // buildExtraPriceLookup(). Live values come from public.AquariumExtraPricingSetup (see
+  // supabase_aquarium_extra_pricing.sql), editable from the portal's Pricing Setup page.
+  var DEFAULT_EXTRA_PRICES = {
+    Hole: 150
+  };
+
+  // Last-resort fallback only, same reasoning as DEFAULT_GLASS_PRICES above - see
   // buildTubularPriceLookup().
   var TUBULAR_RETAIL_RATES = {
     '1x1': 46,
@@ -648,6 +655,28 @@
     return lookup;
   }
 
+  // Per-feature flat prices (currently just "Hole") - see AquariumExtraPricingSetup
+  // (supabase_aquarium_extra_pricing.sql). Same defensive shape-tolerance as buildGlassPriceLookup:
+  // accepts either the RPC's snake_case columns or a PascalCase row, and silently skips anything
+  // that doesn't look like a valid {feature_key, price} pair rather than throwing.
+  function buildExtraPriceLookup(rows) {
+    var lookup = Object.assign({}, DEFAULT_EXTRA_PRICES);
+    var items = Array.isArray(rows) ? rows : [];
+
+    for (var i = 0; i < items.length; i += 1) {
+      var row = items[i] || {};
+      var key = String(row.feature_key || row.FeatureKey || '').trim();
+      var price = Number(row.price || row.Price || 0);
+      if (!key || !(price >= 0)) {
+        continue;
+      }
+
+      lookup[key] = price;
+    }
+
+    return lookup;
+  }
+
   function validateGlassSafety(lengthInches, widthInches, heightInches, glassThickness, isTempered, isRimless) {
     var glass = normalizeGlass(glassThickness);
     var gallons = cubicInchesToGallons(lengthInches * widthInches * heightInches);
@@ -762,6 +791,13 @@
       (options.filtrationSump && options.filtrationSump.enabled) ||
       String(optionType).toLowerCase() === 'complete setup'
     );
+    // Hole for aquarium: flat price per hole (drilling), configurable via AquariumExtraPricingSetup.
+    // Divider: priced the same as a main glass panel spanning the tank's Width x Height, using
+    // whatever the effective glass price/sqft already works out to for THIS aquarium (thickness +
+    // tempered already factored in via finalPricePerSqFt below), plus a flat 20% per direct
+    // instruction ("Divider fix is glass price... calculate the height and width price + 20%").
+    var holeCount = Math.max(0, Math.round(Number(options.holeCount) || 0));
+    var dividerCount = Math.max(0, Math.round(Number(options.dividerCount) || 0));
     var lengthInches = toInches(options.length, unit);
     var widthInches = toInches(options.width, unit);
     var heightInches = toInches(options.height, unit);
@@ -868,6 +904,8 @@
     );
     var basePricePerSqFt = Number(glassPrices[glass]) || 100;
     var finalPricePerSqFt = basePricePerSqFt;
+    var extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
+    var holePricePerHole = Number(extraPrices.Hole) || DEFAULT_EXTRA_PRICES.Hole;
     var glassAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
     var standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows);
     if (standCalculation && standCalculation.error) {
@@ -891,6 +929,8 @@
       stickerBackground: 0,
       stickerBottom: 0,
       aquascapeService: 0,
+      holes: 0,
+      divider: 0,
       stand: standCalculation ? Number(standCalculation.price) || 0 : 0
     };
 
@@ -1046,6 +1086,18 @@
       calculatedPrice += components.stickerBottom;
     }
 
+    if (holeCount > 0) {
+      components.holes = round2(holeCount * holePricePerHole);
+      calculatedPrice += components.holes;
+    }
+
+    if (dividerCount > 0) {
+      var dividerAreaSqFt = (widthInches * heightInches) / 144;
+      var dividerPriceEach = round2(dividerAreaSqFt * finalPricePerSqFt * 1.2);
+      components.divider = round2(dividerPriceEach * dividerCount);
+      calculatedPrice += components.divider;
+    }
+
     if (hasAquascapeService) {
       components.aquascapeService = Math.round(gallons * 210);
       calculatedPrice += components.aquascapeService;
@@ -1096,6 +1148,7 @@
     buildGlassPriceLookup: buildGlassPriceLookup,
     buildTubularPriceLookup: buildTubularPriceLookup,
     buildStickerPriceLookup: buildStickerPriceLookup,
+    buildExtraPriceLookup: buildExtraPriceLookup,
     calculateCustomAquarium: calculateCustomAquarium,
     validateGlassSafety: validateGlassSafety,
     toInches: toInches,

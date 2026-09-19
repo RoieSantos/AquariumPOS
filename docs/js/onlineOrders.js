@@ -54,8 +54,35 @@ let hidePriceColumns = false;
 const GROUP_COUNT_IDS = {
   'Confirmed': 'groupCountConfirmed',
   'Printed': 'groupCountPrinted',
+  'Assigned': 'groupCountAssigned',
   'To Ship': 'groupCountToShip'
 };
+
+// Tab/count order for the grouped view - includes 'Assigned', unlike ONLINE_ORDER_STAFF_STATUS_
+// SCOPE above, which stays the real Status values sent server-side (p_status_in). 'Assigned' is
+// never a real Status value (see orderDisplayStatus below) - the server-side fetch already covers
+// it by asking for 'Printed', which orderDisplayStatus then splits client-side.
+const GROUP_TAB_STATUSES = ['Confirmed', 'Printed', 'Assigned', 'To Ship'];
+
+// 'Assigned' isn't a real OnlineOrders.Status value - Status must keep mirroring Pancake (see
+// supabase_online_order_production_assignment.sql's header comment), so this is a derived
+// display-only split: a 'Printed' order whose every NEEDED maker is set reads as 'Assigned'
+// everywhere a status is shown/grouped, positioned right after Printed in the workflow
+// (Confirmed > Printed > Assigned > To Ship > Shipped). An order needs a Tank Maker when it has
+// an aquarium line, a Stand Maker when it has a stand line, one/the other/both/neither - an order
+// needing neither (has_aquarium_line and has_stand_line both false) never becomes 'Assigned', it
+// just stays 'Printed' (nothing to assign). Same split admin_get_online_order_status_summary/
+// admin_list_online_orders' own p_status = 'Assigned' case make server-side (supabase_orders_
+// sync_tables.sql).
+function orderDisplayStatus(o) {
+  const status = (o.status || '').trim();
+  if (status.toLowerCase() === 'printed' && (o.has_aquarium_line || o.has_stand_line)) {
+    const tankOk = !o.has_aquarium_line || !!o.assigned_tank_maker;
+    const standOk = !o.has_stand_line || !!o.assigned_stand_maker;
+    if (tankOk && standOk) return 'Assigned';
+  }
+  return status;
+}
 
 // Which tab is currently showing in the grouped (Online Order Staff) view, and the last set of
 // rows fetched for it - switching tabs just re-renders from this, no server round-trip needed
@@ -120,6 +147,7 @@ function matchesWarehouseFilter(order) {
 const STATUS_SUMMARY_ELEMENT_IDS = {
   'Confirmed': 'statusCountConfirmed',
   'Printed': 'statusCountPrinted',
+  'Assigned': 'statusCountAssigned',
   'To Ship': 'statusCountToShip',
   'Shipped': 'statusCountShipped',
   'Cancelled': 'statusCountCancelled'
@@ -181,18 +209,32 @@ function gmaBadgeHtml(order) {
   return `<a class="badge badge-purple" href="automated-orders.html?order=${encodeURIComponent(order.gma_order_no || '')}" title="Created from a GMA conversation - click to see the originating request.">GMA Page</a>`;
 }
 
-// "Assigned To" dropdown (Production Member roster only, see loadProductionMembers) - change is
-// handled by the delegated listener wired to .assign-production-select in init() below.
-function assignSelectHtml(order) {
+// "Assigned To" dropdown(s) - per "maybe each order can be assign a tank maker and a stand maker.
+// if an order has Aquarium order assign tank maker, if stand then we can assign stand maker": one
+// order can need a Tank Maker (has_aquarium_line), a Stand Maker (has_stand_line), both, or
+// neither, so this renders 0-2 dropdowns instead of always one generic "Assigned To". Both share
+// the same Production Member roster (loadProductionMembers) - change is handled by the delegated
+// listener wired to .assign-maker-select in init() below (data-role tells it which column to
+// write via admin_assign_online_order_maker).
+function makerSelectHtml(order, role, currentUsername) {
   const options = productionMembers
-    .map((m) => `<option value="${escapeHtml(m.username)}" ${order.assigned_production_member === m.username ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
+    .map((m) => `<option value="${escapeHtml(m.username)}" ${currentUsername === m.username ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
     .join('');
+  const label = role === 'tank' ? 'Tank Maker' : 'Stand Maker';
   return `
-    <select class="assign-production-select" data-order-id="${escapeHtml(order.order_id)}" style="max-width:150px;">
-      <option value="" ${!order.assigned_production_member ? 'selected' : ''}>&mdash; Unassigned &mdash;</option>
+    <select class="assign-maker-select" data-order-id="${escapeHtml(order.order_id)}" data-role="${role}" title="${label}" style="max-width:150px;">
+      <option value="" ${!currentUsername ? 'selected' : ''}>&mdash; ${label} &mdash;</option>
       ${options}
     </select>
   `;
+}
+
+function assignSelectHtml(order) {
+  const parts = [];
+  if (order.has_aquarium_line) parts.push(makerSelectHtml(order, 'tank', order.assigned_tank_maker));
+  if (order.has_stand_line) parts.push(makerSelectHtml(order, 'stand', order.assigned_stand_maker));
+  if (!parts.length) return '<span class="muted">&mdash;</span>';
+  return `<div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">${parts.join('')}</div>`;
 }
 
 function escapeHtml(value) {
@@ -217,12 +259,12 @@ function statusCellHtml(o) {
   // confusing rejection).
   const showToShipBtn = statusLower === 'printed';
   if (!showToShipBtn) {
-    return escapeHtml(status);
+    return escapeHtml(orderDisplayStatus(o));
   }
 
   return `
     <div class="status-cell-wrap" style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
-      <span class="status-text">${escapeHtml(status)}</span>
+      <span class="status-text">${escapeHtml(orderDisplayStatus(o))}</span>
       <button type="button" class="btn btn-primary btn-sm status-to-ship-btn" style="font-size:12px; padding:3px 8px;">To Ship</button>
     </div>
   `;
@@ -247,7 +289,10 @@ function orderRowsHtml(orders) {
         <td><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span></td>
         <td>${o.estimated_delivery_date || ''}</td>
         <td>${o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : ''}</td>
-        <td><a href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View</a></td>
+        <td>
+          <a href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View</a><br>
+          <button type="button" class="btn btn-secondary btn-sm status-send-message-btn" style="margin-top:4px; font-size:12px; padding:3px 8px;">TO-SHIP</button>
+        </td>
       </tr>
     `)
     .join('');
@@ -281,6 +326,7 @@ function orderCardHtml(o) {
       <div class="order-card-actions">
         <a class="btn btn-secondary btn-sm" href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View Order Lines</a>
         <button type="button" class="btn btn-secondary btn-sm status-send-photo-btn">Send Photo</button>
+        <button type="button" class="btn btn-secondary btn-sm status-send-message-btn">TO-SHIP</button>
         ${showToShipBtn ? '<button type="button" class="btn btn-primary status-to-ship-btn">To Ship</button>' : ''}
       </div>
     </div>
@@ -292,22 +338,22 @@ function orderCardHtml(o) {
 // see wireGroupedTabs below).
 function renderActiveGroupTab() {
   const list = document.getElementById('groupedOrdersList');
-  const bucket = lastGroupedRows.filter((o) => (o.status || '').trim().toLowerCase() === activeGroupStatus.toLowerCase());
+  const bucket = lastGroupedRows.filter((o) => orderDisplayStatus(o).toLowerCase() === activeGroupStatus.toLowerCase());
   list.innerHTML = bucket.length === 0
     ? `<p class="muted">No ${activeGroupStatus} orders.</p>`
     : bucket.map(orderCardHtml).join('');
 }
 
-// Splits rows into the Confirmed/Printed/To Ship counts (see GROUP_COUNT_IDS above), stores them
-// for tab switching, and renders whichever tab is currently active. fetchedCount/totalCount come
-// straight from the server response (BEFORE the client-side warehouse/outstanding post-filters
-// loadOrders applies) - used only to flag when the 200-row fetch cap might be hiding older
-// matching orders, not to decide what's actually shown.
+// Splits rows into the Confirmed/Assigned/Printed/To Ship counts (see GROUP_COUNT_IDS/GROUP_TAB_
+// STATUSES above), stores them for tab switching, and renders whichever tab is currently active.
+// fetchedCount/totalCount come straight from the server response (BEFORE the client-side
+// warehouse/outstanding post-filters loadOrders applies) - used only to flag when the 200-row
+// fetch cap might be hiding older matching orders, not to decide what's actually shown.
 function renderGroupedOrders(rows, fetchedCount, totalCount) {
   lastGroupedRows = rows;
 
-  ONLINE_ORDER_STAFF_STATUS_SCOPE.forEach((status) => {
-    const count = rows.filter((o) => (o.status || '').trim().toLowerCase() === status.toLowerCase()).length;
+  GROUP_TAB_STATUSES.forEach((status) => {
+    const count = rows.filter((o) => orderDisplayStatus(o).toLowerCase() === status.toLowerCase()).length;
     document.getElementById(GROUP_COUNT_IDS[status]).textContent = count;
   });
 
@@ -658,7 +704,8 @@ let pendingToShip = null;
 function handleOrderTableClick(event) {
   const toShipBtn = event.target.closest('.status-to-ship-btn');
   const sendPhotoBtn = event.target.closest('.status-send-photo-btn');
-  if (!toShipBtn && !sendPhotoBtn) return;
+  const sendMessageBtn = event.target.closest('.status-send-message-btn');
+  if (!toShipBtn && !sendPhotoBtn && !sendMessageBtn) return;
 
   // Generic [data-order-id] (not tr[data-order-id]) - matches both the flat table's <tr> rows and
   // the grouped view's <div class="order-card"> cards (see orderCardHtml above), since the same
@@ -666,6 +713,10 @@ function handleOrderTableClick(event) {
   const row = event.target.closest('[data-order-id]');
   if (!row) return;
 
+  if (sendMessageBtn) {
+    openSendMessageModal(row.dataset.orderId);
+    return;
+  }
   if (sendPhotoBtn) {
     handleSendPhotoClick(row.dataset.orderId, sendPhotoBtn);
     return;
@@ -673,21 +724,170 @@ function handleOrderTableClick(event) {
   handleToShipClick(row.dataset.orderId, toShipBtn);
 }
 
-// Delegated on #setupContent (see init() below) so this fires for the assign dropdown in both the
-// flat table (orderRowsHtml) and the grouped card view (orderCardHtml) - same delegation
-// convention as handleOrderTableClick above, just for 'change' instead of 'click'.
+// "TO-SHIP" (was a generic "Send Message" button, per direct request now labeled/prefilled for
+// this one use) - brings GMA Conversations' own "Send to customer" capability to this page, per
+// direct request. Not every order here came from a GMA conversation though, so the routing has to
+// be resolved per-order first (admin_get_online_order_messaging_route, see sql/supabase_online_
+// order_send_message.sql's header comment for the full reasoning): a GMA-originated order has no
+// Pancake conversation at all (Psid is always null for those) and can only be reached via the GMA
+// Facebook Page's own Graph API - the exact same chatbot-staff-reply Edge Function GMA
+// Conversations' own send button already calls, just with an explicit psid instead of relying on
+// that page's "currently open conversation" state. Every other order already has a real Pancake
+// conversation (Page_ID/Conversation_ID, populated by the regular sync) and goes through
+// admin_send_online_order_message instead, which mirrors _send_online_order_status_message's own
+// Pancake call exactly.
+//
+// The composer now opens prefilled with admin_render_online_order_to_ship_message's output - the
+// exact same "your order is ready" template the local POS (OnlineOrdersForm.cs's To Ship button/
+// GlobalSettings.PickupReadyMessage) sends, so staff aren't typing it from scratch. Still an
+// editable textarea before Send, same as before.
+let sendMessageOrderId = null;
+let sendMessageRoute = null;
+
+async function openSendMessageModal(orderId) {
+  sendMessageOrderId = orderId;
+  sendMessageRoute = null;
+
+  const modal = document.getElementById('sendOrderMessageModal');
+  const subEl = document.getElementById('sendOrderMessageSub');
+  const errorEl = document.getElementById('sendOrderMessageError');
+  const textEl = document.getElementById('sendOrderMessageText');
+  const sendBtn = document.getElementById('sendOrderMessageSendBtn');
+
+  textEl.value = '';
+  errorEl.classList.add('hidden');
+  subEl.textContent = `Order ${orderId} - checking where this customer can be reached...`;
+  sendBtn.disabled = true;
+  modal.classList.remove('hidden');
+
+  const [routeResult, messageResult] = await Promise.all([
+    supabaseClient.rpc('admin_get_online_order_messaging_route', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId
+    }),
+    supabaseClient.rpc('admin_render_online_order_to_ship_message', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId
+    })
+  ]);
+  const { data, error } = routeResult;
+
+  // Prefill is best-effort - a failure here shouldn't block sending, just leaves the textarea for
+  // staff to type into manually like before.
+  if (!messageResult.error && messageResult.data) {
+    textEl.value = messageResult.data;
+  }
+
+  if (error || !data || data.length === 0) {
+    subEl.textContent = `Order ${orderId}`;
+    errorEl.textContent = error?.message || 'Could not determine how to reach this customer.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  sendMessageRoute = data[0];
+  const name = sendMessageRoute.customer_name || 'this customer';
+
+  if (sendMessageRoute.is_gma_order) {
+    subEl.textContent = `To ${name} (Order ${orderId}) - via the GMA Page.`;
+    sendBtn.disabled = false;
+  } else if (sendMessageRoute.has_pancake_conversation) {
+    subEl.textContent = `To ${name} (Order ${orderId}) - via Pancake.`;
+    sendBtn.disabled = false;
+  } else {
+    subEl.textContent = `Order ${orderId}`;
+    errorEl.textContent = 'This order has no linked Messenger conversation on either platform - there is nowhere to send a message.';
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function closeSendMessageModal() {
+  document.getElementById('sendOrderMessageModal').classList.add('hidden');
+  sendMessageOrderId = null;
+  sendMessageRoute = null;
+}
+
+async function submitSendOrderMessage() {
+  const errorEl = document.getElementById('sendOrderMessageError');
+  const textEl = document.getElementById('sendOrderMessageText');
+  const sendBtn = document.getElementById('sendOrderMessageSendBtn');
+  errorEl.classList.add('hidden');
+
+  const message = textEl.value.trim();
+  if (!message) {
+    errorEl.textContent = 'Enter a message first.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (!sendMessageRoute) return;
+
+  sendBtn.disabled = true;
+  try {
+    if (sendMessageRoute.is_gma_order) {
+      const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+          'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify({
+          admin_username: currentSession.username,
+          admin_password: currentSession.password,
+          psid: sendMessageRoute.gma_psid,
+          message,
+          images: []
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result.error || `Send failed (${response.status}).`);
+      }
+    } else {
+      const { error } = await supabaseClient.rpc('admin_send_online_order_message', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_order_id: sendMessageOrderId,
+        p_message: message
+      });
+      if (error) throw error;
+    }
+
+    closeSendMessageModal();
+  } catch (err) {
+    errorEl.textContent = err?.message || 'Could not send the message.';
+    errorEl.classList.remove('hidden');
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+function wireSendMessageModalButtons() {
+  document.getElementById('sendOrderMessageCancelBtn').addEventListener('click', closeSendMessageModal);
+  document.getElementById('sendOrderMessageSendBtn').addEventListener('click', submitSendOrderMessage);
+}
+
+// Delegated on #setupContent (see init() below) so this fires for the Tank/Stand Maker dropdowns
+// (makerSelectHtml) in both the flat table (orderRowsHtml) and the grouped card view
+// (orderCardHtml) - same delegation convention as handleOrderTableClick above, just for 'change'
+// instead of 'click'. data-role ('tank'/'stand') tells admin_assign_online_order_maker which of
+// the two columns this particular dropdown writes.
 async function handleAssignProductionMemberChange(event) {
-  const select = event.target.closest('.assign-production-select');
+  const select = event.target.closest('.assign-maker-select');
   if (!select) return;
 
   const orderId = select.dataset.orderId;
+  const role = select.dataset.role;
   const username = select.value || null;
 
   select.disabled = true;
-  const { data, error } = await supabaseClient.rpc('admin_assign_online_order_production_member', {
+  const { data, error } = await supabaseClient.rpc('admin_assign_online_order_maker', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_order_id: orderId,
+    p_role: role,
     p_username: username
   });
   select.disabled = false;
@@ -1227,6 +1427,7 @@ function wireOrderFilters() {
   wireOrderFilters();
   wireShipSerialModalButtons();
   wireViewSerialsModalButtons();
+  wireSendMessageModalButtons();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
   if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);

@@ -412,9 +412,28 @@ interface AquariumQuoteInput {
   length: number;
   width: number;
   height: number;
+  holeCount?: number;
+  dividerCount?: number;
   glassPricingSetupRows?: Array<Record<string, unknown>>;
   glassPricingUom?: string;
   tubularPricingSetupRows?: Array<Record<string, unknown>>;
+  extraPricingSetupRows?: Array<Record<string, unknown>>;
+}
+
+// Mirrors docs/WebAquariumCalculator/custom-aquarium-calculator.js's DEFAULT_EXTRA_PRICES/
+// buildExtraPriceLookup - last-resort fallback only, live values come from
+// public.AquariumExtraPricingSetup (supabase_aquarium_extra_pricing.sql).
+const DEFAULT_EXTRA_PRICES: Record<string, number> = { Hole: 150 };
+
+function buildExtraPriceLookup(rows: Array<Record<string, unknown>> | undefined): Record<string, number> {
+  const lookup: Record<string, number> = { ...DEFAULT_EXTRA_PRICES };
+  for (const row of rows ?? []) {
+    const key = String((row as Record<string, unknown>).feature_key ?? (row as Record<string, unknown>).FeatureKey ?? '').trim();
+    const price = Number((row as Record<string, unknown>).price ?? (row as Record<string, unknown>).Price ?? 0);
+    if (!key || !(price >= 0)) continue;
+    lookup[key] = price;
+  }
+  return lookup;
 }
 
 function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unknown> {
@@ -433,6 +452,8 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   const hasEnclosure = Boolean(options.enclosure);
   const hasStand = Boolean(options.stand && options.stand.enabled);
   const hasFiltrationSump = Boolean((options.filtrationSump && options.filtrationSump.enabled) || optionType.toLowerCase() === 'complete setup');
+  const holeCount = Math.max(0, Math.round(Number(options.holeCount) || 0));
+  const dividerCount = Math.max(0, Math.round(Number(options.dividerCount) || 0));
   const lengthInches = toInches(options.length, unit);
   const widthInches = toInches(options.width, unit);
   const heightInches = toInches(options.height, unit);
@@ -501,10 +522,14 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   let finalPricePerSqFt = basePricePerSqFt;
   const glassAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
   const standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows);
+  const extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
+  const holePricePerHole = Number(extraPrices.Hole) || DEFAULT_EXTRA_PRICES.Hole;
   const components: Record<string, number> = {
     glass: 0,
     highStrip: 0,
     aquascapeService: 0,
+    holes: 0,
+    divider: 0,
     stand: standCalculation ? Number(standCalculation.price) || 0 : 0
   };
 
@@ -541,6 +566,18 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   }
   if (calculatedPrice >= 1000) {
     calculatedPrice = roundNearest10(calculatedPrice);
+  }
+
+  if (holeCount > 0) {
+    components.holes = round2(holeCount * holePricePerHole);
+    calculatedPrice += components.holes;
+  }
+
+  if (dividerCount > 0) {
+    const dividerAreaSqFt = (widthInches * heightInches) / 144;
+    const dividerPriceEach = round2(dividerAreaSqFt * finalPricePerSqFt * 1.2);
+    components.divider = round2(dividerPriceEach * dividerCount);
+    calculatedPrice += components.divider;
   }
 
   if (hasAquascapeService) {
@@ -660,6 +697,8 @@ export const TOOLS: Anthropic.Tool[] = [
         low_iron: { type: 'boolean' },
         rimless: { type: 'boolean' },
         high_strip: { type: 'boolean', description: 'An extra glass strip along the top rim.' },
+        hole_count: { type: 'integer', description: 'Number of drilled holes for the aquarium, if any. Flat rate per hole - ask the customer how many they need before including this.' },
+        divider_count: { type: 'integer', description: 'Number of internal glass dividers/partitions, if any. Priced from the tank\'s own glass rate for a Width x Height panel, plus 20%, per divider.' },
         add_stand: { type: 'boolean', description: 'Set true only if the customer wants a matching stand included.' },
         stand_layers: { type: 'integer', description: 'Number of stand shelves/layers, minimum 2. Only used when add_stand is true.' },
         stand_tubular: { type: 'string', enum: ['1x1', '1.5x1.5', '2x2'], description: 'Stand frame tubular size. Only used when add_stand is true.' },
@@ -863,7 +902,7 @@ export function buildSystemPrompt(
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Printed/To Ship/Shipped/Cancelled), and which branch/warehouse it was ordered from; for an Automated Order result, share its Pancake sync status plainly (e.g. still being processed vs. confirmed). There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
-    '- Custom aquarium and/or stand price quotes: if the customer only gives a GALLON size (e.g. "50 gallon", "75g") rather than asking for something custom (specific length/width/height, rimless, tempered, low iron, etc.), FIRST use search_items (try both "<N>g" and "<N> gallon", e.g. search_items("50g")) to check whether a ready-made standard aquarium of that size is already in the catalog and in stock - if one is, offer that real product first (its actual name/price/stock, and offer to send a photo) instead of jumping to a custom quote. Only fall back to compute_aquarium_quote if no matching standard item exists, the customer explicitly wants custom dimensions/spec, or they say they don\'t want the standard one you offered. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote. Before calling the tool, restate back what you understood - dimensions, unit, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
+    '- Custom aquarium and/or stand price quotes: if the customer only gives a GALLON size (e.g. "50 gallon", "75g") rather than asking for something custom (specific length/width/height, rimless, tempered, low iron, etc.), FIRST use search_items (try both "<N>g" and "<N> gallon", e.g. search_items("50g")) to check whether a ready-made standard aquarium of that size is already in the catalog and in stock - if one is, offer that real product first (its actual name/price/stock, and offer to send a photo) instead of jumping to a custom quote. Only fall back to compute_aquarium_quote if no matching standard item exists, the customer explicitly wants custom dimensions/spec, or they say they don\'t want the standard one you offered. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote - also ask if they need any drilled holes (hole_count, flat rate per hole) or internal dividers/partitions (divider_count, priced from the tank\'s own glass rate for a Width x Height panel plus 20%), and include whichever they want. Before calling the tool, restate back what you understood - dimensions, unit, holes/dividers if any, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, holes/divider charges if any, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
     '- Delivery fees: first find out whether the customer wants the store\'s OWN TRUCK to deliver, or wants to arrange their own Lalamove courier - if it\'s not already clear which, ask. For the store\'s own truck: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. This is the store\'s own official distance-based formula - the same one staff use - so state it with confidence as the actual fee, not as a rough estimate pending staff confirmation. For Lalamove: ask which branch and the full delivery address, work out and tell the customer what size vehicle you recommend booking based on what they\'re having delivered (see compute_lalamove_quote\'s own description for how to pick one), then call compute_lalamove_quote with that vehicle type - this is a live quote straight from Lalamove\'s own system, so state the price with full confidence. Lalamove quoting is QUOTE ONLY - it cannot book the ride, so if the customer wants to proceed, tell them staff will arrange the actual Lalamove booking.',
     '- Scheduling a delivery date for an existing Online Order: first ask (if not already clear) whether they want the store\'s OWN TRUCK to deliver it, as opposed to a courier they\'re arranging themselves (e.g. Lalamove) or picking it up - only continue if they say the store\'s own truck. Get their order number, then call get_delivery_scheduling_options. If it comes back not eligible, explain the reason in plain words (e.g. already scheduled, order not ready yet). If eligible, tell the customer the deliveryFee it returned with confidence as the actual fee (whether deliveryFeeIsEstimate is true - the same official formula as compute_delivery_quote - or false - the order\'s already-recorded fee, makes no difference to how confidently you state it) AND the candidateDates, and get them to explicitly confirm both the fee and one specific date before calling schedule_delivery_date. Never book a date they haven\'t confirmed, and never invent a date that wasn\'t in candidateDates. Once booked, let them know it\'s confirmed and staff will also see it on the schedule.',
     '- Delivery whereabouts ("where is my delivery", "where is my order", "where is the driver with my stuff"): ALWAYS confirm first (if not already clear from the conversation) whether this is the STORE\'S OWN TRUCK delivering it, or a courier the customer arranged themselves (e.g. Lalamove) - never assume either way. If it\'s a Lalamove courier: explain plainly that the store can\'t track a Lalamove rider from here, and the customer needs to coordinate directly with their rider (through the Lalamove app, or whatever contact info Lalamove gave them). If it\'s the store\'s own truck: get their order number and call get_delivery_schedule_status. If it comes back scheduled for TODAY (is_today), tell them it\'s out for delivery today (mention the route_name if given), THEN call get_driver_location (TEST feature) and share its liveTrackingUrl (mention the page updates live as the driver moves) plus minutesSinceUpdate - if no driver is currently tracking, just tell the customer the truck is scheduled for today and a team member can give a more specific update. If scheduled_date is a different day, tell them that date instead. If for_delivery is false (not scheduled at all yet), let them know it hasn\'t been scheduled yet and offer to help schedule a date (see the delivery-scheduling item above) or that staff can confirm.',
@@ -964,9 +1003,10 @@ export function buildSystemPrompt(
 }
 
 export async function computeAquariumQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const [{ data: glassRows }, { data: tubularRows }] = await Promise.all([
+  const [{ data: glassRows }, { data: tubularRows }, { data: extraRows }] = await Promise.all([
     supabase.rpc('public_get_glass_pricing'),
-    supabase.rpc('public_get_tubular_pricing')
+    supabase.rpc('public_get_tubular_pricing'),
+    supabase.rpc('public_get_aquarium_extra_pricing')
   ]);
 
   const addStand = Boolean(input.add_stand);
@@ -981,6 +1021,8 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     lowIron: Boolean(input.low_iron),
     rimless: Boolean(input.rimless),
     highStrip: Boolean(input.high_strip),
+    holeCount: Number(input.hole_count) || 0,
+    dividerCount: Number(input.divider_count) || 0,
     option: 'Aquarium only',
     stand: addStand
       ? {
@@ -992,7 +1034,8 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
       : { enabled: false },
     glassPricingSetupRows: glassRows ?? [],
     glassPricingUom: 'MM',
-    tubularPricingSetupRows: tubularRows ?? []
+    tubularPricingSetupRows: tubularRows ?? [],
+    extraPricingSetupRows: extraRows ?? []
   });
 
   // Links to the live drawing tool with the exact (already safety-adjusted) numbers, rather than

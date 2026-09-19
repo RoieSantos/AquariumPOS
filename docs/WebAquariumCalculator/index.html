@@ -446,6 +446,16 @@
           <label class="checkbox-row"><input id="standEnabled" type="checkbox">Stand</label>
         </div>
 
+        <div class="field" style="margin-top: 10px;">
+          <label for="holeCount">Hole for Aquarium (qty)</label>
+          <input id="holeCount" type="number" value="0" min="0" step="1">
+        </div>
+
+        <div class="field">
+          <label for="dividerCount">Divider (qty)</label>
+          <input id="dividerCount" type="number" value="0" min="0" step="1">
+        </div>
+
         <div id="standCalcWrap" class="hidden" style="margin-top: 12px;">
           <div class="field">
             <label for="standLayers">Stand Layers</label>
@@ -708,6 +718,7 @@
     var glassPricingSetupRows = [];
     var tubularPricingSetupRows = [];
     var stickerPricingSetupRows = [];
+    var extraPricingSetupRows = [];
     var lastResult = null;
     var suppressUiSync = false;
     var ruleNoticeState = {
@@ -1380,6 +1391,8 @@
         highStrip: byId('highStrip').checked,
         aquascapeService: byId('aquascape').checked,
         enclosure: byId('enclosure').checked,
+        holeCount: byId('holeCount').value,
+        dividerCount: byId('dividerCount').value,
         filtrationSump: {
           enabled: byId('sumpEnabled').checked,
           type: byId('sumpType').value,
@@ -1419,7 +1432,8 @@
         glassPricingSetupRows: glassPricingSetupRows,
         glassPricingUom: 'MM',
         tubularPricingSetupRows: tubularPricingSetupRows,
-        stickerPricingSetupRows: stickerPricingSetupRows
+        stickerPricingSetupRows: stickerPricingSetupRows,
+        extraPricingSetupRows: extraPricingSetupRows
       };
     }
 
@@ -1605,7 +1619,18 @@
         rows.push(['Special Note', note]);
       }
 
-      rows.push(['Aquarium Price', result.aquariumOnlyPrice.toFixed(2)]);
+      // aquariumOnlyPrice includes holes/divider baked in (same as AIO/High Strip/Aquascape,
+      // fused in before it's captured) - pulled back out here so they can show as their own
+      // priced lines instead of being silently absorbed into "Aquarium Price", the same
+      // treatment Stand already gets below.
+      var aquariumBasePrice = result.aquariumOnlyPrice - (c.holes || 0) - (c.divider || 0);
+      rows.push(['Aquarium Price', aquariumBasePrice.toFixed(2)]);
+      if (c.holes > 0) {
+        rows.push(['Hole for Aquarium (' + byId('holeCount').value + ')', c.holes.toFixed(2)]);
+      }
+      if (c.divider > 0) {
+        rows.push(['Divider (' + byId('dividerCount').value + ')', c.divider.toFixed(2)]);
+      }
       if (n.stand) {
         rows.push(['Stand Price', c.stand.toFixed(2)]);
       }
@@ -1673,17 +1698,20 @@
       pricingSetupLoadPromise = Promise.all([
         supabaseClient.rpc('public_get_glass_pricing'),
         supabaseClient.rpc('public_get_tubular_pricing'),
-        supabaseClient.rpc('public_get_sticker_pricing')
+        supabaseClient.rpc('public_get_sticker_pricing'),
+        supabaseClient.rpc('public_get_aquarium_extra_pricing')
       ])
         .then(function (results) {
           glassPricingSetupRows = Array.isArray(results[0].data) ? results[0].data : [];
           tubularPricingSetupRows = Array.isArray(results[1].data) ? results[1].data : [];
           stickerPricingSetupRows = Array.isArray(results[2].data) ? results[2].data : [];
+          extraPricingSetupRows = Array.isArray(results[3].data) ? results[3].data : [];
         })
         .catch(function () {
           glassPricingSetupRows = [];
           tubularPricingSetupRows = [];
           stickerPricingSetupRows = [];
+          extraPricingSetupRows = [];
         });
       return pricingSetupLoadPromise;
     }
@@ -1837,6 +1865,7 @@
 
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
+        'holeCount', 'dividerCount',
         'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
         'sumpUnit', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'

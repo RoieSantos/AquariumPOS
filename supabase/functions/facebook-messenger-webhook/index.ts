@@ -162,16 +162,29 @@ async function handleReadReceipt(supabase: SupabaseClient, psid: string | undefi
 // permission, deactivated profile, transient error) and just leaves CustomerName null rather than
 // blocking the reply - the next inbound message tries again since the caller only calls this when
 // CustomerName is still unset.
+//
+// Logs the actual failure reason (Graph API's own error body, not just "it failed") - per direct
+// follow-up on why some GMA Conversations entries never resolve past their raw Psid: without this,
+// a permission/token/rate-limit failure and a genuinely deactivated profile looked identical from
+// the outside (both just silently leave CustomerName null forever). Still never throws/blocks the
+// reply - this is diagnostics only, read via the Supabase Edge Function logs for this function.
 async function fetchFacebookProfileName(psid: string, pageAccessToken: string, graphVersion: string): Promise<string | null> {
   try {
     const url = `https://graph.facebook.com/${graphVersion}/${psid}?fields=first_name,last_name&access_token=${pageAccessToken}`;
     const res = await fetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '(could not read response body)');
+      console.error(`Facebook profile lookup failed for psid ${psid}: HTTP ${res.status} - ${errorBody}`);
+      return null;
+    }
     const body = await res.json();
     const name = [body.first_name, body.last_name].filter(Boolean).join(' ').trim();
+    if (!name) {
+      console.error(`Facebook profile lookup for psid ${psid} returned HTTP 200 but no first_name/last_name - full body: ${JSON.stringify(body)}`);
+    }
     return name || null;
   } catch (err) {
-    console.error('Failed to fetch Facebook profile name:', err instanceof Error ? err.message : err);
+    console.error(`Failed to fetch Facebook profile name for psid ${psid}:`, err instanceof Error ? err.message : err);
     return null;
   }
 }
