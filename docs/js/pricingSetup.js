@@ -308,8 +308,13 @@ async function saveAquariumExtraPricing(row) {
 async function loadRepairPricingSetup() {
   const { data, error } = await supabaseClient.rpc('public_get_repair_pricing_setup');
   const row = Array.isArray(data) ? data[0] : data;
-  document.getElementById('repairMarkupPercentInput').value = (!error && row) ? row.panel_replacement_markup_percent : 20;
-  document.getElementById('repairResealFlatFeeInput').value = (!error && row) ? row.resealing_flat_fee : 500;
+  const ok = !error && row;
+  document.getElementById('repairMarkupPercentInput').value = ok ? row.panel_replacement_markup_percent : 20;
+  document.getElementById('repairResealSmallFeeInput').value = ok ? row.resealing_flat_fee : 500;
+  document.getElementById('repairResealMediumFeeInput').value = ok ? row.resealing_medium_fee : 800;
+  document.getElementById('repairResealLargeFeeInput').value = ok ? row.resealing_large_fee : 1200;
+  document.getElementById('repairResealXlFeeInput').value = ok ? row.resealing_xl_fee : 1800;
+  document.getElementById('repairResealMonsterFeeInput').value = ok ? row.resealing_monster_fee : 2500;
 }
 
 async function saveRepairPricingSetup() {
@@ -318,9 +323,13 @@ async function saveRepairPricingSetup() {
   errorEl.classList.add('hidden');
 
   const markupPercent = Number(document.getElementById('repairMarkupPercentInput').value);
-  const resealFlatFee = Number(document.getElementById('repairResealFlatFeeInput').value);
-  if (!(markupPercent >= 0) || !(resealFlatFee >= 0)) {
-    errorEl.textContent = 'Enter valid non-negative numbers for both fields.';
+  const smallFee = Number(document.getElementById('repairResealSmallFeeInput').value);
+  const mediumFee = Number(document.getElementById('repairResealMediumFeeInput').value);
+  const largeFee = Number(document.getElementById('repairResealLargeFeeInput').value);
+  const xlFee = Number(document.getElementById('repairResealXlFeeInput').value);
+  const monsterFee = Number(document.getElementById('repairResealMonsterFeeInput').value);
+  if (![markupPercent, smallFee, mediumFee, largeFee, xlFee, monsterFee].every((n) => n >= 0)) {
+    errorEl.textContent = 'Enter valid non-negative numbers for every field.';
     errorEl.classList.remove('hidden');
     return;
   }
@@ -331,7 +340,11 @@ async function saveRepairPricingSetup() {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_panel_replacement_markup_percent: markupPercent,
-      p_resealing_flat_fee: resealFlatFee
+      p_resealing_flat_fee: smallFee,
+      p_resealing_medium_fee: mediumFee,
+      p_resealing_large_fee: largeFee,
+      p_resealing_xl_fee: xlFee,
+      p_resealing_monster_fee: monsterFee
     });
 
     if (error) {

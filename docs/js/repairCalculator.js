@@ -11,10 +11,14 @@
 //     live glass rate (public_get_glass_pricing, via CustomAquariumCalculator.
 //     buildGlassPriceLookup - the shared engine, not a re-implementation) + a labor markup % from
 //     RepairPricingSetup, summed across every checked panel into one total.
-//   - Resealing / Leak Repair: a flat fee from that same settings table (size doesn't change the
-//     price), but per "let the user fill in the dimension of the tank to reseal" it still uses the
-//     same shared Length/Width/Height fields as Panel Replacement - purely for the record/spec
-//     text (shows the tank's size and estimated gallons alongside the flat fee), not to compute it.
+//   - Resealing / Leak Repair: per "can you calculate the reseal - what is the best figure?" ->
+//     "yes, scale with size" + "just suggest something reasonable" (no real cost data available) -
+//     priced off the SAME shared Length/Width/Height fields as Panel Replacement, using estimated
+//     gallons (L x W x H / 231) to pick one of five size tiers, each with its own configurable fee
+//     in RepairPricingSetup (<=20 / 21-50 / 51-100 / 101-150 / 151+ gallons). These are a
+//     defensible-but-generic starting point (~1.5x per tier, anchored on the pre-existing P500
+//     default as the smallest tier), not a verified cost calculation - meant to be sanity-checked
+//     and adjusted on the Pricing Setup page against real material/labor costs.
 // Client-side pricing only - nothing here is saved to the database, matching the other calculators
 // (Custom Stand, Aquarium Calculator, Stickers). Alice (the AI bot) does NOT know about this
 // feature yet - out of scope per direct instruction to build the system feature first, and teach
@@ -24,7 +28,28 @@ const PANEL_LOCATIONS = ['Bottom', 'Front', 'Back', 'Left', 'Right'];
 
 let repairType = 'panel';
 let repairGlassLookup = null; // built once from live GlassPricingSetup rows, null while still loading
-let repairPricingSetup = { panelReplacementMarkupPercent: 20, resealingFlatFee: 500 }; // defaults until loaded
+let repairPricingSetup = {
+  panelReplacementMarkupPercent: 20,
+  resealingSmallFee: 500,
+  resealingMediumFee: 800,
+  resealingLargeFee: 1200,
+  resealingXlFee: 1800,
+  resealingMonsterFee: 2500
+}; // defaults until loaded
+
+// Breakpoints are fixed business rules (not staff-editable) - only the fee per tier is
+// configurable. Order matters: first match wins, evaluated smallest-to-largest.
+const RESEAL_TIERS = [
+  { maxGallons: 20, label: 'up to 20 gal', settingKey: 'resealingSmallFee' },
+  { maxGallons: 50, label: '21-50 gal', settingKey: 'resealingMediumFee' },
+  { maxGallons: 100, label: '51-100 gal', settingKey: 'resealingLargeFee' },
+  { maxGallons: 150, label: '101-150 gal', settingKey: 'resealingXlFee' },
+  { maxGallons: Infinity, label: '151+ gal (monster tank)', settingKey: 'resealingMonsterFee' }
+];
+
+function repairResealTierFor(gallons) {
+  return RESEAL_TIERS.find((tier) => gallons <= tier.maxGallons) || RESEAL_TIERS[RESEAL_TIERS.length - 1];
+}
 
 function repairFormatCurrency(value) {
   return '₱' + (Number(value) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -46,7 +71,11 @@ async function repairLoadPricingSetup() {
     if (setup) {
       repairPricingSetup = {
         panelReplacementMarkupPercent: Number(setup.panel_replacement_markup_percent) || 20,
-        resealingFlatFee: Number(setup.resealing_flat_fee) || 500
+        resealingSmallFee: Number(setup.resealing_flat_fee) || 500,
+        resealingMediumFee: Number(setup.resealing_medium_fee) || 800,
+        resealingLargeFee: Number(setup.resealing_large_fee) || 1200,
+        resealingXlFee: Number(setup.resealing_xl_fee) || 1800,
+        resealingMonsterFee: Number(setup.resealing_monster_fee) || 2500
       };
     }
   } catch (err) {
@@ -134,13 +163,21 @@ function repairRecalculate() {
   } else {
     const aquarium = repairAquariumDims();
     const hasDims = aquarium.length > 0 && aquarium.width > 0 && aquarium.height > 0;
-    const total = repairPricingSetup.resealingFlatFee;
-    const tankLabel = hasDims
-      ? `${aquarium.length}" x ${aquarium.width}" x ${aquarium.height}" (~${Math.round(repairEstimateGallons(aquarium))} gal)`
-      : 'Flat fee';
+
+    if (!hasDims) {
+      repairRenderSummary([{ label: 'Resealing / Leak Repair', value: 'Enter aquarium dimensions above' }], 0);
+      return;
+    }
+
+    const gallons = repairEstimateGallons(aquarium);
+    const tier = repairResealTierFor(gallons);
+    const total = repairPricingSetup[tier.settingKey];
 
     repairRenderSummary([
-      { label: 'Resealing / Leak Repair', value: tankLabel }
+      {
+        label: `Resealing / Leak Repair (${tier.label})`,
+        value: `${aquarium.length}" x ${aquarium.width}" x ${aquarium.height}" (~${Math.round(gallons)} gal)`
+      }
     ], total);
   }
 }
@@ -160,9 +197,12 @@ function repairBuildSpecText() {
   }
   const aquarium = repairAquariumDims();
   const hasDims = aquarium.length > 0 && aquarium.width > 0 && aquarium.height > 0;
-  const tankPart = hasDims ? ` (${aquarium.length}"x${aquarium.width}"x${aquarium.height}", ~${Math.round(repairEstimateGallons(aquarium))} gal)` : '';
+  if (!hasDims) return 'Repair - Resealing/Leak Repair: enter aquarium dimensions above';
+
+  const gallons = repairEstimateGallons(aquarium);
+  const tier = repairResealTierFor(gallons);
   const notes = document.getElementById('repairResealNotes').value.trim();
-  return `Repair - Resealing/Leak Repair${tankPart}${notes ? ' - ' + notes : ''}`;
+  return `Repair - Resealing/Leak Repair (${aquarium.length}"x${aquarium.width}"x${aquarium.height}", ~${Math.round(gallons)} gal, ${tier.label})${notes ? ' - ' + notes : ''}`;
 }
 
 async function repairCopySummary() {

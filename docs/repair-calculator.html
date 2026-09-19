@@ -89,7 +89,7 @@
 
   <div class="page">
     <h1>Repair Calculator</h1>
-    <p class="muted">Price aquarium repairs - Panel Replacement is priced from the damaged panel's own area using the same live Glass Pricing Setup rate as new custom builds, plus a labor markup. Resealing/Leak Repair is a flat fee. Both are configurable on the Pricing Setup page. Client-side pricing only - nothing here is saved to the database; use "Copy Summary" to paste the breakdown into an order or note.</p>
+    <p class="muted">Price aquarium repairs - Panel Replacement is priced from the damaged panel's own area using the same live Glass Pricing Setup rate as new custom builds, plus a labor markup. Resealing/Leak Repair is priced by tank size tier (estimated from the dimensions below). Both are configurable on the Pricing Setup page. Client-side pricing only - nothing here is saved to the database; use "Copy Summary" to paste the breakdown into an order or note.</p>
 
     <div class="repair-type-tabs">
       <button type="button" class="repair-type-tab active" id="repairTabPanel" data-type="panel">Panel Replacement</button>
@@ -157,10 +157,13 @@
       </div>
     </div>
 
-    <div id="repairResealFields" class="form-grid hidden" style="margin-top:16px;">
-      <div class="form-row" style="grid-column: 1 / -1;">
-        <label for="repairResealNotes">Notes</label>
-        <textarea id="repairResealNotes" rows="2" placeholder="e.g. small leak at bottom-front seam"></textarea>
+    <div id="repairResealFields" style="margin-top:16px;">
+      <p class="muted" style="margin-top:0; margin-bottom:12px;">Priced by tank size tier, estimated from the dimensions above (up to 20 gal / 21-50 / 51-100 / 101-150 / 151+ "monster" tank) - each tier's fee is configurable on the Pricing Setup page. These are a starting-point suggestion, not a verified cost calculation - sanity-check against your real material/labor costs.</p>
+      <div class="form-grid">
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="repairResealNotes">Notes</label>
+          <textarea id="repairResealNotes" rows="2" placeholder="e.g. small leak at bottom-front seam"></textarea>
+        </div>
       </div>
     </div>
 
