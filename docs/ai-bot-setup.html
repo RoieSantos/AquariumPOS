@@ -177,6 +177,30 @@
       <div style="margin-top:8px;">
         <button class="btn btn-success" id="saveFollowUpSettingsBtn" type="button">Save Follow-Up Settings</button>
       </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Capability Gaps / Enhancement Requests</h2>
+        <button class="btn btn-secondary btn-sm" id="refreshCapabilityGapsBtn" type="button" style="margin-left:auto;">Refresh</button>
+      </div>
+      <p class="muted">Things the bot was honest that it couldn't actually help with yet (e.g. a service it has no pricing/knowledge for) - a real backlog of what to build next, straight from real customer/staff questions instead of guesswork. See the "log_capability_gap" tool.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Channel</th>
+              <th>Question</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="capabilityGapsTableBody">
+            <tr><td colspan="4" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="capabilityGapsError" class="error-text hidden"></div>
     </div>
   </div>
 

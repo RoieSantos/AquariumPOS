@@ -682,6 +682,18 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'log_capability_gap',
+    description:
+      'Call this when you genuinely do not have the knowledge, pricing, or tools to answer something - a type of request you were never given information about (e.g. repair/refurbishment services on an aquarium the customer already owns, as opposed to a brand-new custom build you CAN quote with compute_aquarium_quote). Do NOT use this for things you already know how to handle but that need a human to finish - use escalate_to_staff for those instead. Always tell the person honestly first that this isn\'t something you\'re programmed to help with yet, THEN call this tool - never claim their request was sent somewhere or that an answer is coming if nothing was actually set in motion.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'The customer/staff request, as close to verbatim as possible.' }
+      },
+      required: ['question']
+    }
+  },
+  {
     name: 'compute_aquarium_quote',
     description:
       'Compute a real price quote for a custom aquarium tank. Ask for length/width/height and glass thickness at minimum; ask about a matching stand only if the customer mentions wanting one. This is the store\'s own official pricing formula - the exact same one staff use - so state the result with confidence, not as a rough estimate. Never state a price for a custom tank without calling this tool first.',
@@ -942,6 +954,10 @@ export function buildSystemPrompt(
     'WHEN TO ESCALATE TO STAFF:',
     '- Refund requests, complaints, damaged/wrong items, or the customer explicitly asking for a human.',
     '- Call the escalate_to_staff tool, then let the customer know a team member will follow up with them in this same conversation.',
+    '',
+    'WHEN YOU DON\'T ACTUALLY KNOW / CAN\'T HELP:',
+    '- escalate_to_staff is for things you understand and CAN normally handle, just not without a human\'s final action (a complaint, a refund, a price override). It is NOT for something you have no real knowledge, pricing, or tool for at all - e.g. repair/refurbishment services on an aquarium the customer already owns, versus a brand-new custom build you CAN quote with compute_aquarium_quote.',
+    '- For that second kind, be honest instead of pretending you handled it - never say something has been "sent to staff" or that an answer/price is coming if nothing was actually set in motion. Tell the person plainly, in their own language/tone (Taglish is fine), that this isn\'t something you\'re programmed to help with yet - e.g. "Hindi ko pa kayang sagutin yan ngayon, wala pa akong info dyan - ill-log ko na lang siya para maisama sa future updates namin." Then call the log_capability_gap tool with their exact question so the team has a real record of what to build next. If it\'s the kind of thing a staff member could still genuinely help with directly (like an actual repair job), you can ALSO suggest they wait for staff or call the store - just don\'t claim it\'s already been forwarded unless you actually called escalate_to_staff too.',
     ''
   ];
 
@@ -1426,6 +1442,20 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         .eq('Psid', psid);
       await supabase.rpc('_telegram_send_message', { p_text: `Chatbot escalation (PSID ${psid}): ${reason}` });
       return 'Staff have been notified and will follow up with the customer directly in this conversation.';
+    }
+    case 'log_capability_gap': {
+      const question = String(input.question ?? '').trim();
+      if (!question) return 'No question provided to log.';
+      // Not gated behind `simulate` - this is a meta/product-improvement record about a gap in
+      // Alice herself, not a customer-facing side effect, so it's useful to capture even from the
+      // AI Bot Sandbox or a portal chat test, not just live channels.
+      const channel = psid.startsWith('web:') ? 'website'
+        : psid.startsWith('sandbox:') ? 'sandbox'
+        : psid.startsWith('portal-chat:') ? 'portal-chat'
+        : psid.startsWith('telegram:') ? 'telegram'
+        : 'messenger';
+      await supabase.from('BotCapabilityGaps').insert({ Channel: channel, Question: question });
+      return 'Logged for the team to review as a possible future feature. Make sure the person already knows honestly that you can\'t help with this yet.';
     }
     case 'send_item_image': {
       const itemCode = String(input.item_code ?? '').trim();

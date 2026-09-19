@@ -102,6 +102,21 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, reply: null }); // Alice isn't in this conversation - quietly no-op
   }
 
+  // Per direct request: only super users can DM Alice 1:1 - any staff can still @mention her
+  // inside a group. get_or_create_dm_conversation (supabase_portal_chat_tables.sql) has no
+  // password/identity check at all (same "anon full access" trust tier as the rest of that
+  // schema), so it can't be the enforcement point - this IS, since it already re-verifies
+  // adminUsername/adminPassword above before ever getting here.
+  if (!conversation.IsGroup) {
+    const { data: isSuperUser } = await supabase.rpc('is_admin_authorized', {
+      p_username: adminUsername,
+      p_password: adminPassword
+    });
+    if (!isSuperUser) {
+      return jsonResponse({ ok: true, reply: null });
+    }
+  }
+
   const { data: historyRows, error: historyError } = await supabase
     .from('ChatMessages')
     .select('SenderUsername, Body, CreatedAtUtc')

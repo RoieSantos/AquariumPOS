@@ -399,14 +399,21 @@ function chatRenderConversationList() {
 function chatRenderDirectoryList() {
   const container = document.getElementById('chatDirectoryList');
   const search = (document.getElementById('chatDirectorySearch').value || '').trim().toLowerCase();
-  const filtered = chatDirectory.filter((u) => !search || u.display_name.toLowerCase().includes(search));
+  const isGroupMode = chatNewMode === 'group';
+
+  // Per direct request: only super users can DM Alice 1:1 - everyone else can still @mention her
+  // inside a group they create. Hidden here from the "Message" tab entirely rather than shown-then-
+  // rejected, so non-super users aren't left wondering why she never replies; portal-chat-alice-
+  // reply enforces the actual rule server-side too, this is just so the UI matches that reality.
+  const candidates = (isGroupMode || chatSession.isSuperUser)
+    ? chatDirectory
+    : chatDirectory.filter((u) => u.username !== ALICE_USERNAME);
+  const filtered = candidates.filter((u) => !search || u.display_name.toLowerCase().includes(search));
 
   if (filtered.length === 0) {
     container.innerHTML = '<p class="muted" style="padding:16px;">No staff found.</p>';
     return;
   }
-
-  const isGroupMode = chatNewMode === 'group';
 
   container.innerHTML = filtered
     .map((u) => {

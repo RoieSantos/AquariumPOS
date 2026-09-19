@@ -153,6 +153,77 @@ async function saveFollowUpSettings() {
   }
 }
 
+function escapeHtml(value) {
+  return (value ?? '').toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+const CAPABILITY_GAP_STATUSES = ['new', 'planned', 'done', 'wontfix'];
+
+async function loadCapabilityGaps() {
+  const tbody = document.getElementById('capabilityGapsTableBody');
+  const errorEl = document.getElementById('capabilityGapsError');
+  errorEl.classList.add('hidden');
+  tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading...</td></tr>';
+
+  const { data, error } = await supabaseClient.rpc('admin_list_bot_capability_gaps', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    tbody.innerHTML = '';
+    return;
+  }
+
+  const rows = data || [];
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Nothing logged yet - this fills up whenever Alice is honest that she can\'t help with something.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map((row) => {
+    const date = row.CreatedAtUtc ? new Date(row.CreatedAtUtc).toLocaleString() : '-';
+    const options = CAPABILITY_GAP_STATUSES
+      .map((s) => `<option value="${s}"${s === row.Status ? ' selected' : ''}>${s}</option>`)
+      .join('');
+    return `
+      <tr>
+        <td>${escapeHtml(date)}</td>
+        <td>${escapeHtml(row.Channel)}</td>
+        <td>${escapeHtml(row.Question)}</td>
+        <td><select data-gap-id="${row.Id}" class="capability-gap-status">${options}</select></td>
+      </tr>
+    `;
+  }).join('');
+
+  tbody.querySelectorAll('.capability-gap-status').forEach((select) => {
+    select.addEventListener('change', () => updateCapabilityGapStatus(select.dataset.gapId, select.value));
+  });
+}
+
+async function updateCapabilityGapStatus(id, status) {
+  const errorEl = document.getElementById('capabilityGapsError');
+  errorEl.classList.add('hidden');
+
+  const { error } = await supabaseClient.rpc('admin_update_bot_capability_gap_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_id: Number(id),
+    p_status: status
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+  }
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -177,8 +248,10 @@ async function saveFollowUpSettings() {
   document.getElementById('saveAiSettingsBtn').addEventListener('click', saveAiSettings);
   document.getElementById('saveStoreInfoBtn').addEventListener('click', saveStoreInfo);
   document.getElementById('saveFollowUpSettingsBtn').addEventListener('click', saveFollowUpSettings);
+  document.getElementById('refreshCapabilityGapsBtn').addEventListener('click', loadCapabilityGaps);
 
   await loadAiSettings();
   await loadStoreInfo();
   await loadFollowUpSettings();
+  await loadCapabilityGaps();
 })();
