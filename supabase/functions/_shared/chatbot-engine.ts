@@ -31,10 +31,10 @@ export const MAX_TOKENS = 2048;
 // (calculateCustomAquarium + everything it calls, minus the standalone Stand/Filtration/Sticker
 // builders and sticker helpers - out of scope for compute_aquarium_quote). Source of truth is
 // that file - if its pricing logic changes, re-sync this block so the bot's quotes keep matching
-// the website's. Deliberately NOT "fixed" to also correct buildGlassPriceLookup's field-name
-// mismatch (it reads row.uom/row.units, which public_get_glass_pricing() never returns, so it
-// always falls through to the hardcoded DEFAULT_GLASS_PRICES below) - faithfully reproducing that
-// quirk keeps bot quotes consistent with what customers see on order-now.html today.
+// the website's. buildGlassPriceLookup below was previously a verbatim copy of a real bug in that
+// file (read row.uom/row.units, which public_get_glass_pricing() never actually returns, so it
+// always fell through to DEFAULT_GLASS_PRICES) - now fixed on both sides at once so they stay
+// consistent with each other AND actually honor live Pricing Setup edits.
 // ============================================================================
 
 const DEFAULT_GLASS_PRICES: Record<string, number> = { '3mm': 85, '6mm': 185, '10mm': 290, '12mm': 350 };
@@ -46,6 +46,10 @@ function round2(value: number): number {
 
 function roundNearest10(value: number): number {
   return Math.round((Number(value) || 0) / 10) * 10;
+}
+
+function ceilNearest10(value: number): number {
+  return Math.ceil((Number(value) || 0) / 10) * 10;
 }
 
 function normalizeUnit(unit: string): string {
@@ -308,19 +312,13 @@ function calculateStand(
   };
 }
 
-function buildGlassPriceLookup(rows: Array<Record<string, unknown>> | null | undefined, preferredUom: string): Record<string, number> {
+function buildGlassPriceLookup(rows: Array<Record<string, unknown>> | null | undefined, _preferredUom: string): Record<string, number> {
   const lookup: Record<string, number> = Object.assign({}, DEFAULT_GLASS_PRICES);
-  const wantedUom = String(preferredUom || 'MM').trim().toLowerCase();
   const items = Array.isArray(rows) ? rows : [];
 
   for (const row of items) {
-    const rowUom = String((row as any).uom ?? (row as any).UOM ?? '').trim().toLowerCase();
-    if (rowUom !== wantedUom) {
-      continue;
-    }
-
-    const units = String((row as any).units ?? (row as any).Units ?? '').trim();
-    const price = Number((row as any).pricePerSqFt ?? (row as any).PricePerSqFt ?? 0);
+    const units = String((row as any).thickness ?? (row as any).Thickness ?? '').trim();
+    const price = Number((row as any).price_per_sqft ?? (row as any).pricePerSqFt ?? (row as any).PricePerSqFt ?? 0);
     if (!units || !(price > 0)) {
       continue;
     }
@@ -630,7 +628,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_items',
     description:
-      'Search the store\'s product catalog by name, keyword, brand, or SKU. Use this whenever a customer asks if you carry something, or asks about the price/stock of a specific product.',
+      'Search the store\'s product catalog by name, keyword, brand, or SKU. Use this whenever a customer asks if you carry something, or asks about the price/stock of a specific product. Results may include a wholesale_price (only for wholesale-eligible categories, and only when an actual price is set - see the WHOLESALE PRICING rule below for when you\'re allowed to mention it).',
     input_schema: {
       type: 'object',
       properties: {
@@ -748,6 +746,27 @@ export const TOOLS: Anthropic.Tool[] = [
         }
       },
       required: ['origin_location', 'destination_address', 'vehicle_type']
+    }
+  },
+  {
+    name: 'compute_sticker_quote',
+    description:
+      'Compute a real price quote for a custom accessory/sticker/background (Plain Sticker, Tiles Sticker, Acrylic, Allum TopCover, Rubber Matting, Glass, Marine Plywood, or Laminated Plywood) - the store\'s own official pricing formula, the exact same live rates staff use. Priced from Length x Width only (no height - these are flat pieces). Ask for the type, and thickness if that type needs one (Rubber Matting/Glass/Marine Plywood/Laminated Plywood only - Plain Sticker/Tiles Sticker/Acrylic/Allum TopCover have a single flat rate with no thickness choice). State the result with confidence, not as a rough estimate. Never state accessory/sticker/background pricing without calling this tool first - do not recite or guess a price from memory, even if you think you know it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['Plain Sticker', 'Tiles Sticker', 'Acrylic', 'Allum TopCover', 'Rubber Matting', 'Glass', 'Marine Plywood', 'Laminated Plywood'],
+          description: 'Which accessory/sticker/background type.'
+        },
+        length: { type: 'number', description: 'Length.' },
+        width: { type: 'number', description: 'Width.' },
+        unit: { type: 'string', enum: ['Inches', 'cm', 'mm', 'ft'], description: 'Defaults to Inches if not specified.' },
+        thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm', '18mm'], description: 'Only used for Rubber Matting/Glass (3/6/10/12mm) or Marine Plywood/Laminated Plywood (6/18mm only). Defaults to 6mm if that type needs a thickness and none is given.' },
+        is_repair: { type: 'boolean', description: 'Only for type=Glass: true if this is a repair/resurfacing job on existing glass rather than a fresh install - priced at 2.5x the normal rate.' }
+      },
+      required: ['type', 'length', 'width']
     }
   },
   {
@@ -951,6 +970,12 @@ export function buildSystemPrompt(
     '- If a customer asks for a discount, a lower price, price matching, or otherwise tries to negotiate a price, politely decline yourself - do not escalate to staff for this alone. Explain, in your own friendly words, that all prices are system-generated and you don\'t have permission to apply a discount or change a price. Stay warm and helpful about everything else in the conversation - this is just a firm, final no on the price itself.',
     '- If the customer pushes back hard, gets upset, or turns it into a complaint after you\'ve declined, that becomes a complaint - escalate it per WHEN TO ESCALATE TO STAFF below.',
     '',
+    'WHOLESALE PRICING:',
+    '- Quote regular (retail) price by default for everyone, always - NEVER volunteer or lead with wholesale_price on your own initiative, even for a wholesale-eligible item.',
+    '- Only mention wholesale_price if the customer explicitly asks about wholesale, bulk, or reseller pricing for that specific item.',
+    '- A search_items result\'s wholesale_price will be null for most items (either the category isn\'t wholesale-eligible, or no wholesale price has been set) - if asked and it\'s null, say plainly that item doesn\'t have wholesale pricing available, don\'t guess or estimate one.',
+    '- Never mention or estimate an item\'s Cost (what the store pays for it) under any circumstance, wholesale question or not - that field is never given to you and must never be invented.',
+    '',
     'WHEN TO ESCALATE TO STAFF:',
     '- Refund requests, complaints, damaged/wrong items, or the customer explicitly asking for a human.',
     '- Call the escalate_to_staff tool, then let the customer know a team member will follow up with them in this same conversation.',
@@ -972,9 +997,9 @@ export function buildSystemPrompt(
 
   lines.push(
     'GROUNDING RULES:',
-    '- Never invent stock, price, order, aquarium quote, or delivery fee information - always use the tools.',
+    '- Never invent stock, price, order, aquarium quote, accessory/sticker quote, or delivery fee information - always use the tools, even if you think you already know the number.',
     '- If a tool returns nothing, say so plainly rather than guessing.',
-    '- Speak in plain product names only - never mention internal item codes, category codes, or cost/wholesale pricing.',
+    '- Speak in plain product names only - never mention internal item codes or category codes. Never mention Cost. Wholesale price follows its own rule below (WHOLESALE PRICING) - not an outright ban like the others.',
     '',
     'FORMATTING:',
     '- Messenger renders plain text only - no markdown (no **bold**, no [links](url)).',
@@ -1100,6 +1125,142 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
   }
 
   return result;
+}
+
+// ============================================================================
+// BEGIN: ported verbatim from docs/WebAquariumCalculator/custom-aquarium-calculator.js
+// (calculateStandaloneSticker + everything it calls) - backs compute_sticker_quote. Added per
+// direct request after Alice was caught reciting stale/wrong static sticker pricing ("Paint style
+// - P50/sq ft", which doesn't exist in the real pricing table) instead of an actual live lookup -
+// there was previously no sticker/accessory tool at all. Source of truth is that file - if its
+// pricing logic changes, re-sync this block. Same "hand-ported copy, not a shared import" caveat as
+// calculateCustomAquarium above - both copies must be kept in sync manually.
+// ============================================================================
+
+const STICKER_PRICE_PER_SQFT: Record<string, number> = {
+  'Tiles Sticker': 90,
+  'Plain Sticker': 70,
+  'Acrylic': 135,
+  'Allum TopCover': 500
+};
+const RUBBER_STICKER_PRICE_PER_SQFT: Record<string, number> = { '3mm': 26, '6mm': 32, '10mm': 45, '12mm': 60 };
+const RUBBER_STICKER_BASE_PRICE_PER_SQFT = 85;
+const MARINE_PLYWOOD_PRICE_PER_SQFT: Record<string, number> = { '6mm': 90, '18mm': 185 };
+const LAMINATED_PLYWOOD_PRICE_PER_SQFT: Record<string, number> = { '6mm': 125, '18mm': 210 };
+
+function stickerTypeHasThickness(type: string): boolean {
+  return type === 'Rubber Matting' || type === 'Glass' || type === 'Marine Plywood' || type === 'Laminated Plywood';
+}
+
+interface StickerPriceLookup {
+  flat: Record<string, number>;
+  rubber: Record<string, number>;
+  rubberBase: number;
+  marinePlywood: Record<string, number>;
+  laminatedPlywood: Record<string, number>;
+}
+
+function buildStickerPriceLookup(rows: Array<Record<string, unknown>> | null | undefined): StickerPriceLookup {
+  const flat = Object.assign({}, STICKER_PRICE_PER_SQFT);
+  const rubber = Object.assign({}, RUBBER_STICKER_PRICE_PER_SQFT);
+  let rubberBase = RUBBER_STICKER_BASE_PRICE_PER_SQFT;
+  const marinePlywood = Object.assign({}, MARINE_PLYWOOD_PRICE_PER_SQFT);
+  const laminatedPlywood = Object.assign({}, LAMINATED_PLYWOOD_PRICE_PER_SQFT);
+  const items = Array.isArray(rows) ? rows : [];
+
+  for (const row of items) {
+    const type = String((row as any).stickerType ?? (row as any).sticker_type ?? (row as any).StickerType ?? '').trim();
+    const thicknessRaw = (row as any).thickness ?? (row as any).Thickness;
+    const price = Number((row as any).pricePerSqFt ?? (row as any).price_per_sqft ?? (row as any).PricePerSqFt ?? 0);
+    if (!type || !(price > 0)) continue;
+
+    if (type === 'Rubber Matting') {
+      if (thicknessRaw) {
+        rubber[normalizeGlass(thicknessRaw)] = price;
+      } else {
+        rubberBase = price;
+      }
+    } else if (type === 'Marine Plywood' && thicknessRaw) {
+      marinePlywood[normalizeGlass(thicknessRaw)] = price;
+    } else if (type === 'Laminated Plywood' && thicknessRaw) {
+      laminatedPlywood[normalizeGlass(thicknessRaw)] = price;
+    } else if (Object.prototype.hasOwnProperty.call(flat, type)) {
+      flat[type] = price;
+    }
+  }
+
+  return { flat, rubber, rubberBase, marinePlywood, laminatedPlywood };
+}
+
+function stickerPricePerSqFt(type: string, thickness: string | null, stickerLookup: StickerPriceLookup, glassLookup: Record<string, number>): number {
+  const { flat, rubber, rubberBase, marinePlywood, laminatedPlywood } = stickerLookup;
+  const glass = glassLookup || DEFAULT_GLASS_PRICES;
+
+  if (type === 'Rubber Matting') return (thickness && rubber[thickness]) || rubberBase;
+  if (type === 'Glass') return (thickness && glass[thickness]) || glass['6mm'];
+  if (type === 'Marine Plywood') return (thickness && marinePlywood[thickness]) || marinePlywood['6mm'];
+  if (type === 'Laminated Plywood') return (thickness && laminatedPlywood[thickness]) || laminatedPlywood['6mm'];
+  return flat[type] || flat['Plain Sticker'];
+}
+
+// Length/Width only (no height) - stickers/mats/covers are flat, same as the desktop dialog.
+function calculateStandaloneSticker(input: Record<string, unknown>): Record<string, unknown> {
+  const options = input || {};
+  const unit = (options.unit as string) || 'Inches';
+  const lengthInches = toInches(options.length as number, unit);
+  const widthInches = toInches(options.width as number, unit);
+
+  if (!(lengthInches > 0) || !(widthInches > 0)) {
+    return { ok: false, error: 'Please enter valid positive Length and Width.' };
+  }
+
+  const type = (options.type as string) || 'Plain Sticker';
+  const hasThickness = stickerTypeHasThickness(type);
+  const thickness = hasThickness ? ((options.thickness as string) || '6mm') : null;
+  const isRepair = type === 'Glass' && Boolean(options.repair);
+
+  const stickerLookup = buildStickerPriceLookup(options.stickerPricingSetupRows as Array<Record<string, unknown>>);
+  const glassLookup = buildGlassPriceLookup(options.glassPricingSetupRows as Array<Record<string, unknown>>, (options.glassPricingUom as string) || 'MM');
+  const areaSqFt = inchesToFeet(lengthInches) * inchesToFeet(widthInches);
+  const pricePerSqFt = stickerPricePerSqFt(type, thickness, stickerLookup, glassLookup);
+  let estimatedPrice = areaSqFt * pricePerSqFt;
+  if (isRepair) estimatedPrice *= 2.5;
+
+  return {
+    ok: true,
+    totalPrice: ceilNearest10(estimatedPrice),
+    normalized: {
+      unit,
+      lengthInches: round2(lengthInches),
+      widthInches: round2(widthInches),
+      areaSqFt: round2(areaSqFt),
+      type,
+      thickness,
+      isRepair
+    }
+  };
+}
+// ============================================================================
+// END: ported from custom-aquarium-calculator.js
+// ============================================================================
+
+export async function computeStickerQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const [{ data: stickerRows }, { data: glassRows }] = await Promise.all([
+    supabase.rpc('public_get_sticker_pricing'),
+    supabase.rpc('public_get_glass_pricing')
+  ]);
+
+  return calculateStandaloneSticker({
+    unit: (input.unit as string) || 'Inches',
+    length: Number(input.length),
+    width: Number(input.width),
+    type: (input.type as string) || 'Plain Sticker',
+    thickness: (input.thickness as string) || undefined,
+    repair: Boolean(input.is_repair),
+    stickerPricingSetupRows: stickerRows ?? [],
+    glassPricingSetupRows: glassRows ?? [],
+    glassPricingUom: 'MM'
+  });
 }
 
 export async function computeDeliveryQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -1481,6 +1642,8 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       return JSON.stringify(await computeDeliveryQuote(supabase, input));
     case 'compute_lalamove_quote':
       return JSON.stringify(await computeLalamoveQuote(supabase, input));
+    case 'compute_sticker_quote':
+      return JSON.stringify(await computeStickerQuote(supabase, input));
     case 'get_driver_location':
       return JSON.stringify(await computeDriverLocation(supabase, input));
     case 'save_customer_info': {

@@ -305,6 +305,47 @@ async function saveAquariumExtraPricing(row) {
   await loadAquariumExtraPricing();
 }
 
+async function loadRepairPricingSetup() {
+  const { data, error } = await supabaseClient.rpc('public_get_repair_pricing_setup');
+  const row = Array.isArray(data) ? data[0] : data;
+  document.getElementById('repairMarkupPercentInput').value = (!error && row) ? row.panel_replacement_markup_percent : 20;
+  document.getElementById('repairResealFlatFeeInput').value = (!error && row) ? row.resealing_flat_fee : 500;
+}
+
+async function saveRepairPricingSetup() {
+  const errorEl = document.getElementById('repairPricingSetupError');
+  const saveBtn = document.getElementById('saveRepairPricingSetupBtn');
+  errorEl.classList.add('hidden');
+
+  const markupPercent = Number(document.getElementById('repairMarkupPercentInput').value);
+  const resealFlatFee = Number(document.getElementById('repairResealFlatFeeInput').value);
+  if (!(markupPercent >= 0) || !(resealFlatFee >= 0)) {
+    errorEl.textContent = 'Enter valid non-negative numbers for both fields.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('admin_upsert_repair_pricing_setup', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_panel_replacement_markup_percent: markupPercent,
+      p_resealing_flat_fee: resealFlatFee
+    });
+
+    if (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    await loadRepairPricingSetup();
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -330,9 +371,11 @@ async function saveAquariumExtraPricing(row) {
   document.getElementById('refreshTubularBtn').addEventListener('click', loadTubularPricing);
   document.getElementById('refreshStickerBtn').addEventListener('click', loadStickerPricing);
   document.getElementById('refreshAquariumExtraBtn').addEventListener('click', loadAquariumExtraPricing);
+  document.getElementById('saveRepairPricingSetupBtn').addEventListener('click', saveRepairPricingSetup);
 
   await loadGlassPricing();
   await loadTubularPricing();
   await loadStickerPricing();
   await loadAquariumExtraPricing();
+  await loadRepairPricingSetup();
 })();

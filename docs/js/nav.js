@@ -117,6 +117,7 @@ function renderTopNav(activeLabel) {
   const calculators = [
     { href: 'stand-calculator.html', label: 'Custom Stand' },
     { href: 'aquarium-calculator.html', label: 'Aquarium Calculator' },
+    { href: 'repair-calculator.html', label: 'Repair Calculator' },
     { href: 'sticker-calculator.html', label: 'Custom Accessories / Stickers' },
     { href: 'glass-cut-list.html', label: 'Glass Cut List' },
   ];

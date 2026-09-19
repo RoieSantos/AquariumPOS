@@ -130,6 +130,27 @@
           </tbody>
         </table>
       </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Repair Pricing Setup</h2>
+      </div>
+      <p class="muted">Used by the Repair Calculator page. Panel Replacement uses the Glass Thickness Pricing table above (area x rate) plus this markup; Resealing/Leak Repair is a flat fee.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="repairMarkupPercentInput">Panel Replacement Markup (%)</label>
+          <input type="number" id="repairMarkupPercentInput" min="0" step="0.1" />
+        </div>
+        <div class="form-row">
+          <label for="repairResealFlatFeeInput">Resealing / Leak Repair Flat Fee (&#8369;)</label>
+          <input type="number" id="repairResealFlatFeeInput" min="0" step="1" />
+        </div>
+      </div>
+      <div id="repairPricingSetupError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveRepairPricingSetupBtn" type="button">Save Repair Pricing</button>
+      </div>
     </div>
   </div>
 

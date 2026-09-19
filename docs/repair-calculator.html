@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Repair Calculator - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .repair-type-tabs {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .repair-type-tab {
+      padding: 8px 16px;
+      border: 1px solid var(--panel-border);
+      background: #fff;
+      color: var(--text-muted);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .repair-type-tab.active {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    .repair-summary-card {
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+      margin-top: 16px;
+      max-width: 480px;
+    }
+    .repair-summary-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 0;
+      font-size: 13px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .repair-summary-row:last-child {
+      border-bottom: none;
+    }
+    .repair-summary-total {
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--primary);
+    }
+    .repair-panel-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 14px;
+      max-width: 560px;
+    }
+    .repair-panel-row {
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      background: #fff;
+    }
+    .repair-panel-checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .repair-panel-checkbox-label input {
+      width: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Repair Calculator</h1>
+    <p class="muted">Price aquarium repairs - Panel Replacement is priced from the damaged panel's own area using the same live Glass Pricing Setup rate as new custom builds, plus a labor markup. Resealing/Leak Repair is a flat fee. Both are configurable on the Pricing Setup page. Client-side pricing only - nothing here is saved to the database; use "Copy Summary" to paste the breakdown into an order or note.</p>
+
+    <div class="repair-type-tabs">
+      <button type="button" class="repair-type-tab active" id="repairTabPanel" data-type="panel">Panel Replacement</button>
+      <button type="button" class="repair-type-tab" id="repairTabReseal" data-type="reseal">Resealing / Leak Repair</button>
+    </div>
+
+    <div class="form-grid" style="margin-top:16px;">
+      <div class="form-row">
+        <label for="repairAquariumLength">Aquarium Length (inches)</label>
+        <input type="number" id="repairAquariumLength" min="0" step="0.1" placeholder="e.g. 24" />
+      </div>
+      <div class="form-row">
+        <label for="repairAquariumWidth">Aquarium Width (inches)</label>
+        <input type="number" id="repairAquariumWidth" min="0" step="0.1" placeholder="e.g. 12" />
+      </div>
+      <div class="form-row">
+        <label for="repairAquariumHeight">Aquarium Height (inches)</label>
+        <input type="number" id="repairAquariumHeight" min="0" step="0.1" placeholder="e.g. 15" />
+      </div>
+      <div id="repairGlassThicknessRow" class="form-row">
+        <label for="repairGlassThickness">Glass Thickness</label>
+        <select id="repairGlassThickness">
+          <option value="3mm">3mm</option>
+          <option value="6mm" selected>6mm</option>
+          <option value="10mm">10mm</option>
+          <option value="12mm">12mm</option>
+        </select>
+        <span class="muted" id="repairMarkupNote" style="font-size:12px; display:block; margin-top:4px;"></span>
+      </div>
+    </div>
+
+    <div id="repairPanelFields" style="margin-top:16px;">
+      <p class="muted" style="margin-top:0; margin-bottom:0;">Check every panel that needs replacing - each panel's own size is worked out from the aquarium's overall dimensions above (Bottom = Length x Width, Front/Back = Length x Height, Left/Right = Width x Height), same convention the Aquarium Calculator uses.</p>
+      <div class="repair-panel-list" id="repairPanelList">
+        <div class="repair-panel-row">
+          <label class="repair-panel-checkbox-label">
+            <input type="checkbox" class="repair-panel-checkbox" data-panel="Bottom" />
+            Bottom
+          </label>
+        </div>
+        <div class="repair-panel-row">
+          <label class="repair-panel-checkbox-label">
+            <input type="checkbox" class="repair-panel-checkbox" data-panel="Front" />
+            Front
+          </label>
+        </div>
+        <div class="repair-panel-row">
+          <label class="repair-panel-checkbox-label">
+            <input type="checkbox" class="repair-panel-checkbox" data-panel="Back" />
+            Back
+          </label>
+        </div>
+        <div class="repair-panel-row">
+          <label class="repair-panel-checkbox-label">
+            <input type="checkbox" class="repair-panel-checkbox" data-panel="Left" />
+            Left
+          </label>
+        </div>
+        <div class="repair-panel-row">
+          <label class="repair-panel-checkbox-label">
+            <input type="checkbox" class="repair-panel-checkbox" data-panel="Right" />
+            Right
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div id="repairResealFields" class="form-grid hidden" style="margin-top:16px;">
+      <div class="form-row" style="grid-column: 1 / -1;">
+        <label for="repairResealNotes">Notes</label>
+        <textarea id="repairResealNotes" rows="2" placeholder="e.g. small leak at bottom-front seam"></textarea>
+      </div>
+    </div>
+
+    <div class="repair-summary-card" id="repairSummaryCard">
+      <div id="repairSummaryRows"></div>
+    </div>
+
+    <div class="toolbar" style="margin-top:12px;">
+      <button class="btn btn-secondary btn-sm" id="repairCopyBtn" type="button">Copy Summary</button>
+    </div>
+    <div id="repairError" class="error-text hidden"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="WebAquariumCalculator/custom-aquarium-calculator.js"></script>
+  <script src="js/repairCalculator.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

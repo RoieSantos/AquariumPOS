@@ -631,20 +631,22 @@
     return null;
   }
 
+  // BUGFIX: this previously read row.units/row.pricePerSqFt/row.uom, none of which exist on what
+  // public_get_glass_pricing() actually returns (thickness/price_per_sqft, and no uom column at
+  // all - it already filters to Uom='MM' server-side). That mismatch meant every row got silently
+  // skipped and this ALWAYS fell back to DEFAULT_GLASS_PRICES - live edits from the portal's
+  // Pricing Setup page never actually took effect anywhere this is called (Order Now, the staff
+  // Aquarium Calculator, Stickers). preferredUom is kept as an accepted param for call-site
+  // compatibility even though there's nothing left to filter by.
   function buildGlassPriceLookup(rows, preferredUom) {
+    void preferredUom;
     var lookup = Object.assign({}, DEFAULT_GLASS_PRICES);
-    var wantedUom = String(preferredUom || 'MM').trim().toLowerCase();
     var items = Array.isArray(rows) ? rows : [];
 
     for (var i = 0; i < items.length; i += 1) {
       var row = items[i] || {};
-      var rowUom = String(row.uom || row.UOM || '').trim().toLowerCase();
-      if (rowUom !== wantedUom) {
-        continue;
-      }
-
-      var units = String(row.units || row.Units || '').trim();
-      var price = Number(row.pricePerSqFt || row.PricePerSqFt || 0);
+      var units = String(row.thickness || row.Thickness || '').trim();
+      var price = Number(row.price_per_sqft || row.pricePerSqFt || row.PricePerSqFt || 0);
       if (!units || !(price > 0)) {
         continue;
       }
