@@ -135,6 +135,9 @@ function renderTopNav(activeLabel) {
     inventory.push({ href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });
   }
   if (isSuperUser) {
+    // Super users only for now - every RPC behind this page re-checks with is_admin_authorized, so
+    // this gate is convenience, not the control.
+    inventory.push({ href: 'item-ledger-entries.html', label: 'Item Ledger Entries' });
     inventory.push({ href: 'warehouse-setup.html', label: 'Warehouse Setup' });
     inventory.push({ href: 'item-setup.html', label: 'Item Setup' });
     inventory.push({ href: 'variant-setup.html', label: 'Variants' });

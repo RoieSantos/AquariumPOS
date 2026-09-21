@@ -508,6 +508,79 @@ async function saveFactboxCost() {
   savedEl.classList.remove('hidden');
 }
 
+// Item Price - unlike Cost/Wholesale Price this is not a portal-only field: admin_set_item_price
+// (supabase_item_price_pancake_push.sql) pushes it to Pancake first and only updates the portal if
+// Pancake accepts it, so an error here means nothing changed anywhere. The local POS then picks it
+// up from Pancake on its own timer.
+async function saveFactboxPrice() {
+  if (!openFactboxCode) return;
+
+  const savedEl = document.getElementById('factboxPriceSaved');
+  const warningEl = document.getElementById('factboxPriceWarning');
+  const input = document.getElementById('factboxPriceInput');
+  const saveBtn = document.getElementById('factboxPriceSaveBtn');
+  savedEl.classList.add('hidden');
+  warningEl.classList.add('hidden');
+
+  const raw = input.value.trim();
+  const price = raw === '' ? null : Number(raw);
+
+  if (price === null || !Number.isFinite(price) || price < 0) {
+    window.alert('Enter a price of 0 or more.');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  const code = openFactboxCode;
+  const { data, error } = await supabaseClient.rpc('admin_set_item_price', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: code,
+    p_price: price
+  });
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = 'Save';
+
+  if (error) {
+    window.alert(error.message);
+    return;
+  }
+
+  // Pancake is the master, so the stored price is whatever it echoed back - normally the value that
+  // was typed, but if Pancake rounded it the box and table should show what actually stuck.
+  const storedPrice = Number(data?.price);
+  const item = itemsByCode.get(code);
+  if (item) item.price = storedPrice;
+
+  const row = document.querySelector(`#itemTableBody tr[data-code="${code}"]`);
+  if (row) row.children[5].innerHTML = formatMoney(storedPrice);
+
+  if (openFactboxCode === code) {
+    input.value = storedPrice;
+    if (item) renderItemCardGeneral(item);
+  }
+
+  const notes = [];
+  if (data && Number(data.requested) !== storedPrice) {
+    notes.push(`Saved as ${formatMoney(storedPrice)} instead of ${formatMoney(data.requested)} - prices are sent to Pancake as whole numbers.`);
+  }
+  if (data && !data.pancake_confirmed) {
+    notes.push('Pancake accepted the update but did not confirm the new price - check it in Pancake.');
+  }
+  if (data && data.retail_price_override !== null && data.retail_price_override !== undefined) {
+    notes.push(`This item also has a Retail Price of ${formatMoney(data.retail_price_override)}, and Order Now and the AI bot quote that instead of Price.`);
+  }
+
+  if (notes.length > 0) {
+    warningEl.textContent = notes.join(' ');
+    warningEl.classList.remove('hidden');
+  }
+  savedEl.classList.remove('hidden');
+}
+
 async function saveFactboxWholesalePrice() {
   if (!openFactboxCode) return;
 
@@ -714,23 +787,111 @@ function renderFactboxVariants(variants) {
     return;
   }
 
+  // With several variants each one carries its own price in Pancake, so each row gets its own price
+  // box (admin_set_variant_price). A lone variant is priced from the item's own Price box instead -
+  // two boxes for the same number would just be confusing.
+  const perVariantPrices = count > 1;
+
   container.innerHTML = variants
     .map((v) => {
       const thumb = v.images
         ? imageHtml(v.images, 'factbox-variant-thumb')
         : '<div class="factbox-variant-thumb-placeholder"></div>';
       const priceText = v.price !== null && v.price !== undefined ? formatMoney(v.price) : '';
+      const priceValue = v.price === null || v.price === undefined ? '' : Number(v.price);
+      const metaText = perVariantPrices
+        ? (v.sku ? 'SKU ' + v.sku : '')
+        : `${v.sku ? 'SKU ' + v.sku : ''}${v.sku && priceText ? ' - ' : ''}${priceText ? '₱' + priceText : ''}`;
+      const priceEditor = perVariantPrices
+        ? `
+          <div class="factbox-variant-price" data-variation-id="${escapeHtml(v.variation_id)}">
+            <input type="number" class="factbox-variant-price-input" step="0.01" min="0" placeholder="Price" value="${priceValue}" aria-label="Price" />
+            <button class="btn btn-secondary btn-sm factbox-variant-price-save" type="button">Save</button>
+          </div>`
+        : '';
       return `
         <div class="factbox-variant-row">
           ${thumb}
           <div class="factbox-variant-info">
             <div class="factbox-variant-name">${v.variant_name || v.sku || v.variation_id || 'Unnamed variant'}</div>
-            <div class="factbox-variant-meta">${v.sku ? 'SKU ' + v.sku : ''}${v.sku && priceText ? ' - ' : ''}${priceText ? '₱' + priceText : ''}</div>
+            <div class="factbox-variant-meta">${metaText}</div>
+            <div class="factbox-variant-status muted hidden"></div>
           </div>
+          ${priceEditor}
         </div>
       `;
     })
     .join('');
+}
+
+// Per-variant price save - admin_set_variant_price pushes to Pancake first, same contract as
+// saveFactboxPrice: an error means nothing changed anywhere.
+async function saveFactboxVariantPrice(box) {
+  if (!openFactboxCode) return;
+
+  const code = openFactboxCode;
+  const variationId = box.dataset.variationId;
+  const input = box.querySelector('.factbox-variant-price-input');
+  const saveBtn = box.querySelector('.factbox-variant-price-save');
+  const statusEl = box.closest('.factbox-variant-row').querySelector('.factbox-variant-status');
+  statusEl.classList.add('hidden');
+  statusEl.classList.remove('error-text');
+
+  const raw = input.value.trim();
+  const price = raw === '' ? null : Number(raw);
+  if (price === null || !Number.isFinite(price) || price < 0) {
+    window.alert('Enter a price of 0 or more.');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  const { data, error } = await supabaseClient.rpc('admin_set_variant_price', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_variation_id: variationId,
+    p_price: price
+  });
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = 'Save';
+
+  if (error) {
+    window.alert(error.message);
+    return;
+  }
+
+  // The card may have been closed or moved to another item while the push was in flight - the
+  // price is saved either way, there is just nothing left on screen to update.
+  if (openFactboxCode !== code) return;
+
+  const storedPrice = Number(data?.price);
+  input.value = storedPrice;
+
+  // Items.Price mirrors one representative variant (see supabase_item_price_pancake_push.sql) - only
+  // when this was that variant did the server touch it, so only then patch the item's own display.
+  if (data?.item_price_updated) {
+    const item = itemsByCode.get(code);
+    if (item) {
+      item.price = storedPrice;
+      const row = document.querySelector(`#itemTableBody tr[data-code="${code}"]`);
+      if (row) row.children[5].innerHTML = formatMoney(storedPrice);
+      document.getElementById('factboxPriceInput').value = storedPrice;
+      renderItemCardGeneral(item);
+    }
+  }
+
+  const notes = ['Saved.'];
+  if (Number(data?.requested) !== storedPrice) {
+    notes.push(`Saved as ${formatMoney(storedPrice)} instead of ${formatMoney(data.requested)} - prices are sent to Pancake as whole numbers.`);
+  }
+  if (!data?.pancake_confirmed) {
+    notes.push('Pancake did not confirm the new price - check it in Pancake.');
+  }
+  statusEl.textContent = notes.join(' ');
+  statusEl.classList.toggle('error-text', notes.length > 1);
+  statusEl.classList.remove('hidden');
 }
 
 // Item Card layout state, remembered per browser the same way the Purchase Order document's is
@@ -783,7 +944,6 @@ function renderItemCardGeneral(item) {
       : Number(item.quantity_in_stock).toLocaleString();
   document.getElementById('itemCardStatus').textContent = item.is_active === false ? 'Inactive' : 'Active';
 
-  document.getElementById('itemCardPrice').textContent = formatMoney(item.price);
   document.getElementById('itemCardRetailPrice').textContent = formatMoney(item.retail_price);
   document.getElementById('itemCardPromoPrice').textContent = formatMoney(item.promo_price);
 
@@ -826,6 +986,12 @@ async function openFactbox(code) {
   document.getElementById('factboxCostInput').value =
     item.cost === null || item.cost === undefined ? '' : Number(item.cost);
 
+  document.getElementById('factboxPriceSaved').classList.add('hidden');
+  document.getElementById('factboxPriceWarning').classList.add('hidden');
+  document.getElementById('factboxPriceInput').value =
+    item.price === null || item.price === undefined ? '' : Number(item.price);
+  setFactboxPriceEditable(true);
+
   document.getElementById('factboxWholesalePriceSaved').classList.add('hidden');
   document.getElementById('factboxWholesalePriceInput').value =
     item.wholesale_price === null || item.wholesale_price === undefined ? '' : Number(item.wholesale_price);
@@ -853,6 +1019,18 @@ async function openFactbox(code) {
   }
 
   renderFactboxVariants(data);
+
+  // Same rule admin_set_item_price enforces server-side: an item with several variants has no single
+  // price to push to Pancake, so the box is locked rather than letting Save fail.
+  if (data && data.length > 1) setFactboxPriceEditable(false, data.length);
+}
+
+function setFactboxPriceEditable(editable, variantCount) {
+  document.getElementById('factboxPriceInput').disabled = !editable;
+  document.getElementById('factboxPriceSaveBtn').disabled = !editable;
+  document.getElementById('factboxPriceHint').textContent = editable
+    ? 'The selling price. Saving sends it to Pancake first; the POS picks it up from Pancake within about 5 minutes.'
+    : `This item has ${variantCount} variants, each priced separately in Pancake. Shows the default variant's price - set each variant's price in the Variants tab below.`;
 }
 
 function closeFactbox() {
@@ -1202,6 +1380,11 @@ function wireFactbox() {
     await saveItemUom(input.closest('.item-uom-row').dataset.uomCode, qty);
   });
   document.getElementById('factboxCostSaveBtn').addEventListener('click', saveFactboxCost);
+  document.getElementById('factboxPriceSaveBtn').addEventListener('click', saveFactboxPrice);
+  document.getElementById('factboxVariants').addEventListener('click', (event) => {
+    const saveBtn = event.target.closest('.factbox-variant-price-save');
+    if (saveBtn) saveFactboxVariantPrice(saveBtn.closest('.factbox-variant-price'));
+  });
   document.getElementById('factboxWholesalePriceSaveBtn').addEventListener('click', saveFactboxWholesalePrice);
   document.getElementById('factboxHideFromSetCheckbox').addEventListener('change', saveFactboxHideFromSet);
 }

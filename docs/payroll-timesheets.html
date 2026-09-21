@@ -33,6 +33,22 @@
         <button class="btn btn-primary" id="createRunFromTimesheetsBtn" type="button" style="margin-left:auto;">Create Payroll Run from This Week</button>
       </div>
       <p class="muted">Type hours worked directly into each day's cell (e.g. "8"). Leave a cell blank for a day not worked. Once a cell is saved it locks (grayed out) and can no longer be edited here - use the list below to correct an existing entry. The Cash Advance column is one amount per employee for the whole week (e.g. released every Thursday) - it's automatically deducted from that employee's next payroll run.</p>
+
+      <div id="weeklyProjectedFundingBox" class="hidden" style="margin-bottom:16px; padding:12px; border:1px solid var(--border-color, #dee2e6); border-radius:8px; max-width:520px;">
+        <div class="muted" style="margin-bottom:6px;" id="weeklyProjectedFundingLabel">Projected funding needed if a Weekly payroll run is created for this week</div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Cash</label>
+            <div id="weeklyProjectedCashLine">-</div>
+          </div>
+          <div class="form-row">
+            <label>Digital (GCash)</label>
+            <div id="weeklyProjectedDigitalLine">-</div>
+          </div>
+        </div>
+      </div>
+      <div id="weeklyProjectedFundingNote" class="muted hidden" style="margin-bottom:16px;"></div>
+
       <div id="bulkEntryError" class="error-text hidden"></div>
       <div style="margin-bottom:12px;">
         <button class="btn btn-success btn-sm" id="saveBulkEntryBtn" type="button">Save All</button>
@@ -149,6 +165,21 @@
           <input type="date" id="newRunPayDate" />
         </div>
       </div>
+
+      <div id="projectedFundingBox" class="hidden" style="margin-top:12px; padding:12px; border:1px solid var(--border-color, #dee2e6); border-radius:8px;">
+        <div class="muted" style="margin-bottom:6px;">Projected funding needed for this run</div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Cash</label>
+            <div id="projectedCashLine">-</div>
+          </div>
+          <div class="form-row">
+            <label>Digital (GCash)</label>
+            <div id="projectedDigitalLine">-</div>
+          </div>
+        </div>
+      </div>
+      <div id="projectedFundingNote" class="muted hidden" style="margin-top:8px;"></div>
 
       <div id="newRunError" class="error-text hidden"></div>
       <div style="margin-top:16px; text-align:right;">

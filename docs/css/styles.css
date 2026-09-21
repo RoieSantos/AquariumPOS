@@ -2263,6 +2263,22 @@ body.hide-price-columns .price-col {
   color: var(--text-muted);
 }
 
+.factbox-variant-status {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.factbox-variant-price {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.factbox-variant-price-input {
+  width: 96px;
+}
+
 /* Shared pagination bar (js/pagination.js) - sits directly under a .table-wrap */
 .pagination-bar {
   display: flex;
@@ -4895,7 +4911,7 @@ body:has(.wizard-page) {
    columns into a phone. */
 .new-po-lines {
   table-layout: fixed;
-  min-width: 940px;
+  min-width: 1080px;
 }
 
 /* Each editor fills its cell rather than sitting at some default width, which is what makes the

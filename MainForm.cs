@@ -1197,6 +1197,12 @@ INSERT INTO CardProcessingFeeLog (
                 // toggled, so this is what makes that reach Stock Counts' own local filter.
                 try { await OnlinefunctionsEvents.SyncCategoryProductionFlagsFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
 
+                // Also Supabase -> desktop - Item wholesale prices are maintained in the Web Portal's
+                // Item Setup (Pancake has no wholesale field), and SyncItemsToSupabaseAsync above no
+                // longer pushes WholesalePrice, so this is the only thing that moves it. The "Sync
+                // Items" button (RunManualProductSyncAsync) runs the same pull on demand.
+                try { await OnlinefunctionsEvents.SyncItemWholesalePricesFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
                 // Also Supabase -> desktop - Glass/Stand-Tubular/Sticker pricing, centralized so the
                 // Web Portal's Pricing Setup page is the one place staff edit these now instead of
                 // separately here and on the two web calculators (see
@@ -3944,8 +3950,23 @@ ORDER BY i.[Description], i.[Name], i.Code";
             try
             {
                 int updated = await OnlinefunctionsEvents.SyncProductVariationsAsync(TimeSpan.FromSeconds(60));
+
+                // Wholesale prices come from the Web Portal, not Pancake - pulled here too so the
+                // button also refreshes them on demand instead of waiting for the 5-minute timer.
+                // A failure here is reported but doesn't undo the Pancake item sync above.
+                string wholesaleNote;
+                try
+                {
+                    int wholesaleUpdated = await OnlinefunctionsEvents.SyncItemWholesalePricesFromSupabaseAsync(TimeSpan.FromSeconds(60));
+                    wholesaleNote = $"Wholesale prices updated: {wholesaleUpdated}";
+                }
+                catch (Exception wholesaleEx)
+                {
+                    wholesaleNote = $"Wholesale prices NOT updated: {wholesaleEx.Message}";
+                }
+
                 onSuccess?.Invoke();
-                MessageBox.Show($"Sync completed. Items updated: {updated}", "Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"Sync completed. Items updated: {updated}\n{wholesaleNote}", "Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {

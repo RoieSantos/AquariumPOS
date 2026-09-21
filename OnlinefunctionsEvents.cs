@@ -3653,9 +3653,13 @@ ORDER BY [RunningSerialNo]", connection);
             return new MasterDataSyncSummary(itemRows.Count, insertedCount, updatedCount);
         }
 
+        // WholesalePrice is deliberately NOT in this list: it is maintained in the Web Portal and pulled
+        // down by SyncItemWholesalePricesFromSupabaseAsync, so pushing the local value back up here would
+        // just revert every Portal edit on the next tick (and push the local column's DEFAULT 0 for every
+        // item that has no wholesale price).
         private static readonly string[] OptionalItemColumns = new[]
         {
-            "Description", "Cost", "Price", "WholesalePrice", "RetailPrice", "PromoPrice",
+            "Description", "Cost", "Price", "RetailPrice", "PromoPrice",
             "CategoryCode", "Brand", "SKU", "QuantityInStock", "MinimumStock", "IsActive",
             "VariationId", "ProductId"
         };
@@ -7405,6 +7409,111 @@ WHEN NOT MATCHED THEN
                 cmd.Parameters["@Code"].Value = code;
                 cmd.Parameters["@IsProductionCategory"].Value = isProduction;
                 updatedCount += cmd.ExecuteNonQuery();
+            }
+
+            return updatedCount;
+        }
+
+        /// <summary>
+        /// Supabase -> desktop: pulls each item's WholesalePrice from the Web Portal's Item Setup into
+        /// local dbo.Items.WholesalePrice. The Portal is the only place wholesale prices are maintained
+        /// now (Pancake has no wholesale field in this integration, so it cannot carry them) - a local
+        /// edit (the item form, the wholesale Excel import) just gets overwritten the next time this
+        /// runs, same as the Glass/Tubular/Sticker pricing pull below.
+        /// SyncItemsToSupabaseAsync no longer pushes WholesalePrice (see OptionalItemColumns) - without
+        /// that, the two syncs would keep overwriting each other and a Portal edit would be reverted
+        /// within one timer tick.
+        /// Reads through the pos_list_item_wholesale_prices RPC (supabase_pos_item_wholesale_price_pull.sql),
+        /// NOT the Items table: this app's Supabase key is the anon/publishable one, and anon has no SELECT
+        /// on public."Items" (a direct GET fails with 401 "permission denied for table Items"). The RPC
+        /// exposes only Code + WholesalePrice, and only for items that have a wholesale price.
+        /// An item with NO wholesale price in the Portal is left alone locally - it is never blanked. That
+        /// is deliberate: until the Portal has been seeded with the wholesale prices staff already keep
+        /// locally, "blank in the Portal" means "not entered yet", and overwriting with it would wipe every
+        /// local price. The catch is that clearing a price in the Portal does not clear it here.
+        /// Only rows whose value actually differs are updated, and items that don't exist locally are
+        /// skipped (update-only). Pages through the results since PostgREST caps one response.
+        /// Returns the number of local rows changed.
+        /// </summary>
+        public static async Task<int> SyncItemWholesalePricesFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(60);
+
+            string endpointUrl = GlobalSettings.ItemsSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+                throw new InvalidOperationException("ItemsSupabaseEndpoint is not configured.");
+
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+
+            // Older installs may not have the column yet - nothing to write to, so nothing to do.
+            using (var colCmd = new SqlCommand("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Items' AND COLUMN_NAME = 'WholesalePrice'", conn))
+            {
+                if (Convert.ToInt32(colCmd.ExecuteScalar() ?? 0) == 0)
+                    return 0;
+            }
+
+            // Prices are never negative, so -1 stands in for NULL in the "did it change" comparison.
+            using var updateCmd = new SqlCommand(
+                "UPDATE dbo.Items SET WholesalePrice = @WholesalePrice WHERE Code = @Code AND ISNULL(WholesalePrice, -1) <> @WholesalePrice",
+                conn);
+            updateCmd.Parameters.Add("@Code", System.Data.SqlDbType.NVarChar, 100);
+            var priceParam = updateCmd.Parameters.Add("@WholesalePrice", System.Data.SqlDbType.Decimal);
+            priceParam.Precision = 10;
+            priceParam.Scale = 2;
+
+            // The RPC lives next to the Items endpoint: https://<project>.supabase.co/rest/v1/rpc/<name>
+            int restIndex = endpointUrl.IndexOf("/rest/v1/", StringComparison.OrdinalIgnoreCase);
+            if (restIndex < 0)
+                throw new InvalidOperationException("ItemsSupabaseEndpoint is not a Supabase REST URL.");
+            string rpcUrl = endpointUrl.Substring(0, restIndex) + "/rest/v1/rpc/pos_list_item_wholesale_prices";
+
+            const int pageSize = 1000;
+            int updatedCount = 0;
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            for (int offset = 0; ; offset += pageSize)
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Post, rpcUrl);
+                req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+                req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+                req.Content = new StringContent(
+                    JsonSerializer.Serialize(new { p_limit = pageSize, p_offset = offset }),
+                    Encoding.UTF8, "application/json");
+
+                using var resp = await http.SendAsync(req).ConfigureAwait(false);
+                string respText = string.Empty;
+                try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+                if (!resp.IsSuccessStatusCode)
+                    throw new HttpRequestException($"Item wholesale prices RPC failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+                using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                    break;
+
+                int rowCount = 0;
+                foreach (var row in doc.RootElement.EnumerateArray())
+                {
+                    rowCount++;
+                    if (row.ValueKind != JsonValueKind.Object) continue;
+
+                    string code = row.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == JsonValueKind.String
+                        ? codeProp.GetString() ?? string.Empty
+                        : string.Empty;
+                    if (string.IsNullOrWhiteSpace(code)) continue;
+
+                    // No number (null) = no wholesale price entered in the Portal - leave the local value.
+                    if (!row.TryGetProperty("wholesale_price", out var priceProp) || priceProp.ValueKind != JsonValueKind.Number)
+                        continue;
+
+                    updateCmd.Parameters["@Code"].Value = code;
+                    updateCmd.Parameters["@WholesalePrice"].Value = Math.Round(priceProp.GetDecimal(), 2);
+                    updatedCount += updateCmd.ExecuteNonQuery();
+                }
+
+                if (rowCount < pageSize)
+                    break;
             }
 
             return updatedCount;

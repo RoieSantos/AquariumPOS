@@ -962,9 +962,12 @@ async function shipTransferOrder(docNo) {
     // commit it locally.
     for (const line of lineUpdates) {
       if (line.increment <= 0) continue;
+      // 'Last Actor' is who to credit the Item Ledger entry to - a trigger on Transfer_Line posts
+      // the shipment to the ledger off this same update (supabase_item_ledger_hooks.sql).
       await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': line.lineNo }, {
         'Qty To Ship': line.increment,
-        'Qty Shipped': line.qtyShipped
+        'Qty Shipped': line.qtyShipped,
+        'Last Actor': currentSession?.username || null
       });
     }
 
@@ -1117,7 +1120,8 @@ async function receiveTransferOrder(docNo) {
       if (line.increment <= 0) continue;
       await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': line.lineNo }, {
         'Qty To Receive': line.increment,
-        'Qty Received': line.qtyReceived
+        'Qty Received': line.qtyReceived,
+        'Last Actor': currentSession?.username || null
       });
       await releaseReceivedSerials(docNo, line.itemNo, line.variantId, line.increment, toWarehouseName);
     }

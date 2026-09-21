@@ -151,8 +151,16 @@
         <div class="doc-fasttab-body">
           <div class="form-grid">
             <div class="form-row">
-              <label>Price</label>
-              <div id="itemCardPrice" class="muted"></div>
+              <label for="factboxPriceInput">Price</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input type="number" id="factboxPriceInput" step="0.01" min="0" placeholder="Not set" style="flex:1;" />
+                <button class="btn btn-secondary btn-sm" id="factboxPriceSaveBtn" type="button">Save</button>
+              </div>
+              <div class="muted" style="margin-top:4px; font-size:12px;" id="factboxPriceHint">
+                The selling price. Saving sends it to Pancake first; the POS picks it up from Pancake within about 5 minutes.
+              </div>
+              <div id="factboxPriceSaved" class="muted hidden" style="margin-top:4px;">Saved.</div>
+              <div id="factboxPriceWarning" class="error-text hidden" style="margin-top:4px;"></div>
             </div>
             <div class="form-row">
               <label for="factboxWholesalePriceInput">Wholesale Price</label>

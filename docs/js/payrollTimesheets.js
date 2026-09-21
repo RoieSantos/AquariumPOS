@@ -188,6 +188,7 @@ async function loadWeekGrid() {
   (advanceData || []).forEach((a) => { advanceByUsername[a.username] = { amount: a.amount, method: a.method }; });
 
   renderWeekGrid(dates, existingByKey, advanceByUsername);
+  refreshWeeklyProjectedFunding();
 }
 
 // Super User only - client-side re-enable of every locked cell in the grid as currently shown, so
@@ -486,6 +487,7 @@ function autofillDates() {
   document.getElementById('newRunPeriodStart').value = toDateInputValue(dates.periodStart);
   document.getElementById('newRunPeriodEnd').value = toDateInputValue(dates.periodEnd);
   document.getElementById('newRunPayDate').value = toDateInputValue(dates.payDate);
+  refreshProjectedFunding();
 }
 
 function autofillWeeklyDates() {
@@ -512,6 +514,94 @@ function autofillWeeklyDates() {
   document.getElementById('newRunPeriodStart').value = toDateInputValue(periodStart);
   document.getElementById('newRunPeriodEnd').value = toDateInputValue(payDate);
   document.getElementById('newRunPayDate').value = toDateInputValue(payDate);
+  refreshProjectedFunding();
+}
+
+// Shows "this run will need PxK Cash / PyK Digital, you have PaK / PbK on hand" in the New Payroll
+// Run modal, computed by actually running admin_create_payroll_run's real math and rolling it back
+// (supabase_payroll_projected_run_requirement.sql) - so the officer knows how much to prepare
+// before committing, without a second hand-written copy of the pay calculation drifting out of
+// sync with the real one.
+async function refreshProjectedFunding() {
+  const box = document.getElementById('projectedFundingBox');
+  const noteEl = document.getElementById('projectedFundingNote');
+
+  const payCycle = document.getElementById('newRunPayCycle').value;
+  const periodStart = document.getElementById('newRunPeriodStart').value || null;
+  const periodEnd = document.getElementById('newRunPeriodEnd').value || null;
+  const payDate = document.getElementById('newRunPayDate').value || null;
+
+  if (!periodStart || !periodEnd) {
+    box.classList.add('hidden');
+    noteEl.classList.add('hidden');
+    return;
+  }
+
+  const { data, error } = await supabaseClient.rpc('admin_get_projected_payroll_run_requirement', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_pay_cycle: payCycle,
+    p_period_start: periodStart,
+    p_period_end: periodEnd,
+    p_pay_date: payDate
+  });
+
+  if (error) {
+    box.classList.add('hidden');
+    noteEl.textContent = error.message || 'Could not compute projected funding for this period yet.';
+    noteEl.classList.remove('hidden');
+    return;
+  }
+
+  noteEl.classList.add('hidden');
+  const result = Array.isArray(data) ? data[0] : data;
+  document.getElementById('projectedCashLine').innerHTML = formatProjectedFundingLine(Number(result?.cash_required || 0), Number(result?.cash_balance || 0));
+  document.getElementById('projectedDigitalLine').innerHTML = formatProjectedFundingLine(Number(result?.digital_required || 0), Number(result?.digital_balance || 0));
+  box.classList.remove('hidden');
+}
+
+function formatProjectedFundingLine(required, balance) {
+  const shortfall = required - balance;
+  const statusHtml = shortfall > 0
+    ? `<span style="color:var(--danger);">short by ₱${shortfall.toFixed(2)}</span>`
+    : `<span style="color:var(--success);">covered</span>`;
+  return `<strong>₱${required.toFixed(2)}</strong> needed - ₱${balance.toFixed(2)} on hand, ${statusHtml}`;
+}
+
+// Always-visible quick-glance version on the main Timesheets page itself (not just inside the New
+// Payroll Run modal) - mirrors exactly what "Create Payroll Run from This Week" defaults to
+// (Weekly pay cycle, period = the week currently shown) so the officer sees it without having to
+// open the modal first. If the week has SemiMonthly employees too, use the modal (pick SemiMonthly
+// + the real cutoff dates there) for an accurate projection of their run instead.
+async function refreshWeeklyProjectedFunding() {
+  const box = document.getElementById('weeklyProjectedFundingBox');
+  const noteEl = document.getElementById('weeklyProjectedFundingNote');
+  const dates = weekDates(weekStart);
+
+  document.getElementById('weeklyProjectedFundingLabel').textContent =
+    `Projected funding needed if a Weekly payroll run is created for this week (${dates[0].getMonth() + 1}/${dates[0].getDate()} - ${dates[6].getMonth() + 1}/${dates[6].getDate()})`;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_projected_payroll_run_requirement', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_pay_cycle: 'Weekly',
+    p_period_start: toDateInputValue(dates[0]),
+    p_period_end: toDateInputValue(dates[6]),
+    p_pay_date: toDateInputValue(dates[6])
+  });
+
+  if (error) {
+    box.classList.add('hidden');
+    noteEl.textContent = error.message || 'Could not compute projected funding for this week yet.';
+    noteEl.classList.remove('hidden');
+    return;
+  }
+
+  noteEl.classList.add('hidden');
+  const result = Array.isArray(data) ? data[0] : data;
+  document.getElementById('weeklyProjectedCashLine').innerHTML = formatProjectedFundingLine(Number(result?.cash_required || 0), Number(result?.cash_balance || 0));
+  document.getElementById('weeklyProjectedDigitalLine').innerHTML = formatProjectedFundingLine(Number(result?.digital_required || 0), Number(result?.digital_balance || 0));
+  box.classList.remove('hidden');
 }
 
 function updateCutoffRowVisibility() {
@@ -659,6 +749,9 @@ async function saveNewRun() {
   document.getElementById('newRunWeeklyPayDate').addEventListener('change', autofillWeeklyDates);
   document.getElementById('autofillDatesBtn').addEventListener('click', autofillDates);
   document.getElementById('autofillWeeklyDatesBtn').addEventListener('click', autofillWeeklyDates);
+  document.getElementById('newRunPeriodStart').addEventListener('change', refreshProjectedFunding);
+  document.getElementById('newRunPeriodEnd').addEventListener('change', refreshProjectedFunding);
+  document.getElementById('newRunPayDate').addEventListener('change', refreshProjectedFunding);
   document.getElementById('bulkEntryTableBody').addEventListener('input', (e) => {
     if (e.target.classList.contains('bulk-hours')) updateRowTotals();
   });
