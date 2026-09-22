@@ -4820,38 +4820,57 @@ WHERE Code = @Code
                                 if (hasPaymentPlaceholder)
                                 {
                                     decimal balance = 0m;
+                                    bool haveLiveBalance = false;
+
+                                    // Fetch the balance live from Pancake first - dbo.OnlineOrderHeader/the bound grid are
+                                    // only refreshed when the form opens or Sync is clicked (no recurring timer), so a
+                                    // payment collected mid-session would otherwise still show here as unpaid.
                                     try
                                     {
-                                        // Try to read Balance from the bound DataTable first
-                                        if (dgv.CurrentRow != null)
+                                        var liveBalance = await IntegrationEvents.GetLiveOrderBalanceAsync(orderId).ConfigureAwait(false);
+                                        if (liveBalance.HasValue)
                                         {
-                                            var dt = dgv.DataSource as DataTable;
-                                            if (dt != null)
-                                            {
-                                                int idx = dgv.CurrentRow.Index;
-                                                if (dt.Rows.Count > idx && dt.Columns.Contains("Balance"))
-                                                {
-                                                    var bval = dt.Rows[idx]["Balance"];
-                                                    if (bval != DBNull.Value && bval != null) balance = Convert.ToDecimal(bval);
-                                                }
-                                            }
+                                            balance = liveBalance.Value;
+                                            haveLiveBalance = true;
                                         }
                                     }
-                                    catch { balance = 0m; }
+                                    catch { }
 
-                                    // Fallback: query the header table for the balance if we couldn't get it from the grid
-                                    if (balance == 0m)
+                                    if (!haveLiveBalance)
                                     {
                                         try
                                         {
-                                            using var connB = new SqlConnection(connectionString);
-                                            connB.Open();
-                                            using var cmdB = new SqlCommand("SELECT Balance FROM dbo.OnlineOrderHeader WHERE OrderID = @OrderID", connB);
-                                            cmdB.Parameters.AddWithValue("@OrderID", orderId);
-                                            var obj = cmdB.ExecuteScalar();
-                                            if (obj != null && obj != DBNull.Value) balance = Convert.ToDecimal(obj);
+                                            // Try to read Balance from the bound DataTable first
+                                            if (dgv.CurrentRow != null)
+                                            {
+                                                var dt = dgv.DataSource as DataTable;
+                                                if (dt != null)
+                                                {
+                                                    int idx = dgv.CurrentRow.Index;
+                                                    if (dt.Rows.Count > idx && dt.Columns.Contains("Balance"))
+                                                    {
+                                                        var bval = dt.Rows[idx]["Balance"];
+                                                        if (bval != DBNull.Value && bval != null) balance = Convert.ToDecimal(bval);
+                                                    }
+                                                }
+                                            }
                                         }
                                         catch { balance = 0m; }
+
+                                        // Fallback: query the header table for the balance if we couldn't get it from the grid
+                                        if (balance == 0m)
+                                        {
+                                            try
+                                            {
+                                                using var connB = new SqlConnection(connectionString);
+                                                connB.Open();
+                                                using var cmdB = new SqlCommand("SELECT Balance FROM dbo.OnlineOrderHeader WHERE OrderID = @OrderID", connB);
+                                                cmdB.Parameters.AddWithValue("@OrderID", orderId);
+                                                var obj = cmdB.ExecuteScalar();
+                                                if (obj != null && obj != DBNull.Value) balance = Convert.ToDecimal(obj);
+                                            }
+                                            catch { balance = 0m; }
+                                        }
                                     }
 
                                     if (balance > 0m)
@@ -5132,32 +5151,50 @@ WHERE Code = @Code
                     if (hasPaymentPlaceholder)
                     {
                         decimal balance = 0m;
+                        bool haveLiveBalance = false;
 
-                        // Try to read Balance from the bound DataTable first
+                        // Fetch the balance live from Pancake first - dbo.OnlineOrderHeader/the bound grid are
+                        // only refreshed when the form opens or Sync is clicked (no recurring timer), so a
+                        // payment collected mid-session would otherwise still show here as unpaid.
                         try
                         {
-                            var dt = dgv.DataSource as DataTable;
-                            if (dt != null && dt.Rows.Count > rowIndex && dt.Columns.Contains("Balance"))
+                            var liveBalance = await IntegrationEvents.GetLiveOrderBalanceAsync(orderId).ConfigureAwait(false);
+                            if (liveBalance.HasValue)
                             {
-                                var bval = dt.Rows[rowIndex]["Balance"];
-                                if (bval != DBNull.Value && bval != null) balance = Convert.ToDecimal(bval);
+                                balance = liveBalance.Value;
+                                haveLiveBalance = true;
                             }
                         }
-                        catch { balance = 0m; }
+                        catch { }
 
-                        // Fallback: query the header table for the balance if we couldn't get it from the grid
-                        if (balance == 0m)
+                        if (!haveLiveBalance)
                         {
+                            // Try to read Balance from the bound DataTable first
                             try
                             {
-                                using var connB = new SqlConnection(connectionString);
-                                connB.Open();
-                                using var cmdB = new SqlCommand("SELECT Balance FROM dbo.OnlineOrderHeader WHERE OrderID = @OrderID", connB);
-                                cmdB.Parameters.AddWithValue("@OrderID", orderId);
-                                var obj = cmdB.ExecuteScalar();
-                                if (obj != null && obj != DBNull.Value) balance = Convert.ToDecimal(obj);
+                                var dt = dgv.DataSource as DataTable;
+                                if (dt != null && dt.Rows.Count > rowIndex && dt.Columns.Contains("Balance"))
+                                {
+                                    var bval = dt.Rows[rowIndex]["Balance"];
+                                    if (bval != DBNull.Value && bval != null) balance = Convert.ToDecimal(bval);
+                                }
                             }
                             catch { balance = 0m; }
+
+                            // Fallback: query the header table for the balance if we couldn't get it from the grid
+                            if (balance == 0m)
+                            {
+                                try
+                                {
+                                    using var connB = new SqlConnection(connectionString);
+                                    connB.Open();
+                                    using var cmdB = new SqlCommand("SELECT Balance FROM dbo.OnlineOrderHeader WHERE OrderID = @OrderID", connB);
+                                    cmdB.Parameters.AddWithValue("@OrderID", orderId);
+                                    var obj = cmdB.ExecuteScalar();
+                                    if (obj != null && obj != DBNull.Value) balance = Convert.ToDecimal(obj);
+                                }
+                                catch { balance = 0m; }
+                            }
                         }
 
                         if (balance > 0m)

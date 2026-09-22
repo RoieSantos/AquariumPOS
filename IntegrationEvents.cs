@@ -282,11 +282,10 @@ namespace AquariumPOS
                     // Money fields mapping
                     decimal moneyToCollect = 0m;
                     decimal amountPaid = 0m; // prepaid
-                    decimal balance = 0m; // cod
+                    decimal balance = 0m; // computed below as moneyToCollect - amountPaid, NOT read from Pancake's own "cod" field
 
                     string moneyStr = GetFirstString(item, "money_to_collect", "moneyToCollect", "total_price", "total", "amount", "money");
                     string prepaidStr = GetFirstString(item, "prepaid", "prepaid_amount", "pre_paid", "deposit", "prepayment");
-                    string codStr = GetFirstString(item, "cod", "cash_on_delivery", "balance", "due", "amount_due");
                     // Discount, LastPaid and Status
                     string discountStr = GetFirstString(item, "discount", "discount_amount", "discounted_amount");
                     string statusStr = GetFirstString(item, "status_name", "status", "state", "order_status");
@@ -371,13 +370,15 @@ namespace AquariumPOS
                             moneyStr = GetFirstString(mt, "amount", "value", "total");
                         if (item.TryGetProperty("prepaid", out var pp) && pp.ValueKind == JsonValueKind.Object)
                             prepaidStr = GetFirstString(pp, "amount", "value");
-                        if (item.TryGetProperty("cod", out var cd) && cd.ValueKind == JsonValueKind.Object)
-                            codStr = GetFirstString(cd, "amount", "value");
                     }
 
                     moneyToCollect = ParseDecimal(moneyStr);
                     amountPaid = ParseDecimal(prepaidStr);
-                    balance = ParseDecimal(codStr);
+                    // Balance was previously read straight from Pancake's own "cod" field, which goes
+                    // stale whenever a payment or order edit updates money_to_collect/prepaid without
+                    // Pancake also recomputing cod - causing the automated To-Ship message to quote a
+                    // wrong balance. Computed locally instead from the two fields that ARE kept in sync.
+                    balance = moneyToCollect - amountPaid;
                     bool forDelivery = ParseBoolean(forDeliveryRaw);
 
                     try
@@ -1908,6 +1909,81 @@ WHERE OrderID = @OrderID
             string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
             string shopId = GlobalSettings.OnlineOrdersShopId ?? string.Empty;
             return $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/orders/{Uri.EscapeDataString(orderId)}?api_key={Uri.EscapeDataString(apiKey)}&page_size=1000";
+        }
+
+        // Live balance lookup for the customer-facing To-Ship/Pending-Transfer message
+        // (SendUpdateToCustomerForRowAsync in OnlineOrdersForm.cs). Per "the problem is coming when
+        // they do status change on local pos": dbo.OnlineOrderHeader.Balance (and the bound grid's
+        // own copy of it) is only ever refreshed by SyncOrderListAsync, which only runs once when the
+        // Online Orders form opens or when staff click Sync - NOT on a recurring timer (that timer is
+        // commented out further down this file) and NOT as part of marking an order To Ship. So a
+        // payment collected after the form was opened, or simply a long-running session, meant the
+        // automated message could quote a balance that was minutes or hours stale. This does one
+        // direct GET of the order straight from Pancake at message-build time instead, so the balance
+        // reflects whatever Pancake actually has right now. Returns null (caller falls back to the
+        // cached value) on any failure - this must never block sending the message.
+        public static async Task<decimal?> GetLiveOrderBalanceAsync(string orderId, TimeSpan? timeout = null)
+        {
+            if (string.IsNullOrWhiteSpace(orderId)) return null;
+
+            try
+            {
+                timeout ??= TimeSpan.FromSeconds(8);
+                var baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+                var url = BuildOnlineOrderUpdateEndpoint(orderId);
+
+                using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = timeout.Value };
+                using var resp = await http.GetAsync(url).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) return null;
+
+                var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+
+                JsonElement orderEl = root;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("data", out var dataProp) && dataProp.ValueKind == JsonValueKind.Object)
+                        orderEl = dataProp;
+                    else if (root.TryGetProperty("order", out var orderProp) && orderProp.ValueKind == JsonValueKind.Object)
+                        orderEl = orderProp;
+                }
+                if (orderEl.ValueKind != JsonValueKind.Object) return null;
+
+                string GetFirstString(JsonElement el, params string[] names)
+                {
+                    foreach (var n in names)
+                    {
+                        if (el.TryGetProperty(n, out var v) && v.ValueKind != JsonValueKind.Null)
+                            return v.ToString() ?? string.Empty;
+                    }
+                    return string.Empty;
+                }
+
+                decimal ParseDecimalLocal(string s)
+                {
+                    if (string.IsNullOrWhiteSpace(s)) return 0m;
+                    var cleaned = s.Replace(",", string.Empty).Replace("$", string.Empty).Replace("€", string.Empty).Replace("₱", string.Empty).Trim();
+                    if (decimal.TryParse(cleaned, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var v)) return v;
+                    return 0m;
+                }
+
+                string moneyStr = orderEl.TryGetProperty("money_to_collect", out var mt) && mt.ValueKind == JsonValueKind.Object
+                    ? GetFirstString(mt, "amount", "value", "total")
+                    : GetFirstString(orderEl, "money_to_collect", "moneyToCollect", "total_price", "total", "amount", "money");
+
+                string prepaidStr = orderEl.TryGetProperty("prepaid", out var pp) && pp.ValueKind == JsonValueKind.Object
+                    ? GetFirstString(pp, "amount", "value")
+                    : GetFirstString(orderEl, "prepaid", "prepaid_amount", "pre_paid", "deposit", "prepayment");
+
+                decimal moneyToCollect = ParseDecimalLocal(moneyStr);
+                decimal amountPaid = ParseDecimalLocal(prepaidStr);
+                return moneyToCollect - amountPaid;
+            }
+            catch
+            {
+                return null; // best-effort - caller falls back to the cached value
+            }
         }
 
         private static DateTime LoadLocalEstimatedDeliveryDate(string orderId)
