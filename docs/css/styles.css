@@ -2648,6 +2648,82 @@ body.hide-price-columns .price-col {
   font-weight: 700;
 }
 
+/* Customer Message Timing dashboard (super users only, docs/message-timing.html) - a day x hour
+   sequential heatmap (single blue hue, light->dark by magnitude - steps 250/400/550/700 from the
+   dataviz skill's references/palette.md) rather than the bar rows above, per direct request for a
+   heatmap. Levels are buckets of that grid's own max (see levelFor in messageTimingDashboard.js),
+   not a literal linear scale, so a handful of very busy hours don't wash out every other cell.
+   Dark mode reverses which end represents "fewest" (darkest = fewest, blending toward the dark
+   surface; lightest = most, popping off it) rather than reusing the light-mode order, per the
+   skill's "sequential flips anchor in dark" rule - and caps its darkest step at 600 (#184f95)
+   rather than light mode's 700, since 700 no longer clears the 2:1 near-surface contrast floor
+   against this portal's dark background (both ramps validated with
+   dataviz/scripts/validate_palette.js --ordinal). */
+.msg-heatmap-wrap {
+  overflow-x: auto;
+  margin: 4px 0 10px;
+}
+
+.msg-heatmap {
+  display: grid;
+  grid-template-columns: 64px repeat(24, minmax(24px, 1fr));
+  gap: 3px;
+  min-width: 760px;
+}
+
+.msg-heat-hour-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  align-self: end;
+  padding-bottom: 2px;
+}
+
+.msg-heat-day-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+}
+
+.msg-heat-cell {
+  aspect-ratio: 1;
+  border-radius: 4px;
+  transition: transform 0.1s ease;
+}
+
+.msg-heat-cell:hover {
+  transform: scale(1.15);
+}
+
+.msg-heat-cell[data-level="0"], .msg-heat-swatch[data-level="0"] { background: var(--panel-border); }
+.msg-heat-cell[data-level="1"], .msg-heat-swatch[data-level="1"] { background: #86b6ef; }
+.msg-heat-cell[data-level="2"], .msg-heat-swatch[data-level="2"] { background: #3987e5; }
+.msg-heat-cell[data-level="3"], .msg-heat-swatch[data-level="3"] { background: #1c5cab; }
+.msg-heat-cell[data-level="4"], .msg-heat-swatch[data-level="4"] { background: #0d366b; }
+
+:root[data-theme="dark"] .msg-heat-cell[data-level="1"], :root[data-theme="dark"] .msg-heat-swatch[data-level="1"] { background: #184f95; }
+:root[data-theme="dark"] .msg-heat-cell[data-level="2"], :root[data-theme="dark"] .msg-heat-swatch[data-level="2"] { background: #2a78d6; }
+:root[data-theme="dark"] .msg-heat-cell[data-level="3"], :root[data-theme="dark"] .msg-heat-swatch[data-level="3"] { background: #6da7ec; }
+:root[data-theme="dark"] .msg-heat-cell[data-level="4"], :root[data-theme="dark"] .msg-heat-swatch[data-level="4"] { background: #b7d3f6; }
+
+.msg-heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 18px;
+}
+
+.msg-heat-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
 /* Top Selling Items report - horizontal bars (item names need a horizontal layout, unlike the
    short day-of-week/hour-of-day labels the vertical .timing-bar-* classes above are built for). */
 .item-rank-row {

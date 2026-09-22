@@ -1676,11 +1676,14 @@ begin
         );
         v_amount_paid := public.pancake_parse_decimal(v_prepaid_raw);
 
-        v_cod_raw := coalesce(
-          v_item -> 'cod' ->> 'amount', v_item -> 'cod' ->> 'value',
-          v_item ->> 'cod', v_item ->> 'cash_on_delivery', v_item ->> 'balance', v_item ->> 'due', v_item ->> 'amount_due'
-        );
-        v_balance := public.pancake_parse_decimal(v_cod_raw);
+        -- Balance used to be read straight from Pancake's own "cod" field here (v_cod_raw :=
+        -- coalesce(cod, cash_on_delivery, balance, due, amount_due)). That goes stale whenever a
+        -- payment or order edit updates money_to_collect/prepaid without Pancake also recomputing
+        -- cod - which is exactly what was causing the automated To-Ship Messenger reply to quote a
+        -- wrong balance to customers. Computed locally instead from the two fields that ARE kept in
+        -- sync on every pull (confirmed against a real order: MoneyToCollect 17564.19, AmountPaid
+        -- 10000.00 -> Balance 7564.19 - see supabase_manual_insert_online_order_91120.sql).
+        v_balance := v_money_to_collect - v_amount_paid;
 
         v_discount_raw := coalesce(v_item ->> 'discount', v_item ->> 'discount_amount', v_item ->> 'discounted_amount');
         v_discount := public.pancake_parse_decimal(v_discount_raw);
@@ -2201,11 +2204,14 @@ begin
         );
         v_amount_paid := public.pancake_parse_decimal(v_prepaid_raw);
 
-        v_cod_raw := coalesce(
-          v_item -> 'cod' ->> 'amount', v_item -> 'cod' ->> 'value',
-          v_item ->> 'cod', v_item ->> 'cash_on_delivery', v_item ->> 'balance', v_item ->> 'due', v_item ->> 'amount_due'
-        );
-        v_balance := public.pancake_parse_decimal(v_cod_raw);
+        -- Balance used to be read straight from Pancake's own "cod" field here (v_cod_raw :=
+        -- coalesce(cod, cash_on_delivery, balance, due, amount_due)). That goes stale whenever a
+        -- payment or order edit updates money_to_collect/prepaid without Pancake also recomputing
+        -- cod - which is exactly what was causing the automated To-Ship Messenger reply to quote a
+        -- wrong balance to customers. Computed locally instead from the two fields that ARE kept in
+        -- sync on every pull (confirmed against a real order: MoneyToCollect 17564.19, AmountPaid
+        -- 10000.00 -> Balance 7564.19 - see supabase_manual_insert_online_order_91120.sql).
+        v_balance := v_money_to_collect - v_amount_paid;
 
         v_discount_raw := coalesce(v_item ->> 'discount', v_item ->> 'discount_amount', v_item ->> 'discounted_amount');
         v_discount := public.pancake_parse_decimal(v_discount_raw);
@@ -2828,11 +2834,14 @@ begin
       );
       v_amount_paid := public.pancake_parse_decimal(v_prepaid_raw);
 
-      v_cod_raw := coalesce(
-        v_item -> 'cod' ->> 'amount', v_item -> 'cod' ->> 'value',
-        v_item ->> 'cod', v_item ->> 'cash_on_delivery', v_item ->> 'balance', v_item ->> 'due', v_item ->> 'amount_due'
-      );
-      v_balance := public.pancake_parse_decimal(v_cod_raw);
+      -- Balance used to be read straight from Pancake's own "cod" field here (v_cod_raw :=
+      -- coalesce(cod, cash_on_delivery, balance, due, amount_due)). That goes stale whenever a
+      -- payment or order edit updates money_to_collect/prepaid without Pancake also recomputing
+      -- cod - which is exactly what was causing the automated To-Ship Messenger reply to quote a
+      -- wrong balance to customers. Computed locally instead from the two fields that ARE kept in
+      -- sync on every pull (confirmed against a real order: MoneyToCollect 17564.19, AmountPaid
+      -- 10000.00 -> Balance 7564.19 - see supabase_manual_insert_online_order_91120.sql).
+      v_balance := v_money_to_collect - v_amount_paid;
 
       v_discount_raw := coalesce(v_item ->> 'discount', v_item ->> 'discount_amount', v_item ->> 'discounted_amount');
       v_discount := public.pancake_parse_decimal(v_discount_raw);

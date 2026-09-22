@@ -280,34 +280,6 @@
           </div>
         </div>
 
-        <div id="pancakeSyncSection" class="hidden">
-          <div class="section-divider"></div>
-          <h3 style="margin-bottom:8px;">Pancake Sync</h3>
-          <p class="muted" style="margin-top:0;">Each Receive pushes a stock-in purchase to Pancake per warehouse. A line's Qty Received only updates once Pancake confirms it here.</p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Received</th>
-                  <th>Warehouse</th>
-                  <!-- What to search for in Pancake's own purchase list to verify a Failed/Rejected
-                       attempt before retrying it - see the Receive confirmation in js/purchaseOrders.js. -->
-                  <th>Pancake Note</th>
-                  <th>Pancake Purchase ID</th>
-                  <th>Status</th>
-                  <th>Error</th>
-                  <!-- Live stock check (supabase_purchase_order_pancake_stock_verification.sql) -
-                       only meaningful, and only shown, on a 'Failed' row: 'Rejected' is a definite
-                       4xx that could not have gone through, and 'Synced'/'ManuallyConfirmed' rows
-                       are already resolved. Super-user only (staff_check_pancake_stock_snapshot
-                       itself is is_admin_authorized), toggled in loadPancakeSyncStatus. -->
-                  <th id="pancakeSyncCheckHeader" class="hidden"></th>
-                </tr>
-              </thead>
-              <tbody id="pancakeSyncBody"></tbody>
-            </table>
-          </div>
-        </div>
       </div>
 
       <div id="poCardError" class="error-text hidden" style="margin-top:12px;"></div>
@@ -321,12 +293,6 @@
       <div class="toolbar hidden" style="margin-top:12px;" id="poCardExistingFooter">
         <button class="btn btn-primary" id="receiveQtyBtn" type="button" title="Adds the Qty Received you entered to inventory">Receive</button>
         <span class="muted" style="font-size:12px;">Fill in Qty Received for what arrived, then Receive to add it to inventory.</span>
-        <!-- Recovery path for a Pancake sync that came back "Failed" (an ambiguous connection
-             error, not a definite rejection) but was manually confirmed in Pancake to have gone
-             through anyway - see supabase_purchase_order_manual_receive_confirm.sql. Super-user
-             only (toggled in openReceiveModal, js/purchaseOrders.js) since it bypasses the normal
-             Pancake confirmation and trusts a manual check instead. -->
-        <button class="btn btn-secondary btn-sm hidden" id="confirmReceivedNoSyncBtn" type="button" title="Only use after manually verifying in Pancake that this quantity was already added as stock - marks it received locally WITHOUT calling Pancake again">Confirm Received (Already in Pancake)</button>
         <button class="btn btn-primary" id="postPoBtn" type="button" style="margin-left:auto;">Post Purchase Order</button>
       </div>
     </div>

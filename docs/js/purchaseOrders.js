@@ -23,9 +23,7 @@ function describeSupabaseError(err, fallback) {
   return fallback;
 }
 
-// Pancake's own error text (surfaced in the Pancake Sync panel below) is external content, so it
-// gets escaped before going into innerHTML - same care transferOrders.js's own Pancake Sync panel
-// takes with its escapeHtml helper.
+// Escapes text before it goes into innerHTML - item/variant/vendor names are free text.
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -102,11 +100,11 @@ async function loadPurchaseOrders() {
 }
 
 async function deletePurchaseOrder(poNo, receivedQty) {
-  // Receiving already pushed a real stock-in to Pancake (see staff_receive_purchase_order_lines) -
-  // deleting the portal record does NOT reverse that, so make sure staff know before they delete
-  // what looks like just a local document.
+  // Receiving already added stock to the Item Ledger (see staff_receive_purchase_order_lines) -
+  // deleting the PO record does NOT take that stock back out, so make sure staff know before they
+  // delete what looks like just a document. (To undo a receipt, reverse it on Item Ledger Entries.)
   const message = receivedQty > 0
-    ? `Purchase Order ${poNo} has already received ${receivedQty} unit(s), which were pushed to Pancake as stock. Deleting this record will NOT reverse that Pancake stock-in - only the portal's own PO record is removed. Delete anyway?`
+    ? `Purchase Order ${poNo} has already received ${receivedQty} unit(s), which were added to inventory. Deleting this record will NOT remove that stock - reverse the receipt on Item Ledger Entries first if it was a mistake. Delete anyway?`
     : `Delete Purchase Order ${poNo}? This cannot be undone.`;
   if (!window.confirm(message)) return;
 
@@ -129,10 +127,6 @@ async function deletePurchaseOrder(poNo, receivedQty) {
 // staff_receive_purchase_order_lines in supabase_purchase_order_receiving.sql), then post the
 // whole order into Posted Purchase Orders once done receiving.
 let currentReceivePoNo = null;
-// Last-fetched Pancake Sync panel rows for the open PO, newest first (matches the RPC's own
-// ordering) - read by receivePurchaseOrderQuantities to warn before a Receive that could be
-// retrying a previous attempt whose actual outcome in Pancake is unknown. See loadPancakeSyncStatus.
-let currentPancakeSyncRows = [];
 
 function receiveLineRemaining(l) {
   return Math.max(0, (Number(l.quantity) || 0) - (Number(l.qty_received) || 0));
@@ -389,7 +383,7 @@ async function ensureItemUnitsLoaded(itemCodes) {
 
 // Per "on editing the PO can we change the UOM?" - a picker while the line is still untouched,
 // plain text once it has been received against (staff_set_purchase_order_line_uom blocks the
-// change server-side at the same point, because that quantity is already stock in Pancake).
+// change server-side at the same point, because that quantity is already in the Item Ledger).
 // An item with only its base unit has nothing to switch to, so it reads as text too.
 function uomCell(l) {
   const units = itemUnitsByItemCode.get(l.item_code) || [];
@@ -621,11 +615,11 @@ async function renderReceiveLines(lines) {
       // everything still outstanding, since a single complete delivery is the normal case.
       //
       // Kept as .receive-qty-input so it still flows through staff_receive_purchase_order_lines
-      // and the Pancake stock-in - see the class comment above. Nothing here writes QtyReceived
-      // directly; the running total only ever moves when Pancake confirms.
+      // and the Item Ledger - see the class comment above. Nothing here writes QtyReceived
+      // directly; the running total only moves together with a ledger entry.
       const remaining = receiveLineRemaining(l);
       const alreadyReceived = Number(l.qty_received || 0);
-      // What arrived is counted in BASE units - that is what goes to Pancake as stock, and what a
+      // What arrived is counted in BASE units - that is what goes into the ledger as stock, and what a
       // receiver counts on the pallet - while Qty Ordered beside it reads in the ordering unit. On
       // a line where those differ, the column says so rather than leaving it to be inferred.
       const receiveUnitNote = Number(l.qty_per_uom || 1) !== 1
@@ -687,7 +681,6 @@ async function openReceiveModal(poNo) {
   document.getElementById('poCardGeneralTab').open = readStoredFlag(poCardGeneralTabKey(), true);
 
   document.getElementById('poEditSection').classList.toggle('hidden', !currentSession?.isSuperUser);
-  document.getElementById('confirmReceivedNoSyncBtn').classList.toggle('hidden', !currentSession?.isSuperUser);
   resetPoAddItemFields();
 
   const [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
@@ -736,121 +729,11 @@ async function openReceiveModal(poNo) {
   }
 
   await renderReceiveLines(lineRows || []);
-  await loadPancakeSyncStatus(poNo);
 }
 
-// Pancake Sync panel - one row per Receive action's Pancake purchase attempt (grouped by
-// Warehouse - see staff_receive_purchase_order_lines in supabase_purchase_order_pancake_sync.sql).
-// Hidden entirely if this PO has never been received against.
-function pancakeSyncBadgeClass(status) {
-  switch (status) {
-    case 'Synced': return 'badge-success';
-    case 'Failed': return 'badge-danger';
-    case 'Rejected': return 'badge-danger';
-    // A super user's manual override (staff_confirm_purchase_order_receipt_without_sync), not an
-    // actual Pancake confirmation - deliberately not badge-success, so it keeps reading as "take a
-    // second look" rather than blending in with a real Synced row.
-    case 'ManuallyConfirmed': return 'badge-warning';
-    default: return 'badge-neutral';
-  }
-}
-
-async function loadPancakeSyncStatus(poNo) {
-  const section = document.getElementById('pancakeSyncSection');
-  const body = document.getElementById('pancakeSyncBody');
-
-  const { data, error } = await supabaseClient.rpc('staff_list_purchase_order_pancake_purchases', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_po_no: poNo
-  });
-
-  if (error || !data || data.length === 0) {
-    currentPancakeSyncRows = [];
-    section.classList.add('hidden');
-    return;
-  }
-
-  currentPancakeSyncRows = data;
-  section.classList.remove('hidden');
-  document.getElementById('pancakeSyncCheckHeader').classList.toggle('hidden', !currentSession?.isSuperUser);
-  body.innerHTML = data
-    .map((row) => {
-      // Only a 'Failed' row is worth checking - 'Rejected' is a definite 4xx that could not have
-      // gone through, and 'Synced'/'ManuallyConfirmed' are already resolved one way or the other.
-      const checkCell = !currentSession?.isSuperUser
-        ? ''
-        : row.sync_status === 'Failed'
-          ? `<td><button type="button" class="btn btn-secondary btn-sm" data-check-pancake-stock="${row.purchase_event_no}">Check Stock</button></td>`
-          : '<td></td>';
-      return `
-      <tr>
-        <td>${row.received_at_utc ? new Date(row.received_at_utc).toLocaleString() : ''}</td>
-        <td>${row.warehouse_name || row.warehouse_id || ''}</td>
-        <!-- Pancake has no confirmed GET/list-by-note endpoint (see this PO's own Pancake sync
-             SQL header comment), so this is not clickable - it's what to type into Pancake's own
-             purchase search to check by hand, matching the note staff_receive_purchase_order_lines
-             actually sent (p_po_no || '-' || v_event_no). -->
-        <td>${escapeHtml(poNo + '-' + row.purchase_event_no)}</td>
-        <td>${escapeHtml(row.pancake_purchase_id) || '-'}</td>
-        <td><span class="badge ${pancakeSyncBadgeClass(row.sync_status)}">${escapeHtml(row.sync_status)}</span></td>
-        <td class="muted" title="${escapeHtml(row.sync_error)}">${escapeHtml(row.sync_error)}</td>
-        ${checkCell}
-      </tr>
-    `;
-    })
-    .join('');
-}
-
-// Live stock comparison for one 'Failed' Pancake Sync row - see
-// supabase_purchase_order_pancake_stock_verification.sql. Purely informational: shows what Pancake
-// currently reports per item against the stock captured right before that attempt, and a rough
-// "likely synced" read from the delta. It cannot prove either way (other stock movement since the
-// attempt confounds it) and never changes anything itself - Confirm Received (Already in Pancake)
-// is the actual action, once these numbers make the call clear.
-async function checkPancakeStockSnapshot(purchaseEventNo, btn) {
-  btn.disabled = true;
-  btn.textContent = 'Checking...';
-  try {
-    const { data, error } = await supabaseClient.rpc('staff_check_pancake_stock_snapshot', {
-      p_admin_username: currentSession.username,
-      p_admin_password: currentSession.password,
-      p_purchase_event_no: purchaseEventNo
-    });
-
-    if (error) {
-      window.alert(describeSupabaseError(error, 'Failed to check live Pancake stock.'));
-      return;
-    }
-
-    const rows = data || [];
-    if (rows.length === 0) {
-      window.alert('No items found for this Pancake sync attempt.');
-      return;
-    }
-
-    const lines = rows.map((r) => {
-      const before = r.quantity_before === null || r.quantity_before === undefined ? '?' : r.quantity_before;
-      const now = r.quantity_now === null || r.quantity_now === undefined ? '?' : r.quantity_now;
-      const verdict = r.likely_synced === null || r.likely_synced === undefined
-        ? 'Unknown (no baseline captured, or Pancake could not be reached)'
-        : r.likely_synced
-          ? 'Likely SYNCED - stock moved by at least what was expected'
-          : 'Likely NOT synced - stock has not moved as expected';
-      return `${r.item_code || r.variation_id}: before ${before}, now ${now}, expected +${r.quantity_expected}\n  -> ${verdict}`;
-    });
-
-    window.alert(
-      `Live Pancake stock check\n\n${lines.join('\n\n')}\n\n` +
-      `This compares stock BEFORE this attempt to stock right NOW - it is a strong hint, not proof. ` +
-      `Other stock movement (a sale, another purchase) since the attempt can still make it wrong.`
-    );
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Check Stock';
-  }
-}
-
+// Receive posts what arrived straight into the Item Ledger (staff_receive_purchase_order_lines):
+// the line's running QtyReceived and its Purchase ledger entry are written in one database
+// transaction, so they can't disagree and there is nothing external to wait for or retry.
 async function receivePurchaseOrderQuantities() {
   const errorEl = document.getElementById('poCardError');
   errorEl.classList.add('hidden');
@@ -870,110 +753,21 @@ async function receivePurchaseOrderQuantities() {
     return;
   }
 
-  // Pancake's create-purchase endpoint has no confirmed idempotency key and no confirmed way to
-  // list/search existing purchases (see supabase_purchase_order_pancake_sync.sql's header comment
-  // and staff_receive_purchase_order_lines' own exception handler) - a 'Failed' attempt (a
-  // connection/timeout error, as opposed to 'Rejected', a definite 4xx that could not have gone
-  // through) genuinely might have created the stock-in in Pancake despite the app never seeing a
-  // success response. QtyReceived is never incremented on a Failed attempt, so the Receive inputs
-  // silently refill with the SAME quantity that just failed - clicking Receive again is exactly how
-  // a real duplicate stock-in happens. This can only warn, not verify (nothing here can safely
-  // check Pancake before retrying), so it forces an explicit acknowledgment instead of a
-  // one-line warning sitting in a table nobody re-reads.
-  const lastSync = currentPancakeSyncRows[0];
-  if (lastSync && lastSync.sync_status === 'Failed') {
-    const note = `${currentReceivePoNo}-${lastSync.purchase_event_no}`;
-    const confirmed = window.confirm(
-      `The last Pancake sync for this Purchase Order FAILED with a connection error - it may have actually gone through in Pancake despite the error.\n\n` +
-      `Before receiving again, search Pancake's own purchase list for note "${note}" to check whether it's already there.\n\n` +
-      `Already verified it's NOT in Pancake? Click OK to receive. Not sure? Click Cancel and check first.`
-    );
-    if (!confirmed) return;
-  }
-
   const btn = document.getElementById('receiveQtyBtn');
   btn.disabled = true;
   try {
-    // Each call syncs to Pancake per warehouse before updating anything locally - a row here can
-    // come back 'Failed'/'Rejected' without the overall RPC call itself erroring, so a successful
-    // call must still be checked for per-warehouse failures (see
-    // staff_receive_purchase_order_lines's header comment for why those aren't auto-retried).
-    const { data, error } = await supabaseClient.rpc('staff_receive_purchase_order_lines', {
+    const { error } = await supabaseClient.rpc('staff_receive_purchase_order_lines', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_po_no: currentReceivePoNo,
       p_lines: lines
     });
     if (error) throw error;
-
-    const failed = (data || []).filter((r) => r.sync_status !== 'Synced');
-    if (failed.length > 0) {
-      const details = failed
-        .map((r) => `${r.warehouse_name || r.warehouse_id} - ${r.sync_error || r.sync_status}`)
-        .join('; ');
-      errorEl.textContent = `Some warehouse(s) failed to sync to Pancake and were NOT received: ${details}`;
-      errorEl.classList.remove('hidden');
-    }
 
     await openReceiveModal(currentReceivePoNo);
     await loadPurchaseOrders();
   } catch (err) {
     errorEl.textContent = describeSupabaseError(err, 'Failed to receive Purchase Order.');
-    errorEl.classList.remove('hidden');
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// Recovery path for a Pancake sync that came back 'Failed' but was manually confirmed in Pancake
-// to have actually gone through - see supabase_purchase_order_manual_receive_confirm.sql. Reuses
-// the same Qty Received inputs as Receive, but calls
-// staff_confirm_purchase_order_receipt_without_sync instead, which updates QtyReceived locally
-// WITHOUT attempting another live Pancake POST (that POST is exactly what would create a real
-// duplicate stock-in now that the first is confirmed to have landed). Super-user only - the button
-// itself is hidden from everyone else (openReceiveModal).
-async function confirmPurchaseOrderReceiptWithoutSync() {
-  const errorEl = document.getElementById('poCardError');
-  errorEl.classList.add('hidden');
-
-  const rows = Array.from(document.getElementById('receiveLinesBody').querySelectorAll('tr[data-entry-no]'));
-  const lines = rows
-    .map((row) => {
-      const input = row.querySelector('.receive-qty-input');
-      const quantity = input ? parseFloat(input.value) || 0 : 0;
-      return { entry_no: Number(row.dataset.entryNo), quantity };
-    })
-    .filter((l) => l.quantity > 0);
-
-  if (lines.length === 0) {
-    errorEl.textContent = 'Enter a Qty Received for at least one line first.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-
-  const confirmed = window.confirm(
-    `This marks the entered quantities as received LOCALLY WITHOUT calling Pancake again.\n\n` +
-    `Only use this after you have personally checked Pancake's own purchase list and confirmed this exact stock-in is already there (e.g. from a "Failed" sync that actually went through).\n\n` +
-    `Using this WITHOUT checking Pancake first will make your local records disagree with real Pancake inventory.\n\n` +
-    `Have you verified this in Pancake? Click OK to proceed, Cancel if you have not checked yet.`
-  );
-  if (!confirmed) return;
-
-  const btn = document.getElementById('confirmReceivedNoSyncBtn');
-  btn.disabled = true;
-  try {
-    const { error } = await supabaseClient.rpc('staff_confirm_purchase_order_receipt_without_sync', {
-      p_admin_username: currentSession.username,
-      p_admin_password: currentSession.password,
-      p_po_no: currentReceivePoNo,
-      p_lines: lines
-    });
-    if (error) throw error;
-
-    await openReceiveModal(currentReceivePoNo);
-    await loadPurchaseOrders();
-  } catch (err) {
-    errorEl.textContent = describeSupabaseError(err, 'Failed to confirm receipt.');
     errorEl.classList.remove('hidden');
   } finally {
     btn.disabled = false;
@@ -2057,13 +1851,6 @@ async function createNewPurchaseOrder() {
   });
 
   document.getElementById('receiveQtyBtn').addEventListener('click', receivePurchaseOrderQuantities);
-  document.getElementById('confirmReceivedNoSyncBtn').addEventListener('click', confirmPurchaseOrderReceiptWithoutSync);
-
-  document.getElementById('pancakeSyncBody').addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-check-pancake-stock]');
-    if (!btn) return;
-    checkPancakeStockSnapshot(Number(btn.dataset.checkPancakeStock), btn);
-  });
   document.getElementById('postPoBtn').addEventListener('click', postPurchaseOrder);
 
   document.getElementById('receiveLinesBody').addEventListener('click', (e) => {

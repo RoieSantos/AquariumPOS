@@ -1,8 +1,6 @@
-// Stock On Hand report - reads public."ItemWarehouseStockCache" (see
-// supabase_item_warehouse_stock.sql) via staff_list_item_warehouse_stock. That cache is only ever
-// populated by staff clicking "Refresh from Pancake" (staff_refresh_item_warehouse_stock) - real
-// per-warehouse stock lives in Pancake, not this app's own database, and walking the whole catalog
-// against Pancake's per-product endpoint is too slow to run live on every page load.
+// Stock On Hand report - reads staff_list_item_warehouse_stock, which sums the Item Ledger
+// (supabase_item_ledger_hooks.sql). There is nothing to refresh: every receipt, transfer and
+// adjustment updates it the moment it is posted.
 let currentSession = null;
 let allRows = [];
 // Per "can we sort it manually per quantity on hand" - click any column header to sort by it,
@@ -35,9 +33,9 @@ function formatQty(value) {
 }
 
 function formatRefreshedAt(iso) {
-  if (!iso) return 'Never refreshed yet.';
+  if (!iso) return 'No stock movements posted yet.';
   const d = new Date(iso);
-  return 'Last refreshed: ' + d.toLocaleString();
+  return 'Last stock movement: ' + d.toLocaleString();
 }
 
 function sortRows(rows) {
@@ -73,11 +71,12 @@ function renderTable() {
   const filtered = search
     ? allRows.filter((r) => [r.item_code, r.item_name, r.variant_name].some((v) => (v || '').toString().toLowerCase().includes(search)))
     : allRows;
-  const rows = sortRows(filtered);
+  const hideZero = document.getElementById('hideZeroInput').checked;
+  const rows = sortRows(hideZero ? filtered.filter((r) => Number(r.remain_quantity) !== 0) : filtered);
   updateSortIndicators();
 
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="muted">No stock records found. Try "Refresh from Pancake" if this is the first time loading this page.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">No stock found. Stock appears here once it has been received, transferred or adjusted on the Item Ledger.</td></tr>';
     return;
   }
 
@@ -119,9 +118,7 @@ async function loadWarehouseOptions() {
   });
 }
 
-// Per "when I open stock on hand i only need to show the ones included on stock on hand in the
-// category setup" - only lists categories flagged Include in Stock Sync (Category Setup), not
-// every category in the catalog like the picker this page used before.
+// Only lists categories that actually have stock in the ledger.
 async function loadCategoryOptions() {
   const { data, error } = await supabaseClient.rpc('staff_list_stock_sync_categories', {
     p_admin_username: currentSession.username,
@@ -191,85 +188,6 @@ async function loadStock() {
   renderTable();
 }
 
-// Driven from here rather than one big Postgres RPC looping over the whole catalog - a first
-// attempt at that hit Supabase's statement timeout on a real catalog. Instead
-// staff_start_item_warehouse_stock_refresh() hands back the product ids for whichever categories
-// are currently flagged "Include in Stock Sync" on Category Setup (see
-// supabase_item_warehouse_stock_category_refresh.sql), then this walks that list calling
-// staff_refresh_item_warehouse_stock_product() a few at a time - each call is bounded by a single
-// Pancake HTTP request, so no individual call can ever approach the timeout no matter how large
-// the catalog grows. The scope is set once on Category Setup, not picked here - refresh always
-// syncs the same configured set regardless of this page's own Category filter (which is just for
-// viewing what's already cached).
-const REFRESH_CONCURRENCY = 3;
-
-async function refreshFromPancake() {
-  const btn = document.getElementById('refreshFromPancakeBtn');
-  const statusEl = document.getElementById('refreshStatus');
-  btn.disabled = true;
-  statusEl.className = 'muted';
-  statusEl.textContent = 'Starting refresh...';
-  statusEl.classList.remove('hidden');
-
-  const { data: productRows, error: startError } = await supabaseClient.rpc('staff_start_item_warehouse_stock_refresh', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password
-  });
-
-  if (startError) {
-    statusEl.className = 'error-text';
-    statusEl.textContent = 'Refresh failed to start: ' + startError.message;
-    btn.disabled = false;
-    return;
-  }
-
-  const productIds = (productRows || []).map((r) => r.product_id);
-
-  if (productIds.length === 0) {
-    btn.disabled = false;
-    statusEl.className = 'error-text';
-    statusEl.textContent = 'No categories are marked "Include in Stock Sync" yet - set that up on Category Setup first.';
-    return;
-  }
-
-  let processed = 0;
-  let failed = 0;
-  let rowsWritten = 0;
-
-  for (let i = 0; i < productIds.length; i += REFRESH_CONCURRENCY) {
-    const batch = productIds.slice(i, i + REFRESH_CONCURRENCY);
-    const results = await Promise.all(
-      batch.map((productId) => supabaseClient.rpc('staff_refresh_item_warehouse_stock_product', {
-        p_admin_username: currentSession.username,
-        p_admin_password: currentSession.password,
-        p_product_id: productId
-      }))
-    );
-
-    results.forEach((result) => {
-      const row = result.data && result.data[0];
-      if (result.error || (row && row.fetch_error)) {
-        failed++;
-      } else {
-        processed++;
-        rowsWritten += (row && row.rows_written) || 0;
-      }
-    });
-
-    const done = Math.min(i + REFRESH_CONCURRENCY, productIds.length);
-    btn.textContent = `Refreshing... ${done}/${productIds.length} products`;
-    statusEl.textContent = `Refreshing... ${done}/${productIds.length} products (${failed} failed so far)`;
-  }
-
-  btn.disabled = false;
-  btn.textContent = 'Refresh from Pancake';
-  statusEl.className = failed > 0 ? 'error-text' : 'rule-notice-positive';
-  statusEl.textContent = `Refreshed ${processed} product(s), ${rowsWritten} stock row(s) written` +
-    (failed > 0 ? `, ${failed} product(s) failed to fetch.` : '.');
-
-  await loadStock();
-}
-
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -277,11 +195,11 @@ async function refreshFromPancake() {
   renderTopNav('Stock On Hand');
 
   document.getElementById('searchInput').addEventListener('input', renderTable);
+  document.getElementById('hideZeroInput').addEventListener('change', renderTable);
   document.getElementById('warehouseFilter').addEventListener('change', loadStock);
   document.getElementById('categoryFilter').addEventListener('change', loadStock);
   document.getElementById('vendorFilter').addEventListener('change', loadStock);
   document.getElementById('refreshViewBtn').addEventListener('click', loadStock);
-  document.getElementById('refreshFromPancakeBtn').addEventListener('click', refreshFromPancake);
 
   // Per "can I request a printout per vendor? so I can order stocks" - carries whatever's
   // currently filtered/on screen through to the print page (js/stockOnHandPrint.js), so picking a
@@ -348,6 +266,13 @@ async function refreshFromPancake() {
 
     if (lines.length === 0) {
       window.alert('Type a Quantity for at least one item from this vendor first.');
+      return;
+    }
+
+    // Items nothing has been posted for are listed with no warehouse unless a Warehouse filter is
+    // set - a PO line needs one (it is where the stock lands when received).
+    if (lines.some((l) => !l.warehouse_id)) {
+      window.alert('Pick a Warehouse in the filter above first - every Purchase Order line needs a warehouse to be received into.');
       return;
     }
 

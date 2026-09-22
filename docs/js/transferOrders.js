@@ -454,7 +454,7 @@ function renderManageLines(lines, status) {
           <td>${l['Item No.'] || ''}</td>
           <td>${l['Variant Name'] || ''}</td>
           <td>${l['Description'] || ''}</td>
-          <td class="pancake-stock-cell muted" data-pancake-stock-line-no="${l['Line No.']}">&hellip;</td>
+          <td class="available-stock-cell muted" data-available-line-no="${l['Line No.']}">&hellip;</td>
           <td>${qtyToTransfer}</td>
           <td>${qtyToShipCell}</td>
           <td>${serialsCell}</td>
@@ -677,117 +677,39 @@ async function openManageModal(docNo) {
 
   renderManageLines(lines, status);
   updateManageActionButtons(status, lines);
-  await Promise.all([loadPancakeSyncStatus(docNo), loadPancakeStockForLines(docNo)]);
+  await loadAvailableStockForLines(docNo);
 }
 
-// Pancake Sync panel (Manage modal) - one row per Ship action that attempted a Pancake push (see
-// supabase_transfer_orders_pancake_sync.sql). Hidden entirely if the order has never shipped.
-// 'Synced' is a normal, expected state before the order is fully Received (the Pancake transfer
-// exists but isn't marked Completed yet) - only 'Failed' rows get a Retry button; a 'Synced' row
-// that failed to auto-complete at Receive time keeps its Sync Error set, which also earns a Retry
-// button (staff_retry_transfer_pancake_shipment knows to retry completion instead of re-creating).
-function pancakeSyncBadgeClass(status) {
-  switch (status) {
-    case 'Completed': return 'badge-success';
-    case 'Synced': return 'badge-primary';
-    case 'Failed': return 'badge-danger';
-    case 'Rejected': return 'badge-danger';
-    default: return 'badge-neutral';
-  }
-}
+// "Available" column (Manage modal) - what this order's From Warehouse has on hand for each line,
+// straight from the Item Ledger (staff_get_transfer_line_stock). Runs after renderManageLines has
+// already put a per-line placeholder cell in the DOM (data-available-line-no), so this only ever
+// fills those in. The numbers are also kept in currentAvailableByLineNo so Ship can check them
+// before it does anything it can't undo (claiming serials).
+let currentAvailableByLineNo = new Map();
 
-async function loadPancakeSyncStatus(docNo) {
-  const section = document.getElementById('pancakeSyncSection');
-  const body = document.getElementById('pancakeSyncBody');
-
-  const { data, error } = await supabaseClient.rpc('staff_list_transfer_pancake_shipments', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_document_no: docNo
-  });
-
-  if (error || !data || data.length === 0) {
-    section.classList.add('hidden');
-    return;
-  }
-
-  section.classList.remove('hidden');
-  body.innerHTML = data
-    .map((row) => {
-      const needsRetry = row.sync_status === 'Failed' || row.sync_status === 'Rejected' || (row.sync_status === 'Synced' && row.sync_error);
-      const retryBtn = needsRetry
-        ? `<button class="btn btn-secondary btn-sm" data-retry-event-no="${row.shipment_event_no}" type="button">Retry</button>`
-        : '';
-      // Friendly text is the visible label; the raw sqlerrm/libcurl text stays available via the
-      // title tooltip for troubleshooting without cluttering the table for staff.
-      const friendlyError = row.sync_error ? friendlyPancakeErrorMessage(row.sync_error) : '';
-      const rawErrorAttr = row.sync_error ? ` title="${escapeHtml(row.sync_error)}"` : '';
-      return `
-        <tr>
-          <td>${new Date(row.shipped_at_utc).toLocaleString()}</td>
-          <td>${row.pancake_transfer_id || '-'}</td>
-          <td><span class="badge ${pancakeSyncBadgeClass(row.sync_status)}">${row.sync_status}</span></td>
-          <td class="muted"${rawErrorAttr}>${friendlyError}</td>
-          <td>${retryBtn}</td>
-        </tr>
-      `;
-    })
-    .join('');
-
-  body.querySelectorAll('button[data-retry-event-no]').forEach((btn) => {
-    btn.addEventListener('click', () => retryPancakeShipment(docNo, btn.dataset.retryEventNo));
-  });
-}
-
-async function retryPancakeShipment(docNo, shipmentEventNo) {
-  const errorEl = document.getElementById('viewLinesError');
-  errorEl.classList.add('hidden');
-
-  const { data, error } = await supabaseClient.rpc('staff_retry_transfer_pancake_shipment', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_shipment_event_no: Number(shipmentEventNo)
-  });
-
-  const result = data && data[0];
-  if (error || !result || result.sync_status === 'Failed' || result.sync_status === 'Rejected') {
-    const detail = error ? describeSupabaseError(error, 'unknown error') : (result?.sync_error || 'unknown error');
-    errorEl.textContent = `Pancake retry failed - ${friendlyPancakeErrorMessage(detail)}`;
-    errorEl.classList.remove('hidden');
-  }
-
-  await loadPancakeSyncStatus(docNo);
-}
-
-// "Available (Pancake)" column (Manage modal) - live remain_quantity at this order's From
-// Warehouse for each line, read straight from Pancake Cloud via GET /products/{id} (see
-// supabase_transfer_line_pancake_stock.sql's header comment for why that endpoint over a
-// per-variation one). Runs after renderManageLines has already put a per-line placeholder cell
-// in the DOM (data-pancake-stock-line-no), so this only ever fills those in - it never blocks or
-// replaces the rest of the line render, and a slow/failed Pancake call just leaves the affected
-// cells showing their error/unknown state instead of hanging the whole modal.
-async function loadPancakeStockForLines(docNo) {
-  const cells = document.querySelectorAll('#viewLinesBody [data-pancake-stock-line-no]');
+async function loadAvailableStockForLines(docNo) {
+  currentAvailableByLineNo = new Map();
+  const cells = document.querySelectorAll('#viewLinesBody [data-available-line-no]');
   if (cells.length === 0) return;
 
-  const { data, error } = await supabaseClient.rpc('staff_get_transfer_line_pancake_stock', {
+  const { data, error } = await supabaseClient.rpc('staff_get_transfer_line_stock', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_document_no: docNo
   });
 
   if (error) {
-    console.error('staff_get_transfer_line_pancake_stock failed:', error);
+    console.error('staff_get_transfer_line_stock failed:', error);
     cells.forEach((cell) => {
       cell.textContent = '?';
-      cell.title = describeSupabaseError(error, 'Failed to load Pancake stock.');
+      cell.title = describeSupabaseError(error, 'Failed to load available stock.');
     });
     return;
   }
 
-  const byLineNo = new Map((data || []).map((row) => [String(row.line_no), row]));
+  currentAvailableByLineNo = new Map((data || []).map((row) => [String(row.line_no), row]));
   cells.forEach((cell) => {
-    const row = byLineNo.get(cell.dataset.pancakeStockLineNo);
+    const row = currentAvailableByLineNo.get(cell.dataset.availableLineNo);
     if (!row) {
       cell.textContent = '?';
       return;
@@ -795,11 +717,8 @@ async function loadPancakeStockForLines(docNo) {
     if (row.fetch_error) {
       cell.textContent = '?';
       cell.title = row.fetch_error;
-    } else if (row.remain_quantity === null || row.remain_quantity === undefined) {
-      cell.textContent = '?';
-      cell.title = 'Not linked to a Pancake product, or no stock data returned for this warehouse.';
     } else {
-      cell.textContent = row.remain_quantity;
+      cell.textContent = Number(row.available_quantity);
       cell.classList.remove('muted');
       cell.title = '';
     }
@@ -845,7 +764,7 @@ async function shipTransferOrder(docNo) {
   // Production Category lines need exactly one picked (existing, IN_STOCK) serial per unit being
   // shipped this action - see renderManageLines' serial-tag-picker cell. Checked client-side here
   // (just counting what's already been picked) before anything server-side happens; the actual
-  // atomic claim - which also re-verifies availability - happens further down, after Pancake syncs.
+  // atomic claim - which also re-verifies availability - happens further down, once stock is confirmed.
   const incompleteSerialLines = [];
   const serialRunningNosToClaim = [];
   for (const line of lineUpdates) {
@@ -876,71 +795,44 @@ async function shipTransferOrder(docNo) {
     return;
   }
 
-  // Push just this action's shipped quantities to Pancake as their own transfer (see
-  // supabase_transfer_orders_pancake_sync.sql's header comment for why this can't just append to
-  // a previous shipment's Pancake transfer). item/variant come from the row's own data attributes
-  // (set by renderManageLines) rather than a second fetch.
-  const pancakeItems = lineUpdates
-    .filter((l) => l.increment > 0)
-    .map((l) => {
-      const row = rows.find((r) => r.dataset.lineNo === l.lineNo);
-      return {
-        item_no: row?.dataset.itemNo || null,
-        variant_id: row?.dataset.variantId || null,
-        quantity: l.increment
-      };
-    });
-
   const shipBtn = document.getElementById('shipTransferBtn');
   shipBtn.disabled = true;
   try {
-    // Sync to Pancake BEFORE writing anything locally - per direct instruction, Ship is now
-    // blocked entirely unless Pancake actually confirms the transfer ('Synced'). Both 'Rejected'
-    // (Pancake explicitly refusing, e.g. insufficient stock) and 'Failed' (unreachable/timeout/
-    // 5xx - we don't know if it went through) block the shipment, so the portal never records a
-    // local Ship that Pancake hasn't confirmed. Staff can retry from the Pancake Sync panel once
-    // the underlying issue (stock or connectivity) is resolved.
-    const fromWarehouseId = currentManageHeader?.['From Warehouse ID'];
-    const toWarehouseId = currentManageHeader?.['To Warehouse ID'];
-
-    if (!fromWarehouseId || !toWarehouseId) {
-      errorEl.textContent = 'Cannot ship - this order is missing a From/To Warehouse ID, so it cannot be verified with Pancake.';
+    // The From Warehouse must actually have what is being shipped - checked against the Item Ledger
+    // BEFORE claiming serials, since that claim is the one step here that isn't undone if Ship then
+    // fails. (The ledger trigger on Transfer_Line enforces the same rule again server-side, which is
+    // what protects against two people shipping the same stock at the same moment.)
+    if (!currentManageHeader?.['From Warehouse ID'] || !currentManageHeader?.['To Warehouse ID']) {
+      errorEl.textContent = 'Cannot ship - this order is missing a From/To Warehouse ID.';
       errorEl.classList.remove('hidden');
       return;
     }
 
-    const { data: syncRows, error: syncError } = await supabaseClient.rpc('staff_sync_transfer_shipment_to_pancake', {
-      p_admin_username: currentSession.username,
-      p_admin_password: currentSession.password,
-      p_document_no: docNo,
-      p_from_warehouse_id: fromWarehouseId,
-      p_to_warehouse_id: toWarehouseId,
-      p_items: pancakeItems,
-      p_shipped_by: currentSession?.displayName || currentSession?.username || null
-    });
-
-    const syncResult = syncRows && syncRows[0];
-    if (syncResult?.sync_status === 'Rejected') {
-      errorEl.textContent = `Cannot ship - ${friendlyPancakeErrorMessage(syncResult.sync_error)}`;
-      errorEl.classList.remove('hidden');
-      await loadPancakeSyncStatus(docNo);
-      return;
+    await loadAvailableStockForLines(docNo);
+    const shortages = [];
+    for (const line of lineUpdates) {
+      if (line.increment <= 0) continue;
+      const row = rows.find((r) => r.dataset.lineNo === line.lineNo);
+      const available = currentAvailableByLineNo.get(String(line.lineNo));
+      const label = row?.dataset.itemNo || `line ${line.lineNo}`;
+      if (!available || available.fetch_error) {
+        shortages.push(`${label} (${available?.fetch_error || 'stock could not be checked'})`);
+      } else if (Number(available.available_quantity) < line.increment) {
+        shortages.push(`${label} (${Number(available.available_quantity)} on hand, shipping ${line.increment})`);
+      }
     }
-    if (syncError || !syncResult || syncResult.sync_status !== 'Synced') {
-      const detail = syncError ? describeSupabaseError(syncError, 'unknown error') : (syncResult?.sync_error || 'unknown error');
-      errorEl.textContent = `Cannot ship - ${friendlyPancakeErrorMessage(detail)} Nothing was shipped locally - retry from the Pancake Sync panel below.`;
+    if (shortages.length > 0) {
+      errorEl.textContent = `Cannot ship - not enough stock at ${currentManageHeader['From Warehouse'] || 'the From Warehouse'}: ${shortages.join('; ')}.`;
       errorEl.classList.remove('hidden');
-      await loadPancakeSyncStatus(docNo);
       return;
     }
 
-    // Pancake has confirmed - now atomically claim the picked serials (IN_STOCK -> IN_TRANSIT,
+    // Stock confirmed - now atomically claim the picked serials (IN_STOCK -> IN_TRANSIT,
     // Location -> "In Transit to {To Warehouse}") before committing anything locally. This
     // re-verifies availability server-side (see staff_claim_serials_for_transfer_shipment) in
-    // case someone else grabbed the same serial in the meantime - rare, but if it happens here
-    // Pancake has already been told about this shipment while the local claim failed; nothing is
-    // written locally in that case, so retry once the picker is refreshed with what's still
-    // actually available.
+    // case someone else grabbed the same serial in the meantime - rare, but if it happens
+    // nothing is written, so retry once the picker is refreshed with what's still actually
+    // available.
     if (serialRunningNosToClaim.length > 0) {
       try {
         const { error: claimError } = await supabaseClient.rpc('staff_claim_serials_for_transfer_shipment', {
@@ -952,14 +844,15 @@ async function shipTransferOrder(docNo) {
         });
         if (claimError) throw claimError;
       } catch (err) {
-        errorEl.textContent = `Cannot ship - could not claim the picked serials: ${describeSupabaseError(err, 'unknown error')}. Pancake has already recorded this shipment - re-pick serials and try Ship again, or contact an admin if this persists.`;
+        errorEl.textContent = `Cannot ship - could not claim the picked serials: ${describeSupabaseError(err, 'unknown error')}. Nothing was shipped - re-pick serials and try Ship again, or contact an admin if this persists.`;
         errorEl.classList.remove('hidden');
         return;
       }
     }
 
-    // Only reached once Pancake has confirmed ('Synced') and serials (if any) are claimed - now
-    // commit it locally.
+    // Only reached once stock is confirmed and serials (if any) are claimed - now commit it. The
+    // ledger entry is written by the trigger on this same Transfer_Line update (see
+    // supabase_item_ledger_hooks.sql), in the same transaction.
     for (const line of lineUpdates) {
       if (line.increment <= 0) continue;
       // 'Last Actor' is who to credit the Item Ledger entry to - a trigger on Transfer_Line posts
@@ -1069,52 +962,11 @@ async function receiveTransferOrder(docNo) {
     return;
   }
 
-  // Complete Pancake transfers once everything actually SHIPPED has been received - not gated on
-  // the order's own Status hitting the literal 'Received' label, since that only happens once Qty
-  // Received catches up to the originally-requested Qty To Transfer (computeAggregateStatus). A
-  // short-shipped order (e.g. the source warehouse didn't have full stock) would otherwise sit at
-  // 'Partial Received' forever and its already-shipped Pancake transfer(s) would never get marked
-  // Completed, even though nothing more is coming.
-  const totalShippedSoFar = lineUpdates.reduce((sum, l) => sum + l.qtyShipped, 0);
-  const totalReceivedSoFar = lineUpdates.reduce((sum, l) => sum + l.qtyReceived, 0);
-  const allShippedQtyReceived = totalShippedSoFar > 0 && totalReceivedSoFar >= totalShippedSoFar;
-
   const receiveBtn = document.getElementById('receiveTransferBtn');
   receiveBtn.disabled = true;
   try {
-    // Complete Pancake transfers BEFORE writing anything locally - per direct instruction, Receive
-    // is now blocked entirely unless Pancake completion actually succeeds, same as Ship blocks on
-    // a failed/unconfirmed sync. Already-Completed shipments from an earlier partial receipt are
-    // skipped automatically by the RPC, so calling this on every qualifying receive is safe.
-    if (allShippedQtyReceived) {
-      let completions;
-      try {
-        const { data, error: completeError } = await supabaseClient.rpc('staff_complete_transfer_pancake_shipments', {
-          p_admin_username: currentSession.username,
-          p_admin_password: currentSession.password,
-          p_document_no: docNo
-        });
-        if (completeError) throw completeError;
-        completions = data || [];
-      } catch (err) {
-        errorEl.textContent = `Cannot receive - could not complete Pancake sync: ${describeSupabaseError(err, 'unknown error')}. Nothing was received locally.`;
-        errorEl.classList.remove('hidden');
-        return;
-      }
-
-      const stillPending = completions.filter((c) => c.sync_status !== 'Completed');
-      if (stillPending.length > 0) {
-        const details = stillPending
-          .map((c) => `#${c.shipment_event_no} (Pancake ID: ${c.pancake_transfer_id || 'none'})${c.sync_error ? ` - ${c.sync_error}` : ''}`)
-          .join('; ');
-        errorEl.textContent = `Cannot receive - ${stillPending.length} Pancake shipment(s) failed to complete: ${details}. Nothing was received locally - retry the Pancake sync below, then try Receive again.`;
-        errorEl.classList.remove('hidden');
-        await loadPancakeSyncStatus(docNo);
-        return;
-      }
-    }
-
-    // Only reached once Pancake completion succeeded, or wasn't needed yet - now commit locally.
+    // Commit locally - the trigger on Transfer_Line adds the received stock to the To Warehouse in
+    // the Item Ledger as part of this same update.
     const toWarehouseName = currentManageHeader?.['To Warehouse'] || '';
     for (const line of lineUpdates) {
       if (line.increment <= 0) continue;
@@ -1350,36 +1202,6 @@ function escapeHtml(value) {
   }[ch]));
 }
 
-// Pancake sync errors otherwise surface raw sqlerrm/libcurl text straight from Postgres (e.g.
-// "OpenSSL SSL_read: SSL_ERROR_SYSCALL, errno 0" or a stock-rejection message embedded in a JSON
-// blob) - meaningless to warehouse staff. This maps the known failure shapes to plain-language
-// explanations of what happened and what to do about it, falling back to the raw text (still
-// logged to the console, and always kept alongside it in the Pancake Sync panel's Error column
-// via a title tooltip) only when nothing recognized matches.
-function friendlyPancakeErrorMessage(rawDetail) {
-  const text = String(rawDetail || '').trim();
-  console.error('Pancake sync error detail:', text);
-
-  if (/SSL_ERROR|SSL_read|SSL_write|OpenSSL|Could not resolve host|Connection refused|Connection reset|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|timed out|timeout|Failed to connect|Empty reply from server/i.test(text)) {
-    return 'Could not reach Pancake Cloud (connection issue). This is usually temporary - please try again in a moment.';
-  }
-  if (/kh[oôo]ng đủ số lượng|insufficient stock|not enough stock|out of stock|HTTP 422/i.test(text)) {
-    return 'Pancake reports there is not enough stock at the source warehouse for one or more items.';
-  }
-  if (/HTTP 5\d\d/.test(text)) {
-    return 'Pancake Cloud is temporarily unavailable (server error on their end). Please try again shortly.';
-  }
-  if (/HTTP 401|HTTP 403|Unauthorized|Forbidden/i.test(text)) {
-    return 'Pancake rejected the request due to an authorization issue - contact an admin to check the Pancake API key.';
-  }
-  if (/HTTP 404/i.test(text)) {
-    return 'Pancake could not find the transfer or warehouse referenced - it may have been deleted, or the id is out of date.';
-  }
-  if (!text) {
-    return 'Unknown error - see the console/panel for details.';
-  }
-  return text;
-}
 
 // Sequential per-warehouse Document No. (TR-{WarehouseName}0001, ...) via staff_next_transfer_no,
 // which pulls its Prefix/Padding/Starting No. from the 'TRANSFER-ORDER' No. Series (General Setup

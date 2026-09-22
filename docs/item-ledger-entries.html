@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Item Ledger Entries - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=1" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,185 +17,303 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>Item Ledger Entries</h1>
-    <p class="muted">
-      Every stock movement, one signed line each - receipts add, issues subtract, and on-hand stock
-      is simply the sum. Entries are permanent: a mistake is corrected by reversing it (which posts
-      an opposite entry), never by editing or deleting, so the history always reconciles.
-    </p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-clear-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/><path d="M11.5 11.5l3 3M14.5 11.5l-3 3"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
+    <symbol id="ico-undo" viewBox="0 0 16 16"><path d="M5.2 3 2.5 5.8 5.2 8.6"/><path d="M2.5 5.8h6.3a4 4 0 0 1 0 8H6"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+  </svg>
 
-    <section class="card hidden" id="failuresCard" style="margin-bottom:18px; border-color:var(--danger);">
-      <h2 style="margin-top:0; font-size:15px; color:var(--danger);">Movements that did not reach the ledger</h2>
-      <p class="muted" style="margin-top:0; font-size:12px;">
-        These stock movements happened (a receipt or a transfer was saved) but could not be written
-        to the ledger, so the balances below are missing them. Fix the cause (e.g. an item or
-        variant that no longer exists), post the missing quantity as an adjustment above, then
-        dismiss the row.
-      </p>
-      <div class="table-wrap">
-        <table class="doc-lines">
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Document</th>
-              <th>Item</th>
-              <th>Warehouse</th>
-              <th style="text-align:right;">Quantity</th>
-              <th>Error</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="failuresBody"></tbody>
-        </table>
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Item Ledger Entries</h1>
+        <p class="bc-subtitle">Every stock movement, one signed line each. Entries are permanent - a mistake is corrected by reversing it.</p>
       </div>
-    </section>
-
-    <section class="card" style="margin-bottom:18px;">
-      <h2 style="margin-top:0; font-size:15px;">New Stock Adjustment</h2>
-      <p class="muted" style="margin-top:0; font-size:12px;">
-        Adds or removes stock directly - use it to load opening balances or to correct a count.
-        A reason is required and shows on the ledger.
-      </p>
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="adjItemInput">Item</label>
-          <input type="text" id="adjItemInput" list="adjItemList" placeholder="Type an item code or name..." autocomplete="off" />
-          <datalist id="adjItemList"></datalist>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="ileSearchInput" placeholder="Search" aria-label="Search entries" autocomplete="off" />
         </div>
-        <div class="form-row hidden" id="adjVariantRow">
+        <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+          <svg class="bc-ico"><use href="#ico-filter"/></svg>
+        </button>
+        <button class="bc-iconbtn" id="clearFiltersBtn" type="button" title="Clear filters" aria-label="Clear filters">
+          <svg class="bc-ico"><use href="#ico-clear-filter"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+      <button class="bc-cmd bc-cmd-accent" id="newAdjBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Adjustment</button>
+      <button class="bc-cmd" id="countBtn" type="button"><svg class="bc-ico"><use href="#ico-upload"/></svg>Load / Count Stock</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="reverseBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-undo"/></svg>Reverse Transaction</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="ileRefreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
+    </div>
+
+    <div class="bc-infobar hidden" id="salesPostingBar" role="status">
+      <span class="bc-infobar-text" id="salesPostingStatus">Loading...</span>
+      <button class="bc-btn bc-btn-primary hidden" id="startSalesPostingBtn" type="button">Start Posting Sales From Now</button>
+    </div>
+
+    <div class="bc-tabs" role="tablist">
+      <button class="bc-tab active" type="button" role="tab" data-view="ledger" aria-selected="true">Ledger Entries</button>
+      <button class="bc-tab" type="button" role="tab" data-view="balance" aria-selected="false">Stock by Location</button>
+    </div>
+
+    <div class="bc-chips hidden" id="filterChips" aria-label="Active filters"></div>
+
+    <div class="bc-body" id="bcBody">
+      <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+        <div class="bc-pane-head">Filter list by</div>
+        <div class="bc-pane-body">
+          <div class="bc-fp-field">
+            <label for="ileFromDate">Posting Date - from</label>
+            <input type="date" id="ileFromDate" />
+          </div>
+          <div class="bc-fp-field">
+            <label for="ileToDate">Posting Date - to</label>
+            <input type="date" id="ileToDate" />
+          </div>
+          <div class="bc-fp-field">
+            <label for="ileTypeFilter">Entry Type</label>
+            <select id="ileTypeFilter">
+              <option value="">(all)</option>
+              <option value="Purchase">Purchase</option>
+              <option value="Sale">Sale</option>
+              <option value="Positive Adjmt.">Positive Adjmt.</option>
+              <option value="Negative Adjmt.">Negative Adjmt.</option>
+              <option value="Transfer">Transfer</option>
+            </select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="ileWarehouseFilter">Location Code</label>
+            <select id="ileWarehouseFilter"><option value="">(all)</option></select>
+          </div>
+          <button class="bc-link" id="clearFiltersLink" type="button">Clear filters</button>
+          <p class="bc-fp-hint">On Stock by Location, the "to" date is the as-of date (blank = everything posted).</p>
+        </div>
+      </aside>
+
+      <section class="bc-main" id="bcMain">
+        <!-- Ledger Entries view -->
+        <div id="ledgerView">
+          <div id="ileError" class="error-text hidden"></div>
+          <div class="bc-grid-wrap" id="ledgerGridWrap">
+            <table class="bc-grid" id="ileTable">
+              <thead>
+                <tr>
+                  <th>Posting Date</th>
+                  <th>Entry Type</th>
+                  <th>Document Type</th>
+                  <th>Document No.</th>
+                  <th>Item No.</th>
+                  <th>Description</th>
+                  <th>Variant</th>
+                  <th>Location Code</th>
+                  <th class="num">Quantity</th>
+                  <th class="cell-center">Correction</th>
+                  <th class="num">Entry No.</th>
+                </tr>
+              </thead>
+              <tbody id="ileTableBody">
+                <tr><td colspan="11" class="cell-msg">Loading...</td></tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="8">Total (all filtered entries)</td>
+                  <td id="ileTotalQuantity" class="num">0</td>
+                  <td colspan="2"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div id="ilePaginationBar"></div>
+        </div>
+
+        <!-- Stock by Location view -->
+        <div id="balanceView" class="hidden">
+          <div class="bc-grid-toolbar">
+            <label><input type="checkbox" id="balCombineVariants" /> Combine variants (one row per item and location)</label>
+            <span class="muted">Negative inventory is shown in red - more stock has left than the ledger has ever received.</span>
+          </div>
+          <div id="balError" class="error-text hidden"></div>
+          <div class="bc-grid-wrap" id="balanceGridWrap">
+            <table class="bc-grid" id="balTable">
+              <thead>
+                <tr>
+                  <th>Item No.</th>
+                  <th>Description</th>
+                  <th>Variant</th>
+                  <th>Location Code</th>
+                  <th class="num">Inbound</th>
+                  <th class="num">Outbound</th>
+                  <th class="num">Inventory</th>
+                </tr>
+              </thead>
+              <tbody id="balTableBody">
+                <tr><td colspan="7" class="cell-msg">Loading...</td></tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="6">Total inventory (all filtered rows)</td>
+                  <td id="balTotal" class="num">0</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div id="balPaginationBar"></div>
+        </div>
+      </section>
+
+      <aside class="bc-factbox" id="factBox" aria-label="Entry details">
+        <div class="bc-fact">
+          <div class="bc-fact-title">Entry Details</div>
+          <div class="bc-fact-body" id="factDetails">
+            <p class="bc-fact-empty">Select an entry to see its details.</p>
+          </div>
+        </div>
+        <div class="bc-fact hidden" id="factAvailBox">
+          <div class="bc-fact-title">Item Availability by Location</div>
+          <div class="bc-fact-body" id="factAvail"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- New Adjustment dialog -->
+  <div class="bc-dialog-backdrop hidden" id="adjDialog" role="dialog" aria-modal="true" aria-labelledby="adjDialogTitle">
+    <div class="bc-dialog">
+      <div class="bc-dialog-head">
+        <h2 id="adjDialogTitle">New Stock Adjustment</h2>
+        <button class="bc-iconbtn" type="button" data-close-dialog aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">Adds or removes stock directly - use it to correct a count or load a few opening balances. A reason is required and shows on the ledger. For many items at once use Load / Count Stock.</p>
+        <div class="bc-field">
+          <label for="adjItemInput">Item No.</label>
+          <div>
+            <input type="text" id="adjItemInput" list="adjItemList" placeholder="Type an item code or name..." autocomplete="off" />
+            <datalist id="adjItemList"></datalist>
+          </div>
+        </div>
+        <div class="bc-field hidden" id="adjVariantRow">
           <label for="adjVariantSelect">Variant</label>
           <select id="adjVariantSelect"></select>
         </div>
-        <div class="form-row">
-          <label for="adjWarehouseSelect">Warehouse</label>
+        <div class="bc-field">
+          <label for="adjWarehouseSelect">Location Code</label>
           <select id="adjWarehouseSelect"></select>
         </div>
-        <div class="form-row">
-          <label for="adjDirectionSelect">Adjustment</label>
+        <div class="bc-field">
+          <label for="adjDirectionSelect">Entry Type</label>
           <select id="adjDirectionSelect">
-            <option value="1">Add stock (+)</option>
-            <option value="-1">Remove stock (-)</option>
+            <option value="1">Positive Adjmt. (add stock)</option>
+            <option value="-1">Negative Adjmt. (remove stock)</option>
           </select>
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="adjQuantityInput">Quantity</label>
           <input type="number" id="adjQuantityInput" min="0" step="any" placeholder="0" />
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="adjDateInput">Posting Date</label>
           <input type="date" id="adjDateInput" />
         </div>
-        <div class="form-row" style="grid-column: 1 / -1;">
-          <label for="adjReasonInput">Reason</label>
+        <div class="bc-field">
+          <label for="adjReasonInput">Description</label>
           <input type="text" id="adjReasonInput" maxlength="400" placeholder="e.g. Opening balance, Cycle count correction, Damaged goods" />
         </div>
       </div>
-      <div class="toolbar" style="margin-top:10px;">
-        <button class="btn btn-primary" id="postAdjustmentBtn" type="button">Post Adjustment</button>
-        <span id="adjMessage" class="muted hidden"></span>
+      <div class="bc-dialog-foot">
+        <button class="bc-btn bc-btn-primary" id="postAdjustmentBtn" type="button">Post</button>
+        <button class="bc-btn" type="button" data-close-dialog>Close</button>
+        <p id="adjMessage" class="bc-dialog-msg muted hidden"></p>
       </div>
-    </section>
-
-    <div class="toolbar">
-      <div class="field" style="max-width:160px;">
-        <label for="ileFromDate">From</label>
-        <input type="date" id="ileFromDate" />
-      </div>
-      <div class="field" style="max-width:160px;">
-        <label for="ileToDate">To</label>
-        <input type="date" id="ileToDate" />
-      </div>
-      <div class="field" style="max-width:240px;">
-        <label for="ileWarehouseFilter">Warehouse</label>
-        <select id="ileWarehouseFilter"><option value="">All warehouses</option></select>
-      </div>
-      <div class="field" style="max-width:190px;">
-        <label for="ileTypeFilter">Entry Type</label>
-        <select id="ileTypeFilter">
-          <option value="">All types</option>
-          <option value="Purchase">Purchase</option>
-          <option value="Sale">Sale</option>
-          <option value="Positive Adjmt.">Positive Adjmt.</option>
-          <option value="Negative Adjmt.">Negative Adjmt.</option>
-          <option value="Transfer">Transfer</option>
-        </select>
-      </div>
-      <div class="field" style="max-width:280px;">
-        <label for="ileSearchInput">Search</label>
-        <input type="text" id="ileSearchInput" placeholder="Item, variant, document or description..." />
-      </div>
-      <button class="btn btn-secondary" id="ileRefreshBtn" type="button">Apply</button>
     </div>
+  </div>
 
-    <div id="ileError" class="error-text hidden"></div>
+  <!-- Load / Count Stock dialog -->
+  <div class="bc-dialog-backdrop hidden" id="countDialog" role="dialog" aria-modal="true" aria-labelledby="countDialogTitle">
+    <div class="bc-dialog bc-dialog-wide">
+      <div class="bc-dialog-head">
+        <h2 id="countDialogTitle">Load or Count Stock (CSV)</h2>
+        <button class="bc-iconbtn" type="button" data-close-dialog aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">
+          Upload what is on the shelves and the ledger is set to match. Columns:
+          <strong>Item</strong> (item code or SKU), <strong>Variant</strong> (optional - id, SKU or name; needed
+          for an item that has several), <strong>Warehouse</strong> (name or ID) and <strong>Quantity</strong>
+          (what you counted). Only the <em>difference</em> from what the ledger holds is posted, so the first
+          upload becomes your opening balances, a later one becomes a stock-take correction, and uploading the same
+          file twice changes nothing. Preview first - the file is applied all together or not at all.
+        </p>
+        <div class="bc-count-tools">
+          <input type="file" id="countFileInput" accept=".csv,.txt,text/csv" />
+          <a href="#" id="countTemplateLink" class="bc-link">Download template</a>
+        </div>
+        <div class="bc-field">
+          <label for="countDateInput">Posting Date</label>
+          <input type="date" id="countDateInput" style="max-width:200px;" />
+        </div>
+        <div class="bc-field">
+          <label for="countReasonInput">Description</label>
+          <input type="text" id="countReasonInput" value="Opening balance" maxlength="200" />
+        </div>
+        <div id="countSummary" class="bc-count-summary muted"></div>
+        <div class="bc-preview-wrap hidden" id="countPreviewWrap">
+          <table class="bc-grid">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Item</th>
+                <th>Location Code</th>
+                <th class="num">Counted</th>
+                <th class="num">On Hand Now</th>
+                <th class="num">Change</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="countPreviewBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <button class="bc-btn" id="countPreviewBtn" type="button">Preview</button>
+        <button class="bc-btn bc-btn-primary" id="countPostBtn" type="button" disabled>Post Count</button>
+        <button class="bc-btn" type="button" data-close-dialog>Close</button>
+      </div>
+    </div>
+  </div>
 
-    <div class="table-wrap">
-      <table class="doc-lines">
-        <thead>
-          <tr>
-            <th>Entry No.</th>
-            <th>Posting Date</th>
-            <th>Entry Type</th>
-            <th>Item</th>
-            <th>Warehouse</th>
-            <th>Document</th>
-            <th>Description</th>
-            <th style="text-align:right;">Quantity</th>
-            <th>Posted By</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="ileTableBody">
-          <tr><td colspan="10" class="muted">Loading...</td></tr>
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colspan="7" style="text-align:right; font-weight:600;">Net quantity (all filtered entries)</td>
-            <td id="ileTotalQuantity" class="doc-num" style="font-weight:600;">0</td>
-            <td colspan="2"></td>
-          </tr>
-        </tfoot>
-      </table>
+  <!-- Reverse Transaction dialog -->
+  <div class="bc-dialog-backdrop hidden" id="reverseDialog" role="dialog" aria-modal="true" aria-labelledby="reverseDialogTitle">
+    <div class="bc-dialog">
+      <div class="bc-dialog-head">
+        <h2 id="reverseDialogTitle">Reverse Transaction</h2>
+        <button class="bc-iconbtn" type="button" data-close-dialog aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <div class="bc-summary-box" id="reverseSummary"></div>
+        <p class="bc-lede">This posts an opposite entry dated today - the original stays on the ledger, marked as reversed.</p>
+        <div class="bc-field">
+          <label for="reverseReasonInput">Reason</label>
+          <input type="text" id="reverseReasonInput" maxlength="400" placeholder="Why is this being reversed?" />
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <button class="bc-btn bc-btn-primary" id="reverseConfirmBtn" type="button">Reverse</button>
+        <button class="bc-btn" type="button" data-close-dialog>Cancel</button>
+        <p id="reverseMessage" class="bc-dialog-msg error-text hidden"></p>
+      </div>
     </div>
-    <div id="ilePaginationBar"></div>
-
-    <h2 style="margin-top:26px;">Stock Balance</h2>
-    <p class="muted" style="margin-top:0;">
-      On-hand stock computed from the ledger as of the To date above (blank = everything posted),
-      for the same warehouse and search filters. Negative balances are shown in red - they mean
-      more stock has left than the ledger has ever received.
-    </p>
-    <div class="toolbar" style="margin-top:0;">
-      <label style="display:flex; align-items:center; gap:6px;">
-        <input type="checkbox" id="balCombineVariants" />
-        Combine variants (one row per item and warehouse)
-      </label>
-    </div>
-    <div id="balError" class="error-text hidden"></div>
-    <div class="table-wrap">
-      <table class="doc-lines">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Warehouse</th>
-            <th style="text-align:right;">In</th>
-            <th style="text-align:right;">Out</th>
-            <th style="text-align:right;">Balance</th>
-          </tr>
-        </thead>
-        <tbody id="balTableBody">
-          <tr><td colspan="5" class="muted">Loading...</td></tr>
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colspan="4" style="text-align:right; font-weight:600;">Total balance (all filtered rows)</td>
-            <td id="balTotal" class="doc-num" style="font-weight:600;">0</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    <div id="balPaginationBar"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -203,7 +322,7 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/itemLedgerEntries.js"></script>
+  <script src="js/itemLedgerEntries.js?v=bc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

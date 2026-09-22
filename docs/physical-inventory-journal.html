@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Physical Inventory Journal - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-calc" viewBox="0 0 16 16"><rect x="3" y="2" width="10" height="12" rx="1"/><path d="M5 5h6M5 8h1M8 8h1M11 8h1M5 11h1M8 11h1M11 11h1"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-trash" viewBox="0 0 16 16"><path d="M3 4.5h10M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M4.5 4.5 5 13a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.5-8.5"/></symbol>
+    <symbol id="ico-post" viewBox="0 0 16 16"><path d="M3 8h8M8 4.5 11.5 8 8 11.5"/><path d="M13 3v10"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6"/><rect x="2.5" y="6" width="11" height="5.5" rx="1"/><path d="M4.5 10.5V13.5h7V10.5"/></symbol>
+  </svg>
+
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Physical Inventory Journal</h1>
+        <p class="bc-subtitle">Calculate to pull in what the ledger expects, type what you actually count, then post. Only counted lines post - the rest wait for next time.</p>
+      </div>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="lineSearchInput" placeholder="Search lines" aria-label="Search lines" autocomplete="off" />
+          <button class="bc-search-clear hidden" id="lineSearchClearBtn" type="button" aria-label="Clear search">&times;</button>
+        </div>
+        <span class="bc-search-count muted" id="lineSearchCount"></span>
+      </div>
+    </div>
+
+    <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+      <button class="bc-cmd bc-cmd-accent" id="calcBtn" type="button"><svg class="bc-ico"><use href="#ico-calc"/></svg>Calculate Inventory</button>
+      <button class="bc-cmd" id="newLineBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Line</button>
+      <button class="bc-cmd" id="deleteLineBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-trash"/></svg>Delete Line</button>
+      <button class="bc-cmd" id="clearAllBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-trash"/></svg>Delete All Lines</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd bc-cmd-accent" id="postBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-post"/></svg>Post</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="journalRefreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
+      <button class="bc-cmd" id="printBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-print"/></svg>Print</button>
+    </div>
+
+    <div class="bc-batchbar">
+      <label for="batchNameInput">Batch Name</label>
+      <input type="text" id="batchNameInput" list="batchNameList" value="DEFAULT" maxlength="50" autocomplete="off" />
+      <datalist id="batchNameList"></datalist>
+      <span class="bc-batch-progress" id="batchProgress"></span>
+    </div>
+
+    <div class="bc-body no-filterpane" id="bcBody">
+      <section class="bc-main" id="bcMain">
+        <div id="journalError" class="error-text hidden"></div>
+        <div class="bc-grid-wrap" id="journalGridWrap">
+          <table class="bc-grid" id="journalTable">
+            <thead>
+              <tr id="journalHeaderRow">
+                <th class="sortable" data-sort-key="item_code">Item No.<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort-key="item_name">Description<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort-key="variant_name">Variant<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort-key="sku">SKU<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort-key="warehouse_name">Location Code<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort-key="qty_calculated">Qty. (Calculated)<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort-key="qty_counted">Qty. (Phys. Inventory)<span class="sort-arrow"></span></th>
+                <th class="num sortable" data-sort-key="quantity">Quantity<span class="sort-arrow"></span></th>
+              </tr>
+            </thead>
+            <tbody id="journalTableBody">
+              <tr><td colspan="8" class="cell-msg">Choose or type a batch name, then Calculate Inventory to begin.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="bc-factbox" id="factBox" aria-label="Line details">
+        <div class="bc-fact">
+          <div class="bc-fact-title">Line Details</div>
+          <div class="bc-fact-body" id="factDetails">
+            <p class="bc-fact-empty">Select a line to see its details.</p>
+          </div>
+        </div>
+        <div class="bc-fact hidden" id="factAvailBox">
+          <div class="bc-fact-title">Item Availability by Location</div>
+          <div class="bc-fact-body" id="factAvail"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Calculate Inventory dialog -->
+  <div class="bc-dialog-backdrop hidden" id="calcDialog" role="dialog" aria-modal="true" aria-labelledby="calcDialogTitle">
+    <div class="bc-dialog">
+      <div class="bc-dialog-head">
+        <h2 id="calcDialogTitle">Calculate Inventory</h2>
+        <button class="bc-iconbtn" type="button" data-close-dialog aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">
+          Adds a line for every active item at the location below (one line per variant, for an item that
+          has several) with the ledger's current quantity as Qty. (Calculated). Run it again any time to pick
+          up items you haven't reached yet - it never touches a line you've already given a count to.
+        </p>
+        <div class="bc-field">
+          <label for="calcWarehouseSelect">Location Code</label>
+          <select id="calcWarehouseSelect"></select>
+        </div>
+        <div class="bc-field">
+          <label for="calcCategorySelect">Category</label>
+          <select id="calcCategorySelect"><option value="">(all)</option></select>
+        </div>
+        <div class="bc-field">
+          <label for="calcSearchInput">Item filter</label>
+          <input type="text" id="calcSearchInput" placeholder="Optional - item code or name" autocomplete="off" />
+        </div>
+        <div class="bc-field">
+          <label for="calcStockSyncOnlyInput">&nbsp;</label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:400;">
+            <input type="checkbox" id="calcStockSyncOnlyInput" style="width:auto;" />
+            Only categories flagged "Include in Stock Sync"
+          </label>
+        </div>
+        <div class="bc-field">
+          <label for="calcFromPancakeInput">&nbsp;</label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:400;">
+            <input type="checkbox" id="calcFromPancakeInput" style="width:auto;" />
+            Qty. (Calculated) from Pancake (live)
+          </label>
+          <p class="bc-hint" style="margin:4px 0 0;">
+            After Calculate finishes, fetches each item's current stock straight from Pancake (shown
+            as a progress message below) and overwrites Qty. (Calculated) with it. Slower on a large
+            run - narrow with Category/Item filter first. Falls back to the portal's own figure for
+            anything Pancake doesn't return. Posting still always compares against the portal's live
+            balance either way.
+          </p>
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <button class="bc-btn bc-btn-primary" id="calcConfirmBtn" type="button">Calculate</button>
+        <button class="bc-btn" type="button" data-close-dialog>Close</button>
+        <p id="calcMessage" class="bc-dialog-msg muted hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Line dialog -->
+  <div class="bc-dialog-backdrop hidden" id="newLineDialog" role="dialog" aria-modal="true" aria-labelledby="newLineDialogTitle">
+    <div class="bc-dialog">
+      <div class="bc-dialog-head">
+        <h2 id="newLineDialogTitle">New Line</h2>
+        <button class="bc-iconbtn" type="button" data-close-dialog aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <div class="bc-field">
+          <label for="newLineItemInput">Item No.</label>
+          <div>
+            <input type="text" id="newLineItemInput" list="newLineItemList" placeholder="Type an item code or name..." autocomplete="off" />
+            <datalist id="newLineItemList"></datalist>
+          </div>
+        </div>
+        <div class="bc-field hidden" id="newLineVariantRow">
+          <label for="newLineVariantSelect">Variant</label>
+          <select id="newLineVariantSelect"></select>
+        </div>
+        <div class="bc-field">
+          <label for="newLineWarehouseSelect">Location Code</label>
+          <select id="newLineWarehouseSelect"></select>
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <button class="bc-btn bc-btn-primary" id="newLineConfirmBtn" type="button">Add</button>
+        <button class="bc-btn" type="button" data-close-dialog>Close</button>
+        <p id="newLineMessage" class="bc-dialog-msg error-text hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Post dialog -->
+  <div class="bc-dialog-backdrop hidden" id="postDialog" role="dialog" aria-modal="true" aria-labelledby="postDialogTitle">
+    <div class="bc-dialog">
+      <div class="bc-dialog-head">
+        <h2 id="postDialogTitle">Post Physical Inventory</h2>
+        <button class="bc-iconbtn" type="button" data-close-dialog aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <div class="bc-summary-box" id="postSummary">Checking...</div>
+        <div class="bc-field">
+          <label for="postDateInput">Posting Date</label>
+          <input type="date" id="postDateInput" />
+        </div>
+        <div class="bc-field">
+          <label for="postReasonInput">Reason</label>
+          <input type="text" id="postReasonInput" maxlength="200" placeholder="e.g. Cycle count, Year-end count" />
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <button class="bc-btn bc-btn-primary" id="postConfirmBtn" type="button" disabled>Post</button>
+        <button class="bc-btn" type="button" data-close-dialog>Close</button>
+        <p id="postMessage" class="bc-dialog-msg error-text hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Print-only count sheet: hidden on screen, built and shown by printJournal() in
+       physicalInventoryJournal.js right before window.print(). See bc-list.css's @media print rules
+       (hides everything else under <body>, shows only this). -->
+  <div id="printArea"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/physicalInventoryJournal.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

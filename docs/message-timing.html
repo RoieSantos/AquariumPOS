@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Message Timing - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Customer Message Timing</h1>
+    <p class="muted">When customers actually message the AI bot on GMA Conversations, by day of week and hour of day, so you can spot the busiest times to have someone watching the inbox. Covers the last 60 days (older messages are trimmed automatically). Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Shown only if the session was created before login started capturing the password
+         (edge case - existing logged-in users before this update); a fresh login fixes it. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Main content, shown once unlocked -->
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Filter by date</h2>
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <label for="dateFromInput" class="muted" style="margin:0;">From</label>
+          <input type="date" id="dateFromInput" />
+          <label for="dateToInput" class="muted" style="margin:0;">To</label>
+          <input type="date" id="dateToInput" />
+          <button class="btn btn-primary" id="applyFilterBtn" type="button">Apply</button>
+          <button class="btn btn-secondary" id="clearFilterBtn" type="button">Clear</button>
+        </div>
+      </div>
+
+      <div id="timingLoading" class="muted">Loading...</div>
+      <div id="timingError" class="error-text hidden"></div>
+
+      <div id="timingResults" class="hidden">
+        <div class="stat-card-grid">
+          <div class="stat-card">
+            <div class="stat-label"><span class="stat-icon">📅</span> Busiest Day</div>
+            <div class="stat-value" id="busiestDay">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label"><span class="stat-icon">⏰</span> Busiest Hour</div>
+            <div class="stat-value" id="busiestHour">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label"><span class="stat-icon">💬</span> Total Messages</div>
+            <div class="stat-value" id="totalMessages">-</div>
+          </div>
+        </div>
+
+        <div class="card timing-section">
+          <div class="timing-section-title">Message Heatmap</div>
+          <div class="timing-section-sub">Darker = more customer messages in that hour</div>
+          <div class="msg-heatmap-wrap">
+            <div class="msg-heatmap" id="msgHeatmapGrid"></div>
+          </div>
+          <div class="msg-heatmap-legend">
+            <span>Fewer</span>
+            <span class="msg-heat-swatch" data-level="0"></span>
+            <span class="msg-heat-swatch" data-level="1"></span>
+            <span class="msg-heat-swatch" data-level="2"></span>
+            <span class="msg-heat-swatch" data-level="3"></span>
+            <span class="msg-heat-swatch" data-level="4"></span>
+            <span>More</span>
+          </div>
+
+          <div class="timing-section-sub" style="margin-top:6px;font-weight:600;">Busiest time slots</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Day &amp; Hour</th><th>Messages</th></tr></thead>
+              <tbody id="topSlotsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/messageTimingDashboard.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

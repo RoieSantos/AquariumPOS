@@ -1,0 +1,1144 @@
+/* ---------------------------------------------------------------------------
+   Business Central list-page look (Item Ledger Entries - docs/item-ledger-entries.html)
+
+   Per direct request: "make the ui/ux same as Business Central item ledger entries". The pieces of
+   a BC list page, each a class here:
+
+     .bc-titlebar   page title on the left, Search + filter-pane toggle on the right
+     .bc-cmdbar     the action bar: flat text buttons with an icon, no filled "web" buttons
+     .bc-infobar    the message bar under the action bar (a warning/info strip, not a card)
+     .bc-tabs       list "views" as underlined tabs
+     .bc-filterpane the left "Filter list by" pane
+     .bc-grid       the list itself: compact rows, header without a fill, no vertical rules,
+                    hover + selected row, numbers right-aligned
+     .bc-factbox    the right-hand FactBox column (details of the selected line)
+     .bc-dialog     BC-style dialog (title bar, label-left fields, OK/Cancel footer)
+
+   Everything is scoped under .bc-ile so no other page shifts. Colours are variables with a dark
+   override so the site-wide theme toggle (js/theme.js) keeps working.
+   --------------------------------------------------------------------------- */
+
+.page.bc-ile {
+  --bc-surface: #ffffff;
+  --bc-surface-2: #faf9f8;
+  --bc-line: #e1dfdd;
+  --bc-line-strong: #c8c6c4;
+  --bc-hover: #f3f2f1;
+  --bc-selected: #e3eefa;
+  --bc-cmd-hover: #edebe9;
+  --bc-link: #0f6cbd;
+  --bc-warn-bg: #fff4ce;
+  --bc-warn-line: #f0d77a;
+  --bc-info-bg: #eaf3fb;
+  --bc-info-line: #b6d4ee;
+  --bc-input-bg: #ffffff;
+  max-width: none;
+  padding: 12px 20px 28px;
+  font-size: 13px;
+}
+
+:root[data-theme="dark"] .page.bc-ile {
+  --bc-surface: #111a2c;
+  --bc-surface-2: #0f1728;
+  --bc-line: #22314b;
+  --bc-line-strong: #33476a;
+  --bc-hover: #16213a;
+  --bc-selected: #1b2e52;
+  --bc-cmd-hover: #1a2740;
+  --bc-link: #6cb0f5;
+  --bc-warn-bg: #3b3212;
+  --bc-warn-line: #6b5a1d;
+  --bc-info-bg: #14263f;
+  --bc-info-line: #27466f;
+  --bc-input-bg: #111a2c;
+}
+
+.bc-ile svg.bc-ico {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ------------------------------------------------------------------ title bar */
+
+.bc-ile .bc-titlebar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 4px;
+}
+
+.bc-ile .bc-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.bc-ile .bc-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-title-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bc-ile .bc-search {
+  position: relative;
+}
+
+.bc-ile .bc-search svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.bc-ile .bc-search input {
+  width: 260px;
+  max-width: 100%;
+  height: 32px;
+  padding: 4px 26px 4px 31px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg);
+}
+
+.bc-ile .bc-search-clear {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bc-ile .bc-search-clear:hover {
+  background: var(--bc-surface-2);
+  color: var(--text-main);
+}
+
+.bc-ile .bc-search-count {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.bc-ile .bc-search input:focus,
+.bc-ile .bc-dialog input:focus,
+.bc-ile .bc-dialog select:focus,
+.bc-ile .bc-filterpane input:focus,
+.bc-ile .bc-filterpane select:focus {
+  outline: 2px solid var(--bc-link);
+  outline-offset: -1px;
+}
+
+.bc-ile .bc-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.bc-ile .bc-iconbtn:hover {
+  background: var(--bc-cmd-hover);
+}
+
+.bc-ile .bc-iconbtn[aria-pressed="true"] {
+  background: var(--bc-selected);
+  color: var(--bc-link);
+}
+
+/* ------------------------------------------------------------------ action bar */
+
+.bc-ile .bc-cmdbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--bc-line);
+}
+
+.bc-ile .bc-cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bc-ile .bc-cmd:hover:not(:disabled) {
+  background: var(--bc-cmd-hover);
+}
+
+.bc-ile .bc-cmd:disabled {
+  color: var(--text-muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* BC's lead action ("+ New") is the one accent-coloured item on the bar. */
+.bc-ile .bc-cmd-accent {
+  color: var(--bc-link);
+  font-weight: 600;
+}
+
+.bc-ile .bc-cmd-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--bc-line-strong);
+}
+
+/* ------------------------------------------------------------------ message bar */
+
+.bc-ile .bc-infobar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--bc-info-line);
+  border-left-width: 4px;
+  background: var(--bc-info-bg);
+  font-size: 13px;
+}
+
+.bc-ile .bc-infobar.bc-infobar-warn {
+  border-color: var(--bc-warn-line);
+  background: var(--bc-warn-bg);
+}
+
+.bc-ile .bc-infobar .bc-infobar-text {
+  flex: 1 1 320px;
+}
+
+.bc-ile .bc-btn {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  background: var(--bc-surface);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bc-ile .bc-btn:hover:not(:disabled) {
+  background: var(--bc-hover);
+}
+
+.bc-ile .bc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bc-ile .bc-btn-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.bc-ile .bc-btn-primary:hover:not(:disabled) {
+  background: var(--primary-strong);
+}
+
+/* ------------------------------------------------------------------ view tabs */
+
+.bc-ile .bc-tabs {
+  display: flex;
+  gap: 22px;
+  margin: 12px 0 0;
+  border-bottom: 1px solid var(--bc-line);
+}
+
+.bc-ile .bc-tab {
+  padding: 8px 2px 7px;
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.bc-ile .bc-tab:hover {
+  color: var(--text-main);
+}
+
+.bc-ile .bc-tab.active {
+  border-bottom-color: var(--bc-link);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ applied-filter chips */
+
+.bc-ile .bc-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.bc-ile .bc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 3px 1px 10px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 12px;
+  background: var(--bc-surface);
+}
+
+.bc-ile .bc-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bc-ile .bc-chip button:hover {
+  background: var(--bc-cmd-hover);
+  color: var(--text-main);
+}
+
+/* ------------------------------------------------------------------ body: filter pane | list | factbox */
+
+.bc-ile .bc-body {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr) 270px;
+  gap: 16px;
+  /* stretch, not start: the filter pane/FactBox reach the same bottom edge as the grid, which the
+     page's JS sizes to fill the rest of the viewport (fitGridToViewport) - so nothing is left as
+     dead space below a short box while the columns beside it run taller. */
+  align-items: stretch;
+  margin-top: 12px;
+}
+
+.bc-ile .bc-body.no-filterpane {
+  grid-template-columns: minmax(0, 1fr) 270px;
+}
+
+.bc-ile .bc-body.no-factbox {
+  grid-template-columns: 250px minmax(0, 1fr);
+}
+
+.bc-ile .bc-body.no-filterpane.no-factbox {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.bc-ile .bc-filterpane,
+.bc-ile .bc-factbox {
+  border: 1px solid var(--bc-line);
+  background: var(--bc-surface);
+}
+
+.bc-ile .bc-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--bc-line);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bc-ile .bc-pane-body {
+  padding: 10px 12px 12px;
+}
+
+.bc-ile .bc-filterpane label {
+  margin: 0 0 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-filterpane .bc-fp-field {
+  margin-bottom: 10px;
+}
+
+.bc-ile .bc-filterpane input,
+.bc-ile .bc-filterpane select {
+  height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg);
+}
+
+.bc-ile .bc-fp-hint {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--bc-link);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.bc-ile .bc-link:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------ the list grid */
+
+.bc-ile .bc-main {
+  min-width: 0;
+  border: 1px solid var(--bc-line);
+  background: var(--bc-surface);
+}
+
+.bc-ile .bc-grid-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--bc-line);
+  font-size: 13px;
+}
+
+.bc-ile .bc-grid-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-main);
+}
+
+.bc-ile .bc-grid-toolbar input[type="checkbox"] {
+  width: auto;
+}
+
+.bc-ile .bc-grid-wrap {
+  overflow: auto;
+  /* Fallback only, used before the page's JS measures the real space (fitGridToViewport) and sets
+     an inline max-height that fills exactly to the bottom of the viewport - a fixed guess here is
+     wrong as soon as a page's chrome above the grid is a different height (that's what left a slab
+     of empty page below a too-short grid on Physical Inventory Journal). */
+  max-height: calc(100vh - 260px);
+  min-height: 200px;
+}
+
+.bc-ile table.bc-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bc-surface);
+  font-size: 13px;
+}
+
+.bc-ile .bc-grid th,
+.bc-ile .bc-grid td {
+  padding: 0 8px;
+  height: 32px;
+  border: none;
+  border-bottom: 1px solid var(--bc-line);
+  text-align: left;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+/* BC's header is bold text on the surface colour with a stronger rule underneath - no fill. Sticky
+   cells must paint their own opaque background or the rows scroll through them. */
+.bc-ile .bc-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bc-surface);
+  border-bottom: 1px solid var(--bc-line-strong);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+/* BC-style sortable column header - click to sort, click again to reverse. */
+.bc-ile .bc-grid thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.bc-ile .bc-grid thead th.sortable:hover {
+  background: var(--bc-surface-2);
+}
+
+.bc-ile .bc-grid thead th.sortable .sort-arrow {
+  display: inline-block;
+  width: 10px;
+  margin-left: 2px;
+  font-size: 10px;
+  color: var(--bc-accent);
+  opacity: 0;
+}
+
+.bc-ile .bc-grid thead th.sort-asc .sort-arrow,
+.bc-ile .bc-grid thead th.sort-desc .sort-arrow {
+  opacity: 1;
+}
+
+.bc-ile .bc-grid tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--bc-surface-2);
+  border-top: 1px solid var(--bc-line-strong);
+  border-bottom: none;
+  font-weight: 600;
+}
+
+.bc-ile .bc-grid tbody tr {
+  cursor: default;
+}
+
+.bc-ile .bc-grid tbody tr:hover td {
+  background: var(--bc-hover);
+}
+
+.bc-ile .bc-grid tbody tr.selected td {
+  background: var(--bc-selected);
+}
+
+/* The accent bar BC draws on the left edge of the current row. */
+.bc-ile .bc-grid tbody tr.selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--bc-link);
+}
+
+/* A reversed entry (and the correction that cancels it) stays on the ledger - that is the point -
+   but is dimmed so it is clear the pair nets to nothing. */
+.bc-ile .bc-grid tbody tr.dim td {
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-grid tbody tr.dim.selected td {
+  color: var(--text-main);
+}
+
+.bc-ile .bc-grid .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bc-ile .bc-grid .neg {
+  color: var(--danger);
+}
+
+.bc-ile .bc-grid .cell-text {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bc-ile .bc-grid .cell-center {
+  text-align: center;
+}
+
+.bc-ile .bc-grid .cell-msg {
+  height: 64px;
+  text-align: center;
+  color: var(--text-muted);
+  white-space: normal;
+}
+
+.bc-ile .bc-grid .cell-msg.error-text {
+  color: var(--danger);
+}
+
+.bc-ile .bc-tick {
+  color: var(--bc-link);
+  font-weight: 700;
+}
+
+.bc-ile .pagination-bar {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--bc-line);
+}
+
+.bc-ile .pagination-bar .btn {
+  padding: 4px 10px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  background: var(--bc-surface);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.bc-ile .pagination-bar .btn:hover:not(:disabled) {
+  background: var(--bc-hover);
+}
+
+.bc-ile .pagination-bar select {
+  height: 28px;
+  border-radius: 2px;
+  background: var(--bc-input-bg);
+}
+
+.bc-ile #ileError,
+.bc-ile #balError {
+  margin: 0;
+  padding: 8px 12px;
+}
+
+/* ------------------------------------------------------------------ FactBox */
+
+.bc-ile .bc-factbox {
+  display: flex;
+  flex-direction: column;
+}
+
+.bc-ile .bc-fact + .bc-fact {
+  border-top: 1px solid var(--bc-line);
+}
+
+.bc-ile .bc-fact-title {
+  padding: 9px 12px 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bc-ile .bc-fact-body {
+  padding: 4px 12px 12px;
+}
+
+.bc-ile .bc-fact-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.bc-ile dl.bc-facts {
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.bc-ile dl.bc-facts dt {
+  color: var(--text-muted);
+}
+
+.bc-ile dl.bc-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.bc-ile .bc-avail {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  background: transparent;
+}
+
+.bc-ile .bc-avail td {
+  padding: 3px 0;
+  border: none;
+  font-size: 12.5px;
+}
+
+.bc-ile .bc-avail td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bc-ile .bc-avail tr.total td {
+  padding-top: 6px;
+  border-top: 1px solid var(--bc-line);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ worksheet batch bar
+   (Physical Inventory Journal - docs/physical-inventory-journal.html). BC keeps the journal Batch
+   Name as a plain field near the top of the page rather than a list filter, so it gets its own
+   strip instead of the .bc-infobar/.bc-tabs used by a list page. */
+
+.bc-ile .bc-batchbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--bc-line);
+  background: var(--bc-surface-2);
+  font-size: 13px;
+}
+
+.bc-ile .bc-batchbar label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-batchbar input {
+  height: 30px;
+  width: 200px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg);
+}
+
+.bc-ile .bc-batchbar .bc-batch-progress {
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-batchbar .bc-batch-progress strong {
+  color: var(--text-main);
+}
+
+/* Editable cells in a worksheet grid (Qty. Phys. Inventory) - BC's faint "this is an input" tint,
+   same idea as .doc-lines input in styles.css. */
+.bc-ile .bc-grid input.bc-qty-cell {
+  width: 88px;
+  height: 24px;
+  padding: 1px 6px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 12.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: #fffdf5;
+  color: var(--text-main);
+}
+
+:root[data-theme="dark"] .bc-ile .bc-grid input.bc-qty-cell {
+  background: #1a2438;
+}
+
+.bc-ile .bc-grid input.bc-qty-cell:focus {
+  outline: 2px solid var(--bc-link);
+  outline-offset: -1px;
+}
+
+.bc-ile .bc-grid td.qty-cell-wrap {
+  padding: 4px 8px;
+}
+
+/* ------------------------------------------------------------------ dialogs */
+
+.bc-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 7vh 16px 24px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.bc-dialog {
+  width: 100%;
+  max-width: 560px;
+  background: var(--bc-surface, #fff);
+  border-radius: 2px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  color: var(--text-main);
+}
+
+.bc-dialog.bc-dialog-wide {
+  max-width: 980px;
+}
+
+.bc-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 10px;
+}
+
+.bc-dialog-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.bc-dialog-body {
+  padding: 4px 20px 8px;
+  font-size: 13px;
+}
+
+.bc-dialog-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px 16px;
+}
+
+.bc-dialog-foot .bc-dialog-msg {
+  flex: 1 1 100%;
+  order: 9;
+  margin: 2px 0 0;
+  font-size: 12.5px;
+}
+
+.bc-dialog .bc-lede {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.bc-dialog .bc-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* BC dialog / card fields: the label sits to the LEFT of its value, not above it. */
+.bc-dialog .bc-field {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 12px;
+  margin-bottom: 9px;
+}
+
+.bc-dialog .bc-field > label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-main);
+}
+
+.bc-dialog input[type="text"],
+.bc-dialog input[type="number"],
+.bc-dialog input[type="date"],
+.bc-dialog select {
+  height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg, #fff);
+}
+
+.bc-dialog input[type="file"] {
+  font-size: 13px;
+}
+
+.bc-dialog .bc-count-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 8px;
+}
+
+.bc-dialog .bc-count-summary {
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.bc-dialog .bc-preview-wrap {
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--bc-line);
+}
+
+.bc-dialog table.bc-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bc-surface);
+}
+
+.bc-dialog .bc-grid th,
+.bc-dialog .bc-grid td {
+  padding: 0 10px;
+  height: 30px;
+  border: none;
+  border-bottom: 1px solid var(--bc-line);
+  text-align: left;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.bc-dialog .bc-grid thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bc-surface);
+  border-bottom: 1px solid var(--bc-line-strong);
+  font-weight: 600;
+}
+
+.bc-dialog .bc-grid .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bc-dialog .bc-grid .neg {
+  color: var(--danger);
+}
+
+.bc-dialog .bc-btn,
+.bc-dialog .bc-iconbtn {
+  height: 30px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  background: var(--bc-surface);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bc-dialog .bc-btn {
+  padding: 0 16px;
+}
+
+.bc-dialog .bc-btn:hover:not(:disabled),
+.bc-dialog .bc-iconbtn:hover {
+  background: var(--bc-hover);
+}
+
+.bc-dialog .bc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bc-dialog .bc-btn-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.bc-dialog .bc-btn-primary:hover:not(:disabled) {
+  background: var(--primary-strong);
+}
+
+.bc-dialog .bc-iconbtn {
+  width: 30px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.bc-dialog .bc-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--bc-link, #0f6cbd);
+  font: inherit;
+  cursor: pointer;
+}
+
+.bc-dialog .bc-summary-box {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--bc-line);
+  background: var(--bc-surface-2, #faf9f8);
+  font-size: 12.5px;
+}
+
+/* The dialogs sit outside .page.bc-ile (they are fixed-position), so they carry their own copy of
+   the colour variables. */
+.bc-dialog-backdrop {
+  --bc-surface: #ffffff;
+  --bc-surface-2: #faf9f8;
+  --bc-line: #e1dfdd;
+  --bc-line-strong: #c8c6c4;
+  --bc-hover: #f3f2f1;
+  --bc-link: #0f6cbd;
+  --bc-input-bg: #ffffff;
+}
+
+:root[data-theme="dark"] .bc-dialog-backdrop {
+  --bc-surface: #111a2c;
+  --bc-surface-2: #0f1728;
+  --bc-line: #22314b;
+  --bc-line-strong: #33476a;
+  --bc-hover: #16213a;
+  --bc-link: #6cb0f5;
+  --bc-input-bg: #111a2c;
+}
+
+/* ------------------------------------------------------------------ narrower screens */
+
+@media (max-width: 1280px) {
+  .bc-ile .bc-body,
+  .bc-ile .bc-body.no-filterpane {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
+
+  .bc-ile .bc-body.no-filterpane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bc-ile .bc-factbox {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .bc-ile .bc-body,
+  .bc-ile .bc-body.no-filterpane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bc-ile .bc-grid-wrap {
+    max-height: none;
+  }
+
+  .bc-ile .bc-search input {
+    width: 100%;
+  }
+
+  .bc-ile .bc-title-tools {
+    width: 100%;
+  }
+
+  .bc-ile .bc-search {
+    flex: 1;
+  }
+
+  .bc-dialog .bc-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Print (count sheet) - #printArea is built and filled by printJournal() right before
+   window.print(). Hidden on screen; on print, everything else under <body> is hidden instead so
+   only the count sheet comes out, regardless of what dialog/page state was open.
+   --------------------------------------------------------------------------- */
+
+#printArea {
+  display: none;
+}
+
+@media print {
+  body > *:not(#printArea) {
+    display: none !important;
+  }
+
+  #printArea {
+    display: block !important;
+    color: #000;
+    background: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  #printArea h1 {
+    font-size: 16px;
+    margin: 0 0 10px;
+  }
+
+  #printArea table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  #printArea .print-meta {
+    margin-bottom: 14px;
+    font-size: 11px;
+  }
+
+  #printArea .print-meta td {
+    padding: 1px 6px 1px 0;
+  }
+
+  #printArea .print-meta td:first-child {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  #printArea .print-lines th,
+  #printArea .print-lines td {
+    border: 1px solid #999;
+    padding: 4px 6px;
+    font-size: 11px;
+    text-align: left;
+  }
+
+  #printArea .print-lines th.num,
+  #printArea .print-lines td.num {
+    text-align: right;
+  }
+
+  #printArea .print-lines .blank-cell {
+    min-width: 70px;
+  }
+
+  #printArea .print-sign {
+    margin-top: 18px;
+    font-size: 12px;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+}

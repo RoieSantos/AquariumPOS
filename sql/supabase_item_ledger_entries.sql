@@ -28,9 +28,10 @@
 --     supabase_item_ledger_hooks.sql (run that after this file).
 --   * Sales are NOT hooked in yet - see the note at the bottom of that file.
 --
--- Negative inventory is allowed (BC's default): nothing here refuses a movement that would take
--- a balance below zero, so a receipt entered late never gets blocked - the balances report just
--- shows the negative.
+-- NEGATIVE STOCK. Where someone is choosing to take stock out (a transfer shipment, a negative
+-- adjustment) the movement is refused if it would take the balance below zero. Where it can't be
+-- refused (a sale that already happened, a reversal) it is allowed, and the balances report shows
+-- the negative in red so it can be investigated.
 
 -- ============================================================================
 -- 1. Item Ledger Entries
@@ -115,16 +116,102 @@ create trigger "TR_ItemLedgerEntries_NoTruncate"
 -- 2. Posting engine
 -- ============================================================================
 
--- The one and only way a row gets written. Every stock-moving workflow (adjustments now; PO
--- receiving, transfers and sales later) should call this rather than inserting directly, so the
--- validation lives in exactly one place.
+-- ----------------------------------------------------------------------------
+-- Stock key: which "shelf" a movement belongs to.
+--
+-- The stock unit is ITEM + VARIANT + WAREHOUSE, but a variant only means something when the item
+-- actually has several. Two shapes exist in this catalog:
+--   * A variant with its OWN Items row (Variants.ItemCode = that row): the item code alone already
+--     says which variant it is, so the variant id is redundant and is stored as null.
+--   * Several variants that all resolve to ONE Items row (Variants.ItemCode = the parent): here the
+--     variant id is the only thing telling them apart, so it is REQUIRED and stored.
+-- Normalising like this keeps a plain item's balance in one row instead of splitting it between
+-- "no variant" and "its only variant", which would make every balance quietly wrong.
+--
+-- A variant that has its own Items row but is passed against the parent's code (the Adjustment
+-- form's variant picker lists variants by parent) is re-pointed at its own item.
+-- ----------------------------------------------------------------------------
+create or replace function public._ile_resolve_stock_key(p_item_code text, p_variant_id text)
+returns table(item_code text, variant_id text)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_item text := trim(coalesce(p_item_code, ''));
+  v_variant text := nullif(trim(coalesce(p_variant_id, '')), '');
+  v_variant_item text;
+  v_variant_main text;
+  v_count int;
+begin
+  if v_variant is not null then
+    select v."ItemCode", v."MainItemCode" into v_variant_item, v_variant_main
+      from public."Variants" v where v."VariationId" = v_variant;
+
+    if not found then
+      raise exception 'Variant "%" does not exist.', v_variant;
+    end if;
+
+    if v_variant_item is not null and v_variant_item <> v_item and v_variant_main = v_item then
+      v_item := v_variant_item;
+    elsif coalesce(v_variant_item, '') <> v_item and coalesce(v_variant_main, '') <> v_item then
+      raise exception 'Variant "%" does not belong to item "%".', v_variant, v_item;
+    end if;
+  end if;
+
+  select count(*) into v_count from public."Variants" v where v."ItemCode" = v_item;
+
+  if v_count >= 2 then
+    if v_variant is null then
+      raise exception 'Item "%" has % variants - pick which variant.', v_item, v_count;
+    end if;
+    return query select v_item, v_variant;
+  else
+    return query select v_item, null::text;
+  end if;
+end;
+$$;
+
+revoke execute on function public._ile_resolve_stock_key(text, text) from public, anon, authenticated;
+
+-- On-hand for one stock key, straight from the ledger. Pass the RESOLVED key.
+create or replace function public._ile_balance(p_item_code text, p_variant_id text, p_warehouse_id text)
+returns numeric
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  select coalesce(sum(e."Quantity"), 0)
+  from public."ItemLedgerEntries" e
+  where e."ItemCode" = p_item_code
+    and e."WarehouseId" = p_warehouse_id
+    and coalesce(e."VariantId", '') = coalesce(p_variant_id, '')
+$$;
+
+revoke execute on function public._ile_balance(text, text, text) from public, anon, authenticated;
+
+-- The one and only way a row gets written. Every stock-moving workflow (adjustments, PO receiving,
+-- transfers, and sales later) calls this rather than inserting directly, so the validation lives
+-- in exactly one place.
 --
 -- Deliberately does NOT check the sign against the entry type: a reversal of a Purchase is a
 -- negative Purchase row, exactly as in BC. Callers that want that rule (the adjustment RPC) apply
 -- it themselves.
 --
+-- p_prevent_negative: refuse a movement that would take this stock key below zero. Used where
+-- someone is choosing to take stock out (transfer shipments, negative adjustments). Left off for
+-- reversals (a correction must always be possible) and for sales (a sale that already happened
+-- can't be refused - it just shows as negative stock to be investigated). Serialised per stock key
+-- so two simultaneous shipments can't both pass the check against the same stock.
+--
 -- Not granted to anon - this is an internal building block, and it does no authorization of its
 -- own. Only the admin_*/staff_* RPCs (which do) may reach it.
+-- The first version had 12 parameters. Left in place next to this 13-parameter one, a call with
+-- only the required arguments would match both and fail as ambiguous.
+drop function if exists public._ile_post(text, text, text, text, numeric, date, text, text, text, bigint, text, bigint);
+
 create or replace function public._ile_post(
   p_entry_type text,
   p_item_code text,
@@ -137,7 +224,8 @@ create or replace function public._ile_post(
   p_description text,
   p_transaction_no bigint,
   p_posted_by text,
-  p_reverses_entry_no bigint default null
+  p_reverses_entry_no bigint default null,
+  p_prevent_negative boolean default false
 )
 returns bigint
 language plpgsql
@@ -146,26 +234,38 @@ set search_path = public, extensions
 as $$
 declare
   v_entry_no bigint;
-  v_variant_id text := nullif(trim(coalesce(p_variant_id, '')), '');
+  v_item text;
+  v_variant text;
+  v_warehouse_name text;
+  v_on_hand numeric;
 begin
   if p_quantity is null or p_quantity = 0 then
     raise exception 'Item % has a zero quantity - nothing to post.', p_item_code;
   end if;
 
-  if not exists (select 1 from public."Items" where "Code" = p_item_code) then
+  if not exists (select 1 from public."Items" where "Code" = trim(coalesce(p_item_code, ''))) then
     raise exception 'Item "%" does not exist.', p_item_code;
   end if;
 
-  if not exists (select 1 from public."Warehouses" where "ID" = p_warehouse_id) then
+  select w."Name" into v_warehouse_name from public."Warehouses" w where w."ID" = p_warehouse_id;
+  if not found then
     raise exception 'Warehouse "%" does not exist.', p_warehouse_id;
   end if;
 
-  if v_variant_id is not null and not exists (
-    select 1 from public."Variants" v
-    where v."VariationId" = v_variant_id
-      and (v."ItemCode" = p_item_code or v."MainItemCode" = p_item_code)
-  ) then
-    raise exception 'Variant "%" does not belong to item "%".', v_variant_id, p_item_code;
+  select k.item_code, k.variant_id into v_item, v_variant
+    from public._ile_resolve_stock_key(p_item_code, p_variant_id) k;
+
+  if not exists (select 1 from public."Items" where "Code" = v_item) then
+    raise exception 'Item "%" does not exist.', v_item;
+  end if;
+
+  if coalesce(p_prevent_negative, false) and p_quantity < 0 then
+    perform pg_advisory_xact_lock(hashtext(v_item || '|' || coalesce(v_variant, '') || '|' || p_warehouse_id));
+    v_on_hand := public._ile_balance(v_item, v_variant, p_warehouse_id);
+    if v_on_hand + p_quantity < 0 then
+      raise exception 'Not enough stock: % has % on hand at %, cannot take out %.',
+        v_item || coalesce(' (' || v_variant || ')', ''), v_on_hand, coalesce(v_warehouse_name, p_warehouse_id), -p_quantity;
+    end if;
   end if;
 
   insert into public."ItemLedgerEntries" (
@@ -174,7 +274,7 @@ begin
   )
   values (
     coalesce(p_transaction_no, nextval('public.ile_transaction_no_seq')),
-    coalesce(p_posting_date, current_date), p_entry_type, p_item_code, v_variant_id, p_warehouse_id,
+    coalesce(p_posting_date, public._ile_today()), p_entry_type, v_item, v_variant, p_warehouse_id,
     round(p_quantity, 4), p_document_type, p_document_no, left(p_description, 500),
     p_reverses_entry_no, p_posted_by
   )
@@ -184,7 +284,7 @@ begin
 end;
 $$;
 
-revoke execute on function public._ile_post(text, text, text, text, numeric, date, text, text, text, bigint, text, bigint) from public, anon, authenticated;
+revoke execute on function public._ile_post(text, text, text, text, numeric, date, text, text, text, bigint, text, bigint, boolean) from public, anon, authenticated;
 
 -- ============================================================================
 -- 3. Manual adjustments (also how opening balances are loaded)
@@ -251,7 +351,9 @@ begin
       v_document_no,
       trim(p_description),
       v_transaction_no,
-      p_admin_username
+      p_admin_username,
+      null,
+      v_quantity < 0
     );
   end loop;
 
@@ -266,6 +368,20 @@ grant execute on function public.admin_post_item_adjustments(text, text, date, t
 -- ============================================================================
 
 drop function if exists public.admin_reverse_item_ledger_transaction(text, text, bigint, text);
+
+-- Extension point called for every entry a reversal cancels. No-op by default - see the call site.
+create or replace function public._ile_on_reversed(p_entry public."ItemLedgerEntries")
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  null;
+end;
+$$;
+
+revoke execute on function public._ile_on_reversed(public."ItemLedgerEntries") from public, anon, authenticated;
 
 -- Reverses the WHOLE transaction the given entry belongs to (an adjustment batch, or everything one
 -- PO receive click posted) by posting the mirror image dated today. The original rows are left exactly as they
@@ -284,7 +400,7 @@ as $$
 declare
   v_transaction_no bigint;
   v_new_transaction_no bigint;
-  v_row record;
+  v_row public."ItemLedgerEntries";
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -333,6 +449,10 @@ begin
       p_admin_username,
       v_row."EntryNo"
     );
+
+    -- Lets the document behind an entry react to being reversed (a PO receipt gives its received
+    -- quantity back). A no-op here; supabase_item_ledger_hooks.sql supplies the real behaviour.
+    perform public._ile_on_reversed(v_row);
   end loop;
 
   return v_new_transaction_no;

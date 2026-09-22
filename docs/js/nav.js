@@ -138,6 +138,7 @@ function renderTopNav(activeLabel) {
     // Super users only for now - every RPC behind this page re-checks with is_admin_authorized, so
     // this gate is convenience, not the control.
     inventory.push({ href: 'item-ledger-entries.html', label: 'Item Ledger Entries' });
+    inventory.push({ href: 'physical-inventory-journal.html', label: 'Physical Inventory Journal' });
     inventory.push({ href: 'warehouse-setup.html', label: 'Warehouse Setup' });
     inventory.push({ href: 'item-setup.html', label: 'Item Setup' });
     inventory.push({ href: 'variant-setup.html', label: 'Variants' });
@@ -153,6 +154,7 @@ function renderTopNav(activeLabel) {
   }
   if (isSuperUser) {
     reports.push({ href: 'order-timing-dashboard.html', label: 'Order Timing' });
+    reports.push({ href: 'message-timing.html', label: 'Message Timing' });
     reports.push({ href: 'expense-entries.html', label: 'Expenses' });
     reports.push({ href: 'expense-journal.html', label: 'Expense Journal' });
     // Financials - super users only, matching the Expenses page it draws from. Both RPCs behind

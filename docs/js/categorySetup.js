@@ -21,13 +21,13 @@ function renderCategoryRows(categories) {
         <td>${c.item_count ?? 0}</td>
         <td><input type="checkbox" class="category-production-input" data-code="${encodeURIComponent(c.code)}" ${c.is_production_category ? 'checked' : ''} /></td>
         <td><input type="checkbox" class="category-exclude-input" data-code="${encodeURIComponent(c.code)}" ${c.exclude_in_transfer_orders ? 'checked' : ''} /></td>
-        <td><input type="checkbox" class="category-stock-sync-input" data-code="${encodeURIComponent(c.code)}" ${c.include_in_stock_sync ? 'checked' : ''} /></td>
         <td><input type="checkbox" class="category-wholesale-input" data-code="${encodeURIComponent(c.code)}" ${c.is_wholesale_applicable ? 'checked' : ''} /></td>
+        <td><input type="checkbox" class="category-stock-sync-input" data-code="${encodeURIComponent(c.code)}" ${c.include_in_stock_sync ? 'checked' : ''} /></td>
       </tr>
     `)
     .join('');
 
-  tbody.querySelectorAll('.category-production-input, .category-exclude-input, .category-stock-sync-input, .category-wholesale-input').forEach((cb) => {
+  tbody.querySelectorAll('.category-production-input, .category-exclude-input, .category-wholesale-input, .category-stock-sync-input').forEach((cb) => {
     cb.addEventListener('change', () => saveCategoryFlags(decodeURIComponent(cb.dataset.code)));
   });
   // Auto-saves on blur (not every keystroke) - the description field is free text, unlike the
@@ -42,8 +42,8 @@ async function saveCategoryFlags(code) {
   const descriptionInput = row.querySelector('.category-description-input');
   const productionCb = row.querySelector('.category-production-input');
   const excludeCb = row.querySelector('.category-exclude-input');
-  const stockSyncCb = row.querySelector('.category-stock-sync-input');
   const wholesaleCb = row.querySelector('.category-wholesale-input');
+  const stockSyncCb = row.querySelector('.category-stock-sync-input');
 
   const { error } = await supabaseClient.rpc('admin_update_category_flags', {
     p_admin_username: currentSession.username,
@@ -52,8 +52,8 @@ async function saveCategoryFlags(code) {
     p_description: descriptionInput.value.trim() || null,
     p_is_production_category: productionCb.checked,
     p_exclude_in_transfer_orders: excludeCb.checked,
-    p_include_in_stock_sync: stockSyncCb.checked,
-    p_is_wholesale_applicable: wholesaleCb.checked
+    p_is_wholesale_applicable: wholesaleCb.checked,
+    p_include_in_stock_sync: stockSyncCb.checked
   });
 
   if (error) {
