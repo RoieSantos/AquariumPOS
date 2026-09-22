@@ -20,9 +20,9 @@
 //     default as the smallest tier), not a verified cost calculation - meant to be sanity-checked
 //     and adjusted on the Pricing Setup page against real material/labor costs.
 // Client-side pricing only - nothing here is saved to the database, matching the other calculators
-// (Custom Stand, Aquarium Calculator, Stickers). Alice (the AI bot) does NOT know about this
-// feature yet - out of scope per direct instruction to build the system feature first, and teach
-// her about it as a separate follow-up.
+// (Custom Stand, Aquarium Calculator, Stickers). Alice (the AI bot) CAN also quote these two repair
+// types via compute_repair_quote (supabase/functions/_shared/chatbot-engine.ts) - a hand-ported
+// copy of this same pricing logic, not a shared import; keep both in sync manually if this changes.
 
 const PANEL_LOCATIONS = ['Bottom', 'Front', 'Back', 'Left', 'Right'];
 

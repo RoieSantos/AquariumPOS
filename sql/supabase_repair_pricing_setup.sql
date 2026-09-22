@@ -9,9 +9,8 @@
 -- Single fixed-row settings table, same shape as ChatbotAiSettings/ChatbotFollowUpSettings (Id=1),
 -- not a per-feature key/value list, since there are only ever these two knobs.
 --
--- NOTE: Alice (the AI bot) does NOT know about repairs yet - per direct instruction, this feature
--- is being built in the system first; teaching the bot about it (new compute_repair_quote tool,
--- system prompt updates) is a separate follow-up once this is confirmed working.
+-- NOTE: Alice (the AI bot) now also quotes these two repair types via the compute_repair_quote
+-- tool (supabase/functions/_shared/chatbot-engine.ts) - a hand-ported copy of this pricing logic.
 --
 -- Run this in the Supabase SQL Editor.
 

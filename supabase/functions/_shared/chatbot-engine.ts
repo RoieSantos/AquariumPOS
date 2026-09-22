@@ -682,7 +682,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'log_capability_gap',
     description:
-      'Call this when you genuinely do not have the knowledge, pricing, or tools to answer something - a type of request you were never given information about (e.g. repair/refurbishment services on an aquarium the customer already owns, as opposed to a brand-new custom build you CAN quote with compute_aquarium_quote). Do NOT use this for things you already know how to handle but that need a human to finish - use escalate_to_staff for those instead. Always tell the person honestly first that this isn\'t something you\'re programmed to help with yet, THEN call this tool - never claim their request was sent somewhere or that an answer is coming if nothing was actually set in motion.',
+      'Call this when you genuinely do not have the knowledge, pricing, or tools to answer something - a type of request you were never given information about (e.g. a repair job type compute_repair_quote doesn\'t cover, like a cracked stand frame or filtration/electrical repair, as opposed to a glass panel replacement or resealing/leak repair you CAN quote with compute_repair_quote). Do NOT use this for things you already know how to handle but that need a human to finish - use escalate_to_staff for those instead. Always tell the person honestly first that this isn\'t something you\'re programmed to help with yet, THEN call this tool - never claim their request was sent somewhere or that an answer is coming if nothing was actually set in motion.',
     input_schema: {
       type: 'object',
       properties: {
@@ -767,6 +767,28 @@ export const TOOLS: Anthropic.Tool[] = [
         is_repair: { type: 'boolean', description: 'Only for type=Glass: true if this is a repair/resurfacing job on existing glass rather than a fresh install - priced at 2.5x the normal rate.' }
       },
       required: ['type', 'length', 'width']
+    }
+  },
+  {
+    name: 'compute_repair_quote',
+    description:
+      'Compute a real price quote for repairing/refurbishing an aquarium the customer ALREADY OWNS (a broken/cracked glass panel that needs replacing, or resealing a leak) - the store\'s own official repair pricing formula, the exact same live rates staff use. Only covers glass panel replacement and resealing/leak repair - for any other kind of repair (stand frame, electrical/pump, filtration, etc.) use log_capability_gap instead, this tool cannot quote that. Ask for the aquarium\'s OVERALL Length/Width/Height first (never ask the customer to measure just the damaged panel by itself - each panel\'s own size is worked out from the overall dimensions, same convention as compute_aquarium_quote: Bottom = Length x Width, Front/Back = Length x Height, Left/Right = Width x Height). For repair_type "panel", also ask which panel(s) are damaged (one or more of Bottom/Front/Back/Left/Right) and the glass thickness if known (defaults to 6mm if not given). For repair_type "reseal" (resealing/leak repair), no panel or thickness is needed - it is priced by an estimated tank size tier from the same dimensions, not a per-panel amount. State the result with confidence, not as a rough estimate. Never state repair pricing without calling this tool first. This is QUOTE ONLY - it cannot place an actual repair job; if the customer wants to proceed, tell them staff will need to arrange drop-off/scheduling, then call escalate_to_staff.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        repair_type: { type: 'string', enum: ['panel', 'reseal'], description: '"panel" for a broken/cracked glass panel that needs replacing, "reseal" for resealing/a leak.' },
+        length: { type: 'number', description: 'Aquarium overall length.' },
+        width: { type: 'number', description: 'Aquarium overall width.' },
+        height: { type: 'number', description: 'Aquarium overall height.' },
+        unit: { type: 'string', enum: ['Inches', 'cm', 'mm', 'ft'], description: 'Defaults to Inches if not specified.' },
+        panels: {
+          type: 'array',
+          items: { type: 'string', enum: ['Bottom', 'Front', 'Back', 'Left', 'Right'] },
+          description: 'REQUIRED when repair_type is "panel": which panel(s) are damaged. Ignored for "reseal".'
+        },
+        glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm'], description: 'Only used when repair_type is "panel". Defaults to 6mm if not specified.' }
+      },
+      required: ['repair_type', 'length', 'width', 'height']
     }
   },
   {
@@ -939,6 +961,7 @@ export function buildSystemPrompt(
     '- Delivery whereabouts ("where is my delivery", "where is my order", "where is the driver with my stuff"): ALWAYS confirm first (if not already clear from the conversation) whether this is the STORE\'S OWN TRUCK delivering it, or a courier the customer arranged themselves (e.g. Lalamove) - never assume either way. If it\'s a Lalamove courier: explain plainly that the store can\'t track a Lalamove rider from here, and the customer needs to coordinate directly with their rider (through the Lalamove app, or whatever contact info Lalamove gave them). If it\'s the store\'s own truck: get their order number and call get_delivery_schedule_status. If it comes back scheduled for TODAY (is_today), tell them it\'s out for delivery today (mention the route_name if given), THEN call get_driver_location (TEST feature) and share its liveTrackingUrl (mention the page updates live as the driver moves) plus minutesSinceUpdate - if no driver is currently tracking, just tell the customer the truck is scheduled for today and a team member can give a more specific update. If scheduled_date is a different day, tell them that date instead. If for_delivery is false (not scheduled at all yet), let them know it hasn\'t been scheduled yet and offer to help schedule a date (see the delivery-scheduling item above) or that staff can confirm.',
     '- (TEST) Only if a customer asks generically "where is the driver" with no order/delivery context at all (not tied to their own order), you may call get_driver_location directly without an order number - it just reports whichever driver is currently tracking, for testing GPS reporting end-to-end.',
     '- General conversation about aquariums, fish, and pets, related to what the store sells.',
+    '- Repair/refurbishment quotes for an aquarium the customer ALREADY OWNS - a broken/cracked glass panel that needs replacing, or resealing/a leak - use compute_repair_quote (this covers glass panel replacement and resealing only, not stand/electrical/filtration repairs - use log_capability_gap for those). Ask for the aquarium\'s OVERALL length/width/height first, never just the damaged panel\'s own size (it\'s worked out from the overall dimensions, same convention as compute_aquarium_quote). For a panel replacement, also ask which panel(s) are damaged (Bottom/Front/Back/Left/Right, one or more) and the glass thickness if known. For resealing/a leak, no panel or thickness is needed. This is the store\'s own official repair pricing formula - the same one staff use - so state it with confidence. It is QUOTE ONLY - there is no way to place a repair job yourself, so once the customer wants to proceed, tell them staff will arrange drop-off/scheduling and call escalate_to_staff.',
     '',
     'AQUARIUM & STAND SAFETY RULES - understand these so you can explain and apply them confidently in conversation, not just react after the fact. compute_aquarium_quote always does the actual math and is the source of truth for exact numbers - never calculate or predict a safety change yourself, but you should recognize when one is likely so you can set expectations before quoting:',
     '- Glass gets thicker, or tempered, automatically as size/volume grows: 3mm glass only works up to 24 inches in length and small volumes; anything bigger needs 6mm, 10mm, or 12mm. Any tank with width or height of 36 inches or more always requires tempered glass. Very large tanks (roughly 180+ gallons, or beyond about 72x30x30 inches) require 12mm glass.',
@@ -981,10 +1004,11 @@ export function buildSystemPrompt(
     '',
     'WHEN TO ESCALATE TO STAFF:',
     '- Refund requests, complaints, damaged/wrong items, or the customer explicitly asking for a human.',
+    '- A repair quote from compute_repair_quote that the customer wants to proceed with - staff need to arrange drop-off/scheduling since there is no create_order path for repairs.',
     '- Call the escalate_to_staff tool, then let the customer know a team member will follow up with them in this same conversation.',
     '',
     'WHEN YOU DON\'T ACTUALLY KNOW / CAN\'T HELP:',
-    '- escalate_to_staff is for things you understand and CAN normally handle, just not without a human\'s final action (a complaint, a refund, a price override). It is NOT for something you have no real knowledge, pricing, or tool for at all - e.g. repair/refurbishment services on an aquarium the customer already owns, versus a brand-new custom build you CAN quote with compute_aquarium_quote.',
+    '- escalate_to_staff is for things you understand and CAN normally handle, just not without a human\'s final action (a complaint, a refund, a price override, a confirmed repair quote that now needs drop-off/scheduling). It is NOT for something you have no real knowledge, pricing, or tool for at all - e.g. a repair job type compute_repair_quote doesn\'t cover (stand frame, electrical/pump, filtration), versus a glass panel replacement or resealing/leak repair you CAN quote with compute_repair_quote.',
     '- For that second kind, be honest instead of pretending you handled it - never say something has been "sent to staff" or that an answer/price is coming if nothing was actually set in motion. Tell the person plainly, in their own language/tone (Taglish is fine), that this isn\'t something you\'re programmed to help with yet - e.g. "Hindi ko pa kayang sagutin yan ngayon, wala pa akong info dyan - ill-log ko na lang siya para maisama sa future updates namin." Then call the log_capability_gap tool with their exact question so the team has a real record of what to build next. If it\'s the kind of thing a staff member could still genuinely help with directly (like an actual repair job), you can ALSO suggest they wait for staff or call the store - just don\'t claim it\'s already been forwarded unless you actually called escalate_to_staff too.',
     ''
   ];
@@ -1000,7 +1024,7 @@ export function buildSystemPrompt(
 
   lines.push(
     'GROUNDING RULES:',
-    '- Never invent stock, price, order, aquarium quote, accessory/sticker quote, or delivery fee information - always use the tools, even if you think you already know the number.',
+    '- Never invent stock, price, order, aquarium quote, accessory/sticker quote, repair quote, or delivery fee information - always use the tools, even if you think you already know the number.',
     '- If a tool returns nothing, say so plainly rather than guessing.',
     '- Speak in plain product names only - never mention internal item codes or category codes. Never mention Cost. Wholesale price follows its own rule below (WHOLESALE PRICING) - not an outright ban like the others.',
     '',
@@ -1265,6 +1289,146 @@ export async function computeStickerQuote(supabase: SupabaseClient, input: Recor
     glassPricingUom: 'MM'
   });
 }
+
+// ============================================================================
+// BEGIN: ported from docs/js/repairCalculator.js (repairRecalculate + everything it calls) - backs
+// compute_repair_quote. Panel Replacement: each checked panel's own area (SAME convention as
+// getGlassAreaSqFt above - Bottom = Length x Width, Front/Back = Length x Height, Left/Right =
+// Width x Height) x the live glass rate (buildGlassPriceLookup, the shared lookup above - not a
+// re-implementation) + a labor markup % from RepairPricingSetup, summed across every checked panel.
+// Resealing/Leak Repair: estimated gallons (L x W x H / 231) picks one of five size tiers, each
+// with its own configurable flat fee. Source of truth is that file - if its pricing logic changes,
+// re-sync this block. Same hand-ported-copy caveat as calculateCustomAquarium/
+// calculateStandaloneSticker above - both copies must be kept in sync manually.
+// ============================================================================
+
+const REPAIR_PANEL_LOCATIONS = ['Bottom', 'Front', 'Back', 'Left', 'Right'];
+
+const REPAIR_RESEAL_TIERS: Array<{ maxGallons: number; label: string; settingKey: string }> = [
+  { maxGallons: 20, label: 'up to 20 gal', settingKey: 'resealingSmallFee' },
+  { maxGallons: 50, label: '21-50 gal', settingKey: 'resealingMediumFee' },
+  { maxGallons: 100, label: '51-100 gal', settingKey: 'resealingLargeFee' },
+  { maxGallons: 150, label: '101-150 gal', settingKey: 'resealingXlFee' },
+  { maxGallons: Infinity, label: '151+ gal (monster tank)', settingKey: 'resealingMonsterFee' }
+];
+
+function repairResealTierFor(gallons: number): { maxGallons: number; label: string; settingKey: string } {
+  return REPAIR_RESEAL_TIERS.find((tier) => gallons <= tier.maxGallons) || REPAIR_RESEAL_TIERS[REPAIR_RESEAL_TIERS.length - 1];
+}
+
+// Same convention as getGlassAreaSqFt: Bottom = Length x Width, Front/Back = Length x Height, Left/Right = Width x Height.
+function repairPanelDims(panel: string, lengthInches: number, widthInches: number, heightInches: number): { width: number; height: number } {
+  if (panel === 'Bottom') return { width: lengthInches, height: widthInches };
+  if (panel === 'Front' || panel === 'Back') return { width: lengthInches, height: heightInches };
+  return { width: widthInches, height: heightInches }; // Left / Right
+}
+
+function calculateRepairQuote(input: Record<string, unknown>): Record<string, unknown> {
+  const options = input || {};
+  const unit = (options.unit as string) || 'Inches';
+  const lengthInches = toInches(options.length as number, unit);
+  const widthInches = toInches(options.width as number, unit);
+  const heightInches = toInches(options.height as number, unit);
+
+  if (!(lengthInches > 0) || !(widthInches > 0) || !(heightInches > 0)) {
+    return { ok: false, error: 'Please enter valid positive overall Length, Width, and Height for the aquarium.' };
+  }
+
+  const repairType = (options.repairType as string) === 'reseal' ? 'reseal' : 'panel';
+  const setup = (options.repairPricingSetup || {}) as Record<string, number>;
+  const glassLookup = (options.glassLookup || {}) as Record<string, number>;
+
+  if (repairType === 'panel') {
+    const panels = Array.isArray(options.panels)
+      ? (options.panels as string[]).filter((p) => REPAIR_PANEL_LOCATIONS.includes(p))
+      : [];
+    if (panels.length === 0) {
+      return { ok: false, error: 'Please specify at least one damaged panel (Bottom, Front, Back, Left, or Right).' };
+    }
+    const thickness = normalizeGlass((options.glassThickness as string) || '6mm');
+    const glassRate = glassLookup[thickness] || DEFAULT_GLASS_PRICES[thickness] || 0;
+    const markupPercent = Number(setup.panelReplacementMarkupPercent) || 20;
+
+    let total = 0;
+    const breakdown: Array<Record<string, unknown>> = [];
+    for (const panel of panels) {
+      const { width, height } = repairPanelDims(panel, lengthInches, widthInches, heightInches);
+      const areaSqFt = (width * height) / 144;
+      const glassCost = areaSqFt * glassRate;
+      const markup = glassCost * (markupPercent / 100);
+      const price = glassCost + markup;
+      total += price;
+      breakdown.push({ panel, widthInches: round2(width), heightInches: round2(height), areaSqFt: round2(areaSqFt), price: round2(price) });
+    }
+
+    return {
+      ok: true,
+      repairType: 'panel',
+      totalPrice: round2(total),
+      normalized: {
+        unit,
+        lengthInches: round2(lengthInches),
+        widthInches: round2(widthInches),
+        heightInches: round2(heightInches),
+        glassThickness: thickness,
+        markupPercent,
+        panels: breakdown
+      }
+    };
+  }
+
+  // Resealing / Leak Repair - priced by tank size tier, not per-panel.
+  const gallons = cubicInchesToGallons(lengthInches * widthInches * heightInches);
+  const tier = repairResealTierFor(gallons);
+  const total = Number(setup[tier.settingKey]) || 0;
+
+  return {
+    ok: true,
+    repairType: 'reseal',
+    totalPrice: round2(total),
+    normalized: {
+      unit,
+      lengthInches: round2(lengthInches),
+      widthInches: round2(widthInches),
+      heightInches: round2(heightInches),
+      estimatedGallons: Math.round(gallons),
+      tierLabel: tier.label
+    }
+  };
+}
+
+export async function computeRepairQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const [{ data: glassRows }, { data: setupRows }] = await Promise.all([
+    supabase.rpc('public_get_glass_pricing'),
+    supabase.rpc('public_get_repair_pricing_setup')
+  ]);
+
+  const glassLookup = buildGlassPriceLookup(glassRows ?? [], 'MM');
+  const setupRow = (Array.isArray(setupRows) ? setupRows[0] : setupRows) as Record<string, unknown> | undefined;
+  const repairPricingSetup = {
+    panelReplacementMarkupPercent: Number(setupRow?.panel_replacement_markup_percent) || 20,
+    resealingSmallFee: Number(setupRow?.resealing_flat_fee) || 500,
+    resealingMediumFee: Number(setupRow?.resealing_medium_fee) || 800,
+    resealingLargeFee: Number(setupRow?.resealing_large_fee) || 1200,
+    resealingXlFee: Number(setupRow?.resealing_xl_fee) || 1800,
+    resealingMonsterFee: Number(setupRow?.resealing_monster_fee) || 2500
+  };
+
+  return calculateRepairQuote({
+    unit: (input.unit as string) || 'Inches',
+    length: Number(input.length),
+    width: Number(input.width),
+    height: Number(input.height),
+    repairType: (input.repair_type as string) || 'panel',
+    panels: Array.isArray(input.panels) ? input.panels : [],
+    glassThickness: (input.glass_thickness as string) || '6mm',
+    glassLookup,
+    repairPricingSetup
+  });
+}
+// ============================================================================
+// END: ported from repairCalculator.js
+// ============================================================================
 
 export async function computeDeliveryQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const location = String(input.origin_location ?? '').trim();
@@ -1647,6 +1811,8 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       return JSON.stringify(await computeLalamoveQuote(supabase, input));
     case 'compute_sticker_quote':
       return JSON.stringify(await computeStickerQuote(supabase, input));
+    case 'compute_repair_quote':
+      return JSON.stringify(await computeRepairQuote(supabase, input));
     case 'get_driver_location':
       return JSON.stringify(await computeDriverLocation(supabase, input));
     case 'save_customer_info': {
