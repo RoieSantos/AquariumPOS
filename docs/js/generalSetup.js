@@ -137,6 +137,38 @@ async function savePromotionSetting() {
   await loadPromotionSetting();
 }
 
+// Item Ledger: Transfer Order posting on/off switch (supabase_item_ledger_transfer_posting_toggle.
+// sql) - a real toggle for what was previously only reachable by disabling the underlying trigger
+// by hand in the SQL editor.
+async function loadTransferPostingSetting() {
+  const { data, error } = await supabaseClient.rpc('admin_get_item_ledger_transfer_posting_enabled', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  // Not found (SQL not run yet) shouldn't block the rest of the page - default the checkbox to
+  // checked (the feature's own default) and let Save surface the real error if they try to use it.
+  document.getElementById('transferPostingEnabledInput').checked = error ? true : !!data;
+}
+
+async function saveTransferPostingSetting() {
+  const errorEl = document.getElementById('transferPostingError');
+  errorEl.classList.add('hidden');
+
+  const { error } = await supabaseClient.rpc('admin_set_item_ledger_transfer_posting_enabled', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_enabled: document.getElementById('transferPostingEnabledInput').checked
+  });
+
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  await loadTransferPostingSetting();
+}
+
 // Shared upload flow for both the logo and the Login page background image - only the RPC name,
 // which CompanyInfo field the result overrides, and which UI elements to update differ.
 async function uploadCompanyAsset({ fileInputId, uploadBtnId, uploadBtnLabel, rpcName, overrideKey, assetLabel }) {
@@ -837,6 +869,7 @@ async function deleteSetting(key) {
   document.getElementById('uploadBackgroundBtn').addEventListener('click', handleUploadBackground);
   document.getElementById('saveCompanyInfoBtn').addEventListener('click', () => saveCompanyInfo());
   document.getElementById('savePromoBtn').addEventListener('click', savePromotionSetting);
+  document.getElementById('saveTransferPostingBtn').addEventListener('click', saveTransferPostingSetting);
   document.getElementById('saveNoSeriesBtn').addEventListener('click', saveNoSeries);
   document.getElementById('cancelNoSeriesEditBtn').addEventListener('click', resetNoSeriesForm);
   document.getElementById('savePancakeApiKeyBtn').addEventListener('click', savePancakeApiKey);
@@ -848,6 +881,7 @@ async function deleteSetting(key) {
 
   await loadCompanyInfo();
   await loadPromotionSetting();
+  await loadTransferPostingSetting();
   await loadNoSeries();
   await loadPancakeApiKeyStatus();
   await loadPancakePublicApiKeyStatus();

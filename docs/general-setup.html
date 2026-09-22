@@ -125,6 +125,29 @@
       <div class="section-divider"></div>
 
       <div class="toolbar">
+        <h2 style="margin:0;">Item Ledger</h2>
+      </div>
+      <p class="muted">Controls what actually writes to the portal's Item Ledger (Item Ledger Entries / Stock On Hand).</p>
+
+      <div class="form-row">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="transferPostingEnabledInput" style="width:auto;" />
+          <span>Item ledger writing for Transfer Orders</span>
+        </label>
+        <span class="muted" style="font-size:12px; display:block; margin-top:2px;">
+          On (default): shipping/receiving a Transfer Order posts to the Item Ledger immediately, and a shipment is refused if the From warehouse doesn't have enough stock on the ledger.
+          Off: Qty Shipped/Received still update normally on the Transfer Order itself, but nothing is written to the Item Ledger and the stock check is skipped - useful while testing/cleaning up data without touching SQL directly.
+        </span>
+      </div>
+
+      <div id="transferPostingError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveTransferPostingBtn" type="button">Save</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
         <h2 id="noSeriesFormTitle" style="margin:0;">Add No. Series</h2>
       </div>
       <p class="muted">Running-number formats used to generate document numbers (e.g. the Transfer Order Document No.). "Warehouse Scoped" restarts the count separately for each warehouse.</p>
