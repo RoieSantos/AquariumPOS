@@ -957,7 +957,7 @@ export function buildSystemPrompt(
     'If a customer asks whether you are a bot, say plainly that you are an automated assistant, then keep helping - unless the ADDITIONAL DIRECTIONS FROM THE STORE OWNER section below explicitly says to answer that differently, in which case follow that instruction instead.',
     '',
     'WHAT YOU CAN HELP WITH:',
-    '- Whether a product is in stock and its price (use the search_items or list_items_in_category tools - never guess). When you tell a customer about a specific product, offer to send a photo of it ("want me to send you a photo?") - only call send_item_image after they say yes, using the item_code from that search result. Never send a photo unprompted, and never send more than one or two per exchange even if asked about several items at once - offer, then send only the one(s) they confirm.',
+    '- Whether a product is in stock and its price (use the search_items or list_items_in_category tools - never guess). Only mention stock/quantity when the customer actually asks about availability/stock, or you\'re telling them it\'s NOT available at all (has none in the catalog) - a plain price question gets just the price, don\'t volunteer the stock count or "0 in stock"/"currently showing X" unprompted. When you tell a customer about a specific product, offer to send a photo of it ("want me to send you a photo?") - only call send_item_image after they say yes, using the item_code from that search result. Never send a photo unprompted, and never send more than one or two per exchange even if asked about several items at once - offer, then send only the one(s) they confirm.',
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Printed/To Ship/Shipped/Cancelled), and which branch/warehouse it was ordered from; for an Automated Order result, share its Pancake sync status plainly (e.g. still being processed vs. confirmed). There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
@@ -1054,6 +1054,13 @@ export function buildSystemPrompt(
   // rather than Amaya - see supabase_chatbot_ai_settings_default_location.sql.
   const defaultLocation = (aiSettings?.DefaultLocation as string | undefined)?.trim() || 'GMA';
   lines.push('', `DEFAULT BRANCH: ${defaultLocation} - use this for create_order's "location" field whenever the customer hasn't told you which branch (Amaya or GMA) fulfills their order, rather than guessing.`);
+  lines.push(
+    '',
+    'BRANCH PIN LOCATIONS (for customers asking where we are / how to get there):',
+    '- Amaya branch - pin location: "RSPetStop Amaya"',
+    '- GMA branch - pin location: "RSPetStop GMA"',
+    '- Tell the customer to search that exact pin name in Google Maps or Waze to find the branch. Only give the pin name of the branch they ask about (or both if they haven\'t said which); do not invent street addresses or link URLs.'
+  );
   if (companyInfo) {
     lines.push('', 'COMPANY INFO:');
     if (companyInfo.Address) lines.push(`Address: ${companyInfo.Address}`);
@@ -1531,7 +1538,11 @@ async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: n
   const res = await fetch(url);
   const data = await res.json();
   if (data?.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-    console.error(`geocodeAddress service error for "${address}": ${data.status} - ${data.error_message ?? 'no detail'}`);
+    // Logs only the last 6 chars of the key (never the full secret) so staff can confirm in
+    // Google Cloud Console whether this is actually the same key they just edited - a
+    // REQUEST_DENIED that persists after adding Geocoding API to a key's restrictions usually
+    // means the wrong key got edited (projects often have a separate frontend Maps/Places key).
+    console.error(`geocodeAddress service error for "${address}" (key ...${apiKey.slice(-6)}): ${data.status} - ${data.error_message ?? 'no detail'}`);
     throw new Error('GEOCODE_SERVICE_ERROR');
   }
   const loc = data?.results?.[0]?.geometry?.location;
