@@ -127,6 +127,7 @@ function openNewUserModal() {
   document.getElementById('newUserProductionMember').checked = false;
   document.getElementById('newUserPayrollOfficer').checked = false;
   document.getElementById('newUserStoreManager').checked = false;
+  document.getElementById('newUserConversationsStaff').checked = false;
   document.getElementById('newUserMonthlyTarget').value = 0;
   document.getElementById('newUserMustChangePassword').checked = false;
   document.getElementById('newUserEmployeeNo').value = '';
@@ -162,6 +163,7 @@ function openEditUserModal(username) {
   document.getElementById('editUserProductionMember').checked = !!user.is_production_member;
   document.getElementById('editUserPayrollOfficer').checked = !!user.is_payroll_officer;
   document.getElementById('editUserStoreManager').checked = !!user.is_store_manager;
+  document.getElementById('editUserConversationsStaff').checked = !!user.is_conversations_staff;
   document.getElementById('editUserMonthlyTarget').value = Number(user.monthly_sales_target) || 0;
   document.getElementById('editUserMustChangePassword').checked = !!user.must_change_password;
   document.getElementById('editUserActive').checked = !!user.is_active;
@@ -198,6 +200,7 @@ async function saveEditUser() {
   const isProductionMember = document.getElementById('editUserProductionMember').checked;
   const isPayrollOfficer = document.getElementById('editUserPayrollOfficer').checked;
   const isStoreManager = document.getElementById('editUserStoreManager').checked;
+  const isConversationsStaff = document.getElementById('editUserConversationsStaff').checked;
   const monthlyTarget = Number(document.getElementById('editUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('editUserMustChangePassword').checked;
   const isActive = document.getElementById('editUserActive').checked;
@@ -253,7 +256,8 @@ async function saveEditUser() {
     p_daily_rate: dailyRate,
     p_has_paid_rest_day: hasPaidRestDay,
     p_employee_no: employeeNo || null,
-    p_is_store_manager: isStoreManager
+    p_is_store_manager: isStoreManager,
+    p_is_conversations_staff: isConversationsStaff
   });
 
   saveBtn.disabled = false;
@@ -286,6 +290,7 @@ async function saveNewUser() {
   const isProductionMember = document.getElementById('newUserProductionMember').checked;
   const isPayrollOfficer = document.getElementById('newUserPayrollOfficer').checked;
   const isStoreManager = document.getElementById('newUserStoreManager').checked;
+  const isConversationsStaff = document.getElementById('newUserConversationsStaff').checked;
   const monthlyTarget = Number(document.getElementById('newUserMonthlyTarget').value) || 0;
   const mustChangePassword = document.getElementById('newUserMustChangePassword').checked;
   const employeeNo = document.getElementById('newUserEmployeeNo').value.trim();
@@ -344,7 +349,8 @@ async function saveNewUser() {
     p_daily_rate: dailyRate,
     p_has_paid_rest_day: hasPaidRestDay,
     p_employee_no: employeeNo || null,
-    p_is_store_manager: isStoreManager
+    p_is_store_manager: isStoreManager,
+    p_is_conversations_staff: isConversationsStaff
   });
 
   saveBtn.disabled = false;

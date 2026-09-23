@@ -82,6 +82,9 @@ function renderTopNav(activeLabel) {
   // requireAuth() STORE_MANAGER_ALLOWED_PAGES, so hiding these links is convenience, not the
   // control.
   const isStoreManager = !!session?.isStoreManager;
+  // Conversations Access (supabase_staff_users_conversations_staff_field.sql) - plain additive tag
+  // that just unlocks the GMA Conversations link below, same shape as Payroll Officer.
+  const isConversationsStaff = !!session?.isConversationsStaff;
 
   // Dashboard stands alone (not part of any group) since it's the one link everyone reaches for
   // first. Everything else is bucketed by function so the nav reads as a handful of menus instead
@@ -166,7 +169,13 @@ function renderTopNav(activeLabel) {
   if (isSuperUser) {
     admin.push({ href: 'general-setup.html', label: 'General Setup' });
     admin.push({ href: 'ai-bot-setup.html', label: 'AI Bot Setup' });
+  }
+  // Conversations Access sees GMA Conversations even without full Super User - same
+  // "isSuperUser || is<Flag>" gate the page itself enforces in its own init().
+  if (isSuperUser || isConversationsStaff) {
     admin.push({ href: 'gma-conversations.html', label: 'GMA Conversations' });
+  }
+  if (isSuperUser) {
     admin.push({ href: 'customers.html', label: 'Customers' });
     admin.push({ href: 'ai-bot-sandbox.html', label: 'AI Bot Sandbox' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });

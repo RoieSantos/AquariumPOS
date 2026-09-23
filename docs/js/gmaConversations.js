@@ -3508,7 +3508,7 @@ async function handleGmaInboxEvent(payload) {
   currentSession = session;
   renderTopNav('GMA Conversations');
 
-  if (!session.isSuperUser) {
+  if (!session.isSuperUser && !session.isConversationsStaff) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
     return;
   }

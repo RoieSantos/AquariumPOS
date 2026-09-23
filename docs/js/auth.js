@@ -60,6 +60,7 @@ async function attemptLogin(username, password) {
     isProductionMember: !!result.is_production_member,
     isPayrollOfficer: !!result.is_payroll_officer,
     isStoreManager: !!result.is_store_manager,
+    isConversationsStaff: !!result.is_conversations_staff,
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -133,7 +134,7 @@ const STORE_MANAGER_ALLOWED_PAGES = [
 function hasNoPortalPermission(session) {
   return !session.isSuperUser && !session.isPayrollOfficer && !session.isSalesUser &&
     !session.isSerialAdmin && !session.isDeliveryTeam && !session.isOnlineOrderStaff &&
-    !session.isProductionMember && !session.isStoreManager;
+    !session.isProductionMember && !session.isStoreManager && !session.isConversationsStaff;
 }
 const NO_PERMISSION_ALLOWED_PAGES = ['my-payslips.html', 'my-payslip-print.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
 
@@ -306,6 +307,7 @@ async function refreshPortalSession(session) {
       isProductionMember: !!result.is_production_member,
       isPayrollOfficer: !!result.is_payroll_officer,
       isStoreManager: !!result.is_store_manager,
+      isConversationsStaff: !!result.is_conversations_staff,
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);
