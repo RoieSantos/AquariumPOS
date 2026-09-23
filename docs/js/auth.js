@@ -111,6 +111,13 @@ const ONLINE_ORDER_STAFF_ALLOWED_PAGES = ['online-orders.html', 'online-order-li
 // necessary companion/print/drill-down pages (e.g. online-order-lines.html for Online Orders'
 // "View" link, transfer-order-print*.html for Transfer Orders' print buttons) - without those,
 // clicking into a normal workflow from an allowed page would immediately bounce them out.
+// gma-conversations.html added per supabase_staff_users_conversations_staff_field.sql - without
+// this, a Store Manager account that's also ticked "Conversations Access" got bounced straight
+// back to dashboard.html on click, since this exclusive allowlist runs before (and overrides) any
+// additive flag's own page-level check. Same gap that already existed for Store Manager + Payroll
+// Officer (payroll.html/etc. also aren't on this list) - just the first time it's been hit/fixed.
+// physical-inventory-journal.html added per "can you show this to manager permission too?" - its
+// RPCs were also switched to accept Store Manager (supabase_phys_journal_store_manager_access.sql).
 const STORE_MANAGER_ALLOWED_PAGES = [
   'dashboard.html', 'change-password.html', 'staff-login.html',
   'my-payslips.html', 'my-payslip-print.html',
@@ -118,9 +125,11 @@ const STORE_MANAGER_ALLOWED_PAGES = [
   'serial-tracker.html', 'inventory-summary.html',
   'stock-on-hand.html', 'stock-on-hand-print.html',
   'transfer-orders.html', 'transfer-order-print.html', 'transfer-order-print-production.html',
+  'physical-inventory-journal.html',
   'stand-calculator.html', 'aquarium-calculator.html', 'repair-calculator.html', 'sticker-calculator.html', 'glass-cut-list.html',
   'online-orders.html', 'online-order-lines.html',
-  'automated-orders.html'
+  'automated-orders.html',
+  'gma-conversations.html'
 ];
 
 // Same exclusive-lockdown shape as Delivery Team/Online Order Staff above, for a "plain" account

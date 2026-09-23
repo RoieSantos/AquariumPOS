@@ -137,11 +137,17 @@ function renderTopNav(activeLabel) {
     inventory.push({ href: 'purchase-orders.html', label: 'Purchase Orders' });
     inventory.push({ href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });
   }
+  // Per "can you show this to manager permission too?" - Physical Inventory Journal is also open to
+  // Store Manager accounts (supabase_phys_journal_store_manager_access.sql swapped its RPCs' auth
+  // check to allow SuperUser OR StoreManager). Everything else in this super-user-only block stays
+  // SuperUser only.
+  if (isSuperUser || isStoreManager) {
+    inventory.push({ href: 'physical-inventory-journal.html', label: 'Physical Inventory Journal' });
+  }
   if (isSuperUser) {
     // Super users only for now - every RPC behind this page re-checks with is_admin_authorized, so
     // this gate is convenience, not the control.
     inventory.push({ href: 'item-ledger-entries.html', label: 'Item Ledger Entries' });
-    inventory.push({ href: 'physical-inventory-journal.html', label: 'Physical Inventory Journal' });
     inventory.push({ href: 'warehouse-setup.html', label: 'Warehouse Setup' });
     inventory.push({ href: 'item-setup.html', label: 'Item Setup' });
     inventory.push({ href: 'variant-setup.html', label: 'Variants' });
