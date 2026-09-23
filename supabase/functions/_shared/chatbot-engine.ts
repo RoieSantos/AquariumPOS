@@ -739,7 +739,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'compute_lalamove_quote',
     description:
-      'Gets a REAL Lalamove courier price quote (a live call to Lalamove\'s own API - always accurate, never a rough estimate) for a customer who wants to arrange their own Lalamove delivery, as opposed to the store\'s own truck (use compute_delivery_quote for that instead - ask the customer which they want if not already clear). QUOTE ONLY - this cannot actually book the Lalamove ride; if the customer wants to proceed, tell them staff will arrange the actual booking. Before calling, first work out and tell the customer in plain language what size vehicle to book based on what they are having delivered, then pass that as vehicle_type: MOTORCYCLE for a single small/light item (e.g. food, small accessories, a small filter); SEDAN for a few boxes or one small-to-medium item; MPV for a small aquarium/stand or several items; TRUCK330 (a small van/L300-style truck) for a medium-to-large aquarium or stand, or several bulky items; 2000KG_ALUMINUM (a 2-ton truck) for a very large aquarium/stand, multiple large items, or anything unusually bulky/heavy. If the customer asks for a different vehicle than you recommended, use theirs instead. Ask which branch (Amaya or GMA) and the full delivery address if not already known.',
+      'Gets a REAL Lalamove courier price quote (a live call to Lalamove\'s own API) for a customer who wants to arrange their own Lalamove delivery, as opposed to the store\'s own truck (use compute_delivery_quote for that instead - ask the customer which they want if not already clear). If the exact address can\'t be pinpointed, this automatically falls back to the barangay/city level and the result comes back with approximate: true plus an approximateNote - when that happens, tell the customer plainly the fee is an estimate based on their general area (not the exact address) and may change slightly, don\'t present it as exact. QUOTE ONLY - this cannot actually book the Lalamove ride; if the customer wants to proceed, tell them staff will arrange the actual booking. Before calling, first work out and tell the customer in plain language what size vehicle to book based on what they are having delivered, then pass that as vehicle_type: MOTORCYCLE for a single small/light item (e.g. food, small accessories, a small filter); SEDAN for a few boxes or one small-to-medium item; MPV for a small aquarium/stand or several items; TRUCK330 (a small van/L300-style truck) for a medium-to-large aquarium or stand, or several bulky items; 2000KG_ALUMINUM (a 2-ton truck) for a very large aquarium/stand, multiple large items, or anything unusually bulky/heavy. If the customer asks for a different vehicle than you recommended, use theirs instead. Ask which branch (Amaya or GMA) and the full delivery address if not already known.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1538,6 +1538,35 @@ async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: n
   return loc ? { lat: loc.lat, lng: loc.lng } : null;
 }
 
+// Strict Geocoding API often can't resolve a full informal PH address in one run-on string (e.g.
+// "blk 6 lot 7 brgy luzviminda 2 dasmarinas cavite") even though the exact same barangay resolves
+// fine on its own - the store's own Places Autocomplete widget (docs/js/deliveryQuote.js,
+// GOOGLE_MAPS_API_KEY) shows this: it happily matches "brgy luzviminda 2 dasmarinas" to "Brgy
+// Luzviminda II Hall". So when the full address comes back empty, retry with just the
+// barangay-and-up portion (or, lacking a barangay marker, the last few words = city/province) -
+// good enough for an approximate Lalamove fee, better than refusing and blaming a valid address.
+function simplifyToHighLevelAddress(address: string): string | null {
+  const brgyMatch = address.match(/\b(?:brgy\.?|barangay)\b.*/i);
+  if (brgyMatch && brgyMatch[0].trim().toLowerCase() !== address.trim().toLowerCase()) {
+    return brgyMatch[0].trim();
+  }
+  const words = address.trim().split(/\s+/);
+  return words.length > 3 ? words.slice(-3).join(' ') : null;
+}
+
+async function geocodeAddressWithFallback(
+  address: string,
+  apiKey: string
+): Promise<{ lat: number; lng: number; approximate: boolean } | null> {
+  const exact = await geocodeAddress(address, apiKey);
+  if (exact) return { ...exact, approximate: false };
+
+  const simplified = simplifyToHighLevelAddress(address);
+  if (!simplified) return null;
+  const approx = await geocodeAddress(simplified, apiKey);
+  return approx ? { ...approx, approximate: true } : null;
+}
+
 export async function computeLalamoveQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const location = String(input.origin_location ?? '').trim();
   const destinationAddress = String(input.destination_address ?? '').trim();
@@ -1559,9 +1588,9 @@ export async function computeLalamoveQuote(supabase: SupabaseClient, input: Reco
     return { error: 'Lalamove quoting is not configured yet - ask staff to set this up.' };
   }
 
-  let destLatLng: { lat: number; lng: number } | null;
+  let destLatLng: { lat: number; lng: number; approximate: boolean } | null;
   try {
-    destLatLng = await geocodeAddress(destinationAddress, routesApiKey);
+    destLatLng = await geocodeAddressWithFallback(destinationAddress, routesApiKey);
   } catch (err) {
     if (err instanceof Error && err.message === 'GEOCODE_SERVICE_ERROR') {
       return {
@@ -1572,7 +1601,10 @@ export async function computeLalamoveQuote(supabase: SupabaseClient, input: Reco
     return { error: err instanceof Error ? err.message : 'Could not reach the mapping service.' };
   }
   if (!destLatLng) {
-    return { error: 'Could not find that delivery address - ask the customer to double check it.' };
+    return {
+      error:
+        'Could not find that delivery address, even after trying just the barangay/city portion - ask the customer for a nearby landmark or a more complete street/barangay name.'
+    };
   }
 
   let quote: Record<string, unknown>;
@@ -1603,7 +1635,14 @@ export async function computeLalamoveQuote(supabase: SupabaseClient, input: Reco
     requestedVehicleType: vehicleType,
     distanceKm: distanceMeters != null ? Math.round((distanceMeters / 1000) * 10) / 10 : null,
     total: quote.total,
-    currency: quote.currency || 'PHP'
+    currency: quote.currency || 'PHP',
+    ...(destLatLng.approximate
+      ? {
+          approximate: true,
+          approximateNote:
+            'The exact address did not resolve - this fee is estimated from the barangay/area level only. Tell the customer it\'s approximate and may change slightly once staff confirm the exact pin/landmark.'
+        }
+      : {})
   };
 }
 
