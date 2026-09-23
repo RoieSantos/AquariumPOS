@@ -1518,11 +1518,22 @@ export async function computeDeliveryQuote(supabase: SupabaseClient, input: Reco
 // hands Google's Routes API a plain destination address string), Lalamove's API needs the
 // destination as resolved lat/lng, so this geocodes it first - reusing GOOGLE_ROUTES_API_KEY, since
 // Geocoding API is a standard Maps Platform API that's normally enabled alongside Routes API on the
-// same Google Cloud key.
+// same Google Cloud key. region=ph biases ambiguous/informal PH addresses toward the right match.
+//
+// IMPORTANT: the Geocoding API always returns a "status" field even on failure (REQUEST_DENIED,
+// OVER_QUERY_LIMIT, INVALID_REQUEST, UNKNOWN_ERROR) - those mean the KEY/quota/config is broken,
+// not that the address is bad, and must never be reported to the customer as "couldn't find your
+// address" (that previously happened here - the old code only checked results[0], so a REQUEST_DENIED
+// response silently looked identical to a genuine zero-result and Alice kept blaming valid addresses).
+// Only a real ZERO_RESULTS is an actual bad-address case.
 async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: number; lng: number } | null> {
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&region=ph&key=${apiKey}`;
   const res = await fetch(url);
   const data = await res.json();
+  if (data?.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+    console.error(`geocodeAddress service error for "${address}": ${data.status} - ${data.error_message ?? 'no detail'}`);
+    throw new Error('GEOCODE_SERVICE_ERROR');
+  }
   const loc = data?.results?.[0]?.geometry?.location;
   return loc ? { lat: loc.lat, lng: loc.lng } : null;
 }
@@ -1552,6 +1563,12 @@ export async function computeLalamoveQuote(supabase: SupabaseClient, input: Reco
   try {
     destLatLng = await geocodeAddress(destinationAddress, routesApiKey);
   } catch (err) {
+    if (err instanceof Error && err.message === 'GEOCODE_SERVICE_ERROR') {
+      return {
+        error:
+          'The mapping service itself failed (not the address - do not ask the customer to retype or clarify it). Tell them there\'s a technical issue getting the Lalamove quote right now and call escalate_to_staff so a team member can follow up with the quote manually.'
+      };
+    }
     return { error: err instanceof Error ? err.message : 'Could not reach the mapping service.' };
   }
   if (!destLatLng) {
