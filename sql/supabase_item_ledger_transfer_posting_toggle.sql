@@ -124,7 +124,9 @@ begin
     raise exception 'Not authorized.';
   end if;
 
-  update public."ItemLedgerSetup" set "TransferPostingEnabled" = coalesce(p_enabled, true), "UpdatedAtUtc" = now();
+  update public."ItemLedgerSetup"
+     set "TransferPostingEnabled" = coalesce(p_enabled, true), "UpdatedAtUtc" = now()
+   where "Id" = true;
 end;
 $$;
 

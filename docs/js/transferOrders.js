@@ -725,6 +725,23 @@ async function loadAvailableStockForLines(docNo) {
   });
 }
 
+// Whether Transfer Orders currently post to the Item Ledger at all (General Setup > Item Ledger,
+// see supabase_item_ledger_transfer_posting_toggle.sql). Fetched fresh each time rather than
+// cached, since it can be flipped from another tab/session at any moment. Defaults to true (the
+// feature's own default) if the check itself fails, so a transient error here doesn't accidentally
+// let a real stock shortage through - it just falls back to the normal, stricter behaviour.
+async function isTransferLedgerPostingEnabled() {
+  const { data, error } = await supabaseClient.rpc('admin_get_item_ledger_transfer_posting_enabled', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (error) {
+    console.error('admin_get_item_ledger_transfer_posting_enabled failed:', error);
+    return true;
+  }
+  return !!data;
+}
+
 async function shipTransferOrder(docNo) {
   const errorEl = document.getElementById('viewLinesError');
   errorEl.classList.add('hidden');
@@ -808,23 +825,30 @@ async function shipTransferOrder(docNo) {
       return;
     }
 
+    // Only worth checking/blocking on ledger stock while Transfer Orders actually post to the
+    // Item Ledger (General Setup > Item Ledger) - when that's off, the ledger has no say over
+    // this shipment at all (the same setting also makes the server-side trigger skip its own
+    // stock check, so this isn't just a client-side bypass of a rule still enforced underneath).
     await loadAvailableStockForLines(docNo);
-    const shortages = [];
-    for (const line of lineUpdates) {
-      if (line.increment <= 0) continue;
-      const row = rows.find((r) => r.dataset.lineNo === line.lineNo);
-      const available = currentAvailableByLineNo.get(String(line.lineNo));
-      const label = row?.dataset.itemNo || `line ${line.lineNo}`;
-      if (!available || available.fetch_error) {
-        shortages.push(`${label} (${available?.fetch_error || 'stock could not be checked'})`);
-      } else if (Number(available.available_quantity) < line.increment) {
-        shortages.push(`${label} (${Number(available.available_quantity)} on hand, shipping ${line.increment})`);
+    const ledgerPostingEnabled = await isTransferLedgerPostingEnabled();
+    if (ledgerPostingEnabled) {
+      const shortages = [];
+      for (const line of lineUpdates) {
+        if (line.increment <= 0) continue;
+        const row = rows.find((r) => r.dataset.lineNo === line.lineNo);
+        const available = currentAvailableByLineNo.get(String(line.lineNo));
+        const label = row?.dataset.itemNo || `line ${line.lineNo}`;
+        if (!available || available.fetch_error) {
+          shortages.push(`${label} (${available?.fetch_error || 'stock could not be checked'})`);
+        } else if (Number(available.available_quantity) < line.increment) {
+          shortages.push(`${label} (${Number(available.available_quantity)} on hand, shipping ${line.increment})`);
+        }
       }
-    }
-    if (shortages.length > 0) {
-      errorEl.textContent = `Cannot ship - not enough stock at ${currentManageHeader['From Warehouse'] || 'the From Warehouse'}: ${shortages.join('; ')}.`;
-      errorEl.classList.remove('hidden');
-      return;
+      if (shortages.length > 0) {
+        errorEl.textContent = `Cannot ship - not enough stock at ${currentManageHeader['From Warehouse'] || 'the From Warehouse'}: ${shortages.join('; ')}.`;
+        errorEl.classList.remove('hidden');
+        return;
+      }
     }
 
     // Stock confirmed - now atomically claim the picked serials (IN_STOCK -> IN_TRANSIT,
