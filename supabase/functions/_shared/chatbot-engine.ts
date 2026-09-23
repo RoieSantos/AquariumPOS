@@ -644,6 +644,12 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: {} }
   },
   {
+    name: 'list_wholesale_prices',
+    description:
+      'List every item that currently has a wholesale price set (only Aquarium/Stand/Sump Filtration items ever do - see the WHOLESALE PRICING rule). Use this when a customer asks for the wholesale price LIST/catalog/rate sheet in general, not a specific item - for a specific item\'s price use search_items instead.',
+    input_schema: { type: 'object', properties: {} }
+  },
+  {
     name: 'list_items_in_category',
     description:
       'List active items in one specific category, with price and stock. Use after list_categories, or when the customer names a category directly (e.g. "what filters do you have").',
@@ -995,6 +1001,7 @@ export function buildSystemPrompt(
     '- If the customer pushes back hard, gets upset, or turns it into a complaint after you\'ve declined, that becomes a complaint - escalate it per WHEN TO ESCALATE TO STAFF below.',
     '',
     'WHOLESALE PRICING:',
+    '- If a customer asks broadly for the wholesale price LIST/catalog/rate sheet (not about one specific item), call list_wholesale_prices and share what it returns (item name + wholesale_price, grouped by category is fine) - don\'t use search_items for this since that needs a matching keyword and won\'t surface a full list. If it comes back empty, say plainly that no wholesale prices are set up yet rather than guessing - don\'t invent figures from a Set/bundle or from compute_aquarium_quote.',
     '- SCOPE: wholesale pricing and the ₱5,000-per-transaction minimum ONLY cover INDIVIDUAL Aquarium, Stand, and Sump Filtration items from the catalog - nothing else the store sells. It NEVER covers a "Set"/bundle/package item (e.g. an Aquarium Set bundling a tank with a stand/filter/accessories at one all-in price, or anything under the SET category/whose name says Set/Package/Combo/Bundle) - a Set has its own fixed package price, is a completely different pricing scheme, and is never wholesale-eligible even if it happens to include an aquarium/stand/sump inside it. Never bring up, offer, or ask about wholesale for any other product line (fish food, medicine, decor, other filters/equipment, accessories, Sets/bundles, etc.) - just quote the regular/package price for those, no wholesale question at all. This also does NOT cover a custom-built aquarium/stand quoted through compute_aquarium_quote (that has no catalog wholesale_price at all) - only ready-made, individual Aquarium/Stand/Sump Filtration items returned by search_items/list_items_in_category.',
     '- ASK about it: when a customer shows buying interest in an INDIVIDUAL Aquarium, Stand, or Sump Filtration item specifically (asks its price, asks what\'s available in that line, or is heading toward ordering one) - NOT a Set/bundle/package - and it hasn\'t come up yet in this conversation, ask once whether they\'re buying at RETAIL or WHOLESALE pricing, and mention the ₱5,000 minimum (e.g. "Retail or wholesale po ito? Note na ang wholesale ay may minimum na ₱5,000 per transaction."). Ask only once per conversation - don\'t repeat it once they\'ve answered, and don\'t ask for things wholesale doesn\'t apply to (see SCOPE above, plus delivery fees, order status, general questions). If they don\'t answer and just keep asking prices, quote retail. Asking for wholesale pricing is NOT a discount request - handle it here, not with the DISCOUNTS / PRICE CHANGES decline.',
     '- RETAIL (or no answer): quote the regular price, as always. Don\'t bring up wholesale_price figures for retail buyers.',
@@ -1717,6 +1724,11 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const { data, error } = await supabase.rpc('public_list_order_categories');
       if (error) return `Lookup failed: ${error.message}`;
       return JSON.stringify(data ?? []);
+    }
+    case 'list_wholesale_prices': {
+      const { data, error } = await supabase.rpc('public_list_wholesale_items');
+      if (error) return `Lookup failed: ${error.message}`;
+      return data && data.length > 0 ? JSON.stringify(data) : 'No wholesale prices are currently set on any item.';
     }
     case 'list_items_in_category': {
       const categoryCode = String(input.category_code ?? '').trim();
