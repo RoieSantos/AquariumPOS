@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-24
 
+- **Bot no longer volunteers "wala kaming stock" on plain price questions**: in `buildSystemPrompt` ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)) the stock rule now says an item that exists with 0 stock still gets just its price (only truly-missing items or explicit availability questions mention stock), and the "50 gallon" standard-tank rule no longer says "in stock". Needs the `chatbot-*` edge functions redeployed.
+
 - **Dashboard site-wide "Monthly Sales Target" card now super-user only**: [dashboard.js](docs/js/dashboard.js) passes a 0 target to `updateSalesTargetTile` for non-super users, which hides the card (per-staff target bars on the Sales by Staff cards are unchanged).
 - **Online orders stuck on Printed/Confirmed/To Ship after Pancake marked them Delivered**: new [supabase_online_order_open_status_refresh.sql](sql/supabase_online_order_open_status_refresh.sql) adds `cron_refresh_open_online_order_statuses` (every minute, 40 orders/run, least-recently-refreshed first) that re-fetches each still-open order's detail from Pancake and overwrites `Status`, independent of the `updated_after` cursor that was skipping them. Needs to be run in the Supabase SQL editor.
 
