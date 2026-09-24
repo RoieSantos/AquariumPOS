@@ -149,7 +149,9 @@ async function loadFinancialSummary(session) {
   const prevMonthWalkInSalesOnlySubEl = document.getElementById('statPrevMonthWalkInSalesOnlySub');
   if (prevMonthWalkInSalesOnlySubEl) prevMonthWalkInSalesOnlySubEl.textContent = `${prevMonthLabel} · ${prevMonthWalkinCount} ${prevMonthWalkinWord}`;
 
-  updateSalesTargetTile(row.month_sales, row.month_sales_target);
+  // Monthly Sales Target card is super-user only - loadFinancialSummary also runs for plain staff
+  // (walk-in-only card), who must not see the target/progress.
+  updateSalesTargetTile(row.month_sales, session.isSuperUser ? row.month_sales_target : 0);
 }
 
 // Two-letter initials for the staff avatar circle, e.g. "Juan Dela Cruz" -> "JD".
