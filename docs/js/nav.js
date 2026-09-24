@@ -133,6 +133,7 @@ function renderTopNav(activeLabel) {
   // visible to Sales-only users too.
   inventory.push({ href: 'inventory-summary.html', label: 'Inventory Summary' });
   inventory.push({ href: 'stock-on-hand.html', label: 'Stock On Hand' });
+  inventory.push({ href: 'shelf-map.html', label: 'Shelf Map' });
   if (!isStoreManager) {
     inventory.push({ href: 'purchase-orders.html', label: 'Purchase Orders' });
     inventory.push({ href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });

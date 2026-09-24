@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shelf Map - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .shelf-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: stretch; }
+    .shelf-cell { flex: 1 1 0; min-width: 96px; border: 2px solid var(--border, #c9d3e0); border-radius: 8px; padding: 8px; background: var(--card-bg, #fff); display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: inherit; }
+    .shelf-cell .cell-label { font-size: 12px; font-weight: 600; line-height: 1.2; }
+    .shelf-cell .cell-code { font-size: 12px; color: var(--text-muted, #666); }
+    .shelf-cell .cell-qty { font-size: 22px; font-weight: 700; line-height: 1.1; margin-top: auto; }
+    .shelf-cell input.cell-count { width: 100%; font-size: 20px; font-weight: 700; margin-top: auto; padding: 2px 4px; box-sizing: border-box; }
+    .shelf-cell .cell-sub { font-size: 11px; color: var(--text-muted, #666); }
+    .shelf-cell.ok { border-color: #2e9e5b; }
+    .shelf-cell.diff { border-color: #d98a00; }
+    .shelf-cell.empty { border-color: #d64545; }
+    .shelf-cell.unlinked { border-style: dashed; }
+    .shelf-cell.editable { cursor: pointer; }
+    .shelf-add-cell { flex: 0 0 auto; align-self: center; }
+    .shelf-scroll { overflow-x: auto; }
+    .shelf-scroll .shelf-row { min-width: min-content; }
+    .shelf-legend span { display: inline-block; margin-right: 12px; font-size: 12px; }
+    .shelf-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    .cell-field { display: block; margin-bottom: 10px; }
+    .cell-field label { display: block; font-size: 12px; margin-bottom: 2px; }
+    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
+    .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Shelf Map</h1>
+    <p class="muted">Each box is a spot on the shelf. The big number is the current count on that shelf spot - type a new number to update it. "Ledger" is the item's quantity on hand at the location (from the Item Ledger, always current), added up across every shelf spot holding that item; "Drawing" is the count written on the paper sketch.</p>
+
+    <div class="toolbar">
+      <label for="locationSelect" class="muted" style="margin:0;">Location</label>
+      <select id="locationSelect" style="max-width:200px;"></select>
+      <label for="shelfSelect" class="muted" style="margin:0;">Shelf</label>
+      <select id="shelfSelect" style="max-width:260px;"></select>
+      <span class="muted" id="warehouseLabel"></span>
+      <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+      <button class="btn btn-secondary btn-sm hidden" id="newShelfBtn" type="button">New Shelf</button>
+      <button class="btn btn-primary btn-sm hidden" id="editBtn" type="button">Edit Layout</button>
+    </div>
+
+    <div id="editBar" class="toolbar hidden">
+      <input type="text" id="shelfNameInput" placeholder="Shelf name" style="max-width:240px;" />
+      <select id="shelfWarehouseSelect" style="max-width:220px;"><option value="">No warehouse</option></select>
+      <button class="btn btn-secondary btn-sm" id="addRowBtn" type="button">+ Row</button>
+      <button class="btn btn-secondary btn-sm" id="autoLinkBtn" type="button">Auto-link items</button>
+      <button class="btn btn-primary btn-sm" id="saveBtn" type="button">Save</button>
+      <button class="btn btn-secondary btn-sm" id="cancelBtn" type="button">Cancel</button>
+      <button class="btn btn-secondary btn-sm" id="deleteShelfBtn" type="button">Delete Shelf</button>
+    </div>
+
+    <div class="shelf-legend muted" id="legend">
+      <span><i class="shelf-dot" style="background:#2e9e5b"></i>Shelf count matches ledger</span>
+      <span><i class="shelf-dot" style="background:#d98a00"></i>Shelf count differs from ledger</span>
+      <span><i class="shelf-dot" style="background:#d64545"></i>Out of stock</span>
+      <span><i class="shelf-dot" style="background:#999"></i>Not linked to an item (dashed)</span>
+    </div>
+
+    <div id="shelfError" class="error-text hidden"></div>
+    <div id="shelfLoading" class="muted">Loading...</div>
+    <div id="shelfBody" class="shelf-scroll" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="cellModal">
+    <div class="modal-panel" style="max-width:480px;">
+      <h3 style="margin-top:0;">Shelf Spot</h3>
+      <div class="cell-field"><label>Description (brand / name)</label><input type="text" id="cellLabel" /></div>
+      <div class="cell-field"><label>Model code</label><input type="text" id="cellModel" /></div>
+      <div class="cell-field"><label>Current count on the shelf</label><input type="number" id="cellCurrent" min="0" inputmode="numeric" /></div>
+      <div class="cell-field"><label>Quantity on the drawing</label><input type="number" id="cellDrawn" min="0" inputmode="numeric" /></div>
+      <div class="cell-field"><label>Notes</label><input type="text" id="cellNotes" /></div>
+      <div class="cell-field">
+        <label>Linked item: <strong id="cellItemLabel">none</strong></label>
+        <input type="text" id="cellItemSearch" placeholder="Search item code or name to link..." />
+        <div id="cellItemHits"></div>
+        <button class="btn btn-secondary btn-sm" id="cellUnlinkBtn" type="button" style="margin-top:6px;">Unlink item</button>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" id="cellOkBtn" type="button">OK</button>
+        <button class="btn btn-secondary btn-sm" id="cellCancelBtn" type="button">Cancel</button>
+        <button class="btn btn-secondary btn-sm" id="cellLeftBtn" type="button">&larr; Move</button>
+        <button class="btn btn-secondary btn-sm" id="cellRightBtn" type="button">Move &rarr;</button>
+        <button class="btn btn-secondary btn-sm" id="cellDeleteBtn" type="button">Remove Spot</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/shelfMap.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

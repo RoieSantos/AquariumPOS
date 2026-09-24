@@ -123,7 +123,7 @@ const STORE_MANAGER_ALLOWED_PAGES = [
   'my-payslips.html', 'my-payslip-print.html',
   'delivery.html', 'delivery-receipt.html', 'delivery-quote.html', 'invoice.html', 'job-order.html',
   'serial-tracker.html', 'inventory-summary.html',
-  'stock-on-hand.html', 'stock-on-hand-print.html',
+  'stock-on-hand.html', 'stock-on-hand-print.html', 'shelf-map.html',
   'transfer-orders.html', 'transfer-order-print.html', 'transfer-order-print-production.html',
   'physical-inventory-journal.html',
   'stand-calculator.html', 'aquarium-calculator.html', 'repair-calculator.html', 'sticker-calculator.html', 'glass-cut-list.html',
