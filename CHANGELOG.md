@@ -2,7 +2,17 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-09-24
+
+- **Alice can now actually look at photos customers send on Messenger** (previously the image was only run through a payment-screenshot check, then a canned "someone will follow up" reply). [facebook-messenger-webhook/index.ts](supabase/functions/facebook-messenger-webhook/index.ts) now attaches the current photo to the customer's message in the main AI turn (captioned or not); only payment screenshots (or a photo that couldn't be loaded) still take the old canned/staff-handoff path. New photos rule in [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts): describe/help from the photo, cautious non-diagnostic fish-health guidance, never quote prices/sizes from a photo alone, damaged-item photos escalate. Website widget (`chatbot-web-reply`) has no photo upload at all, so it isn't covered. Deployed `facebook-messenger-webhook` only; the other four consumers of `chatbot-engine.ts` still run the older prompt until redeployed.
+
 ## 2026-09-23
+
+- **Physical Inventory Journal is now a blind count for non-Super Users**: Qty. (Calculated) and Quantity (the variance, which would reveal it) are hidden from the grid, the line detail panel (also Qty. (Current)) and the printed count sheet unless `session.isSuperUser`. [physicalInventoryJournal.js](docs/js/physicalInventoryJournal.js) + a `.calc-only` CSS rule in [physical-inventory-journal.html](docs/physical-inventory-journal.html). UI-level only - the RPCs still return the figures.
+
+- **Item Setup item card now shows "Stock by Location"** (actual on-hand per warehouse from the Item Ledger, BC-style). New [supabase_item_setup_stock_by_warehouse.sql](sql/supabase_item_setup_stock_by_warehouse.sql) (`staff_get_item_stock_by_warehouse`), plus a new row in [item-setup.html](docs/item-setup.html) filled by `loadItemCardStockByLocation` in [itemSetup.js](docs/js/itemSetup.js). Each quantity is a link that opens [item-ledger-entries.html](docs/item-ledger-entries.html) filtered to that item + location (all time); [itemLedgerEntries.js](docs/js/itemLedgerEntries.js) gained a `?warehouse=` deep link to go with the existing `?search=`.
+
+- **Alice now reports stock per branch (Amaya vs GMA)**, like Business Central's per-location inventory. New [supabase_chatbot_stock_by_location.sql](sql/supabase_chatbot_stock_by_location.sql) adds a `stock_by_location` jsonb column (from `ItemLedgerEntries` per warehouse, matched by warehouse name) to `public_search_items` and `public_list_order_items`; [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts) tool descriptions + stock rule updated to use it. Needs the SQL run, then the bot functions redeployed.
 
 - **Alice now knows the branch pin locations** ("RSPetStop Amaya" and "RSPetStop GMA") and tells customers to search that exact name in Google Maps/Waze when they ask where the branches are. New BRANCH PIN LOCATIONS block in `buildSystemPrompt` in [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts). Not deployed yet.
 

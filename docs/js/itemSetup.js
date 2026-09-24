@@ -287,6 +287,33 @@ function populateFactboxUomSelects() {
   purchSelect.value = factboxItemUoms.find((u) => u.is_purch)?.unit_of_measure_code || '';
 }
 
+// Actual on-hand per warehouse, from the Item Ledger (staff_get_item_stock_by_warehouse).
+async function loadItemCardStockByLocation(code) {
+  const el = document.getElementById('itemCardStockByLocation');
+  el.textContent = 'Loading...';
+
+  const { data, error } = await supabaseClient.rpc('staff_get_item_stock_by_warehouse', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: code
+  });
+
+  if (openFactboxCode !== code) return;
+
+  if (error) {
+    el.innerHTML = `<span class="error-text">${escapeHtml(error.message)}</span>`;
+    return;
+  }
+
+  el.innerHTML = !data || data.length === 0
+    ? '-'
+    : data.map((w) => {
+        // Opens the Item Ledger Entries page filtered to this item + warehouse (all time).
+        const href = `item-ledger-entries.html?search=${encodeURIComponent(code)}&warehouse=${encodeURIComponent(w.warehouse_id)}`;
+        return `<div>${escapeHtml(w.warehouse_name)}: <a href="${href}" title="View item ledger entries for this location"><strong>${Number(w.quantity).toLocaleString()}</strong></a></div>`;
+      }).join('');
+}
+
 async function loadFactboxItemUoms(code) {
   const container = document.getElementById('factboxItemUoms');
   container.innerHTML = '<p class="muted">Loading units...</p>';
@@ -979,6 +1006,7 @@ async function openFactbox(code) {
 
   document.getElementById('factboxUomSaved').classList.add('hidden');
   loadFactboxItemUoms(code);
+  loadItemCardStockByLocation(code);
 
   document.getElementById('factboxCostSaved').classList.add('hidden');
   // Blank rather than 0 when uncosted - "not costed yet" and "costs nothing" are different, and

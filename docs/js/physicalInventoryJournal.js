@@ -270,11 +270,11 @@ function renderGrid() {
         <td class="cell-text" title="${escapeHtml(r.variant_name || '')}">${escapeHtml(r.variant_name || '')}</td>
         <td>${escapeHtml(r.sku || '')}</td>
         <td>${escapeHtml(r.warehouse_name || '')}</td>
-        <td class="num">${formatQuantity(r.qty_calculated)}</td>
+        <td class="num calc-only">${formatQuantity(r.qty_calculated)}</td>
         <td class="num qty-cell-wrap">
           <input type="number" class="bc-qty-cell" min="0" step="any" data-qty-line-id="${r.line_id}" value="${escapeHtml(counted)}" placeholder="-" />
         </td>
-        <td class="num ${qtyNeg ? 'neg' : ''}">${qtyText}</td>
+        <td class="num calc-only ${qtyNeg ? 'neg' : ''}">${qtyText}</td>
       </tr>`;
   }).join('');
 }
@@ -366,10 +366,12 @@ function renderFactBox() {
     ['Variant', r.variant_name || r.variant_id || ''],
     ['SKU', r.sku || ''],
     ['Location Code', r.warehouse_name],
-    ['Qty. (Calculated)', formatQuantity(r.qty_calculated)],
-    ['Qty. (Current)', formatQuantity(r.qty_current)],
+    ...(currentSession.isSuperUser ? [
+      ['Qty. (Calculated)', formatQuantity(r.qty_calculated)],
+      ['Qty. (Current)', formatQuantity(r.qty_current)]
+    ] : []),
     ['Qty. (Phys. Inventory)', r.qty_counted === null || r.qty_counted === undefined ? 'Not counted yet' : formatQuantity(r.qty_counted)],
-    ['Quantity to post', r.quantity === null || r.quantity === undefined ? '' : formatQuantity(r.quantity)],
+    ...(currentSession.isSuperUser ? [['Quantity to post', r.quantity === null || r.quantity === undefined ? '' : formatQuantity(r.quantity)]] : []),
     ['Last Updated', r.updated_at_utc ? new Date(r.updated_at_utc).toLocaleString() : ''],
     ['Updated By', r.updated_by]
   ].filter(([, v]) => v !== '' && v !== null && v !== undefined);
@@ -436,7 +438,7 @@ function printJournal() {
       <td>${escapeHtml(r.variant_name || '')}</td>
       <td>${escapeHtml(r.sku || '')}</td>
       <td>${escapeHtml(r.warehouse_name || '')}</td>
-      <td class="num">${formatQuantity(r.qty_calculated)}</td>
+      ${currentSession.isSuperUser ? `<td class="num">${formatQuantity(r.qty_calculated)}</td>` : ''}
       <td class="blank-cell"></td>
     </tr>`).join('');
 
@@ -452,7 +454,7 @@ function printJournal() {
       <thead>
         <tr>
           <th>Item No.</th><th>Description</th><th>Variant</th><th>SKU</th><th>Location</th>
-          <th class="num">Qty. (Calculated)</th><th>Qty. (Phys. Inventory)</th>
+          ${currentSession.isSuperUser ? '<th class="num">Qty. (Calculated)</th>' : ''}<th>Qty. (Phys. Inventory)</th>
         </tr>
       </thead>
       <tbody>${rowsHtml}</tbody>
@@ -815,6 +817,8 @@ async function confirmPost() {
   const session = await requireAuth();
   if (!session) return;
   currentSession = session;
+  // Blind count for everyone but a Super User (CSS hides every .calc-only column).
+  document.body.classList.toggle('hide-calc', !session.isSuperUser);
   renderTopNav('Physical Inventory Journal');
 
   document.getElementById('calcBtn').addEventListener('click', openCalcDialog);

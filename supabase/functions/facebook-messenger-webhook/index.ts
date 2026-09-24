@@ -655,6 +655,7 @@ async function processMessage(
   let attachmentUrl: string | null = null;
   let attachmentType: string | null = null;
   let detectedPayment: DetectedPayment | null = null;
+  let imageForClaude: { base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' } | null = null;
 
   if (imageAttachment?.payload?.url) {
     const stored = await storeChatbotAttachment(supabase, psid, imageAttachment.payload.url);
@@ -663,6 +664,11 @@ async function processMessage(
       attachmentUrl = stored.signedUrl;
       attachmentType = 'image';
       detectedPayment = await extractPaymentDetails(anthropic, model, stored.base64, stored.contentType);
+      const ct = stored.contentType;
+      imageForClaude = {
+        base64: stored.base64,
+        mediaType: ct.includes('png') ? 'image/png' : ct.includes('webp') ? 'image/webp' : ct.includes('gif') ? 'image/gif' : 'image/jpeg'
+      };
     }
   }
 
@@ -849,7 +855,10 @@ async function processMessage(
   // question to answer) - acknowledge it and hand off to staff (who can see it inline in the GMA
   // Conversations inbox, e.g. to verify a GCash payment screenshot) rather than running a full AI
   // turn over a placeholder "[Photo]" prompt.
-  if (!trimmedText && attachmentUrl) {
+  // Non-payment photos (fish, tank, damaged item, etc.) now fall through to the normal AI turn
+  // below with the image attached, so Alice can actually look at them - only payment screenshots
+  // (or a photo we couldn't load for Claude) still take this canned/staff-handoff path.
+  if (!trimmedText && attachmentUrl && (detectedPayment || !imageForClaude)) {
     let ack: string;
     let confirmationRequestedOrderNo: string | null = null;
     if (detectedPayment?.amount != null) {
@@ -924,6 +933,18 @@ async function processMessage(
   const messages: Anthropic.MessageParam[] = (historyRows ?? [])
     .reverse()
     .map((row: { Role: string; Content: string }) => ({ role: row.Role === 'user' ? 'user' : 'assistant', content: row.Content }));
+
+  // Attach the photo to the customer's just-sent message (the last 'user' turn). Only the current
+  // photo is sent as an image - earlier photos in history stay as their "[Photo]" text placeholder.
+  if (imageForClaude) {
+    const last = messages[messages.length - 1];
+    if (last && last.role === 'user' && typeof last.content === 'string') {
+      last.content = [
+        { type: 'image', source: { type: 'base64', media_type: imageForClaude.mediaType, data: imageForClaude.base64 } },
+        { type: 'text', text: last.content === '[Photo]' ? 'The customer sent this photo with no message.' : last.content }
+      ];
+    }
+  }
 
   const [{ data: storeInfo }, { data: companyInfo }, { data: aiSettings }, { data: followUpSettings }] = await Promise.all([
     supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),

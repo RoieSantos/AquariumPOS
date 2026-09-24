@@ -13,6 +13,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    /* Blind count: everyone but a Super User is not shown the system quantity (or the variance,
+       which would give it away) - see physicalInventoryJournal.js. */
+    body.hide-calc .calc-only { display: none; }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>
@@ -75,9 +80,9 @@
                 <th class="sortable" data-sort-key="variant_name">Variant<span class="sort-arrow"></span></th>
                 <th class="sortable" data-sort-key="sku">SKU<span class="sort-arrow"></span></th>
                 <th class="sortable" data-sort-key="warehouse_name">Location Code<span class="sort-arrow"></span></th>
-                <th class="num sortable" data-sort-key="qty_calculated">Qty. (Calculated)<span class="sort-arrow"></span></th>
+                <th class="num sortable calc-only" data-sort-key="qty_calculated">Qty. (Calculated)<span class="sort-arrow"></span></th>
                 <th class="num sortable" data-sort-key="qty_counted">Qty. (Phys. Inventory)<span class="sort-arrow"></span></th>
-                <th class="num sortable" data-sort-key="quantity">Quantity<span class="sort-arrow"></span></th>
+                <th class="num sortable calc-only" data-sort-key="quantity">Quantity<span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody id="journalTableBody">

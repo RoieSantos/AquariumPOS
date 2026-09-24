@@ -1109,5 +1109,8 @@ async function startSalesPosting() {
   });
 
   await loadWarehouses();
+  // ?warehouse=ID deep link (Item Setup's Stock by Location numbers) - pairs with ?search= above.
+  const linkedWarehouse = new URLSearchParams(window.location.search).get('warehouse');
+  if (linkedWarehouse) document.getElementById('ileWarehouseFilter').value = linkedWarehouse;
   await Promise.all([refreshAll(), loadSalesPostingStatus()]);
 })();
