@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Defect Items - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .defect-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; align-items: start; }
+    .defect-form .field label { display: block; font-size: 12px; margin-bottom: 3px; }
+    .defect-form .field input, .defect-form .field select, .defect-form .field textarea { width: 100%; box-sizing: border-box; }
+    .defect-form .wide { grid-column: 1 / -1; }
+    .item-hits { border: 1px solid var(--border, #c9d3e0); border-radius: 6px; margin-top: 2px; max-height: 220px; overflow-y: auto; background: var(--card-bg, #fff); }
+    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
+    .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
+    .photo-preview { max-width: 220px; max-height: 180px; border-radius: 6px; margin-top: 6px; display: block; }
+    .defect-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border, #c9d3e0); display: block; }
+    .defect-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .status-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+    .status-tabs button.active { background: var(--primary, #1d4f91); color: #fff; }
+    .defect-note { font-size: 12px; color: var(--text-muted, #666); }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Defect Items</h1>
+    <p class="muted">Report a broken or defective item with a photo. Stock is not removed until a super user approves the report; approving posts a negative adjustment to the Item Ledger.</p>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h2 style="margin-top:0;">Report a defect</h2>
+      <div class="defect-form">
+        <div class="field wide">
+          <label for="itemSearchInput">Item</label>
+          <input type="text" id="itemSearchInput" placeholder="Search item code or name..." autocomplete="off" />
+          <div id="itemHits" class="item-hits hidden"></div>
+          <div id="itemChosen" class="muted" style="margin-top:4px;"></div>
+        </div>
+        <div class="field hidden" id="variantField">
+          <label for="variantSelect">Variant</label>
+          <select id="variantSelect"></select>
+        </div>
+        <div class="field">
+          <label for="locationSelect">Location</label>
+          <select id="locationSelect"></select>
+        </div>
+        <div class="field">
+          <label for="quantityInput">Quantity defective</label>
+          <input type="number" id="quantityInput" min="0" step="1" value="1" />
+        </div>
+        <div class="field">
+          <label for="reasonSelect">Reason</label>
+          <select id="reasonSelect">
+            <option value="">Select a reason...</option>
+            <option>Broken</option>
+            <option>Dead on arrival</option>
+            <option>Damaged in transit</option>
+            <option>Damaged by customer / returned</option>
+            <option>Not working</option>
+            <option>Expired</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="field wide">
+          <label for="noteInput">Note (optional)</label>
+          <textarea id="noteInput" rows="2" placeholder="What happened?"></textarea>
+        </div>
+        <div class="field wide">
+          <label for="photoInput">Photo (required)</label>
+          <input type="file" id="photoInput" accept="image/*" capture="environment" />
+          <img id="photoPreview" class="photo-preview hidden" alt="Photo preview" />
+        </div>
+      </div>
+      <div id="formError" class="error-text hidden" style="margin-top:8px;"></div>
+      <div id="formSuccess" class="hidden" style="margin-top:8px; color:#2e9e5b;"></div>
+      <div style="margin-top:12px;">
+        <button class="btn btn-primary" id="submitBtn" type="button">Submit for approval</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Reports</h2>
+      <div class="toolbar">
+        <input type="text" id="searchInput" placeholder="Search report no., item code or name..." style="max-width:320px;" />
+        <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div class="status-tabs" id="statusTabs">
+        <button class="btn btn-secondary btn-sm active" data-status="Pending" type="button">Pending</button>
+        <button class="btn btn-secondary btn-sm" data-status="Approved" type="button">Approved</button>
+        <button class="btn btn-secondary btn-sm" data-status="Rejected" type="button">Rejected</button>
+        <button class="btn btn-secondary btn-sm" data-status="Withdrawn" type="button">Withdrawn</button>
+        <button class="btn btn-secondary btn-sm" data-status="" type="button">All</button>
+      </div>
+      <div id="listError" class="error-text hidden"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Photo</th>
+              <th>Report</th>
+              <th>Item</th>
+              <th>Location</th>
+              <th>Qty</th>
+              <th>Reason</th>
+              <th>Reported</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="reportsBody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" style="margin-top:8px;">
+        <button class="btn btn-secondary btn-sm" id="prevPageBtn" type="button">&lsaquo; Prev</button>
+        <span class="muted" id="pageInfo"></span>
+        <button class="btn btn-secondary btn-sm" id="nextPageBtn" type="button">Next &rsaquo;</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/defectItems.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

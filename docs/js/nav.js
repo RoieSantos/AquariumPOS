@@ -144,6 +144,8 @@ function renderTopNav(activeLabel) {
   // SuperUser only.
   if (isSuperUser || isStoreManager) {
     inventory.push({ href: 'physical-inventory-journal.html', label: 'Physical Inventory Journal' });
+    // Store Managers report (own location, with a photo); Super Users report and approve.
+    inventory.push({ href: 'defect-items.html', label: 'Defect Items' });
   }
   if (isSuperUser) {
     // Super users only for now - every RPC behind this page re-checks with is_admin_authorized, so

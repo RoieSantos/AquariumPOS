@@ -37,7 +37,8 @@ export const MAX_TOKENS = 2048;
 // consistent with each other AND actually honor live Pricing Setup edits.
 // ============================================================================
 
-const DEFAULT_GLASS_PRICES: Record<string, number> = { '3mm': 85, '6mm': 185, '10mm': 290, '12mm': 350 };
+// 19mm (3/4") is only offered on the standalone Sticker calculator's Glass type, not on aquariums.
+const DEFAULT_GLASS_PRICES: Record<string, number> = { '3mm': 85, '6mm': 185, '10mm': 290, '12mm': 350, '19mm': 2000 };
 const TUBULAR_RETAIL_RATES: Record<string, number> = { '1x1': 46, '1.5x1.5': 52, '2x2': 95 };
 
 function round2(value: number): number {
@@ -769,8 +770,9 @@ export const TOOLS: Anthropic.Tool[] = [
         length: { type: 'number', description: 'Length.' },
         width: { type: 'number', description: 'Width.' },
         unit: { type: 'string', enum: ['Inches', 'cm', 'mm', 'ft'], description: 'Defaults to Inches if not specified.' },
-        thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm', '18mm'], description: 'Only used for Rubber Matting/Glass (3/6/10/12mm) or Marine Plywood/Laminated Plywood (6/18mm only). Defaults to 6mm if that type needs a thickness and none is given.' },
-        is_repair: { type: 'boolean', description: 'Only for type=Glass: true if this is a repair/resurfacing job on existing glass rather than a fresh install - priced at 2.5x the normal rate.' }
+        thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm', '18mm', '19mm'], description: 'Only used for Rubber Matting (3/6/10/12mm), Glass (3/6/10/12mm, or 19mm = 3/4 inch glass) or Marine Plywood/Laminated Plywood (6/18mm only). Defaults to 6mm if that type needs a thickness and none is given.' },
+        is_repair: { type: 'boolean', description: 'Only for type=Glass: true if this is a repair/resurfacing job on existing glass rather than a fresh install - priced at 2.5x the normal rate.' },
+        is_tempered: { type: 'boolean', description: 'Only for type=Glass: true if the customer wants tempered glass - priced at 2x the normal glass rate.' }
       },
       required: ['type', 'length', 'width']
     }
@@ -1261,12 +1263,15 @@ function calculateStandaloneSticker(input: Record<string, unknown>): Record<stri
   const hasThickness = stickerTypeHasThickness(type);
   const thickness = hasThickness ? ((options.thickness as string) || '6mm') : null;
   const isRepair = type === 'Glass' && Boolean(options.repair);
+  const isTempered = type === 'Glass' && Boolean(options.tempered);
 
   const stickerLookup = buildStickerPriceLookup(options.stickerPricingSetupRows as Array<Record<string, unknown>>);
   const glassLookup = buildGlassPriceLookup(options.glassPricingSetupRows as Array<Record<string, unknown>>, (options.glassPricingUom as string) || 'MM');
   const areaSqFt = inchesToFeet(lengthInches) * inchesToFeet(widthInches);
   const pricePerSqFt = stickerPricePerSqFt(type, thickness, stickerLookup, glassLookup);
   let estimatedPrice = areaSqFt * pricePerSqFt;
+  // Tempered glass is double the glass rate - the same 2x the custom aquarium calculator applies.
+  if (isTempered) estimatedPrice *= 2;
   if (isRepair) estimatedPrice *= 2.5;
 
   return {
@@ -1279,7 +1284,8 @@ function calculateStandaloneSticker(input: Record<string, unknown>): Record<stri
       areaSqFt: round2(areaSqFt),
       type,
       thickness,
-      isRepair
+      isRepair,
+      isTempered
     }
   };
 }
@@ -1300,6 +1306,7 @@ export async function computeStickerQuote(supabase: SupabaseClient, input: Recor
     type: (input.type as string) || 'Plain Sticker',
     thickness: (input.thickness as string) || undefined,
     repair: Boolean(input.is_repair),
+    tempered: Boolean(input.is_tempered),
     stickerPricingSetupRows: stickerRows ?? [],
     glassPricingSetupRows: glassRows ?? [],
     glassPricingUom: 'MM'

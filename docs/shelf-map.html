@@ -49,7 +49,9 @@
       <label for="shelfSelect" class="muted" style="margin:0;">Shelf</label>
       <select id="shelfSelect" style="max-width:260px;"></select>
       <span class="muted" id="warehouseLabel"></span>
+      <span class="muted" id="lastReplenishment"></span>
       <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+      <button class="btn btn-secondary btn-sm" id="replenishBtn" type="button" title="Create a transfer order from the Warehouse location to this shelf's location for every item running low">Create Replenishment TO</button>
       <button class="btn btn-secondary btn-sm hidden" id="newShelfBtn" type="button">New Shelf</button>
       <button class="btn btn-primary btn-sm hidden" id="editBtn" type="button">Edit Layout</button>
     </div>
@@ -65,8 +67,8 @@
     </div>
 
     <div class="shelf-legend muted" id="legend">
-      <span><i class="shelf-dot" style="background:#2e9e5b"></i>Shelf count matches ledger</span>
-      <span><i class="shelf-dot" style="background:#d98a00"></i>Shelf count differs from ledger</span>
+      <span><i class="shelf-dot" style="background:#2e9e5b"></i>Ledger is more than half of the shelf qty</span>
+      <span><i class="shelf-dot" style="background:#d98a00"></i>Ledger is half or less of the shelf qty</span>
       <span><i class="shelf-dot" style="background:#d64545"></i>Out of stock</span>
       <span><i class="shelf-dot" style="background:#999"></i>Not linked to an item (dashed)</span>
     </div>

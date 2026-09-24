@@ -185,6 +185,60 @@ function updateBodyLayout() {
 function updateActionState() {
   const e = selectedEntry();
   document.getElementById('reverseBtn').disabled = !(activeView === 'ledger' && e && !e.is_reversed && !e.is_reversal);
+  document.getElementById('showDocBtn').disabled = !(activeView === 'ledger' && e && linkedDocumentKind(e));
+}
+
+// "Show Document" (as in Business Central): opens the document an entry was posted from, in a new
+// tab. A reversal ("Purchase Receipt Reversal") points at the same document as the original.
+// Adjustments, stock counts, physical inventory and opening balances have no document page.
+// A purchase order / transfer order that is still open goes to its normal page, and one that has
+// since been posted goes to the Posted Purchase Orders / Posted Transfer Orders page.
+function linkedDocumentKind(e) {
+  const docNo = String(e.document_no || '').trim();
+  if (!docNo) return null;
+  const type = String(e.document_type || '').replace(/ Reversal$/, '');
+  if (type === 'Sales Order') return { kind: 'sales', docNo };
+  if (type === 'Defect') return { kind: 'defect', docNo };
+  if (type === 'Purchase Receipt') return { kind: 'purchase', docNo };
+  if (type === 'Transfer Shipment' || type === 'Transfer Receipt') return { kind: 'transfer', docNo };
+  return null;
+}
+
+// Which page holds the document right now: the open one if it still exists, otherwise the posted one.
+async function resolveLinkedDocumentUrl({ kind, docNo }) {
+  const enc = encodeURIComponent(docNo);
+  if (kind === 'sales') return 'online-order-lines.html?order=' + enc;
+  if (kind === 'defect') return 'defect-items.html?search=' + enc;
+
+  if (kind === 'purchase') {
+    const { data } = await supabaseClient.rpc('staff_get_purchase_order', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_po_no: docNo
+    });
+    return (data && data.length > 0 ? 'purchase-orders.html?search=' : 'posted-purchase-orders.html?search=') + enc;
+  }
+
+  const { data } = await supabaseClient.from('Transfer_Header').select('*').eq('"No."', docNo).limit(1);
+  return (data && data.length > 0 ? 'transfer-orders.html?doc=' : 'posted-transfer-orders.html?doc=') + enc;
+}
+
+async function showLinkedDocument() {
+  const e = selectedEntry();
+  const doc = e && linkedDocumentKind(e);
+  if (!doc) return;
+
+  // Opened up front so the browser's pop-up blocker treats it as part of the click, then pointed
+  // at the right page once we know whether the document is still open or already posted.
+  const tab = window.open('', '_blank');
+  try {
+    const url = await resolveLinkedDocumentUrl(doc);
+    if (tab) tab.location.href = url; else window.location.href = url;
+  } catch (err) {
+    if (tab) tab.close();
+    console.error('Show Document failed:', err);
+    window.alert('Could not open the document: ' + (err.message || err));
+  }
 }
 
 function loadActiveViewIfDirty() {
@@ -250,7 +304,7 @@ async function loadEntries() {
   const body = document.getElementById('ileTableBody');
   const errorBox = document.getElementById('ileError');
   errorBox.classList.add('hidden');
-  body.innerHTML = '<tr><td colspan="11" class="cell-msg">Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="13" class="cell-msg">Loading...</td></tr>';
 
   const f = filterValues();
   const { data, error } = await supabaseClient.rpc('admin_list_item_ledger_entries', {
@@ -270,7 +324,7 @@ async function loadEntries() {
   if (error) {
     ledgerRows = [];
     selectedEntryNo = null;
-    body.innerHTML = `<tr><td colspan="11" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="13" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     updateActionState();
     renderFactBox();
     fitActiveGrid();
@@ -282,7 +336,7 @@ async function loadEntries() {
 
   if (rows.length === 0) {
     selectedEntryNo = null;
-    body.innerHTML = '<tr><td colspan="11" class="cell-msg">There is nothing to show for these filters.</td></tr>';
+    body.innerHTML = '<tr><td colspan="13" class="cell-msg">There is nothing to show for these filters.</td></tr>';
     document.getElementById('ileTotalQuantity').textContent = '0';
     renderPaginationBar(document.getElementById('ilePaginationBar'), { page: ledgerPage, pageSize: ledgerPageSize, totalCount: 0 }, {});
     updateActionState();
@@ -307,6 +361,8 @@ async function loadEntries() {
     return `
       <tr class="${classes}" data-entry-no="${r.entry_no}">
         <td>${escapeHtml(formatDate(r.posting_date))}</td>
+        <td>${escapeHtml(r.posted_at_utc ? new Date(r.posted_at_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}</td>
+        <td>${escapeHtml(r.posted_by || '')}</td>
         <td>${escapeHtml(r.entry_type)}${r.is_reversed ? ' <span class="muted">(reversed)</span>' : ''}</td>
         <td>${escapeHtml(r.document_type || '')}</td>
         <td>${escapeHtml(r.document_no || '')}</td>
@@ -1022,6 +1078,7 @@ async function startSalesPosting() {
   });
   document.getElementById('countBtn').addEventListener('click', () => showDialog('countDialog'));
   document.getElementById('reverseBtn').addEventListener('click', openReverseDialog);
+  document.getElementById('showDocBtn').addEventListener('click', showLinkedDocument);
   document.getElementById('reverseConfirmBtn').addEventListener('click', confirmReverse);
   document.getElementById('reverseReasonInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') confirmReverse();

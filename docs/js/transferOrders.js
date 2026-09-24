@@ -376,6 +376,14 @@ function updateManageActionButtons(status, lines) {
     !active || currentManageIsOwnFromWarehouse || currentManageHasAnyShipped || currentManageIsLocked
   );
 
+  // Super-user-only "Delete Order" - removes the header and lines outright. Only offered while
+  // nothing has shipped: shipping/receiving write Item Ledger entries, which deleting the order
+  // wouldn't undo. Any status qualifies (a Cancelled order can be deleted too).
+  document.getElementById('deleteTransferBtn').classList.toggle(
+    'hidden',
+    !currentSession?.isSuperUser || currentManageHasAnyShipped
+  );
+
   // Super-user-only "Change From Warehouse" - same active/not-yet-shipped gating as Cancel above,
   // for the same reason: once anything has physically shipped, the source it shipped from can't be
   // rewritten after the fact. Unlike Cancel, this has no currentManageIsOwnFromWarehouse
@@ -678,6 +686,90 @@ async function openManageModal(docNo) {
   renderManageLines(lines, status);
   updateManageActionButtons(status, lines);
   await loadAvailableStockForLines(docNo);
+  await autoFillQtyToShip(docNo, lines);
+}
+
+// Qty To Ship is filled from what the From Warehouse has on hand: each line gets the lesser of
+// what is still unshipped and what is available (never negative), and is saved straight away so
+// the printout and anyone else opening the order see it. The box is filled for everyone who sees it,
+// but only SAVED by someone who can actually ship this order (the Ship button is showing). Only
+// while Transfer Orders post to the Item Ledger - with that off the ledger has no say over stock,
+// so there is nothing reliable to fill from (a hand-typed value still saves then). A value typed in by
+// hand is saved when the box loses focus and is then KEPT on later opens instead of being refilled
+// from stock - see "Qty To Ship Manual" (supabase_transfer_line_qty_to_ship_manual.sql); Ship clears it.
+async function autoFillQtyToShip(docNo, lines) {
+  const fillFromStock = await isTransferLedgerPostingEnabled();
+  const canShipHere = !document.getElementById('shipTransferBtn').classList.contains('hidden');
+
+  const lineByNo = new Map((lines || []).map((l) => [String(l['Line No.']), l]));
+
+  async function saveQtyToShip(lineNo, value, manual) {
+    try {
+      await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': lineNo }, { 'Qty To Ship': value });
+      const line = lineByNo.get(String(lineNo));
+      if (line) line['Qty To Ship'] = value;
+    } catch (err) {
+      console.error('Saving Qty To Ship failed:', err);
+      return;
+    }
+    // Remembering that a person chose this number (so the next open doesn't replace it with the
+    // stock figure) needs "Qty To Ship Manual" (supabase_transfer_line_qty_to_ship_manual.sql). Its own
+    // best-effort write, so the quantity itself still saves if that script hasn't been run yet.
+    if (manual !== undefined) {
+      try {
+        await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': lineNo }, { 'Qty To Ship Manual': manual });
+      } catch (err) {
+        console.error('Saving Qty To Ship Manual failed (has supabase_transfer_line_qty_to_ship_manual.sql been run?):', err);
+      }
+    }
+  }
+
+  const rows = Array.from(document.querySelectorAll('#viewLinesBody tr[data-line-no]'));
+
+  // Wired for every row up front, before any awaiting below, so a number typed while the stock
+  // figures are still being applied is never overwritten - the fill skips any box already touched.
+  rows.forEach((row) => {
+    const input = row.querySelector('.manage-qty-to-ship');
+    if (!input) return;
+    input.addEventListener('input', () => { input.dataset.touched = 'true'; });
+    if (canShipHere) {
+      input.addEventListener('change', () => {
+        const typed = Math.min(Math.max(parseFloat(input.value) || 0, 0), parseFloat(input.max) || 0);
+        saveQtyToShip(row.dataset.lineNo, typed, true);
+      });
+    }
+  });
+
+  for (const row of rows) {
+    const input = row.querySelector('.manage-qty-to-ship');
+    if (!input || input.dataset.touched === 'true') continue;
+    const lineNo = row.dataset.lineNo;
+    const line = lineByNo.get(String(lineNo)) || {};
+    const remaining = parseFloat(input.max) || 0;
+    const picker = row.querySelector('.serial-tag-picker');
+
+    let fill;
+    if (line['Qty To Ship Manual'] === true && line['Qty To Ship'] !== null && line['Qty To Ship'] !== undefined) {
+      // Someone chose this number by hand - keep it (never more than is still unshipped).
+      fill = Math.min(remaining, Math.max(0, Number(line['Qty To Ship']) || 0));
+    } else {
+      if (!fillFromStock) continue;
+      const available = currentAvailableByLineNo.get(String(lineNo));
+      if (!available || available.fetch_error) continue;
+      fill = Math.min(remaining, Math.max(0, Number(available.available_quantity) || 0));
+    }
+    input.value = fill;
+
+    // Keep a serial-tracked line's required count in step with the new quantity.
+    if (picker) {
+      picker.dataset.required = String(fill);
+      updateSerialTagCount(picker);
+    }
+
+    if (canShipHere && line['Qty To Ship Manual'] !== true && Number(line['Qty To Ship']) !== fill) {
+      await saveQtyToShip(lineNo, fill, undefined);
+    }
+  }
 }
 
 // "Available" column (Manage modal) - what this order's From Warehouse has on hand for each line,
@@ -886,6 +978,13 @@ async function shipTransferOrder(docNo) {
         'Qty Shipped': line.qtyShipped,
         'Last Actor': currentSession?.username || null
       });
+      // A shipment uses up whatever was chosen, so the next round fills from stock again. Best-effort:
+      // the column comes from supabase_transfer_line_qty_to_ship_manual.sql.
+      try {
+        await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': line.lineNo }, { 'Qty To Ship Manual': false });
+      } catch (err) {
+        console.error('Clearing Qty To Ship Manual failed:', err);
+      }
     }
 
     // Transfer Date/Shipped By mark the first shipment out, not every partial shipment - leave
@@ -1138,6 +1237,51 @@ async function cancelTransferOrder(docNo) {
     errorEl.classList.remove('hidden');
   } finally {
     cancelBtn.disabled = false;
+  }
+}
+
+// Super-user-only. Deletes the Transfer_Header and every Transfer_Line, but only if nothing has
+// been shipped or received - re-read from the database right before deleting, since the modal's
+// copy of the lines can be stale (someone else may have shipped since it was opened).
+async function deleteTransferOrder(docNo) {
+  const errorEl = document.getElementById('viewLinesError');
+  errorEl.classList.add('hidden');
+
+  if (!currentSession?.isSuperUser) {
+    errorEl.textContent = 'Only a super user can delete a transfer order.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const deleteBtn = document.getElementById('deleteTransferBtn');
+  deleteBtn.disabled = true;
+  try {
+    const { data: lines, error: linesError } = await supabaseClient
+      .from('Transfer_Line')
+      .select('"Qty Shipped", "Qty Received"')
+      .eq('"Document No."', docNo);
+    if (linesError) throw linesError;
+
+    if ((lines || []).some((l) => (Number(l['Qty Shipped']) || 0) > 0 || (Number(l['Qty Received']) || 0) > 0)) {
+      errorEl.textContent = 'This order cannot be deleted - at least one item has already been shipped.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    if (!window.confirm(`Permanently delete transfer order ${docNo} and its ${(lines || []).length} line(s)? This cannot be undone.`)) return;
+
+    const { error: deleteLineError } = await supabaseClient.from('Transfer_Line').delete().eq('"Document No."', docNo);
+    if (deleteLineError) throw deleteLineError;
+    const { error: deleteHeaderError } = await supabaseClient.from('Transfer_Header').delete().eq('"No."', docNo);
+    if (deleteHeaderError) throw deleteHeaderError;
+
+    document.getElementById('viewLinesModal').classList.add('hidden');
+    await loadHeaders();
+  } catch (err) {
+    errorEl.textContent = describeSupabaseError(err, 'Failed to delete transfer order.');
+    errorEl.classList.remove('hidden');
+  } finally {
+    deleteBtn.disabled = false;
   }
 }
 
@@ -1888,6 +2032,7 @@ async function saveNewTransfer() {
   document.getElementById('shipTransferBtn').addEventListener('click', () => shipTransferOrder(currentManageDocNo));
   document.getElementById('receiveTransferBtn').addEventListener('click', () => receiveTransferOrder(currentManageDocNo));
   document.getElementById('cancelTransferBtn').addEventListener('click', () => cancelTransferOrder(currentManageDocNo));
+  document.getElementById('deleteTransferBtn').addEventListener('click', () => deleteTransferOrder(currentManageDocNo));
   document.getElementById('editFromWarehouseBtn').addEventListener('click', openFromWarehouseEdit);
   document.getElementById('cancelFromWarehouseEditBtn').addEventListener('click', closeFromWarehouseEdit);
   document.getElementById('saveFromWarehouseBtn').addEventListener('click', saveFromWarehouseEdit);

@@ -10,7 +10,10 @@
     '3mm': 85,
     '6mm': 185,
     '10mm': 290,
-    '12mm': 350
+    '12mm': 350,
+    // 3/4" glass - only offered on the standalone Sticker calculator's Glass type (see
+    // getStickerThicknessOptions), not on aquariums.
+    '19mm': 2000
   };
 
   // Last-resort fallback only, same reasoning as DEFAULT_GLASS_PRICES above - see
@@ -527,7 +530,14 @@
 
   function getStickerThicknessOptions(type) {
     if (type === 'Marine Plywood' || type === 'Laminated Plywood') return PLYWOOD_THICKNESS_OPTIONS.slice();
+    if (type === 'Glass') return STANDARD_STICKER_THICKNESS_OPTIONS.concat(['19mm']);
     return STANDARD_STICKER_THICKNESS_OPTIONS.slice();
+  }
+
+  // What a thickness option is called on screen. The value stays "19mm" (the price lookup key);
+  // only the wording adds that it is the 3/4 inch glass.
+  function getStickerThicknessLabel(thickness) {
+    return thickness === '19mm' ? '19mm (3/4")' : thickness;
   }
 
   // Builds a sticker price lookup from StickerPricingSetup rows (public_get_sticker_pricing), same
@@ -599,12 +609,15 @@
     var hasThickness = stickerTypeHasThickness(type);
     var thickness = hasThickness ? (options.thickness || '6mm') : null;
     var isRepair = type === 'Glass' && Boolean(options.repair);
+    var isTempered = type === 'Glass' && Boolean(options.tempered);
 
     var stickerLookup = buildStickerPriceLookup(options.stickerPricingSetupRows);
     var glassLookup = buildGlassPriceLookup(options.glassPricingSetupRows, options.glassPricingUom || 'MM');
     var areaSqFt = inchesToFeet(lengthInches) * inchesToFeet(widthInches);
     var pricePerSqFt = stickerPricePerSqFt(type, thickness, stickerLookup, glassLookup);
     var estimatedPrice = areaSqFt * pricePerSqFt;
+    // Tempered glass is double the glass rate - the same 2x the custom aquarium calculator applies.
+    if (isTempered) estimatedPrice *= 2;
     if (isRepair) estimatedPrice *= 2.5;
 
     return {
@@ -617,7 +630,8 @@
         areaSqFt: round2(areaSqFt),
         type: type,
         thickness: thickness,
-        isRepair: isRepair
+        isRepair: isRepair,
+        isTempered: isTempered
       }
     };
   }
@@ -1159,6 +1173,7 @@
     calculateStandaloneSticker: calculateStandaloneSticker,
     stickerTypeHasThickness: stickerTypeHasThickness,
     getStickerThicknessOptions: getStickerThicknessOptions,
+    getStickerThicknessLabel: getStickerThicknessLabel,
     enforceStandTubularSafety: enforceStandTubularSafety,
     getTubularThicknessInches: getTubularThicknessInches,
     computeStandBuiltLengthInches: computeStandBuiltLengthInches

@@ -43,18 +43,166 @@ function currentShelf() {
 }
 
 // Colour compares what is counted on the shelves (summed over every spot of this location holding
-// the item) against the ledger's on-hand for that location.
+// the item) against the ledger's on-hand for that location. Orange = the ledger has dropped to half
+// of the shelf quantity or less, i.e. time to restock the shelf; green = more than half is still in
+// the ledger (including more than the shelf holds); red = nothing left anywhere.
 function cellStatus(cell) {
   const drawing = cell.drawn_qty != null ? `Drawing: ${formatQty(cell.drawn_qty)}` : '';
   if (!cell.item_code) return { cls: 'unlinked', sub: drawing };
   if (cell.on_hand === null || cell.on_hand === undefined) return { cls: 'unlinked', sub: [drawing, 'pick a location'].filter(Boolean).join(' - ') };
   const onHand = Number(cell.on_hand);
   const shelfTotal = Number(cell.shelf_total || 0);
-  let cls = 'diff';
+  let cls = 'ok';
   if (onHand <= 0 && shelfTotal === 0) cls = 'empty';
-  else if (shelfTotal === onHand) cls = 'ok';
+  else if (onHand <= shelfTotal / 2) cls = 'diff';
   const shared = cell.item_cells > 1 ? ` (shelf total ${formatQty(shelfTotal)}, ${cell.item_cells} spots)` : '';
   return { cls, sub: `Ledger: ${formatQty(onHand)}${shared}${drawing ? ' | ' + drawing : ''}` };
+}
+
+// ---------------------------------------------------------------- replenishment transfer order
+
+const REPLENISH_FROM_WAREHOUSE_NAME = 'Warehouse';
+const REPLENISH_DESCRIPTION_PREFIX = 'Shelf replenishment - ';
+
+// Every linked item on the shelf whose ledger has dropped to half of the shelf qty or less (the
+// orange spots), topped back up to the shelf qty: shelf_total - on_hand. An item drawn in several
+// spots appears once, since shelf_total/on_hand already cover all of its spots.
+function replenishmentNeeds(shelf) {
+  const byItem = new Map();
+  (shelf.cells || []).forEach((cell) => {
+    if (!cell.item_code || byItem.has(cell.item_code)) return;
+    if (cell.on_hand === null || cell.on_hand === undefined) return;
+    const onHand = Number(cell.on_hand);
+    const shelfTotal = Number(cell.shelf_total || 0);
+    const qty = Math.ceil(shelfTotal - onHand);
+    if (shelfTotal > 0 && onHand <= shelfTotal / 2 && qty > 0) {
+      byItem.set(cell.item_code, { itemCode: cell.item_code, itemName: cell.item_name || '', qty, onHand, shelfTotal });
+    }
+  });
+  return Array.from(byItem.values());
+}
+
+async function findWarehouse(name) {
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: name,
+    p_limit: 100
+  });
+  if (error || !data) return null;
+  return data.find((w) => (w.name || '').toLowerCase() === name.toLowerCase()) || null;
+}
+
+// Creates a Requested transfer order from the "Warehouse" location to this shelf's location, the
+// same document the Transfer Orders page's New Transfer Order saves (Transfer_Header + Transfer_Line).
+async function createReplenishmentTransfer() {
+  const shelf = currentShelf();
+  if (!shelf) return;
+  if (!shelf.warehouse_id) {
+    window.alert('This shelf has no location set. Edit Layout and pick one first.');
+    return;
+  }
+
+  const btn = document.getElementById('replenishBtn');
+  btn.disabled = true;
+  try {
+    const [fromWarehouse, toWarehouse] = await Promise.all([
+      findWarehouse(REPLENISH_FROM_WAREHOUSE_NAME),
+      findWarehouse(shelf.warehouse_name || '')
+    ]);
+    if (!fromWarehouse) {
+      window.alert(`Could not find a location named "${REPLENISH_FROM_WAREHOUSE_NAME}".`);
+      return;
+    }
+    const toId = toWarehouse ? toWarehouse.id : shelf.warehouse_id;
+    const toName = toWarehouse ? toWarehouse.name : (shelf.warehouse_name || shelf.warehouse_id);
+    if (fromWarehouse.id === toId) {
+      window.alert(`This shelf is already at "${fromWarehouse.name}" - nothing to replenish from.`);
+      return;
+    }
+
+    const needs = replenishmentNeeds(shelf);
+    if (needs.length === 0) {
+      window.alert('Nothing to replenish - no item on this shelf is at half of its shelf qty or less.');
+      return;
+    }
+
+    // A transfer line must name a variant when the item has any (see saveNewTransfer in
+    // transferOrders.js). An item with exactly one variant - the usual case, every Pancake product
+    // has one - just uses it, same as picking it by hand. Only items with SEVERAL variants are left
+    // off and listed, since which one to send is a choice.
+    const lines = [];
+    const needsVariant = [];
+    for (const need of needs) {
+      const { data } = await supabaseClient.rpc('staff_search_variants', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_item_code: need.itemCode,
+        p_page: 1
+      });
+      const variants = data || [];
+      if (variants.length === 0) {
+        lines.push(need);
+      } else if (variants.length === 1 && Number(variants[0].total_count || 1) <= 1) {
+        const v = variants[0];
+        lines.push({ ...need, variantId: v.variation_id, variantName: v.sku || v.variant_name || v.variation_id });
+      } else {
+        needsVariant.push(need.itemCode);
+      }
+    }
+    if (lines.length === 0) {
+      window.alert('Every item that needs replenishing has several variants, so pick them on the Transfer Orders page: ' + needsVariant.join(', '));
+      return;
+    }
+
+    const summary = lines.map((l) => `  ${l.itemCode} ${l.itemName} - ${formatQty(l.qty)}`).join('\n');
+    const skipped = needsVariant.length ? `\n\nLeft off (they have several variants - add them on the Transfer Orders page): ${needsVariant.join(', ')}` : '';
+    if (!window.confirm(`Create a transfer order from ${fromWarehouse.name} to ${toName} for ${lines.length} item${lines.length === 1 ? '' : 's'}?\n\n${summary}${skipped}`)) return;
+
+    const { data: docNo, error: noError } = await supabaseClient.rpc('staff_next_transfer_no', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_warehouse_name: toName
+    });
+    if (noError || !docNo) throw noError || new Error('Could not get a Document No.');
+
+    const who = currentSession.displayName || currentSession.username || null;
+    const today = new Date();
+    const requestedDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+
+    await upsertRow('Transfer_Header', { 'No.': docNo }, {
+      'Description': `${REPLENISH_DESCRIPTION_PREFIX}${shelf.name}`,
+      'Status': 'Requested',
+      'Requested Date': requestedDate,
+      'From Warehouse ID': fromWarehouse.id,
+      'From Warehouse': fromWarehouse.name,
+      'To Warehouse ID': toId,
+      'To Warehouse': toName,
+      'Use Production Category': false,
+      'Requested By': who,
+      'Is Locked': true,
+      'Locked At': new Date().toISOString(),
+      'Locked By': who
+    });
+    for (let i = 0; i < lines.length; i += 1) {
+      await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': (i + 1) * 10000 }, {
+        'Item No.': lines[i].itemCode,
+        'Variant ID': lines[i].variantId || null,
+        'Variant Name': lines[i].variantName || null,
+        'Description': lines[i].itemName || null,
+        'Qty To Transfer': lines[i].qty
+      });
+    }
+
+    loadLastReplenishment(currentShelf());
+    if (window.confirm(`Transfer order ${docNo} created (${lines.length} line${lines.length === 1 ? '' : 's'}). Open it now?`)) {
+      window.location.href = 'transfer-orders.html?doc=' + encodeURIComponent(docNo);
+    }
+  } catch (err) {
+    window.alert('Failed to create the transfer order: ' + (err.message || err));
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function countedLabel(cell) {
@@ -132,6 +280,51 @@ function renderShelfSelect() {
   document.getElementById('warehouseLabel').textContent = shelf && !shelf.warehouse_id
     ? 'No location set on this shelf - Edit Layout and pick one to see ledger quantities.'
     : '';
+
+  loadLastReplenishment(shelf);
+}
+
+// The most recent replenishment transfer order made from this shelf's button (createReplenishmentTransfer
+// below), found by its description "Shelf replenishment - <shelf name>". An open order is preferred;
+// if none is open, the latest one already posted/archived is shown instead.
+let lastReplenishmentToken = 0;
+
+async function loadLastReplenishment(shelf) {
+  const el = document.getElementById('lastReplenishment');
+  const token = ++lastReplenishmentToken;
+  el.innerHTML = '';
+  if (!shelf) return;
+
+  const description = `${REPLENISH_DESCRIPTION_PREFIX}${shelf.name}`;
+  const columns = '"No.", "Status", "Requested Date", "Requested By", "To Warehouse"';
+
+  let posted = false;
+  let { data } = await supabaseClient.from('Transfer_Header').select(columns)
+    .eq('"Description"', description)
+    .order('"Locked At"', { ascending: false, nullsFirst: false })
+    .order('"No."', { ascending: false })
+    .limit(1);
+  if (!data || data.length === 0) {
+    const archived = await supabaseClient.from('Posted_Transfer_Header').select(columns)
+      .eq('"Description"', description)
+      .order('"Requested Date"', { ascending: false })
+      .order('"No."', { ascending: false })
+      .limit(1);
+    data = archived.data;
+    posted = true;
+  }
+  if (token !== lastReplenishmentToken) return; // another shelf was picked meanwhile
+
+  if (!data || data.length === 0) {
+    el.textContent = 'No replenishment transfer order yet.';
+    return;
+  }
+  const t = data[0];
+  const page = posted ? 'posted-transfer-orders.html' : 'transfer-orders.html';
+  const date = t['Requested Date'] ? new Date(t['Requested Date']).toLocaleDateString() : '';
+  el.innerHTML = `Last replenishment TO: <a href="${page}?doc=${encodeURIComponent(t['No.'])}">${escapeHtml(t['No.'])}</a>` +
+    ` - ${escapeHtml(t['Status'] || (posted ? 'Posted' : ''))}${date ? ', requested ' + escapeHtml(date) : ''}` +
+    `${t['Requested By'] ? ' by ' + escapeHtml(t['Requested By']) : ''}`;
 }
 
 async function loadWarehouseOptions() {
@@ -178,6 +371,7 @@ function setEditing(on) {
   const canEditLayout = !!currentSession.isSuperUser;
   document.getElementById('editBtn').classList.toggle('hidden', on || !canEditLayout);
   document.getElementById('newShelfBtn').classList.toggle('hidden', on || !canEditLayout);
+  document.getElementById('replenishBtn').classList.toggle('hidden', on);
   document.getElementById('legend').classList.toggle('hidden', false);
   document.getElementById('shelfSelect').disabled = on;
 }
@@ -385,6 +579,7 @@ function moveCell(delta) {
     await loadShelves(currentShelfId);
   });
   document.getElementById('refreshBtn').addEventListener('click', () => loadShelves());
+  document.getElementById('replenishBtn').addEventListener('click', createReplenishmentTransfer);
   document.getElementById('editBtn').addEventListener('click', () => { if (currentShelf()) startEdit(false); });
   document.getElementById('newShelfBtn').addEventListener('click', () => startEdit(true));
   document.getElementById('cancelBtn').addEventListener('click', cancelEdit);

@@ -283,6 +283,13 @@ async function openViewModal(poNo) {
   currentSession = session;
   renderTopNav('Posted Purchase Orders');
 
+  // Deep-link from Item Ledger Entries' "Show Document" action, e.g. ?search=PO-0001.
+  const searchParam = new URLSearchParams(window.location.search).get('search');
+  if (searchParam) {
+    document.getElementById('poSearchInput').value = searchParam;
+    currentSearch = searchParam.trim();
+  }
+
   document.getElementById('poSearchInput').addEventListener('input', (e) => {
     const value = e.target.value.trim();
     clearTimeout(searchDebounceHandle);

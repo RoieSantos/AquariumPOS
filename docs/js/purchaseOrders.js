@@ -731,49 +731,6 @@ async function openReceiveModal(poNo) {
   await renderReceiveLines(lineRows || []);
 }
 
-// Receive posts what arrived straight into the Item Ledger (staff_receive_purchase_order_lines):
-// the line's running QtyReceived and its Purchase ledger entry are written in one database
-// transaction, so they can't disagree and there is nothing external to wait for or retry.
-async function receivePurchaseOrderQuantities() {
-  const errorEl = document.getElementById('poCardError');
-  errorEl.classList.add('hidden');
-
-  const rows = Array.from(document.getElementById('receiveLinesBody').querySelectorAll('tr[data-entry-no]'));
-  const lines = rows
-    .map((row) => {
-      const input = row.querySelector('.receive-qty-input');
-      const quantity = input ? parseFloat(input.value) || 0 : 0;
-      return { entry_no: Number(row.dataset.entryNo), quantity };
-    })
-    .filter((l) => l.quantity > 0);
-
-  if (lines.length === 0) {
-    errorEl.textContent = 'Enter a Qty Received for at least one line first.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-
-  const btn = document.getElementById('receiveQtyBtn');
-  btn.disabled = true;
-  try {
-    const { error } = await supabaseClient.rpc('staff_receive_purchase_order_lines', {
-      p_admin_username: currentSession.username,
-      p_admin_password: currentSession.password,
-      p_po_no: currentReceivePoNo,
-      p_lines: lines
-    });
-    if (error) throw error;
-
-    await openReceiveModal(currentReceivePoNo);
-    await loadPurchaseOrders();
-  } catch (err) {
-    errorEl.textContent = describeSupabaseError(err, 'Failed to receive Purchase Order.');
-    errorEl.classList.remove('hidden');
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 async function postPurchaseOrder() {
   const errorEl = document.getElementById('poCardError');
   errorEl.classList.add('hidden');
@@ -787,20 +744,59 @@ async function postPurchaseOrder() {
     return;
   }
 
+  // Post = Receive what is typed in the Qty Received boxes (prefilled with everything outstanding),
+  // and then, only if that leaves nothing outstanding, archive the PO. A partial receipt is
+  // received into the Item Ledger but the PO stays open (its badge reads "Partially Received").
+  // An input only renders while a line still has a remaining balance.
   const rows = Array.from(document.getElementById('receiveLinesBody').querySelectorAll('tr[data-entry-no]'));
-  const anyUnreceived = rows.some((row) => {
+  const lines = [];
+  let stillOutstanding = 0;
+  rows.forEach((row) => {
     const input = row.querySelector('.receive-qty-input');
-    return !!input; // an input only renders while a line still has a remaining balance
+    if (!input) return;
+    const remaining = parseFloat(input.max) || 0;
+    const quantity = Math.min(Math.max(parseFloat(input.value) || 0, 0), remaining);
+    if (quantity > 0) lines.push({ entry_no: Number(row.dataset.entryNo), quantity });
+    stillOutstanding += remaining - quantity;
   });
+  const isPartial = stillOutstanding > 0;
 
-  const confirmMessage = anyUnreceived
-    ? `Purchase Order ${currentReceivePoNo} still has unreceived quantity. Post it to Posted Purchase Orders anyway?`
-    : `Post Purchase Order ${currentReceivePoNo} to Posted Purchase Orders? This cannot be undone.`;
+  if (isPartial && lines.length === 0) {
+    errorEl.textContent = 'Enter a Qty Received for at least one line first.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  let confirmMessage;
+  if (isPartial) {
+    confirmMessage = `Purchase Order ${currentReceivePoNo} is only partially received.\n\nThis will only receipt the quantities entered (${lines.length} line${lines.length === 1 ? '' : 's'}) into inventory. The PO will NOT be posted - it stays open as Partially Received until everything has arrived.\n\nContinue?`;
+  } else if (lines.length > 0) {
+    confirmMessage = `Posting Purchase Order ${currentReceivePoNo} will RECEIVE the quantities entered (${lines.length} line${lines.length === 1 ? '' : 's'}) into inventory (Item Ledger Entries) and move it to Posted Purchase Orders.\n\nThis cannot be undone. Continue?`;
+  } else {
+    confirmMessage = `Post Purchase Order ${currentReceivePoNo} to Posted Purchase Orders? Everything on it has already been received. This cannot be undone.`;
+  }
   if (!window.confirm(confirmMessage)) return;
 
   const btn = document.getElementById('postPoBtn');
   btn.disabled = true;
   try {
+    if (lines.length > 0) {
+      const { error: receiveError } = await supabaseClient.rpc('staff_receive_purchase_order_lines', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_po_no: currentReceivePoNo,
+        p_lines: lines
+      });
+      if (receiveError) throw receiveError;
+    }
+
+    if (isPartial) {
+      await openReceiveModal(currentReceivePoNo);
+      await loadPurchaseOrders();
+      window.alert(`Purchase Order ${currentReceivePoNo} was partially received and has NOT been posted. Post it again once the rest has arrived.`);
+      return;
+    }
+
     const { error } = await supabaseClient.rpc('staff_post_purchase_order', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -810,7 +806,7 @@ async function postPurchaseOrder() {
 
     document.getElementById('poCardModal').classList.add('hidden');
     await loadPurchaseOrders();
-    window.alert(`Purchase Order ${currentReceivePoNo} has been posted.`);
+    window.alert(`Purchase Order ${currentReceivePoNo} has been received and posted.`);
   } catch (err) {
     errorEl.textContent = describeSupabaseError(err, 'Failed to post Purchase Order.');
     errorEl.classList.remove('hidden');
@@ -1819,6 +1815,13 @@ async function createNewPurchaseOrder() {
   currentSession = session;
   renderTopNav('Purchase Orders');
 
+  // Deep-link from Item Ledger Entries' "Show Document" action, e.g. ?search=PO-0001.
+  const searchParam = new URLSearchParams(window.location.search).get('search');
+  if (searchParam) {
+    document.getElementById('poSearchInput').value = searchParam;
+    currentSearch = searchParam.trim();
+  }
+
   document.getElementById('poSearchInput').addEventListener('input', (e) => {
     const value = e.target.value.trim();
     clearTimeout(searchDebounceHandle);
@@ -1850,7 +1853,6 @@ async function createNewPurchaseOrder() {
     writeStoredFlag(poCardGeneralTabKey(), e.target.open);
   });
 
-  document.getElementById('receiveQtyBtn').addEventListener('click', receivePurchaseOrderQuantities);
   document.getElementById('postPoBtn').addEventListener('click', postPurchaseOrder);
 
   document.getElementById('receiveLinesBody').addEventListener('click', (e) => {

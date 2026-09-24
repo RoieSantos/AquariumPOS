@@ -250,9 +250,14 @@
           </select>
         </div>
 
+        <div id="temperedWrap" class="checkbox-row hidden">
+          <input id="tempered" type="checkbox">
+          <label for="tempered" style="margin:0;">Tempered</label>
+        </div>
+
         <div id="repairWrap" class="checkbox-row hidden">
           <input id="repair" type="checkbox">
-          <label for="repair" style="margin:0;">Repair (2.5x price)</label>
+          <label for="repair" style="margin:0;">Repair</label>
         </div>
 
         <div class="field">
@@ -358,6 +363,7 @@
         type: type,
         thickness: byId('thickness').value,
         repair: byId('repair').checked,
+        tempered: byId('tempered').checked,
         stickerPricingSetupRows: stickerPricingSetupRows,
         glassPricingSetupRows: glassPricingSetupRows,
         glassPricingUom: 'MM'
@@ -377,6 +383,7 @@
         thickness: result.normalized.thickness,
         hasThickness: Boolean(result.normalized.thickness),
         isRepair: result.normalized.isRepair,
+        isTempered: result.normalized.isTempered,
         length: byId('length').value,
         width: byId('width').value,
         unit: result.normalized.unit
@@ -390,7 +397,7 @@
       }
 
       var rows = [
-        ['Type', result.type + (result.isRepair ? ' (Repair)' : '')],
+        ['Type', result.type + (result.isTempered ? ' (Tempered)' : '') + (result.isRepair ? ' (Repair)' : '')],
         ['Dimensions', result.length + ' x ' + result.width + ' ' + result.unit],
         ['Area', result.areaSqFt.toFixed(2) + ' sq ft'],
         ['Quantity', String(result.qty)]
@@ -411,7 +418,7 @@
       var current = select.value;
 
       select.innerHTML = options.map(function (opt) {
-        return '<option' + (opt === current ? ' selected' : '') + '>' + opt + '</option>';
+        return '<option value="' + opt + '"' + (opt === current ? ' selected' : '') + '>' + window.CustomAquariumCalculator.getStickerThicknessLabel(opt) + '</option>';
       }).join('');
 
       if (options.indexOf(current) < 0) {
@@ -428,6 +435,9 @@
       var showRepair = type === 'Glass';
       byId('repairWrap').classList.toggle('hidden', !showRepair);
       if (!showRepair) byId('repair').checked = false;
+
+      byId('temperedWrap').classList.toggle('hidden', type !== 'Glass');
+      if (type !== 'Glass') byId('tempered').checked = false;
     }
 
     async function runCalculation() {
@@ -457,6 +467,7 @@
         el.addEventListener(eventName, runCalculation);
       });
       byId('repair').addEventListener('change', runCalculation);
+      byId('tempered').addEventListener('change', runCalculation);
 
       calculateButton.addEventListener('click', runCalculation);
       closeButton.addEventListener('click', function () {

@@ -310,7 +310,7 @@ begin
     raise exception 'Load your stock first (upload a stock count) - starting sales posting on an empty ledger would drive every item negative.';
   end if;
 
-  update public."ItemLedgerSetup" set "SalesPostingStartUtc" = v_start, "UpdatedAtUtc" = now();
+  update public."ItemLedgerSetup" set "SalesPostingStartUtc" = v_start, "UpdatedAtUtc" = now() where "Id";
   perform public._ile_sync_all_item_quantities();
 
   return v_start;

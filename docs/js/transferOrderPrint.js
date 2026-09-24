@@ -12,10 +12,18 @@ function formatDate(value) {
   return d.toLocaleDateString();
 }
 
+// What is going out on this shipment: the Qty To Ship saved on the line, or - when none was
+// entered - everything still unshipped (the same default the Manage modal's Qty To Ship box shows).
+function qtyToShip(line) {
+  const saved = line['Qty To Ship'];
+  if (saved !== null && saved !== undefined && saved !== '') return saved;
+  return Math.max(0, (Number(line['Qty To Transfer']) || 0) - (Number(line['Qty Shipped']) || 0));
+}
+
 function renderLines(lines) {
   const body = document.getElementById('linesBody');
   if (!lines || lines.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" class="muted">No line items.</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="muted">No line items.</td></tr>';
     return;
   }
 
@@ -26,6 +34,7 @@ function renderLines(lines) {
         <td>${l['Variant Name'] || ''}</td>
         <td>${l['Description'] || ''}</td>
         <td>${l['Qty To Transfer'] ?? ''}</td>
+        <td>${qtyToShip(l)}</td>
         <td>${l['Qty Shipped'] ?? ''}</td>
         <td>${l['Qty Received'] ?? ''}</td>
       </tr>

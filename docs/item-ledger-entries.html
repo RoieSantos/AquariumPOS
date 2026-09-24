@@ -25,6 +25,7 @@
     <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
     <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
     <symbol id="ico-undo" viewBox="0 0 16 16"><path d="M5.2 3 2.5 5.8 5.2 8.6"/><path d="M2.5 5.8h6.3a4 4 0 0 1 0 8H6"/></symbol>
+    <symbol id="ico-doc" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
     <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
   </svg>
 
@@ -53,6 +54,7 @@
       <button class="bc-cmd" id="countBtn" type="button"><svg class="bc-ico"><use href="#ico-upload"/></svg>Load / Count Stock</button>
       <span class="bc-cmd-sep"></span>
       <button class="bc-cmd" id="reverseBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-undo"/></svg>Reverse Transaction</button>
+      <button class="bc-cmd" id="showDocBtn" type="button" disabled title="Open the document this entry was posted from"><svg class="bc-ico"><use href="#ico-doc"/></svg>Show Document</button>
       <span class="bc-cmd-sep"></span>
       <button class="bc-cmd" id="ileRefreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
     </div>
@@ -110,6 +112,8 @@
               <thead>
                 <tr>
                   <th>Posting Date</th>
+                  <th>Posted At</th>
+                  <th>Posted By</th>
                   <th>Entry Type</th>
                   <th>Document Type</th>
                   <th>Document No.</th>

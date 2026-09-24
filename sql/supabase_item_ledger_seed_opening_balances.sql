@@ -109,7 +109,7 @@ begin
 
   -- Sales posting starts from this moment (see supabase_item_ledger_sales.sql), and the catalogue's
   -- stock figure is brought in line with the ledger - items the ledger has no stock of go to 0.
-  update public."ItemLedgerSetup" set "SalesPostingStartUtc" = now(), "UpdatedAtUtc" = now();
+  update public."ItemLedgerSetup" set "SalesPostingStartUtc" = now(), "UpdatedAtUtc" = now() where "Id";
   perform public._ile_sync_all_item_quantities();
 
   raise notice 'Opening balances posted: %, skipped: % (see STEP 3). Sales posting is now ON.', v_posted, v_skipped;
