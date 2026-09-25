@@ -6,7 +6,7 @@
 -- drift from the ledger. DrawnQty is just the count that was written on the paper drawing.
 --
 -- Viewing + counting: any authorized staff (staff_get_shelf_maps, staff_set_shelf_cell_count).
--- Editing the layout: Super User only (admin_*).
+-- Editing the layout: Super User or Store Manager (admin_*).
 -- Run in the Supabase SQL Editor (needs supabase_item_ledger_entries.sql already applied).
 
 create table if not exists public."ShelfMaps" (
@@ -39,9 +39,34 @@ create index if not exists "IX_ShelfMapCells_ShelfId" on public."ShelfMapCells" 
 alter table public."ShelfMaps" enable row level security;
 alter table public."ShelfMapCells" enable row level security;
 
--- Store Managers were briefly allowed to edit the layout; that was reverted (view + count only).
--- Drops the helper if an earlier version of this script created it.
-drop function if exists public.is_shelf_map_editor_authorized(text, text);
+-- Layout editors = Super User OR Store Manager, re-verified per call (same trust model as
+-- is_admin_authorized, deliberately NOT widening that one - see is_phys_journal_authorized in
+-- supabase_phys_journal_store_manager_access.sql). Not granted to anon; only called from inside the
+-- security definer functions below.
+create or replace function public.is_shelf_map_editor_authorized(p_username text, p_password text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_password_hash text;
+  v_is_active boolean;
+  v_super_user boolean;
+  v_store_manager boolean;
+begin
+  select "PasswordHash", "IsActive", "SuperUser", "StoreManager"
+    into v_password_hash, v_is_active, v_super_user, v_store_manager
+    from public."StaffUsers"
+    where "Username" = p_username;
+
+  if not found or not v_is_active or not (coalesce(v_super_user, false) or coalesce(v_store_manager, false)) then
+    return false;
+  end if;
+
+  return v_password_hash = crypt(p_password, v_password_hash);
+end;
+$$;
 
 drop function if exists public.staff_get_shelf_maps(text, text);
 
@@ -129,7 +154,7 @@ as $$
 declare
   v_id int := p_id;
 begin
-  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
+  if not public.is_shelf_map_editor_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
   end if;
   if nullif(trim(coalesce(p_name, '')), '') is null then
@@ -176,7 +201,7 @@ security definer
 set search_path = public, extensions
 as $$
 begin
-  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
+  if not public.is_shelf_map_editor_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
   end if;
   delete from public."ShelfMaps" where "Id" = p_id;

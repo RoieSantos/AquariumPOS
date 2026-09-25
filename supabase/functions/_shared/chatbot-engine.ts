@@ -348,6 +348,16 @@ function validateGlassSafety(
   const gallons = cubicInchesToGallons(lengthInches * widthInches * heightInches);
   const glassMm = extractGlassMm(glass);
 
+  // Safety rule: an aquarium 4 feet (48 inches) tall or more must use 19mm (3/4") glass. Checked
+  // first, so a tall tank goes straight to 19mm instead of stepping through 6mm/10mm/12mm.
+  if (heightInches >= 48 && glassMm < 19) {
+    return {
+      isSafe: false,
+      message: 'Height is 4 feet (48 inches) or more. 19mm (3/4") glass is required. Auto-upgrading glass to 19mm.',
+      autoChangeTo: '19mm'
+    };
+  }
+
   if (glass === '3mm' && lengthInches > 24) {
     return { isSafe: false, message: 'Length exceeds 24 inches for 3mm glass. Auto-upgrading glass to 6mm.', autoChangeTo: '6mm' };
   }
@@ -388,6 +398,7 @@ function validateGlassSafety(
 
 function getRequiredGlassFromMessage(message: string): string | null {
   const text = String(message || '').toLowerCase();
+  if (text.indexOf('19mm') >= 0) return '19mm';
   if (text.indexOf('12mm') >= 0) return '12mm';
   if (text.indexOf('10mm') >= 0) return '10mm';
   if (text.indexOf('6mm') >= 0) return '6mm';
@@ -709,7 +720,7 @@ export const TOOLS: Anthropic.Tool[] = [
         width: { type: 'number', description: 'Tank width.' },
         height: { type: 'number', description: 'Tank height.' },
         unit: { type: 'string', enum: ['Inches', 'cm', 'mm', 'ft'], description: 'Defaults to Inches if not specified.' },
-        glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm'], description: 'Defaults to 6mm if not specified.' },
+        glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm', '19mm'], description: 'Defaults to 6mm if not specified. Any tank 4 feet (48 inches) tall or more is automatically upgraded to 19mm (3/4 inch) glass for safety, whatever is passed here.' },
         tempered_glass: { type: 'boolean' },
         low_iron: { type: 'boolean' },
         rimless: { type: 'boolean', description: 'Rimless tank (no top frame bracing) - requires thicker glass for 10-15 and 30-100 gallon sizes. Set true if the customer asks for rimless OR says they will use a hang-on-back (HOB) filter, since a hang-on-back setup calls for a rimless tank.' },

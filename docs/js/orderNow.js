@@ -2634,9 +2634,9 @@ function convertToInches(value, unit) {
 // validateGlassSafety actually considers safe for these dimensions - a single tier bump isn't
 // always enough (e.g. a very large tank flagged at 6mm may still be unsafe at 10mm and need
 // 12mm), so this walks the chart forward instead of guessing one step ahead. Returns null if
-// even 12mm (the thickest option offered) still isn't enough.
+// even 19mm (the thickest option offered) still isn't enough.
 function findSafeGlassTier(lengthIn, widthIn, heightIn, startingGlass) {
-  const tiers = ['3mm', '6mm', '10mm', '12mm'];
+  const tiers = ['3mm', '6mm', '10mm', '12mm', '19mm'];
   const startIdx = Math.max(tiers.indexOf(startingGlass), 0);
   for (let i = startIdx; i < tiers.length; i += 1) {
     const check = window.CustomAquariumCalculator.validateGlassSafety(lengthIn, widthIn, heightIn, tiers[i], true, false);

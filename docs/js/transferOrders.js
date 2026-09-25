@@ -376,6 +376,14 @@ function updateManageActionButtons(status, lines) {
     !active || currentManageIsOwnFromWarehouse || currentManageHasAnyShipped || currentManageIsLocked
   );
 
+  // Create PO: only while something is still unshipped, and not for Store Managers - they have no
+  // access to the Purchase Order pages (js/auth.js STORE_MANAGER_ALLOWED_PAGES), so a PO made here
+  // would be one they can't open or print.
+  document.getElementById('createPoFromTransferBtn').classList.toggle(
+    'hidden',
+    !hasRemainingToShip || !!currentSession?.isStoreManager
+  );
+
   // Super-user-only "Delete Order" - removes the header and lines outright. Only offered while
   // nothing has shipped: shipping/receiving write Item Ledger entries, which deleting the order
   // wouldn't undo. Any status qualifies (a Cancelled order can be deleted too).
@@ -832,6 +840,180 @@ async function isTransferLedgerPostingEnabled() {
     return true;
   }
   return !!data;
+}
+
+// ---- Create PO for the items this order's From Warehouse is short of ----
+// "Missing" = still-unshipped quantity minus what the From Warehouse has on hand (Item Ledger, the
+// same figure as the Available column). Grouped by each item's primary vendor, one Purchase Order
+// per vendor, received into the From Warehouse (that is where the stock is needed to ship from).
+let createPoGroups = []; // [{ vendorCode, vendorName, lines: [{ itemCode, itemName, variantId, variantName, onHand, missing }] }]
+let createPoNoVendor = [];
+
+async function openCreatePoModal(docNo) {
+  const errorEl = document.getElementById('viewLinesError');
+  errorEl.classList.add('hidden');
+  await loadAvailableStockForLines(docNo);
+
+  const rows = Array.from(document.getElementById('viewLinesBody').querySelectorAll('tr[data-line-no]'));
+  const missingLines = [];
+  const unchecked = [];
+  rows.forEach((row) => {
+    const remaining = Math.max(0, (Number(row.dataset.qtyToTransfer) || 0) - (Number(row.dataset.qtyShipped) || 0));
+    if (remaining <= 0) return;
+    const available = currentAvailableByLineNo.get(String(row.dataset.lineNo));
+    if (!available || available.fetch_error) {
+      unchecked.push(row.dataset.itemNo);
+      return;
+    }
+    const onHand = Math.max(0, Number(available.available_quantity) || 0);
+    const missing = remaining - onHand;
+    if (missing > 0) {
+      missingLines.push({
+        itemCode: row.dataset.itemNo,
+        itemName: row.cells[2]?.textContent.trim() || row.dataset.itemNo,
+        variantId: row.dataset.variantId || '',
+        variantName: row.cells[1]?.textContent.trim() || '',
+        onHand,
+        missing
+      });
+    }
+  });
+
+  if (missingLines.length === 0) {
+    errorEl.textContent = unchecked.length
+      ? `Nothing to buy for the lines that could be checked. Stock could not be checked for: ${unchecked.join(', ')}.`
+      : `Nothing is missing - ${currentManageHeader?.['From Warehouse'] || 'the From Warehouse'} has enough stock for everything still to ship.`;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const { data, error } = await supabaseClient.rpc('staff_get_items_vendor_info', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_codes: Array.from(new Set(missingLines.map((l) => l.itemCode)))
+  });
+  if (error) {
+    errorEl.textContent = 'Could not look up suppliers: ' + describeSupabaseError(error, 'unknown error') + ' (has supabase_transfer_order_create_po.sql been run?)';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const vendorByItem = new Map((data || []).map((r) => [r.item_code, r]));
+
+  const byVendor = new Map();
+  createPoNoVendor = [];
+  missingLines.forEach((l) => {
+    const info = vendorByItem.get(l.itemCode);
+    if (!info || !info.vendor_code) {
+      createPoNoVendor.push(l);
+      return;
+    }
+    if (!byVendor.has(info.vendor_code)) {
+      byVendor.set(info.vendor_code, { vendorCode: info.vendor_code, vendorName: info.vendor_name || info.vendor_code, lines: [] });
+    }
+    byVendor.get(info.vendor_code).lines.push({ ...l, itemName: info.item_name || l.itemName });
+  });
+  createPoGroups = Array.from(byVendor.values());
+
+  const fromName = currentManageHeader?.['From Warehouse'] || 'the From Warehouse';
+  document.getElementById('createPoIntro').textContent =
+    `Transfer Order ${docNo}: ${missingLines.length} line(s) where ${fromName} does not have enough stock. One Purchase Order is created per supplier, received into ${fromName}. Adjust quantities or untick a supplier to skip it.`;
+
+  const groupsHtml = createPoGroups.map((g, gi) => `
+    <div style="margin-bottom:14px;">
+      <label style="display:flex; gap:8px; align-items:center; font-weight:600; margin-bottom:4px;">
+        <input type="checkbox" class="create-po-vendor-check" data-group="${gi}" checked /> ${escapeHtml(g.vendorName)} <span class="muted" style="font-weight:400;">(${escapeHtml(g.vendorCode)})</span>
+      </label>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Item No.</th><th>Variant</th><th>Description</th><th>On Hand</th><th>Missing</th><th>Order Qty</th></tr></thead>
+        <tbody>${g.lines.map((l, li) => `
+          <tr>
+            <td>${escapeHtml(l.itemCode)}</td><td>${escapeHtml(l.variantName)}</td><td>${escapeHtml(l.itemName)}</td>
+            <td>${l.onHand}</td><td>${l.missing}</td>
+            <td><input type="number" class="create-po-qty" data-group="${gi}" data-line="${li}" min="0" step="1" value="${l.missing}" style="width:90px;" /></td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>`).join('');
+
+  const noVendorHtml = createPoNoVendor.length
+    ? `<div class="error-text" style="margin-bottom:8px;">No supplier set on: ${createPoNoVendor.map((l) => escapeHtml(l.itemCode)).join(', ')} - set the Vendor No. in Item Setup, then try again. These are not included.</div>`
+    : '';
+  const uncheckedHtml = unchecked.length
+    ? `<div class="muted" style="margin-bottom:8px;">Stock could not be checked for: ${unchecked.map(escapeHtml).join(', ')} - not included.</div>`
+    : '';
+
+  document.getElementById('createPoBody').innerHTML = noVendorHtml + uncheckedHtml + (groupsHtml || '<p class="muted">No missing item has a supplier set.</p>');
+  document.getElementById('createPoError').classList.add('hidden');
+  document.getElementById('createPoResult').innerHTML = '';
+  document.getElementById('createPoConfirmBtn').classList.toggle('hidden', createPoGroups.length === 0);
+  document.getElementById('createPoConfirmBtn').disabled = false;
+  document.getElementById('createPoModal').classList.remove('hidden');
+}
+
+async function confirmCreatePo() {
+  const errorEl = document.getElementById('createPoError');
+  errorEl.classList.add('hidden');
+  const fromId = currentManageHeader?.['From Warehouse ID'];
+  const fromName = currentManageHeader?.['From Warehouse'];
+  if (!fromId) {
+    errorEl.textContent = 'This order has no From Warehouse ID.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('createPoConfirmBtn');
+  btn.disabled = true;
+  const results = [];
+  const failures = [];
+
+  for (let gi = 0; gi < createPoGroups.length; gi++) {
+    const group = createPoGroups[gi];
+    const check = document.querySelector(`.create-po-vendor-check[data-group="${gi}"]`);
+    if (!check?.checked) continue;
+
+    const lines = group.lines.map((l, li) => {
+      const qty = Number(document.querySelector(`.create-po-qty[data-group="${gi}"][data-line="${li}"]`)?.value) || 0;
+      return {
+        item_code: l.itemCode,
+        item_name: l.itemName,
+        quantity: qty,
+        variant_code: l.variantId || null,
+        variant_name: l.variantName || null
+      };
+    }).filter((l) => l.quantity > 0);
+    if (lines.length === 0) continue;
+
+    const { data, error } = await supabaseClient.rpc('staff_create_purchase_order', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_vendor_code: group.vendorCode,
+      p_notes: `Created from Transfer Order ${currentManageDocNo} (missing stock)`,
+      p_lines: lines,
+      p_warehouse_id: fromId,
+      p_warehouse_name: fromName || null
+    });
+    if (error) {
+      failures.push(`${group.vendorName}: ${describeSupabaseError(error, 'unknown error')}`);
+    } else {
+      results.push({ vendor: group.vendorName, poNo: data });
+      // Done - stop it being created twice by an accidental second click.
+      check.checked = false;
+      check.disabled = true;
+    }
+  }
+
+  btn.disabled = false;
+  if (failures.length) {
+    errorEl.textContent = 'Some Purchase Orders could not be created - ' + failures.join('; ');
+    errorEl.classList.remove('hidden');
+  }
+  if (results.length) {
+    document.getElementById('createPoResult').innerHTML = '<p><strong>Created:</strong></p><ul>' + results.map((r) =>
+      `<li>${escapeHtml(r.vendor)}: <a href="purchase-order-print.html?po=${encodeURIComponent(r.poNo)}">${escapeHtml(r.poNo)}</a></li>`).join('') + '</ul>';
+  } else if (!failures.length) {
+    errorEl.textContent = 'Nothing to create - tick a supplier and enter a quantity above 0.';
+    errorEl.classList.remove('hidden');
+  }
 }
 
 async function shipTransferOrder(docNo) {
@@ -2030,6 +2212,9 @@ async function saveNewTransfer() {
   document.getElementById('addLineBtn').addEventListener('click', addNewLineRow);
   document.getElementById('saveTransferBtn').addEventListener('click', saveNewTransfer);
   document.getElementById('shipTransferBtn').addEventListener('click', () => shipTransferOrder(currentManageDocNo));
+  document.getElementById('createPoFromTransferBtn').addEventListener('click', () => openCreatePoModal(currentManageDocNo));
+  document.getElementById('createPoConfirmBtn').addEventListener('click', confirmCreatePo);
+  document.getElementById('createPoCloseBtn').addEventListener('click', () => document.getElementById('createPoModal').classList.add('hidden'));
   document.getElementById('receiveTransferBtn').addEventListener('click', () => receiveTransferOrder(currentManageDocNo));
   document.getElementById('cancelTransferBtn').addEventListener('click', () => cancelTransferOrder(currentManageDocNo));
   document.getElementById('deleteTransferBtn').addEventListener('click', () => deleteTransferOrder(currentManageDocNo));

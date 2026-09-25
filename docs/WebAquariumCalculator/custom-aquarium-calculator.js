@@ -638,6 +638,7 @@
 
   function getRequiredGlassFromMessage(message) {
     var text = String(message || '').toLowerCase();
+    if (text.indexOf('19mm') >= 0) return '19mm';
     if (text.indexOf('12mm') >= 0) return '12mm';
     if (text.indexOf('10mm') >= 0) return '10mm';
     if (text.indexOf('6mm') >= 0) return '6mm';
@@ -697,6 +698,16 @@
     var glass = normalizeGlass(glassThickness);
     var gallons = cubicInchesToGallons(lengthInches * widthInches * heightInches);
     var glassMm = extractGlassMm(glass);
+
+    // Safety rule: an aquarium 4 feet (48 inches) tall or more must use 19mm (3/4") glass. Checked
+    // first, so a tall tank goes straight to 19mm instead of stepping through 6mm/10mm/12mm.
+    if (heightInches >= 48 && glassMm < 19) {
+      return {
+        isSafe: false,
+        message: 'Height is 4 feet (48 inches) or more. 19mm (3/4") glass is required. Auto-upgrading glass to 19mm.',
+        autoChangeTo: '19mm'
+      };
+    }
 
     if (glass === '3mm' && lengthInches > 24) {
       return {

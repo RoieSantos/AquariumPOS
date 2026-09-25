@@ -367,8 +367,8 @@ async function loadShelves(keepId) {
 
 function setEditing(on) {
   document.getElementById('editBar').classList.toggle('hidden', !on);
-  // Layout editing is Super User only; Store Managers (and everyone else) view + update counts.
-  const canEditLayout = !!currentSession.isSuperUser;
+  // Layout editing: Super User or Store Manager; everyone else views + updates counts.
+  const canEditLayout = !!(currentSession.isSuperUser || currentSession.isStoreManager);
   document.getElementById('editBtn').classList.toggle('hidden', on || !canEditLayout);
   document.getElementById('newShelfBtn').classList.toggle('hidden', on || !canEditLayout);
   document.getElementById('replenishBtn').classList.toggle('hidden', on);

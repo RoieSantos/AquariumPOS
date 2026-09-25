@@ -2,6 +2,19 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-09-25
+
+- **Shelf Map layout editing re-opened to Store Managers** (reverses the view+count-only change from 2026-09-24, per "can we let the store manager access edit the shelf"): `admin_save_shelf_map`/`admin_delete_shelf_map` in [supabase_shelf_maps.sql](sql/supabase_shelf_maps.sql) use `is_shelf_map_editor_authorized` (Super User OR Store Manager) again, and [shelfMap.js](docs/js/shelfMap.js) shows Edit Layout/New Shelf to both. Re-run the SQL.
+
+- **Custom aquarium safety rule: 4 ft (48 in) tall or more requires 19mm (3/4") glass** (threshold is `>= 48`, corrected from `> 48` at the user's request): new first check in `validateGlassSafety` ([custom-aquarium-calculator.js](docs/WebAquariumCalculator/custom-aquarium-calculator.js)) auto-upgrades the glass straight to 19mm (priced at the 2000/sq ft 19mm rate). "19mm (3/4")" added to the aquarium glass dropdowns in [index.html](docs/WebAquariumCalculator/index.html), [order-now.html](docs/order-now.html) and [gma-conversations.html](docs/gma-conversations.html); Order Now's tier walk in [orderNow.js](docs/js/orderNow.js) now ends at 19mm. Mirrored in [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts) (validator, message helper, `glass_thickness` enum/description) so Alice quotes the same - not deployed yet.
+
+
+- **New one-off [supabase_item_ledger_backfill_transfer.sql](sql/supabase_item_ledger_backfill_transfer.sql)**: writes the missing Item Ledger entries (Transfer Shipment / Transfer Receipt) for transfer order(s) shipped while "Transfer posting" was switched off. Edit the order number(s) at the top; posts only the difference vs. what the ledger already holds, so it's safe to re-run, and doesn't refuse when the source is short (lists any negative stock after).
+
+## 2026-09-25
+
+- **Transfer Orders: new "Create PO" button** in the Manage modal ([transfer-orders.html](docs/transfer-orders.html), [transferOrders.js](docs/js/transferOrders.js)). Finds every line where the From Warehouse's on-hand (Item Ledger, same as the Available column) is less than what's still to ship, groups the missing quantities by each item's primary vendor, and creates one Purchase Order per vendor (received into the From Warehouse, note "Created from Transfer Order X") via the existing `staff_create_purchase_order`. Quantities are editable and a vendor can be unticked before creating; items with no Vendor No. are listed and skipped. Hidden for Store Managers (no access to PO pages). New [supabase_transfer_order_create_po.sql](sql/supabase_transfer_order_create_po.sql) (`staff_get_items_vendor_info`) - needs running. The AI bot is unaffected.
+
 ## 2026-09-24
 
 - **Shelf Map shows the last replenishment transfer order** for the selected shelf ([shelf-map.html](docs/shelf-map.html) / [shelfMap.js](docs/js/shelfMap.js) `loadLastReplenishment`): next to the location label, "Last replenishment TO: <no.> - status, requested <date> by <user>", linking to that order (Transfer Orders if still open, otherwise Posted Transfer Orders). Found by the "Shelf replenishment - <shelf name>" description the button writes; refreshes after creating one. No SQL change.
