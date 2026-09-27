@@ -5042,3 +5042,20 @@ body:has(.wizard-page) {
     max-width: 140px;
   }
 }
+
+/* Short menus for locked-down accounts (Delivery Team, Online Order Staff, makers, payslips-only -
+   js/nav.js) have no hamburger toggle, so the phone rule above that hides .topnav-links left them
+   with no links at all (e.g. My Payslips missing on mobile). Keep them visible and wrapping. */
+@media (max-width: 860px) {
+  .topnav-links.topnav-links-compact {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+    margin-top: 8px;
+    gap: 4px;
+  }
+  .topnav-links.topnav-links-compact .topnav-link { padding: 8px 12px; }
+  .topnav-links.topnav-links-compact .topnav-logout { margin-left: auto; }
+}

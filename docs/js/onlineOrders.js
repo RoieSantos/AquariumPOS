@@ -238,6 +238,171 @@ const MAKER_ROLES = {
   dispatcher: { staffRole: 'Dispatcher', label: 'Dispatcher', field: 'dispatcher' }
 };
 
+// ---------------------------------------------------------------- Production Done (per person)
+// Per "can you give them a button where they can do production done on their side.. be careful
+// because an order can be assigned to multiple user/employee" - each assignee marks only their own
+// part (supabase_online_order_production_done.sql). Same parts rule as the server's
+// _online_order_production_roles: tank / stand for custom aquarium / stand lines, dispatcher for a
+// custom order with neither, nothing for a normal order.
+function neededProductionRoles(o) {
+  if (!o?.has_custom_line) return [];
+  const roles = [];
+  if (o.has_aquarium_line) roles.push('tank');
+  if (o.has_stand_line) roles.push('stand');
+  return roles.length ? roles : ['dispatcher'];
+}
+
+function myProductionRoles(o) {
+  const me = currentSession?.username;
+  return neededProductionRoles(o).filter((role) => me && o[`assigned_${MAKER_ROLES[role].field}`] === me);
+}
+
+function isProductionDone(o) {
+  const needed = neededProductionRoles(o);
+  return needed.length > 0 && needed.every((role) => o.production_done?.[role]);
+}
+
+function canChangeProduction(o) {
+  return ['confirmed', 'submitted', 'printed', 'assigned'].includes((o?.status || '').trim().toLowerCase());
+}
+
+// Status shown in the list / card: 'Production Done' once every part is done (display only - the
+// real status stays Assigned until the Production Manager / POS moves it on).
+function listDisplayStatus(o) {
+  return isProductionDone(o) && canChangeProduction(o) ? 'Production Done' : orderDisplayStatus(o);
+}
+
+function productionDoneTickHtml(o, role) {
+  const d = o.production_done?.[role];
+  if (!d) return '';
+  const when = d.done_at ? new Date(d.done_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return ` <span class="oo-done" title="Production done by ${escapeHtml(d.done_by_name || d.done_by)}${when ? ' · ' + when : ''}">&#10003; Done</span>`;
+}
+
+async function attachProductionDone(rows) {
+  const ids = rows.filter((o) => neededProductionRoles(o).length).map((o) => String(o.order_id));
+  rows.forEach((o) => { o.production_done = {}; });
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_production_done', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.error('staff_get_online_order_production_done failed:', error);
+    return;
+  }
+  const byOrder = new Map(rows.map((o) => [String(o.order_id), o]));
+  (data || []).forEach((d) => {
+    const o = byOrder.get(String(d.order_id));
+    if (o) o.production_done[d.role] = d;
+  });
+}
+
+// Sets both Production Done buttons (list + card) for an order: hidden for non-makers, "Undo" once
+// all of this user's parts are done, disabled when they have no part or the order has moved on.
+function updateProductionDoneButton(btnId, o) {
+  const btn = document.getElementById(btnId);
+  if (!currentSession?.isOrderMaker) { btn.classList.add('hidden'); return; }
+  btn.classList.remove('hidden');
+  const mine = o ? myProductionRoles(o) : [];
+  const allMineDone = mine.length > 0 && mine.every((role) => o.production_done?.[role]);
+  btn.querySelector('.pd-label').textContent = allMineDone ? 'Undo Production Done' : 'Production Done';
+  btn.disabled = !mine.length || !canChangeProduction(o);
+  btn.title = !o ? 'Select an order'
+    : !mine.length ? 'You are not assigned to a production part of this order'
+    : !canChangeProduction(o) ? `This order is already ${o.status}`
+    : `Your part: ${mine.map((r) => MAKER_ROLES[r].label).join(' + ')}`;
+}
+
+// Phone view of My Assignments - see #myAssignmentCards in online-orders.html. Rendered on every
+// My Assignments load; CSS decides whether it or the grid shows.
+function renderMyAssignmentCards(rows) {
+  const box = document.getElementById('myAssignmentCards');
+  if (!rows.length) {
+    box.innerHTML = '<div class="oo-mc-empty">No open orders are assigned to you right now.</div>';
+    return;
+  }
+  const me = currentSession.username;
+  box.innerHTML = rows.map((o) => {
+    const status = listDisplayStatus(o);
+    const mine = myProductionRoles(o);
+    const allMineDone = mine.length > 0 && mine.every((role) => o.production_done?.[role]);
+    const canChange = canChangeProduction(o);
+    const partChips = neededProductionRoles(o).map((role) => {
+      const field = MAKER_ROLES[role].field;
+      const who = o[`assigned_${field}_name`] || o[`assigned_${field}`];
+      const done = !!o.production_done?.[role];
+      const isMe = o[`assigned_${field}`] === me;
+      return `<span class="oo-mc-part${done ? ' done' : ''}${isMe ? ' me' : ''}">
+        <b>${escapeHtml(MAKER_ROLES[role].label)}</b> ${isMe ? 'You' : escapeHtml(who || 'Not assigned')}
+        <i>${done ? '&#10003; Done' : 'To do'}</i></span>`;
+    }).join('');
+    const dispatcher = neededProductionRoles(o).includes('dispatcher') ? ''
+      : `<div class="oo-mc-line"><span>Dispatcher</span>${o.assigned_dispatcher === me ? 'You' : escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher || '-')}</div>`;
+    const pdBtn = mine.length ? `<button type="button" class="oo-mc-btn ${allMineDone ? 'undo' : 'primary'}" data-pd-order="${escapeHtml(o.order_id)}" ${canChange ? '' : 'disabled'}>
+        ${allMineDone ? 'Undo Production Done' : '&#10003; Production Done'}</button>` : '';
+    return `
+      <article class="oo-mc" data-order-id="${escapeHtml(o.order_id)}">
+        <header class="oo-mc-head">
+          <a href="#" class="oo-mc-id" data-open-order="${escapeHtml(o.order_id)}">#${escapeHtml(o.order_id)}</a>
+          <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>
+        </header>
+        <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
+        <div class="oo-mc-line"><span>Due</span>${escapeHtml(o.estimated_delivery_date || 'Not set')}${o.for_delivery ? ' · Delivery' : ' · Pickup'}</div>
+        <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse_name || o.location_id || '-')} ${glassBadgeHtml(o)}</div>
+        ${dispatcher}
+        <div class="oo-mc-parts">${partChips}</div>
+        ${o.note_print ? `<div class="oo-mc-note">${escapeHtml(o.note_print)}</div>` : ''}
+        <div class="oo-mc-actions">
+          <button type="button" class="oo-mc-btn" data-open-order="${escapeHtml(o.order_id)}">Open</button>
+          ${pdBtn}
+        </div>
+      </article>`;
+  }).join('');
+}
+
+function wireMyAssignmentCards() {
+  document.getElementById('myAssignmentCards').addEventListener('click', (event) => {
+    const pd = event.target.closest('[data-pd-order]');
+    if (pd) { handleProductionDoneClick(pd.dataset.pdOrder, pd); return; }
+    const open = event.target.closest('[data-open-order]');
+    if (open) {
+      event.preventDefault();
+      selectedOrderId = open.dataset.openOrder;
+      openOrderCard(open.dataset.openOrder);
+    }
+  });
+}
+
+async function handleProductionDoneClick(orderId, btn) {
+  const o = findFlatOrder(orderId);
+  if (!o) return;
+  const mine = myProductionRoles(o);
+  if (!mine.length) return;
+  const undo = mine.every((role) => o.production_done?.[role]);
+  const parts = mine.map((r) => MAKER_ROLES[r].label.replace(' Maker', '').toLowerCase()).join(' and ');
+  const question = undo
+    ? `Undo Production Done for your part (${parts}) of order ${o.order_id}?`
+    : `Mark your part (${parts}) of order ${o.order_id} as done?`;
+  if (!confirm(question)) return;
+
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_set_online_order_production_done', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(o.order_id),
+    p_done: !undo
+  });
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) {
+    alert(error?.message || result?.message || 'Could not update production.');
+  } else if (!undo && result.all_done) {
+    alert(`Order ${o.order_id}: every part is done - it now shows as Production Done.`);
+  }
+  await refreshCurrentOrders();
+}
+
 function makerSelectHtml(order, role, currentUsername) {
   const staffRole = MAKER_ROLES[role].staffRole;
   const members = productionMembers.filter((m) => (m.staff_roles || []).includes(staffRole));
@@ -298,12 +463,12 @@ function orderRowsHtml(orders) {
         <td>${o.order_date || ''}</td>
         <td>${o.order_time || ''}</td>
         <td>${escapeHtml(o.customer_name)}</td>
-        <td>${escapeHtml(orderDisplayStatus(o))}</td>
+        <td>${escapeHtml(listDisplayStatus(o))}</td>
         <td>${escapeHtml(o.confirmed_by)}</td>
         <td>${escapeHtml(o.created_by)}</td>
-        <td>${assigneeCellHtml(o, o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}</td>
-        <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}</td>
-        <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}</td>
+        <td>${assigneeCellHtml(o, o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}${productionDoneTickHtml(o, 'tank')}</td>
+        <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}${productionDoneTickHtml(o, 'stand')}</td>
+        <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${escapeHtml(o.note_print)}</td>
         ${hidePriceColumns ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
@@ -1208,6 +1373,7 @@ function updateOrderActionState() {
   ['openOrderBtn', 'listSendPhotoBtn', 'listSendMessageBtn'].forEach((id) => { document.getElementById(id).disabled = !o; });
   document.getElementById('listToShipBtn').disabled = !isPrintedOrder(o);
   document.getElementById('listAssignBtn').disabled = !o;
+  updateProductionDoneButton('listProductionDoneBtn', o);
 }
 
 // ---------------------------------------------------------------- Assign popup
@@ -1387,6 +1553,7 @@ function wireOrderListActions() {
   document.getElementById('listSendPhotoBtn').addEventListener('click', (e) => selectedOrderId && handleSendPhotoClick(selectedOrderId, e.currentTarget));
   document.getElementById('listSendMessageBtn').addEventListener('click', () => selectedOrderId && openSendMessageModal(selectedOrderId));
   document.getElementById('listToShipBtn').addEventListener('click', (e) => selectedOrderId && handleToShipClick(selectedOrderId, e.currentTarget));
+  document.getElementById('listProductionDoneBtn').addEventListener('click', (e) => selectedOrderId && handleProductionDoneClick(selectedOrderId, e.currentTarget));
 }
 
 // ---------------------------------------------------------------- Online Order document (card + lines)
@@ -1423,7 +1590,7 @@ function setCardText(id, value) {
 }
 
 function fillOrderCardHeader(o) {
-  const displayStatus = orderDisplayStatus(o);
+  const displayStatus = listDisplayStatus(o);
   document.getElementById('orderCardTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
   const badge = document.getElementById('orderCardStatusBadge');
   badge.textContent = displayStatus || '';
@@ -1450,6 +1617,7 @@ function fillOrderCardHeader(o) {
     o.for_delivery ? `For delivery${o.estimated_delivery_date ? ' · ' + o.estimated_delivery_date : ''}` : 'Pickup';
 
   document.getElementById('cardToShipBtn').disabled = !isPrintedOrder(o);
+  updateProductionDoneButton('cardProductionDoneBtn', o);
   renderOrderCardAssignments();
 }
 
@@ -1458,9 +1626,9 @@ function renderOrderCardAssignments() {
   if (!o) return;
   document.getElementById('ocTankMakerRow').classList.toggle('hidden', !o.has_aquarium_line);
   document.getElementById('ocStandMakerRow').classList.toggle('hidden', !o.has_stand_line);
-  document.getElementById('ocTankMaker').innerHTML = o.has_aquarium_line ? makerSelectHtml(o, 'tank', o.assigned_tank_maker) : '';
-  document.getElementById('ocStandMaker').innerHTML = o.has_stand_line ? makerSelectHtml(o, 'stand', o.assigned_stand_maker) : '';
-  document.getElementById('ocDispatcher').innerHTML = makerSelectHtml(o, 'dispatcher', o.assigned_dispatcher);
+  document.getElementById('ocTankMaker').innerHTML = o.has_aquarium_line ? makerSelectHtml(o, 'tank', o.assigned_tank_maker) + productionDoneTickHtml(o, 'tank') : '';
+  document.getElementById('ocStandMaker').innerHTML = o.has_stand_line ? makerSelectHtml(o, 'stand', o.assigned_stand_maker) + productionDoneTickHtml(o, 'stand') : '';
+  document.getElementById('ocDispatcher').innerHTML = makerSelectHtml(o, 'dispatcher', o.assigned_dispatcher) + productionDoneTickHtml(o, 'dispatcher');
 
   const parts = [];
   if (o.has_aquarium_line) parts.push(`Tank: ${o.assigned_tank_maker_name || o.assigned_tank_maker || '-'}`);
@@ -1761,6 +1929,7 @@ function wireOrderCard() {
   document.getElementById('cardSendPhotoBtn').addEventListener('click', (e) => openCardOrderId && handleSendPhotoClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardSendMessageBtn').addEventListener('click', () => openCardOrderId && openSendMessageModal(openCardOrderId));
   document.getElementById('cardToShipBtn').addEventListener('click', (e) => openCardOrderId && handleToShipClick(openCardOrderId, e.currentTarget));
+  document.getElementById('cardProductionDoneBtn').addEventListener('click', (e) => openCardOrderId && handleProductionDoneClick(openCardOrderId, e.currentTarget));
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
@@ -1836,6 +2005,7 @@ async function loadOrders(search, status) {
   }
 
   await attachDispatchers(rows);
+  await attachProductionDone(rows);
   if (myGeneration !== loadGeneration) return;
 
   // Online Order Staff get the tabbed card view (renderGroupedOrders) instead of the flat table +
@@ -1851,6 +2021,9 @@ async function loadOrders(search, status) {
   if (selectedOrderId && !rows.some((o) => String(o.order_id) === String(selectedOrderId))) selectedOrderId = null;
   updateOrderActionState();
   refreshOpenOrderCardHeader();
+
+  document.getElementById('setupContent').classList.toggle('mine-mode', myAssignmentsOnly);
+  if (myAssignmentsOnly) renderMyAssignmentCards(rows);
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
@@ -2129,6 +2302,7 @@ function wireOrderFilters() {
   wireOrderListActions();
   wireOrderCard();
   wireAssignDialog();
+  wireMyAssignmentCards();
   wireOrderCardAttachments();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
@@ -2191,6 +2365,8 @@ function wireOrderFilters() {
   if (isOrderMakerOnly(session)) {
     myAssignmentsLocked = true;
     myAssignmentsOnly = true;
+    document.querySelector('.bc-title').textContent = 'My Assignments';
+    document.getElementById('ordersSubtitle').textContent = 'Orders assigned to you. Open one to see its items and photos; tap Production Done when your part is finished.';
     hidePriceColumns = true;
     document.getElementById('deliveryFeeHeader').classList.add('hidden');
     // Only their tab - status tabs and the status filter would just be empty for them.

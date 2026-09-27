@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=6" />
+  <link rel="stylesheet" href="css/styles.css?v=maker2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=8" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -27,6 +27,7 @@
     <symbol id="ico-message" viewBox="0 0 16 16"><path d="M2.5 3h11v7.5H7L4 13v-2.5H2.5z"/></symbol>
     <symbol id="ico-ship" viewBox="0 0 16 16"><path d="M1.5 4h8v6.5h-8zM9.5 6.5h3l2 2.2v1.8h-5"/><circle cx="4.2" cy="11.8" r="1.2"/><circle cx="11.8" cy="11.8" r="1.2"/></symbol>
     <symbol id="ico-assign" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.3"/><path d="M1.8 13.5c.5-2.4 2.1-3.7 4.2-3.7 1.2 0 2.2.4 3 1.2"/><path d="M11.5 9v5M9 11.5h5"/></symbol>
+    <symbol id="ico-done" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M5.2 8.2 7.1 10l3.7-4"/></symbol>
     <symbol id="ico-attach" viewBox="0 0 16 16"><path d="M12.5 7.5 7.8 12.2a3 3 0 0 1-4.2-4.2l5-5a2 2 0 0 1 2.8 2.8l-5 5a1 1 0 0 1-1.4-1.4L9.5 4.9"/></symbol>
   </svg>
 
@@ -37,7 +38,7 @@
     <div class="bc-titlebar">
       <div>
         <h1 class="bc-title">Online Orders</h1>
-        <p class="bc-subtitle">Live, read-only view of customer orders fetched directly from Pancake.</p>
+        <p class="bc-subtitle" id="ordersSubtitle">Live, read-only view of customer orders fetched directly from Pancake.</p>
       </div>
       <div class="bc-title-tools">
         <div class="bc-search">
@@ -75,6 +76,9 @@
         <button class="bc-cmd" id="listToShipBtn" type="button" disabled title="Only a Printed or Assigned order can be marked To Ship"><svg class="bc-ico"><use href="#ico-ship"/></svg>To Ship</button>
         <!-- Production Manager / Super User only (js/onlineOrders.js canAssignOrders) -->
         <button class="bc-cmd hidden" id="listAssignBtn" type="button" disabled title="Assign the Tank Maker / Stand Maker / Dispatcher for the selected order"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
+        <!-- Tank Maker / Stand Maker / Dispatcher only: marks the user's own part of the selected order
+             done (js/onlineOrders.js handleProductionDoneClick). -->
+        <button class="bc-cmd hidden" id="listProductionDoneBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
         <span class="bc-cmd-sep"></span>
         <button class="bc-cmd" id="refreshOrdersBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
         <!-- Super users only - see js/onlineOrders.js's init() (session.isSuperUser gate). No icon:
@@ -149,6 +153,11 @@
         </section>
       </div>
 
+      <!-- My Assignments on a phone (js/onlineOrders.js renderMyAssignmentCards): one card per order
+           with the user's own part and big Open / Production Done buttons, instead of the wide grid
+           and filter pane. Shown by css/bc-list.css only below 760px while #setupContent.mine-mode. -->
+      <div class="oo-mine-cards" id="myAssignmentCards"></div>
+
       <!-- Online Order Staff only (js/onlineOrders.js's init()) - per "i want to show the online
            order per category: Confirmed / Printed / To-Ship... built it as a mobile GUI friendly.
            I want button style Confirmed Printed and ToShip, make it very Mobile friendly" - a big
@@ -199,6 +208,7 @@
         <button class="bc-cmd" id="cardSendPhotoBtn" type="button"><svg class="bc-ico"><use href="#ico-camera"/></svg>Send Photo</button>
         <button class="bc-cmd" id="cardSendMessageBtn" type="button"><svg class="bc-ico"><use href="#ico-message"/></svg>To-Ship Message</button>
         <button class="bc-cmd" id="cardToShipBtn" type="button" title="Only a Printed or Assigned order can be marked To Ship"><svg class="bc-ico"><use href="#ico-ship"/></svg>To Ship</button>
+        <button class="bc-cmd hidden" id="cardProductionDoneBtn" type="button"><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
         <button class="bc-cmd hidden" id="cardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker / Dispatcher"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
       </div>
 
@@ -419,11 +429,11 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=maker1"></script>
+  <script src="js/nav.js?v=maker2"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=bc9"></script>
+  <script src="js/onlineOrders.js?v=bc11"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

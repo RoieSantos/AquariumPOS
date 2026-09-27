@@ -16,7 +16,7 @@ function renderTopNav(activeLabel) {
     nav.innerHTML = `
       <div class="topnav-inner">
         <span class="topnav-brand">RS Pet Stop Portal</span>
-        <div class="topnav-links" id="topnavLinks">
+        <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
           <a class="topnav-link${activeLabel === 'Delivery' ? ' active' : ''}" href="delivery.html">Delivery</a>
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
@@ -35,7 +35,7 @@ function renderTopNav(activeLabel) {
     nav.innerHTML = `
       <div class="topnav-inner">
         <span class="topnav-brand">RS Pet Stop Portal</span>
-        <div class="topnav-links" id="topnavLinks">
+        <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
           <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">Online Orders</a>
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
@@ -53,7 +53,7 @@ function renderTopNav(activeLabel) {
     nav.innerHTML = `
       <div class="topnav-inner">
         <span class="topnav-brand">RS Pet Stop Portal</span>
-        <div class="topnav-links" id="topnavLinks">
+        <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">My Assignments</a>
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
@@ -72,7 +72,7 @@ function renderTopNav(activeLabel) {
     nav.innerHTML = `
       <div class="topnav-inner">
         <span class="topnav-brand">RS Pet Stop Portal</span>
-        <div class="topnav-links" id="topnavLinks">
+        <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
