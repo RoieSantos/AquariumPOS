@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payroll Ledger - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,13 +17,42 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <div class="toolbar">
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-edit" viewBox="0 0 16 16"><path d="M10.8 2.7 13.3 5.2 5.6 12.9 2.6 13.4 3.1 10.4z"/><path d="M9.4 4.1l2.5 2.5"/></symbol>
+    <symbol id="ico-open" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-delete" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></symbol>
+    <symbol id="ico-calendar" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></symbol>
+    <symbol id="ico-money" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8" rx="1"/><circle cx="8" cy="8" r="1.8"/></symbol>
+    <symbol id="ico-ledger" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></symbol>
+    <symbol id="ico-people" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5"/><circle cx="11.5" cy="6" r="1.7"/><path d="M11 9.6c1.5.1 2.6 1.1 3 3"/></symbol>
+    <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
+    <symbol id="ico-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></symbol>
+  </svg>
+
+  <!-- Business Central ledger-entries list (css/bc-list.css): search in the title bar, filters in
+       the left "Filter list by" pane (each applies as soon as it changes), a read-only grid. -->
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
       <div>
-        <h1 style="margin-bottom:4px;">Payroll Ledger</h1>
-        <p class="muted">Every Base Pay, Addition, Deduction, and Net Pay entry posted when a payroll run is finalized - a permanent detailed record across all runs.</p>
+        <h1 class="bc-title">Payroll Ledger Entries</h1>
+        <p class="bc-subtitle">Every Base Pay, Addition, Deduction, Net Pay, Funding and Cash Advance entry - a permanent record across all runs.</p>
       </div>
-      <a href="payroll.html" class="btn btn-secondary">Back to Payroll</a>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="filterSearch" placeholder="Search" aria-label="Search employee or label" autocomplete="off" />
+        </div>
+        <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+          <svg class="bc-ico"><use href="#ico-filter"/></svg>
+        </button>
+      </div>
     </div>
 
     <div id="notAuthorizedBox" class="hidden">
@@ -30,76 +60,83 @@
     </div>
 
     <div id="ledgerContent" class="hidden">
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="filterEmployee">Employee</label>
-          <select id="filterEmployee">
-            <option value="">All Employees</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="filterEntryType">Entry Type</label>
-          <select id="filterEntryType">
-            <option value="">All Types</option>
-            <option value="Funding">Funding</option>
-            <option value="Payroll">Payroll</option>
-            <option value="CashAdvance">Cash Advance</option>
-            <option value="BasePay">Base Pay</option>
-            <option value="Addition">Addition</option>
-            <option value="Deduction">Deduction</option>
-            <option value="NetPay">Net Pay</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="filterMethod">Method</label>
-          <select id="filterMethod">
-            <option value="">All Methods</option>
-            <option value="Cash">Cash</option>
-            <option value="Digital">Digital (GCash)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="filterPeriodStart">Period From</label>
-          <input type="date" id="filterPeriodStart" />
-        </div>
-        <div class="form-row">
-          <label for="filterPeriodEnd">Period To</label>
-          <input type="date" id="filterPeriodEnd" />
-        </div>
-        <div class="form-row" style="align-self:end;">
-          <button class="btn btn-primary btn-sm" id="applyFiltersBtn" type="button">Apply Filters</button>
-        </div>
-      </div>
-      <div class="form-grid">
-        <div class="form-row" style="max-width:320px;">
-          <label for="filterSearch">Search</label>
-          <input type="text" id="filterSearch" placeholder="Search employee or label..." />
-        </div>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <a class="bc-cmd" href="payroll.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-money"/></svg>Payroll Runs</a>
+        <a class="bc-cmd" href="payroll-setup.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-settings"/></svg>Payroll Setup</a>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="refreshLedgerBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
       </div>
 
-      <div id="ledgerSummary" class="muted" style="margin-bottom:8px;"></div>
+      <div class="bc-body no-factbox" id="bcBody">
+        <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+          <div class="bc-pane-head">Filter list by</div>
+          <div class="bc-pane-body">
+            <div class="bc-fp-field">
+              <label for="filterEmployee">Employee</label>
+              <select id="filterEmployee"><option value="">(all)</option></select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="filterEntryType">Entry Type</label>
+              <select id="filterEntryType">
+                <option value="">(all)</option>
+                <option value="Funding">Funding</option>
+                <option value="Payroll">Payroll</option>
+                <option value="CashAdvance">Cash Advance</option>
+                <option value="BasePay">Base Pay</option>
+                <option value="Addition">Addition</option>
+                <option value="Deduction">Deduction</option>
+                <option value="NetPay">Net Pay</option>
+              </select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="filterMethod">Method</label>
+              <select id="filterMethod">
+                <option value="">(all)</option>
+                <option value="Cash">Cash</option>
+                <option value="Digital">Digital (GCash)</option>
+              </select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="filterPeriodStart">Period - from</label>
+              <input type="date" id="filterPeriodStart" />
+            </div>
+            <div class="bc-fp-field">
+              <label for="filterPeriodEnd">Period - to</label>
+              <input type="date" id="filterPeriodEnd" />
+            </div>
+            <button class="bc-link" id="applyFiltersBtn" type="button">Apply filters</button>
+            <span class="muted"> &middot; </span>
+            <button class="bc-link" id="clearFiltersLink" type="button">Clear filters</button>
+          </div>
+        </aside>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Period</th>
-              <th>Employee No.</th>
-              <th>Employee</th>
-              <th>Entry Type</th>
-              <th>Label</th>
-              <th style="text-align:right;">Amount</th>
-              <th>Method</th>
-              <th>Posted By</th>
-              <th>Posted At</th>
-            </tr>
-          </thead>
-          <tbody id="ledgerTableBody">
-            <tr><td colspan="9" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
+        <section class="bc-main">
+          <div class="bc-grid-toolbar">
+            <span id="ledgerSummary" class="muted"></span>
+          </div>
+          <div class="bc-grid-wrap" id="ledgerGridWrap">
+            <table class="bc-grid">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Employee No.</th>
+                  <th>Employee</th>
+                  <th>Entry Type</th>
+                  <th>Description</th>
+                  <th class="num">Amount</th>
+                  <th>Method</th>
+                  <th>Posted By</th>
+                  <th>Posted At</th>
+                </tr>
+              </thead>
+              <tbody id="ledgerTableBody">
+                <tr><td colspan="9" class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="ledgerPaginationBar"></div>
+        </section>
       </div>
-      <div id="ledgerPaginationBar"></div>
     </div>
   </div>
 
@@ -109,7 +146,7 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollLedger.js"></script>
+  <script src="js/payrollLedger.js?v=bc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

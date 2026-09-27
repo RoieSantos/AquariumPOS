@@ -466,6 +466,16 @@ namespace AquariumPOS
                         {
                             statusStr = "Printed";
                         }
+                        // Pancake code 11 is used as "Assigned" (Production Manager assigned the makers
+                        // from the portal) - see sql/supabase_online_order_assigned_status.sql.
+                        else if (string.Equals(s, "11", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(s, "assigned", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(s, "restocking", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(s, "waitting", StringComparison.OrdinalIgnoreCase) // Pancake's own spelling for code 11
+                            || string.Equals(s, "waiting_for_goods", StringComparison.OrdinalIgnoreCase))
+                        {
+                            statusStr = "Assigned";
+                        }
                     }
 
                     // First column is OrderID (was ReceiptNo previously)

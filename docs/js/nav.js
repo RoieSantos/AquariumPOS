@@ -47,6 +47,23 @@ function renderTopNav(activeLabel) {
     return;
   }
 
+  // Tank Maker / Stand Maker / Dispatcher with no other access - their assigned orders + payslips
+  // (see isOrderMakerOnly in js/auth.js).
+  if (isOrderMakerOnly(session)) {
+    nav.innerHTML = `
+      <div class="topnav-inner">
+        <span class="topnav-brand">RS Pet Stop Portal</span>
+        <div class="topnav-links" id="topnavLinks">
+          <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">My Assignments</a>
+          <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
+          <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
+        </div>
+      </div>
+    `;
+    wireLogoutButton('logoutBtn');
+    return;
+  }
+
   // Same lockdown shape, for a plain account with none of the permission checkboxes ticked - per
   // "why it can see all the buttons? it suppose to be My payslips only right?" js/auth.js's
   // requireAuth() only allows dashboard.html (shows just a "Go to My Payslips" link, see

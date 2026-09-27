@@ -15,7 +15,7 @@ let sortDir = 1;
 let cardMode = 'new'; // 'new' | 'edit'
 let filterPaneOpen = true;
 
-const ROLE_LABELS = { StandMaker: 'Stand Maker', TankMaker: 'Tank Maker', Dispatcher: 'Dispatcher', Cashier: 'Cashier' };
+const ROLE_LABELS = { StandMaker: 'Stand Maker', TankMaker: 'Tank Maker', Dispatcher: 'Dispatcher', Cashier: 'Cashier', ProductionManager: 'Production Manager' };
 
 // Portal access flags: [list field, RPC param, card checkbox id, short label, description].
 const ACCESS_FLAGS = [

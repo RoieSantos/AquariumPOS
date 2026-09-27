@@ -45,18 +45,18 @@ function poRowsHtml(rows) {
   return rows
     .map((po) => `
       <tr class="clickable-row" data-po-no="${encodeURIComponent(po.po_no)}">
-        <td>${po.po_no}</td>
+        <td><span class="bc-doc-no">${po.po_no}</span></td>
         <td>${po.vendor_name || po.vendor_code || ''}</td>
         <td>${escapeHtml(po.warehouse_name || '')}</td>
         <td>${formatDate(po.order_date)}</td>
-        <td style="text-align:right;">${po.line_count ?? 0}</td>
-        <td style="text-align:right;">${Number(po.total_quantity || 0).toLocaleString()}</td>
+        <td class="num">${po.line_count ?? 0}</td>
+        <td class="num">${Number(po.total_quantity || 0).toLocaleString()}</td>
         <td>${receivedBadgeHtml(po)}</td>
         <td>${escapeHtml(po.payment_method || '')}</td>
         <td>${po.created_by || ''}</td>
         <td>
-          <a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();">Print</a>
-          <button class="btn btn-secondary btn-sm" data-delete-po="${encodeURIComponent(po.po_no)}" data-received-qty="${Number(po.total_received_quantity || 0)}" type="button" onclick="event.stopPropagation();">Delete</button>
+          <a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" class="bc-row-action" onclick="event.stopPropagation();">Print</a>
+          <button class="bc-row-action bc-row-action-danger" data-delete-po="${encodeURIComponent(po.po_no)}" data-received-qty="${Number(po.total_received_quantity || 0)}" type="button" onclick="event.stopPropagation();">Delete</button>
         </td>
       </tr>
     `)
@@ -65,7 +65,7 @@ function poRowsHtml(rows) {
 
 async function loadPurchaseOrders() {
   const tbody = document.getElementById('poTableBody');
-  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('staff_list_purchase_orders', {
     p_admin_username: currentSession.username,
@@ -76,13 +76,13 @@ async function loadPurchaseOrders() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   const rows = data || [];
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="10" class="muted">No Purchase Orders yet - create one from Stock On Hand.</td></tr>'
+    ? '<tr><td colspan="10" class="cell-msg">No Purchase Orders yet - create one from Stock On Hand, or with New.</td></tr>'
     : poRowsHtml(rows);
 
   tbody.querySelectorAll('tr[data-po-no]').forEach((row) => {
@@ -97,6 +97,16 @@ async function loadPurchaseOrders() {
       onPageSizeChange: (newSize) => { currentPageSize = newSize; currentPage = 1; loadPurchaseOrders(); }
     }
   );
+  fitGridToViewport();
+}
+
+// The list grid fills the rest of the window (css/bc-list.css .bc-grid-wrap) - measured, since the
+// title bar's height changes with the window width.
+function fitGridToViewport() {
+  const el = document.getElementById('poGridWrap');
+  if (!el || el.offsetParent === null) return;
+  const available = window.innerHeight - el.getBoundingClientRect().top - 64; // leaves room for the pagination bar
+  el.style.maxHeight = Math.max(240, available) + 'px';
 }
 
 async function deletePurchaseOrder(poNo, receivedQty) {
@@ -1831,6 +1841,9 @@ async function createNewPurchaseOrder() {
       loadPurchaseOrders();
     }, 300);
   });
+
+  document.getElementById('poRefreshBtn').addEventListener('click', loadPurchaseOrders);
+  window.addEventListener('resize', fitGridToViewport);
 
   document.getElementById('poTableBody').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-delete-po]');

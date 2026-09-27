@@ -5,6 +5,7 @@
 let currentSession = null;
 let currentPage = 1;
 let currentPageSize = 25;
+let selectedRunId = null; // BC list: Open acts on the selected row
 let cutoffSettings = null; // loaded once from admin_get_payroll_cutoff_settings, used by autofillDates()
 
 function toDateInputValue(date) {
@@ -120,29 +121,57 @@ function renderRunRows(runs) {
   const tbody = document.getElementById('runTableBody');
 
   if (!runs || runs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="muted">No payroll runs found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">No payroll runs found.</td></tr>';
+    updateRunActionState();
     return;
   }
 
   tbody.innerHTML = runs
     .map((r) => `
-      <tr>
-        <td>${formatDate(r.period_start)} - ${formatDate(r.period_end)}</td>
+      <tr data-run-id="${r.run_id}" class="${String(r.run_id) === String(selectedRunId) ? 'selected' : ''}">
+        <td><a class="bc-doc-no" href="payroll-run.html?run=${r.run_id}" title="Open this payroll run">${formatDate(r.period_start)} - ${formatDate(r.period_end)}</a></td>
         <td>${formatCycleLabel(r.pay_cycle)}</td>
         <td>${formatDate(r.pay_date)}</td>
         <td><span class="badge ${r.status === 'Finalized' ? 'badge-success' : 'badge-warning'}">${r.status}</span></td>
-        <td>${r.employee_count}</td>
-        <td>${formatCurrency(r.total_net_pay)}</td>
+        <td class="num">${r.employee_count}</td>
+        <td class="num">${formatCurrency(r.total_net_pay)}</td>
         <td>${r.created_by || ''}</td>
-        <td><a class="btn btn-secondary btn-sm" href="payroll-run.html?run=${r.run_id}">Open</a></td>
       </tr>
     `)
     .join('');
+  if (!runs.some((r) => String(r.run_id) === String(selectedRunId))) selectedRunId = null;
+  updateRunActionState();
+}
+
+function updateRunActionState() {
+  document.getElementById('openRunBtn').disabled = !selectedRunId;
+}
+
+function openRun(runId) {
+  if (runId) window.location.href = `payroll-run.html?run=${runId}`;
+}
+
+function wireRunList() {
+  const tbody = document.getElementById('runTableBody');
+  tbody.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;
+    const tr = e.target.closest('tr[data-run-id]');
+    if (!tr) return;
+    selectedRunId = tr.dataset.runId;
+    tbody.querySelectorAll('tr[data-run-id]').forEach((row) => row.classList.toggle('selected', row === tr));
+    updateRunActionState();
+  });
+  tbody.addEventListener('dblclick', (e) => {
+    const tr = e.target.closest('tr[data-run-id]');
+    if (tr) openRun(tr.dataset.runId);
+  });
+  document.getElementById('openRunBtn').addEventListener('click', () => openRun(selectedRunId));
+  document.getElementById('refreshRunsBtn').addEventListener('click', () => { loadRuns(); loadFundBalances(); });
 }
 
 async function loadRuns() {
   const tbody = document.getElementById('runTableBody');
-  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_runs', {
     p_admin_username: currentSession.username,
@@ -152,7 +181,7 @@ async function loadRuns() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="cell-msg error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -282,10 +311,11 @@ async function saveNewRun() {
   await loadCutoffSettingsOnce();
   await loadFundBalances();
 
+  wireRunList();
   document.getElementById('newRunBtn').addEventListener('click', openNewRunModal);
-  document.getElementById('closeNewRunBtn').addEventListener('click', () =>
-    document.getElementById('newRunModal').classList.add('hidden')
-  );
+  const closeNewRun = () => document.getElementById('newRunModal').classList.add('hidden');
+  document.getElementById('closeNewRunBtn').addEventListener('click', closeNewRun);
+  document.getElementById('cancelNewRunBtn').addEventListener('click', closeNewRun);
   document.getElementById('saveRunBtn').addEventListener('click', saveNewRun);
   document.getElementById('newRunPayCycle').addEventListener('change', handlePayCycleChange);
   document.getElementById('newRunCutoff').addEventListener('change', autofillDates);

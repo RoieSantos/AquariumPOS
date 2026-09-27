@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payroll - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,126 +17,159 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>Payroll</h1>
-    <p class="muted">Create and review payroll runs. Only visible to super users and payroll officers.</p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-edit" viewBox="0 0 16 16"><path d="M10.8 2.7 13.3 5.2 5.6 12.9 2.6 13.4 3.1 10.4z"/><path d="M9.4 4.1l2.5 2.5"/></symbol>
+    <symbol id="ico-open" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-delete" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></symbol>
+    <symbol id="ico-calendar" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></symbol>
+    <symbol id="ico-money" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8" rx="1"/><circle cx="8" cy="8" r="1.8"/></symbol>
+    <symbol id="ico-ledger" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></symbol>
+    <symbol id="ico-people" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5"/><circle cx="11.5" cy="6" r="1.7"/><path d="M11 9.6c1.5.1 2.6 1.1 3 3"/></symbol>
+    <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
+    <symbol id="ico-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></symbol>
+  </svg>
+
+  <!-- Business Central list page (css/bc-list.css): title, action bar, cues, list. A run opens as
+       its own document (payroll-run.html) from the Period link, a double-click, or Open. -->
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Payroll Runs</h1>
+        <p class="bc-subtitle">Create and review payroll runs. Only visible to super users and payroll officers.</p>
+      </div>
+    </div>
 
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
 
     <div id="payrollContent" class="hidden">
-      <!-- Read-only reference - manage/log funding from Payroll Setup's Cash & Digital On Hand
-           section. -->
-      <div class="form-grid" style="margin-bottom:20px;">
-        <div class="form-row">
-          <label>Cash on Hand</label>
-          <!-- Clickable - opens the Payroll Ledger report filtered to every Cash-method entry
-               (Funding/Payroll/Cash Advance) behind this balance. -->
-          <a id="cashOnHandDisplay" href="payroll-ledger.html?method=Cash" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;">-</a>
-        </div>
-        <div class="form-row">
-          <label>Digital (GCash) on Hand</label>
-          <a id="digitalOnHandDisplay" href="payroll-ledger.html?method=Digital" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;">-</a>
-        </div>
-        <div class="form-row" style="align-self:end;">
-          <a class="btn btn-secondary btn-sm" href="payroll-setup.html">Log Funding / View Journal</a>
-        </div>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd bc-cmd-accent" id="newRunBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New</button>
+        <button class="bc-cmd" id="openRunBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
+        <span class="bc-cmd-sep"></span>
+        <a class="bc-cmd" href="payroll-timesheets.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-calendar"/></svg>Timesheets</a>
+        <a class="bc-cmd" href="payroll-setup.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-settings"/></svg>Payroll Setup</a>
+        <a class="bc-cmd" href="payroll-ledger.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-ledger"/></svg>Payroll Ledger</a>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="refreshRunsBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
       </div>
 
-      <div class="toolbar">
-        <h2 style="margin:0;">Payroll Runs</h2>
-        <button class="btn btn-primary" id="newRunBtn" type="button">+ New Payroll Run</button>
+      <!-- Read-only balances - manage/log funding from Payroll Setup's Cash & Digital On Hand
+           section. Each cue opens the Payroll Ledger filtered to that method's entries
+           (Funding/Payroll/Cash Advance) behind the balance. -->
+      <div class="bc-cues">
+        <a class="bc-cue" href="payroll-ledger.html?method=Cash">
+          <span class="bc-cue-caption">Cash on Hand</span>
+          <span class="bc-cue-value" id="cashOnHandDisplay">-</span>
+        </a>
+        <a class="bc-cue" href="payroll-ledger.html?method=Digital">
+          <span class="bc-cue-caption">Digital (GCash) on Hand</span>
+          <span class="bc-cue-value" id="digitalOnHandDisplay">-</span>
+        </a>
+        <a class="bc-cue" href="payroll-setup.html?tab=funding">
+          <span class="bc-cue-caption">Funding</span>
+          <span class="bc-cue-note">Log funding / view journal in Payroll Setup &rarr;</span>
+        </a>
       </div>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Period</th>
-              <th>Pay Cycle</th>
-              <th>Pay Date</th>
-              <th>Status</th>
-              <th>Employees</th>
-              <th>Total Net Pay</th>
-              <th>Created By</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="runTableBody">
-            <tr><td colspan="8" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
+      <div class="bc-body no-filterpane no-factbox">
+        <section class="bc-main">
+          <div class="bc-grid-wrap" id="runGridWrap">
+            <table class="bc-grid">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Pay Cycle</th>
+                  <th>Pay Date</th>
+                  <th>Status</th>
+                  <th class="num">Employees</th>
+                  <th class="num">Total Net Pay</th>
+                  <th>Created By</th>
+                </tr>
+              </thead>
+              <tbody id="runTableBody">
+                <tr><td colspan="7" class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="runPaginationBar" class="pagination-bar"></div>
+        </section>
       </div>
-      <div id="runPaginationBar"></div>
     </div>
   </div>
 
-  <!-- New payroll run modal -->
-  <div id="newRunModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;">New Payroll Run</h2>
-        <button class="btn btn-secondary btn-sm" id="closeNewRunBtn" type="button">Close</button>
+  <!-- New Payroll Run - BC dialog: label-left fields, OK/Cancel. The cutoff/weekly helper rows
+       autofill Period Start/End/Pay Date as soon as they change (js/payroll.js). -->
+  <div id="newRunModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog" role="dialog" aria-modal="true" aria-labelledby="newRunTitle">
+      <div class="bc-dialog-head">
+        <h2 id="newRunTitle">New Payroll Run</h2>
+        <button class="bc-iconbtn" id="closeNewRunBtn" type="button" aria-label="Close">&times;</button>
       </div>
-
-      <div class="form-grid">
-        <div class="form-row">
+      <div class="bc-dialog-body">
+        <div class="bc-field">
           <label for="newRunPayCycle">Pay Cycle</label>
           <select id="newRunPayCycle">
             <option value="SemiMonthly">Semi-Monthly</option>
             <option value="Weekly">Weekly</option>
           </select>
         </div>
-      </div>
 
-      <div id="cutoffAutofillRow" class="form-grid hidden">
-        <div class="form-row">
-          <label for="newRunCutoff">Cutoff</label>
-          <select id="newRunCutoff">
-            <option value="A">Cutoff A</option>
-            <option value="B">Cutoff B</option>
-          </select>
+        <div id="cutoffAutofillRow" class="hidden">
+          <div class="bc-field">
+            <label for="newRunCutoff">Cutoff</label>
+            <select id="newRunCutoff">
+              <option value="A">Cutoff A</option>
+              <option value="B">Cutoff B</option>
+            </select>
+          </div>
+          <div class="bc-field">
+            <label for="newRunTargetMonth">Month</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="month" id="newRunTargetMonth" />
+              <button class="bc-link" id="autofillDatesBtn" type="button" style="white-space:nowrap;">Autofill Dates</button>
+            </div>
+          </div>
         </div>
-        <div class="form-row">
-          <label for="newRunTargetMonth">Month</label>
-          <input type="month" id="newRunTargetMonth" />
-        </div>
-        <div class="form-row" style="align-self:end;">
-          <button class="btn btn-secondary btn-sm" id="autofillDatesBtn" type="button">Autofill Dates</button>
-        </div>
-      </div>
 
-      <!-- Weekly has no cutoff concept - pay date is always a Sunday, period is just that
-           preceding 7-day week. -->
-      <div id="weeklyAutofillRow" class="form-grid hidden">
-        <div class="form-row">
-          <label for="newRunWeeklyPayDate">Pay Date (Sunday)</label>
-          <input type="date" id="newRunWeeklyPayDate" />
+        <!-- Weekly has no cutoff concept - pay date is always a Sunday, period is just that
+             preceding 7-day week. -->
+        <div id="weeklyAutofillRow" class="hidden">
+          <div class="bc-field">
+            <label for="newRunWeeklyPayDate">Pay Date (Sunday)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="date" id="newRunWeeklyPayDate" />
+              <button class="bc-link" id="autofillWeeklyDatesBtn" type="button" style="white-space:nowrap;">Autofill Dates</button>
+            </div>
+          </div>
         </div>
-        <div class="form-row" style="align-self:end;">
-          <button class="btn btn-secondary btn-sm" id="autofillWeeklyDatesBtn" type="button">Autofill Dates</button>
-        </div>
-      </div>
 
-      <div class="form-grid">
-        <div class="form-row">
+        <div class="bc-field">
           <label for="newRunPeriodStart">Period Start</label>
           <input type="date" id="newRunPeriodStart" />
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="newRunPeriodEnd">Period End</label>
           <input type="date" id="newRunPeriodEnd" />
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="newRunPayDate">Pay Date</label>
           <input type="date" id="newRunPayDate" />
         </div>
       </div>
-
-      <div id="newRunError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveRunBtn" type="button">Create Run</button>
+      <div class="bc-dialog-foot">
+        <p id="newRunError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveRunBtn" type="button">Create Run</button>
+        <button class="bc-btn" id="cancelNewRunBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -146,7 +180,7 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payroll.js"></script>
+  <script src="js/payroll.js?v=bc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

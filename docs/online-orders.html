@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,9 +17,38 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>Online Orders</h1>
-    <p class="muted">Live, read-only view of customer orders fetched directly from Pancake.</p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-open" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-camera" viewBox="0 0 16 16"><path d="M2 5h2.5l1.2-1.8h4.6L11.5 5H14v8H2z"/><circle cx="8" cy="9" r="2.3"/></symbol>
+    <symbol id="ico-message" viewBox="0 0 16 16"><path d="M2.5 3h11v7.5H7L4 13v-2.5H2.5z"/></symbol>
+    <symbol id="ico-ship" viewBox="0 0 16 16"><path d="M1.5 4h8v6.5h-8zM9.5 6.5h3l2 2.2v1.8h-5"/><circle cx="4.2" cy="11.8" r="1.2"/><circle cx="11.8" cy="11.8" r="1.2"/></symbol>
+    <symbol id="ico-assign" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.3"/><path d="M1.8 13.5c.5-2.4 2.1-3.7 4.2-3.7 1.2 0 2.2.4 3 1.2"/><path d="M11.5 9v5M9 11.5h5"/></symbol>
+    <symbol id="ico-attach" viewBox="0 0 16 16"><path d="M12.5 7.5 7.8 12.2a3 3 0 0 1-4.2-4.2l5-5a2 2 0 0 1 2.8 2.8l-5 5a1 1 0 0 1-1.4-1.4L9.5 4.9"/></symbol>
+  </svg>
+
+  <!-- Business Central list page (css/bc-list.css) - same shell as Transfer Orders / Purchase
+       Orders. Online Order Staff get the mobile card view (#groupedOrdersView) instead of the list;
+       js/onlineOrders.js hides #flatOrdersView (the whole filter pane + list body) for them. -->
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Online Orders</h1>
+        <p class="bc-subtitle">Live, read-only view of customer orders fetched directly from Pancake.</p>
+      </div>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="orderSearchInput" placeholder="Search" aria-label="Search by order ID or customer" autocomplete="off" />
+        </div>
+        <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+          <svg class="bc-ico"><use href="#ico-filter"/></svg>
+        </button>
+      </div>
+    </div>
 
     <!-- Not authorized (unused now that Online Orders is open to all staff; kept for markup parity) -->
     <div id="notAuthorizedBox" class="hidden">
@@ -29,65 +59,94 @@
          (edge case - existing logged-in users before this update); a fresh login fixes it. -->
     <div id="unlockBox" class="hidden">
       <p class="error-text" id="unlockError"></p>
-      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+      <button class="bc-btn bc-btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
     </div>
 
     <!-- Main content, shown by default now that no password re-entry is required -->
     <div id="setupContent" class="hidden">
+      <!-- BC action bar: every order action lives here and works on the selected row (click a row
+           to select it) - the list itself has no buttons. Open (or double-click / the Order ID)
+           opens the Online Order document with its lines. -->
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions" id="orderCmdbar">
+        <button class="bc-cmd bc-cmd-accent" id="openOrderBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="listSendPhotoBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-camera"/></svg>Send Photo</button>
+        <button class="bc-cmd" id="listSendMessageBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-message"/></svg>To-Ship Message</button>
+        <button class="bc-cmd" id="listToShipBtn" type="button" disabled title="Only a Printed or Assigned order can be marked To Ship"><svg class="bc-ico"><use href="#ico-ship"/></svg>To Ship</button>
+        <!-- Production Manager / Super User only (js/onlineOrders.js canAssignOrders) -->
+        <button class="bc-cmd hidden" id="listAssignBtn" type="button" disabled title="Assign the Tank Maker / Stand Maker / Dispatcher for the selected order"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="refreshOrdersBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
+        <!-- Super users only - see js/onlineOrders.js's init() (session.isSuperUser gate). No icon:
+             exportOrdersToExcel restores the label with textContent, which would drop it. -->
+        <button type="button" class="bc-cmd hidden" id="exportExcelBtn">Export to Excel</button>
+      </div>
+
       <!-- Shown when arriving from a Dashboard finance card (?period=/?scope=/?filter=), per
            "once I click the dashboard I want to be able to open the corresponding data/page of
            entries filtered" - describes the active deep-link filter and offers a way back out. -->
-      <p class="muted hidden" id="activeFilterNote"></p>
-      <div class="toolbar">
-        <h2 style="margin:0;">Orders</h2>
-        <div style="display:flex; gap:12px; align-items:center;">
-          <input type="text" id="orderSearchInput" placeholder="Search by order ID or customer..." style="max-width:280px;" />
-          <input type="text" id="statusFilterInput" placeholder="Filter by status..." style="max-width:180px;" />
-          <!-- Super users only - see js/onlineOrders.js's init() (session.isSuperUser gate) -->
-          <button type="button" class="btn btn-success btn-sm hidden" id="exportExcelBtn">📊 Export to Excel</button>
-        </div>
-      </div>
+      <div class="bc-infobar hidden" id="activeFilterNote"></div>
+
       <!-- Exact per-status record counts (from the persisted OnlineOrders table, kept fresh by the
            background cron sync) - not the live/paged Pancake list below, which only shows what's
            been loaded so far. See admin_get_online_order_status_summary(). Clickable: sets the
-           status filter box to that status and reloads the list (click the active pill again to
-           clear the filter). -->
-      <div class="status-summary-bar" id="statusSummaryBar">
-        <button type="button" class="status-summary-pill" data-status="Confirmed"><span class="badge badge-primary">Confirmed</span> <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
-        <button type="button" class="status-summary-pill" data-status="Printed"><span class="badge badge-warning">Printed</span> <span class="status-summary-count" id="statusCountPrinted">-</span></button>
-        <button type="button" class="status-summary-pill" data-status="Assigned"><span class="badge badge-glass">Assigned</span> <span class="status-summary-count" id="statusCountAssigned">-</span></button>
-        <button type="button" class="status-summary-pill" data-status="To Ship"><span class="badge badge-purple">To Ship</span> <span class="status-summary-count" id="statusCountToShip">-</span></button>
-        <button type="button" class="status-summary-pill" data-status="Shipped"><span class="badge badge-success">Shipped</span> <span class="status-summary-count" id="statusCountShipped">-</span></button>
-        <button type="button" class="status-summary-pill" data-status="Cancelled"><span class="badge badge-danger">Cancelled</span> <span class="status-summary-count" id="statusCountCancelled">-</span></button>
+           status filter box to that status and reloads the list (click the active one again to
+           clear the filter). Shown as BC view tabs, each with its count. -->
+      <div class="bc-tabs status-summary-bar" id="statusSummaryBar">
+        <!-- Tank Maker / Stand Maker / Dispatcher only: the open orders assigned to the logged-in user
+             (js/onlineOrders.js myAssignmentsOnly, supabase_online_order_my_assignments.sql). -->
+        <button type="button" class="bc-tab status-summary-pill hidden" id="myAssignmentsTab" data-mine="1">My Assignments <span class="status-summary-count" id="myAssignmentsCount"></span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="Confirmed">Confirmed <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="Printed">Printed <span class="status-summary-count" id="statusCountPrinted">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="Assigned">Assigned <span class="status-summary-count" id="statusCountAssigned">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="To Ship">To Ship <span class="status-summary-count" id="statusCountToShip">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="Shipped">Shipped <span class="status-summary-count" id="statusCountShipped">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="Cancelled">Cancelled <span class="status-summary-count" id="statusCountCancelled">-</span></button>
       </div>
-      <div id="flatOrdersView">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Order ID</th>
-                <th>Date</th>
-                <th>Time</th>
-                <th>Customer</th>
-                <th>Status</th>
-                <th>Confirmed By</th>
-                <th>Created By</th>
-                <th>Assigned To</th>
-                <th>Glass</th>
-                <th>Print Note</th>
-                <th id="deliveryFeeHeader">Delivery Fee</th>
-                <th>Warehouse</th>
-                <th>For Delivery</th>
-                <th>Est. Delivery Date</th>
-                <th>Last Updated</th>
-                <th>Lines</th>
-              </tr>
-            </thead>
-            <tbody id="orderTableBody">
-            </tbody>
-          </table>
-        </div>
-        <div id="orderPaginationBar"></div>
+
+      <div class="bc-body no-factbox" id="flatOrdersView">
+        <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+          <div class="bc-pane-head">Filter list by</div>
+          <div class="bc-pane-body">
+            <div class="bc-fp-field">
+              <label for="statusFilterInput">Status</label>
+              <input type="text" id="statusFilterInput" placeholder="e.g. Printed" autocomplete="off" />
+            </div>
+            <p class="bc-fp-hint">Or pick a status tab above - click it again to clear.</p>
+          </div>
+        </aside>
+
+        <section class="bc-main">
+          <div class="bc-grid-wrap" id="orderGridWrap">
+            <table class="bc-grid oo-grid" data-resize-key="online-orders-v2">
+              <thead>
+                <tr>
+                  <th>Order ID</th>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Customer</th>
+                  <th>Status</th>
+                  <th>Confirmed By</th>
+                  <th>Created By</th>
+                  <th>Tank Maker</th>
+                  <th>Stand Maker</th>
+                  <th>Dispatcher</th>
+                  <th>Glass</th>
+                  <th>Print Note</th>
+                  <th id="deliveryFeeHeader" class="num">Delivery Fee</th>
+                  <th>Warehouse</th>
+                  <th>For Delivery</th>
+                  <th>Est. Delivery Date</th>
+                  <th>Last Updated</th>
+                </tr>
+              </thead>
+              <tbody id="orderTableBody">
+                <tr><td colspan="17" class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="orderPaginationBar"></div>
+        </section>
       </div>
 
       <!-- Online Order Staff only (js/onlineOrders.js's init()) - per "i want to show the online
@@ -95,7 +154,8 @@
            I want button style Confirmed Printed and ToShip, make it very Mobile friendly" - a big
            tap-target tab per status (switches which bucket is shown, all fetched in one shot - see
            renderGroupedOrders) plus a stacked card per order instead of a wide table, since these
-           staff work off a phone in the warehouse, not a desktop. -->
+           staff work off a phone in the warehouse, not a desktop. Deliberately NOT restyled to the
+           BC list look - it is a phone screen. -->
       <div id="groupedOrdersView" class="hidden">
         <div class="grouped-tabs" id="groupedTabs">
           <button type="button" class="grouped-tab-btn active" data-status="Confirmed">Confirmed<span class="grouped-tab-count" id="groupCountConfirmed">0</span></button>
@@ -107,6 +167,158 @@
         <div id="groupedOrdersList" class="order-card-list">
           <p class="muted">Loading...</p>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Online Order document - BC document page, same shell as the Transfer Order document
+       (css/bc-list.css .bc-doc): caption + title + status, action bar, General / Assignment /
+       Delivery FastTabs with label-left fields, then the Lines part (live from Pancake via
+       admin_get_online_order_detail_live, same source as online-order-lines.html). Opened from the
+       list's Open action, a double-click, or the Order ID link (js/onlineOrders.js openOrderCard).
+       Sits before the other modals in the DOM so the photo/message/serial dialogs it launches
+       stack above it. -->
+  <div id="orderCardModal" class="modal-backdrop hidden">
+    <div class="modal-panel to-manage-panel bc-doc" role="dialog" aria-modal="true" aria-labelledby="orderCardTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">ONLINE ORDER</div>
+          <div class="bc-doc-titleline">
+            <h2 id="orderCardTitle">Online Order</h2>
+            <span id="orderCardStatusBadge" class="badge badge-neutral"></span>
+            <span id="orderCardBadges"></span>
+          </div>
+        </div>
+        <div class="bc-doc-window">
+          <button class="bc-cmd" id="orderCardMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
+          <button class="bc-iconbtn bc-doc-close" id="closeOrderCardBtn" type="button" aria-label="Close" title="Close">&times;</button>
+        </div>
+      </div>
+
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd" id="cardSendPhotoBtn" type="button"><svg class="bc-ico"><use href="#ico-camera"/></svg>Send Photo</button>
+        <button class="bc-cmd" id="cardSendMessageBtn" type="button"><svg class="bc-ico"><use href="#ico-message"/></svg>To-Ship Message</button>
+        <button class="bc-cmd" id="cardToShipBtn" type="button" title="Only a Printed or Assigned order can be marked To Ship"><svg class="bc-ico"><use href="#ico-ship"/></svg>To Ship</button>
+        <button class="bc-cmd hidden" id="cardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker / Dispatcher"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
+      </div>
+
+      <div class="bc-doc-body">
+        <details class="doc-fasttab" id="orderCardGeneralTab" open>
+          <summary>General <span class="doc-fasttab-summary" id="orderCardGeneralSummary"></span></summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field"><label>Order ID</label><div class="bc-doc-value" id="ocOrderId"></div></div>
+              <div class="bc-doc-field"><label>Customer</label><div class="bc-doc-value" id="ocCustomer"></div></div>
+              <div class="bc-doc-field"><label>Order Date</label><div class="bc-doc-value" id="ocOrderDate"></div></div>
+              <div class="bc-doc-field"><label>Status</label><div class="bc-doc-value" id="ocStatus"></div></div>
+            </div>
+            <div>
+              <div class="bc-doc-field"><label>Warehouse</label><div class="bc-doc-value" id="ocWarehouse"></div></div>
+              <div class="bc-doc-field"><label>Confirmed By</label><div class="bc-doc-value" id="ocConfirmedBy"></div></div>
+              <div class="bc-doc-field"><label>Created By</label><div class="bc-doc-value" id="ocCreatedBy"></div></div>
+              <div class="bc-doc-field"><label>Last Updated</label><div class="bc-doc-value" id="ocLastUpdated"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" id="orderCardAssignTab" open>
+          <summary>Assignment <span class="doc-fasttab-summary" id="orderCardAssignSummary"></span></summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field" id="ocTankMakerRow"><label>Tank Maker</label><div id="ocTankMaker"></div></div>
+              <div class="bc-doc-field" id="ocStandMakerRow"><label>Stand Maker</label><div id="ocStandMaker"></div></div>
+            </div>
+            <div>
+              <div class="bc-doc-field"><label>Dispatcher</label><div id="ocDispatcher"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" id="orderCardDeliveryTab" open>
+          <summary>Delivery <span class="doc-fasttab-summary" id="orderCardDeliverySummary"></span></summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field"><label>For Delivery</label><div class="bc-doc-value" id="ocForDelivery"></div></div>
+              <div class="bc-doc-field"><label>Est. Delivery Date</label><div class="bc-doc-value" id="ocEstDelivery"></div></div>
+            </div>
+            <div>
+              <div class="bc-doc-field" id="ocDeliveryFeeRow"><label>Delivery Fee</label><div class="bc-doc-value" id="ocDeliveryFee"></div></div>
+              <div class="bc-doc-field bc-doc-field-top"><label>Print Note</label><div class="bc-doc-value" id="ocPrintNote"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <div class="bc-doc-part">
+          <div class="bc-doc-part-head">Lines</div>
+          <div class="line-items-wrap">
+            <table class="bc-grid bc-doc-lines">
+              <thead>
+                <tr>
+                  <th>Item No.</th>
+                  <th style="min-width:320px;">Description</th>
+                  <th class="num">Quantity</th>
+                  <th class="num oc-price">Unit Price</th>
+                  <th class="num oc-price">Discount</th>
+                  <th class="num oc-price">Line Amount</th>
+                  <th>Note</th>
+                  <th style="min-width:200px;">Attachments</th>
+                </tr>
+              </thead>
+              <tbody id="orderCardLinesBody"></tbody>
+              <tfoot id="orderCardLinesFoot"></tfoot>
+            </table>
+          </div>
+        </div>
+
+        <!-- Photos sent to the customer with Send Photo / To Ship (public."OnlineOrderStatusPhotos",
+             kept 30 days) - order-level, separate from the per-line attachments above. Hidden when
+             the order has none. -->
+        <div class="bc-doc-part hidden" id="orderCardPhotosPart">
+          <div class="bc-doc-part-head">Photos Sent</div>
+          <div id="orderCardPhotosList" style="display:flex; flex-wrap:wrap; gap:12px; padding:10px 0;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File picker for the Online Order document's per-line "+ Attach" (js/onlineOrders.js
+       wireOrderCardAttachments) - same file types/size as online-order-lines.html. -->
+  <input type="file" id="cardAttachmentFileInput" class="hidden" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" />
+
+  <!-- Assign popup - Production Manager / Super User only (supabase_production_manager_role.sql
+       enforces the same server-side). Opened from the list's or the order card's Assign action.
+       Each dropdown lists only staff holding that Staff Role; OK saves whatever changed
+       (js/onlineOrders.js openAssignDialog / saveAssignDialog). -->
+  <div id="assignDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="assignDialogTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">ASSIGN ORDER</div>
+          <h2 id="assignDialogTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeAssignDialogBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede" id="assignDialogLede"></p>
+        <div class="bc-field" id="assignTankRow">
+          <label for="assignTankSelect">Tank Maker</label>
+          <select id="assignTankSelect"></select>
+        </div>
+        <div class="bc-field" id="assignStandRow">
+          <label for="assignStandSelect">Stand Maker</label>
+          <select id="assignStandSelect"></select>
+        </div>
+        <div class="bc-field">
+          <label for="assignDispatcherSelect">Dispatcher</label>
+          <select id="assignDispatcherSelect"></select>
+        </div>
+        <p class="bc-hint" id="assignDialogHint"></p>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="assignDialogError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveAssignDialogBtn" type="button">OK</button>
+        <button class="bc-btn" id="cancelAssignDialogBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -130,14 +342,22 @@
        enough available, staff are told to finish on the desktop app instead. Reuses the same
        .serial-tag-picker/.serial-tag-chip styling Transfer Orders already established. -->
   <div id="shipSerialModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:560px;">
-      <h3 style="margin:0 0 6px;">Select Serials to Ship</h3>
-      <p class="muted" style="margin:0 0 16px;">This order has serial-tracked item(s) - pick which physical unit(s) are shipping.</p>
-      <div id="shipSerialModalLines"></div>
-      <p class="error-text hidden" id="shipSerialModalError" style="margin-top:12px;"></p>
-      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
-        <button type="button" class="btn btn-secondary" id="shipSerialModalCancelBtn">Cancel</button>
-        <button type="button" class="btn btn-primary" id="shipSerialModalConfirmBtn">Confirm &amp; Continue</button>
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:560px;" role="dialog" aria-modal="true" aria-labelledby="shipSerialModalTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">ONLINE ORDER</div>
+          <h2 id="shipSerialModalTitle">Select Serials to Ship</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" style="margin:0 0 12px;">This order has serial-tracked item(s) - pick which physical unit(s) are shipping.</p>
+        <div id="shipSerialModalLines"></div>
+        <p class="error-text hidden" id="shipSerialModalError" style="margin-top:12px;"></p>
+      </div>
+      <div class="bc-doc-foot">
+        <span style="flex:1;"></span>
+        <button type="button" class="bc-btn bc-btn-primary" id="shipSerialModalConfirmBtn">Confirm &amp; Continue</button>
+        <button type="button" class="bc-btn" id="shipSerialModalCancelBtn">Cancel</button>
       </div>
     </div>
   </div>
@@ -150,12 +370,20 @@
        gate the (currently disabled) To Ship picker above still uses. View-only, nothing is picked
        or claimed here - staff still finish the actual shipment on the local POS. -->
   <div id="viewSerialsModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:560px;">
-      <h3 style="margin:0 0 6px;">Available Serials</h3>
-      <p class="muted" style="margin:0 0 16px;">This order has serial-tracked item(s) - here's what's currently in stock at your location.</p>
-      <div id="viewSerialsModalLines"></div>
-      <div style="display:flex; justify-content:flex-end; margin-top:20px;">
-        <button type="button" class="btn btn-secondary" id="viewSerialsModalCloseBtn">Close</button>
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:560px;" role="dialog" aria-modal="true" aria-labelledby="viewSerialsModalTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">ONLINE ORDER</div>
+          <h2 id="viewSerialsModalTitle">Available Serials</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" style="margin:0 0 12px;">This order has serial-tracked item(s) - here's what's currently in stock at your location.</p>
+        <div id="viewSerialsModalLines"></div>
+      </div>
+      <div class="bc-doc-foot">
+        <span style="flex:1;"></span>
+        <button type="button" class="bc-btn" id="viewSerialsModalCloseBtn">Close</button>
       </div>
     </div>
   </div>
@@ -167,14 +395,22 @@
        admin_render_online_order_to_ship_message (same file). Plain textarea + Send, same shape as
        the ship-serial/view-serials modals above rather than a bespoke design. -->
   <div id="sendOrderMessageModal" class="modal-backdrop hidden">
-    <div class="modal-panel" style="max-width:520px;">
-      <h3 style="margin:0 0 6px;">Send To-Ship Message to Customer</h3>
-      <p class="muted" id="sendOrderMessageSub" style="margin:0 0 16px;"></p>
-      <textarea id="sendOrderMessageText" rows="5" style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--panel-border); border-radius:6px; font-family:inherit; font-size:13px;" placeholder="Type your message..."></textarea>
-      <p class="error-text hidden" id="sendOrderMessageError" style="margin-top:12px;"></p>
-      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
-        <button type="button" class="btn btn-secondary" id="sendOrderMessageCancelBtn">Cancel</button>
-        <button type="button" class="btn btn-primary" id="sendOrderMessageSendBtn">Send</button>
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:520px;" role="dialog" aria-modal="true" aria-labelledby="sendOrderMessageTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">ONLINE ORDER</div>
+          <h2 id="sendOrderMessageTitle">Send To-Ship Message to Customer</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" id="sendOrderMessageSub" style="margin:0 0 12px;"></p>
+        <textarea id="sendOrderMessageText" class="bc-doc-textarea" rows="5" placeholder="Type your message..."></textarea>
+        <p class="error-text hidden" id="sendOrderMessageError" style="margin-top:12px;"></p>
+      </div>
+      <div class="bc-doc-foot">
+        <span style="flex:1;"></span>
+        <button type="button" class="bc-btn bc-btn-primary" id="sendOrderMessageSendBtn">Send</button>
+        <button type="button" class="bc-btn" id="sendOrderMessageCancelBtn">Cancel</button>
       </div>
     </div>
   </div>
@@ -183,10 +419,11 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=grouped2"></script>
+  <script src="js/nav.js?v=maker1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
-  <script src="js/onlineOrders.js"></script>
+  <script src="js/bcColumnResize.js?v=1"></script>
+  <script src="js/onlineOrders.js?v=bc9"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

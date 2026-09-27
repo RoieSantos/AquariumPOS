@@ -53,14 +53,13 @@ function renderLedgerRows(entries) {
   const summaryEl = document.getElementById('ledgerSummary');
 
   if (!entries || entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">No ledger entries match these filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No ledger entries match these filters.</td></tr>';
     summaryEl.textContent = '';
     return;
   }
 
-  const entryTypeBadge = { BasePay: 'badge-neutral', Addition: 'badge-success', Deduction: 'badge-danger', NetPay: 'badge-primary', CashAdvance: 'badge-warning', Funding: 'badge-success', Payroll: 'badge-danger' };
-  const entryTypeLabel = { CashAdvance: 'Cash Advance' };
-  const methodBadge = { Cash: 'badge-neutral', Digital: 'badge-primary' };
+  // Plain text, the way BC's ledger entry lists show Entry Type - no coloured badges.
+  const entryTypeLabel = { CashAdvance: 'Cash Advance', BasePay: 'Base Pay', NetPay: 'Net Pay' };
 
   tbody.innerHTML = entries
     .map((e) => `
@@ -68,10 +67,10 @@ function renderLedgerRows(entries) {
         <td>${e.period_start === e.period_end ? formatDate(e.period_start) : `${formatDate(e.period_start)} - ${formatDate(e.period_end)}`}</td>
         <td>${e.employee_no || ''}</td>
         <td>${e.display_name || e.username || '<span class="muted">-</span>'}</td>
-        <td><span class="badge ${entryTypeBadge[e.entry_type] || 'badge-neutral'}">${entryTypeLabel[e.entry_type] || e.entry_type}</span></td>
+        <td>${entryTypeLabel[e.entry_type] || e.entry_type}</td>
         <td>${e.label}${e.notes ? ` <span class="muted">(${e.notes})</span>` : ''}</td>
-        <td style="text-align:right;">${formatCurrency(e.amount)}</td>
-        <td>${e.method ? `<span class="badge ${methodBadge[e.method] || 'badge-neutral'}">${e.method === 'Digital' ? 'Digital (GCash)' : e.method}</span>` : ''}</td>
+        <td class="num ${Number(e.amount) < 0 ? 'neg' : ''}">${formatCurrency(e.amount)}</td>
+        <td>${e.method ? (e.method === 'Digital' ? 'Digital (GCash)' : e.method) : ''}</td>
         <td>${e.posted_by || ''}</td>
         <td>${formatDateTime(e.posted_at_utc)}</td>
       </tr>
@@ -90,7 +89,7 @@ function renderLedgerRows(entries) {
 
 async function loadLedger() {
   const tbody = document.getElementById('ledgerTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
 
   const thisGeneration = ++loadGeneration;
 
@@ -117,7 +116,7 @@ async function loadLedger() {
   if (thisGeneration !== loadGeneration) return; // a newer filter/page request superseded this one
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">${error.message}</td></tr>`;
     document.getElementById('ledgerSummary').textContent = '';
     return;
   }
@@ -166,7 +165,21 @@ async function loadLedger() {
   await loadEmployeeFilterOnce();
   await loadLedger();
 
-  document.getElementById('applyFiltersBtn').addEventListener('click', () => { currentPage = 1; loadLedger(); });
+  const reload = () => { currentPage = 1; loadLedger(); };
+  document.getElementById('applyFiltersBtn').addEventListener('click', reload);
+  document.getElementById('refreshLedgerBtn').addEventListener('click', loadLedger);
+  ['filterEmployee', 'filterPeriodStart', 'filterPeriodEnd'].forEach((id) => document.getElementById(id).addEventListener('change', reload));
+  document.getElementById('clearFiltersLink').addEventListener('click', () => {
+    ['filterEmployee', 'filterEntryType', 'filterMethod', 'filterPeriodStart', 'filterPeriodEnd', 'filterSearch'].forEach((id) => { document.getElementById(id).value = ''; });
+    reload();
+  });
+  let filterPaneOpen = true;
+  document.getElementById('filterPaneBtn').addEventListener('click', () => {
+    filterPaneOpen = !filterPaneOpen;
+    document.getElementById('filterPane').classList.toggle('hidden', !filterPaneOpen);
+    document.getElementById('bcBody').classList.toggle('no-filterpane', !filterPaneOpen);
+    document.getElementById('filterPaneBtn').setAttribute('aria-pressed', filterPaneOpen ? 'true' : 'false');
+  });
   document.getElementById('filterEntryType').addEventListener('change', () => { currentPage = 1; loadLedger(); });
   document.getElementById('filterMethod').addEventListener('change', () => { currentPage = 1; loadLedger(); });
   document.getElementById('filterSearch').addEventListener('input', (e) => {

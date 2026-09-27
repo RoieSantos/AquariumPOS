@@ -77,16 +77,14 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
   const tbody = document.getElementById('bulkEntryTableBody');
 
   const headerCells = dates
-    .map((d, i) => `<th>${WEEKDAY_LABELS[i]}<br /><span class="muted" style="font-weight:normal;">${d.getMonth() + 1}/${d.getDate()}</span></th>`)
+    .map((d, i) => `<th class="num">${WEEKDAY_LABELS[i]} <span class="muted" style="font-weight:normal;">${d.getMonth() + 1}/${d.getDate()}</span></th>`)
     .join('');
-  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th>Total</th><th>Cash Advance</th><th>Method</th></tr>`;
+  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th class="num">Total</th><th class="num">Cash Advance</th><th>Method</th></tr>`;
 
   if (employeeOptions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="${dates.length + 4}" class="muted">No active employees found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${dates.length + 4}" class="cell-msg">No active employees found.</td></tr>`;
     return;
   }
-
-  const lockedStyle = 'background:#e9ecef; color:#6c757d;';
 
   tbody.innerHTML = employeeOptions
     .map((e) => {
@@ -96,7 +94,7 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
           const existing = existingByKey[key];
           const value = existing ? existing.hours_worked : '';
           const locked = !!existing;
-          return `<td><input type="number" class="bulk-hours" data-date="${toDateInputValue(d)}" min="0" max="24" step="0.5" value="${value}" style="width:70px;${locked ? lockedStyle : ''}" ${locked ? 'disabled' : ''} /></td>`;
+          return `<td class="qty-cell-wrap num"><input type="number" class="bulk-hours bc-qty-cell" data-date="${toDateInputValue(d)}" min="0" max="24" step="0.5" value="${value}" style="width:64px;" ${locked ? 'disabled title="Saved - correct it in All Entries below"' : ''} /></td>`;
         })
         .join('');
       const advance = advanceByUsername[e.username];
@@ -107,10 +105,10 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
         <tr data-username="${e.username}">
           <td>${e.display_name || e.username}</td>
           ${cells}
-          <td class="row-total muted">0.00</td>
-          <td><input type="number" class="bulk-ca" min="0" step="0.01" value="${caValue}" style="width:90px;${caLocked ? lockedStyle : ''}" placeholder="0.00" ${caLocked ? 'disabled' : ''} /></td>
-          <td>
-            <select class="bulk-ca-method" style="width:110px;${caLocked ? lockedStyle : ''}" ${caLocked ? 'disabled' : ''}>
+          <td class="row-total num" style="font-weight:600;">0.00</td>
+          <td class="qty-cell-wrap num"><input type="number" class="bulk-ca bc-qty-cell" min="0" step="0.01" value="${caValue}" style="width:90px;" placeholder="0.00" ${caLocked ? 'disabled' : ''} /></td>
+          <td class="qty-cell-wrap">
+            <select class="bulk-ca-method bc-cell-select" ${caLocked ? 'disabled' : ''}>
               <option value="Cash" ${caMethod === 'Cash' ? 'selected' : ''}>Cash</option>
               <option value="Digital" ${caMethod === 'Digital' ? 'selected' : ''}>Digital (GCash)</option>
             </select>
@@ -283,29 +281,37 @@ function renderEntryRows(entries) {
   const tbody = document.getElementById('timesheetTableBody');
 
   if (!entries || entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="muted">No timesheet entries found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="cell-msg">No timesheet entries found.</td></tr>';
+    selectedEntryId = null;
+    updateEntryActionState();
     return;
   }
 
   tbody.innerHTML = entries
     .map((t) => `
-      <tr>
+      <tr data-entry-id="${t.timesheet_id}" class="${String(t.timesheet_id) === String(selectedEntryId) ? 'selected' : ''}">
         <td>${t.display_name || t.username || ''}</td>
         <td>${formatDate(t.work_date)}</td>
-        <td>${Number(t.hours_worked).toFixed(2)}</td>
+        <td class="num">${Number(t.hours_worked).toFixed(2)}</td>
         <td>${t.notes || ''}</td>
-        <td>
-          <button class="btn btn-secondary btn-sm" data-edit-id="${t.timesheet_id}" type="button">Edit</button>
-          <button class="btn btn-danger btn-sm" data-delete-id="${t.timesheet_id}" type="button">Delete</button>
-        </td>
       </tr>
     `)
     .join('');
+  if (!entries.some((x) => String(x.timesheet_id) === String(selectedEntryId))) selectedEntryId = null;
+  updateEntryActionState();
+}
+
+// BC list: Edit / Delete on the All Entries toolbar act on the selected entry (double-click edits).
+let selectedEntryId = null;
+
+function updateEntryActionState() {
+  document.getElementById('editEntryBtn').disabled = !selectedEntryId;
+  document.getElementById('deleteEntryBtn').disabled = !selectedEntryId;
 }
 
 async function loadEntries() {
   const tbody = document.getElementById('timesheetTableBody');
-  tbody.innerHTML = '<tr><td colspan="5" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="4" class="cell-msg">Loading...</td></tr>';
 
   const username = document.getElementById('filterUsername').value || null;
   const dateStart = document.getElementById('filterDateStart').value || null;
@@ -322,7 +328,7 @@ async function loadEntries() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="5" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="cell-msg error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -739,9 +745,9 @@ async function saveNewRun() {
     errorEl.classList.add('hidden');
     openNewRunModal();
   });
-  document.getElementById('closeNewRunBtn').addEventListener('click', () =>
-    document.getElementById('newRunModal').classList.add('hidden')
-  );
+  const closeNewRun = () => document.getElementById('newRunModal').classList.add('hidden');
+  document.getElementById('closeNewRunBtn').addEventListener('click', closeNewRun);
+  document.getElementById('cancelNewRunBtn').addEventListener('click', closeNewRun);
   document.getElementById('saveRunBtn').addEventListener('click', saveNewRun);
   document.getElementById('newRunPayCycle').addEventListener('change', handlePayCycleChange);
   document.getElementById('newRunCutoff').addEventListener('change', autofillDates);
@@ -767,15 +773,23 @@ async function saveNewRun() {
 
   document.getElementById('applyFiltersBtn').addEventListener('click', () => { currentPage = 1; loadEntries(); });
   document.getElementById('newEntryBtn').addEventListener('click', openNewEntryModal);
-  document.getElementById('closeEntryModalBtn').addEventListener('click', () =>
-    document.getElementById('entryModal').classList.add('hidden')
-  );
+  const closeEntryModal = () => document.getElementById('entryModal').classList.add('hidden');
+  document.getElementById('closeEntryModalBtn').addEventListener('click', closeEntryModal);
+  document.getElementById('cancelEntryModalBtn').addEventListener('click', closeEntryModal);
   document.getElementById('saveEntryBtn').addEventListener('click', saveEntry);
 
-  document.getElementById('timesheetTableBody').addEventListener('click', (e) => {
-    const editBtn = e.target.closest('[data-edit-id]');
-    if (editBtn) return openEditEntryModal(editBtn.getAttribute('data-edit-id'));
-    const deleteBtn = e.target.closest('[data-delete-id]');
-    if (deleteBtn) return deleteEntry(deleteBtn.getAttribute('data-delete-id'));
+  const entryBody = document.getElementById('timesheetTableBody');
+  entryBody.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-entry-id]');
+    if (!tr) return;
+    selectedEntryId = tr.dataset.entryId;
+    entryBody.querySelectorAll('tr[data-entry-id]').forEach((row) => row.classList.toggle('selected', row === tr));
+    updateEntryActionState();
   });
+  entryBody.addEventListener('dblclick', (e) => {
+    const tr = e.target.closest('tr[data-entry-id]');
+    if (tr) openEditEntryModal(tr.dataset.entryId);
+  });
+  document.getElementById('editEntryBtn').addEventListener('click', () => selectedEntryId && openEditEntryModal(selectedEntryId));
+  document.getElementById('deleteEntryBtn').addEventListener('click', () => selectedEntryId && deleteEntry(selectedEntryId));
 })();

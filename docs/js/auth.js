@@ -61,6 +61,14 @@ async function attemptLogin(username, password) {
     isPayrollOfficer: !!result.is_payroll_officer,
     isStoreManager: !!result.is_store_manager,
     isConversationsStaff: !!result.is_conversations_staff,
+    // Staff Roles (User Setup > Employee > Roles, supabase_production_manager_role.sql) - job tags;
+    // Production Manager is the only role (besides Super User) that can assign Tank Maker /
+    // Stand Maker / Dispatcher on Online Orders.
+    staffRoles: result.staff_roles || [],
+    isProductionManager: (result.staff_roles || []).includes('ProductionManager'),
+    // Tank Maker / Stand Maker / Dispatcher - sees their own orders on Online Orders' My
+    // Assignments tab (supabase_online_order_my_assignments.sql).
+    isOrderMaker: (result.staff_roles || []).some((r) => ORDER_MAKER_ROLES.includes(r)),
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -143,7 +151,20 @@ const STORE_MANAGER_ALLOWED_PAGES = [
 function hasNoPortalPermission(session) {
   return !session.isSuperUser && !session.isPayrollOfficer && !session.isSalesUser &&
     !session.isSerialAdmin && !session.isDeliveryTeam && !session.isOnlineOrderStaff &&
-    !session.isProductionMember && !session.isStoreManager && !session.isConversationsStaff;
+    !session.isProductionMember && !session.isStoreManager && !session.isConversationsStaff &&
+    !session.isProductionManager && !session.isOrderMaker;
+}
+
+// Per "if an order has been assigned to the user.. can you show it to their access?" - a Tank Maker
+// / Stand Maker / Dispatcher with no permission checkbox ticked is confined to their My Assignments
+// list on Online Orders (plus payslips). The server enforces the same thing: admin_list_online_orders
+// only ever returns their own assignments (_is_order_maker_only). Same lockdown shape as Online
+// Order Staff above; dashboard.html is left out so it redirects to their list.
+const ORDER_MAKER_ROLES = ['TankMaker', 'StandMaker', 'Dispatcher'];
+const ORDER_MAKER_ALLOWED_PAGES = ['online-orders.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
+
+function isOrderMakerOnly(session) {
+  return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });
 }
 const NO_PERMISSION_ALLOWED_PAGES = ['my-payslips.html', 'my-payslip-print.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
 
@@ -175,6 +196,11 @@ async function requireAuth() {
   // bookmarking/typing a different URL directly.
   if (refreshed.isDeliveryTeam && !DELIVERY_TEAM_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'delivery.html';
+    return null;
+  }
+
+  if (isOrderMakerOnly(refreshed) && !ORDER_MAKER_ALLOWED_PAGES.includes(currentPageFileName())) {
+    window.location.href = 'online-orders.html';
     return null;
   }
 
@@ -317,6 +343,11 @@ async function refreshPortalSession(session) {
       isPayrollOfficer: !!result.is_payroll_officer,
       isStoreManager: !!result.is_store_manager,
       isConversationsStaff: !!result.is_conversations_staff,
+      staffRoles: result.staff_roles || [],
+      isProductionManager: (result.staff_roles || []).includes('ProductionManager'),
+    // Tank Maker / Stand Maker / Dispatcher - sees their own orders on Online Orders' My
+    // Assignments tab (supabase_online_order_my_assignments.sql).
+    isOrderMaker: (result.staff_roles || []).some((r) => ORDER_MAKER_ROLES.includes(r)),
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);
@@ -335,6 +366,7 @@ async function refreshPortalSession(session) {
 // instead, since that's the one thing built specifically for a plain employee login.
 function getDefaultLandingPage(session) {
   if (!session) return 'dashboard.html';
+  if (isOrderMakerOnly(session)) return 'online-orders.html';
   return hasNoPortalPermission(session) ? 'my-payslips.html' : 'dashboard.html';
 }
 

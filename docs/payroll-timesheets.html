@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Employee Timesheets - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,208 +17,236 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>Employee Timesheets</h1>
-    <p class="muted">Daily hours worked per employee, entered by the payroll officer/supervisor. Standard day is set in Payroll Setup's Overtime Settings - hours beyond that auto-post as Overtime when a payroll run is created; entered days short of it auto-post as Undertime. Only visible to super users and payroll officers.</p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-edit" viewBox="0 0 16 16"><path d="M10.8 2.7 13.3 5.2 5.6 12.9 2.6 13.4 3.1 10.4z"/><path d="M9.4 4.1l2.5 2.5"/></symbol>
+    <symbol id="ico-open" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-delete" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></symbol>
+    <symbol id="ico-calendar" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></symbol>
+    <symbol id="ico-money" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8" rx="1"/><circle cx="8" cy="8" r="1.8"/></symbol>
+    <symbol id="ico-ledger" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></symbol>
+    <symbol id="ico-people" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5"/><circle cx="11.5" cy="6" r="1.7"/><path d="M11 9.6c1.5.1 2.6 1.1 3 3"/></symbol>
+    <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
+    <symbol id="ico-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></symbol>
+  </svg>
+
+  <!-- Business Central worksheet page (css/bc-list.css): action bar, a batch bar for the week
+       being entered (like Physical Inventory Journal's batch), the weekly entry grid with BC's
+       tinted input cells, then the All Entries list for corrections - its row actions sit on the
+       part's own toolbar and work on the selected entry. -->
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Timesheets</h1>
+        <p class="bc-subtitle">Daily hours worked per employee. Hours beyond the standard day (Payroll Setup &gt; Overtime Settings) auto-post as Overtime when a payroll run is created; entered days short of it auto-post as Undertime.</p>
+      </div>
+    </div>
 
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
 
     <div id="timesheetsContent" class="hidden">
-      <div class="toolbar">
-        <h2 style="margin:0;">Weekly Entry (All Employees)</h2>
-        <button class="btn btn-secondary btn-sm" id="prevWeekBtn" type="button">&laquo; Prev Week</button>
-        <span class="muted" id="weekRangeLabel" style="min-width:180px; text-align:center;"></span>
-        <button class="btn btn-secondary btn-sm" id="nextWeekBtn" type="button">Next Week &raquo;</button>
-        <button class="btn btn-primary" id="createRunFromTimesheetsBtn" type="button" style="margin-left:auto;">Create Payroll Run from This Week</button>
-      </div>
-      <p class="muted">Type hours worked directly into each day's cell (e.g. "8"). Leave a cell blank for a day not worked. Once a cell is saved it locks (grayed out) and can no longer be edited here - use the list below to correct an existing entry. The Cash Advance column is one amount per employee for the whole week (e.g. released every Thursday) - it's automatically deducted from that employee's next payroll run.</p>
-
-      <div id="weeklyProjectedFundingBox" class="hidden" style="margin-bottom:16px; padding:12px; border:1px solid var(--border-color, #dee2e6); border-radius:8px; max-width:520px;">
-        <div class="muted" style="margin-bottom:6px;" id="weeklyProjectedFundingLabel">Projected funding needed if a Weekly payroll run is created for this week</div>
-        <div class="form-grid">
-          <div class="form-row">
-            <label>Cash</label>
-            <div id="weeklyProjectedCashLine">-</div>
-          </div>
-          <div class="form-row">
-            <label>Digital (GCash)</label>
-            <div id="weeklyProjectedDigitalLine">-</div>
-          </div>
-        </div>
-      </div>
-      <div id="weeklyProjectedFundingNote" class="muted hidden" style="margin-bottom:16px;"></div>
-
-      <div id="bulkEntryError" class="error-text hidden"></div>
-      <div style="margin-bottom:12px;">
-        <button class="btn btn-success btn-sm" id="saveBulkEntryBtn" type="button">Save All</button>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd bc-cmd-accent" id="saveBulkEntryBtn" type="button">Save All</button>
         <!-- Super User only - re-enables every locked cell in the currently-shown week so it can be
              corrected and re-saved, without going through the All Entries list below. -->
-        <button class="btn btn-secondary btn-sm hidden" id="unlockEditingBtn" type="button">Unlock Editing (Super User)</button>
-      </div>
-      <div class="table-wrap" style="margin-bottom:24px;">
-        <table>
-          <thead id="bulkEntryTableHead"></thead>
-          <tbody id="bulkEntryTableBody">
-            <tr><td class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
+        <button class="bc-cmd hidden" id="unlockEditingBtn" type="button">Unlock Editing (Super User)</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="createRunFromTimesheetsBtn" type="button"><svg class="bc-ico"><use href="#ico-money"/></svg>Create Payroll Run from This Week</button>
+        <span class="bc-cmd-sep"></span>
+        <a class="bc-cmd" href="payroll.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-money"/></svg>Payroll Runs</a>
+        <a class="bc-cmd" href="payroll-setup.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-settings"/></svg>Payroll Setup</a>
       </div>
 
-      <div class="section-divider"></div>
-      <div class="toolbar">
-        <h2 style="margin:0;">All Entries</h2>
+      <div class="bc-batchbar">
+        <label>Week</label>
+        <button class="bc-btn" id="prevWeekBtn" type="button">&laquo; Prev</button>
+        <strong id="weekRangeLabel" style="min-width:190px; text-align:center;"></strong>
+        <button class="bc-btn" id="nextWeekBtn" type="button">Next &raquo;</button>
+        <span class="bc-batch-progress">Type hours per day (e.g. 8); blank = not worked. Saved cells lock - correct them in All Entries below. Cash Advance is one amount per employee for the week, deducted from their next payroll run.</span>
+      </div>
+
+      <div id="weeklyProjectedFundingBox" class="bc-infobar hidden">
+        <span class="bc-infobar-text">
+          <span id="weeklyProjectedFundingLabel" class="muted">Projected funding needed if a Weekly payroll run is created for this week</span><br />
+          <strong>Cash:</strong> <span id="weeklyProjectedCashLine">-</span><br />
+          <strong>Digital (GCash):</strong> <span id="weeklyProjectedDigitalLine">-</span>
+        </span>
+      </div>
+      <div id="weeklyProjectedFundingNote" class="bc-infobar hidden"></div>
+
+      <div id="bulkEntryError" class="bc-infobar bc-infobar-warn error-text hidden"></div>
+
+      <div class="bc-body no-filterpane no-factbox">
+        <section class="bc-main">
+          <div class="bc-grid-wrap" style="max-height:none;">
+            <table class="bc-grid bc-ts-grid">
+              <thead id="bulkEntryTableHead"></thead>
+              <tbody id="bulkEntryTableBody">
+                <tr><td class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:10px; margin-top:22px;">
+        <h2 class="bc-section-title" style="margin:0;">All Entries</h2>
         <!-- Collapsed by default - this is the correction/edit view (and the only way a
              non-Super-User Payroll Officer can fix a locked grid cell), not the everyday one. -->
-        <button class="btn btn-secondary btn-sm" id="toggleAllEntriesBtn" type="button">Show All Entries</button>
+        <button class="bc-link" id="toggleAllEntriesBtn" type="button">Show All Entries</button>
       </div>
       <div id="allEntriesSection" class="hidden">
-        <div class="toolbar">
-          <select id="filterUsername" style="max-width:240px;">
-            <option value="">All employees</option>
-          </select>
-          <input type="date" id="filterDateStart" />
-          <span class="muted">to</span>
-          <input type="date" id="filterDateEnd" />
-          <button class="btn btn-secondary btn-sm" id="applyFiltersBtn" type="button">Filter</button>
-          <button class="btn btn-primary" id="newEntryBtn" type="button" style="margin-left:auto;">+ Add Single Entry</button>
+        <div class="bc-cmdbar" role="toolbar" aria-label="Entry actions">
+          <button class="bc-cmd bc-cmd-accent" id="newEntryBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Entry</button>
+          <button class="bc-cmd" id="editEntryBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-edit"/></svg>Edit</button>
+          <button class="bc-cmd bc-cmd-danger" id="deleteEntryBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-delete"/></svg>Delete</button>
         </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Employee</th>
-                <th>Date</th>
-                <th>Hours Worked</th>
-                <th>Notes</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="timesheetTableBody">
-              <tr><td colspan="5" class="muted">Loading...</td></tr>
-            </tbody>
-          </table>
+        <div class="bc-body no-filterpane no-factbox" style="margin-top:8px;">
+          <section class="bc-main">
+            <div class="bc-grid-toolbar">
+              <label for="filterUsername">Employee</label>
+              <select id="filterUsername" style="max-width:220px; height:28px;">
+                <option value="">All employees</option>
+              </select>
+              <label for="filterDateStart">From</label>
+              <input type="date" id="filterDateStart" style="width:auto; height:28px; padding:2px 6px;" />
+              <label for="filterDateEnd">To</label>
+              <input type="date" id="filterDateEnd" style="width:auto; height:28px; padding:2px 6px;" />
+              <button class="bc-link" id="applyFiltersBtn" type="button">Apply filter</button>
+            </div>
+            <div class="bc-grid-wrap">
+              <table class="bc-grid">
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Work Date</th>
+                    <th class="num">Hours Worked</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody id="timesheetTableBody">
+                  <tr><td colspan="4" class="cell-msg">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div id="timesheetPaginationBar"></div>
+          </section>
         </div>
-        <div id="timesheetPaginationBar"></div>
       </div>
     </div>
   </div>
 
-  <!-- New payroll run modal (same fields/flow as payroll.html's "+ New Payroll Run") -->
-  <div id="newRunModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;">New Payroll Run</h2>
-        <button class="btn btn-secondary btn-sm" id="closeNewRunBtn" type="button">Close</button>
+  <!-- New Payroll Run - same fields/flow as payroll.html's New, as a BC dialog. -->
+  <div id="newRunModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog" role="dialog" aria-modal="true" aria-labelledby="newRunTitle">
+      <div class="bc-dialog-head">
+        <h2 id="newRunTitle">New Payroll Run</h2>
+        <button class="bc-iconbtn" id="closeNewRunBtn" type="button" aria-label="Close">&times;</button>
       </div>
-      <p class="muted">Period dates default to the week shown in the grid above - make sure any timesheet hours you want reflected in this run were entered for dates inside the period below.</p>
-
-      <div class="form-grid">
-        <div class="form-row">
+      <div class="bc-dialog-body">
+        <p class="bc-lede">Period dates default to the week shown in the grid - make sure any hours you want in this run were entered for dates inside the period below.</p>
+        <div class="bc-field">
           <label for="newRunPayCycle">Pay Cycle</label>
           <select id="newRunPayCycle">
             <option value="Weekly">Weekly</option>
             <option value="SemiMonthly">Semi-Monthly</option>
           </select>
         </div>
-      </div>
 
-      <div id="cutoffAutofillRow" class="form-grid hidden">
-        <div class="form-row">
-          <label for="newRunCutoff">Cutoff</label>
-          <select id="newRunCutoff">
-            <option value="A">Cutoff A</option>
-            <option value="B">Cutoff B</option>
-          </select>
+        <div id="cutoffAutofillRow" class="hidden">
+          <div class="bc-field">
+            <label for="newRunCutoff">Cutoff</label>
+            <select id="newRunCutoff">
+              <option value="A">Cutoff A</option>
+              <option value="B">Cutoff B</option>
+            </select>
+          </div>
+          <div class="bc-field">
+            <label for="newRunTargetMonth">Month</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="month" id="newRunTargetMonth" />
+              <button class="bc-link" id="autofillDatesBtn" type="button" style="white-space:nowrap;">Autofill Dates</button>
+            </div>
+          </div>
         </div>
-        <div class="form-row">
-          <label for="newRunTargetMonth">Month</label>
-          <input type="month" id="newRunTargetMonth" />
-        </div>
-        <div class="form-row" style="align-self:end;">
-          <button class="btn btn-secondary btn-sm" id="autofillDatesBtn" type="button">Autofill Dates</button>
-        </div>
-      </div>
 
-      <div id="weeklyAutofillRow" class="form-grid hidden">
-        <div class="form-row">
-          <label for="newRunWeeklyPayDate">Pay Date (Sunday)</label>
-          <input type="date" id="newRunWeeklyPayDate" />
+        <div id="weeklyAutofillRow" class="hidden">
+          <div class="bc-field">
+            <label for="newRunWeeklyPayDate">Pay Date (Sunday)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="date" id="newRunWeeklyPayDate" />
+              <button class="bc-link" id="autofillWeeklyDatesBtn" type="button" style="white-space:nowrap;">Autofill Dates</button>
+            </div>
+          </div>
         </div>
-        <div class="form-row" style="align-self:end;">
-          <button class="btn btn-secondary btn-sm" id="autofillWeeklyDatesBtn" type="button">Autofill Dates</button>
-        </div>
-      </div>
 
-      <div class="form-grid">
-        <div class="form-row">
+        <div class="bc-field">
           <label for="newRunPeriodStart">Period Start</label>
           <input type="date" id="newRunPeriodStart" />
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="newRunPeriodEnd">Period End</label>
           <input type="date" id="newRunPeriodEnd" />
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="newRunPayDate">Pay Date</label>
           <input type="date" id="newRunPayDate" />
         </div>
-      </div>
 
-      <div id="projectedFundingBox" class="hidden" style="margin-top:12px; padding:12px; border:1px solid var(--border-color, #dee2e6); border-radius:8px;">
-        <div class="muted" style="margin-bottom:6px;">Projected funding needed for this run</div>
-        <div class="form-grid">
-          <div class="form-row">
-            <label>Cash</label>
-            <div id="projectedCashLine">-</div>
-          </div>
-          <div class="form-row">
-            <label>Digital (GCash)</label>
-            <div id="projectedDigitalLine">-</div>
-          </div>
+        <div id="projectedFundingBox" class="bc-summary-box hidden">
+          <div class="muted" style="margin-bottom:4px;">Projected funding needed for this run</div>
+          <div><strong>Cash:</strong> <span id="projectedCashLine">-</span></div>
+          <div><strong>Digital (GCash):</strong> <span id="projectedDigitalLine">-</span></div>
         </div>
+        <p id="projectedFundingNote" class="bc-hint hidden"></p>
       </div>
-      <div id="projectedFundingNote" class="muted hidden" style="margin-top:8px;"></div>
-
-      <div id="newRunError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveRunBtn" type="button">Create Run</button>
+      <div class="bc-dialog-foot">
+        <p id="newRunError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveRunBtn" type="button">Create Run</button>
+        <button class="bc-btn" id="cancelNewRunBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
 
-  <!-- Add/Edit timesheet entry modal -->
-  <div id="entryModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;" id="entryModalTitle">Add Timesheet Entry</h2>
-        <button class="btn btn-secondary btn-sm" id="closeEntryModalBtn" type="button">Close</button>
+  <!-- Add/Edit timesheet entry - BC dialog -->
+  <div id="entryModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog" role="dialog" aria-modal="true" aria-labelledby="entryModalTitle">
+      <div class="bc-dialog-head">
+        <h2 id="entryModalTitle">Add Timesheet Entry</h2>
+        <button class="bc-iconbtn" id="closeEntryModalBtn" type="button" aria-label="Close">&times;</button>
       </div>
-
-      <div class="form-grid">
-        <div class="form-row">
+      <div class="bc-dialog-body">
+        <div class="bc-field">
           <label for="entryUsername">Employee</label>
           <select id="entryUsername"></select>
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="entryWorkDate">Work Date</label>
           <input type="date" id="entryWorkDate" />
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="entryHoursWorked">Hours Worked</label>
           <input type="number" id="entryHoursWorked" min="0.5" max="24" step="0.5" value="8" />
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="entryNotes">Notes</label>
           <input type="text" id="entryNotes" />
         </div>
       </div>
-
-      <div id="entryError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveEntryBtn" type="button">Save Entry</button>
+      <div class="bc-dialog-foot">
+        <p id="entryError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveEntryBtn" type="button">Save Entry</button>
+        <button class="bc-btn" id="cancelEntryModalBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -228,7 +257,7 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollTimesheets.js"></script>
+  <script src="js/payrollTimesheets.js?v=bc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

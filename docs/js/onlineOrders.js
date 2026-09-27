@@ -6,7 +6,7 @@
 // its own. This makes the page load instantly regardless of backlog size, with no
 // throttling/incremental-catch-up/chunked-paging complexity needed.
 //
-// Status IS writable from here though (see statusCellHtml/handleOrderTableClick below) -
+// Status IS writable from here though (see the To Ship action / handleToShipClick below) -
 // admin_update_online_order_status (supabase_online_order_portal_status_update.sql) pushes the
 // change live to Pancake, mirroring the desktop app's OnlineOrdersForm grid instead of just
 // reading whatever the last sync happened to pull in.
@@ -42,8 +42,18 @@ let currentConfirmedBy = null;
 // holds even against a direct RPC call. "Please be aware that they dont need to see price" -
 // hidePriceColumns strips the Delivery Fee column here (see orderRowsHtml) and every price column
 // on the Online Order Lines drill-down (js/onlineOrderLines.js).
-const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed', 'Printed', 'To Ship'];
+// 'Assigned' is now a real status too (supabase_online_order_assigned_status.sql), so it's fetched
+// alongside Printed.
+const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed', 'Printed', 'Assigned', 'To Ship'];
 let hidePriceColumns = false;
+
+// Per "if an order has been assigned to the user.. can you show it to their access?" - the My
+// Assignments tab lists only the open orders where the logged-in user is the Tank Maker, Stand
+// Maker or Dispatcher (admin_list_online_orders' p_assigned_to_me, supabase_online_order_my_
+// assignments.sql). Staff whose only access is one of those roles (isOrderMakerOnly, js/auth.js)
+// are locked to it - the server forces it for them too.
+let myAssignmentsOnly = false;
+let myAssignmentsLocked = false;
 
 // Per "i want to show the online order per category: Confirmed / Printed / To-Ship... built it as
 // a mobile GUI friendly. I want button style Confirmed Printed and ToShip, make it very Mobile
@@ -102,6 +112,7 @@ let currentSessionIsProductionWarehouse = true;
 // via staff_list_order_makers, since it rarely changes and every row's dropdown needs it. Each
 // dropdown filters this by its own role (makerSelectHtml).
 let productionMembers = [];
+let productionMembersError = null; // last load failure, shown in the Assign popup instead of "no one has the role"
 
 async function loadProductionMembers() {
   const { data, error } = await supabaseClient.rpc('staff_list_order_makers', {
@@ -110,8 +121,10 @@ async function loadProductionMembers() {
   });
   if (error || !data) {
     console.error('staff_list_order_makers failed:', error);
+    productionMembersError = error?.message || 'No data returned.';
     return;
   }
+  productionMembersError = null;
   productionMembers = data;
 }
 
@@ -213,13 +226,20 @@ function gmaBadgeHtml(order) {
 // "Assigned To" dropdown(s) - per "maybe each order can be assign a tank maker and a stand maker.
 // if an order has Aquarium order assign tank maker, if stand then we can assign stand maker": one
 // order can need a Tank Maker (has_aquarium_line), a Stand Maker (has_stand_line), both, or
-// neither, so this renders 0-2 dropdowns instead of always one generic "Assigned To". Each lists
-// only the staff holding that Staff Role (TankMaker / StandMaker) from the shared roster
+// neither, so this renders 0-2 maker dropdowns, plus a Dispatcher dropdown on every order
+// (supabase_online_order_dispatcher.sql). Each lists only the staff holding that Staff Role
+// (TankMaker / StandMaker / Dispatcher) from the shared roster
 // (loadProductionMembers) - change is handled by the delegated listener wired to
 // .assign-maker-select in init() below (data-role tells it which column to write via
 // admin_assign_online_order_maker).
+const MAKER_ROLES = {
+  tank: { staffRole: 'TankMaker', label: 'Tank Maker', field: 'tank_maker' },
+  stand: { staffRole: 'StandMaker', label: 'Stand Maker', field: 'stand_maker' },
+  dispatcher: { staffRole: 'Dispatcher', label: 'Dispatcher', field: 'dispatcher' }
+};
+
 function makerSelectHtml(order, role, currentUsername) {
-  const staffRole = role === 'tank' ? 'TankMaker' : 'StandMaker';
+  const staffRole = MAKER_ROLES[role].staffRole;
   const members = productionMembers.filter((m) => (m.staff_roles || []).includes(staffRole));
   let options = members
     .map((m) => `<option value="${escapeHtml(m.username)}" ${currentUsername === m.username ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
@@ -227,12 +247,16 @@ function makerSelectHtml(order, role, currentUsername) {
   // An assignment made before roles existed (or to someone whose role was since removed) stays
   // visible instead of the dropdown silently showing blank - it just can't be re-picked.
   if (currentUsername && !members.some((m) => m.username === currentUsername)) {
-    const name = (role === 'tank' ? order.assigned_tank_maker_name : order.assigned_stand_maker_name) || currentUsername;
+    const name = order[`assigned_${MAKER_ROLES[role].field}_name`] || currentUsername;
     options += `<option value="${escapeHtml(currentUsername)}" selected disabled>${escapeHtml(name)} (no role)</option>`;
   }
-  const label = role === 'tank' ? 'Tank Maker' : 'Stand Maker';
+  const label = MAKER_ROLES[role].label;
+  // Assigning Tank Maker / Stand Maker / Dispatcher is the Production Manager's call (or a Super
+  // User's) - supabase_production_manager_role.sql enforces the same server-side. Everyone else
+  // sees who's assigned, read-only.
+  const locked = !(currentSession?.isSuperUser || currentSession?.isProductionManager);
   return `
-    <select class="assign-maker-select" data-order-id="${escapeHtml(order.order_id)}" data-role="${role}" title="${label}" style="max-width:150px;">
+    <select class="assign-maker-select" data-order-id="${escapeHtml(order.order_id)}" data-role="${role}" title="${locked ? label + ' - assigned by the Production Manager' : label}" style="max-width:150px;" ${locked ? 'disabled' : ''}>
       <option value="" ${!currentUsername ? 'selected' : ''}>&mdash; ${label} &mdash;</option>
       ${options}
     </select>
@@ -243,7 +267,7 @@ function assignSelectHtml(order) {
   const parts = [];
   if (order.has_aquarium_line) parts.push(makerSelectHtml(order, 'tank', order.assigned_tank_maker));
   if (order.has_stand_line) parts.push(makerSelectHtml(order, 'stand', order.assigned_stand_maker));
-  if (!parts.length) return '<span class="muted">&mdash;</span>';
+  parts.push(makerSelectHtml(order, 'dispatcher', order.assigned_dispatcher));
   return `<div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">${parts.join('')}</div>`;
 }
 
@@ -255,54 +279,38 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-function statusCellHtml(o) {
-  const status = o.status || '';
-  const statusLower = status.trim().toLowerCase();
-  if (statusLower === 'new') {
-    return `<span title="Ask the online sales team to confirm this order first.">${escapeHtml(status)}</span>`;
-  }
-
-  // Mirrors the desktop app's IsPrintedStatusForRow gate on MarkRowAsToShipAsync (OnlineOrdersForm.cs)
-  // and admin_update_online_order_status' matching server-side check - only a 'Printed' order can
-  // be marked 'To Ship' from here, not 'Confirmed' or anything else, so the button only appears
-  // then (the RPC would reject it anyway, but showing it only when it'll actually work avoids a
-  // confusing rejection).
-  const showToShipBtn = statusLower === 'printed';
-  if (!showToShipBtn) {
-    return escapeHtml(orderDisplayStatus(o));
-  }
-
-  return `
-    <div class="status-cell-wrap" style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
-      <span class="status-text">${escapeHtml(orderDisplayStatus(o))}</span>
-      <button type="button" class="btn btn-primary btn-sm status-to-ship-btn" style="font-size:12px; padding:3px 8px;">To Ship</button>
-    </div>
-  `;
+// Plain-text assignee for the list columns - '' when the order doesn't need that maker at all
+// (no aquarium/stand line), so an empty cell reads differently from "needed but unassigned" (-).
+function assigneeCellHtml(o, needed, username, name) {
+  if (!needed) return '';
+  return username ? escapeHtml(name || username) : '<span class="muted">-</span>';
 }
 
+// BC list rows: data only, no buttons. Every action (Open / Send Photo / To-Ship Message / To Ship)
+// lives on the action bar and works on the selected row (see wireOrderListActions), and the
+// Order ID drills into the Online Order document (openOrderCard) the way a BC "No." field does.
+// Assignments are edited on that document, not in the list.
 function orderRowsHtml(orders) {
   return orders
     .map((o) => `
-      <tr data-order-id="${o.order_id}">
-        <td>${o.order_id || ''}</td>
+      <tr data-order-id="${escapeHtml(o.order_id)}" class="${String(o.order_id) === String(selectedOrderId) ? 'selected' : ''}">
+        <td><a class="bc-doc-no" href="#" data-open-order="${escapeHtml(o.order_id)}" title="Open this order">${escapeHtml(o.order_id)}</a></td>
         <td>${o.order_date || ''}</td>
         <td>${o.order_time || ''}</td>
-        <td>${o.customer_name || ''}</td>
-        <td>${statusCellHtml(o)}</td>
-        <td>${o.confirmed_by || ''}</td>
-        <td>${o.created_by || ''}</td>
-        <td>${assignSelectHtml(o)}</td>
+        <td>${escapeHtml(o.customer_name)}</td>
+        <td>${escapeHtml(orderDisplayStatus(o))}</td>
+        <td>${escapeHtml(o.confirmed_by)}</td>
+        <td>${escapeHtml(o.created_by)}</td>
+        <td>${assigneeCellHtml(o, o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}</td>
+        <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}</td>
+        <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}</td>
         <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
-        <td>${o.note_print || ''}</td>
-        ${hidePriceColumns ? '' : `<td>${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
-        <td>${o.warehouse_name || o.location_id || ''}</td>
-        <td><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span></td>
+        <td>${escapeHtml(o.note_print)}</td>
+        ${hidePriceColumns ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
+        <td>${escapeHtml(o.warehouse_name || o.location_id)}</td>
+        <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
         <td>${o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : ''}</td>
-        <td>
-          <a href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View</a><br>
-          <button type="button" class="btn btn-secondary btn-sm status-send-message-btn" style="margin-top:4px; font-size:12px; padding:3px 8px;">TO-SHIP</button>
-        </td>
       </tr>
     `)
     .join('');
@@ -310,13 +318,14 @@ function orderRowsHtml(orders) {
 
 // Stacked card for the grouped (Online Order Staff / mobile) view - one order's info as
 // label/value rows instead of a wide table, so nothing gets clipped or forces horizontal
-// scrolling on a phone. The "To Ship" button follows the same rule as statusCellHtml (only shown
-// once an order is 'Printed'). "Send Photo" is detached from that gate entirely - it's always
+// scrolling on a phone. The "To Ship" button is only shown once an order is 'Printed' (same rule
+// as the desktop list's To Ship action, see updateOrderActionState). "Send Photo" is detached from that gate entirely - it's always
 // offered, independent of To Ship's status/enabled state (see handleSendPhotoClick).
 function orderCardHtml(o) {
   const status = o.status || '';
-  // Same 'Printed' gate as statusCellHtml above - see the comment there.
-  const showToShipBtn = status.trim().toLowerCase() === 'printed';
+  // Mirrors the desktop app's IsPrintedStatusForRow gate on MarkRowAsToShipAsync (OnlineOrdersForm.cs)
+  // and admin_update_online_order_status' matching server-side check.
+  const showToShipBtn = isPrintedOrder(o);
 
   return `
     <div class="order-card" data-order-id="${o.order_id}">
@@ -882,8 +891,8 @@ function wireSendMessageModalButtons() {
 // Delegated on #setupContent (see init() below) so this fires for the Tank/Stand Maker dropdowns
 // (makerSelectHtml) in both the flat table (orderRowsHtml) and the grouped card view
 // (orderCardHtml) - same delegation convention as handleOrderTableClick above, just for 'change'
-// instead of 'click'. data-role ('tank'/'stand') tells admin_assign_online_order_maker which of
-// the two columns this particular dropdown writes.
+// instead of 'click'. data-role ('tank'/'stand'/'dispatcher') tells admin_assign_online_order_maker which of
+// the three columns this particular dropdown writes.
 async function handleAssignProductionMemberChange(event) {
   const select = event.target.closest('.assign-maker-select');
   if (!select) return;
@@ -906,6 +915,15 @@ async function handleAssignProductionMemberChange(event) {
   if (error || !result || !result.success) {
     alert('Could not update the assignment: ' + (error?.message || result?.message || 'unknown error'));
     await refreshCurrentOrders(); // reverts the dropdown back to its last saved value
+    if (select.closest('#orderCardModal')) renderOrderCardAssignments();
+    return;
+  }
+
+  // Edited on the Online Order document - reload the list so its Tank/Stand/Dispatcher columns
+  // and the derived "Assigned" status reflect it (the card header refreshes from the new rows).
+  if (select.closest('#orderCardModal')) {
+    await refreshCurrentOrders();
+    if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
   }
 }
 
@@ -1167,6 +1185,613 @@ function handleSendPhotoCancelled() {
   pendingSendPhoto = null;
 }
 
+// ---------------------------------------------------------------- BC list selection + action bar
+
+// The flat list's rows as last rendered, and which one is selected - the action bar's Open / Send
+// Photo / To-Ship Message / To Ship all act on selectedOrderId (BC: actions work on the current
+// line). Kept across reloads by id so a refresh doesn't drop the selection.
+let lastFlatRows = [];
+let selectedOrderId = null;
+
+function findFlatOrder(orderId) {
+  return lastFlatRows.find((o) => String(o.order_id) === String(orderId)) || null;
+}
+
+// 'Assigned' is a Printed order whose makers are set - To Ship is allowed from either.
+function isPrintedOrder(o) {
+  const status = (o?.status || '').trim().toLowerCase();
+  return status === 'printed' || status === 'assigned';
+}
+
+function updateOrderActionState() {
+  const o = findFlatOrder(selectedOrderId);
+  ['openOrderBtn', 'listSendPhotoBtn', 'listSendMessageBtn'].forEach((id) => { document.getElementById(id).disabled = !o; });
+  document.getElementById('listToShipBtn').disabled = !isPrintedOrder(o);
+  document.getElementById('listAssignBtn').disabled = !o;
+}
+
+// ---------------------------------------------------------------- Assign popup
+
+// Assigning is the Production Manager's call (or a Super User's) - see supabase_production_manager_role.sql.
+function canAssignOrders() {
+  return !!(currentSession?.isSuperUser || currentSession?.isProductionManager);
+}
+
+let assignDialogOrderId = null;
+
+// Options for one role's dropdown: only staff holding that Staff Role, plus the current assignee
+// even if they've since lost the role (shown, not re-pickable) so nothing is silently blanked.
+function assignOptionsHtml(order, role) {
+  const cfg = MAKER_ROLES[role];
+  const current = order[`assigned_${cfg.field}`] || '';
+  const pool = productionMembers.filter((m) => (m.staff_roles || []).includes(cfg.staffRole));
+  let html = `<option value="">(Not assigned)</option>` + pool
+    .map((m) => `<option value="${escapeHtml(m.username)}" ${m.username === current ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
+    .join('');
+  if (current && !pool.some((m) => m.username === current)) {
+    html += `<option value="${escapeHtml(current)}" selected disabled>${escapeHtml(order[`assigned_${cfg.field}_name`] || current)} (no role)</option>`;
+  }
+  return html;
+}
+
+async function openAssignDialog(orderId) {
+  const o = findFlatOrder(orderId);
+  if (!o || !canAssignOrders()) return;
+  assignDialogOrderId = String(o.order_id);
+
+  // Re-read the roster every time - roles ticked in User Setup after this page was opened must
+  // show up without a page reload.
+  await loadProductionMembers();
+
+  document.getElementById('assignDialogTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  const needs = [o.has_aquarium_line ? 'an aquarium' : null, o.has_stand_line ? 'a stand' : null].filter(Boolean);
+  // Only custom orders go Confirmed > Assigned > To Ship here; normal orders still go through the
+  // local POS (see _online_order_assignment_complete in supabase_online_order_assigned_status.sql).
+  document.getElementById('assignDialogLede').textContent = needs.length
+    ? `This order has ${needs.join(' and ')} to build. It moves to Assigned once everyone is set.`
+    : o.has_custom_line
+      ? 'This custom order has no aquarium or stand line - it moves to Assigned once a Dispatcher is set.'
+      : 'Normal order (no custom items) - print and ship it from the local POS. You can still record a Dispatcher; the status won\'t change.';
+
+  document.getElementById('assignTankRow').classList.toggle('hidden', !o.has_aquarium_line);
+  document.getElementById('assignStandRow').classList.toggle('hidden', !o.has_stand_line);
+  document.getElementById('assignTankSelect').innerHTML = assignOptionsHtml(o, 'tank');
+  document.getElementById('assignStandSelect').innerHTML = assignOptionsHtml(o, 'stand');
+  document.getElementById('assignDispatcherSelect').innerHTML = assignOptionsHtml(o, 'dispatcher');
+
+  const missing = ['TankMaker', 'StandMaker', 'Dispatcher']
+    .filter((r) => !productionMembers.some((m) => (m.staff_roles || []).includes(r)))
+    .map((r) => MAKER_ROLES[Object.keys(MAKER_ROLES).find((k) => MAKER_ROLES[k].staffRole === r)].label);
+  document.getElementById('assignDialogHint').textContent = productionMembersError
+    ? `Could not load the staff list: ${productionMembersError} - make sure sql/supabase_online_order_maker_by_role.sql and sql/supabase_online_order_dispatcher.sql have been run.`
+    : missing.length
+      ? `No active staff has the ${missing.join(' / ')} role yet - tick it in User Setup > (employee) > Roles.`
+      : '';
+
+  document.getElementById('assignDialogError').classList.add('hidden');
+  document.getElementById('assignDialog').classList.remove('hidden');
+}
+
+function closeAssignDialog() {
+  assignDialogOrderId = null;
+  document.getElementById('assignDialog').classList.add('hidden');
+}
+
+async function saveAssignDialog() {
+  const o = findFlatOrder(assignDialogOrderId);
+  if (!o) return closeAssignDialog();
+  const errorEl = document.getElementById('assignDialogError');
+  errorEl.classList.add('hidden');
+
+  const picks = [
+    ['tank', 'assignTankSelect', o.has_aquarium_line],
+    ['stand', 'assignStandSelect', o.has_stand_line],
+    ['dispatcher', 'assignDispatcherSelect', true]
+  ].filter(([role, id, needed]) => {
+    if (!needed) return false;
+    const value = document.getElementById(id).value || null;
+    return value !== (o[`assigned_${MAKER_ROLES[role].field}`] || null);
+  });
+
+  if (!picks.length) return closeAssignDialog();
+
+  const btn = document.getElementById('saveAssignDialogBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const failures = [];
+  for (const [role, id] of picks) {
+    const { data, error } = await supabaseClient.rpc('admin_assign_online_order_maker', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: o.order_id,
+      p_role: role,
+      p_username: document.getElementById(id).value || null
+    });
+    const result = Array.isArray(data) ? data[0] : data;
+    if (error || !result || !result.success) failures.push(`${MAKER_ROLES[role].label}: ${error?.message || result?.message || 'failed'}`);
+  }
+  // Moves the order to 'Assigned' (and Pancake's matching status) once every needed role is
+  // filled, or back to 'Printed' if one was cleared - see admin_sync_online_order_assigned_status.
+  if (!failures.length) {
+    btn.textContent = 'Updating status...';
+    const { error } = await supabaseClient.rpc('admin_sync_online_order_assigned_status', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: o.order_id
+    });
+    if (error) failures.push(`Saved, but the status wasn't updated: ${error.message}`);
+  }
+  btn.disabled = false;
+  btn.textContent = 'OK';
+
+  // Reload either way so the list, the open card and the derived "Assigned" status show what's
+  // actually saved.
+  await refreshCurrentOrders();
+  if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+
+  if (failures.length) {
+    errorEl.textContent = failures.join(' · ');
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  closeAssignDialog();
+}
+
+function wireAssignDialog() {
+  const allowed = canAssignOrders();
+  document.getElementById('listAssignBtn').classList.toggle('hidden', !allowed);
+  document.getElementById('cardAssignBtn').classList.toggle('hidden', !allowed);
+  if (!allowed) return;
+
+  document.getElementById('listAssignBtn').addEventListener('click', () => selectedOrderId && openAssignDialog(selectedOrderId));
+  document.getElementById('cardAssignBtn').addEventListener('click', () => openCardOrderId && openAssignDialog(openCardOrderId));
+  document.getElementById('saveAssignDialogBtn').addEventListener('click', saveAssignDialog);
+  document.getElementById('cancelAssignDialogBtn').addEventListener('click', closeAssignDialog);
+  document.getElementById('closeAssignDialogBtn').addEventListener('click', closeAssignDialog);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.getElementById('assignDialog').classList.contains('hidden')) {
+      e.stopImmediatePropagation();
+      closeAssignDialog();
+    }
+  }, true);
+}
+
+function selectOrderRow(orderId) {
+  selectedOrderId = orderId;
+  document.querySelectorAll('#orderTableBody tr[data-order-id]').forEach((tr) => {
+    tr.classList.toggle('selected', tr.dataset.orderId === String(orderId));
+  });
+  updateOrderActionState();
+}
+
+function wireOrderListActions() {
+  const tbody = document.getElementById('orderTableBody');
+  tbody.addEventListener('click', (event) => {
+    const openLink = event.target.closest('[data-open-order]');
+    if (openLink) {
+      event.preventDefault();
+      selectOrderRow(openLink.dataset.openOrder);
+      openOrderCard(openLink.dataset.openOrder);
+      return;
+    }
+    if (event.target.closest('a')) return; // Glass / GMA badge drill-down links keep their own navigation
+    const tr = event.target.closest('tr[data-order-id]');
+    if (tr) selectOrderRow(tr.dataset.orderId);
+  });
+  tbody.addEventListener('dblclick', (event) => {
+    const tr = event.target.closest('tr[data-order-id]');
+    if (tr && !event.target.closest('a')) openOrderCard(tr.dataset.orderId);
+  });
+
+  document.getElementById('openOrderBtn').addEventListener('click', () => selectedOrderId && openOrderCard(selectedOrderId));
+  document.getElementById('listSendPhotoBtn').addEventListener('click', (e) => selectedOrderId && handleSendPhotoClick(selectedOrderId, e.currentTarget));
+  document.getElementById('listSendMessageBtn').addEventListener('click', () => selectedOrderId && openSendMessageModal(selectedOrderId));
+  document.getElementById('listToShipBtn').addEventListener('click', (e) => selectedOrderId && handleToShipClick(selectedOrderId, e.currentTarget));
+}
+
+// ---------------------------------------------------------------- Online Order document (card + lines)
+
+const ORDER_CARD_MAXIMIZED_KEY = 'onlineOrderCardMaximized';
+let openCardOrderId = null;
+let orderCardLoadGeneration = 0;
+
+function readStoredFlag(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === '1';
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function writeStoredFlag(key, value) {
+  try { localStorage.setItem(key, value ? '1' : '0'); } catch (err) { /* not persisted */ }
+}
+
+function applyOrderCardMaximized(maximized) {
+  const modal = document.getElementById('orderCardModal');
+  modal.classList.toggle('modal-maximized', maximized);
+  modal.querySelector('.modal-panel').classList.toggle('modal-maximized', maximized);
+  const btn = document.getElementById('orderCardMaximizeBtn');
+  btn.textContent = maximized ? 'Restore' : 'Maximize';
+  btn.title = maximized ? 'Restore this document to a window' : 'Maximize this document to fill the window';
+}
+
+function setCardText(id, value) {
+  const el = document.getElementById(id);
+  el.textContent = value === null || value === undefined || value === '' ? '-' : value;
+}
+
+function fillOrderCardHeader(o) {
+  const displayStatus = orderDisplayStatus(o);
+  document.getElementById('orderCardTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  const badge = document.getElementById('orderCardStatusBadge');
+  badge.textContent = displayStatus || '';
+  badge.className = 'badge ' + (displayStatus === 'Assigned' || displayStatus === 'Shipped' ? 'badge-success' : displayStatus === 'Cancelled' ? 'badge-danger' : 'badge-neutral');
+  document.getElementById('orderCardBadges').innerHTML = `${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}`;
+
+  setCardText('ocOrderId', o.order_id);
+  setCardText('ocCustomer', o.customer_name);
+  setCardText('ocOrderDate', [o.order_date, o.order_time].filter(Boolean).join(' '));
+  setCardText('ocStatus', displayStatus);
+  setCardText('ocWarehouse', o.warehouse_name || o.location_id);
+  setCardText('ocConfirmedBy', o.confirmed_by);
+  setCardText('ocCreatedBy', o.created_by);
+  setCardText('ocLastUpdated', o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : '');
+  setCardText('ocForDelivery', o.for_delivery ? 'Yes' : 'No');
+  setCardText('ocEstDelivery', o.estimated_delivery_date);
+  setCardText('ocDeliveryFee', o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '');
+  setCardText('ocPrintNote', o.note_print);
+  document.getElementById('ocDeliveryFeeRow').classList.toggle('hidden', hidePriceColumns);
+
+  document.getElementById('orderCardGeneralSummary').textContent =
+    [o.customer_name, displayStatus, o.warehouse_name || o.location_id].filter(Boolean).join(' · ');
+  document.getElementById('orderCardDeliverySummary').textContent =
+    o.for_delivery ? `For delivery${o.estimated_delivery_date ? ' · ' + o.estimated_delivery_date : ''}` : 'Pickup';
+
+  document.getElementById('cardToShipBtn').disabled = !isPrintedOrder(o);
+  renderOrderCardAssignments();
+}
+
+function renderOrderCardAssignments() {
+  const o = findFlatOrder(openCardOrderId);
+  if (!o) return;
+  document.getElementById('ocTankMakerRow').classList.toggle('hidden', !o.has_aquarium_line);
+  document.getElementById('ocStandMakerRow').classList.toggle('hidden', !o.has_stand_line);
+  document.getElementById('ocTankMaker').innerHTML = o.has_aquarium_line ? makerSelectHtml(o, 'tank', o.assigned_tank_maker) : '';
+  document.getElementById('ocStandMaker').innerHTML = o.has_stand_line ? makerSelectHtml(o, 'stand', o.assigned_stand_maker) : '';
+  document.getElementById('ocDispatcher').innerHTML = makerSelectHtml(o, 'dispatcher', o.assigned_dispatcher);
+
+  const parts = [];
+  if (o.has_aquarium_line) parts.push(`Tank: ${o.assigned_tank_maker_name || o.assigned_tank_maker || '-'}`);
+  if (o.has_stand_line) parts.push(`Stand: ${o.assigned_stand_maker_name || o.assigned_stand_maker || '-'}`);
+  parts.push(`Dispatcher: ${o.assigned_dispatcher_name || o.assigned_dispatcher || '-'}`);
+  document.getElementById('orderCardAssignSummary').textContent = parts.join(' · ');
+}
+
+// After a list reload (e.g. an assignment saved on the card, or a status change from its action
+// bar), re-read the open card's header from the fresh row and its sent photos - the lines don't change, so no re-fetch.
+function refreshOpenOrderCardHeader() {
+  if (!openCardOrderId || document.getElementById('orderCardModal').classList.contains('hidden')) return;
+  const o = findFlatOrder(openCardOrderId);
+  if (o) fillOrderCardHeader(o);
+  loadOrderCardStatusPhotos(openCardOrderId); // e.g. a photo just sent with Send Photo from the card
+}
+
+function money(value) {
+  return value === null || value === undefined || value === '' ? '' : Number(value).toFixed(2);
+}
+
+// Lines + per-line attachments + sent photos for the open document. Same RPCs as
+// online-order-lines.html (js/onlineOrderLines.js) - attachments are an RS Pet Stop-side addition
+// stored in public."OnlineOrderLineAttachments" and joined in by line_id, uploaded through a
+// signed upload URL minted server-side (supabase_online_order_line_attachments.sql).
+const CARD_ATTACHMENTS_BUCKET = 'online-order-line-attachments';
+const CARD_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+let cardLines = [];
+let cardAttachmentsByLineId = {};
+let cardPendingUploadLineId = null;
+
+function isImageFileName(name) {
+  return /\.(png|jpe?g|gif|webp)$/i.test(name || '');
+}
+
+// Pancake doesn't always send net_amount - fall back to gross, then price x qty - discount, so the
+// Line Amount column is never blank for a priced line.
+function lineAmount(l) {
+  if (l.net_amount !== null && l.net_amount !== undefined && l.net_amount !== '') return Number(l.net_amount);
+  if (l.gross_amount !== null && l.gross_amount !== undefined && l.gross_amount !== '') return Number(l.gross_amount) - (Number(l.discount) || 0);
+  if (l.price === null || l.price === undefined || l.price === '') return null;
+  return (Number(l.price) || 0) * (Number(l.quantity) || 0) - (Number(l.discount) || 0);
+}
+
+function cardAttachmentCellHtml(lineId) {
+  if (!lineId) return '<span class="muted">No line ID</span>';
+  const chips = (cardAttachmentsByLineId[lineId] || []).map((a) => {
+    const label = escapeHtml(a.file_name || 'attachment');
+    const link = isImageFileName(a.file_name)
+      ? `<a href="${escapeHtml(a.public_url)}" target="_blank" rel="noopener" title="${label}"><img src="${escapeHtml(a.public_url)}" class="attachment-thumb" alt="${label}" /></a>`
+      : `<a href="${escapeHtml(a.public_url)}" target="_blank" rel="noopener" class="attachment-file-chip">&#128206; ${label}</a>`;
+    return `<span class="attachment-chip">${link}<button type="button" class="attachment-remove-btn" data-attachment-id="${escapeHtml(a.attachment_id)}" title="Remove attachment">&times;</button></span>`;
+  }).join('');
+  return `<div class="attachment-cell">${chips}<button type="button" class="bc-link card-attach-btn" data-line-id="${escapeHtml(lineId)}">+ Attach</button></div>`;
+}
+
+function renderOrderCardLines() {
+  const tbody = document.getElementById('orderCardLinesBody');
+  const tfoot = document.getElementById('orderCardLinesFoot');
+  if (!cardLines.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">No line items found for this order.</td></tr>';
+    tfoot.innerHTML = '';
+    return;
+  }
+
+  const priceCell = (v) => (hidePriceColumns ? '' : `<td class="num">${money(v)}</td>`);
+  tbody.innerHTML = cardLines.map((l) => `
+    <tr>
+      <td>${escapeHtml(l.item_code || l.product_display_id)}</td>
+      <td style="white-space:normal;">${escapeHtml(l.description)}</td>
+      <td class="num">${l.quantity ?? ''}</td>
+      ${priceCell(l.price)}
+      ${priceCell(l.discount)}
+      ${priceCell(lineAmount(l))}
+      <td style="white-space:normal;">${escapeHtml(l.note)}</td>
+      <td style="white-space:normal;">${cardAttachmentCellHtml(l.line_id)}</td>
+    </tr>`).join('');
+
+  const totalQty = cardLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+  const totalNet = cardLines.reduce((sum, l) => sum + (lineAmount(l) || 0), 0);
+  tfoot.innerHTML = `<tr>
+    <td>Total</td><td></td><td class="num">${totalQty}</td>
+    ${hidePriceColumns ? '' : `<td></td><td></td><td class="num">${money(totalNet)}</td>`}
+    <td></td><td></td></tr>`;
+}
+
+async function loadOrderCardLines(orderId) {
+  const myGeneration = ++orderCardLoadGeneration;
+  const tbody = document.getElementById('orderCardLinesBody');
+  cardLines = [];
+  cardAttachmentsByLineId = {};
+  tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">Loading lines from Pancake...</td></tr>';
+  document.getElementById('orderCardLinesFoot').innerHTML = '';
+  document.getElementById('orderCardPhotosPart').classList.add('hidden');
+
+  const [linesRes] = await Promise.all([
+    supabaseClient.rpc('admin_get_online_order_detail_live', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId
+    }),
+    loadOrderCardAttachments(orderId, false),
+    loadOrderCardStatusPhotos(orderId)
+  ]);
+  if (myGeneration !== orderCardLoadGeneration) return;
+
+  if (linesRes.error) {
+    // Usually Pancake's live API being slow for a moment, not a session problem - offer a retry.
+    tbody.innerHTML = `<tr><td colspan="8" class="cell-msg error-text">Could not load lines: ${escapeHtml(linesRes.error.message)}
+      <button type="button" class="bc-link" id="retryOrderCardLinesBtn" style="margin-left:8px;">Retry</button></td></tr>`;
+    document.getElementById('retryOrderCardLinesBtn').addEventListener('click', () => loadOrderCardLines(orderId));
+    return;
+  }
+
+  cardLines = (linesRes.data || []).filter((l) => l.line_id || l.item_code || l.description);
+  renderOrderCardLines();
+}
+
+async function loadOrderCardAttachments(orderId, rerender = true) {
+  const { data, error } = await supabaseClient.rpc('admin_list_online_order_line_attachments', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+  if (String(orderId) !== String(openCardOrderId)) return;
+  cardAttachmentsByLineId = {};
+  (error ? [] : data || []).forEach((a) => {
+    (cardAttachmentsByLineId[a.line_id] = cardAttachmentsByLineId[a.line_id] || []).push(a);
+  });
+  if (rerender && cardLines.length) renderOrderCardLines();
+}
+
+async function uploadOrderCardAttachment(orderId, lineId, file, triggerEl) {
+  if (file.size > CARD_MAX_ATTACHMENT_BYTES) {
+    alert('That file is too large - max 10 MB.');
+    return;
+  }
+  if (triggerEl) { triggerEl.disabled = true; triggerEl.textContent = 'Uploading...'; }
+
+  try {
+    const { data: uploadRows, error: signError } = await supabaseClient.rpc('admin_create_online_order_line_attachment_upload', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId,
+      p_line_id: lineId,
+      p_file_name: file.name
+    });
+    const uploadInfo = uploadRows && uploadRows[0];
+    if (signError || !uploadInfo) {
+      alert(`Could not start upload: ${signError ? signError.message : 'unknown error'}`);
+      return;
+    }
+
+    const { error: uploadError } = await supabaseClient.storage
+      .from(CARD_ATTACHMENTS_BUCKET)
+      .uploadToSignedUrl(uploadInfo.storage_path, uploadInfo.upload_token, file);
+    if (uploadError) {
+      alert(`Upload failed: ${uploadError.message}`);
+      return;
+    }
+
+    const { error: recordError } = await supabaseClient.rpc('admin_record_online_order_line_attachment', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId,
+      p_line_id: lineId,
+      p_file_name: file.name,
+      p_storage_path: uploadInfo.storage_path,
+      p_public_url: uploadInfo.public_url
+    });
+    if (recordError) {
+      alert(`File uploaded, but could not save it against this line: ${recordError.message}`);
+      return;
+    }
+  } finally {
+    if (triggerEl && triggerEl.isConnected) { triggerEl.disabled = false; triggerEl.textContent = '+ Attach'; }
+  }
+
+  await loadOrderCardAttachments(orderId);
+}
+
+async function removeOrderCardAttachment(attachmentId) {
+  if (!confirm('Remove this attachment?')) return;
+  const { error } = await supabaseClient.rpc('admin_delete_online_order_line_attachment', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_attachment_id: attachmentId
+  });
+  if (error) {
+    alert(`Could not remove attachment: ${error.message}`);
+    return;
+  }
+  if (openCardOrderId) await loadOrderCardAttachments(openCardOrderId);
+}
+
+function cardStatusPhotoHtml(p) {
+  const takenAt = p.uploaded_at_utc ? new Date(p.uploaded_at_utc).toLocaleString() : '';
+  return `
+    <div class="status-photo-card" data-photo-id="${escapeHtml(p.photo_id)}">
+      <a href="${escapeHtml(p.public_url)}" target="_blank" rel="noopener">
+        <img src="${escapeHtml(p.public_url)}" class="status-photo-thumb" alt="Status update photo" />
+      </a>
+      <button type="button" class="status-photo-remove-btn" data-photo-id="${escapeHtml(p.photo_id)}" title="Remove photo">&times;</button>
+      <div class="status-photo-meta">
+        <div>${escapeHtml(p.status)} - ${takenAt}</div>
+        <div class="${p.sent_to_customer ? '' : 'error-text'}" title="${escapeHtml(p.send_error)}">${p.sent_to_customer ? 'Sent to customer' : 'Not sent to customer'}</div>
+        <div class="muted">by ${escapeHtml(p.uploaded_by)}</div>
+      </div>
+    </div>`;
+}
+
+async function loadOrderCardStatusPhotos(orderId) {
+  const { data, error } = await supabaseClient.rpc('admin_list_online_order_status_photos', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+  if (String(orderId) !== String(openCardOrderId)) return;
+  const part = document.getElementById('orderCardPhotosPart');
+  if (error || !data || !data.length) {
+    part.classList.add('hidden');
+    return;
+  }
+  document.getElementById('orderCardPhotosList').innerHTML = data.map(cardStatusPhotoHtml).join('');
+  part.classList.remove('hidden');
+}
+
+async function removeOrderCardStatusPhoto(photoId) {
+  if (!confirm('Remove this photo? This cannot be undone.')) return;
+  const { error } = await supabaseClient.rpc('admin_delete_online_order_status_photo', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_photo_id: photoId
+  });
+  if (error) {
+    alert(`Could not remove photo: ${error.message}`);
+    return;
+  }
+  if (openCardOrderId) await loadOrderCardStatusPhotos(openCardOrderId);
+}
+
+function wireOrderCardAttachments() {
+  const fileInput = document.getElementById('cardAttachmentFileInput');
+  let pendingTrigger = null;
+
+  document.getElementById('orderCardLinesBody').addEventListener('click', (event) => {
+    const attachBtn = event.target.closest('.card-attach-btn');
+    if (attachBtn) {
+      cardPendingUploadLineId = attachBtn.dataset.lineId;
+      pendingTrigger = attachBtn;
+      fileInput.click();
+      return;
+    }
+    const removeBtn = event.target.closest('.attachment-remove-btn');
+    if (removeBtn) removeOrderCardAttachment(removeBtn.dataset.attachmentId);
+  });
+
+  fileInput.addEventListener('change', async (event) => {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = ''; // allow re-selecting the same file later
+    const lineId = cardPendingUploadLineId;
+    cardPendingUploadLineId = null;
+    if (!file || !lineId || !openCardOrderId) return;
+    await uploadOrderCardAttachment(openCardOrderId, lineId, file, pendingTrigger);
+  });
+
+  document.getElementById('orderCardPhotosList').addEventListener('click', (event) => {
+    const removeBtn = event.target.closest('.status-photo-remove-btn');
+    if (removeBtn) removeOrderCardStatusPhoto(removeBtn.dataset.photoId);
+  });
+}
+
+function openOrderCard(orderId) {
+  const o = findFlatOrder(orderId);
+  if (!o) return;
+  openCardOrderId = String(o.order_id);
+  document.querySelectorAll('#orderCardModal .oc-price').forEach((th) => th.classList.toggle('hidden', hidePriceColumns));
+  fillOrderCardHeader(o);
+  document.getElementById('orderCardModal').classList.remove('hidden');
+  loadOrderCardLines(openCardOrderId);
+}
+
+function closeOrderCard() {
+  openCardOrderId = null;
+  orderCardLoadGeneration++;
+  document.getElementById('orderCardModal').classList.add('hidden');
+}
+
+function wireOrderCard() {
+  applyOrderCardMaximized(readStoredFlag(ORDER_CARD_MAXIMIZED_KEY, false));
+  document.getElementById('orderCardMaximizeBtn').addEventListener('click', () => {
+    const next = !document.getElementById('orderCardModal').classList.contains('modal-maximized');
+    writeStoredFlag(ORDER_CARD_MAXIMIZED_KEY, next);
+    applyOrderCardMaximized(next);
+  });
+  document.getElementById('closeOrderCardBtn').addEventListener('click', closeOrderCard);
+  document.getElementById('orderCardModal').addEventListener('change', handleAssignProductionMemberChange);
+  document.getElementById('cardSendPhotoBtn').addEventListener('click', (e) => openCardOrderId && handleSendPhotoClick(openCardOrderId, e.currentTarget));
+  document.getElementById('cardSendMessageBtn').addEventListener('click', () => openCardOrderId && openSendMessageModal(openCardOrderId));
+  document.getElementById('cardToShipBtn').addEventListener('click', (e) => openCardOrderId && handleToShipClick(openCardOrderId, e.currentTarget));
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
+    // Only when no dialog launched from the card is open on top of it.
+    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog']
+      .some((id) => !document.getElementById(id).classList.contains('hidden'));
+    if (!stacked) closeOrderCard();
+  });
+}
+
+// Assigned Dispatcher isn't part of admin_list_online_orders' result - it's looked up for just the
+// orders on screen via staff_get_online_order_assignments (supabase_online_order_dispatcher.sql)
+// and merged onto each row before rendering. A failed lookup only leaves the dropdowns blank.
+async function attachDispatchers(rows) {
+  if (!rows.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_assignments', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: rows.map((o) => String(o.order_id))
+  });
+  if (error) {
+    console.error('staff_get_online_order_assignments failed:', error);
+    return;
+  }
+  const byOrder = new Map((data || []).map((a) => [String(a.order_id), a]));
+  rows.forEach((o) => {
+    const a = byOrder.get(String(o.order_id));
+    o.assigned_dispatcher = a?.assigned_dispatcher || null;
+    o.assigned_dispatcher_name = a?.assigned_dispatcher_name || null;
+  });
+}
+
 async function loadOrders(search, status) {
   const myGeneration = ++loadGeneration;
   const grouped = !!currentSession.isOnlineOrderStaff;
@@ -1183,7 +1808,8 @@ async function loadOrders(search, status) {
     p_page: currentPage,
     p_page_size: currentPageSize,
     p_confirmed_by: currentConfirmedBy,
-    p_status_in: grouped ? ONLINE_ORDER_STAFF_STATUS_SCOPE : null
+    p_status_in: grouped ? ONLINE_ORDER_STAFF_STATUS_SCOPE : null,
+    p_assigned_to_me: myAssignmentsOnly
   });
 
   if (myGeneration !== loadGeneration) return;
@@ -1192,7 +1818,7 @@ async function loadOrders(search, status) {
     if (grouped) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
-      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="16" class="error-text">${error.message}</td></tr>`;
+      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="17" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     }
     return;
   }
@@ -1203,10 +1829,14 @@ async function loadOrders(search, status) {
   // pagination bar's total/page count reflects the pre-filter total, not the filtered count
   // actually shown. Same pre-existing tradeoff the old fixed-500-row fetch had; not something
   // this pagination pass changes.
-  let rows = (data || []).filter(matchesWarehouseFilter);
+  let rows = myAssignmentsOnly ? (data || []) : (data || []).filter(matchesWarehouseFilter);
+  if (myAssignmentsOnly) setMyAssignmentsCount(data?.[0]?.total_count || 0);
   if (outstandingOnly) {
     rows = rows.filter((o) => Number(o.balance) > 0);
   }
+
+  await attachDispatchers(rows);
+  if (myGeneration !== loadGeneration) return;
 
   // Online Order Staff get the tabbed card view (renderGroupedOrders) instead of the flat table +
   // pagination bar - see the isOnlineOrderStaff branch in init() below, which hides
@@ -1217,9 +1847,14 @@ async function loadOrders(search, status) {
     return;
   }
 
+  lastFlatRows = rows;
+  if (selectedOrderId && !rows.some((o) => String(o.order_id) === String(selectedOrderId))) selectedOrderId = null;
+  updateOrderActionState();
+  refreshOpenOrderCardHeader();
+
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="16" class="muted">No online orders found.</td></tr>'
+    ? `<tr><td colspan="17" class="cell-msg">${myAssignmentsOnly ? 'No open orders are assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
 
   renderPaginationBar(
@@ -1230,6 +1865,16 @@ async function loadOrders(search, status) {
       onPageSizeChange: (newSize) => { currentPageSize = newSize; currentPage = 1; loadOrders(trimmedSearch, trimmedStatus); }
     }
   );
+  fitGridToViewport();
+}
+
+// The list grid fills the rest of the window (css/bc-list.css .bc-grid-wrap) - measured, since the
+// chrome above it (info bar, status tabs) comes and goes.
+function fitGridToViewport() {
+  const el = document.getElementById('orderGridWrap');
+  if (!el || el.offsetParent === null) return;
+  const available = window.innerHeight - el.getBoundingClientRect().top - 64; // leaves room for the pagination bar
+  el.style.maxHeight = Math.max(240, available) + 'px';
 }
 
 function escapeCsvValue(value) {
@@ -1244,6 +1889,12 @@ function escapeCsvValue(value) {
 // Plain CSV (not a real .xlsx) - Excel opens it natively with no extra library/CDN dependency;
 // the UTF-8 BOM prefix keeps Excel from mangling the Peso sign in any money fields later added.
 async function exportOrdersToExcel() {
+  // Belt-and-braces: the button is only un-hidden for super users, but refuse here too in case it's
+  // reached another way (e.g. the button un-hidden from dev tools).
+  if (!currentSession?.isSuperUser) {
+    alert('Only super users can export orders to Excel.');
+    return;
+  }
   const btn = document.getElementById('exportExcelBtn');
   const searchInput = document.getElementById('orderSearchInput');
   const statusInput = document.getElementById('statusFilterInput');
@@ -1350,8 +2001,16 @@ async function exportOrdersToExcel() {
 function updateStatusPillActiveState() {
   const currentStatus = document.getElementById('statusFilterInput').value.trim().toLowerCase();
   document.querySelectorAll('#statusSummaryBar .status-summary-pill').forEach((pill) => {
-    pill.classList.toggle('active', currentStatus !== '' && pill.dataset.status.toLowerCase() === currentStatus);
+    if (pill.dataset.mine) {
+      pill.classList.toggle('active', myAssignmentsOnly);
+      return;
+    }
+    pill.classList.toggle('active', !myAssignmentsOnly && currentStatus !== '' && pill.dataset.status.toLowerCase() === currentStatus);
   });
+}
+
+function setMyAssignmentsCount(count) {
+  document.getElementById('myAssignmentsCount').textContent = String(count);
 }
 
 // Tab buttons for the grouped (Online Order Staff) view - switching tabs re-renders from the
@@ -1394,6 +2053,20 @@ function wireOrderFilters() {
     const pill = event.target.closest('.status-summary-pill');
     if (!pill) return;
 
+    // My Assignments toggles the assigned-to-me filter and clears the status filter; a status tab
+    // switches back to the full list (unless this account is locked to its assignments).
+    if (pill.dataset.mine) {
+      if (myAssignmentsLocked) return;
+      myAssignmentsOnly = !myAssignmentsOnly;
+      statusInput.value = '';
+      updateStatusPillActiveState();
+      currentPage = 1;
+      clearTimeout(orderSearchDebounceHandle);
+      loadOrders(searchInput.value.trim(), '');
+      return;
+    }
+    if (!myAssignmentsLocked) myAssignmentsOnly = false;
+
     const clickedStatus = pill.dataset.status;
     const alreadyActive = statusInput.value.trim().toLowerCase() === clickedStatus.toLowerCase();
     statusInput.value = alreadyActive ? '' : clickedStatus;
@@ -1405,6 +2078,21 @@ function wireOrderFilters() {
   });
 
   document.getElementById('exportExcelBtn').addEventListener('click', exportOrdersToExcel);
+
+  document.getElementById('refreshOrdersBtn').addEventListener('click', () => {
+    refreshCurrentOrders();
+    if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+  });
+
+  let filterPaneOpen = true;
+  document.getElementById('filterPaneBtn').addEventListener('click', () => {
+    filterPaneOpen = !filterPaneOpen;
+    document.getElementById('filterPane').classList.toggle('hidden', !filterPaneOpen);
+    document.getElementById('flatOrdersView').classList.toggle('no-filterpane', !filterPaneOpen);
+    document.getElementById('filterPaneBtn').setAttribute('aria-pressed', filterPaneOpen ? 'true' : 'false');
+    fitGridToViewport();
+  });
+  window.addEventListener('resize', fitGridToViewport);
 }
 
 (async function init() {
@@ -1438,6 +2126,10 @@ function wireOrderFilters() {
   wireShipSerialModalButtons();
   wireViewSerialsModalButtons();
   wireSendMessageModalButtons();
+  wireOrderListActions();
+  wireOrderCard();
+  wireAssignDialog();
+  wireOrderCardAttachments();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
   if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);
@@ -1481,8 +2173,34 @@ function wireOrderFilters() {
     // shot instead of paging, since this role's whole queue is only ever these 3 statuses.
     document.getElementById('flatOrdersView').classList.add('hidden');
     document.getElementById('groupedOrdersView').classList.remove('hidden');
+    // The filter pane lives inside #flatOrdersView, so its toggle has nothing to show here.
+    document.getElementById('filterPaneBtn').classList.add('hidden');
+    // The action bar's row actions work on the desktop list's selected row - the phone cards carry
+    // their own buttons instead, so only Refresh stays.
+    ['openOrderBtn', 'listSendPhotoBtn', 'listSendMessageBtn', 'listToShipBtn', 'listAssignBtn'].forEach((id) => document.getElementById(id).classList.add('hidden'));
+    document.querySelectorAll('#orderCmdbar .bc-cmd-sep').forEach((sep) => sep.classList.add('hidden'));
     currentPageSize = 200;
     wireGroupedTabs();
+  }
+  if (session.isOrderMaker && !session.isOnlineOrderStaff) {
+    document.getElementById('myAssignmentsTab').classList.remove('hidden');
+    // Makers land on their own list; Super Users / Production Managers who also hold a maker role
+    // keep the full list and can click the tab.
+    myAssignmentsOnly = !session.isSuperUser && !session.isProductionManager && !urlParams.get('status');
+  }
+  if (isOrderMakerOnly(session)) {
+    myAssignmentsLocked = true;
+    myAssignmentsOnly = true;
+    hidePriceColumns = true;
+    document.getElementById('deliveryFeeHeader').classList.add('hidden');
+    // Only their tab - status tabs and the status filter would just be empty for them.
+    document.querySelectorAll('#statusSummaryBar .status-summary-pill:not([data-mine])').forEach((pill) => pill.classList.add('hidden'));
+    document.getElementById('filterPaneBtn').classList.add('hidden');
+    // Read-only: Open and Refresh only, on the list and on the order card.
+    ['listSendPhotoBtn', 'listSendMessageBtn', 'listToShipBtn', 'listAssignBtn', 'exportExcelBtn',
+      'cardSendPhotoBtn', 'cardSendMessageBtn', 'cardToShipBtn', 'cardAssignBtn']
+      .forEach((id) => document.getElementById(id).classList.add('hidden'));
+    document.querySelectorAll('#orderCmdbar .bc-cmd-sep').forEach((sep) => sep.classList.add('hidden'));
   }
   updateStatusPillActiveState();
 
@@ -1524,7 +2242,7 @@ function wireOrderFilters() {
   const showStatusSummary = currentScope !== 'walkin' && !session.isOnlineOrderStaff;
   document.getElementById('statusSummaryBar').classList.toggle('hidden', !showStatusSummary);
 
-  const loaders = [loadOrders('', statusParam)];
-  if (showStatusSummary) loaders.push(loadStatusSummary());
+  const loaders = [loadOrders('', myAssignmentsOnly ? '' : statusParam)];
+  if (showStatusSummary && !myAssignmentsLocked) loaders.push(loadStatusSummary());
   await Promise.all(loaders);
 })();

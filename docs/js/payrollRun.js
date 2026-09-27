@@ -89,7 +89,7 @@ function renderLedgerRows(entries) {
         <td>${e.display_name || e.username || '<span class="muted">-</span>'}</td>
         <td><span class="badge ${entryTypeBadge[e.entry_type] || 'badge-neutral'}">${e.entry_type}</span></td>
         <td>${e.label}${e.method ? ` (${e.method})` : ''}</td>
-        <td style="text-align:right;">${formatCurrency(e.amount)}</td>
+        <td class="num">${formatCurrency(e.amount)}</td>
       </tr>
     `)
     .join('');
@@ -118,7 +118,10 @@ function renderLineRows(lines) {
   const tbody = document.getElementById('lineTableBody');
 
   if (!lines || lines.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="muted">No employees on this run.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">No employees on this run.</td></tr>';
+    document.getElementById('lineTableFoot').innerHTML = '';
+    selectedLineId = null;
+    updateLineActionState();
     return;
   }
 
@@ -127,21 +130,46 @@ function renderLineRows(lines) {
 
   tbody.innerHTML = lines
     .map((l) => `
-      <tr>
-        <td>${l.display_name || l.username}</td>
-        <td>${formatCurrency(l.base_pay)}</td>
-        <td>${hasDaysWorked(l) ? `${formatCurrency(l.daily_rate)}/${unitLabel(l)}` : '<span class="muted">-</span>'}</td>
-        <td>${hasDaysWorked(l) ? `${formatDays(l.days_worked)} ${unitLabel(l)}${l.pay_type === 'Hourly' ? 's' : '(s)'}` : '<span class="muted">-</span>'}</td>
-        <td>${formatCurrency(l.additions_total)}</td>
-        <td>${formatCurrency(l.deductions_total)}</td>
-        <td><strong>${formatCurrency(l.net_pay)}</strong></td>
-        <td>
-          <button class="btn btn-secondary btn-sm" data-line-id="${l.line_id}" type="button">${isRunFinalized() ? 'View' : 'Edit'}</button>
-          <a class="btn btn-secondary btn-sm" href="payroll-print.html?line=${l.line_id}">Print</a>
-        </td>
+      <tr data-line-row="${l.line_id}" class="${l.line_id === selectedLineId ? 'selected' : ''}">
+        <td><a href="#" class="bc-link" data-line-id="${l.line_id}" title="Open this payroll line">${l.display_name || l.username}</a></td>
+        <td class="num">${formatCurrency(l.base_pay)}</td>
+        <td class="num">${hasDaysWorked(l) ? `${formatCurrency(l.daily_rate)}/${unitLabel(l)}` : '<span class="muted">-</span>'}</td>
+        <td class="num">${hasDaysWorked(l) ? `${formatDays(l.days_worked)} ${unitLabel(l)}${l.pay_type === 'Hourly' ? 's' : '(s)'}` : '<span class="muted">-</span>'}</td>
+        <td class="num">${formatCurrency(l.additions_total)}</td>
+        <td class="num">${formatCurrency(l.deductions_total)}</td>
+        <td class="num"><strong>${formatCurrency(l.net_pay)}</strong></td>
       </tr>
     `)
     .join('');
+
+  const sum = (field) => lines.reduce((s, l) => s + (Number(l[field]) || 0), 0);
+  document.getElementById('lineTableFoot').innerHTML = `<tr>
+    <td>Total (${lines.length} employee${lines.length === 1 ? '' : 's'})</td>
+    <td class="num">${formatCurrency(sum('base_pay'))}</td><td></td><td></td>
+    <td class="num">${formatCurrency(sum('additions_total'))}</td>
+    <td class="num">${formatCurrency(sum('deductions_total'))}</td>
+    <td class="num">${formatCurrency(sum('net_pay'))}</td></tr>`;
+
+  if (!lines.some((l) => l.line_id === selectedLineId)) selectedLineId = null;
+  updateLineActionState();
+}
+
+// BC document: Edit Line / Print Payslip act on the selected line (click a row to select it).
+let selectedLineId = null;
+
+function updateLineActionState() {
+  const btn = document.getElementById('editLineBtn');
+  btn.disabled = !selectedLineId;
+  btn.lastChild.textContent = isRunFinalized() ? 'View Line' : 'Edit Line';
+  document.getElementById('printLineBtn').disabled = !selectedLineId;
+}
+
+function selectLine(lineId) {
+  selectedLineId = lineId;
+  document.querySelectorAll('#lineTableBody tr[data-line-row]').forEach((tr) => {
+    tr.classList.toggle('selected', tr.dataset.lineRow === lineId);
+  });
+  updateLineActionState();
 }
 
 async function loadRun() {
@@ -164,7 +192,7 @@ async function loadRun() {
 
 async function loadLines() {
   const tbody = document.getElementById('lineTableBody');
-  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_run_lines', {
     p_admin_username: currentSession.username,
@@ -173,7 +201,7 @@ async function loadLines() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="cell-msg error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -194,7 +222,7 @@ function renderLineItemRows(items) {
         <td><span class="badge ${i.item_type === 'Addition' ? 'badge-success' : 'badge-danger'}">${i.item_type}</span></td>
         <td>${i.label}</td>
         <td style="text-align:right;">${formatCurrency(i.amount)}</td>
-        <td>${isRunFinalized() ? '' : `<button class="btn btn-secondary btn-sm" data-delete-item-id="${i.item_id}" type="button">Remove</button>`}</td>
+        <td>${isRunFinalized() ? '' : `<button class="bc-link" data-delete-item-id="${i.item_id}" type="button">Remove</button>`}</td>
       </tr>
     `)
     .join('');
@@ -293,7 +321,7 @@ async function openLineModal(lineId) {
   document.getElementById('lineBasePay').disabled = isRunFinalized();
   document.getElementById('saveBasePayBtn').classList.toggle('hidden', isRunFinalized());
   document.getElementById('addLineItemBtn').classList.toggle('hidden', isRunFinalized());
-  document.getElementById('newItemType').closest('.form-grid').classList.toggle('hidden', isRunFinalized());
+  document.getElementById('newItemFields').classList.toggle('hidden', isRunFinalized());
   document.getElementById('newItemLabel').value = '';
   document.getElementById('newItemAmount').value = '';
   document.getElementById('lineItemError').classList.add('hidden');
@@ -482,13 +510,29 @@ async function deleteRun() {
   const loaded = await loadRun();
   if (loaded) await loadLines();
 
-  document.getElementById('lineTableBody').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-line-id]');
-    if (btn) openLineModal(btn.getAttribute('data-line-id'));
+  const lineBody = document.getElementById('lineTableBody');
+  lineBody.addEventListener('click', (e) => {
+    const link = e.target.closest('[data-line-id]');
+    if (link) {
+      e.preventDefault();
+      selectLine(link.getAttribute('data-line-id'));
+      openLineModal(link.getAttribute('data-line-id'));
+      return;
+    }
+    const tr = e.target.closest('tr[data-line-row]');
+    if (tr) selectLine(tr.dataset.lineRow);
   });
-  document.getElementById('closeLineModalBtn').addEventListener('click', () =>
-    document.getElementById('lineModal').classList.add('hidden')
-  );
+  lineBody.addEventListener('dblclick', (e) => {
+    const tr = e.target.closest('tr[data-line-row]');
+    if (tr) openLineModal(tr.dataset.lineRow);
+  });
+  document.getElementById('editLineBtn').addEventListener('click', () => selectedLineId && openLineModal(selectedLineId));
+  document.getElementById('printLineBtn').addEventListener('click', () => {
+    if (selectedLineId) window.location.href = `payroll-print.html?line=${selectedLineId}`;
+  });
+  const closeLineModal = () => document.getElementById('lineModal').classList.add('hidden');
+  document.getElementById('closeLineModalBtn').addEventListener('click', closeLineModal);
+  document.getElementById('doneLineModalBtn').addEventListener('click', closeLineModal);
   document.getElementById('saveBasePayBtn').addEventListener('click', saveBasePay);
   document.getElementById('addLineItemBtn').addEventListener('click', addLineItem);
   wireLineItemAutoSave();

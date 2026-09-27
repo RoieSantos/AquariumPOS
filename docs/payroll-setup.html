@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payroll Setup - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,317 +17,366 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>Payroll Setup</h1>
-    <p class="muted">Assign each employee's pay cycle and monthly salary. Only visible to super users and payroll officers.</p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-edit" viewBox="0 0 16 16"><path d="M10.8 2.7 13.3 5.2 5.6 12.9 2.6 13.4 3.1 10.4z"/><path d="M9.4 4.1l2.5 2.5"/></symbol>
+    <symbol id="ico-open" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-delete" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></symbol>
+    <symbol id="ico-calendar" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></symbol>
+    <symbol id="ico-money" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8" rx="1"/><circle cx="8" cy="8" r="1.8"/></symbol>
+    <symbol id="ico-ledger" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></symbol>
+    <symbol id="ico-people" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5"/><circle cx="11.5" cy="6" r="1.7"/><path d="M11 9.6c1.5.1 2.6 1.1 3 3"/></symbol>
+    <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
+    <symbol id="ico-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></symbol>
+  </svg>
+
+  <!-- Business Central setup page (css/bc-list.css): one page, four views as BC tabs -
+       Employees (list + per-column filter row), Funding (cues + log form + journal), Cash
+       Advances (log form + list), Settings (cutoff/overtime FastTabs). List row actions live on
+       each view's action bar and work on the selected row. The active tab is remembered per
+       browser and can be deep-linked with ?tab=employees|funding|advances|settings. -->
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Payroll Setup</h1>
+        <p class="bc-subtitle">Employees' pay profiles, funding, cash advances and cutoff/overtime settings. Only visible to super users and payroll officers.</p>
+      </div>
+    </div>
 
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
 
     <div id="payrollSetupContent" class="hidden">
-      <div class="toolbar">
-        <h2 style="margin:0;">Semi-Monthly Cutoff Settings</h2>
+      <div class="bc-tabs" role="tablist" id="setupTabs">
+        <button class="bc-tab active" type="button" role="tab" data-tab="employees">Employees</button>
+        <button class="bc-tab" type="button" role="tab" data-tab="funding">Funding</button>
+        <button class="bc-tab" type="button" role="tab" data-tab="advances">Cash Advances</button>
+        <button class="bc-tab" type="button" role="tab" data-tab="settings">Settings</button>
       </div>
-      <p class="muted">Used to auto-fill Period Start/End and Pay Date when creating a new Semi-Monthly payroll run.</p>
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="cutoffAStartDay">Cutoff A: Start Day</label>
-          <input type="number" id="cutoffAStartDay" min="1" max="31" />
+
+      <!-- ============================================================ Employees -->
+      <div class="setup-view" data-view="employees">
+        <div class="bc-cmdbar" role="toolbar" aria-label="Employee actions">
+          <button class="bc-cmd bc-cmd-accent" id="newEmployeeBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Employee</button>
+          <button class="bc-cmd" id="editEmployeeBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-edit"/></svg>Edit Payroll Profile</button>
+          <span class="bc-cmd-sep"></span>
+          <button class="bc-cmd" id="clearFiltersBtn" type="button"><svg class="bc-ico"><use href="#ico-filter"/></svg>Clear Filters</button>
         </div>
-        <div class="form-row">
-          <label for="cutoffAEndDay">Cutoff A: End Day</label>
-          <input type="number" id="cutoffAEndDay" min="1" max="31" />
-        </div>
-        <div class="form-row">
-          <label for="cutoffAPayDay">Cutoff A: Pay Day</label>
-          <input type="number" id="cutoffAPayDay" min="1" max="31" />
-        </div>
-        <div class="form-row">
-          <label for="cutoffAPayLastDay" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="cutoffAPayLastDay" style="width:auto;" />
-            <span>Pay on last day of month instead</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="cutoffBStartDay">Cutoff B: Start Day</label>
-          <input type="number" id="cutoffBStartDay" min="1" max="31" />
-        </div>
-        <div class="form-row">
-          <label for="cutoffBEndDay">Cutoff B: End Day</label>
-          <input type="number" id="cutoffBEndDay" min="1" max="31" />
-        </div>
-        <div class="form-row">
-          <label for="cutoffBPayDay">Cutoff B: Pay Day</label>
-          <input type="number" id="cutoffBPayDay" min="1" max="31" />
-        </div>
-        <div class="form-row">
-          <label for="cutoffBPayLastDay" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="cutoffBPayLastDay" style="width:auto;" />
-            <span>Pay on last day of month instead</span>
-          </label>
+
+        <div class="bc-body no-filterpane no-factbox">
+          <section class="bc-main">
+            <div class="bc-grid-wrap" style="max-height:none;">
+              <table class="bc-grid" id="employeeTable">
+                <thead>
+                  <tr>
+                    <th class="sortable-th sortable" data-sort="username">User Name<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable" data-sort="employee_no">Employee No.<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable" data-sort="display_name">Full Name<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable" data-sort="is_active">State<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable" data-sort="pay_cycle">Pay Cycle<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable" data-sort="pay_type">Pay Type<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable num" data-sort="rate">Rate<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable" data-sort="payment_method">Payment Method<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable" data-sort="has_paid_rest_day">Paid Rest Day<span class="sort-indicator"></span></th>
+                    <th class="sortable-th sortable num" data-sort="outstanding_cash_advance">Outstanding CA<span class="sort-indicator"></span></th>
+                  </tr>
+                  <!-- Per-field filter row, Business Central style: free-text "contains" filters on
+                       the text columns, exact dropdowns on the enum-like columns, and BC-style
+                       numeric filter syntax (">5000", "<=10000", "1000..5000", "<>0") on Rate.
+                       Filters apply client-side against the already-loaded employee list in
+                       payrollSetup.js. -->
+                  <tr class="filter-row bc-filter-row">
+                    <th><input type="text" id="filterUsername" placeholder="Filter..." /></th>
+                    <th><input type="text" id="filterEmployeeNo" placeholder="Filter..." /></th>
+                    <th><input type="text" id="filterDisplayName" placeholder="Filter..." /></th>
+                    <th>
+                      <select id="filterActive">
+                        <option value="">All</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </select>
+                    </th>
+                    <th>
+                      <select id="filterPayCycle">
+                        <option value="">All</option>
+                        <option value="none">Not enrolled</option>
+                        <option value="SemiMonthly">Semi-Monthly</option>
+                        <option value="Weekly">Weekly</option>
+                      </select>
+                    </th>
+                    <th>
+                      <select id="filterPayType">
+                        <option value="">All</option>
+                        <option value="Salary">Salary</option>
+                        <option value="Hourly">Hourly</option>
+                      </select>
+                    </th>
+                    <th><input type="text" id="filterMonthlySalary" placeholder=">5000, 1000..2000" /></th>
+                    <th>
+                      <select id="filterPaymentMethod">
+                        <option value="">All</option>
+                        <option value="none">(Not set)</option>
+                        <option value="Cash">Cash</option>
+                        <option value="Digital">Digital (GCash)</option>
+                      </select>
+                    </th>
+                    <th>
+                      <select id="filterPaidRestDay">
+                        <option value="">All</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="employeeTableBody">
+                  <tr><td colspan="10" class="cell-msg">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </div>
 
-      <h3>Overtime Settings</h3>
-      <p class="muted">Used by Timesheets to compute an hourly rate (Monthly Salary / (Work Days/Month x Hours/Day)) and the Overtime Addition / Undertime Deduction auto-posted when a payroll run is created.</p>
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="standardHoursPerDay">Standard Hours / Day</label>
-          <input type="number" id="standardHoursPerDay" min="1" max="24" step="0.5" />
+      <!-- ============================================================ Funding -->
+      <div class="setup-view hidden" data-view="funding">
+        <div class="bc-cmdbar" role="toolbar" aria-label="Funding actions">
+          <button class="bc-cmd bc-cmd-accent" id="logFundingBtn" type="button">Log Funding Entry</button>
+          <span class="bc-cmd-sep"></span>
+          <a class="bc-cmd" href="payroll-ledger.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-ledger"/></svg>Payroll Ledger</a>
         </div>
-        <div class="form-row">
-          <label for="standardWorkDaysPerMonth">Standard Work Days / Month</label>
-          <input type="number" id="standardWorkDaysPerMonth" min="1" max="31" step="0.5" />
+
+        <!-- Clickable - each opens the Payroll Ledger filtered to every entry of that method
+             (Funding/Payroll/Cash Advance), per "i want to see the payroll ledger". -->
+        <div class="bc-cues">
+          <a class="bc-cue" href="payroll-ledger.html?method=Cash" title="See every Cash funding entry and deduction on the Payroll Ledger">
+            <span class="bc-cue-caption">Cash on Hand</span>
+            <span class="bc-cue-value" id="cashOnHandDisplay">-</span>
+          </a>
+          <a class="bc-cue" href="payroll-ledger.html?method=Digital" title="See every Digital funding entry and deduction on the Payroll Ledger">
+            <span class="bc-cue-caption">Digital (GCash) on Hand</span>
+            <span class="bc-cue-value" id="digitalOnHandDisplay">-</span>
+          </a>
         </div>
-        <div class="form-row">
-          <label for="overtimeMultiplier">Overtime Multiplier</label>
-          <input type="number" id="overtimeMultiplier" min="1" step="0.05" />
+
+        <div class="bc-doc bc-setup-form">
+          <details class="doc-fasttab" open>
+            <summary>New Funding Entry <span class="doc-fasttab-summary">Log cash/digital received</span></summary>
+            <div class="doc-fasttab-body">
+              <p class="bc-doc-hint" style="margin:0 0 10px;">Log cash/digital actually received here before running payroll. Each finalized run deducts its Net Pay total from the matching balance - which bucket an employee's pay draws from is their Payment Method (unset = Cash). Finalizing is blocked if either balance can't cover it.</p>
+              <div class="bc-doc-cols">
+                <div>
+                  <div class="bc-doc-field">
+                    <label for="fundingMethod">Method</label>
+                    <select id="fundingMethod">
+                      <option value="Cash">Cash</option>
+                      <option value="Digital">Digital (GCash)</option>
+                    </select>
+                  </div>
+                  <div class="bc-doc-field">
+                    <label for="fundingAmount">Amount Received</label>
+                    <input type="number" id="fundingAmount" min="0.01" step="0.01" />
+                  </div>
+                </div>
+                <div>
+                  <div class="bc-doc-field">
+                    <label for="fundingNotes">Notes</label>
+                    <input type="text" id="fundingNotes" placeholder="e.g. Owner cash deposit, GCash transfer ref #" />
+                  </div>
+                </div>
+              </div>
+              <p id="fundingError" class="error-text hidden" style="margin:4px 0 0;"></p>
+            </div>
+          </details>
+        </div>
+
+        <div id="fundingJournalSection" class="bc-body no-filterpane no-factbox" style="margin-top:4px;">
+          <section class="bc-main">
+            <div class="bc-grid-toolbar">
+              <strong>Funding Journal</strong>
+              <span style="flex:1;"></span>
+              <label for="journalMethodFilter">Method</label>
+              <select id="journalMethodFilter" style="max-width:200px; height:28px;">
+                <option value="">All (Cash + Digital)</option>
+                <option value="Cash">Cash</option>
+                <option value="Digital">Digital (GCash)</option>
+              </select>
+            </div>
+            <div class="bc-grid-wrap" style="max-height:none;">
+              <table class="bc-grid">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Employee</th>
+                    <th>Method</th>
+                    <th class="num">Amount</th>
+                    <th>Description</th>
+                    <th>Posted By</th>
+                  </tr>
+                </thead>
+                <tbody id="fundingTableBody">
+                  <tr><td colspan="7" class="cell-msg">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div id="fundingPaginationBar"></div>
+          </section>
         </div>
       </div>
 
-      <div id="cutoffSettingsError" class="error-text hidden"></div>
-      <div style="margin-bottom:24px;">
-        <button class="btn btn-success btn-sm" id="saveCutoffSettingsBtn" type="button">Save Cutoff Settings</button>
+      <!-- ============================================================ Cash Advances -->
+      <div class="setup-view hidden" data-view="advances">
+        <div class="bc-cmdbar" role="toolbar" aria-label="Cash advance actions">
+          <button class="bc-cmd bc-cmd-accent" id="logAdvanceBtn" type="button">Log Cash Advance</button>
+          <button class="bc-cmd bc-cmd-danger" id="deleteAdvanceBtn" type="button" disabled title="Only an Outstanding advance can be deleted"><svg class="bc-ico"><use href="#ico-delete"/></svg>Delete</button>
+        </div>
+
+        <div class="bc-doc bc-setup-form">
+          <details class="doc-fasttab" open>
+            <summary>New Cash Advance <span class="doc-fasttab-summary">Deducted automatically from the next payroll run</span></summary>
+            <div class="doc-fasttab-body">
+              <p class="bc-doc-hint" style="margin:0 0 10px;">Log a Cash Advance the moment it's released (e.g. every Thursday). It stays Outstanding until the employee's next payroll run is created, then is pulled in as a Deduction and marked Applied.</p>
+              <div class="bc-doc-cols">
+                <div>
+                  <div class="bc-doc-field">
+                    <label for="advanceUsername">Employee</label>
+                    <select id="advanceUsername"></select>
+                  </div>
+                  <div class="bc-doc-field">
+                    <label for="advanceDate">Date</label>
+                    <input type="date" id="advanceDate" />
+                  </div>
+                  <div class="bc-doc-field">
+                    <label for="advanceAmount">Amount</label>
+                    <input type="number" id="advanceAmount" min="0.01" step="0.01" />
+                  </div>
+                </div>
+                <div>
+                  <div class="bc-doc-field">
+                    <label for="advanceMethod">Method</label>
+                    <select id="advanceMethod">
+                      <option value="Cash">Cash</option>
+                      <option value="Digital">Digital (GCash)</option>
+                    </select>
+                  </div>
+                  <div class="bc-doc-field">
+                    <label for="advanceNotes">Notes</label>
+                    <input type="text" id="advanceNotes" />
+                  </div>
+                </div>
+              </div>
+              <p id="advanceError" class="error-text hidden" style="margin:4px 0 0;"></p>
+            </div>
+          </details>
+        </div>
+
+        <div class="bc-body no-filterpane no-factbox" style="margin-top:4px;">
+          <section class="bc-main">
+            <div class="bc-grid-toolbar">
+              <strong>Cash Advances</strong>
+              <span style="flex:1;"></span>
+              <select id="filterAdvanceUsername" style="max-width:220px; height:28px;">
+                <option value="">All employees</option>
+              </select>
+              <select id="filterAdvanceStatus" style="max-width:160px; height:28px;">
+                <option value="">All statuses</option>
+                <option value="Outstanding">Outstanding</option>
+                <option value="Applied">Applied</option>
+              </select>
+              <button class="bc-link" id="applyAdvanceFiltersBtn" type="button">Apply filter</button>
+            </div>
+            <div class="bc-grid-wrap" style="max-height:none;">
+              <table class="bc-grid">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Employee</th>
+                    <th>Employee No.</th>
+                    <th class="num">Amount</th>
+                    <th>Method</th>
+                    <th>Notes</th>
+                    <th>Status</th>
+                    <th>Posted By</th>
+                  </tr>
+                </thead>
+                <tbody id="advanceTableBody">
+                  <tr><td colspan="8" class="cell-msg">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </div>
 
-      <div class="section-divider"></div>
-      <div class="toolbar">
-        <h2 style="margin:0;">Cash & Digital On Hand</h2>
-      </div>
-      <p class="muted">Log cash/digital actually received here (Funding) before running payroll. Each finalized run automatically deducts its Net Pay total from the matching balance below - which bucket an employee's pay draws from is decided by their Payment Method (set per employee in the Employees table below; unset defaults to Cash). Finalizing a run is blocked if either balance can't cover it.</p>
+      <!-- ============================================================ Settings -->
+      <div class="setup-view hidden" data-view="settings">
+        <div class="bc-cmdbar" role="toolbar" aria-label="Settings actions">
+          <button class="bc-cmd bc-cmd-accent" id="saveCutoffSettingsBtn" type="button">Save Settings</button>
+        </div>
+        <p id="cutoffSettingsError" class="bc-infobar bc-infobar-warn error-text hidden"></p>
 
-      <div class="form-grid" style="margin-bottom:12px;">
-        <div class="form-row">
-          <label>Cash on Hand</label>
-          <!-- Clickable - opens the Payroll Ledger report filtered to every Cash-method entry
-               (Funding/Payroll/Cash Advance), per "i want to see the payroll ledger". -->
-          <a id="cashOnHandDisplay" href="payroll-ledger.html?method=Cash" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;" title="See every Cash funding entry and deduction on the Payroll Ledger">-</a>
-        </div>
-        <div class="form-row">
-          <label>Digital (GCash) on Hand</label>
-          <a id="digitalOnHandDisplay" href="payroll-ledger.html?method=Digital" style="display:block; font-size:22px; font-weight:600; text-decoration:underline;" title="See every Digital funding entry and deduction on the Payroll Ledger">-</a>
-        </div>
-      </div>
+        <div class="bc-doc bc-setup-form">
+          <details class="doc-fasttab" open>
+            <summary>Semi-Monthly Cutoffs <span class="doc-fasttab-summary">Auto-fills Period Start/End and Pay Date for new Semi-Monthly runs</span></summary>
+            <div class="doc-fasttab-body bc-doc-cols">
+              <div>
+                <div class="bc-doc-field"><label for="cutoffAStartDay">Cutoff A - Start Day</label><input type="number" id="cutoffAStartDay" min="1" max="31" /></div>
+                <div class="bc-doc-field"><label for="cutoffAEndDay">Cutoff A - End Day</label><input type="number" id="cutoffAEndDay" min="1" max="31" /></div>
+                <div class="bc-doc-field"><label for="cutoffAPayDay">Cutoff A - Pay Day</label><input type="number" id="cutoffAPayDay" min="1" max="31" /></div>
+                <div class="bc-doc-field"><label for="cutoffAPayLastDay">Pay on Last Day of Month</label><input type="checkbox" class="bc-switch" id="cutoffAPayLastDay" /></div>
+              </div>
+              <div>
+                <div class="bc-doc-field"><label for="cutoffBStartDay">Cutoff B - Start Day</label><input type="number" id="cutoffBStartDay" min="1" max="31" /></div>
+                <div class="bc-doc-field"><label for="cutoffBEndDay">Cutoff B - End Day</label><input type="number" id="cutoffBEndDay" min="1" max="31" /></div>
+                <div class="bc-doc-field"><label for="cutoffBPayDay">Cutoff B - Pay Day</label><input type="number" id="cutoffBPayDay" min="1" max="31" /></div>
+                <div class="bc-doc-field"><label for="cutoffBPayLastDay">Pay on Last Day of Month</label><input type="checkbox" class="bc-switch" id="cutoffBPayLastDay" /></div>
+              </div>
+            </div>
+          </details>
 
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="fundingMethod">Method</label>
-          <select id="fundingMethod">
-            <option value="Cash">Cash</option>
-            <option value="Digital">Digital (GCash)</option>
-          </select>
+          <details class="doc-fasttab" open>
+            <summary>Overtime <span class="doc-fasttab-summary">Hourly rate and Overtime/Undertime auto-posting</span></summary>
+            <div class="doc-fasttab-body">
+              <p class="bc-doc-hint" style="margin:0 0 10px;">Hourly rate = Monthly Salary / (Work Days per Month x Hours per Day). Used by Timesheets and the Overtime Addition / Undertime Deduction posted when a payroll run is created.</p>
+              <div class="bc-doc-cols">
+                <div>
+                  <div class="bc-doc-field"><label for="standardHoursPerDay">Standard Hours / Day</label><input type="number" id="standardHoursPerDay" min="1" max="24" step="0.5" /></div>
+                  <div class="bc-doc-field"><label for="standardWorkDaysPerMonth">Standard Work Days / Month</label><input type="number" id="standardWorkDaysPerMonth" min="1" max="31" step="0.5" /></div>
+                </div>
+                <div>
+                  <div class="bc-doc-field"><label for="overtimeMultiplier">Overtime Multiplier</label><input type="number" id="overtimeMultiplier" min="1" step="0.05" /></div>
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
-        <div class="form-row">
-          <label for="fundingAmount">Amount Received</label>
-          <input type="number" id="fundingAmount" min="0.01" step="0.01" />
-        </div>
-        <div class="form-row">
-          <label for="fundingNotes">Notes</label>
-          <input type="text" id="fundingNotes" placeholder="e.g. Owner cash deposit, GCash transfer ref #" />
-        </div>
-      </div>
-      <div id="fundingError" class="error-text hidden"></div>
-      <div style="margin-bottom:16px;">
-        <button class="btn btn-success btn-sm" id="logFundingBtn" type="button">Log Funding Entry</button>
-      </div>
-
-      <div id="fundingJournalSection">
-        <div class="toolbar">
-          <h3 style="margin:0;">Funding Journal</h3>
-          <label for="journalMethodFilter" class="muted" style="margin-left:auto;">Method</label>
-          <select id="journalMethodFilter" style="max-width:200px;">
-            <option value="">All (Cash + Digital)</option>
-            <option value="Cash">Cash</option>
-            <option value="Digital">Digital (GCash)</option>
-          </select>
-        </div>
-        <div class="table-wrap" style="margin-bottom:8px;">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Employee</th>
-                <th>Method</th>
-                <th>Amount</th>
-                <th>Notes</th>
-                <th>Posted By</th>
-              </tr>
-            </thead>
-            <tbody id="fundingTableBody">
-              <tr><td colspan="7" class="muted">Loading...</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div id="fundingPaginationBar" style="margin-bottom:24px;"></div>
-      </div>
-
-      <div class="section-divider"></div>
-      <div class="toolbar">
-        <h2 style="margin:0;">Cash Advances</h2>
-      </div>
-      <p class="muted">Log a Cash Advance the moment it's released (e.g. every Thursday). It sits as Outstanding until the employee's next payroll run is created, at which point every Outstanding advance for that employee is automatically pulled in as a Deduction line item and marked Applied.</p>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="advanceUsername">Employee</label>
-          <select id="advanceUsername"></select>
-        </div>
-        <div class="form-row">
-          <label for="advanceDate">Date</label>
-          <input type="date" id="advanceDate" />
-        </div>
-        <div class="form-row">
-          <label for="advanceAmount">Amount</label>
-          <input type="number" id="advanceAmount" min="0.01" step="0.01" />
-        </div>
-        <div class="form-row">
-          <label for="advanceMethod">Method</label>
-          <select id="advanceMethod">
-            <option value="Cash">Cash</option>
-            <option value="Digital">Digital (GCash)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="advanceNotes">Notes</label>
-          <input type="text" id="advanceNotes" />
-        </div>
-      </div>
-      <div id="advanceError" class="error-text hidden"></div>
-      <div style="margin-bottom:16px;">
-        <button class="btn btn-success btn-sm" id="logAdvanceBtn" type="button">Log Cash Advance</button>
-      </div>
-
-      <div class="toolbar">
-        <select id="filterAdvanceUsername" style="max-width:240px;">
-          <option value="">All employees</option>
-        </select>
-        <select id="filterAdvanceStatus" style="max-width:180px;">
-          <option value="">All statuses</option>
-          <option value="Outstanding">Outstanding</option>
-          <option value="Applied">Applied</option>
-        </select>
-        <button class="btn btn-secondary btn-sm" id="applyAdvanceFiltersBtn" type="button">Filter</button>
-      </div>
-      <div class="table-wrap" style="margin-bottom:24px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Employee</th>
-              <th>Employee No.</th>
-              <th>Amount</th>
-              <th>Method</th>
-              <th>Notes</th>
-              <th>Status</th>
-              <th>Posted By</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="advanceTableBody">
-            <tr><td colspan="9" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="section-divider"></div>
-      <div class="toolbar">
-        <h2 style="margin:0;">Employees</h2>
-        <button class="btn btn-primary btn-sm" id="newEmployeeBtn" type="button">+ New Employee</button>
-      </div>
-      <div class="table-wrap">
-        <table id="employeeTable">
-          <thead>
-            <tr>
-              <th class="sortable-th" data-sort="username">Username<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="employee_no">Employee No.<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="display_name">Display Name<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="is_active">Active<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="pay_cycle">Pay Cycle<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="pay_type">Pay Type<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="rate">Rate<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="payment_method">Payment Method<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="has_paid_rest_day">Paid Rest Day<span class="sort-indicator"></span></th>
-              <th class="sortable-th" data-sort="outstanding_cash_advance">Outstanding CA<span class="sort-indicator"></span></th>
-              <th>Actions</th>
-            </tr>
-            <!-- Per-field filter row, Business Central style: free-text "contains" filters on the
-                 text columns, exact dropdowns on the enum-like columns, and BC-style numeric filter
-                 syntax (">5000", "<=10000", "1000..5000", "<>0") on Monthly Salary. Filters apply
-                 client-side against the already-loaded employee list in payrollSetup.js. -->
-            <tr class="filter-row">
-              <th><input type="text" id="filterUsername" placeholder="Filter..." style="width:100%; font-size:12px; padding:4px 6px;" /></th>
-              <th><input type="text" id="filterEmployeeNo" placeholder="Filter..." style="width:100%; font-size:12px; padding:4px 6px;" /></th>
-              <th><input type="text" id="filterDisplayName" placeholder="Filter..." style="width:100%; font-size:12px; padding:4px 6px;" /></th>
-              <th>
-                <select id="filterActive" style="width:100%; font-size:12px; padding:4px 6px;">
-                  <option value="">All</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </th>
-              <th>
-                <select id="filterPayCycle" style="width:100%; font-size:12px; padding:4px 6px;">
-                  <option value="">All</option>
-                  <option value="none">Not enrolled</option>
-                  <option value="SemiMonthly">Semi-Monthly</option>
-                  <option value="Weekly">Weekly</option>
-                </select>
-              </th>
-              <th>
-                <select id="filterPayType" style="width:100%; font-size:12px; padding:4px 6px;">
-                  <option value="">All</option>
-                  <option value="Salary">Salary</option>
-                  <option value="Hourly">Hourly</option>
-                </select>
-              </th>
-              <th><input type="text" id="filterMonthlySalary" placeholder="e.g. >5000, 1000..2000" style="width:100%; font-size:12px; padding:4px 6px;" /></th>
-              <th>
-                <select id="filterPaymentMethod" style="width:100%; font-size:12px; padding:4px 6px;">
-                  <option value="">All</option>
-                  <option value="none">(Not set)</option>
-                  <option value="Cash">Cash</option>
-                  <option value="Digital">Digital (GCash)</option>
-                </select>
-              </th>
-              <th>
-                <select id="filterPaidRestDay" style="width:100%; font-size:12px; padding:4px 6px;">
-                  <option value="">All</option>
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
-                </select>
-              </th>
-              <th></th>
-              <th><button class="btn btn-secondary btn-sm" id="clearFiltersBtn" type="button">Clear</button></th>
-            </tr>
-          </thead>
-          <tbody id="employeeTableBody">
-            <tr><td colspan="11" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
       </div>
     </div>
   </div>
 
-  <!-- Edit payroll profile modal -->
-  <div id="editProfileModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;">Edit Payroll Profile</h2>
-        <button class="btn btn-secondary btn-sm" id="closeEditProfileBtn" type="button">Close</button>
+  <!-- Payroll Profile card - BC card dialog -->
+  <div id="editProfileModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-card" role="dialog" aria-modal="true" aria-labelledby="editProfileTitle" style="max-width:640px;">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-card-caption">PAYROLL PROFILE</div>
+          <h2 id="editProfileTitle">Edit Payroll Profile</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeEditProfileBtn" type="button" aria-label="Close">&times;</button>
       </div>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="editProfileUsername">Username</label>
-          <input type="text" id="editProfileUsername" disabled />
-        </div>
-        <div class="form-row">
-          <label for="editProfileEmployeeNo">Employee No.</label>
-          <input type="text" id="editProfileEmployeeNo" autocomplete="off" />
-        </div>
-        <div class="form-row">
+      <div class="bc-dialog-body">
+        <div class="bc-field"><label for="editProfileUsername">User Name</label><input type="text" id="editProfileUsername" disabled /></div>
+        <div class="bc-field"><label for="editProfileEmployeeNo">Employee No.</label><input type="text" id="editProfileEmployeeNo" autocomplete="off" /></div>
+        <div class="bc-field">
           <label for="editProfilePayCycle">Pay Cycle</label>
           <select id="editProfilePayCycle">
             <option value="">(Not enrolled)</option>
@@ -334,28 +384,16 @@
             <option value="Weekly">Weekly</option>
           </select>
         </div>
-        <div class="form-row">
+        <div class="bc-field">
           <label for="editProfilePayType">Pay Type</label>
           <select id="editProfilePayType">
             <option value="Salary">Salary (fixed Monthly Salary)</option>
-            <option value="Hourly">Hourly (Daily Rate / 8 x hours worked, from Timesheets)</option>
+            <option value="Hourly">Hourly (Daily Rate / 8 x hours, from Timesheets)</option>
           </select>
         </div>
-        <div class="form-row" id="editProfileMonthlySalaryRow">
-          <label for="editProfileMonthlySalary">Monthly Salary</label>
-          <input type="number" id="editProfileMonthlySalary" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row hidden" id="editProfileDailyRateRow">
-          <label for="editProfileDailyRate">Daily Rate</label>
-          <input type="number" id="editProfileDailyRate" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row">
-          <label for="editProfilePaidRestDay" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editProfilePaidRestDay" style="width:auto;" />
-            Has Paid Rest Day (adds a day's worth of salary to each payrun)
-          </label>
-        </div>
-        <div class="form-row">
+        <div class="bc-field" id="editProfileMonthlySalaryRow"><label for="editProfileMonthlySalary">Monthly Salary</label><input type="number" id="editProfileMonthlySalary" min="0" step="0.01" value="0" /></div>
+        <div class="bc-field hidden" id="editProfileDailyRateRow"><label for="editProfileDailyRate">Daily Rate</label><input type="number" id="editProfileDailyRate" min="0" step="0.01" value="0" /></div>
+        <div class="bc-field">
           <label for="editProfilePaymentMethod">Payment Method</label>
           <select id="editProfilePaymentMethod">
             <option value="">(Not set - treated as Cash)</option>
@@ -363,112 +401,101 @@
             <option value="Digital">Digital (GCash)</option>
           </select>
         </div>
-        <div class="form-row">
-          <label for="editProfileActive" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editProfileActive" style="width:auto;" />
-            <span>Active (unchecking excludes this employee from future payroll runs)</span>
-          </label>
-        </div>
+        <div class="bc-field"><label for="editProfilePaidRestDay" title="Adds a day's worth of salary to each payrun">Paid Rest Day</label><input type="checkbox" class="bc-switch" id="editProfilePaidRestDay" /></div>
+        <div class="bc-field"><label for="editProfileActive">Active<span class="bc-field-hint">Off = excluded from future payroll runs</span></label><input type="checkbox" class="bc-switch" id="editProfileActive" /></div>
       </div>
-
-      <div id="editProfileError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveProfileBtn" type="button">Save Changes</button>
+      <div class="bc-dialog-foot">
+        <p id="editProfileError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveProfileBtn" type="button">Save Changes</button>
+        <button class="bc-btn" id="cancelEditProfileBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
 
-  <!-- New employee modal - creates a plain StaffUsers login (no role flags, temp password,
+  <!-- New Employee card - creates a plain StaffUsers login (no role flags, temp password,
        must-change-password forced) via admin_create_payroll_employee. A Payroll Officer who isn't
        a Super User can use this without needing User Setup access; a Super User who wants to also
        grant roles/a warehouse does that afterward in User Setup. -->
-  <div id="newEmployeeModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;">New Employee</h2>
-        <button class="btn btn-secondary btn-sm" id="closeNewEmployeeBtn" type="button">Close</button>
+  <div id="newEmployeeModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-dialog-wide bc-card" role="dialog" aria-modal="true" aria-labelledby="newEmployeeTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-card-caption">EMPLOYEE CARD - NEW</div>
+          <h2 id="newEmployeeTitle">New Employee</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeNewEmployeeBtn" type="button" aria-label="Close">&times;</button>
       </div>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="newEmployeeUsername">Username</label>
-          <input type="text" id="newEmployeeUsername" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeeEmployeeNo">Employee No.</label>
-          <input type="text" id="newEmployeeEmployeeNo" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeePassword">Temporary Password</label>
-          <input type="text" id="newEmployeePassword" autocomplete="off" value="123456" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeeDisplayName">Display Name</label>
-          <input type="text" id="newEmployeeDisplayName" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeePosition">Position</label>
-          <input type="text" id="newEmployeePosition" placeholder="e.g. Cashier, Helper, Manager" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeeHireDate">Hire Date</label>
-          <input type="date" id="newEmployeeHireDate" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeeBirthdate">Birthdate</label>
-          <input type="date" id="newEmployeeBirthdate" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeePhoneNumber">Phone Number</label>
-          <input type="text" id="newEmployeePhoneNumber" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeeHomeAddress">Home Address</label>
-          <input type="text" id="newEmployeeHomeAddress" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeePaymentMethod">Payment Method</label>
-          <select id="newEmployeePaymentMethod">
-            <option value="">(Not set)</option>
-            <option value="Cash">Cash</option>
-            <option value="Digital">Digital (GCash)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="newEmployeePayCycle">Pay Cycle</label>
-          <select id="newEmployeePayCycle">
-            <option value="">(Not enrolled)</option>
-            <option value="SemiMonthly">Semi-Monthly</option>
-            <option value="Weekly">Weekly</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="newEmployeePayType">Pay Type</label>
-          <select id="newEmployeePayType">
-            <option value="Salary">Salary (fixed Monthly Salary)</option>
-            <option value="Hourly">Hourly (Daily Rate / 8 x hours worked, from Timesheets)</option>
-          </select>
-        </div>
-        <div class="form-row" id="newEmployeeMonthlySalaryRow">
-          <label for="newEmployeeMonthlySalary">Monthly Salary</label>
-          <input type="number" id="newEmployeeMonthlySalary" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row hidden" id="newEmployeeDailyRateRow">
-          <label for="newEmployeeDailyRate">Daily Rate</label>
-          <input type="number" id="newEmployeeDailyRate" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row">
-          <label for="newEmployeePaidRestDay" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newEmployeePaidRestDay" style="width:auto;" />
-            Has Paid Rest Day (adds a day's worth of salary to each payrun)
-          </label>
-        </div>
+      <div class="bc-dialog-body">
+        <details class="doc-fasttab" open>
+          <summary>General</summary>
+          <div class="doc-fasttab-body bc-card-cols">
+            <div>
+              <div class="bc-field"><label for="newEmployeeUsername">User Name</label><input type="text" id="newEmployeeUsername" autocomplete="off" /></div>
+              <div class="bc-field"><label for="newEmployeeDisplayName">Full Name</label><input type="text" id="newEmployeeDisplayName" /></div>
+              <div class="bc-field"><label for="newEmployeeEmployeeNo">Employee No.</label><input type="text" id="newEmployeeEmployeeNo" autocomplete="off" /></div>
+            </div>
+            <div>
+              <div class="bc-field"><label for="newEmployeePassword">Temporary Password</label><input type="text" id="newEmployeePassword" autocomplete="off" value="123456" /></div>
+              <div class="bc-field"><label for="newEmployeePosition">Position</label><input type="text" id="newEmployeePosition" placeholder="e.g. Cashier, Helper, Manager" /></div>
+              <div class="bc-field"><label for="newEmployeeHireDate">Hire Date</label><input type="date" id="newEmployeeHireDate" /></div>
+            </div>
+          </div>
+        </details>
+        <details class="doc-fasttab" open>
+          <summary>Personal</summary>
+          <div class="doc-fasttab-body bc-card-cols">
+            <div>
+              <div class="bc-field"><label for="newEmployeeBirthdate">Birth Date</label><input type="date" id="newEmployeeBirthdate" /></div>
+              <div class="bc-field"><label for="newEmployeePhoneNumber">Phone No.</label><input type="text" id="newEmployeePhoneNumber" autocomplete="off" /></div>
+            </div>
+            <div>
+              <div class="bc-field"><label for="newEmployeeHomeAddress">Address</label><input type="text" id="newEmployeeHomeAddress" /></div>
+            </div>
+          </div>
+        </details>
+        <details class="doc-fasttab" open>
+          <summary>Payroll</summary>
+          <div class="doc-fasttab-body bc-card-cols">
+            <div>
+              <div class="bc-field">
+                <label for="newEmployeePayCycle">Pay Cycle</label>
+                <select id="newEmployeePayCycle">
+                  <option value="">(Not enrolled)</option>
+                  <option value="SemiMonthly">Semi-Monthly</option>
+                  <option value="Weekly">Weekly</option>
+                </select>
+              </div>
+              <div class="bc-field">
+                <label for="newEmployeePayType">Pay Type</label>
+                <select id="newEmployeePayType">
+                  <option value="Salary">Salary (fixed Monthly Salary)</option>
+                  <option value="Hourly">Hourly (Daily Rate / 8 x hours, from Timesheets)</option>
+                </select>
+              </div>
+              <div class="bc-field" id="newEmployeeMonthlySalaryRow"><label for="newEmployeeMonthlySalary">Monthly Salary</label><input type="number" id="newEmployeeMonthlySalary" min="0" step="0.01" value="0" /></div>
+              <div class="bc-field hidden" id="newEmployeeDailyRateRow"><label for="newEmployeeDailyRate">Daily Rate</label><input type="number" id="newEmployeeDailyRate" min="0" step="0.01" value="0" /></div>
+            </div>
+            <div>
+              <div class="bc-field">
+                <label for="newEmployeePaymentMethod">Payment Method</label>
+                <select id="newEmployeePaymentMethod">
+                  <option value="">(Not set)</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Digital">Digital (GCash)</option>
+                </select>
+              </div>
+              <div class="bc-field"><label for="newEmployeePaidRestDay" title="Adds a day's worth of salary to each payrun">Paid Rest Day</label><input type="checkbox" class="bc-switch" id="newEmployeePaidRestDay" /></div>
+            </div>
+          </div>
+        </details>
+        <p class="bc-lede" style="margin-top:8px;">Creates a login with no special roles and forces a password change at first login. A super user can grant roles later in User Setup.</p>
       </div>
-
-      <p class="muted" style="font-size:12px;">Creates a login with no special roles (not Super User, Sales User, etc.) and forces a password change at first login. A super user can grant additional roles later in User Setup.</p>
-      <div id="newEmployeeError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveNewEmployeeBtn" type="button">Create Employee</button>
+      <div class="bc-dialog-foot">
+        <p id="newEmployeeError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveNewEmployeeBtn" type="button">Create Employee</button>
+        <button class="bc-btn" id="cancelNewEmployeeBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -479,7 +506,7 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollSetup.js"></script>
+  <script src="js/payrollSetup.js?v=bc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

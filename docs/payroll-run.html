@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payroll Run - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,102 +17,135 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <div class="toolbar">
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-edit" viewBox="0 0 16 16"><path d="M10.8 2.7 13.3 5.2 5.6 12.9 2.6 13.4 3.1 10.4z"/><path d="M9.4 4.1l2.5 2.5"/></symbol>
+    <symbol id="ico-open" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-delete" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></symbol>
+    <symbol id="ico-calendar" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></symbol>
+    <symbol id="ico-money" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8" rx="1"/><circle cx="8" cy="8" r="1.8"/></symbol>
+    <symbol id="ico-ledger" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></symbol>
+    <symbol id="ico-people" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5"/><circle cx="11.5" cy="6" r="1.7"/><path d="M11 9.6c1.5.1 2.6 1.1 3 3"/></symbol>
+    <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
+    <symbol id="ico-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></symbol>
+  </svg>
+
+  <!-- Business Central document page (css/bc-list.css .bc-doc / .bc-doc-page): caption + title +
+       status, action bar, Funding FastTab (Draft only), Lines part, Ledger part (Finalized only).
+       Line actions (Edit Line / Print Payslip) act on the selected line; the employee name also
+       opens it. -->
+  <div class="page bc-doc bc-doc-page">
+    <div class="bc-doc-head">
       <div>
-        <h1 id="runTitle" style="margin-bottom:4px;">Payroll Run</h1>
-        <p class="muted" id="runSubtitle"></p>
+        <a class="bc-link bc-doc-back" href="payroll.html">&larr; Payroll Runs</a>
+        <div class="bc-doc-caption" style="margin-top:6px;">PAYROLL RUN</div>
+        <div class="bc-doc-titleline">
+          <h2 id="runTitle">Payroll Run</h2>
+          <span id="runStatusBadge"></span>
+        </div>
+        <p class="muted" id="runSubtitle" style="margin:2px 0 0; font-size:12.5px;"></p>
       </div>
-      <a href="payroll.html" class="btn btn-secondary">Back to Payroll</a>
     </div>
 
-    <div id="notAuthorizedBox" class="hidden">
+    <div id="notAuthorizedBox" class="hidden" style="padding:0 20px;">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
 
     <div id="runContent" class="hidden">
-      <div class="toolbar">
-        <span id="runStatusBadge"></span>
-        <div>
-          <button class="btn btn-danger" id="deleteRunBtn" type="button">Delete Run</button>
-          <button class="btn btn-success" id="finalizeRunBtn" type="button">Finalize Run</button>
-        </div>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd bc-cmd-accent" id="finalizeRunBtn" type="button"><svg class="bc-ico"><use href="#ico-check"/></svg>Finalize</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="editLineBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-edit"/></svg>Edit Line</button>
+        <button class="bc-cmd" id="printLineBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-print"/></svg>Print Payslip</button>
+        <span class="bc-cmd-sep"></span>
+        <a class="bc-cmd" href="payroll-ledger.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-ledger"/></svg>Payroll Ledger</a>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd bc-cmd-danger" id="deleteRunBtn" type="button"><svg class="bc-ico"><use href="#ico-delete"/></svg>Delete</button>
       </div>
 
-      <!-- Shown only while Draft - a preview of admin_finalize_payroll_run's hard-block check
-           (supabase_payroll_funding_ledger.sql), so a shortfall is visible before Finalize is even
-           clicked, not just as an error after. -->
-      <div id="fundingRequirementBox" class="hidden" style="margin-bottom:16px;">
-        <h3 style="margin-bottom:8px;">Cash & Digital (GCash) on Hand</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Method</th>
-                <th>Required for This Run</th>
-                <th>On Hand</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Cash</td>
-                <td id="cashRequiredDisplay">-</td>
-                <td id="cashOnHandRunDisplay">-</td>
-                <td id="cashStatusDisplay"></td>
-              </tr>
-              <tr>
-                <td>Digital (GCash)</td>
-                <td id="digitalRequiredDisplay">-</td>
-                <td id="digitalOnHandRunDisplay">-</td>
-                <td id="digitalStatusDisplay"></td>
-              </tr>
-            </tbody>
-          </table>
+      <div id="runError" class="bc-doc-error error-text hidden"></div>
+
+      <div class="bc-doc-body">
+        <!-- Shown only while Draft - a preview of admin_finalize_payroll_run's hard-block check
+             (supabase_payroll_funding_ledger.sql), so a shortfall is visible before Finalize is even
+             clicked, not just as an error after. -->
+        <details class="doc-fasttab" id="fundingRequirementBox" open>
+          <summary>Funding <span class="doc-fasttab-summary">Cash &amp; Digital (GCash) required vs on hand</span></summary>
+          <div class="doc-fasttab-body">
+            <table class="bc-grid bc-doc-lines">
+              <thead>
+                <tr>
+                  <th>Method</th>
+                  <th class="num">Required for This Run</th>
+                  <th class="num">On Hand</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Cash</td>
+                  <td class="num" id="cashRequiredDisplay">-</td>
+                  <td class="num" id="cashOnHandRunDisplay">-</td>
+                  <td id="cashStatusDisplay"></td>
+                </tr>
+                <tr>
+                  <td>Digital (GCash)</td>
+                  <td class="num" id="digitalRequiredDisplay">-</td>
+                  <td class="num" id="digitalOnHandRunDisplay">-</td>
+                  <td id="digitalStatusDisplay"></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+
+        <div class="bc-doc-part">
+          <div class="bc-doc-part-head">Lines</div>
+          <div class="line-items-wrap">
+            <table class="bc-grid bc-doc-lines">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th class="num">Base Pay</th>
+                  <th class="num">Rate</th>
+                  <th class="num">Worked</th>
+                  <th class="num">Additions</th>
+                  <th class="num">Deductions</th>
+                  <th class="num">Net Pay</th>
+                </tr>
+              </thead>
+              <tbody id="lineTableBody">
+                <tr><td colspan="7" class="cell-msg">Loading...</td></tr>
+              </tbody>
+              <tfoot id="lineTableFoot"></tfoot>
+            </table>
+          </div>
         </div>
-      </div>
 
-      <div id="runError" class="error-text hidden"></div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Employee</th>
-              <th>Base Pay</th>
-              <th>Rate</th>
-              <th>Worked</th>
-              <th>Additions</th>
-              <th>Deductions</th>
-              <th>Net Pay</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="lineTableBody">
-            <tr><td colspan="8" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Shown only once the run is Finalized - admin_finalize_payroll_run posts these rows
-           automatically at that moment (see supabase_payroll_ledger.sql). -->
-      <div id="ledgerSection" class="hidden" style="margin-top:24px;">
-        <div class="toolbar">
-          <h2 style="margin:0;">Ledger</h2>
-          <a class="btn btn-secondary btn-sm" href="payroll-ledger.html">Full Ledger Report</a>
-        </div>
-        <div class="table-wrap">
-          <table>
+        <!-- Shown only once the run is Finalized - admin_finalize_payroll_run posts these rows
+             automatically at that moment (see supabase_payroll_ledger.sql). -->
+        <div id="ledgerSection" class="bc-doc-part hidden" style="margin-top:18px;">
+          <div class="bc-doc-part-head">
+            Ledger Entries
+            <a class="bc-cmd" href="payroll-ledger.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-ledger"/></svg>Full Ledger Report</a>
+          </div>
+          <table class="bc-grid bc-doc-lines">
             <thead>
               <tr>
                 <th>Employee</th>
                 <th>Entry Type</th>
                 <th>Label</th>
-                <th style="text-align:right;">Amount</th>
+                <th class="num">Amount</th>
               </tr>
             </thead>
             <tbody id="ledgerTableBody">
-              <tr><td colspan="4" class="muted">Loading...</td></tr>
+              <tr><td colspan="4" class="cell-msg">Loading...</td></tr>
             </tbody>
           </table>
         </div>
@@ -119,83 +153,103 @@
     </div>
   </div>
 
-  <!-- Line detail modal: override base pay, add/remove addition/deduction line items -->
-  <div id="lineModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;" id="lineModalTitle">Payroll Line</h2>
-        <button class="btn btn-secondary btn-sm" id="closeLineModalBtn" type="button">Close</button>
-      </div>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="lineBasePay">Base Pay</label>
-          <input type="number" id="lineBasePay" min="0" step="0.01" />
+  <!-- Payroll Line card: override base pay, see the pay summary, add/remove addition/deduction
+       line items. BC card dialog (css/bc-list.css .bc-card) with FastTabs. -->
+  <div id="lineModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-dialog-wide bc-card" role="dialog" aria-modal="true" aria-labelledby="lineModalTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-card-caption">PAYROLL LINE</div>
+          <h2 id="lineModalTitle">Payroll Line</h2>
         </div>
-      </div>
-      <div style="text-align:right; margin-bottom:16px;">
-        <button class="btn btn-secondary btn-sm" id="saveBasePayBtn" type="button">Save Base Pay</button>
+        <button class="bc-iconbtn" id="closeLineModalBtn" type="button" aria-label="Close">&times;</button>
       </div>
 
-      <!-- Pay for hours actually worked: Base Pay minus the auto Absent deduction plus any auto
-           Overtime addition = Gross Pay. Other (manual) additions/deductions then reach Net Pay. -->
-      <div class="table-wrap" style="margin-bottom:16px;">
-        <table>
-          <tbody>
-            <tr><td>Base Pay</td><td style="text-align:right;" id="summaryBasePay">-</td></tr>
-            <tr id="summaryDaysWorkedRow" class="hidden"><td>Worked</td><td style="text-align:right;" id="summaryDaysWorked">-</td></tr>
-            <tr id="summaryBreakdownRow" class="hidden"><td colspan="2" id="summaryBreakdownContent" class="muted"></td></tr>
-            <tr><td>Overtime</td><td style="text-align:right;" id="summaryOvertime">-</td></tr>
-            <tr><td>Absent</td><td style="text-align:right;" id="summaryAbsent">-</td></tr>
-            <tr><td><strong>Gross Pay</strong></td><td style="text-align:right;"><strong id="summaryGrossPay">-</strong></td></tr>
-            <tr><td>Other Additions</td><td style="text-align:right;" id="summaryOtherAdditions">-</td></tr>
-            <tr><td>Other Deductions</td><td style="text-align:right;" id="summaryOtherDeductions">-</td></tr>
-            <tr><td><strong>Net Pay</strong></td><td style="text-align:right;"><strong id="summaryNetPay">-</strong></td></tr>
-          </tbody>
-        </table>
+      <div class="bc-dialog-body">
+        <details class="doc-fasttab" open>
+          <summary>Pay</summary>
+          <div class="doc-fasttab-body bc-card-cols">
+            <div>
+              <div class="bc-field">
+                <label for="lineBasePay">Base Pay</label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <input type="number" id="lineBasePay" min="0" step="0.01" />
+                  <button class="bc-btn" id="saveBasePayBtn" type="button">Save</button>
+                </div>
+              </div>
+            </div>
+            <div>
+              <!-- Pay for hours actually worked: Base Pay minus the auto Absent deduction plus any
+                   auto Overtime addition = Gross Pay. Other (manual) additions/deductions then
+                   reach Net Pay. -->
+              <table class="bc-pay-summary">
+                <tbody>
+                  <tr><td>Base Pay</td><td id="summaryBasePay">-</td></tr>
+                  <tr id="summaryDaysWorkedRow" class="hidden"><td>Worked</td><td id="summaryDaysWorked">-</td></tr>
+                  <tr id="summaryBreakdownRow" class="hidden"><td colspan="2" id="summaryBreakdownContent" class="muted"></td></tr>
+                  <tr><td>Overtime</td><td id="summaryOvertime">-</td></tr>
+                  <tr><td>Absent</td><td id="summaryAbsent">-</td></tr>
+                  <tr class="total"><td>Gross Pay</td><td id="summaryGrossPay">-</td></tr>
+                  <tr><td>Other Additions</td><td id="summaryOtherAdditions">-</td></tr>
+                  <tr><td>Other Deductions</td><td id="summaryOtherDeductions">-</td></tr>
+                  <tr class="total grand"><td>Net Pay</td><td id="summaryNetPay">-</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" open>
+          <summary>Additions / Deductions</summary>
+          <div class="doc-fasttab-body">
+            <table class="bc-grid bc-pay-items">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Label</th>
+                  <th class="num">Amount</th>
+                  <th style="width:70px;"></th>
+                </tr>
+              </thead>
+              <tbody id="lineItemTableBody">
+                <tr><td colspan="4" class="muted">Loading...</td></tr>
+              </tbody>
+            </table>
+
+            <div id="newItemFields" class="bc-card-cols" style="margin-top:12px;">
+              <div>
+                <div class="bc-field">
+                  <label for="newItemType">Type</label>
+                  <select id="newItemType">
+                    <option value="Addition">Addition</option>
+                    <option value="Deduction">Deduction</option>
+                  </select>
+                </div>
+                <div class="bc-field">
+                  <label for="newItemLabel">Label</label>
+                  <input type="text" id="newItemLabel" placeholder="e.g. Bonus, Cash Advance" />
+                </div>
+              </div>
+              <div>
+                <div class="bc-field">
+                  <label for="newItemAmount">Amount</label>
+                  <input type="number" id="newItemAmount" min="0" step="0.01" />
+                </div>
+                <div class="bc-field">
+                  <span></span>
+                  <div><button class="bc-btn bc-btn-primary" id="addLineItemBtn" type="button">+ Add Line Item</button></div>
+                </div>
+              </div>
+            </div>
+            <p id="lineItemError" class="error-text hidden" style="margin:6px 0 0;"></p>
+          </div>
+        </details>
       </div>
 
-      <h3>Additions / Deductions</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Label</th>
-              <th style="text-align:right;">Amount</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="lineItemTableBody">
-            <tr><td colspan="4" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="form-grid" style="margin-top:12px;">
-        <div class="form-row">
-          <label for="newItemType">Type</label>
-          <select id="newItemType">
-            <option value="Addition">Addition</option>
-            <option value="Deduction">Deduction</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="newItemLabel">Label</label>
-          <input type="text" id="newItemLabel" placeholder="e.g. Bonus, Cash Advance" />
-        </div>
-        <div class="form-row">
-          <label for="newItemAmount">Amount</label>
-          <input type="number" id="newItemAmount" min="0" step="0.01" />
-        </div>
-      </div>
-      <div id="lineItemError" class="error-text hidden"></div>
-      <div style="margin-top:8px; text-align:right;">
-        <button class="btn btn-primary btn-sm" id="addLineItemBtn" type="button">+ Add Line Item</button>
-      </div>
-
-      <div style="margin-top:16px; text-align:right;">
-        <a class="btn btn-secondary" id="printPayslipLink" href="#">Print Payslip</a>
+      <div class="bc-dialog-foot">
+        <span style="flex:1;"></span>
+        <a class="bc-btn" id="printPayslipLink" href="#" style="display:inline-flex; align-items:center; text-decoration:none;">Print Payslip</a>
+        <button class="bc-btn bc-btn-primary" id="doneLineModalBtn" type="button">Close</button>
       </div>
     </div>
   </div>
@@ -205,7 +259,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
-  <script src="js/payrollRun.js"></script>
+  <script src="js/payrollRun.js?v=bc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

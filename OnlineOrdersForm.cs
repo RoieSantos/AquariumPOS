@@ -1744,7 +1744,8 @@ WHERE OrderID = @OrderID", conn);
                 { "Production Done", "production_done" },
                 { "To Ship", "8" },
                 { "Shipped", "2" },
-                { "Printed", "13" }
+                { "Printed", "13" },
+                { "Assigned", "11" }
             };
 
             if (map.TryGetValue(displayStatus.Trim(), out var api)) return api;
@@ -3446,7 +3447,9 @@ WHERE Code = @Code
                         status = dt.Rows[rowIndex]["Status"]?.ToString() ?? string.Empty;
                 }
 
-                return string.Equals(status?.Trim(), "Printed", StringComparison.OrdinalIgnoreCase);
+                // "Assigned" = a Printed order whose makers were assigned on the portal.
+                return string.Equals(status?.Trim(), "Printed", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(status?.Trim(), "Assigned", StringComparison.OrdinalIgnoreCase);
             }
             catch
             {
@@ -3983,6 +3986,7 @@ WHERE Code = @Code
                     var sTrim = status?.Trim();
                     if (!string.Equals(sTrim, "Confirmed", StringComparison.OrdinalIgnoreCase)
                         && !string.Equals(sTrim, "Printed", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(sTrim, "Assigned", StringComparison.OrdinalIgnoreCase)
                         && !string.Equals(sTrim, "To Ship", StringComparison.OrdinalIgnoreCase))
                     {
                         MessageBox.Show("Only orders with status 'Confirmed', 'Printed' or 'To Ship' can be paid/posted to POS. Please confirm, print or mark the order to ship first.", "Invalid Status", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -5647,7 +5651,7 @@ END", conn);
                                 try { dgv.Columns.RemoveAt(colIndex); } catch { }
 
                                 // Base allowed statuses
-                                var baseStatuses = new System.Collections.Generic.List<string> { "Submitted", "new", "Confirmed", "Pending Transfer", "In-Transit", "Received", "Production Done", "To Ship", "Shipped", "Printed" };
+                                var baseStatuses = new System.Collections.Generic.List<string> { "Submitted", "new", "Confirmed", "Pending Transfer", "In-Transit", "Received", "Production Done", "To Ship", "Shipped", "Printed", "Assigned" };
                                 if (_showNonCurrentLocationsOnly)
                                     baseStatuses.RemoveAll(x =>
                                         !string.Equals(x, "Pending Transfer", StringComparison.OrdinalIgnoreCase)

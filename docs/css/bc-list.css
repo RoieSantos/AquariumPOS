@@ -1712,6 +1712,554 @@
   font-size: 11.5px;
 }
 
+/* ------------------------------------------------------------------ shared bits for the other BC documents/lists
+   (Purchase Orders - docs/purchase-orders.html, Online Orders - docs/online-orders.html) */
+
+/* A link can be an action-bar item too (e.g. "Posted Purchase Orders", a document's Print). */
+.bc-ile a.bc-cmd,
+.bc-doc a.bc-cmd {
+  text-decoration: none;
+}
+
+.bc-ile a.bc-doc-no {
+  text-decoration: none;
+}
+
+.bc-ile a.bc-doc-no:hover {
+  text-decoration: underline;
+}
+
+/* Per-row actions in a list grid (Print / Delete on Purchase Orders) - text links, not buttons. */
+.bc-ile .bc-row-action {
+  border: none;
+  background: none;
+  padding: 0 6px;
+  color: var(--bc-link);
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.bc-ile .bc-row-action:hover {
+  text-decoration: underline;
+}
+
+.bc-ile .bc-row-action-danger {
+  color: var(--danger);
+}
+
+.bc-ile .bc-infobar a {
+  color: var(--bc-link);
+  font-weight: 600;
+}
+
+/* Controls that live inside grid cells (Online Orders' maker pickers / TO-SHIP buttons): compact,
+   and the row grows to fit them instead of clipping at the 32px row height. */
+.bc-ile .oo-grid > tbody > tr > td {
+  height: auto;
+  min-height: 32px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.bc-ile .bc-grid .btn {
+  padding: 2px 9px;
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.bc-ile .bc-grid select {
+  height: 26px;
+  padding: 1px 6px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 12.5px;
+  background: var(--bc-input-bg);
+}
+
+/* Online Orders' status count pills, drawn as BC view tabs with the count beside the name. */
+.bc-ile .status-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 12px 0 0;
+}
+
+.bc-ile .status-summary-pill {
+  gap: 6px;
+  padding: 8px 2px 7px;
+  border-radius: 0;
+  box-shadow: none;
+  font-weight: 400;
+}
+
+.bc-ile .status-summary-pill:hover,
+.bc-ile .status-summary-pill.active {
+  box-shadow: none;
+}
+
+.bc-ile .status-summary-pill .status-summary-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--bc-surface-2);
+  border: 1px solid var(--bc-line);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.bc-ile .status-summary-pill.active .status-summary-count {
+  border-color: var(--bc-link);
+  color: var(--bc-link);
+}
+
+/* Purchase Order card lines (.doc-lines from styles.css) inside a BC document: flat, the header
+   on the surface colour with a stronger rule, no rounded box. */
+.bc-doc .doc-lines-wrap {
+  border: 1px solid var(--bc-line);
+  border-radius: 0;
+}
+
+.bc-doc .doc-lines {
+  font-size: 13px;
+}
+
+.bc-doc .doc-lines th,
+.bc-doc .doc-lines td {
+  border-bottom: 1px solid var(--bc-line);
+}
+
+.bc-doc .doc-lines thead th {
+  background: var(--bc-surface);
+  border-bottom: 1px solid var(--bc-line-strong);
+  font-weight: 600;
+}
+
+.bc-doc .doc-lines tfoot td {
+  background: var(--bc-surface-2);
+  border-top: 1px solid var(--bc-line-strong);
+}
+
+.bc-doc .doc-lines > tbody > tr:hover > td {
+  background: var(--bc-hover);
+}
+
+.modal-panel.bc-doc.modal-maximized .doc-lines-wrap {
+  flex: none;
+}
+
+/* "Add Item" strip under an existing PO's lines. */
+.bc-doc .bc-doc-addline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--bc-line);
+  background: var(--bc-surface-2);
+}
+
+.bc-doc .bc-doc-addline input,
+.bc-doc .bc-doc-addline select {
+  height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg);
+  color: var(--text-main);
+}
+
+.bc-doc .bc-doc-addline .item-search-cell input {
+  width: 100%;
+}
+
+.bc-doc .bc-doc-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  background: var(--bc-input-bg);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.bc-doc .bc-doc-foot .bc-doc-hint {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------ resizable columns (js/bcColumnResize.js)
+   A drag handle on each header cell's right edge. Once a column has been resized the table is
+   fixed-layout, so text that no longer fits is cut off with an ellipsis instead of pushing the
+   column back out. */
+
+.bc-ile .bc-grid thead th .bc-col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  z-index: 3;
+}
+
+.bc-ile .bc-grid thead th .bc-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  right: 3px;
+  width: 1px;
+  background: var(--bc-line-strong);
+}
+
+.bc-ile .bc-grid thead th .bc-col-resizer:hover::after,
+.bc-ile .bc-grid thead th .bc-col-resizer.resizing::after {
+  top: 0;
+  bottom: 0;
+  right: 2px;
+  width: 3px;
+  background: var(--bc-link);
+}
+
+.bc-ile table.bc-grid.bc-grid-fixed {
+  table-layout: fixed;
+}
+
+.bc-ile table.bc-grid.bc-grid-fixed > thead > tr > th,
+.bc-ile table.bc-grid.bc-grid-fixed > tbody > tr > td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status/empty messages span every column - let them wrap rather than be cut off. */
+.bc-ile table.bc-grid.bc-grid-fixed > tbody > tr > td.cell-msg {
+  white-space: normal;
+}
+
+body.bc-col-resizing,
+body.bc-col-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+/* ------------------------------------------------------------------ document as a full page
+   (Payroll Run - docs/payroll-run.html). Same .bc-doc look as the Transfer Order document, but
+   as the page itself instead of a popup, so it needs the colour variables .modal-panel.bc-doc
+   normally carries. */
+
+.page.bc-doc-page {
+  --bc-surface: #ffffff;
+  --bc-surface-2: #faf9f8;
+  --bc-line: #e1dfdd;
+  --bc-line-strong: #c8c6c4;
+  --bc-hover: #f3f2f1;
+  --bc-selected: #e3eefa;
+  --bc-cmd-hover: #edebe9;
+  --bc-link: #0f6cbd;
+  --bc-input-bg: #ffffff;
+  --bc-edit-bg: #fffdf5;
+  max-width: none;
+  padding: 0 0 28px;
+  font-size: 13px;
+}
+
+:root[data-theme="dark"] .page.bc-doc-page {
+  --bc-surface: #111a2c;
+  --bc-surface-2: #0f1728;
+  --bc-line: #22314b;
+  --bc-line-strong: #33476a;
+  --bc-hover: #16213a;
+  --bc-selected: #1b2e52;
+  --bc-cmd-hover: #1a2740;
+  --bc-link: #6cb0f5;
+  --bc-input-bg: #111a2c;
+  --bc-edit-bg: #1a2438;
+}
+
+.bc-doc-page .bc-doc-head {
+  padding: 16px 20px 6px;
+}
+
+.bc-doc-page .bc-cmdbar {
+  padding: 2px 16px;
+}
+
+.bc-doc-page .bc-doc-body {
+  padding: 4px 20px 0;
+}
+
+.bc-doc-page .bc-doc-back {
+  font-size: 12.5px;
+}
+
+.bc-doc table.bc-doc-lines > tbody > tr {
+  cursor: default;
+}
+
+.bc-doc table.bc-doc-lines > tbody > tr.selected > td {
+  background: var(--bc-selected);
+}
+
+.bc-doc table.bc-doc-lines > tbody > tr.selected > td:first-child {
+  box-shadow: inset 3px 0 0 var(--bc-link);
+}
+
+.bc-doc table.bc-doc-lines > tfoot > tr > td {
+  padding: 3px 8px;
+  height: 34px;
+  border-top: 1px solid var(--bc-line-strong);
+  font-weight: 600;
+}
+
+/* Worksheet cells that are saved/locked (Timesheets): plain read-only look, not the input tint. */
+.bc-ile .bc-grid input.bc-qty-cell:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.bc-ile .bc-grid select.bc-cell-select {
+  width: 120px;
+  height: 24px;
+  padding: 1px 4px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 12.5px;
+  background: var(--bc-input-bg);
+}
+
+.bc-ile .bc-grid select.bc-cell-select:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  appearance: none;
+}
+
+/* Entry forms that sit on a list page (Payroll Setup's Funding / Cash Advance / Settings):
+   a .bc-doc block inside .page.bc-ile, so they get the flat FastTab + label-left field look. */
+.bc-ile .bc-doc.bc-setup-form {
+  margin-top: 8px;
+}
+
+.bc-ile .bc-doc.bc-setup-form .bc-doc-field input:not(.bc-switch),
+.bc-ile .bc-doc.bc-setup-form .bc-doc-field select {
+  height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg);
+}
+
+.bc-ile .bc-doc.bc-setup-form .bc-doc-field input.bc-switch {
+  width: 36px;
+  height: 20px;
+  padding: 0;
+}
+
+/* Compact controls in a list's grid toolbar (filters above a journal/list part). */
+.bc-ile .bc-grid-toolbar select,
+.bc-ile .bc-grid-toolbar input[type="date"],
+.bc-ile .bc-grid-toolbar input[type="text"] {
+  width: auto;
+  height: 28px;
+  padding: 2px 6px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg);
+}
+
+/* BC-style per-column filter row under a list header (Payroll Setup > Employees). */
+.bc-ile .bc-grid thead tr.bc-filter-row th {
+  top: 33px;
+  height: 30px;
+  padding: 2px 4px;
+  font-weight: 400;
+}
+
+.bc-ile .bc-grid thead tr.bc-filter-row input,
+.bc-ile .bc-grid thead tr.bc-filter-row select {
+  width: 100%;
+  height: 24px;
+  padding: 1px 6px;
+  border: 1px solid var(--bc-line);
+  border-radius: 2px;
+  font-size: 12px;
+  background: var(--bc-input-bg);
+}
+
+.bc-ile .bc-grid thead th .sort-indicator {
+  font-size: 10px;
+  color: var(--bc-link);
+}
+
+/* Online Orders' Assign popup - a larger dialog than the default so the maker dropdowns are easy
+   to read and tap (also used on the warehouse tablet/phone). */
+.bc-dialog.bc-assign-dialog {
+  max-width: 760px;
+}
+
+.bc-assign-dialog .bc-dialog-head {
+  padding: 20px 28px 12px;
+}
+
+.bc-assign-dialog .bc-dialog-head h2 {
+  font-size: 24px;
+}
+
+.bc-assign-dialog .bc-dialog-body {
+  padding: 6px 28px 12px;
+  font-size: 15px;
+}
+
+.bc-assign-dialog .bc-lede {
+  margin-bottom: 18px;
+  font-size: 14.5px;
+}
+
+.bc-assign-dialog .bc-field {
+  grid-template-columns: 170px minmax(0, 1fr);
+  margin-bottom: 16px;
+}
+
+.bc-assign-dialog .bc-field > label {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.bc-assign-dialog select {
+  height: 44px;
+  padding: 6px 12px;
+  font-size: 16px;
+}
+
+.bc-assign-dialog .bc-dialog-foot {
+  padding: 14px 28px 22px;
+}
+
+.bc-assign-dialog .bc-dialog-foot .bc-btn {
+  height: 40px;
+  min-width: 110px;
+  font-size: 15px;
+}
+
+/* Payroll Line card's pay summary: label left, amount right, totals ruled off like a BC
+   totals block. */
+.bc-dialog table.bc-pay-summary {
+  width: 100%;
+  border-collapse: collapse;
+  background: transparent;
+  font-size: 13px;
+}
+
+.bc-dialog table.bc-pay-summary td {
+  padding: 4px 0;
+  border: none;
+  font-size: 13px;
+}
+
+.bc-dialog table.bc-pay-summary td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bc-dialog table.bc-pay-summary tr.total td {
+  padding-top: 6px;
+  border-top: 1px solid var(--bc-line);
+  font-weight: 600;
+}
+
+.bc-dialog table.bc-pay-summary tr.grand td {
+  border-top: 2px solid var(--bc-line-strong);
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------------ cues (Payroll pages)
+   BC Role Center "cues": a row of flat tiles, each a caption over one big figure, clickable to
+   drill into the entries behind it. */
+
+.bc-ile .bc-cues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.bc-ile .bc-cue {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 180px;
+  min-height: 78px;
+  padding: 10px 14px;
+  border: 1px solid var(--bc-line);
+  border-top: 3px solid var(--bc-link);
+  background: var(--bc-surface);
+  color: var(--text-main);
+  text-decoration: none;
+}
+
+a.bc-cue:hover {
+  background: var(--bc-hover);
+}
+
+.bc-ile .bc-cue-caption {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-cue-value {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.bc-ile .bc-cue-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.bc-ile .bc-cue.bc-cue-warn {
+  border-top-color: #c19c00;
+}
+
+.bc-ile .bc-cue.bc-cue-danger {
+  border-top-color: var(--danger);
+}
+
+/* Section heading between two parts of a list page (e.g. Payroll Setup's employees vs journal). */
+.bc-ile .bc-section-title {
+  margin: 22px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Inputs BC dialogs didn't style yet (month pickers, passwords, notes). */
+.bc-dialog input[type="month"],
+.bc-dialog input[type="password"],
+.bc-dialog input[type="time"],
+.bc-dialog textarea {
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg, #fff);
+  color: var(--text-main);
+}
+
 /* ------------------------------------------------------------------ narrower screens */
 
 @media (max-width: 1280px) {

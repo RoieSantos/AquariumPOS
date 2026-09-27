@@ -16,9 +16,9 @@ let sortColumn = null;
 let sortDirection = 'asc';
 
 function formatCycle(cycle) {
-  if (cycle === 'SemiMonthly') return '<span class="badge badge-primary">Semi-Monthly</span>';
-  if (cycle === 'Weekly') return '<span class="badge badge-primary">Weekly</span>';
-  return '<span class="badge badge-neutral">Not enrolled</span>';
+  if (cycle === 'SemiMonthly') return 'Semi-Monthly';
+  if (cycle === 'Weekly') return 'Weekly';
+  return '<span class="muted">Not enrolled</span>';
 }
 
 function formatCurrency(amount) {
@@ -27,19 +27,19 @@ function formatCurrency(amount) {
 }
 
 function formatPaymentMethod(method) {
-  if (method === 'Cash') return '<span class="badge badge-neutral">Cash</span>';
-  if (method === 'Digital') return '<span class="badge badge-primary">Digital (GCash)</span>';
+  if (method === 'Cash') return 'Cash';
+  if (method === 'Digital') return 'Digital (GCash)';
   return '<span class="muted">Not set (Cash)</span>';
 }
 
 function formatPayType(payType) {
-  return payType === 'Hourly' ? '<span class="badge badge-primary">Hourly</span>' : '<span class="badge badge-neutral">Salary</span>';
+  return payType === 'Hourly' ? 'Hourly' : 'Salary';
 }
 
 // A day's worth of salary is added to each payrun when true (supabase_payroll_paid_rest_day_boolean.sql).
 function formatPaidRestDay(hasPaidRestDay) {
   return hasPaidRestDay
-    ? '<span class="badge badge-success">Yes</span>'
+    ? 'Yes'
     : '<span class="muted">No</span>';
 }
 
@@ -59,32 +59,43 @@ function renderEmployeeRows(employees) {
     const message = allEmployees.length === 0
       ? 'No staff logins found.'
       : 'No employees match the current filters.';
-    tbody.innerHTML = `<tr><td colspan="11" class="muted">${message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg">${message}</td></tr>`;
+    updateEmployeeActionState();
     return;
   }
 
   tbody.innerHTML = employees
     .map((e) => `
-      <tr>
-        <td>${e.username || ''}</td>
+      <tr data-username="${e.username}" class="${e.username === selectedEmployeeUsername ? 'selected' : ''}">
+        <td><a href="#" class="bc-link" data-edit-username="${e.username}" title="Edit payroll profile">${e.username || ''}</a></td>
         <td>${e.employee_no || ''}</td>
         <td>${e.display_name || ''}</td>
-        <td><span class="badge ${e.is_active ? 'badge-success' : 'badge-danger'}">${e.is_active ? 'Active' : 'Inactive'}</span></td>
+        <td>${e.is_active ? 'Active' : '<span class="neg">Inactive</span>'}</td>
         <td>${formatCycle(e.pay_cycle)}</td>
         <td>${formatPayType(e.pay_type)}</td>
-        <td>${formatRate(e)}</td>
+        <td class="num">${formatRate(e)}</td>
         <td>${formatPaymentMethod(e.payment_method)}</td>
         <td>${formatPaidRestDay(e.has_paid_rest_day)}</td>
-        <td>${Number(e.outstanding_cash_advance) > 0 ? `<span class="badge badge-warning">${formatCurrency(e.outstanding_cash_advance)}</span>` : '<span class="muted">-</span>'}</td>
-        <td><button class="btn btn-secondary btn-sm" data-edit-username="${e.username}" type="button">Edit</button></td>
+        <td class="num">${Number(e.outstanding_cash_advance) > 0 ? formatCurrency(e.outstanding_cash_advance) : '<span class="muted">-</span>'}</td>
       </tr>
     `)
     .join('');
+  updateEmployeeActionState();
+}
+
+// BC list: "Edit Payroll Profile" on the Employees action bar acts on the selected row (the user
+// name link and a double-click open it too).
+let selectedEmployeeUsername = null;
+
+function updateEmployeeActionState() {
+  const exists = currentEmployees.some((e) => e.username === selectedEmployeeUsername);
+  if (!exists) selectedEmployeeUsername = null;
+  document.getElementById('editEmployeeBtn').disabled = !selectedEmployeeUsername;
 }
 
 async function loadEmployees() {
   const tbody = document.getElementById('employeeTableBody');
-  tbody.innerHTML = '<tr><td colspan="11" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_employees', {
     p_admin_username: currentSession.username,
@@ -92,7 +103,7 @@ async function loadEmployees() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="11" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -401,21 +412,20 @@ function renderFundingRows(entries) {
   const tbody = document.getElementById('fundingTableBody');
 
   if (!entries || entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">No funding entries yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">No funding entries yet.</td></tr>';
     return;
   }
 
-  const entryTypeBadge = { Funding: 'badge-success', Payroll: 'badge-danger', CashAdvance: 'badge-warning' };
-  const entryTypeLabel = { CashAdvance: 'Cash Advance' };
+  const entryTypeLabel = { CashAdvance: 'Cash Advance', NetPay: 'Net Pay', BasePay: 'Base Pay' };
 
   tbody.innerHTML = entries
     .map((f) => `
       <tr>
         <td>${f.posted_at_utc ? new Date(f.posted_at_utc).toLocaleString() : ''}</td>
-        <td><span class="badge ${entryTypeBadge[f.entry_type] || 'badge-neutral'}">${entryTypeLabel[f.entry_type] || f.entry_type}</span></td>
+        <td>${entryTypeLabel[f.entry_type] || f.entry_type}</td>
         <td>${f.display_name || f.username || '<span class="muted">-</span>'}</td>
-        <td>${f.method || ''}</td>
-        <td>${f.entry_type === 'Funding' ? '' : '-'}${formatCurrency(f.amount)}</td>
+        <td>${f.method === 'Digital' ? 'Digital (GCash)' : f.method || ''}</td>
+        <td class="num ${f.entry_type === 'Funding' ? '' : 'neg'}">${f.entry_type === 'Funding' ? '' : '-'}${formatCurrency(f.amount)}</td>
         <td>${f.label || ''}${f.notes ? ` <span class="muted">(${f.notes})</span>` : ''}</td>
         <td>${f.posted_by || ''}</td>
       </tr>
@@ -425,7 +435,7 @@ function renderFundingRows(entries) {
 
 async function loadFundingJournal() {
   const tbody = document.getElementById('fundingTableBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">Loading...</td></tr>';
 
   // p_funding_only:true restricts this to the three EntryTypes that carry a Method (Funding,
   // Payroll, CashAdvance) - i.e. everything that makes up Cash on Hand/Digital on Hand - rather
@@ -441,7 +451,7 @@ async function loadFundingJournal() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="cell-msg error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -555,7 +565,7 @@ async function saveCutoffSettings() {
   });
 
   saveBtn.disabled = false;
-  saveBtn.textContent = 'Save Cutoff Settings';
+  saveBtn.textContent = 'Save Settings';
 
   const result = Array.isArray(data) ? data[0] : data;
   if (error || !result || !result.success) {
@@ -578,25 +588,36 @@ function renderAdvanceRows(rows) {
   const tbody = document.getElementById('advanceTableBody');
 
   if (!rows || rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">No cash advances logged yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">No cash advances logged yet.</td></tr>';
+    selectedAdvance = null;
+    updateAdvanceActionState();
     return;
   }
 
   tbody.innerHTML = rows
     .map((a) => `
-      <tr>
+      <tr data-advance-id="${a.advance_id}" data-status="${a.status}" class="${selectedAdvance && String(selectedAdvance.id) === String(a.advance_id) ? 'selected' : ''}">
         <td>${formatDate(a.advance_date)}</td>
         <td>${a.display_name || a.username}</td>
         <td>${a.employee_no || ''}</td>
-        <td>${formatCurrency(a.amount)}</td>
+        <td class="num">${formatCurrency(a.amount)}</td>
         <td>${formatPaymentMethod(a.method)}</td>
         <td>${a.notes || ''}</td>
-        <td><span class="badge ${a.status === 'Outstanding' ? 'badge-warning' : 'badge-success'}">${a.status}</span></td>
+        <td>${a.status}</td>
         <td>${a.created_by || ''}</td>
-        <td>${a.status === 'Outstanding' ? `<button class="btn btn-danger btn-sm" data-delete-advance-id="${a.advance_id}" type="button">Delete</button>` : ''}</td>
       </tr>
     `)
     .join('');
+  if (selectedAdvance && !rows.some((a) => String(a.advance_id) === String(selectedAdvance.id))) selectedAdvance = null;
+  updateAdvanceActionState();
+}
+
+// BC list: Delete on the Cash Advances action bar acts on the selected row - only an Outstanding
+// advance can be deleted (an Applied one is already on a payroll run).
+let selectedAdvance = null; // { id, status }
+
+function updateAdvanceActionState() {
+  document.getElementById('deleteAdvanceBtn').disabled = !(selectedAdvance && selectedAdvance.status === 'Outstanding');
 }
 
 function formatDate(dateStr) {
@@ -613,7 +634,7 @@ function toDateInputValue(date) {
 
 async function loadAdvances() {
   const tbody = document.getElementById('advanceTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">Loading...</td></tr>';
 
   const username = document.getElementById('filterAdvanceUsername').value || null;
   const status = document.getElementById('filterAdvanceStatus').value || null;
@@ -628,7 +649,7 @@ async function loadAdvances() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="cell-msg error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -705,6 +726,29 @@ async function deleteAdvance(advanceId) {
   await loadEmployees();
 }
 
+// BC view tabs: Employees / Funding / Cash Advances / Settings. Remembered per browser; a ?tab=
+// deep link wins (e.g. payroll-setup.html?tab=funding from the Payroll page's Funding cue).
+const SETUP_TAB_KEY = 'payrollSetupTab';
+
+function showSetupTab(tab) {
+  const tabs = Array.from(document.querySelectorAll('#setupTabs .bc-tab'));
+  if (!tabs.some((b) => b.dataset.tab === tab)) tab = 'employees';
+  tabs.forEach((b) => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('.setup-view').forEach((v) => v.classList.toggle('hidden', v.dataset.view !== tab));
+  try { localStorage.setItem(SETUP_TAB_KEY, tab); } catch (err) { /* not remembered */ }
+}
+
+function wireSetupTabs() {
+  document.querySelectorAll('#setupTabs .bc-tab').forEach((b) => b.addEventListener('click', () => showSetupTab(b.dataset.tab)));
+  let stored = null;
+  try { stored = localStorage.getItem(SETUP_TAB_KEY); } catch (err) { stored = null; }
+  showSetupTab(new URLSearchParams(window.location.search).get('tab') || stored || 'employees');
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -726,21 +770,38 @@ async function deleteAdvance(advanceId) {
   await loadFundBalances();
   await loadFundingJournal();
 
-  document.getElementById('employeeTableBody').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-edit-username]');
-    if (btn) openEditProfileModal(btn.getAttribute('data-edit-username'));
+  wireSetupTabs();
+
+  const employeeBody = document.getElementById('employeeTableBody');
+  employeeBody.addEventListener('click', (e) => {
+    const link = e.target.closest('[data-edit-username]');
+    const tr = e.target.closest('tr[data-username]');
+    if (tr) {
+      selectedEmployeeUsername = tr.dataset.username;
+      employeeBody.querySelectorAll('tr[data-username]').forEach((row) => row.classList.toggle('selected', row === tr));
+      updateEmployeeActionState();
+    }
+    if (link) {
+      e.preventDefault();
+      openEditProfileModal(link.getAttribute('data-edit-username'));
+    }
   });
-  document.getElementById('closeEditProfileBtn').addEventListener('click', () =>
-    document.getElementById('editProfileModal').classList.add('hidden')
-  );
+  employeeBody.addEventListener('dblclick', (e) => {
+    const tr = e.target.closest('tr[data-username]');
+    if (tr) openEditProfileModal(tr.dataset.username);
+  });
+  document.getElementById('editEmployeeBtn').addEventListener('click', () => selectedEmployeeUsername && openEditProfileModal(selectedEmployeeUsername));
+  const closeEditProfile = () => document.getElementById('editProfileModal').classList.add('hidden');
+  document.getElementById('closeEditProfileBtn').addEventListener('click', closeEditProfile);
+  document.getElementById('cancelEditProfileBtn').addEventListener('click', closeEditProfile);
   document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
   document.getElementById('editProfilePayType').addEventListener('change', () => togglePayTypeRows('editProfile'));
 
   document.getElementById('newEmployeePayType').addEventListener('change', () => togglePayTypeRows('newEmployee'));
   document.getElementById('newEmployeeBtn').addEventListener('click', openNewEmployeeModal);
-  document.getElementById('closeNewEmployeeBtn').addEventListener('click', () =>
-    document.getElementById('newEmployeeModal').classList.add('hidden')
-  );
+  const closeNewEmployee = () => document.getElementById('newEmployeeModal').classList.add('hidden');
+  document.getElementById('closeNewEmployeeBtn').addEventListener('click', closeNewEmployee);
+  document.getElementById('cancelNewEmployeeBtn').addEventListener('click', closeNewEmployee);
   document.getElementById('saveNewEmployeeBtn').addEventListener('click', saveNewEmployee);
 
   document.getElementById('logFundingBtn').addEventListener('click', logFunding);
@@ -752,10 +813,15 @@ async function deleteAdvance(advanceId) {
 
   document.getElementById('logAdvanceBtn').addEventListener('click', logAdvance);
   document.getElementById('applyAdvanceFiltersBtn').addEventListener('click', loadAdvances);
-  document.getElementById('advanceTableBody').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-delete-advance-id]');
-    if (btn) deleteAdvance(btn.getAttribute('data-delete-advance-id'));
+  const advanceBody = document.getElementById('advanceTableBody');
+  advanceBody.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-advance-id]');
+    if (!tr) return;
+    selectedAdvance = { id: tr.dataset.advanceId, status: tr.dataset.status };
+    advanceBody.querySelectorAll('tr[data-advance-id]').forEach((row) => row.classList.toggle('selected', row === tr));
+    updateAdvanceActionState();
   });
+  document.getElementById('deleteAdvanceBtn').addEventListener('click', () => selectedAdvance && deleteAdvance(selectedAdvance.id));
 
   document.querySelectorAll('#employeeTable .sortable-th').forEach((th) => {
     th.addEventListener('click', () => {
