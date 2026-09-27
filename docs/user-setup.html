@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>User Setup - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=2" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,12 +17,21 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>User Setup</h1>
-    <p class="muted">Create new staff logins for the portal. Only visible to super users.</p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-clear-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/><path d="M11.5 11.5l3 3M14.5 11.5l-3 3"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-edit" viewBox="0 0 16 16"><path d="M10.8 2.7 13.3 5.2 5.6 12.9 2.6 13.4 3.1 10.4z"/><path d="M9.4 4.1l2.5 2.5"/></symbol>
+    <symbol id="ico-card" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="5.8" cy="7.2" r="1.5"/><path d="M3.8 11c.4-1.2 1.1-1.8 2-1.8s1.6.6 2 1.8M9.5 6.5h3M9.5 9h3"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+  </svg>
 
+  <div class="page bc-ile">
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
+      <h1 class="bc-title">User Setup</h1>
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
 
@@ -30,384 +40,284 @@
          No password re-entry prompt otherwise - super user status alone is enough, same trust
          model as Online Orders/Expenses. -->
     <div id="unlockBox" class="hidden">
+      <h1 class="bc-title">User Setup</h1>
       <p class="error-text" id="unlockError"></p>
-      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+      <button class="bc-btn bc-btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
     </div>
 
-    <!-- Main content, shown once unlocked -->
+    <!-- Business Central list page: title + search, action bar, views, filter pane | list | FactBox.
+         Same shell as Item Ledger Entries (css/bc-list.css). A row opens the User Card (below). -->
     <div id="userSetupContent" class="hidden">
-      <div class="toolbar">
-        <h2 style="margin:0;">Staff Logins</h2>
-        <button class="btn btn-primary" id="newUserBtn" type="button">+ New Login</button>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Employee No.</th>
-              <th>Display Name</th>
-              <th>Warehouse</th>
-              <th>Super User</th>
-              <th>Sales User</th>
-              <th>Serial Admin</th>
-              <th>Delivery Team</th>
-              <th>Online Order Staff</th>
-              <th>Payroll Officer</th>
-              <th>Store Manager</th>
-              <th>Monthly Sales Target</th>
-              <th>Change PW</th>
-              <th>Active</th>
-              <th>Created</th>
-              <th>Last Login</th>
-              <th>Position</th>
-              <th>Pay Cycle</th>
-              <th>Monthly Salary</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="userTableBody">
-            <tr><td colspan="20" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div id="userPaginationBar"></div>
-    </div>
-  </div>
-
-  <!-- New user modal -->
-  <div id="newUserModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;">New Staff Login</h2>
-        <button class="btn btn-secondary btn-sm" id="closeNewUserBtn" type="button">Close</button>
-      </div>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="newUsername">Username</label>
-          <input type="text" id="newUsername" autocomplete="off" />
+      <div class="bc-titlebar">
+        <div>
+          <h1 class="bc-title">User Setup</h1>
+          <p class="bc-subtitle">Staff logins, portal access, employee details and payroll - one card per person.</p>
         </div>
-        <div class="form-row">
-          <label for="newUserPassword">Password</label>
-          <input type="password" id="newUserPassword" autocomplete="new-password" />
-        </div>
-        <div class="form-row">
-          <label for="newDisplayName">Display Name</label>
-          <input type="text" id="newDisplayName" />
-        </div>
-        <div class="form-row">
-          <label for="newUserWarehouse">Warehouse</label>
-          <select id="newUserWarehouse">
-            <option value="">(All warehouses)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="newUserSuperUser" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserSuperUser" style="width:auto;" />
-            <span>Super User (can access User Setup)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserSalesUser" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserSalesUser" style="width:auto;" />
-            <span>Sales User</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserSerialAdmin" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserSerialAdmin" style="width:auto;" />
-            <span>Serial Admin (can edit serial locations in Serial Tracker)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserDeliveryTeam" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserDeliveryTeam" style="width:auto;" />
-            <span>Delivery Team (locked to the Delivery calendar only - no other page)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserOnlineOrderStaff" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserOnlineOrderStaff" style="width:auto;" />
-            <span>Online Order Staff (locked to Online Orders only - sees Printed orders only, can mark To Ship and photo-notify customers)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserProductionMember" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserProductionMember" style="width:auto;" />
-            <span>Production Member (can be assigned custom orders to build in Online Orders)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserPayrollOfficer" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserPayrollOfficer" style="width:auto;" />
-            <span>Payroll Officer (can access Payroll / Payroll Setup / Payroll Ledger)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserStoreManager" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserStoreManager" style="width:auto;" />
-            <span>Store Manager (locked to Delivery, Payslips, Serial Tracker, Inventory Summary, Stock On Hand, Transfer Orders, Calculators, Online Orders, Automated Orders only)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserConversationsStaff" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserConversationsStaff" style="width:auto;" />
-            <span>Conversations Access (can access GMA Conversations)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="newUserMonthlyTarget">Monthly Sales Target (?)</label>
-          <input type="number" id="newUserMonthlyTarget" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row">
-          <label for="newUserMustChangePassword" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserMustChangePassword" style="width:auto;" />
-            <span>Require password change at next login</span>
-          </label>
+        <div class="bc-title-tools">
+          <div class="bc-search">
+            <svg class="bc-ico"><use href="#ico-search"/></svg>
+            <input type="text" id="userSearchInput" placeholder="Search" aria-label="Search users" autocomplete="off" />
+          </div>
+          <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+            <svg class="bc-ico"><use href="#ico-filter"/></svg>
+          </button>
+          <button class="bc-iconbtn" id="clearFiltersBtn" type="button" title="Clear filters" aria-label="Clear filters">
+            <svg class="bc-ico"><use href="#ico-clear-filter"/></svg>
+          </button>
         </div>
       </div>
 
-      <h3>Employee & Payroll Info</h3>
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="newUserEmployeeNo">Employee No.</label>
-          <input type="text" id="newUserEmployeeNo" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label for="newUserPosition">Position</label>
-          <input type="text" id="newUserPosition" placeholder="e.g. Cashier, Helper, Manager" />
-        </div>
-        <div class="form-row">
-          <label for="newUserHireDate">Hire Date</label>
-          <input type="date" id="newUserHireDate" />
-        </div>
-        <div class="form-row">
-          <label for="newUserBirthdate">Birthdate</label>
-          <input type="date" id="newUserBirthdate" />
-        </div>
-        <div class="form-row">
-          <label for="newUserPhoneNumber">Phone Number</label>
-          <input type="text" id="newUserPhoneNumber" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label for="newUserHomeAddress">Home Address</label>
-          <input type="text" id="newUserHomeAddress" />
-        </div>
-        <div class="form-row">
-          <label for="newUserPaymentMethod">Payment Method</label>
-          <select id="newUserPaymentMethod">
-            <option value="">(Not set)</option>
-            <option value="Cash">Cash</option>
-            <option value="Digital">Digital (GCash)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="newUserPayCycle">Pay Cycle</label>
-          <select id="newUserPayCycle">
-            <option value="">(Not enrolled in Payroll)</option>
-            <option value="SemiMonthly">Semi-Monthly</option>
-            <option value="Weekly">Weekly</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="newUserPayType">Pay Type</label>
-          <select id="newUserPayType">
-            <option value="Salary">Salary (fixed Monthly Salary)</option>
-            <option value="Hourly">Hourly (Daily Rate / 8 x hours worked, from Timesheets)</option>
-          </select>
-        </div>
-        <div class="form-row" id="newUserMonthlySalaryRow">
-          <label for="newUserMonthlySalary">Monthly Salary</label>
-          <input type="number" id="newUserMonthlySalary" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row hidden" id="newUserDailyRateRow">
-          <label for="newUserDailyRate">Daily Rate</label>
-          <input type="number" id="newUserDailyRate" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row">
-          <label for="newUserPaidRestDay" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="newUserPaidRestDay" style="width:auto;" />
-            Has Paid Rest Day (adds a day's worth of salary to each payrun)
-          </label>
-        </div>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd bc-cmd-accent" id="newUserBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New</button>
+        <button class="bc-cmd" id="editUserBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-edit"/></svg>Edit</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="refreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
       </div>
 
-      <div id="newUserError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveUserBtn" type="button">Create Login</button>
+      <div class="bc-tabs" role="tablist">
+        <button class="bc-tab active" type="button" role="tab" data-view="active" aria-selected="true">Active</button>
+        <button class="bc-tab" type="button" role="tab" data-view="inactive" aria-selected="false">Inactive</button>
+        <button class="bc-tab" type="button" role="tab" data-view="all" aria-selected="false">All</button>
+      </div>
+
+      <div class="bc-body" id="bcBody">
+        <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+          <div class="bc-pane-head">Filter list by</div>
+          <div class="bc-pane-body">
+            <div class="bc-fp-field">
+              <label for="fpWarehouse">Warehouse</label>
+              <select id="fpWarehouse"><option value="">(all)</option></select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="fpRole">Role</label>
+              <select id="fpRole">
+                <option value="">(all)</option>
+                <option value="StandMaker">Stand Maker</option>
+                <option value="TankMaker">Tank Maker</option>
+                <option value="Dispatcher">Dispatcher</option>
+                <option value="Cashier">Cashier</option>
+                <option value="__none">(no role)</option>
+              </select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="fpAccess">Portal Access</label>
+              <select id="fpAccess"><option value="">(all)</option></select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="fpPayCycle">Pay Cycle</label>
+              <select id="fpPayCycle">
+                <option value="">(all)</option>
+                <option value="SemiMonthly">Semi-Monthly</option>
+                <option value="Weekly">Weekly</option>
+                <option value="__none">(not in payroll)</option>
+              </select>
+            </div>
+            <button class="bc-link" id="clearFiltersLink" type="button">Clear filters</button>
+          </div>
+        </aside>
+
+        <section class="bc-main">
+          <div id="userListError" class="error-text hidden" style="margin:0; padding:8px 12px;"></div>
+          <div class="bc-grid-wrap" id="userGridWrap">
+            <table class="bc-grid">
+              <thead>
+                <tr>
+                  <th class="sortable" data-sort="username">User Name<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="employee_no">Employee No.<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="display_name">Full Name<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="warehouse_name">Warehouse<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="job_position">Position<span class="sort-arrow"></span></th>
+                  <th>Roles</th>
+                  <th>Portal Access</th>
+                  <th class="sortable" data-sort="pay_cycle">Pay Cycle<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="is_active">State<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="last_login_at_utc">Last Login<span class="sort-arrow"></span></th>
+                </tr>
+              </thead>
+              <tbody id="userTableBody">
+                <tr><td colspan="10" class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="bc-grid-toolbar" style="border-top:1px solid var(--bc-line); border-bottom:none;">
+            <span class="muted" id="userCount"></span>
+          </div>
+        </section>
+
+        <aside class="bc-factbox" aria-label="Details">
+          <div class="bc-fact">
+            <div class="bc-fact-title">User Details</div>
+            <div class="bc-fact-body" id="factUser"><p class="bc-fact-empty">Select a user to see details.</p></div>
+          </div>
+          <div class="bc-fact">
+            <div class="bc-fact-title">Portal Access</div>
+            <div class="bc-fact-body" id="factAccess"><p class="bc-fact-empty">-</p></div>
+          </div>
+          <div class="bc-fact">
+            <div class="bc-fact-title">Payroll</div>
+            <div class="bc-fact-body" id="factPayroll"><p class="bc-fact-empty">-</p></div>
+          </div>
+        </aside>
       </div>
     </div>
   </div>
 
-  <!-- Edit user modal -->
-  <div id="editUserModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
-      <div class="toolbar">
-        <h2 style="margin:0;">Edit Staff Login</h2>
-        <button class="btn btn-secondary btn-sm" id="closeEditUserBtn" type="button">Close</button>
+  <!-- User Card - BC card page: FastTabs (General / Portal Access / Employee / Payroll), labels to the
+       left of their value, two field columns. One card serves both New and Edit (js/userSetup.js
+       switches mode: Username + Password are only editable on New; Active only shows on Edit). -->
+  <div id="userCardModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-dialog-wide bc-card" role="dialog" aria-modal="true" aria-labelledby="userCardTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-card-caption" id="userCardCaption">USER CARD</div>
+          <h2 id="userCardTitle">New User</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeUserCardBtn" type="button" aria-label="Close">&times;</button>
       </div>
 
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="editUsername">Username</label>
-          <input type="text" id="editUsername" disabled />
-        </div>
-        <div class="form-row">
-          <label for="editDisplayName">Display Name</label>
-          <input type="text" id="editDisplayName" />
-        </div>
-        <div class="form-row">
-          <label for="editUserWarehouse">Warehouse</label>
-          <select id="editUserWarehouse">
-            <option value="">(All warehouses)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="editUserPassword">New Password</label>
-          <input type="password" id="editUserPassword" autocomplete="new-password" placeholder="Leave blank to keep current password" />
-        </div>
-        <div class="form-row">
-          <label for="editUserSuperUser" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserSuperUser" style="width:auto;" />
-            <span>Super User (can access User Setup)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserSalesUser" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserSalesUser" style="width:auto;" />
-            <span>Sales User</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserSerialAdmin" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserSerialAdmin" style="width:auto;" />
-            <span>Serial Admin (can edit serial locations in Serial Tracker)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserDeliveryTeam" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserDeliveryTeam" style="width:auto;" />
-            <span>Delivery Team (locked to the Delivery calendar only - no other page)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserOnlineOrderStaff" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserOnlineOrderStaff" style="width:auto;" />
-            <span>Online Order Staff (locked to Online Orders only - sees Printed orders only, can mark To Ship and photo-notify customers)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserProductionMember" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserProductionMember" style="width:auto;" />
-            <span>Production Member (can be assigned custom orders to build in Online Orders)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserPayrollOfficer" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserPayrollOfficer" style="width:auto;" />
-            <span>Payroll Officer (can access Payroll / Payroll Setup / Payroll Ledger)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserStoreManager" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserStoreManager" style="width:auto;" />
-            <span>Store Manager (locked to Delivery, Payslips, Serial Tracker, Inventory Summary, Stock On Hand, Transfer Orders, Calculators, Online Orders, Automated Orders only)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserConversationsStaff" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserConversationsStaff" style="width:auto;" />
-            <span>Conversations Access (can access GMA Conversations)</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserMonthlyTarget">Monthly Sales Target (?)</label>
-          <input type="number" id="editUserMonthlyTarget" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row">
-          <label for="editUserMustChangePassword" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserMustChangePassword" style="width:auto;" />
-            <span>Require password change at next login</span>
-          </label>
-        </div>
-        <div class="form-row">
-          <label for="editUserActive" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserActive" style="width:auto;" />
-            <span>Active</span>
-          </label>
-        </div>
+      <div class="bc-dialog-body">
+        <details class="doc-fasttab" id="tabGeneral" open>
+          <summary>General <span class="doc-fasttab-summary" id="tabGeneralSummary"></span></summary>
+          <div class="doc-fasttab-body bc-card-cols">
+            <div>
+              <div class="bc-field">
+                <label for="cardUsername">User Name</label>
+                <input type="text" id="cardUsername" autocomplete="off" />
+              </div>
+              <div class="bc-field">
+                <label for="cardDisplayName">Full Name</label>
+                <input type="text" id="cardDisplayName" />
+              </div>
+              <div class="bc-field">
+                <label for="cardWarehouse">Warehouse</label>
+                <select id="cardWarehouse"><option value="">(All warehouses)</option></select>
+              </div>
+            </div>
+            <div>
+              <div class="bc-field">
+                <label for="cardPassword" id="cardPasswordLabel">Password</label>
+                <input type="password" id="cardPassword" autocomplete="new-password" />
+              </div>
+              <div class="bc-field">
+                <label for="cardMustChangePassword">Change Password at Next Login</label>
+                <input type="checkbox" class="bc-switch" id="cardMustChangePassword" />
+              </div>
+              <div class="bc-field" id="cardActiveRow">
+                <label for="cardActive">Active</label>
+                <input type="checkbox" class="bc-switch" id="cardActive" />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" id="tabAccess" open>
+          <summary>Portal Access <span class="doc-fasttab-summary" id="tabAccessSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <p class="bc-lede">What this login can open in the portal. "Locked" access limits the user to those pages only.</p>
+            <div class="bc-card-cols" id="cardAccessList"><!-- filled from ACCESS_FLAGS in js/userSetup.js --></div>
+            <div class="bc-card-cols" style="margin-top:6px;">
+              <div class="bc-field">
+                <label for="cardMonthlyTarget">Monthly Sales Target (₱)</label>
+                <input type="number" id="cardMonthlyTarget" min="0" step="0.01" value="0" />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" id="tabEmployee" open>
+          <summary>Employee <span class="doc-fasttab-summary" id="tabEmployeeSummary"></span></summary>
+          <div class="doc-fasttab-body bc-card-cols">
+            <div>
+              <div class="bc-field">
+                <label for="cardEmployeeNo">Employee No.</label>
+                <input type="text" id="cardEmployeeNo" autocomplete="off" />
+              </div>
+              <div class="bc-field">
+                <label for="cardPosition">Position</label>
+                <input type="text" id="cardPosition" placeholder="e.g. Cashier, Helper, Manager" />
+              </div>
+              <div class="bc-field bc-field-top">
+                <label>Roles</label>
+                <div id="cardRoles" class="bc-role-picks">
+                  <label><input type="checkbox" value="StandMaker" /> Stand Maker</label>
+                  <label><input type="checkbox" value="TankMaker" /> Tank Maker</label>
+                  <label><input type="checkbox" value="Dispatcher" /> Dispatcher</label>
+                  <label><input type="checkbox" value="Cashier" /> Cashier</label>
+                </div>
+              </div>
+              <div class="bc-field">
+                <label for="cardHireDate">Hire Date</label>
+                <input type="date" id="cardHireDate" />
+              </div>
+            </div>
+            <div>
+              <div class="bc-field">
+                <label for="cardBirthdate">Birth Date</label>
+                <input type="date" id="cardBirthdate" />
+              </div>
+              <div class="bc-field">
+                <label for="cardPhoneNumber">Phone No.</label>
+                <input type="text" id="cardPhoneNumber" autocomplete="off" />
+              </div>
+              <div class="bc-field">
+                <label for="cardHomeAddress">Address</label>
+                <input type="text" id="cardHomeAddress" />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" id="tabPayroll" open>
+          <summary>Payroll <span class="doc-fasttab-summary" id="tabPayrollSummary"></span></summary>
+          <div class="doc-fasttab-body bc-card-cols">
+            <div>
+              <div class="bc-field">
+                <label for="cardPayCycle">Pay Cycle</label>
+                <select id="cardPayCycle">
+                  <option value="">(Not enrolled in Payroll)</option>
+                  <option value="SemiMonthly">Semi-Monthly</option>
+                  <option value="Weekly">Weekly</option>
+                </select>
+              </div>
+              <div class="bc-field">
+                <label for="cardPayType">Pay Type</label>
+                <select id="cardPayType">
+                  <option value="Salary">Salary (fixed Monthly Salary)</option>
+                  <option value="Hourly">Hourly (Daily Rate / 8 x hours, from Timesheets)</option>
+                </select>
+              </div>
+              <div class="bc-field" id="cardMonthlySalaryRow">
+                <label for="cardMonthlySalary">Monthly Salary</label>
+                <input type="number" id="cardMonthlySalary" min="0" step="0.01" value="0" />
+              </div>
+              <div class="bc-field hidden" id="cardDailyRateRow">
+                <label for="cardDailyRate">Daily Rate</label>
+                <input type="number" id="cardDailyRate" min="0" step="0.01" value="0" />
+              </div>
+            </div>
+            <div>
+              <div class="bc-field">
+                <label for="cardPaymentMethod">Payment Method</label>
+                <select id="cardPaymentMethod">
+                  <option value="">(Not set)</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Digital">Digital (GCash)</option>
+                </select>
+              </div>
+              <div class="bc-field">
+                <label for="cardPaidRestDay" title="Adds a day's worth of salary to each payrun">Paid Rest Day</label>
+                <input type="checkbox" class="bc-switch" id="cardPaidRestDay" />
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
 
-      <h3>Employee & Payroll Info</h3>
-      <div class="form-grid">
-        <div class="form-row">
-          <label for="editUserEmployeeNo">Employee No.</label>
-          <input type="text" id="editUserEmployeeNo" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label for="editUserPosition">Position</label>
-          <input type="text" id="editUserPosition" placeholder="e.g. Cashier, Helper, Manager" />
-        </div>
-        <div class="form-row">
-          <label for="editUserHireDate">Hire Date</label>
-          <input type="date" id="editUserHireDate" />
-        </div>
-        <div class="form-row">
-          <label for="editUserBirthdate">Birthdate</label>
-          <input type="date" id="editUserBirthdate" />
-        </div>
-        <div class="form-row">
-          <label for="editUserPhoneNumber">Phone Number</label>
-          <input type="text" id="editUserPhoneNumber" autocomplete="off" />
-        </div>
-        <div class="form-row">
-          <label for="editUserHomeAddress">Home Address</label>
-          <input type="text" id="editUserHomeAddress" />
-        </div>
-        <div class="form-row">
-          <label for="editUserPaymentMethod">Payment Method</label>
-          <select id="editUserPaymentMethod">
-            <option value="">(Not set)</option>
-            <option value="Cash">Cash</option>
-            <option value="Digital">Digital (GCash)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="editUserPayCycle">Pay Cycle</label>
-          <select id="editUserPayCycle">
-            <option value="">(Not enrolled in Payroll)</option>
-            <option value="SemiMonthly">Semi-Monthly</option>
-            <option value="Weekly">Weekly</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="editUserPayType">Pay Type</label>
-          <select id="editUserPayType">
-            <option value="Salary">Salary (fixed Monthly Salary)</option>
-            <option value="Hourly">Hourly (Daily Rate / 8 x hours worked, from Timesheets)</option>
-          </select>
-        </div>
-        <div class="form-row" id="editUserMonthlySalaryRow">
-          <label for="editUserMonthlySalary">Monthly Salary</label>
-          <input type="number" id="editUserMonthlySalary" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row hidden" id="editUserDailyRateRow">
-          <label for="editUserDailyRate">Daily Rate</label>
-          <input type="number" id="editUserDailyRate" min="0" step="0.01" value="0" />
-        </div>
-        <div class="form-row">
-          <label for="editUserPaidRestDay" style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="editUserPaidRestDay" style="width:auto;" />
-            Has Paid Rest Day (adds a day's worth of salary to each payrun)
-          </label>
-        </div>
-      </div>
-
-      <div id="editUserError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveEditUserBtn" type="button">Save Changes</button>
+      <div class="bc-dialog-foot">
+        <p id="userCardError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveUserCardBtn" type="button">OK</button>
+        <button class="bc-btn" id="cancelUserCardBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -417,8 +327,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
-  <script src="js/pagination.js"></script>
-  <script src="js/userSetup.js"></script>
+  <script src="js/userSetup.js?v=2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

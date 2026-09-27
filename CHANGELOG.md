@@ -2,7 +2,29 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-09-27
+
+- **Transfer Orders - Business Central look**: list page now uses the BC list shell (title + search, New/Refresh action bar, view tabs All/Requested/Awaiting Receipt/Received/Cancelled, filter pane with Status + From/To Warehouse, record count); the Manage and New Transfer Order modals are BC documents (caption, top action bar with Ship/Receive/Create PO/Print/Cancel/Delete, flat General FastTab with label-left fields, compact "Lines" grid, right-aligned quantities, tinted editable cells). Same element IDs and workflow; Maximize still works. `transfer-orders.html`, `css/bc-list.css` (new `.bc-doc` section), `js/transferOrders.js` (tabs, warehouse filters, count, grid fit).
+
+- **Diagnostic: Amaya serials vs ledger**: read-only [supabase_diagnose_amaya_serials_vs_ledger.sql](sql/supabase_diagnose_amaya_serials_vs_ledger.sql) compares IN_STOCK serial counts per item at Amaya with the Item Ledger on-hand the Ship check uses.
+
+- **Skip Stock Check on Transfer (per category)**: new Category Setup checkbox, meant for aquarium/stand/sump categories (their units live in serials, not the Item Ledger, so Ship was refused at Amaya). Ticked lines: Available shows "n/a", no pre-ship block, Qty To Ship fills to the full unshipped qty, Create PO skips them; the ledger trigger still posts the shipment but doesn't refuse it (From warehouse balance may go negative - stock counts deferred). [supabase_category_skip_transfer_stock_check.sql](sql/supabase_category_skip_transfer_stock_check.sql), `categorySetup.js`, `category-setup.html`, `transferOrders.js`.
+
+## 2026-09-26
+
+- **Order makers assigned by Staff Role**: Online Orders' Tank Maker dropdown now lists only staff with the Tank Maker role, Stand Maker only Stand Makers (was: every Production Member). New `staff_list_order_makers` roster + role check in `admin_assign_online_order_maker` ([supabase_online_order_maker_by_role.sql](sql/supabase_online_order_maker_by_role.sql)); pre-existing assignments to someone without the role still show as "(no role)".
+
+- **User Setup redesigned Business Central-style**: [user-setup.html](docs/user-setup.html)/[userSetup.js](docs/js/userSetup.js) now use the bc-list shell (search, New/Edit/Refresh action bar, Active/Inactive/All views, filter pane by Warehouse/Role/Access/Pay Cycle, sortable grid, FactBox). The two New/Edit modals are merged into one **User Card** with FastTabs (General, Portal Access, Employee, Payroll) and toggle switches; card styles added to [bc-list.css](docs/css/bc-list.css) under `.bc-card`. Same RPCs, no SQL change.
+
+- **Staff Roles in User Setup**: new multi-select `StaffRoles` (Stand Maker / Tank Maker / Dispatcher / Cashier) on StaffUsers, editable as checkboxes in the New/Edit User modals and shown as a Roles column. Saved via new `admin_set_staff_user_roles` RPC ([supabase_staff_users_staff_roles.sql](sql/supabase_staff_users_staff_roles.sql)); tags only, no access change.
+
+- **Diagnostic for order 100768 missing from Assign Order to Delivery**: read-only [supabase_diagnose_delivery_order_100768.sql](sql/supabase_diagnose_delivery_order_100768.sql) checks the portal row (ForDelivery/Status), any existing delivery stop, and Pancake's live copy (status, received_at_shop, is_free_shipping). No code change.
+
 ## 2026-09-25
+
+- **Assemble-to-Order BOM now explodes at request time and is saved with the Transfer Order**: the New Transfer Order screen shows each Assemble-to-Order line's exploded BOM (qty x qty per) as lines are added, and Save stores it as a snapshot (new `Transfer_Line_BOM` table + `staff_save_transfer_bom_snapshot` in [supabase_assemble_to_order.sql](sql/supabase_assemble_to_order.sql)). The Manage modal's BOM, Available, Create PO and the assembly posted at Ship all read that snapshot via new `_ile_line_bom` (falls back to the item's current BOM for orders with no snapshot, e.g. desktop-created). The Production Order printout ([transferOrderPrintProduction.js](docs/js/transferOrderPrintProduction.js)) now lists the build list under each such line. Standard print layout not changed. Re-run the SQL.
+
+- **Assemble-to-Order items (BOM)**: an item can now be flagged "Assemble to Order" on its Item Setup card ([item-setup.html](docs/item-setup.html), [itemSetup.js](docs/js/itemSetup.js)) with a component list (component + qty per parent, one level). New [supabase_assemble_to_order.sql](sql/supabase_assemble_to_order.sql) (`Items."AssembleToOrder"`, `ItemBOM`, `staff_get_item_bom`, `admin_set_item_assemble_to_order`, `admin_upsert_item_bom_component`, `admin_remove_item_bom_component`, `staff_get_transfer_bom`). On a Transfer Order the Manage modal shows the BOM exploded under the parent line ([transferOrders.js](docs/js/transferOrders.js)); the line's Available = parent on hand + how many the components can build; **Create PO** buys the missing COMPONENTS (not the parent). Shipping an ATO line now posts the assembly to the Item Ledger at the From warehouse just before the shipment (components out as Negative Adjmt., parent in as Positive Adjmt., document type 'Assembly'; only the shortfall is built) - `_ile_transfer_line_post` replaced in the same SQL file. Needs the SQL run. The AI bot is unaffected (internal stock flow, not customer-facing).
 
 - **Shelf Map layout editing re-opened to Store Managers** (reverses the view+count-only change from 2026-09-24, per "can we let the store manager access edit the shelf"): `admin_save_shelf_map`/`admin_delete_shelf_map` in [supabase_shelf_maps.sql](sql/supabase_shelf_maps.sql) use `is_shelf_map_editor_authorized` (Super User OR Store Manager) again, and [shelfMap.js](docs/js/shelfMap.js) shows Edit Layout/New Shelf to both. Re-run the SQL.
 

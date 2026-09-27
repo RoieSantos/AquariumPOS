@@ -7,7 +7,7 @@ function renderCategoryRows(categories) {
   const tbody = document.getElementById('categoryTableBody');
 
   if (!categories || categories.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">No categories found on any items yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">No categories found on any items yet.</td></tr>';
     return;
   }
 
@@ -23,11 +23,12 @@ function renderCategoryRows(categories) {
         <td><input type="checkbox" class="category-exclude-input" data-code="${encodeURIComponent(c.code)}" ${c.exclude_in_transfer_orders ? 'checked' : ''} /></td>
         <td><input type="checkbox" class="category-wholesale-input" data-code="${encodeURIComponent(c.code)}" ${c.is_wholesale_applicable ? 'checked' : ''} /></td>
         <td><input type="checkbox" class="category-stock-sync-input" data-code="${encodeURIComponent(c.code)}" ${c.include_in_stock_sync ? 'checked' : ''} /></td>
+        <td><input type="checkbox" class="category-skip-stock-check-input" data-code="${encodeURIComponent(c.code)}" ${c.skip_transfer_stock_check ? 'checked' : ''} /></td>
       </tr>
     `)
     .join('');
 
-  tbody.querySelectorAll('.category-production-input, .category-exclude-input, .category-wholesale-input, .category-stock-sync-input').forEach((cb) => {
+  tbody.querySelectorAll('.category-production-input, .category-exclude-input, .category-wholesale-input, .category-stock-sync-input, .category-skip-stock-check-input').forEach((cb) => {
     cb.addEventListener('change', () => saveCategoryFlags(decodeURIComponent(cb.dataset.code)));
   });
   // Auto-saves on blur (not every keystroke) - the description field is free text, unlike the
@@ -44,6 +45,7 @@ async function saveCategoryFlags(code) {
   const excludeCb = row.querySelector('.category-exclude-input');
   const wholesaleCb = row.querySelector('.category-wholesale-input');
   const stockSyncCb = row.querySelector('.category-stock-sync-input');
+  const skipStockCheckCb = row.querySelector('.category-skip-stock-check-input');
 
   const { error } = await supabaseClient.rpc('admin_update_category_flags', {
     p_admin_username: currentSession.username,
@@ -53,7 +55,8 @@ async function saveCategoryFlags(code) {
     p_is_production_category: productionCb.checked,
     p_exclude_in_transfer_orders: excludeCb.checked,
     p_is_wholesale_applicable: wholesaleCb.checked,
-    p_include_in_stock_sync: stockSyncCb.checked
+    p_include_in_stock_sync: stockSyncCb.checked,
+    p_skip_transfer_stock_check: skipStockCheckCb.checked
   });
 
   if (error) {
@@ -64,7 +67,7 @@ async function saveCategoryFlags(code) {
 
 async function loadCategories() {
   const tbody = document.getElementById('categoryTableBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_categories', {
     p_admin_username: currentSession.username,
@@ -72,7 +75,7 @@ async function loadCategories() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
     return;
   }
 

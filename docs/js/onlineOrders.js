@@ -97,18 +97,19 @@ let lastGroupedRows = [];
 // pages" reason) as transferOrders.js/serialTracker.js's own resolveIsProductionWarehouse.
 let currentSessionIsProductionWarehouse = true;
 
-// Roster for the "Assigned To" dropdown (Production Member-flagged staff only, see
-// supabase_staff_users_production_member_field.sql) - fetched once at init() via
-// staff_list_production_members, since it rarely changes and every row's dropdown needs it.
+// Roster for the Tank/Stand Maker dropdowns - active staff with the TankMaker and/or StandMaker
+// Staff Role (User Setup, see supabase_online_order_maker_by_role.sql) - fetched once at init()
+// via staff_list_order_makers, since it rarely changes and every row's dropdown needs it. Each
+// dropdown filters this by its own role (makerSelectHtml).
 let productionMembers = [];
 
 async function loadProductionMembers() {
-  const { data, error } = await supabaseClient.rpc('staff_list_production_members', {
+  const { data, error } = await supabaseClient.rpc('staff_list_order_makers', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password
   });
   if (error || !data) {
-    console.error('staff_list_production_members failed:', error);
+    console.error('staff_list_order_makers failed:', error);
     return;
   }
   productionMembers = data;
@@ -212,14 +213,23 @@ function gmaBadgeHtml(order) {
 // "Assigned To" dropdown(s) - per "maybe each order can be assign a tank maker and a stand maker.
 // if an order has Aquarium order assign tank maker, if stand then we can assign stand maker": one
 // order can need a Tank Maker (has_aquarium_line), a Stand Maker (has_stand_line), both, or
-// neither, so this renders 0-2 dropdowns instead of always one generic "Assigned To". Both share
-// the same Production Member roster (loadProductionMembers) - change is handled by the delegated
-// listener wired to .assign-maker-select in init() below (data-role tells it which column to
-// write via admin_assign_online_order_maker).
+// neither, so this renders 0-2 dropdowns instead of always one generic "Assigned To". Each lists
+// only the staff holding that Staff Role (TankMaker / StandMaker) from the shared roster
+// (loadProductionMembers) - change is handled by the delegated listener wired to
+// .assign-maker-select in init() below (data-role tells it which column to write via
+// admin_assign_online_order_maker).
 function makerSelectHtml(order, role, currentUsername) {
-  const options = productionMembers
+  const staffRole = role === 'tank' ? 'TankMaker' : 'StandMaker';
+  const members = productionMembers.filter((m) => (m.staff_roles || []).includes(staffRole));
+  let options = members
     .map((m) => `<option value="${escapeHtml(m.username)}" ${currentUsername === m.username ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
     .join('');
+  // An assignment made before roles existed (or to someone whose role was since removed) stays
+  // visible instead of the dropdown silently showing blank - it just can't be re-picked.
+  if (currentUsername && !members.some((m) => m.username === currentUsername)) {
+    const name = (role === 'tank' ? order.assigned_tank_maker_name : order.assigned_stand_maker_name) || currentUsername;
+    options += `<option value="${escapeHtml(currentUsername)}" selected disabled>${escapeHtml(name)} (no role)</option>`;
+  }
   const label = role === 'tank' ? 'Tank Maker' : 'Stand Maker';
   return `
     <select class="assign-maker-select" data-order-id="${escapeHtml(order.order_id)}" data-role="${role}" title="${label}" style="max-width:150px;">

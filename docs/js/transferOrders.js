@@ -97,10 +97,16 @@ function applyModalMaximized(modalId, btnId, maximized) {
     : 'Maximize this document to fill the window';
 }
 
+// From/To Warehouse filter values waiting for their <option>s - the lists are built from the loaded
+// orders (populateWarehouseFilters), so a restored value can't be applied until after loadHeaders.
+let pendingWarehouseFilters = { from: '', to: '' };
+
 function saveFilters() {
   const filters = {
     search: document.getElementById('searchInput').value,
-    status: document.getElementById('statusFilter').value
+    status: document.getElementById('statusFilter').value,
+    from: document.getElementById('fpFromWarehouse').value || pendingWarehouseFilters.from,
+    to: document.getElementById('fpToWarehouse').value || pendingWarehouseFilters.to
   };
   sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
 }
@@ -112,9 +118,62 @@ function restoreFilters() {
     const filters = JSON.parse(raw);
     document.getElementById('searchInput').value = filters.search || '';
     document.getElementById('statusFilter').value = filters.status || '';
+    pendingWarehouseFilters = { from: filters.from || '', to: filters.to || '' };
   } catch {
     // Ignore malformed/stale storage.
   }
+}
+
+function clearListFilters() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('statusFilter').value = '';
+  document.getElementById('fpFromWarehouse').value = '';
+  document.getElementById('fpToWarehouse').value = '';
+  pendingWarehouseFilters = { from: '', to: '' };
+  saveFilters();
+  renderHeaders();
+}
+
+// The staff member's own orders only (From or To is their warehouse) - no "show all" override.
+// Staff with no assigned warehouse (access to all) still see everything.
+function headersInScope() {
+  if (!currentSession?.warehouseName) return allHeaders;
+  return allHeaders.filter((r) =>
+    (r['From Warehouse'] || '') === currentSession.warehouseName ||
+    (r['To Warehouse'] || '') === currentSession.warehouseName
+  );
+}
+
+// Filter pane's From/To Warehouse lists - the warehouses that actually appear on the loaded orders.
+function populateWarehouseFilters() {
+  const rows = headersInScope();
+  [['fpFromWarehouse', 'From Warehouse', 'from'], ['fpToWarehouse', 'To Warehouse', 'to']].forEach(([id, field, key]) => {
+    const select = document.getElementById(id);
+    const current = select.value || pendingWarehouseFilters[key];
+    const names = Array.from(new Set(rows.map((r) => r[field]).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    select.innerHTML = '<option value="">(all)</option>' +
+      names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    select.value = names.includes(current) ? current : '';
+  });
+  pendingWarehouseFilters = { from: '', to: '' };
+}
+
+// The view tabs above the list are shortcuts for the Status filter - the tab matching the current
+// Status is shown active; a Status with no tab of its own (e.g. Partial Received) leaves none active.
+function syncStatusTabs() {
+  const status = document.getElementById('statusFilter').value;
+  document.querySelectorAll('#statusTabs .bc-tab').forEach((tab) => {
+    const active = tab.dataset.status === status;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
+function fitGridToViewport() {
+  const el = document.getElementById('toGridWrap');
+  if (!el || el.offsetParent === null) return;
+  const available = window.innerHeight - el.getBoundingClientRect().top - 56; // leaves room for the count strip
+  el.style.maxHeight = Math.max(240, available) + 'px';
 }
 
 // Page sizes match staff_search_items/staff_search_variants' own p_limit defaults - the RPCs
@@ -156,7 +215,7 @@ function todayLocalDateString() {
 
 async function loadHeaders() {
   const tbody = document.getElementById('headerTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient
     .from('Transfer_Header')
@@ -165,11 +224,12 @@ async function loadHeaders() {
     .limit(300);
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   allHeaders = data || [];
+  populateWarehouseFilters();
   renderHeaders();
 }
 
@@ -177,16 +237,13 @@ function renderHeaders() {
   const tbody = document.getElementById('headerTableBody');
   const search = document.getElementById('searchInput').value.trim().toLowerCase();
   const statusFilter = document.getElementById('statusFilter').value;
+  const fromFilter = document.getElementById('fpFromWarehouse').value;
+  const toFilter = document.getElementById('fpToWarehouse').value;
+  syncStatusTabs();
 
-  // Always scoped to the staff's own warehouse (From or To) - no "show all" override. Staff with
-  // no assigned warehouse (access to all) still see everything.
-  let rows = allHeaders;
-  if (currentSession?.warehouseName) {
-    rows = rows.filter((r) =>
-      (r['From Warehouse'] || '') === currentSession.warehouseName ||
-      (r['To Warehouse'] || '') === currentSession.warehouseName
-    );
-  }
+  let rows = headersInScope();
+  if (fromFilter) rows = rows.filter((r) => (r['From Warehouse'] || '') === fromFilter);
+  if (toFilter) rows = rows.filter((r) => (r['To Warehouse'] || '') === toFilter);
   if (statusFilter) {
     // Supports a comma-separated "multi-status" filter value (see the "Awaiting Receipt" option
     // in transfer-orders.html and dashboard.js's receiving notification) alongside the normal
@@ -201,16 +258,20 @@ function renderHeaders() {
     );
   }
 
+  const countEl = document.getElementById('toCount');
+  countEl.textContent = `${rows.length} transfer order${rows.length === 1 ? '' : 's'}`;
+  fitGridToViewport();
+
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">No transfer orders found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No transfer orders found.</td></tr>';
     return;
   }
 
   tbody.innerHTML = rows
     .map((r) => `
       <tr class="clickable-row" data-doc-no="${encodeURIComponent(r['No.'] || '')}">
-        <td>${r['Is Locked'] ? '<span title="Locked - no more changes except Ship/Receive">🔒</span> ' : ''}${r['No.'] || ''}</td>
-        <td>${r['Description'] || ''}</td>
+        <td><span class="bc-doc-no">${r['No.'] || ''}</span>${r['Is Locked'] ? ' <svg class="bc-ico" style="vertical-align:-3px; color:var(--text-muted);"><title>Locked - no more changes except Ship/Receive</title><use href="#ico-lock"/></svg>' : ''}</td>
+        <td class="cell-text" title="${escapeHtml(r['Description'] || '')}">${r['Description'] || ''}</td>
         <td><span class="badge ${statusBadgeClass(r['Status'])}">${r['Status'] || ''}</span></td>
         <td>${r['From Warehouse'] || ''}</td>
         <td>${r['To Warehouse'] || ''}</td>
@@ -694,7 +755,62 @@ async function openManageModal(docNo) {
   renderManageLines(lines, status);
   updateManageActionButtons(status, lines);
   await loadAvailableStockForLines(docNo);
+  await loadTransferBom(docNo);
   await autoFillQtyToShip(docNo, lines);
+}
+
+// Assemble-to-Order lines (Item Setup > Assemble to Order): the BOM exploded under the parent line,
+// per the quantity still to ship. Computed live from the item's current BOM (supabase_assemble_to_order.sql)
+// - shipping builds the shortfall from these components at the From Warehouse.
+let currentTransferBom = [];
+
+async function loadTransferBom(docNo) {
+  currentTransferBom = [];
+  document.querySelectorAll('#viewLinesBody tr.bom-explosion-row').forEach((tr) => tr.remove());
+
+  const { data, error } = await supabaseClient.rpc('staff_get_transfer_bom', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_document_no: docNo
+  });
+  if (error) {
+    // Not run yet (or a transient failure) - the order still works, it just shows no BOM.
+    console.error('staff_get_transfer_bom failed:', error);
+    return;
+  }
+  currentTransferBom = data || [];
+
+  const byLine = new Map();
+  currentTransferBom.forEach((r) => {
+    if (!byLine.has(String(r.line_no))) byLine.set(String(r.line_no), []);
+    byLine.get(String(r.line_no)).push(r);
+  });
+
+  byLine.forEach((components, lineNo) => {
+    const parentRow = document.querySelector(`#viewLinesBody tr[data-line-no="${lineNo}"]`);
+    if (!parentRow) return;
+    const first = components[0];
+    const fromName = escapeHtml(currentManageHeader?.['From Warehouse'] || 'From Warehouse');
+    const summary = first.to_build > 0
+      ? `Assemble to order - ${first.to_build} to build (${first.parent_on_hand} already on hand at ${fromName}). Exploded BOM:`
+      : `Assemble to order - nothing to build (${first.parent_on_hand} already on hand at ${fromName}).`;
+    const bodyRows = components.map((c) => {
+      const short = c.comp_on_hand == null ? null : Math.max(0, Number(c.qty_required) - Number(c.comp_on_hand));
+      return `<tr>
+        <td>${escapeHtml(c.component_code)}</td><td>${escapeHtml(c.component_name)}</td>
+        <td>${Number(c.qty_per)}</td><td>${Number(c.qty_required)}</td>
+        <td>${c.comp_on_hand == null ? '?' : Number(c.comp_on_hand)}</td>
+        <td>${short ? `<span class="error-text">short ${short}</span>` : ''}</td>
+      </tr>`;
+    }).join('');
+    const tr = document.createElement('tr');
+    tr.className = 'bom-explosion-row';
+    tr.innerHTML = `<td colspan="10" style="background:rgba(29,79,145,0.05);">
+      <div class="muted" style="margin-bottom:4px;">&#8627; ${summary}</div>
+      ${first.to_build > 0 ? `<table style="width:auto; min-width:60%;"><thead><tr><th>Component</th><th>Description</th><th>Qty per</th><th>Qty required</th><th>On hand</th><th></th></tr></thead><tbody>${bodyRows}</tbody></table>` : ''}
+    </td>`;
+    parentRow.after(tr);
+  });
 }
 
 // Qty To Ship is filled from what the From Warehouse has on hand: each line gets the lesser of
@@ -760,6 +876,9 @@ async function autoFillQtyToShip(docNo, lines) {
     if (line['Qty To Ship Manual'] === true && line['Qty To Ship'] !== null && line['Qty To Ship'] !== undefined) {
       // Someone chose this number by hand - keep it (never more than is still unshipped).
       fill = Math.min(remaining, Math.max(0, Number(line['Qty To Ship']) || 0));
+    } else if (currentStockExemptLineNos.has(String(lineNo))) {
+      if (!fillFromStock) continue;
+      fill = remaining; // not stock-limited - see currentStockExemptLineNos
     } else {
       if (!fillFromStock) continue;
       const available = currentAvailableByLineNo.get(String(lineNo));
@@ -786,11 +905,32 @@ async function autoFillQtyToShip(docNo, lines) {
 // fills those in. The numbers are also kept in currentAvailableByLineNo so Ship can check them
 // before it does anything it can't undo (claiming serials).
 let currentAvailableByLineNo = new Map();
+// Lines whose category has Category Setup > "Skip Stock Check on Transfer" (aquariums/stands/sumps) -
+// never blocked on stock, shown as "n/a" in Available, filled to the full unshipped quantity and left
+// out of Create PO. The ledger trigger skips its own check for them too
+// (supabase_category_skip_transfer_stock_check.sql).
+let currentStockExemptLineNos = new Set();
+
+async function loadStockExemptLines(docNo) {
+  currentStockExemptLineNos = new Set();
+  const { data, error } = await supabaseClient.rpc('staff_get_transfer_stock_exempt_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_document_no: docNo
+  });
+  if (error) {
+    // Best-effort (e.g. the SQL hasn't been run yet) - with nothing exempt every line is checked as before.
+    console.error('staff_get_transfer_stock_exempt_lines failed:', error);
+    return;
+  }
+  currentStockExemptLineNos = new Set((data || []).map((row) => String(row.line_no)));
+}
 
 async function loadAvailableStockForLines(docNo) {
   currentAvailableByLineNo = new Map();
   const cells = document.querySelectorAll('#viewLinesBody [data-available-line-no]');
   if (cells.length === 0) return;
+  await loadStockExemptLines(docNo);
 
   const { data, error } = await supabaseClient.rpc('staff_get_transfer_line_stock', {
     p_admin_username: currentSession.username,
@@ -809,6 +949,11 @@ async function loadAvailableStockForLines(docNo) {
 
   currentAvailableByLineNo = new Map((data || []).map((row) => [String(row.line_no), row]));
   cells.forEach((cell) => {
+    if (currentStockExemptLineNos.has(cell.dataset.availableLineNo)) {
+      cell.textContent = 'n/a';
+      cell.title = 'Stock not checked for this category (Category Setup > Skip Stock Check on Transfer).';
+      return;
+    }
     const row = currentAvailableByLineNo.get(cell.dataset.availableLineNo);
     if (!row) {
       cell.textContent = '?';
@@ -854,10 +999,44 @@ async function openCreatePoModal(docNo) {
   errorEl.classList.add('hidden');
   await loadAvailableStockForLines(docNo);
 
+  await loadTransferBom(docNo);
   const rows = Array.from(document.getElementById('viewLinesBody').querySelectorAll('tr[data-line-no]'));
   const missingLines = [];
   const unchecked = [];
+
+  // Assemble-to-Order lines are not bought as the parent - their BOM components are. Sum each
+  // component across every ATO line that uses it, then subtract what the From Warehouse already has once.
+  const atoLineNos = new Set(currentTransferBom.map((r) => String(r.line_no)));
+  const componentNeeds = new Map();
+  currentTransferBom.forEach((r) => {
+    if (Number(r.qty_required) <= 0) return;
+    const existing = componentNeeds.get(r.component_code)
+      || { itemCode: r.component_code, itemName: r.component_name, variantId: '', variantName: '', required: 0, onHand: r.comp_on_hand == null ? null : Number(r.comp_on_hand), parents: new Set() };
+    existing.required += Number(r.qty_required);
+    existing.parents.add(r.parent_item);
+    componentNeeds.set(r.component_code, existing);
+  });
+  componentNeeds.forEach((c) => {
+    if (c.onHand == null) {
+      unchecked.push(`${c.itemCode} (BOM component)`);
+      return;
+    }
+    const missing = c.required - Math.max(0, c.onHand);
+    if (missing > 0) {
+      missingLines.push({
+        itemCode: c.itemCode,
+        itemName: `${c.itemName} (for ${Array.from(c.parents).join(', ')})`,
+        variantId: '',
+        variantName: '',
+        onHand: Math.max(0, c.onHand),
+        missing
+      });
+    }
+  });
+
   rows.forEach((row) => {
+    if (atoLineNos.has(String(row.dataset.lineNo))) return;
+    if (currentStockExemptLineNos.has(String(row.dataset.lineNo))) return;
     const remaining = Math.max(0, (Number(row.dataset.qtyToTransfer) || 0) - (Number(row.dataset.qtyShipped) || 0));
     if (remaining <= 0) return;
     const available = currentAvailableByLineNo.get(String(row.dataset.lineNo));
@@ -1109,6 +1288,7 @@ async function shipTransferOrder(docNo) {
       const shortages = [];
       for (const line of lineUpdates) {
         if (line.increment <= 0) continue;
+        if (currentStockExemptLineNos.has(String(line.lineNo))) continue;
         const row = rows.find((r) => r.dataset.lineNo === line.lineNo);
         const available = currentAvailableByLineNo.get(String(line.lineNo));
         const label = row?.dataset.itemNo || `line ${line.lineNo}`;
@@ -1593,6 +1773,7 @@ function applyItemSelection(row, code, name) {
     clearVariantSelection(row);
   }
   updateProductionCategoryLock();
+  scheduleNewBomPreview();
 }
 
 // Once a line item is picked, changing "Use Production Category" (which drives which From
@@ -1915,6 +2096,73 @@ function applyEstimatedDeliveryDate() {
   document.getElementById('newEstimatedDeliveryDate').value = computeNextDeliveryDate(requestedDate);
 }
 
+// ---- Assemble-to-Order: exploded BOM on the New Transfer Order screen ----
+// Every line whose item is flagged Assemble to Order gets its BOM exploded (qty x qty per) in the box
+// below the lines, and that exploded BOM is saved with the order as a snapshot (see
+// saveNewTransfer / supabase_assemble_to_order.sql). The BOM is looked up per item and cached for
+// this screen visit.
+const newBomCache = new Map(); // item code -> { assemble_to_order, components: [...] } | null
+let newBomPreviewTimer = null;
+
+function scheduleNewBomPreview() {
+  clearTimeout(newBomPreviewTimer);
+  newBomPreviewTimer = setTimeout(refreshNewBomPreview, 300);
+}
+
+async function getItemBomCached(itemCode) {
+  if (newBomCache.has(itemCode)) return newBomCache.get(itemCode);
+  const { data, error } = await supabaseClient.rpc('staff_get_item_bom', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: itemCode
+  });
+  // Not run yet / transient failure - treat as "not assemble to order" so requesting still works.
+  const bom = error ? null : data;
+  newBomCache.set(itemCode, bom);
+  return bom;
+}
+
+// Returns [{ line_no, item_no, qty, components: [{ component_code, component_name, qty_per }] }] for the ATO lines.
+async function collectNewBomLines() {
+  const rows = Array.from(document.getElementById('newLinesBody').querySelectorAll('tr'));
+  const result = [];
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    const itemNo = row.querySelector('.line-item-no')?.value.trim();
+    if (!itemNo) continue;
+    const bom = await getItemBomCached(itemNo);
+    if (!bom || !bom.assemble_to_order || !bom.components || bom.components.length === 0) continue;
+    result.push({
+      line_no: (index + 1) * 10000,
+      item_no: itemNo,
+      qty: parseFloat(row.querySelector('.line-qty')?.value) || 0,
+      components: bom.components
+    });
+  }
+  return result;
+}
+
+async function refreshNewBomPreview() {
+  const box = document.getElementById('newBomPreview');
+  const atoLines = await collectNewBomLines();
+  if (atoLines.length === 0) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = '<div class="muted" style="margin-bottom:4px;">Assemble to order - exploded BOM (saved with this request):</div>' + atoLines.map((l) => `
+    <div style="margin-bottom:8px;">
+      <strong>${escapeHtml(l.item_no)}</strong> &times; ${l.qty}
+      <table style="width:auto; min-width:50%; margin-top:2px;">
+        <thead><tr><th>Component</th><th>Description</th><th>Qty per</th><th>Qty required</th></tr></thead>
+        <tbody>${l.components.map((c) => `
+          <tr><td>${escapeHtml(c.component_code)}</td><td>${escapeHtml(c.component_name)}</td><td>${Number(c.qty_per)}</td><td>${Number(c.qty_per) * l.qty}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`).join('');
+  box.classList.remove('hidden');
+}
+
 function addNewLineRow() {
   const tbody = document.getElementById('newLinesBody');
   const row = document.createElement('tr');
@@ -1935,7 +2183,9 @@ function addNewLineRow() {
   row.querySelector('.remove-line-btn').addEventListener('click', () => {
     row.remove();
     updateProductionCategoryLock();
+    scheduleNewBomPreview();
   });
+  row.querySelector('.line-qty').addEventListener('input', scheduleNewBomPreview);
 
   const itemInput = row.querySelector('.line-item-no');
   let itemSearchDebounceHandle = null;
@@ -2010,6 +2260,7 @@ async function openNewTransferModal() {
   applyEstimatedDeliveryDate();
   document.getElementById('newUseProductionCategory').checked = false;
   document.getElementById('newLinesBody').innerHTML = '';
+  document.getElementById('newBomPreview').classList.add('hidden');
   document.getElementById('newTransferError').classList.add('hidden');
   addNewLineRow();
   updateProductionCategoryLock();
@@ -2142,6 +2393,27 @@ async function saveNewTransfer() {
       });
     }
 
+    // Assemble-to-Order lines: keep the exploded BOM as it was when requested, so a later change to
+    // the item's BOM doesn't alter this order. A failure here doesn't fail the request - the order
+    // is already saved, and without a snapshot it simply falls back to the item's current BOM.
+    try {
+      const atoLines = await collectNewBomLines();
+      if (atoLines.length > 0) {
+        const { error: snapshotError } = await supabaseClient.rpc('staff_save_transfer_bom_snapshot', {
+          p_admin_username: currentSession.username,
+          p_admin_password: currentSession.password,
+          p_document_no: no,
+          p_lines: atoLines.map((l) => ({
+            line_no: l.line_no,
+            components: l.components.map((c) => ({ component_code: c.component_code, qty_per: c.qty_per }))
+          }))
+        });
+        if (snapshotError) console.error('staff_save_transfer_bom_snapshot failed:', snapshotError);
+      }
+    } catch (snapshotErr) {
+      console.error('BOM snapshot failed:', snapshotErr);
+    }
+
     document.getElementById('newTransferModal').classList.add('hidden');
     await loadHeaders();
   } catch (err) {
@@ -2179,6 +2451,29 @@ async function saveNewTransfer() {
     saveFilters();
     renderHeaders();
   });
+  ['fpFromWarehouse', 'fpToWarehouse'].forEach((id) =>
+    document.getElementById(id).addEventListener('change', () => {
+      saveFilters();
+      renderHeaders();
+    })
+  );
+  document.querySelectorAll('#statusTabs .bc-tab').forEach((tab) =>
+    tab.addEventListener('click', () => {
+      document.getElementById('statusFilter').value = tab.dataset.status;
+      saveFilters();
+      renderHeaders();
+    })
+  );
+  document.getElementById('clearFiltersBtn').addEventListener('click', clearListFilters);
+  document.getElementById('clearFiltersLink').addEventListener('click', clearListFilters);
+  let filterPaneOpen = true;
+  document.getElementById('filterPaneBtn').addEventListener('click', () => {
+    filterPaneOpen = !filterPaneOpen;
+    document.getElementById('filterPane').classList.toggle('hidden', !filterPaneOpen);
+    document.getElementById('bcBody').classList.toggle('no-filterpane', !filterPaneOpen);
+    document.getElementById('filterPaneBtn').setAttribute('aria-pressed', filterPaneOpen ? 'true' : 'false');
+  });
+  window.addEventListener('resize', fitGridToViewport);
   document.getElementById('refreshBtn').addEventListener('click', loadHeaders);
   document.getElementById('newTransferBtn').addEventListener('click', openNewTransferModal);
   document.getElementById('closeNewTransferBtn').addEventListener('click', () =>

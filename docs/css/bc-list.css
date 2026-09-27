@@ -1026,6 +1026,692 @@
   --bc-input-bg: #111a2c;
 }
 
+/* ------------------------------------------------------------------ card page (User Card - docs/user-setup.html)
+   A BC card in a dialog: small caption over the title, FastTabs as flat sections with a rule under
+   the heading (not rounded boxes), fields in two columns with the label to the left, and booleans
+   as BC's toggle switch. */
+
+.bc-dialog.bc-card {
+  max-width: 1040px;
+}
+
+.bc-card .bc-card-caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.bc-card .bc-dialog-body {
+  max-height: calc(100vh - 14vh - 150px);
+  overflow-y: auto;
+}
+
+.bc-card .doc-fasttab {
+  border: none;
+  border-radius: 0;
+  margin: 0 0 6px;
+  background: transparent;
+}
+
+.bc-card .doc-fasttab > summary {
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--bc-line);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.bc-card .doc-fasttab > summary .doc-fasttab-summary {
+  font-size: 12.5px;
+}
+
+.bc-card .doc-fasttab-body {
+  padding: 12px 0 8px;
+}
+
+.bc-card .bc-card-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 40px;
+}
+
+.bc-card .bc-field {
+  grid-template-columns: 190px minmax(0, 1fr);
+  min-height: 32px;
+}
+
+.bc-card .bc-field.bc-field-top {
+  align-items: start;
+}
+
+.bc-card .bc-field > label .bc-field-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.bc-card input[type="text"],
+.bc-card input[type="password"],
+.bc-card input[type="number"],
+.bc-card input[type="date"],
+.bc-card select {
+  width: 100%;
+  height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg, #fff);
+}
+
+.bc-card input:disabled {
+  background: var(--bc-surface-2);
+  color: var(--text-muted);
+}
+
+.bc-card input:focus,
+.bc-card select:focus {
+  outline: 2px solid var(--bc-link);
+  outline-offset: -1px;
+}
+
+.bc-card .bc-role-picks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+  padding-top: 5px;
+}
+
+.bc-card .bc-role-picks label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.bc-card .bc-role-picks input {
+  width: auto;
+  margin: 0;
+}
+
+/* BC boolean field: a small toggle switch instead of a checkbox. */
+.bc-card input.bc-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 10px;
+  background: var(--bc-input-bg, #fff);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.bc-card input.bc-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.bc-card input.bc-switch:checked {
+  border-color: var(--bc-link);
+  background: var(--bc-link);
+}
+
+.bc-card input.bc-switch:checked::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.bc-card input.bc-switch:focus-visible {
+  outline: 2px solid var(--bc-link);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ document page (Transfer Order - docs/transfer-orders.html)
+   A BC document (header + lines) shown in the existing .modal-backdrop/.modal-panel, so the page's
+   Maximize (applyModalMaximized) keeps working - .bc-doc only restyles the panel: caption over the
+   title, the action bar at the top (not buttons at the bottom), a flat General FastTab with
+   label-left fields in two columns, and a "Lines" part as a compact grid. It sits outside
+   .page.bc-ile, so it carries its own colour variables and its own copy of the controls it uses. */
+
+.modal-panel.bc-doc {
+  --bc-surface: #ffffff;
+  --bc-surface-2: #faf9f8;
+  --bc-line: #e1dfdd;
+  --bc-line-strong: #c8c6c4;
+  --bc-hover: #f3f2f1;
+  --bc-selected: #e3eefa;
+  --bc-cmd-hover: #edebe9;
+  --bc-link: #0f6cbd;
+  --bc-input-bg: #ffffff;
+  --bc-edit-bg: #fffdf5;
+  padding: 0;
+  border-radius: 2px;
+  background: var(--bc-surface);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+:root[data-theme="dark"] .modal-panel.bc-doc {
+  --bc-surface: #111a2c;
+  --bc-surface-2: #0f1728;
+  --bc-line: #22314b;
+  --bc-line-strong: #33476a;
+  --bc-hover: #16213a;
+  --bc-selected: #1b2e52;
+  --bc-cmd-hover: #1a2740;
+  --bc-link: #6cb0f5;
+  --bc-input-bg: #111a2c;
+  --bc-edit-bg: #1a2438;
+  /* styles.css's dark .modal-panel rule is more specific than .modal-panel.bc-doc - restate it. */
+  background: var(--bc-surface);
+}
+
+.modal-panel.bc-doc.modal-maximized {
+  padding: 0;
+}
+
+/* Maximized: header, action bar and footer stay put; only the body scrolls. */
+.modal-panel.bc-doc.modal-maximized .bc-doc-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+
+.modal-panel.bc-doc.modal-maximized .manage-lines-wrap,
+.modal-panel.bc-doc.modal-maximized .line-items-wrap {
+  flex: none;
+  overflow: visible;
+}
+
+.bc-doc svg.bc-ico {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bc-doc .bc-doc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px 6px;
+}
+
+.bc-doc .bc-doc-caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.bc-doc .bc-doc-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.bc-doc .bc-doc-titleline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.bc-doc .bc-doc-lock {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.bc-doc .bc-doc-window {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.bc-doc .bc-cmdbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px 14px;
+  border-bottom: 1px solid var(--bc-line);
+}
+
+.bc-doc .bc-cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bc-doc .bc-cmd:hover:not(:disabled) {
+  background: var(--bc-cmd-hover);
+}
+
+.bc-doc .bc-cmd:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bc-doc .bc-cmd-accent {
+  color: var(--bc-link);
+  font-weight: 600;
+}
+
+.bc-doc .bc-cmd-danger {
+  color: var(--danger);
+}
+
+.bc-doc .bc-cmd-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--bc-line-strong);
+}
+
+.bc-doc .bc-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.bc-doc .bc-iconbtn:hover {
+  background: var(--bc-cmd-hover);
+}
+
+.bc-doc .bc-doc-close {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.bc-doc .bc-btn {
+  height: 30px;
+  padding: 0 16px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  background: var(--bc-surface);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bc-doc .bc-btn:hover:not(:disabled) {
+  background: var(--bc-hover);
+}
+
+.bc-doc .bc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bc-doc .bc-btn-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.bc-doc .bc-btn-primary:hover:not(:disabled) {
+  background: var(--primary-strong);
+}
+
+.bc-doc .bc-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--bc-link);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.bc-doc .bc-link:hover {
+  text-decoration: underline;
+}
+
+/* Errors show as a bar right under the action bar, where the action that raised them is. */
+.bc-doc .bc-doc-error {
+  margin: 10px 20px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  background: rgba(209, 52, 56, 0.07);
+  font-size: 13px;
+}
+
+.bc-doc .bc-doc-body {
+  padding: 6px 20px 18px;
+}
+
+.bc-doc .bc-doc-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--bc-line);
+}
+
+.bc-doc .bc-doc-foot .bc-dialog-msg {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+/* FastTab: flat section, heading with a rule under it - not a rounded box. */
+.bc-doc .doc-fasttab {
+  border: none;
+  border-radius: 0;
+  margin: 0 0 10px;
+  background: transparent;
+}
+
+.bc-doc .doc-fasttab > summary {
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--bc-line);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.bc-doc .doc-fasttab > summary .doc-fasttab-summary {
+  font-size: 12.5px;
+}
+
+.bc-doc .doc-fasttab-body {
+  padding: 12px 0 4px;
+}
+
+.bc-doc .bc-doc-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 40px;
+}
+
+/* BC card field: label to the LEFT of its value. */
+.bc-doc .bc-doc-field {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 32px;
+  margin-bottom: 6px;
+}
+
+.bc-doc .bc-doc-field.bc-doc-field-top {
+  align-items: start;
+}
+
+.bc-doc .bc-doc-field.bc-doc-field-top > label {
+  padding-top: 6px;
+}
+
+.bc-doc .bc-doc-field > label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-main);
+}
+
+/* Read-only value: plain text on a faint underline, the way BC shows a non-editable field. */
+.bc-doc .bc-doc-value {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px dotted var(--bc-line-strong);
+}
+
+.bc-doc .bc-doc-hint {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.bc-doc .bc-doc-inline-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.bc-doc .bc-doc-inline-edit select {
+  flex: 1;
+}
+
+.bc-doc .bc-doc-field input[type="text"],
+.bc-doc .bc-doc-field input[type="date"],
+.bc-doc .bc-doc-field select,
+.bc-doc .bc-doc-inline-edit select {
+  width: 100%;
+  height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-input-bg);
+  color: var(--text-main);
+}
+
+.bc-doc .bc-doc-field input:disabled {
+  background: var(--bc-surface-2);
+  color: var(--text-main);
+  opacity: 1;
+}
+
+.bc-doc input:focus,
+.bc-doc select:focus {
+  outline: 2px solid var(--bc-link);
+  outline-offset: -1px;
+}
+
+/* BC boolean field: toggle switch. */
+.bc-doc input.bc-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 5px 0 0;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 10px;
+  background: var(--bc-input-bg);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.bc-doc input.bc-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.bc-doc input.bc-switch:checked {
+  border-color: var(--bc-link);
+  background: var(--bc-link);
+}
+
+.bc-doc input.bc-switch:checked::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.bc-doc input.bc-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Lines part */
+.bc-doc .bc-doc-part {
+  margin-top: 8px;
+}
+
+.bc-doc .bc-doc-part-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 6px;
+  border-bottom: 1px solid var(--bc-line);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.bc-doc .bc-doc-part-head .bc-cmd {
+  font-weight: 400;
+}
+
+/* Direct children only (> thead / > tbody), so a table nested inside a line - the Assemble-to-Order
+   BOM under its parent line - keeps its own look. */
+.bc-doc table.bc-doc-lines {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bc-surface);
+  font-size: 13px;
+}
+
+.bc-doc table.bc-doc-lines > thead > tr > th,
+.bc-doc table.bc-doc-lines > tbody > tr > td {
+  padding: 3px 8px;
+  height: 34px;
+  border: none;
+  border-bottom: 1px solid var(--bc-line);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 13px;
+}
+
+.bc-doc table.bc-doc-lines > thead > tr > th {
+  background: var(--bc-surface);
+  border-bottom: 1px solid var(--bc-line-strong);
+  color: var(--text-main);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bc-doc table.bc-doc-lines > tbody > tr:hover > td {
+  background: var(--bc-hover);
+}
+
+.bc-doc table.bc-doc-lines .num {
+  text-align: right;
+}
+
+/* Manage lines: Available, Qty To Transfer, Qty To Ship, Qty Shipped, Qty To Receive, Qty Received. */
+.bc-doc #manageLinesTable > tbody > tr > td:nth-child(4),
+.bc-doc #manageLinesTable > tbody > tr > td:nth-child(5),
+.bc-doc #manageLinesTable > tbody > tr > td:nth-child(6),
+.bc-doc #manageLinesTable > tbody > tr > td:nth-child(8),
+.bc-doc #manageLinesTable > tbody > tr > td:nth-child(9),
+.bc-doc #manageLinesTable > tbody > tr > td:nth-child(10) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Editable cells get BC's faint "this is an input" tint. */
+.bc-doc .manage-qty-to-ship,
+.bc-doc .manage-qty-to-receive {
+  width: 80px;
+  height: 26px;
+  padding: 1px 6px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: var(--bc-edit-bg);
+  color: var(--text-main);
+}
+
+.bc-doc .line-items-table > tbody > tr > td input,
+.bc-doc .line-items-table > tbody > tr > td select {
+  height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--bc-line-strong);
+  border-radius: 2px;
+  font-size: 13px;
+  background: var(--bc-edit-bg);
+  color: var(--text-main);
+}
+
+.bc-doc .serial-tag-search {
+  height: 26px;
+  border-radius: 2px;
+}
+
+.bc-doc .bom-explosion-row > td {
+  white-space: normal;
+}
+
+/* Dialog-sized document (Create PO) */
+.modal-panel.bc-doc.bc-doc-dialog {
+  width: 95vw;
+}
+
+/* List page (Transfer Orders): the document No. reads as a link, as in BC. */
+.bc-ile .bc-grid .bc-doc-no {
+  color: var(--bc-link);
+  font-weight: 600;
+}
+
+.bc-ile .bc-grid tbody tr.clickable-row {
+  cursor: pointer;
+}
+
+.bc-ile .bc-grid tbody tr.clickable-row:hover .bc-doc-no {
+  text-decoration: underline;
+}
+
+.bc-ile .bc-grid .badge {
+  padding: 2px 9px;
+  font-size: 11.5px;
+}
+
 /* ------------------------------------------------------------------ narrower screens */
 
 @media (max-width: 1280px) {
@@ -1067,6 +1753,28 @@
 
   .bc-dialog .bc-field {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bc-card .bc-card-cols,
+  .bc-card .bc-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bc-doc .bc-doc-cols,
+  .bc-doc .bc-doc-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bc-doc .bc-doc-head,
+  .bc-doc .bc-doc-body,
+  .bc-doc .bc-doc-foot {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .bc-doc .manage-lines-wrap,
+  .bc-doc .line-items-wrap {
+    overflow-x: auto;
   }
 }
 

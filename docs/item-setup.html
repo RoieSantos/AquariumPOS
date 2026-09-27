@@ -270,6 +270,33 @@
         </div>
       </details>
 
+      <!-- Assemble to Order: the parent is never stocked at the source warehouse - a Transfer Order
+           for it shows this BOM exploded, and shipping it builds it from the components. See
+           supabase_assemble_to_order.sql. -->
+      <details class="doc-fasttab" id="itemCardBomTab">
+        <summary>
+          Assemble to Order
+          <span class="doc-fasttab-summary" id="itemCardBomSummary"></span>
+        </summary>
+        <div class="doc-fasttab-body">
+          <label class="checkbox-row" style="font-weight:400;">
+            <input type="checkbox" id="factboxAtoCheckbox" />
+            Assemble to Order - built from its components when a Transfer Order requests it
+          </label>
+          <div id="factboxBomSaved" class="muted hidden" style="margin-bottom:4px;">Saved.</div>
+          <div id="factboxBomBody" class="hidden" style="max-width:560px; margin-top:8px;">
+            <div id="factboxBomComponents"></div>
+            <div style="display:flex; gap:6px; margin-top:8px; position:relative;">
+              <input type="text" id="factboxBomSearch" placeholder="Search component item..." style="flex:1;" autocomplete="off" />
+              <input type="number" id="factboxBomQty" step="0.0001" min="0" placeholder="Qty per" style="width:90px;" title="How many of this component go into ONE parent" />
+              <button class="btn btn-secondary btn-sm" id="factboxBomAddBtn" type="button">Add</button>
+            </div>
+            <div id="factboxBomHits" style="max-width:560px;"></div>
+            <div class="muted" id="factboxBomPicked" style="font-size:12px; margin-top:4px;"></div>
+          </div>
+        </div>
+      </details>
+
       <details class="doc-fasttab" id="itemCardVariantsTab">
         <summary>
           Variants

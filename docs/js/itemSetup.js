@@ -397,6 +397,168 @@ async function removeItemUom(uomCode) {
   await loadFactboxItemUoms(openFactboxCode);
 }
 
+// ---- Assemble to Order (BOM) - supabase_assemble_to_order.sql ----
+let factboxBomPicked = null; // { code, name } chosen from the component search
+let factboxBomSearchTimer = null;
+
+function bomRowHtml(c) {
+  return `
+    <div class="item-uom-row" data-component-code="${escapeHtml(c.component_code)}">
+      <span class="item-uom-code" title="${escapeHtml(c.component_name)}" style="flex:1;">${escapeHtml(c.component_code)} - ${escapeHtml(c.component_name)}</span>
+      <input type="number" class="item-bom-qty" step="0.0001" min="0" value="${Number(c.qty_per)}" title="How many of this component go into ONE parent" />
+      <button type="button" class="item-bom-remove" title="Remove this component">&times;</button>
+    </div>
+  `;
+}
+
+async function loadFactboxBom(code) {
+  const body = document.getElementById('factboxBomBody');
+  const check = document.getElementById('factboxAtoCheckbox');
+  document.getElementById('factboxBomSaved').classList.add('hidden');
+  factboxBomPicked = null;
+  document.getElementById('factboxBomPicked').textContent = '';
+  document.getElementById('factboxBomHits').innerHTML = '';
+  document.getElementById('factboxBomSearch').value = '';
+  document.getElementById('factboxBomQty').value = '';
+
+  const { data, error } = await supabaseClient.rpc('staff_get_item_bom', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: code
+  });
+  if (openFactboxCode !== code) return;
+
+  if (error) {
+    // Most likely supabase_assemble_to_order.sql has not been run yet.
+    document.getElementById('factboxBomComponents').innerHTML = `<p class="error-text">${escapeHtml(error.message)}</p>`;
+    body.classList.remove('hidden');
+    return;
+  }
+
+  const bom = data || { assemble_to_order: false, components: [] };
+  check.checked = !!bom.assemble_to_order;
+  body.classList.toggle('hidden', !bom.assemble_to_order);
+  document.getElementById('factboxBomComponents').innerHTML = bom.components.length === 0
+    ? '<p class="muted">No components yet - add what goes into one of this item.</p>'
+    : bom.components.map(bomRowHtml).join('');
+  document.getElementById('itemCardBomSummary').textContent = bom.assemble_to_order
+    ? `${bom.components.length} component(s)`
+    : '';
+}
+
+async function saveFactboxAssembleToOrder() {
+  const check = document.getElementById('factboxAtoCheckbox');
+  const { error } = await supabaseClient.rpc('admin_set_item_assemble_to_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: openFactboxCode,
+    p_enabled: check.checked
+  });
+  if (error) {
+    window.alert(error.message || 'Failed to save.');
+    check.checked = !check.checked;
+    return;
+  }
+  await loadFactboxBom(openFactboxCode);
+  document.getElementById('factboxBomSaved').classList.remove('hidden');
+}
+
+async function saveBomComponent(componentCode, qty) {
+  const { error } = await supabaseClient.rpc('admin_upsert_item_bom_component', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_parent_code: openFactboxCode,
+    p_component_code: componentCode,
+    p_qty_per: qty
+  });
+  if (error) {
+    window.alert(error.message || 'Failed to save this component.');
+    return false;
+  }
+  return true;
+}
+
+async function addBomComponent() {
+  const qty = Number(document.getElementById('factboxBomQty').value);
+  if (!factboxBomPicked) {
+    window.alert('Search and pick a component item first.');
+    return;
+  }
+  if (!qty || qty <= 0) {
+    window.alert('Enter how many of this component go into one parent.');
+    return;
+  }
+  if (!(await saveBomComponent(factboxBomPicked.code, qty))) return;
+  await loadFactboxBom(openFactboxCode);
+}
+
+async function removeBomComponent(componentCode) {
+  const { error } = await supabaseClient.rpc('admin_remove_item_bom_component', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_parent_code: openFactboxCode,
+    p_component_code: componentCode
+  });
+  if (error) {
+    window.alert(error.message || 'Failed to remove this component.');
+    return;
+  }
+  await loadFactboxBom(openFactboxCode);
+}
+
+function wireFactboxBom() {
+  document.getElementById('factboxAtoCheckbox').addEventListener('change', saveFactboxAssembleToOrder);
+  document.getElementById('factboxBomAddBtn').addEventListener('click', addBomComponent);
+
+  document.getElementById('factboxBomSearch').addEventListener('input', () => {
+    clearTimeout(factboxBomSearchTimer);
+    factboxBomPicked = null;
+    document.getElementById('factboxBomPicked').textContent = '';
+    const term = document.getElementById('factboxBomSearch').value.trim();
+    const hitsEl = document.getElementById('factboxBomHits');
+    if (!term) { hitsEl.innerHTML = ''; return; }
+    factboxBomSearchTimer = setTimeout(async () => {
+      const { data } = await supabaseClient.rpc('staff_search_items', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_search: term,
+        p_limit: 8
+      });
+      hitsEl.innerHTML = (data || [])
+        .filter((h) => h.code !== openFactboxCode)
+        .map((h) => `<div class="item-vendor-row bom-hit" style="cursor:pointer;" data-code="${escapeHtml(h.code)}" data-name="${escapeHtml(h.name)}">${escapeHtml(h.code)} - ${escapeHtml(h.name)}</div>`)
+        .join('') || '<div class="muted">No items found.</div>';
+    }, 250);
+  });
+
+  document.getElementById('factboxBomHits').addEventListener('click', (e) => {
+    const hit = e.target.closest('.bom-hit');
+    if (!hit) return;
+    factboxBomPicked = { code: hit.dataset.code, name: hit.dataset.name };
+    document.getElementById('factboxBomPicked').textContent = `Selected: ${factboxBomPicked.code} - ${factboxBomPicked.name}`;
+    document.getElementById('factboxBomSearch').value = factboxBomPicked.code;
+    document.getElementById('factboxBomHits').innerHTML = '';
+  });
+
+  const listEl = document.getElementById('factboxBomComponents');
+  listEl.addEventListener('click', (e) => {
+    const removeBtn = e.target.closest('.item-bom-remove');
+    if (removeBtn) removeBomComponent(removeBtn.closest('.item-uom-row').dataset.componentCode);
+  });
+  // A quantity saves when you leave the box, same as the unit-of-measure rows.
+  listEl.addEventListener('change', async (e) => {
+    const input = e.target.closest('.item-bom-qty');
+    if (!input) return;
+    const qty = Number(input.value);
+    if (!qty || qty <= 0) {
+      window.alert('Quantity per must be greater than zero.');
+      await loadFactboxBom(openFactboxCode);
+      return;
+    }
+    await saveBomComponent(input.closest('.item-uom-row').dataset.componentCode, qty);
+  });
+}
+
 async function saveFactboxUnitsOfMeasure() {
   if (!openFactboxCode) return;
 
@@ -1006,6 +1168,7 @@ async function openFactbox(code) {
 
   document.getElementById('factboxUomSaved').classList.add('hidden');
   loadFactboxItemUoms(code);
+  loadFactboxBom(code);
   loadItemCardStockByLocation(code);
 
   document.getElementById('factboxCostSaved').classList.add('hidden');
@@ -1386,6 +1549,7 @@ function wireFactbox() {
 
   document.getElementById('factboxUomSaveBtn').addEventListener('click', saveFactboxUnitsOfMeasure);
   document.getElementById('factboxAddUomBtn').addEventListener('click', addItemUom);
+  wireFactboxBom();
 
   // Delegated, same as the vendor rows - these are re-rendered on every load. A conversion saves
   // when you leave the box: it is a single number, and a Save button per row would crowd a panel

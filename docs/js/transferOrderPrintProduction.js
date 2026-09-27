@@ -21,6 +21,23 @@ function lineRemainingToShip(l) {
   return Math.max(0, (Number(l['Qty To Transfer']) || 0) - (Number(l['Qty Shipped']) || 0));
 }
 
+// Assemble-to-Order lines: the exploded BOM (components x quantity still to ship) printed right under
+// the parent line, so the warehouse has a build list. Comes from staff_get_transfer_bom
+// (supabase_assemble_to_order.sql) - empty if that isn't set up, in which case nothing extra prints.
+let bomByLineNo = new Map();
+
+function bomRowsHtml(lineNo) {
+  const components = bomByLineNo.get(String(lineNo));
+  if (!components || components.length === 0) return '';
+  return `
+    <tr>
+      <td colspan="4">
+        <strong>Assemble to order - build list:</strong>
+        ${components.map((c) => `<div>&#8627; ${c.component_code} - ${c.component_name}: ${Number(c.total_required)} (${Number(c.qty_per)} per)</div>`).join('')}
+      </td>
+    </tr>`;
+}
+
 function renderLines(lines) {
   const body = document.getElementById('linesBody');
   const toShip = (lines || [])
@@ -39,7 +56,7 @@ function renderLines(lines) {
         <td>${l['Variant Name'] || ''}</td>
         <td>${l['Description'] || ''}</td>
         <td>${qty}</td>
-      </tr>
+      </tr>${bomRowsHtml(l['Line No.'])}
     `)
     .join('');
 }
@@ -76,6 +93,18 @@ async function loadOrder(docNo) {
   if (lineError) {
     document.getElementById('linesBody').innerHTML = `<tr><td class="error-text">${lineError.message}</td></tr>`;
   } else {
+    const { data: bomRows, error: bomError } = await supabaseClient.rpc('staff_get_transfer_bom', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_document_no: docNo
+    });
+    bomByLineNo = new Map();
+    if (!bomError) {
+      (bomRows || []).forEach((r) => {
+        if (!bomByLineNo.has(String(r.line_no))) bomByLineNo.set(String(r.line_no), []);
+        bomByLineNo.get(String(r.line_no)).push(r);
+      });
+    }
     renderLines(lineRows || []);
   }
 

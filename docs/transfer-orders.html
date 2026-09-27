@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Transfer Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=3" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,237 +17,353 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <div class="toolbar">
-      <h1>Transfer Orders</h1>
-      <button class="btn btn-primary" id="newTransferBtn" type="button">+ New Transfer Order</button>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-clear-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/><path d="M11.5 11.5l3 3M14.5 11.5l-3 3"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-ship" viewBox="0 0 16 16"><path d="M1.5 4h8v6.5h-8zM9.5 6.5h2.8l2.2 2.3v1.7h-5"/><circle cx="4.2" cy="11.8" r="1.3"/><circle cx="11.8" cy="11.8" r="1.3"/></symbol>
+    <symbol id="ico-receive" viewBox="0 0 16 16"><path d="M2 9.5h3.2l1 1.8h3.6l1-1.8H14V13H2z"/><path d="M8 2.5v6M5.6 6.2 8 8.6l2.4-2.4"/></symbol>
+    <symbol id="ico-cart" viewBox="0 0 16 16"><path d="M1.5 2.5h2l1.6 7.5h7.4l1.5-5.2H4.2"/><circle cx="6" cy="12.8" r="1"/><circle cx="11.6" cy="12.8" r="1"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-cancel" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.8"/><path d="M4 12 12 4"/></symbol>
+    <symbol id="ico-delete" viewBox="0 0 16 16"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></symbol>
+    <symbol id="ico-lock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></symbol>
+  </svg>
+
+  <!-- Business Central list page: title + search, action bar, views, filter pane | list.
+       Same shell as Item Ledger Entries / User Setup (css/bc-list.css). A row opens the Transfer
+       Order document below. -->
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Transfer Orders</h1>
+        <p class="bc-subtitle">Stock moving between warehouses - request, ship and receive.</p>
+      </div>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="searchInput" placeholder="Search" aria-label="Search by No., description, warehouse" autocomplete="off" />
+        </div>
+        <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+          <svg class="bc-ico"><use href="#ico-filter"/></svg>
+        </button>
+        <button class="bc-iconbtn" id="clearFiltersBtn" type="button" title="Clear filters" aria-label="Clear filters">
+          <svg class="bc-ico"><use href="#ico-clear-filter"/></svg>
+        </button>
+      </div>
     </div>
 
-    <div class="toolbar">
-      <input type="text" id="searchInput" placeholder="Search by No., description, warehouse..." style="max-width:320px;" />
-      <select id="statusFilter" style="max-width:200px;">
-        <option value="">All statuses</option>
-        <option value="Requested">Requested</option>
-        <option value="Partial Shipped">Partial Shipped</option>
-        <option value="In-Transit">In-Transit</option>
-        <!-- Comma-separated "multi-status" value - renderHeaders() in transferOrders.js splits
-             this on comma and matches any of them. Also what the Dashboard's "waiting to be
-             received" notification deep-links to (see dashboard.js's loadNotifications). -->
-        <option value="In-Transit,Partial Shipped">Awaiting Receipt (In-Transit + Partial Shipped)</option>
-        <option value="Partial Received">Partial Received</option>
-        <option value="Received">Received</option>
-        <option value="Cancelled">Cancelled</option>
-      </select>
-      <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+    <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+      <button class="bc-cmd bc-cmd-accent" id="newTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="refreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
     </div>
 
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>No.</th>
-            <th>Description</th>
-            <th>Status</th>
-            <th>From</th>
-            <th>To</th>
-            <th>Requested Date</th>
-            <th>Target Delivery Date</th>
-            <th>Transfer Date</th>
-            <th>Receive Date</th>
-          </tr>
-        </thead>
-        <tbody id="headerTableBody">
-          <tr><td colspan="9" class="muted">Loading...</td></tr>
-        </tbody>
-      </table>
+    <!-- List views - each just sets the Status filter below (js/transferOrders.js syncStatusTabs). -->
+    <div class="bc-tabs" role="tablist" id="statusTabs">
+      <button class="bc-tab" type="button" role="tab" data-status="">All</button>
+      <button class="bc-tab" type="button" role="tab" data-status="Requested">Requested</button>
+      <button class="bc-tab" type="button" role="tab" data-status="In-Transit,Partial Shipped">Awaiting Receipt</button>
+      <button class="bc-tab" type="button" role="tab" data-status="Received">Received</button>
+      <button class="bc-tab" type="button" role="tab" data-status="Cancelled">Cancelled</button>
+    </div>
+
+    <div class="bc-body no-factbox" id="bcBody">
+      <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+        <div class="bc-pane-head">Filter list by</div>
+        <div class="bc-pane-body">
+          <div class="bc-fp-field">
+            <label for="statusFilter">Status</label>
+            <select id="statusFilter">
+              <option value="">(all)</option>
+              <option value="Requested">Requested</option>
+              <option value="Partial Shipped">Partial Shipped</option>
+              <option value="In-Transit">In-Transit</option>
+              <!-- Comma-separated "multi-status" value - renderHeaders() in transferOrders.js splits
+                   this on comma and matches any of them. Also what the Dashboard's "waiting to be
+                   received" notification deep-links to (see dashboard.js's loadNotifications). -->
+              <option value="In-Transit,Partial Shipped">Awaiting Receipt (In-Transit + Partial Shipped)</option>
+              <option value="Partial Received">Partial Received</option>
+              <option value="Received">Received</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="fpFromWarehouse">From Warehouse</label>
+            <select id="fpFromWarehouse"><option value="">(all)</option></select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="fpToWarehouse">To Warehouse</label>
+            <select id="fpToWarehouse"><option value="">(all)</option></select>
+          </div>
+          <button class="bc-link" id="clearFiltersLink" type="button">Clear filters</button>
+        </div>
+      </aside>
+
+      <section class="bc-main">
+        <div class="bc-grid-wrap" id="toGridWrap">
+          <table class="bc-grid">
+            <thead>
+              <tr>
+                <th>No.</th>
+                <th>Description</th>
+                <th>Status</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Requested Date</th>
+                <th>Target Delivery Date</th>
+                <th>Transfer Date</th>
+                <th>Receive Date</th>
+              </tr>
+            </thead>
+            <tbody id="headerTableBody">
+              <tr><td colspan="9" class="cell-msg">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="bc-grid-toolbar" style="border-top:1px solid var(--bc-line); border-bottom:none;">
+          <span class="muted" id="toCount"></span>
+        </div>
+      </section>
     </div>
   </div>
 
-  <!-- Manage transfer order modal (view + Ship/Receive/Cancel actions) -->
+  <!-- Transfer Order document (view + Ship/Receive/Cancel) - BC document page: caption + title,
+       action bar, General FastTab with label-left fields, Lines part. Still a .modal-backdrop /
+       .modal-panel so Maximize (applyModalMaximized) works unchanged; .bc-doc restyles it. -->
   <div id="viewLinesModal" class="modal-backdrop hidden">
-    <div class="modal-panel to-manage-panel">
-      <div class="toolbar">
-        <h2 id="viewLinesTitle">Transfer Order</h2>
-        <span id="viewLinesStatusBadge" class="badge badge-neutral"></span>
-        <span id="viewLinesLockIcon" class="hidden" title="Locked - no more changes except Ship/Receive" style="font-size:18px;">🔒</span>
-        <button class="btn btn-secondary btn-sm" id="printProductionBtn" type="button" style="margin-left:auto;">Print Production Order</button>
-        <button class="btn btn-secondary btn-sm" id="printTransferBtn" type="button">Print (Standard Layout)</button>
-        <button class="btn btn-secondary btn-sm" id="viewLinesMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
-        <button class="btn btn-secondary btn-sm" id="closeViewLinesBtn" type="button">Close</button>
-      </div>
-
-      <!-- Business Central-style "General" FastTab - collapsible, and when collapsed it keeps the
-           warehouses/dates on the tab itself so folding it away never hides what you needed. Open
-           by default; the choice is remembered per browser (js/transferOrders.js). -->
-      <details class="doc-fasttab" id="viewLinesGeneralTab" open>
-        <summary>
-          General
-          <span class="doc-fasttab-summary" id="viewLinesGeneralSummary"></span>
-        </summary>
-        <div class="doc-fasttab-body">
-          <div class="form-grid wide-form-grid">
-            <div class="form-row">
-              <label>From Warehouse</label>
-              <div id="viewFromWarehouse" class="muted"></div>
-              <!-- Super-user-only override - see the "From/To Warehouse are locked" note in
-                   transferOrders.js: everyone else still has no way to change this once an order
-                   exists. Hidden whenever anything has already shipped (updateManageActionButtons) -
-                   the source warehouse a real shipment already moved from can't be rewritten after
-                   the fact. -->
-              <button class="btn btn-secondary btn-sm hidden" id="editFromWarehouseBtn" type="button" style="margin-top:6px; align-self:flex-start;">Change From Warehouse</button>
-              <div id="viewFromWarehouseEditRow" class="hidden" style="margin-top:6px; display:flex; gap:8px; align-items:center;">
-                <select id="viewFromWarehouseSelect" style="flex:1;"></select>
-                <button class="btn btn-primary btn-sm" id="saveFromWarehouseBtn" type="button">Save</button>
-                <button class="btn btn-secondary btn-sm" id="cancelFromWarehouseEditBtn" type="button">Cancel</button>
-              </div>
-            </div>
-            <div class="form-row">
-              <label>To Warehouse</label>
-              <div id="viewToWarehouse" class="muted"></div>
-            </div>
-            <div class="form-row">
-              <label>Requested Date</label>
-              <div id="viewRequestedDate" class="muted"></div>
-            </div>
-            <div class="form-row">
-              <label>Transfer Date</label>
-              <div id="viewTransferDate" class="muted"></div>
-            </div>
-            <div class="form-row">
-              <label>Receive Date</label>
-              <div id="viewReceiveDate" class="muted"></div>
-            </div>
+    <div class="modal-panel to-manage-panel bc-doc" role="dialog" aria-modal="true" aria-labelledby="viewLinesTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">TRANSFER ORDER</div>
+          <div class="bc-doc-titleline">
+            <h2 id="viewLinesTitle">Transfer Order</h2>
+            <span id="viewLinesStatusBadge" class="badge badge-neutral"></span>
+            <span id="viewLinesLockIcon" class="bc-doc-lock hidden" title="Locked - no more changes except Ship/Receive"><svg class="bc-ico"><use href="#ico-lock"/></svg></span>
           </div>
         </div>
-      </details>
-
-      <div class="section-divider"></div>
-      <div class="table-wrap manage-lines-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Item No.</th>
-              <th>Variant</th>
-              <th>Description</th>
-              <th>Available</th>
-              <th>Qty To Transfer</th>
-              <th>Qty To Ship</th>
-              <th>Serials to Ship</th>
-              <th>Qty Shipped</th>
-              <th>Qty To Receive</th>
-              <th>Qty Received</th>
-            </tr>
-          </thead>
-          <tbody id="viewLinesBody"></tbody>
-        </table>
+        <div class="bc-doc-window">
+          <button class="bc-cmd" id="viewLinesMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
+          <button class="bc-iconbtn bc-doc-close" id="closeViewLinesBtn" type="button" aria-label="Close" title="Close">&times;</button>
+        </div>
       </div>
 
-      <div id="viewLinesError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right; display:flex; gap:8px; justify-content:flex-end;">
-        <button class="btn btn-danger hidden" id="deleteTransferBtn" type="button" title="Permanently delete this order and its lines (only while nothing has shipped)">Delete Order</button>
-        <button class="btn btn-secondary hidden" id="createPoFromTransferBtn" type="button" title="Create Purchase Orders (one per supplier) for the items the From Warehouse doesn't have enough of">Create PO</button>
-        <button class="btn btn-danger" id="cancelTransferBtn" type="button">Cancel Order</button>
-        <button class="btn btn-primary" id="shipTransferBtn" type="button">Ship</button>
-        <button class="btn btn-success" id="receiveTransferBtn" type="button">Receive</button>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd bc-cmd-accent" id="shipTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-ship"/></svg>Ship</button>
+        <button class="bc-cmd bc-cmd-accent" id="receiveTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-receive"/></svg>Receive</button>
+        <button class="bc-cmd hidden" id="createPoFromTransferBtn" type="button" title="Create Purchase Orders (one per supplier) for the items the From Warehouse doesn't have enough of"><svg class="bc-ico"><use href="#ico-cart"/></svg>Create PO</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="printProductionBtn" type="button"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Production Order</button>
+        <button class="bc-cmd" id="printTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-print"/></svg>Print</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd bc-cmd-danger" id="cancelTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-cancel"/></svg>Cancel Order</button>
+        <button class="bc-cmd bc-cmd-danger hidden" id="deleteTransferBtn" type="button" title="Permanently delete this order and its lines (only while nothing has shipped)"><svg class="bc-ico"><use href="#ico-delete"/></svg>Delete</button>
+      </div>
+
+      <div id="viewLinesError" class="bc-doc-error error-text hidden"></div>
+
+      <div class="bc-doc-body">
+        <!-- Business Central-style "General" FastTab - collapsible, and when collapsed it keeps the
+             warehouses on the tab itself so folding it away never hides what you needed. Open by
+             default; the choice is remembered per browser (js/transferOrders.js). -->
+        <details class="doc-fasttab" id="viewLinesGeneralTab" open>
+          <summary>
+            General
+            <span class="doc-fasttab-summary" id="viewLinesGeneralSummary"></span>
+          </summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field">
+                <label>From Warehouse</label>
+                <div>
+                  <div id="viewFromWarehouse" class="bc-doc-value"></div>
+                  <!-- Super-user-only override - see the "From/To Warehouse are locked" note in
+                       transferOrders.js: everyone else still has no way to change this once an order
+                       exists. Hidden whenever anything has already shipped (updateManageActionButtons) -
+                       the source warehouse a real shipment already moved from can't be rewritten after
+                       the fact. -->
+                  <button class="bc-link hidden" id="editFromWarehouseBtn" type="button">Change From Warehouse</button>
+                  <div id="viewFromWarehouseEditRow" class="bc-doc-inline-edit hidden">
+                    <select id="viewFromWarehouseSelect"></select>
+                    <button class="bc-btn bc-btn-primary" id="saveFromWarehouseBtn" type="button">Save</button>
+                    <button class="bc-btn" id="cancelFromWarehouseEditBtn" type="button">Cancel</button>
+                  </div>
+                </div>
+              </div>
+              <div class="bc-doc-field">
+                <label>To Warehouse</label>
+                <div id="viewToWarehouse" class="bc-doc-value"></div>
+              </div>
+            </div>
+            <div>
+              <div class="bc-doc-field">
+                <label>Requested Date</label>
+                <div id="viewRequestedDate" class="bc-doc-value"></div>
+              </div>
+              <div class="bc-doc-field">
+                <label>Transfer Date</label>
+                <div id="viewTransferDate" class="bc-doc-value"></div>
+              </div>
+              <div class="bc-doc-field">
+                <label>Receive Date</label>
+                <div id="viewReceiveDate" class="bc-doc-value"></div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div class="bc-doc-part">
+          <div class="bc-doc-part-head">Lines</div>
+          <div class="manage-lines-wrap">
+            <table class="bc-grid bc-doc-lines" id="manageLinesTable">
+              <thead>
+                <tr>
+                  <th>Item No.</th>
+                  <th>Variant</th>
+                  <th>Description</th>
+                  <th class="num">Available</th>
+                  <th class="num">Qty To Transfer</th>
+                  <th class="num">Qty To Ship</th>
+                  <th>Serials to Ship</th>
+                  <th class="num">Qty Shipped</th>
+                  <th class="num">Qty To Receive</th>
+                  <th class="num">Qty Received</th>
+                </tr>
+              </thead>
+              <tbody id="viewLinesBody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- Create PO from the missing items of a transfer order (js/transferOrders.js) - stacks above the Manage modal -->
   <div id="createPoModal" class="modal-backdrop hidden" style="z-index:110;">
-    <div class="modal-panel" style="max-width:900px;">
-      <h3 style="margin-top:0;">Create Purchase Order(s) for missing items</h3>
-      <p class="muted" id="createPoIntro"></p>
-      <div id="createPoBody"></div>
-      <div id="createPoError" class="error-text hidden"></div>
-      <div id="createPoResult"></div>
-      <div style="margin-top:16px; text-align:right; display:flex; gap:8px; justify-content:flex-end;">
-        <button class="btn btn-secondary" id="createPoCloseBtn" type="button">Close</button>
-        <button class="btn btn-primary" id="createPoConfirmBtn" type="button">Create Purchase Order(s)</button>
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:900px;" role="dialog" aria-modal="true" aria-labelledby="createPoTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">TRANSFER ORDER</div>
+          <h2 id="createPoTitle">Create Purchase Order(s) for missing items</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" id="createPoIntro"></p>
+        <div id="createPoBody"></div>
+        <div id="createPoError" class="error-text hidden"></div>
+        <div id="createPoResult"></div>
+      </div>
+      <div class="bc-doc-foot">
+        <button class="bc-btn bc-btn-primary" id="createPoConfirmBtn" type="button">Create Purchase Order(s)</button>
+        <button class="bc-btn" id="createPoCloseBtn" type="button">Close</button>
       </div>
     </div>
   </div>
 
-  <!-- New transfer order modal -->
+  <!-- New transfer order document -->
   <div id="newTransferModal" class="modal-backdrop hidden">
-    <div class="modal-panel to-new-panel">
-      <div class="toolbar">
-        <h2>New Transfer Order</h2>
-        <button class="btn btn-secondary btn-sm" id="newTransferMaximizeBtn" type="button" style="margin-left:auto;" title="Maximize this document to fill the window">Maximize</button>
-        <button class="btn btn-secondary btn-sm" id="closeNewTransferBtn" type="button">Close</button>
+    <div class="modal-panel to-new-panel bc-doc" role="dialog" aria-modal="true" aria-labelledby="newTransferTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">TRANSFER ORDER</div>
+          <h2 id="newTransferTitle">New Transfer Order</h2>
+        </div>
+        <div class="bc-doc-window">
+          <button class="bc-cmd" id="newTransferMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
+          <button class="bc-iconbtn bc-doc-close" id="closeNewTransferBtn" type="button" aria-label="Close" title="Close">&times;</button>
+        </div>
       </div>
 
-      <!-- Business Central-style "General" FastTab, same treatment as the Manage modal above and
-           the Purchase Order card. Open by default; the choice is remembered per browser. -->
-      <details class="doc-fasttab" id="newTransferGeneralTab" open>
-        <summary>
-          General
-          <span class="doc-fasttab-summary" id="newTransferGeneralSummary"></span>
-        </summary>
-        <div class="doc-fasttab-body">
-          <div class="form-grid wide-form-grid">
-            <div class="form-row">
-              <label for="newNo">Document No.</label>
-              <input type="text" id="newNo" />
+      <div class="bc-doc-body">
+        <!-- Business Central-style "General" FastTab, same treatment as the document above and
+             the Purchase Order card. Open by default; the choice is remembered per browser. -->
+        <details class="doc-fasttab" id="newTransferGeneralTab" open>
+          <summary>
+            General
+            <span class="doc-fasttab-summary" id="newTransferGeneralSummary"></span>
+          </summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field">
+                <label for="newNo">No.</label>
+                <input type="text" id="newNo" />
+              </div>
+              <div class="bc-doc-field">
+                <label for="newDescription">Description</label>
+                <input type="text" id="newDescription" />
+              </div>
+              <div class="bc-doc-field">
+                <label for="newFromWarehouse">From Warehouse</label>
+                <div>
+                  <input type="text" id="newFromWarehouse" autocomplete="off" disabled />
+                  <input type="hidden" id="newFromWarehouseId" value="" />
+                </div>
+              </div>
+              <div class="bc-doc-field">
+                <label for="newToWarehouse">To Warehouse</label>
+                <div>
+                  <input type="text" id="newToWarehouse" autocomplete="off" disabled />
+                  <input type="hidden" id="newToWarehouseId" value="" />
+                </div>
+              </div>
             </div>
-            <div class="form-row">
-              <label for="newDescription">Description</label>
-              <input type="text" id="newDescription" />
-            </div>
-            <div class="form-row">
-              <label for="newFromWarehouse">From Warehouse</label>
-              <input type="text" id="newFromWarehouse" autocomplete="off" disabled />
-              <input type="hidden" id="newFromWarehouseId" value="" />
-            </div>
-            <div class="form-row">
-              <label for="newToWarehouse">To Warehouse</label>
-              <input type="text" id="newToWarehouse" autocomplete="off" disabled />
-              <input type="hidden" id="newToWarehouseId" value="" />
-            </div>
-            <div class="form-row">
-              <label for="newRequestedDate">Requested Date</label>
-              <input type="date" id="newRequestedDate" disabled />
-            </div>
-            <div class="form-row">
-              <label for="newEstimatedDeliveryDate">Estimated Delivery Date</label>
-              <input type="date" id="newEstimatedDeliveryDate" disabled />
-              <span class="muted" style="font-size:12px;">Store delivery runs Wed &amp; Sun - auto-set to the next one at least 3 days out, to give production time to build.</span>
-            </div>
-            <div class="form-row">
-              <label style="display:flex; align-items:center; gap:6px;">
-                <input type="checkbox" id="newUseProductionCategory" style="width:auto;" />
-                <span>Use Production Category (Production Items Warehouse)</span>
-              </label>
-              <span class="muted hidden" id="useProductionCategoryLockHint" style="font-size:12px;">Locked - remove all line items to change this or the From Warehouse.</span>
+            <div>
+              <div class="bc-doc-field">
+                <label for="newRequestedDate">Requested Date</label>
+                <input type="date" id="newRequestedDate" disabled />
+              </div>
+              <div class="bc-doc-field bc-doc-field-top">
+                <label for="newEstimatedDeliveryDate">Estimated Delivery Date</label>
+                <div>
+                  <input type="date" id="newEstimatedDeliveryDate" disabled />
+                  <div class="bc-doc-hint">Store delivery runs Wed &amp; Sun - auto-set to the next one at least 3 days out, to give production time to build.</div>
+                </div>
+              </div>
+              <div class="bc-doc-field bc-doc-field-top">
+                <label for="newUseProductionCategory">Use Production Category</label>
+                <div>
+                  <input type="checkbox" class="bc-switch" id="newUseProductionCategory" />
+                  <div class="bc-doc-hint">Production Items Warehouse.</div>
+                  <div class="bc-doc-hint hidden" id="useProductionCategoryLockHint">Locked - remove all line items to change this or the From Warehouse.</div>
+                </div>
+              </div>
             </div>
           </div>
+        </details>
+
+        <div class="bc-doc-part">
+          <div class="bc-doc-part-head">
+            Lines
+            <button class="bc-cmd" id="addLineBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Line</button>
+          </div>
+          <div class="line-items-wrap">
+            <table class="bc-grid bc-doc-lines line-items-table">
+              <thead>
+                <tr>
+                  <th style="min-width:280px;">Item No.</th>
+                  <th style="min-width:260px;">Variant</th>
+                  <th style="min-width:420px;">Description</th>
+                  <th class="num" style="width:110px;">Qty To Transfer</th>
+                  <th style="width:40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="newLinesBody"></tbody>
+            </table>
+          </div>
         </div>
-      </details>
 
-      <div class="section-divider"></div>
-      <div class="toolbar">
-        <h3 style="margin:0;">Line Items</h3>
-        <button class="btn btn-secondary btn-sm" id="addLineBtn" type="button">+ Add Line</button>
+        <!-- Exploded BOM of any Assemble-to-Order line above (Item Setup > Assemble to Order). Saved with
+             the order as a snapshot when it is requested (js/transferOrders.js). -->
+        <div id="newBomPreview" class="hidden" style="margin-top:12px;"></div>
       </div>
 
-      <div class="table-wrap line-items-wrap">
-        <table class="line-items-table">
-          <thead>
-            <tr>
-              <th style="min-width:280px;">Item No.</th>
-              <th style="min-width:260px;">Variant</th>
-              <th style="min-width:610px;">Description</th>
-              <th style="width:60px;">Qty To Transfer</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="newLinesBody"></tbody>
-        </table>
-      </div>
-
-      <div id="newTransferError" class="error-text hidden"></div>
-      <div style="margin-top:16px; text-align:right;">
-        <button class="btn btn-success" id="saveTransferBtn" type="button">Save Transfer Order</button>
+      <div class="bc-doc-foot">
+        <p id="newTransferError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveTransferBtn" type="button">Save Transfer Order</button>
       </div>
     </div>
   </div>
@@ -256,7 +373,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=grouped2"></script>
-  <script src="js/transferOrders.js"></script>
+  <script src="js/transferOrders.js?v=bc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
