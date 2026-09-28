@@ -925,15 +925,20 @@
 
         ruleNoticeState.temperedMandatory = temperedMandatory;
 
-        if (optionValue === 'Undersump') {
+        // Undersump/Overheadsump only pre-fill Width/Height with the standard size right when the
+        // Option is switched to them - after that staff can edit Length/Width/Height freely
+        // (filling on every call used to snap any typed Width/Height straight back).
+        var optionJustChanged = ruleNoticeState.lastOption !== optionValue;
+        if (optionJustChanged && optionValue === 'Undersump') {
           var underDefault = convertInchesToSelectedUnit(18, byId('unit').value);
           trySetFieldValue('width', underDefault);
           trySetFieldValue('height', underDefault);
-        } else if (optionValue === 'Overheadsump') {
+        } else if (optionJustChanged && optionValue === 'Overheadsump') {
           var overheadDefault = convertInchesToSelectedUnit(6, byId('unit').value);
           trySetFieldValue('width', overheadDefault);
           trySetFieldValue('height', overheadDefault);
         }
+        ruleNoticeState.lastOption = optionValue;
 
         if (isCompleteSetup) {
           sumpEnabled.checked = true;

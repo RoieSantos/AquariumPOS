@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- **Aquarium Calculator: editable size on Undersump/Overheadsump**: those Options pre-filled Width/Height (18"/6") on every recalculation, so typed values snapped back. The defaults now fill only when the Option is switched, after which Length/Width/Height are freely editable ([index.html](docs/WebAquariumCalculator/index.html)).
+
 - **Maker focus: big Production Done + read-only stock sheet**: on the order card, a maker-only account's Production Done is now a full-width 52px green button ("Undo" shows as an outlined red button). The Glass Cut's stock sheet size is read-only for them and shows as plain text ([onlineOrders.js](docs/js/onlineOrders.js), [bc-list.css](docs/css/bc-list.css), [online-orders.html](docs/online-orders.html)).
 
 - **Alice learns repair glass type + units**: `compute_repair_quote` guidance now covers glass type (regular/tempered/low iron) and any unit (inches/cm/mm/ft, passed through as given). Alice gives per-panel prices and the total only, never the glass rate, markup % or multipliers; the markup % was also removed from the tool result ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
