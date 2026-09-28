@@ -484,6 +484,51 @@ function renderMyAssignmentCards(rows) {
   }).join('');
 }
 
+// Restock Production Orders (production-orders.html, supabase_production_orders.sql) the user is a
+// Tank / Stand Maker on, whose part isn't done yet - shown under My Assignments on every width.
+// Each card opens the order on the Production Orders page, where the maker marks it done.
+async function loadMyProductionOrderCards() {
+  const box = document.getElementById('myProductionOrderCards');
+  if (!box) return;
+  if (!myAssignmentsOnly || !currentSession.isOrderMaker) {
+    box.classList.add('hidden');
+    return;
+  }
+  const me = currentSession.username;
+  const { data, error } = await supabaseClient.rpc('staff_list_production_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: null,
+    p_status: 'Released',
+    p_assigned_to_me: true,
+    p_page: 1,
+    p_page_size: 50
+  });
+  // Quietly skipped until supabase_production_orders.sql has been run.
+  if (error) { console.warn('staff_list_production_orders:', error.message); box.classList.add('hidden'); return; }
+  const open = (data || []).filter((o) =>
+    (o.tank_maker === me && o.needs_tank && !o.tank_done_at) || (o.stand_maker === me && o.needs_stand && !o.stand_done_at));
+  if (!myAssignmentsOnly || !open.length) { box.classList.add('hidden'); return; }
+  box.innerHTML = `<h3 class="oo-prod-cards-title">Production Orders (restock)</h3>` + open.map((o) => {
+    const parts = ['tank', 'stand'].filter((p) => o[`${p}_maker`] === me && o[`needs_${p}`] && !o[`${p}_done_at`])
+      .map((p) => (p === 'tank' ? 'Tank Maker' : 'Stand Maker')).join(' + ');
+    return `
+      <a class="oo-mc is-clickable" href="production-orders.html?no=${encodeURIComponent(o.order_no)}" aria-label="Open production order ${escapeHtml(o.order_no)}">
+        <header class="oo-mc-head">
+          <span class="oo-mc-id">${escapeHtml(o.order_no)}</span>
+          <span class="oo-mc-status">Restock</span>
+          <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
+        </header>
+        <div class="oo-mc-customer">${escapeHtml(o.description || `${o.line_count} line(s) to build`)}</div>
+        <div class="oo-mc-line oo-mc-eta"><span>Due</span>${etaHtml(o.due_date)}</div>
+        <div class="oo-mc-line"><span>Build</span>${Number(o.total_quantity || 0).toLocaleString()} unit(s) · ${escapeHtml(o.warehouse_name || '')}</div>
+        <div class="oo-mc-line"><span>Your part</span>${escapeHtml(parts)}</div>
+        ${o.notes ? `<div class="oo-mc-note">${escapeHtml(o.notes)}</div>` : ''}
+      </a>`;
+  }).join('');
+  box.classList.remove('hidden');
+}
+
 function wireMyAssignmentCards() {
   document.getElementById('myAssignmentCards').addEventListener('click', (event) => {
     const pd = event.target.closest('[data-pd-order]');
@@ -2716,6 +2761,7 @@ async function loadOrders(search, status) {
 
   document.getElementById('setupContent').classList.toggle('mine-mode', myAssignmentsOnly);
   if (myAssignmentsOnly) renderMyAssignmentCards(rows);
+  loadMyProductionOrderCards();
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0

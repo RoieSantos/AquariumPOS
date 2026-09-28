@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment Methods Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=payreport1" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Payment Methods</h1>
+    <p class="muted">How customers paid - Cash, GCash, BDO and so on - and which method brings in the most. Covers online and walk-in orders, by order date; cancelled orders are left out.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" data-period="today" type="button">Today</button>
+        <button class="btn btn-primary btn-sm" data-period="month" type="button">This Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="prevmonth" type="button">Last Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="custom" type="button">Custom</button>
+      </div>
+      <div class="pm-filter-group hidden" id="customRange">
+        <input type="date" id="dateFrom" aria-label="From date" />
+        <span class="muted">to</span>
+        <input type="date" id="dateTo" aria-label="To date" />
+        <button class="btn btn-primary btn-sm" id="applyRangeBtn" type="button">Apply</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="scopeSelect" aria-label="Order type">
+          <option value="all">Online + Walk-in</option>
+          <option value="online">Online only</option>
+          <option value="walkin">Walk-in only</option>
+        </select>
+        <select id="warehouseSelect" aria-label="Warehouse">
+          <option value="">All warehouses</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="pm-coverage hidden" id="coverageNote">
+      <span id="coverageText"></span>
+      <button class="btn btn-secondary btn-sm" id="backfillBtn" type="button">Load payment history</button>
+    </div>
+
+    <div id="pmLoading" class="muted">Loading...</div>
+    <div id="pmError" class="error-text hidden"></div>
+
+    <div id="pmResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💰</span> Total Collected</div>
+          <div class="stat-value" id="statTotal">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏆</span> Most Used</div>
+          <div class="stat-value" id="statTop" style="font-size:18px;">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🧾</span> Payments</div>
+          <div class="stat-value" id="statCount">-</div>
+        </div>
+      </div>
+
+      <div class="card pm-chart-card">
+        <div class="pm-donut-wrap" id="donutWrap">
+          <svg class="pm-donut" id="donut" viewBox="0 0 200 200" role="img" aria-label="Share of money collected by payment method"></svg>
+          <div class="pm-donut-center">
+            <div class="pm-donut-center-value" id="donutCenterValue">-</div>
+            <div class="pm-donut-center-label" id="donutCenterLabel">total</div>
+          </div>
+          <div class="pm-tooltip hidden" id="donutTooltip" role="status"></div>
+        </div>
+        <div class="pm-legend" id="donutLegend"></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Payment Method</th>
+              <th>Type</th>
+              <th style="text-align:right;">Amount</th>
+              <th style="min-width:160px;">Share</th>
+              <th style="text-align:right;">Orders</th>
+              <th style="text-align:right;">Avg / Order</th>
+            </tr>
+          </thead>
+          <tbody id="pmTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=payreport1"></script>
+  <script src="js/paymentMethodReport.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

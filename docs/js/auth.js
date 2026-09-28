@@ -161,7 +161,9 @@ function hasNoPortalPermission(session) {
 // only ever returns their own assignments (_is_order_maker_only). Same lockdown shape as Online
 // Order Staff above; dashboard.html is left out so it redirects to their list.
 const ORDER_MAKER_ROLES = ['TankMaker', 'StandMaker', 'Dispatcher'];
-const ORDER_MAKER_ALLOWED_PAGES = ['online-orders.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
+// production-orders.html: their assigned restock builds (supabase_production_orders.sql) - the page
+// only shows a maker their own Released orders.
+const ORDER_MAKER_ALLOWED_PAGES = ['online-orders.html', 'production-orders.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
 function isOrderMakerOnly(session) {
   return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });

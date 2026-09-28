@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=glass1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp9" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fp10" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -164,6 +164,11 @@
            with the user's own part and big Open / Production Done buttons, instead of the wide grid
            and filter pane. Shown by css/bc-list.css only below 760px while #setupContent.mine-mode. -->
       <div class="oo-mine-cards" id="myAssignmentCards"></div>
+
+      <!-- Restock Production Orders assigned to me (js/onlineOrders.js loadMyProductionOrderCards,
+           sql/supabase_production_orders.sql) - shown on every screen width while in My Assignments,
+           hidden when there are none. Each card opens production-orders.html?no=. -->
+      <div class="oo-prod-cards hidden" id="myProductionOrderCards"></div>
 
       <!-- Online Order Staff only (js/onlineOrders.js's init()) - per "i want to show the online
            order per category: Confirmed / Printed / To-Ship... built it as a mobile GUI friendly.
@@ -549,7 +554,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/glassCutList.js?v=po1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=bc30"></script>
+  <script src="js/onlineOrders.js?v=bc31"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

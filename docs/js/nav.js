@@ -55,6 +55,7 @@ function renderTopNav(activeLabel) {
         <span class="topnav-brand">RS Pet Stop Portal</span>
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">My Assignments</a>
+          <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
@@ -175,6 +176,13 @@ function renderTopNav(activeLabel) {
     inventory.push({ href: 'vendor-setup.html', label: 'Vendors' });
   }
 
+  // Production (supabase_production_orders.sql) - restock builds; Super User / Production Manager
+  // manage them, a Tank / Stand Maker sees only their own. The RPCs re-check the role.
+  const production = [];
+  if (isSuperUser || session?.isProductionManager || session?.isOrderMaker) {
+    production.push({ href: 'production-orders.html', label: 'Production Orders' });
+  }
+
   const reports = [];
   if (!isSalesOnlyUser && !isStoreManager) {
     reports.push({ href: 'reports.html', label: 'Reports' });
@@ -189,6 +197,8 @@ function renderTopNav(activeLabel) {
     // Financials - super users only, matching the Expenses page it draws from. Both RPCs behind
     // these re-check with is_admin_authorized, so this gate is convenience, not the control.
     reports.push({ href: 'gl-entries.html', label: 'General Ledger' });
+    // Payment Methods report - super users only; its RPCs re-check with is_admin_authorized.
+    reports.push({ href: 'payment-method-report.html', label: 'Payment Methods Report' });
   }
 
   const admin = [];
@@ -224,6 +234,7 @@ function renderTopNav(activeLabel) {
     { label: 'Delivery', items: delivery },
     { label: 'Calculators', items: calculators },
     { label: 'Inventory', items: inventory },
+    { label: 'Production', items: production },
     { label: 'Reports', items: reports },
     { label: 'Admin', items: admin },
   ].filter((group) => group.items.length > 0);

@@ -1089,6 +1089,41 @@ a.badge:hover { text-decoration: underline; }
   z-index: 1;
 }
 
+/* Per-warehouse split under the Daily cards (loadDailyByWarehouse in js/dashboard.js). */
+.finance-card .finance-breakdown {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  position: relative;
+  z-index: 1;
+}
+
+.finance-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.finance-breakdown-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.finance-breakdown-value {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.finance-breakdown-count {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
 /* Dashboard "Sales by Staff (Confirmed By)" cards (super users only) - one card per Sales User,
    each with three clickable figures (Daily/Monthly/Previous Month) that deep-link into Online
    Orders scoped to that staff member + period (see js/dashboard.js's loadSalesByStaff and
@@ -5090,3 +5125,81 @@ body:has(.wizard-page) {
 .oc-glass-panels th { font-weight: 600; color: var(--text-muted); }
 .oc-glass-sheets { display: flex; flex-wrap: wrap; gap: 12px; }
 .oc-glass-sheets svg { display: block; max-width: min(100%, 460px); height: auto; border: 1px solid var(--panel-border); border-radius: 6px; }
+
+/* Payment Methods report (payment-method-report.html). Categorical slots are the dataviz reference
+   palette, validated against this portal's panel surfaces (#ffffff light / #111a2c dark); colour
+   follows the method's Payment Methods master order, not its rank. */
+:root {
+  --pm-surface: var(--panel-bg);
+  --pm-s1: #2a78d6; --pm-s2: #eb6834; --pm-s3: #1baf7a; --pm-s4: #eda100;
+  --pm-s5: #e87ba4; --pm-s6: #008300; --pm-s7: #4a3aa7; --pm-s8: #e34948;
+  --pm-other: #8b93a1;
+  --pm-empty: #e6ebf3;
+  --pm-track: #eef2f8;
+}
+
+:root[data-theme="dark"] {
+  --pm-s1: #3987e5; --pm-s2: #d95926; --pm-s3: #199e70; --pm-s4: #c98500;
+  --pm-s5: #d55181; --pm-s6: #008300; --pm-s7: #9085e9; --pm-s8: #e66767;
+  --pm-other: #7c8aa5;
+  --pm-empty: #1c2840;
+  --pm-track: #1a2539;
+}
+
+.pm-toolbar { flex-wrap: wrap; gap: 10px; }
+.pm-filter-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.pm-coverage {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 10px 14px;
+  border: 1px solid var(--panel-border); border-radius: 10px;
+  background: var(--panel-bg); color: var(--text-main); font-size: 14px;
+}
+
+.pm-chart-card {
+  display: flex; align-items: center; gap: 32px; flex-wrap: wrap;
+  justify-content: center; margin-bottom: 16px;
+}
+
+.pm-donut-wrap { position: relative; width: 260px; max-width: 100%; }
+.pm-donut { display: block; width: 100%; height: auto; }
+
+.pm-slice {
+  stroke: var(--pm-surface); stroke-width: 2; /* 2px surface gap between slices */
+  cursor: pointer; transition: opacity 0.15s;
+}
+.pm-slice.pm-dim, .pm-legend-row.pm-dim { opacity: 0.35; }
+
+.pm-donut-center {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; pointer-events: none; text-align: center;
+}
+.pm-donut-center-value { font-size: 18px; font-weight: 700; color: var(--text-main); }
+.pm-donut-center-label { font-size: 12px; color: var(--text-muted); }
+
+.pm-tooltip {
+  position: absolute; z-index: 5; pointer-events: none; min-width: 150px;
+  padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.5;
+  background: var(--panel-bg); color: var(--text-main);
+  border: 1px solid var(--panel-border); box-shadow: var(--shadow);
+}
+.pm-tooltip-title { display: flex; align-items: center; font-weight: 600; }
+
+.pm-legend { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+.pm-legend-row {
+  display: flex; align-items: center; gap: 8px; font-size: 14px;
+  color: var(--text-main); transition: opacity 0.15s;
+}
+.pm-legend-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-legend-pct { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.pm-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+  margin-right: 8px; flex-shrink: 0; vertical-align: -1px;
+}
+.pm-legend-row .pm-swatch { margin-right: 0; }
+
+.pm-share { display: flex; align-items: center; gap: 8px; }
+.pm-share-track { flex: 1; height: 8px; border-radius: 4px; background: var(--pm-track); overflow: hidden; }
+.pm-share-fill { height: 100%; border-radius: 0 4px 4px 0; }
+.pm-share-pct { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 13px; }

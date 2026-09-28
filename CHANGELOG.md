@@ -4,6 +4,15 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- Reports: new Payment Methods Report (super users) - donut + ranked table of money collected per payment method (Cash, GCash, BDO...), filterable by period, online/walk-in and warehouse ([payment-method-report.html](docs/payment-method-report.html), [paymentMethodReport.js](docs/js/paymentMethodReport.js)).
+- Order payments are now stored: new `OnlineOrderPayments` table filled by a 5-minute Pancake sync plus a page-by-page history backfill button ([supabase_payment_method_report.sql](sql/supabase_payment_method_report.sql)).
+
+- Dashboard: the Daily cards (Today's Online Sales / Walk-In Sales / Expense Today) now list how much of today's total came from each warehouse, via new RPC `admin_get_dashboard_daily_by_warehouse` ([supabase_dashboard_daily_by_warehouse.sql](sql/supabase_dashboard_daily_by_warehouse.sql), [dashboard.js](docs/js/dashboard.js)).
+
+- Production Orders: the Item / Variant search list on a line was cut off by the lines grid's scroll box. It now floats over the page under the input, or above it when there's no room below ([productionOrders.js](docs/js/productionOrders.js)).
+
+- **New module: Production > Production Orders** - restock builds of aquariums / sumps / stands (PRD-000001). Open → assign Tank / Stand Maker → Release (shows on the makers' My Assignments, they mark their part Production Done) → Post Output, partial allowed: posts an Item Ledger `Output` entry at the order's warehouse and creates one IN_STOCK serial per serial-tracked unit (RS-ITEM-YY-000001) so Ready to Ship / transfers can pick it; Finished once everything is output. Reversing the output on Item Ledger Entries gives the qty back and voids its serials (refused if one was sold/moved) ([supabase_production_orders.sql](sql/supabase_production_orders.sql), [production-orders.html](docs/production-orders.html), [productionOrders.js](docs/js/productionOrders.js), [nav.js](docs/js/nav.js), [auth.js](docs/js/auth.js), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css), [item-ledger-entries.html](docs/item-ledger-entries.html)).
+
 - My Assignments phone cards: tapping anywhere on the card opens the order (Open button removed; Production Done / Mark Shipped buttons still act on their own), and Est. Delivery shows as a friendly date with time left ("Mon, Oct 5 · in 7 days", amber when due today/tomorrow, red when overdue) - same on the maker's order summary.
 
 - Ready to Ship / To Ship failed on "SSL_ERROR_SYSCALL": admin_update_online_order_status now uses the shared retrying Pancake PATCH (3 tries with pauses) instead of its own 2 back-to-back tries; time limit 45s -> 60s to fit the retries ([supabase_online_order_to_ship_retry.sql](sql/supabase_online_order_to_ship_retry.sql)).

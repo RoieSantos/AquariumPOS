@@ -309,6 +309,50 @@ async function loadExpenseSummary(session) {
   document.getElementById('statTodayExpenseSub').textContent = `${todayLabel} · ${todayCount} ${todayWord}`;
 }
 
+// Per-warehouse split under the three Daily cards - per "i want see how much is from each
+// warehouse". admin_get_dashboard_daily_by_warehouse (supabase_dashboard_daily_by_warehouse.sql)
+// uses the same "today" rules as the cards' own totals, so the rows add up to the headline figure.
+// A card with nothing today keeps its breakdown hidden.
+function escapeDashboardHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderWarehouseBreakdown(elementId, rows, amountKey, countKey) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const lines = rows
+    .filter((r) => (Number(r[countKey]) || 0) > 0)
+    .sort((a, b) => (Number(b[amountKey]) || 0) - (Number(a[amountKey]) || 0));
+  el.innerHTML = lines
+    .map((r) => `
+      <div class="finance-breakdown-row">
+        <span class="finance-breakdown-name">${escapeDashboardHtml(r.warehouse_name)}</span>
+        <span class="finance-breakdown-value">${formatCurrency(r[amountKey])} <span class="finance-breakdown-count">(${Number(r[countKey]) || 0})</span></span>
+      </div>
+    `)
+    .join('');
+  el.classList.toggle('hidden', lines.length === 0);
+}
+
+async function loadDailyByWarehouse(session) {
+  if (!session.password) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_dashboard_daily_by_warehouse', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_warehouse_name: session.warehouseName || null
+  });
+
+  if (error || !data) {
+    console.error('admin_get_dashboard_daily_by_warehouse failed:', error);
+    return;
+  }
+
+  renderWarehouseBreakdown('statTodayOnlineSalesByWh', data, 'online_sales', 'online_order_count');
+  renderWarehouseBreakdown('statTodayWalkInSalesByWh', data, 'walkin_sales', 'walkin_order_count');
+  renderWarehouseBreakdown('statTodayExpenseByWh', data, 'expense', 'expense_count');
+}
+
 // "Total Purchase" card, sourced from admin_get_purchase_summary()
 // (supabase_item_cost_and_po_line_cost.sql) - the same Asia/Manila month boundary as
 // loadExpenseSummary/loadFinancialSummary above, so all three sections agree on "this month".
@@ -587,6 +631,7 @@ async function loadNotifications(session) {
     document.getElementById('financeCardGrid').classList.remove('hidden');
     await loadFinancialSummary(session);
     await loadExpenseSummary(session);
+    await loadDailyByWarehouse(session);
     await loadPurchaseSummary(session);
     await loadPayrollSummary(session);
     renderProfitCard();

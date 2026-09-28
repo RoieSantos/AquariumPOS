@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Production Orders - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=prod1" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3.2 8.4 6.4 11.5 12.8 4.6"/></symbol>
+    <symbol id="ico-posted" viewBox="0 0 16 16"><path d="M3.5 2.5h6l3 3v8h-9z"/><path d="M5.8 9.2l1.6 1.6 3-3.2"/></symbol>
+  </svg>
+
+  <!-- Production Orders (sql/supabase_production_orders.sql): restock builds of aquariums, sumps and
+       stands. Same Business Central list + document card shell as Purchase Orders. -->
+  <div class="page bc-ile">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Production Orders</h1>
+        <p class="bc-subtitle" id="prodSubtitle">Build aquariums, sumps and stands for stock. Release an order to its makers, then post output as units are finished - it goes into the warehouse's stock with new serials.</p>
+      </div>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="prodSearchInput" placeholder="Search" aria-label="Search by order no., description or item" autocomplete="off" />
+        </div>
+      </div>
+    </div>
+
+    <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+      <button class="bc-cmd bc-cmd-accent" id="newProdBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="prodRefreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
+      <span class="bc-cmd-sep"></span>
+      <label class="bc-cmd" for="prodStatusFilter" style="gap:6px;">Status
+        <select id="prodStatusFilter">
+          <option value="">All</option>
+          <option value="Open">Open</option>
+          <option value="Released">Released</option>
+          <option value="Finished">Finished</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="bc-body no-filterpane no-factbox">
+      <section class="bc-main">
+        <div id="prodPageError" class="error-text hidden" style="margin:12px 0;"></div>
+        <div class="bc-grid-wrap" id="prodGridWrap">
+          <table class="bc-grid" data-resize-key="production-orders">
+            <thead>
+              <tr>
+                <th>No.</th>
+                <th>Description</th>
+                <th>Warehouse</th>
+                <th>Status</th>
+                <th>Due Date</th>
+                <th class="num">Lines</th>
+                <th>Output</th>
+                <th>Tank Maker</th>
+                <th>Stand Maker</th>
+                <th>Created By</th>
+              </tr>
+            </thead>
+            <tbody id="prodTableBody">
+              <tr><td colspan="10" class="cell-msg">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="prodPaginationBar"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Production Order card - one document for New and existing orders (js/productionOrders.js). -->
+  <div id="prodCardModal" class="modal-backdrop hidden">
+    <div class="modal-panel po-doc-panel bc-doc" role="dialog" aria-modal="true" aria-labelledby="prodCardTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">PRODUCTION ORDER</div>
+          <div class="bc-doc-titleline">
+            <h2 id="prodCardTitle">Production Order</h2>
+            <span id="prodCardStatusBadge" class="badge badge-neutral hidden"></span>
+          </div>
+        </div>
+        <div class="bc-doc-window">
+          <button class="bc-cmd" id="prodCardMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
+          <button class="bc-iconbtn bc-doc-close" id="prodCardCloseBtn" type="button" aria-label="Close" title="Close">&times;</button>
+        </div>
+      </div>
+
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <span id="prodManagerActions" class="bc-cmd-group">
+          <button class="bc-cmd bc-cmd-accent" id="prodSaveBtn" type="button"><svg class="bc-ico"><use href="#ico-check"/></svg>Save</button>
+          <button class="bc-cmd" id="prodReleaseBtn" type="button" title="Hand this order to its makers - it appears on their My Assignments">Release</button>
+          <button class="bc-cmd" id="prodReopenBtn" type="button" title="Take it back to Open (only while nothing has been output)">Reopen</button>
+          <button class="bc-cmd bc-cmd-accent" id="prodPostOutputBtn" type="button" title="Put the Qty to Output entered below into stock, with new serials"><svg class="bc-ico"><use href="#ico-posted"/></svg>Post Output</button>
+          <span class="bc-cmd-sep"></span>
+          <button class="bc-cmd" id="prodPrintSerialsBtn" type="button"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serials</button>
+          <button class="bc-cmd bc-row-action-danger" id="prodDeleteBtn" type="button">Delete</button>
+        </span>
+        <!-- Tank / Stand Production Done - the assigned maker (or a manager) marks their part. -->
+        <span id="prodPartDoneActions" class="bc-cmd-group"></span>
+      </div>
+
+      <div id="prodCardError" class="bc-doc-error error-text hidden"></div>
+      <div id="prodCardNotice" class="bc-doc-hint hidden" style="margin:8px 16px 0; color:var(--success);"></div>
+
+      <div class="bc-doc-body">
+        <details class="doc-fasttab" id="prodCardGeneralTab" open>
+          <summary>
+            General
+            <span class="doc-fasttab-summary" id="prodCardGeneralSummary"></span>
+          </summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field">
+                <label for="prodDescription">Description</label>
+                <input type="text" id="prodDescription" placeholder="e.g. Restock 24&quot; tanks for Amaya" maxlength="500" />
+              </div>
+              <div class="bc-doc-field">
+                <label for="prodWarehouse">Warehouse</label>
+                <select id="prodWarehouse" title="Where the finished units go into stock"></select>
+              </div>
+              <div class="bc-doc-field">
+                <label for="prodDueDate">Due Date</label>
+                <input type="date" id="prodDueDate" />
+              </div>
+              <div class="bc-doc-field">
+                <label for="prodNotes">Notes</label>
+                <input type="text" id="prodNotes" placeholder="Optional - shown to the makers" maxlength="1000" />
+              </div>
+            </div>
+            <div>
+              <div class="bc-doc-field">
+                <label>No.</label>
+                <div id="prodNo" class="bc-doc-value">(assigned on Save)</div>
+              </div>
+              <div class="bc-doc-field">
+                <label>Status</label>
+                <div id="prodStatus" class="bc-doc-value">Open</div>
+              </div>
+              <div class="bc-doc-field">
+                <label for="prodTankMaker">Tank Maker</label>
+                <select id="prodTankMaker" title="Builds the aquarium / sump lines"></select>
+              </div>
+              <div class="bc-doc-field">
+                <label for="prodStandMaker">Stand Maker</label>
+                <select id="prodStandMaker" title="Builds the stand / top cover lines"></select>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div class="bc-doc-part">
+          <div class="bc-doc-part-head">
+            Lines
+            <button class="bc-cmd" id="prodAddLineBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Line</button>
+          </div>
+          <p class="bc-doc-hint" id="prodLinesHint"></p>
+          <div class="doc-lines-wrap">
+            <table class="doc-lines prod-lines">
+              <thead>
+                <tr>
+                  <th style="width:36px; text-align:right;">No.</th>
+                  <th style="width:18%;">Item</th>
+                  <th style="width:15%;">Variant</th>
+                  <th>Description</th>
+                  <th style="width:70px;">Part</th>
+                  <th style="width:80px; text-align:right;">Quantity</th>
+                  <th style="width:80px; text-align:right;">Output</th>
+                  <th style="width:80px; text-align:right;">Remaining</th>
+                  <th style="width:96px; text-align:right;" class="prod-output-col">Qty to Output</th>
+                  <th style="width:40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="prodLinesBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="bc-doc-part hidden" id="prodSerialsPart">
+          <div class="bc-doc-part-head">Output Serials</div>
+          <div class="doc-lines-wrap">
+            <table class="doc-lines">
+              <thead>
+                <tr><th>Serial No.</th><th>Item</th><th>Description</th><th>Location</th><th>Status</th><th>Posted</th></tr>
+              </thead>
+              <tbody id="prodSerialsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=prod1"></script>
+  <script src="js/nav.js?v=prod1"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/bcColumnResize.js?v=1"></script>
+  <script src="js/productionOrders.js?v=2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

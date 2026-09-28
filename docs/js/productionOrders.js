@@ -1,0 +1,844 @@
+// Production Orders (docs/production-orders.html, sql/supabase_production_orders.sql) - restock builds of
+// aquariums, sumps and stands. A Super User / Production Manager creates an order, assigns the Tank /
+// Stand Maker, Releases it (it then shows on the makers' My Assignments), and posts Output as units
+// are finished - into the Item Ledger at the order's warehouse, with new IN_STOCK serials for
+// serial-tracked items. A maker opening this page only sees their own Released orders, read-only,
+// with a Production Done button for their part.
+let currentSession = null;
+let isManager = false;
+let currentSearch = '';
+let currentStatus = '';
+let currentPage = 1;
+let currentPageSize = 50;
+let searchDebounceHandle = null;
+
+let warehouses = [];
+let makers = [];
+let openOrder = null; // list row of the order on the card, null for a new one
+let cardDirty = false;
+
+const PROD_MAXIMIZED_KEY = 'prod-card-maximized';
+const PART_LABEL = { tank: 'Tank', stand: 'Stand' };
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function describeSupabaseError(err, fallback) {
+  console.error(fallback, err);
+  const parts = [err?.message, err?.details, err?.hint].filter(Boolean);
+  return parts.length ? parts.join(' - ') : fallback;
+}
+
+function formatDate(value) {
+  if (!value) return '';
+  const [y, m, d] = String(value).slice(0, 10).split('-').map(Number);
+  if (!y) return value;
+  return new Date(y, m - 1, d).toLocaleDateString();
+}
+
+function formatQty(value) {
+  return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+// Same "Stand / Top Cover goes to the Stand Maker" split the server applies (_production_line_part) -
+// shown live while a line is typed; the server's value is what's saved.
+function linePart(description, itemCode) {
+  return /(stand|top[\s_-]*cover)/i.test(`${description || ''} ${itemCode || ''}`) ? 'stand' : 'tank';
+}
+
+function readStoredFlag(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === '1';
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function writeStoredFlag(key, value) {
+  try { localStorage.setItem(key, value ? '1' : '0'); } catch (err) { /* not persisted */ }
+}
+
+function statusBadgeHtml(status) {
+  const cls = status === 'Finished' ? 'badge-success' : status === 'Released' ? 'badge-warning' : 'badge-neutral';
+  return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
+}
+
+function outputBadgeHtml(o) {
+  const total = Number(o.total_quantity || 0);
+  const done = Number(o.total_output || 0);
+  if (done <= 0) return '<span class="muted">None</span>';
+  if (done >= total) return '<span class="badge badge-success">All output</span>';
+  return `<span class="badge badge-warning">${formatQty(done)} / ${formatQty(total)}</span>`;
+}
+
+function makerCellHtml(needed, name, doneAt) {
+  if (!needed) return '<span class="muted">-</span>';
+  if (!name) return '<span class="muted">Not assigned</span>';
+  return `${escapeHtml(name)}${doneAt ? ' <span class="badge badge-success" title="Production Done">&#10003; Done</span>' : ''}`;
+}
+
+// ---------------------------------------------------------------- List
+
+let lastRows = [];
+
+async function loadProductionOrders() {
+  const tbody = document.getElementById('prodTableBody');
+  tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
+
+  const { data, error } = await supabaseClient.rpc('staff_list_production_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: currentSearch || null,
+    p_status: currentStatus || null,
+    p_assigned_to_me: !isManager,
+    p_page: currentPage,
+    p_page_size: currentPageSize
+  });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    return;
+  }
+
+  lastRows = data || [];
+  tbody.innerHTML = lastRows.length === 0
+    ? `<tr><td colspan="10" class="cell-msg">${isManager ? 'No production orders yet - create one with New.' : 'No production orders are assigned to you right now.'}</td></tr>`
+    : lastRows.map((o) => `
+      <tr class="clickable-row" data-order-no="${escapeHtml(o.order_no)}">
+        <td><span class="bc-doc-no">${escapeHtml(o.order_no)}</span></td>
+        <td>${escapeHtml(o.description || '')}</td>
+        <td>${escapeHtml(o.warehouse_name || o.warehouse_id || '')}</td>
+        <td>${statusBadgeHtml(o.status)}</td>
+        <td>${escapeHtml(formatDate(o.due_date))}</td>
+        <td class="num">${o.line_count ?? 0}</td>
+        <td>${outputBadgeHtml(o)}</td>
+        <td>${makerCellHtml(o.needs_tank, o.tank_maker_name, o.tank_done_at)}</td>
+        <td>${makerCellHtml(o.needs_stand, o.stand_maker_name, o.stand_done_at)}</td>
+        <td>${escapeHtml(o.created_by || '')}</td>
+      </tr>`).join('');
+
+  renderPaginationBar(
+    document.getElementById('prodPaginationBar'),
+    { page: currentPage, pageSize: currentPageSize, totalCount: lastRows[0]?.total_count || 0 },
+    {
+      onPageChange: (p) => { currentPage = p; loadProductionOrders(); },
+      onPageSizeChange: (s) => { currentPageSize = s; currentPage = 1; loadProductionOrders(); }
+    }
+  );
+  fitGridToViewport();
+}
+
+function fitGridToViewport() {
+  const el = document.getElementById('prodGridWrap');
+  if (!el || el.offsetParent === null) return;
+  el.style.maxHeight = Math.max(240, window.innerHeight - el.getBoundingClientRect().top - 64) + 'px';
+}
+
+// Fetches one order's list row directly (the card needs it even when it's not on the current page,
+// e.g. opened from My Assignments with ?no=).
+async function fetchOrderRow(orderNo) {
+  const { data, error } = await supabaseClient.rpc('staff_list_production_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: orderNo,
+    p_status: null,
+    p_assigned_to_me: !isManager,
+    p_page: 1,
+    p_page_size: 50
+  });
+  if (error) throw error;
+  return (data || []).find((o) => o.order_no === orderNo) || null;
+}
+
+// ---------------------------------------------------------------- Lookups
+
+async function loadWarehouses() {
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: null,
+    p_limit: 100
+  });
+  if (!error) warehouses = data || [];
+}
+
+async function loadMakers() {
+  const { data, error } = await supabaseClient.rpc('staff_list_order_makers', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (!error) makers = data || [];
+}
+
+// Default for a new order: the user's own warehouse if it's a production warehouse, otherwise the
+// first production warehouse, otherwise nothing picked.
+function defaultWarehouseId() {
+  const mine = (currentSession.warehouseName || '').trim().toLowerCase();
+  const own = warehouses.find((w) => w.is_production_warehouse && (w.name || '').trim().toLowerCase() === mine);
+  return (own || warehouses.find((w) => w.is_production_warehouse))?.id || '';
+}
+
+function fillWarehouseSelect(selectedId) {
+  const select = document.getElementById('prodWarehouse');
+  const sorted = [...warehouses].sort((a, b) => Number(b.is_production_warehouse) - Number(a.is_production_warehouse) || (a.name || '').localeCompare(b.name || ''));
+  select.innerHTML = '<option value="">Select a warehouse...</option>' + sorted
+    .map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)}${w.is_production_warehouse ? ' (production)' : ''}</option>`)
+    .join('');
+  select.value = selectedId || '';
+}
+
+function fillMakerSelect(selectId, role, selected, selectedName) {
+  const select = document.getElementById(selectId);
+  const list = makers.filter((m) => (m.staff_roles || []).includes(role));
+  // Keep a maker who has since lost the role visible rather than silently blanking the field.
+  if (selected && !list.some((m) => m.username === selected)) list.push({ username: selected, display_name: selectedName || selected });
+  select.innerHTML = '<option value="">Not assigned</option>' +
+    list.map((m) => `<option value="${escapeHtml(m.username)}">${escapeHtml(m.display_name)}</option>`).join('');
+  select.value = selected || '';
+}
+
+// ---------------------------------------------------------------- Card
+
+function cardEditable() {
+  return isManager && (!openOrder || openOrder.status !== 'Finished');
+}
+
+function showCardError(message) {
+  const el = document.getElementById('prodCardError');
+  el.textContent = message || '';
+  el.classList.toggle('hidden', !message);
+}
+
+function showCardNotice(message) {
+  const el = document.getElementById('prodCardNotice');
+  el.textContent = message || '';
+  el.classList.toggle('hidden', !message);
+}
+
+function applyMaximized(maximized) {
+  const modal = document.getElementById('prodCardModal');
+  modal.classList.toggle('modal-maximized', maximized);
+  modal.querySelector('.modal-panel').classList.toggle('modal-maximized', maximized);
+  document.getElementById('prodCardMaximizeBtn').textContent = maximized ? 'Restore' : 'Maximize';
+}
+
+function refreshGeneralSummary() {
+  const wh = document.getElementById('prodWarehouse');
+  document.getElementById('prodCardGeneralSummary').textContent = [
+    document.getElementById('prodDescription').value.trim(),
+    wh.value ? wh.selectedOptions[0].textContent : '',
+    document.getElementById('prodDueDate').value ? `Due ${formatDate(document.getElementById('prodDueDate').value)}` : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function renderCardHeader() {
+  const o = openOrder;
+  const status = o ? o.status : 'Open';
+  document.getElementById('prodCardTitle').textContent = o ? `${o.order_no}${o.description ? ' · ' + o.description : ''}` : 'New Production Order';
+  const badge = document.getElementById('prodCardStatusBadge');
+  badge.className = `badge ${status === 'Finished' ? 'badge-success' : status === 'Released' ? 'badge-warning' : 'badge-neutral'}`;
+  badge.textContent = status;
+  badge.classList.toggle('hidden', !o);
+  document.getElementById('prodNo').textContent = o ? o.order_no : '(assigned on Save)';
+  document.getElementById('prodStatus').textContent = status;
+
+  const editable = cardEditable();
+  ['prodDescription', 'prodWarehouse', 'prodDueDate', 'prodNotes', 'prodTankMaker', 'prodStandMaker']
+    .forEach((id) => { document.getElementById(id).disabled = !editable; });
+  // The warehouse output went into can't move afterwards (server enforces it too).
+  if (o && Number(o.total_output) > 0) document.getElementById('prodWarehouse').disabled = true;
+
+  document.getElementById('prodManagerActions').classList.toggle('hidden', !isManager);
+  document.getElementById('prodSaveBtn').classList.toggle('hidden', !editable);
+  document.getElementById('prodReleaseBtn').classList.toggle('hidden', !o || status !== 'Open');
+  document.getElementById('prodReopenBtn').classList.toggle('hidden', !o || status !== 'Released' || Number(o.total_output) > 0);
+  document.getElementById('prodPostOutputBtn').classList.toggle('hidden', !o || status !== 'Released');
+  document.getElementById('prodPrintSerialsBtn').classList.toggle('hidden', !o || Number(o.total_output) <= 0);
+  document.getElementById('prodDeleteBtn').classList.toggle('hidden', !o || Number(o.total_output) > 0);
+  document.getElementById('prodAddLineBtn').classList.toggle('hidden', !editable);
+
+  renderPartDoneButtons();
+  refreshGeneralSummary();
+
+  document.getElementById('prodLinesHint').textContent = !isManager
+    ? 'What to build. Mark your part Production Done when it is all finished.'
+    : status === 'Released'
+      ? 'Enter Qty to Output for what was finished, then Post Output - it goes into stock at the warehouse above, with a new serial per aquarium / stand / sump. Partial is fine; the order finishes once everything is output.'
+      : status === 'Finished'
+        ? 'Everything on this order has been output.'
+        : 'Add what to build, assign the makers, Save, then Release to hand it to them.';
+}
+
+function renderPartDoneButtons() {
+  const box = document.getElementById('prodPartDoneActions');
+  const o = openOrder;
+  if (!o || o.status !== 'Released') { box.innerHTML = ''; return; }
+  const me = currentSession.username;
+  box.innerHTML = ['tank', 'stand'].filter((part) => o[`needs_${part}`]).map((part) => {
+    const maker = o[`${part}_maker`];
+    if (!isManager && maker !== me) return '';
+    const done = !!o[`${part}_done_at`];
+    const who = maker === me ? 'My part' : `${PART_LABEL[part]} (${escapeHtml(o[`${part}_maker_name`] || 'not assigned')})`;
+    return `<button class="bc-cmd${done ? '' : ' bc-cmd-accent'}" type="button" data-part-done="${part}" data-done="${done ? '0' : '1'}"
+      title="${done ? 'Undo Production Done' : 'Mark this part Production Done'}">
+      ${done ? '&#8634; Undo' : '&#10003;'} ${PART_LABEL[part]} Production Done${isManager ? ` - ${who}` : ''}</button>`;
+  }).join('');
+}
+
+// ---- Lines grid
+
+function lineRowHtml(l, index) {
+  const editable = cardEditable();
+  const hasOutput = Number(l.qty_output) > 0;
+  const lockItem = !editable || hasOutput;
+  const remaining = Math.max(0, Number(l.quantity || 0) - Number(l.qty_output || 0));
+  const released = openOrder?.status === 'Released' && isManager;
+  const part = l.part || linePart(l.description, l.item_code);
+  return `
+    <tr data-line-no="${l.line_no ?? ''}" data-item-code="${escapeHtml(l.item_code || '')}" data-item-name="${escapeHtml(l.item_name || '')}"
+        data-variant-id="${escapeHtml(l.variant_id || '')}" data-qty-output="${Number(l.qty_output || 0)}">
+      <td class="doc-num">${index + 1}</td>
+      <td>
+        ${lockItem ? `<b>${escapeHtml(l.item_code || '')}</b><div class="muted" style="font-size:11px;">${escapeHtml(l.item_name || '')}</div>`
+          : `<div class="item-search-cell" style="position:relative;">
+              <input type="text" class="prod-item-input" value="${escapeHtml(l.item_code || '')}" placeholder="Search item..." autocomplete="off" />
+              <div class="item-suggest-dropdown hidden"></div>
+            </div>`}
+      </td>
+      <td>
+        ${lockItem ? escapeHtml(l.variant_name || (l.variant_id ? l.variant_id : '')) || '<span class="muted">-</span>'
+          : `<div class="item-search-cell" style="position:relative;">
+              <input type="text" class="prod-variant-input" value="${escapeHtml(l.variant_name || '')}" placeholder="${l.item_code ? 'Variant (if any)' : 'Pick an item first'}" autocomplete="off" />
+              <div class="variant-suggest-dropdown hidden"></div>
+            </div>`}
+      </td>
+      <td>${editable ? `<input type="text" class="prod-desc-input" value="${escapeHtml(l.description || '')}" maxlength="500" style="width:100%;" />`
+        : escapeHtml(l.description || '')}${l.needs_serial ? ' <span class="badge badge-neutral" title="A serial is created per unit on output">Serial</span>' : ''}</td>
+      <td class="prod-part-cell">${PART_LABEL[part]}</td>
+      <td class="doc-num">${editable ? `<input type="number" class="prod-qty-input" min="${Number(l.qty_output || 0) || 1}" step="1" value="${l.quantity ?? 1}" style="width:70px; text-align:right;" />` : formatQty(l.quantity)}</td>
+      <td class="doc-num">${l.line_no ? formatQty(l.qty_output) : ''}</td>
+      <td class="doc-num">${l.line_no ? formatQty(remaining) : ''}</td>
+      <td class="doc-num prod-output-col">${released && l.line_no && remaining > 0
+        ? `<input type="number" class="prod-output-input" min="0" max="${remaining}" step="1" placeholder="0" style="width:70px; text-align:right;" />` : ''}</td>
+      <td>${editable && !hasOutput ? '<button class="bc-row-action bc-row-action-danger" type="button" data-remove-line title="Remove line">&times;</button>' : ''}</td>
+    </tr>`;
+}
+
+function renderLines(lines) {
+  const body = document.getElementById('prodLinesBody');
+  body.innerHTML = lines.length
+    ? lines.map(lineRowHtml).join('')
+    : '<tr><td colspan="10" class="cell-msg">No lines yet.</td></tr>';
+  const showOutput = openOrder?.status === 'Released' && isManager;
+  document.querySelectorAll('.prod-output-col').forEach((el) => el.classList.toggle('hidden', !showOutput));
+}
+
+function renumberLines() {
+  document.querySelectorAll('#prodLinesBody tr[data-item-code]').forEach((row, i) => {
+    row.cells[0].textContent = i + 1;
+  });
+}
+
+function addLine() {
+  const body = document.getElementById('prodLinesBody');
+  if (!body.querySelector('tr[data-item-code]')) body.innerHTML = '';
+  const count = body.querySelectorAll('tr[data-item-code]').length;
+  body.insertAdjacentHTML('beforeend', lineRowHtml({ quantity: 1 }, count));
+  const showOutput = openOrder?.status === 'Released' && isManager;
+  body.lastElementChild.querySelectorAll('.prod-output-col').forEach((el) => el.classList.toggle('hidden', !showOutput));
+  body.lastElementChild.querySelector('.prod-item-input')?.focus();
+  cardDirty = true;
+}
+
+function refreshRowPart(row) {
+  const desc = row.querySelector('.prod-desc-input')?.value || '';
+  row.querySelector('.prod-part-cell').textContent = PART_LABEL[linePart(desc, row.dataset.itemCode)];
+}
+
+// The lines grid scrolls inside .doc-lines-wrap, which clips an absolutely positioned suggestion
+// list (with one line there is no room below it at all). Pin the list to the viewport under its
+// input instead - or above it when the space below is short.
+function placeDropdown(dropdown) {
+  const input = dropdown.parentElement.querySelector('input');
+  if (!input) return;
+  const rect = input.getBoundingClientRect();
+  const width = Math.max(rect.width, 320);
+  const spaceBelow = window.innerHeight - rect.bottom - 8;
+  const spaceAbove = rect.top - 8;
+  const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
+  const maxHeight = Math.min(260, Math.max(120, openUp ? spaceAbove : spaceBelow));
+  Object.assign(dropdown.style, {
+    position: 'fixed',
+    left: `${Math.min(rect.left, window.innerWidth - width - 8)}px`,
+    width: `${width}px`,
+    right: 'auto',
+    maxHeight: `${maxHeight}px`,
+    top: openUp ? 'auto' : `${rect.bottom + 2}px`,
+    bottom: openUp ? `${window.innerHeight - rect.top + 2}px` : 'auto',
+    marginTop: '0',
+    zIndex: '2000'
+  });
+}
+
+function showDropdown(dropdown) {
+  dropdown.classList.remove('hidden');
+  placeDropdown(dropdown);
+}
+
+async function searchItemsForRow(row, text) {
+  const dropdown = row.querySelector('.item-suggest-dropdown');
+  const { data, error } = await supabaseClient.rpc('staff_search_items', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: text || null,
+    p_limit: 20
+  });
+  if (error) {
+    dropdown.innerHTML = `<div class="item-suggest-empty error-text">${escapeHtml(error.message)}</div>`;
+  } else if (!data?.length) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">No items found.</div>';
+  } else {
+    dropdown.innerHTML = data.map((it) => `
+      <div class="item-suggest-option" data-code="${escapeHtml(it.code)}" data-name="${escapeHtml(it.name || '')}" data-description="${escapeHtml(it.description || it.name || '')}">
+        <span class="item-suggest-code">${escapeHtml(it.code)}</span><span class="item-suggest-name">${escapeHtml(it.name || '')}</span>
+      </div>`).join('');
+  }
+  showDropdown(dropdown);
+}
+
+async function searchVariantsForRow(row, text) {
+  const dropdown = row.querySelector('.variant-suggest-dropdown');
+  if (!row.dataset.itemCode) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">Pick an item first.</div>';
+    showDropdown(dropdown);
+    return;
+  }
+  const { data, error } = await supabaseClient.rpc('staff_search_variants', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: row.dataset.itemCode,
+    p_search: text || null,
+    p_limit: 30
+  });
+  if (error) {
+    dropdown.innerHTML = `<div class="item-suggest-empty error-text">${escapeHtml(error.message)}</div>`;
+  } else if (!data?.length) {
+    dropdown.innerHTML = '<div class="item-suggest-empty muted">This item has no variants.</div>';
+  } else {
+    dropdown.innerHTML = data.map((v) => {
+      const label = [v.sku, v.variant_name].filter(Boolean).join(' - ') || v.variation_id;
+      return `<div class="item-suggest-option" data-variation-id="${escapeHtml(v.variation_id)}" data-label="${escapeHtml(v.variant_name || label)}">
+        <span class="item-suggest-code">${escapeHtml(v.sku || v.variation_id)}</span><span class="item-suggest-name">${escapeHtml(v.variant_name || '')}</span></div>`;
+    }).join('');
+  }
+  showDropdown(dropdown);
+}
+
+function collectLines() {
+  return Array.from(document.querySelectorAll('#prodLinesBody tr[data-item-code]')).map((row) => ({
+    line_no: row.dataset.lineNo ? Number(row.dataset.lineNo) : null,
+    item_code: row.dataset.itemCode || null,
+    variant_id: row.dataset.variantId || null,
+    description: row.querySelector('.prod-desc-input')?.value.trim() || null,
+    quantity: Number(row.querySelector('.prod-qty-input')?.value || 0)
+  }));
+}
+
+// ---- Open / load
+
+async function loadCardLines() {
+  if (!openOrder) { renderLines([]); return; }
+  const { data, error } = await supabaseClient.rpc('staff_list_production_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no
+  });
+  if (error) { showCardError(describeSupabaseError(error, 'Could not load lines.')); return; }
+  renderLines(data || []);
+}
+
+async function loadCardSerials() {
+  const part = document.getElementById('prodSerialsPart');
+  if (!openOrder || !isManager || Number(openOrder.total_output) <= 0) { part.classList.add('hidden'); return []; }
+  const { data, error } = await supabaseClient.rpc('staff_list_production_order_serials', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no
+  });
+  if (error || !data?.length) { part.classList.add('hidden'); return []; }
+  document.getElementById('prodSerialsBody').innerHTML = data.map((s) => `
+    <tr>
+      <td><b>${escapeHtml(s.serial_no)}</b></td>
+      <td>${escapeHtml(s.item_code)}</td>
+      <td>${escapeHtml(s.item_description || '')}</td>
+      <td>${escapeHtml(s.location || '')}</td>
+      <td>${s.status === 'IN_STOCK' ? '<span class="badge badge-success">In Stock</span>' : `<span class="badge badge-neutral">${escapeHtml(s.status)}</span>`}</td>
+      <td>${escapeHtml(s.posted_at ? new Date(s.posted_at).toLocaleString() : '')}</td>
+    </tr>`).join('');
+  part.classList.remove('hidden');
+  return data;
+}
+
+function fillHeaderFields() {
+  const o = openOrder;
+  document.getElementById('prodDescription').value = o?.description || '';
+  fillWarehouseSelect(o ? o.warehouse_id : defaultWarehouseId());
+  document.getElementById('prodDueDate').value = o?.due_date ? String(o.due_date).slice(0, 10) : '';
+  document.getElementById('prodNotes').value = o?.notes || '';
+  fillMakerSelect('prodTankMaker', 'TankMaker', o?.tank_maker, o?.tank_maker_name);
+  fillMakerSelect('prodStandMaker', 'StandMaker', o?.stand_maker, o?.stand_maker_name);
+}
+
+async function openCard(orderRow) {
+  openOrder = orderRow;
+  cardDirty = false;
+  showCardError('');
+  showCardNotice('');
+  fillHeaderFields();
+  renderCardHeader();
+  document.getElementById('prodSerialsPart').classList.add('hidden');
+  document.getElementById('prodLinesBody').innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
+  applyMaximized(readStoredFlag(PROD_MAXIMIZED_KEY, false));
+  document.getElementById('prodCardModal').classList.remove('hidden');
+  if (!orderRow) {
+    renderLines([]);
+    addLine();
+    cardDirty = false;
+    return;
+  }
+  await loadCardLines();
+  await loadCardSerials();
+}
+
+// Re-reads the open order after an action (status, output totals, maker done) and redraws the card.
+async function reloadCard() {
+  if (!openOrder) return;
+  try {
+    const fresh = await fetchOrderRow(openOrder.order_no);
+    if (!fresh) { closeCard(); loadProductionOrders(); return; }
+    openOrder = fresh;
+  } catch (err) {
+    showCardError(describeSupabaseError(err, 'Could not reload the order.'));
+    return;
+  }
+  cardDirty = false;
+  fillHeaderFields();
+  renderCardHeader();
+  await loadCardLines();
+  await loadCardSerials();
+}
+
+function closeCard() {
+  if (cardDirty && isManager && !confirm('You have unsaved changes on this order. Close without saving?')) return;
+  document.getElementById('prodCardModal').classList.add('hidden');
+  openOrder = null;
+  cardDirty = false;
+  if (new URLSearchParams(window.location.search).has('no')) history.replaceState(null, '', 'production-orders.html');
+}
+
+// ---- Actions
+
+async function saveOrder() {
+  showCardError('');
+  showCardNotice('');
+  const lines = collectLines();
+  if (lines.some((l) => !l.item_code)) { showCardError('Pick an item on every line (or remove the empty line).'); return false; }
+  if (lines.some((l) => !(l.quantity > 0))) { showCardError('Every line needs a quantity above zero.'); return false; }
+
+  const btn = document.getElementById('prodSaveBtn');
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_save_production_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder?.order_no || null,
+    p_description: document.getElementById('prodDescription').value,
+    p_warehouse_id: document.getElementById('prodWarehouse').value || null,
+    p_due_date: document.getElementById('prodDueDate').value || null,
+    p_notes: document.getElementById('prodNotes').value,
+    p_tank_maker: document.getElementById('prodTankMaker').value || null,
+    p_stand_maker: document.getElementById('prodStandMaker').value || null,
+    p_lines: lines
+  });
+  btn.disabled = false;
+  if (error) { showCardError(describeSupabaseError(error, 'Could not save the order.')); return false; }
+
+  openOrder = { order_no: data };
+  await reloadCard();
+  showCardNotice(`Saved ${data}.`);
+  loadProductionOrders();
+  return true;
+}
+
+async function setReleased(released) {
+  showCardError('');
+  if (cardDirty && !(await saveOrder())) return;
+  const { error } = await supabaseClient.rpc('staff_set_production_order_released', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no,
+    p_released: released
+  });
+  if (error) { showCardError(describeSupabaseError(error, 'Could not change the status.')); return; }
+  await reloadCard();
+  showCardNotice(released ? 'Released - the makers can now see it on their My Assignments.' : 'Back to Open.');
+  loadProductionOrders();
+}
+
+async function postOutput() {
+  showCardError('');
+  showCardNotice('');
+  if (cardDirty) { showCardError('Save your changes to the lines first, then post output.'); return; }
+
+  const requests = [];
+  for (const row of document.querySelectorAll('#prodLinesBody tr[data-line-no]')) {
+    const input = row.querySelector('.prod-output-input');
+    const qty = Number(input?.value || 0);
+    if (!qty) continue;
+    if (qty < 0 || qty > Number(input.max)) {
+      showCardError(`${row.dataset.itemCode}: Qty to Output must be between 0 and ${input.max}.`);
+      return;
+    }
+    requests.push({ line_no: Number(row.dataset.lineNo), quantity: qty, item_code: row.dataset.itemCode });
+  }
+  if (!requests.length) { showCardError('Enter a Qty to Output on at least one line.'); return; }
+
+  const summary = requests.map((r) => `  ${formatQty(r.quantity)} x ${r.item_code}`).join('\n');
+  const warehouse = openOrder.warehouse_name || openOrder.warehouse_id;
+  if (!confirm(`Post output for ${openOrder.order_no} into ${warehouse}?\n\n${summary}\n\nThis adds the stock and creates serials for serial-tracked items.`)) return;
+
+  const btn = document.getElementById('prodPostOutputBtn');
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_post_production_output', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no,
+    p_lines: requests.map(({ line_no, quantity }) => ({ line_no, quantity })),
+    p_posting_date: null
+  });
+  btn.disabled = false;
+  if (error) { showCardError(describeSupabaseError(error, 'Could not post output.')); return; }
+
+  const rows = (data || []).filter((r) => r.line_no !== null);
+  const serialCount = rows.reduce((n, r) => n + (r.serial_nos?.length || 0), 0);
+  const finalStatus = (data || []).find((r) => r.order_status)?.order_status;
+  await reloadCard();
+  showCardNotice(`Output posted: ${rows.length} line(s)${serialCount ? `, ${serialCount} serial(s) created` : ''}.${finalStatus === 'Finished' ? ' The order is now Finished.' : ''}`);
+  loadProductionOrders();
+}
+
+async function setPartDone(part, done) {
+  showCardError('');
+  const { error } = await supabaseClient.rpc('staff_set_production_order_part_done', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no,
+    p_part: part,
+    p_done: done
+  });
+  if (error) { showCardError(describeSupabaseError(error, 'Could not update Production Done.')); return; }
+  if (!isManager && done) {
+    // Done work drops off a maker's list, same as Online Orders' My Assignments.
+    cardDirty = false;
+    closeCard();
+    loadProductionOrders();
+    return;
+  }
+  await reloadCard();
+  showCardNotice(done ? `${PART_LABEL[part]} marked Production Done.` : `${PART_LABEL[part]} Production Done undone.`);
+  loadProductionOrders();
+}
+
+async function deleteOrder() {
+  if (!openOrder || !confirm(`Delete production order ${openOrder.order_no}? This can't be undone.`)) return;
+  const { error } = await supabaseClient.rpc('staff_delete_production_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no
+  });
+  if (error) { showCardError(describeSupabaseError(error, 'Could not delete the order.')); return; }
+  cardDirty = false;
+  closeCard();
+  loadProductionOrders();
+}
+
+// A plain printable sheet of the order's serials - for writing / sticking on the finished units.
+async function printSerials() {
+  const serials = (await loadCardSerials()).filter((s) => s.status === 'IN_STOCK');
+  if (!serials.length) { showCardError('No in-stock serials on this order to print.'); return; }
+  const win = window.open('', '_blank');
+  if (!win) { showCardError('Allow pop-ups to print the serials.'); return; }
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(openOrder.order_no)} serials</title>
+    <style>body{font-family:Arial,sans-serif;margin:16px}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 12px;color:#555;font-size:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+    .lbl{border:1px dashed #999;padding:10px;break-inside:avoid}.sn{font-size:16px;font-weight:bold;font-family:monospace}.d{font-size:12px;margin-top:4px}</style></head>
+    <body><h1>${escapeHtml(openOrder.order_no)}${openOrder.description ? ' - ' + escapeHtml(openOrder.description) : ''}</h1>
+    <p>${escapeHtml(openOrder.warehouse_name || '')} · ${serials.length} serial(s)</p>
+    <div class="grid">${serials.map((s) => `<div class="lbl"><div class="sn">${escapeHtml(s.serial_no)}</div><div class="d">${escapeHtml(s.item_description || s.item_code)}</div></div>`).join('')}</div>
+    <script>window.onload=function(){window.print();}<\/script></body></html>`);
+  win.document.close();
+}
+
+// ---------------------------------------------------------------- Wiring
+
+function wireLinesGrid() {
+  const body = document.getElementById('prodLinesBody');
+  const debounce = new WeakMap();
+
+  body.addEventListener('input', (e) => {
+    const row = e.target.closest('tr[data-item-code]');
+    if (!row) return;
+    if (!e.target.classList.contains('prod-output-input')) cardDirty = true;
+
+    if (e.target.classList.contains('prod-item-input')) {
+      row.dataset.itemCode = '';
+      row.dataset.variantId = '';
+      const variantInput = row.querySelector('.prod-variant-input');
+      if (variantInput) variantInput.value = '';
+      clearTimeout(debounce.get(e.target));
+      debounce.set(e.target, setTimeout(() => searchItemsForRow(row, e.target.value.trim()), 250));
+    } else if (e.target.classList.contains('prod-variant-input')) {
+      row.dataset.variantId = '';
+      clearTimeout(debounce.get(e.target));
+      debounce.set(e.target, setTimeout(() => searchVariantsForRow(row, e.target.value.trim()), 250));
+    } else if (e.target.classList.contains('prod-desc-input')) {
+      refreshRowPart(row);
+    }
+  });
+
+  body.addEventListener('focusin', (e) => {
+    const row = e.target.closest('tr[data-item-code]');
+    if (!row) return;
+    if (e.target.classList.contains('prod-item-input')) searchItemsForRow(row, e.target.value.trim());
+    if (e.target.classList.contains('prod-variant-input')) searchVariantsForRow(row, e.target.value.trim());
+  });
+
+  body.addEventListener('focusout', (e) => {
+    const dropdown = e.target.parentElement?.querySelector('.item-suggest-dropdown, .variant-suggest-dropdown');
+    if (dropdown) setTimeout(() => dropdown.classList.add('hidden'), 150);
+  });
+
+  body.addEventListener('mousedown', (e) => {
+    const opt = e.target.closest('.item-suggest-option');
+    if (!opt) return;
+    e.preventDefault();
+    const row = opt.closest('tr[data-item-code]');
+    if (opt.dataset.code !== undefined) {
+      row.dataset.itemCode = opt.dataset.code;
+      row.dataset.itemName = opt.dataset.name;
+      row.dataset.variantId = '';
+      row.querySelector('.prod-item-input').value = opt.dataset.code;
+      const variantInput = row.querySelector('.prod-variant-input');
+      variantInput.value = '';
+      variantInput.placeholder = 'Variant (if any)';
+      const desc = row.querySelector('.prod-desc-input');
+      if (desc) desc.value = opt.dataset.description || opt.dataset.name || '';
+      refreshRowPart(row);
+    } else {
+      row.dataset.variantId = opt.dataset.variationId;
+      row.querySelector('.prod-variant-input').value = opt.dataset.label;
+      const desc = row.querySelector('.prod-desc-input');
+      if (desc && !desc.value.includes(opt.dataset.label)) desc.value = `${row.dataset.itemName || desc.value} - ${opt.dataset.label}`.trim();
+      refreshRowPart(row);
+    }
+    cardDirty = true;
+    opt.parentElement.classList.add('hidden');
+  });
+
+  // A fixed-position list would stay put while its input scrolls away - close it instead.
+  const hideOpenDropdowns = () => body.querySelectorAll('.item-suggest-dropdown, .variant-suggest-dropdown')
+    .forEach((d) => d.classList.add('hidden'));
+  document.querySelector('#prodCardModal .doc-lines-wrap').addEventListener('scroll', hideOpenDropdowns);
+  document.querySelector('#prodCardModal .bc-doc-body').addEventListener('scroll', hideOpenDropdowns);
+  window.addEventListener('resize', hideOpenDropdowns);
+
+  body.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-remove-line]')) return;
+    e.target.closest('tr').remove();
+    renumberLines();
+    cardDirty = true;
+  });
+}
+
+(async function init() {
+  const session = await requireAuth();
+  if (!session) return;
+  currentSession = session;
+  renderTopNav('Production Orders');
+
+  isManager = !!(session.isSuperUser || session.isProductionManager);
+  if (!isManager && !session.isOrderMaker) {
+    document.getElementById('prodPageError').textContent = 'Production Orders are for Production Managers and makers (Tank / Stand Maker) only.';
+    document.getElementById('prodPageError').classList.remove('hidden');
+    document.querySelector('.bc-cmdbar').classList.add('hidden');
+    document.getElementById('prodGridWrap').classList.add('hidden');
+    return;
+  }
+  if (!isManager) {
+    document.getElementById('newProdBtn').classList.add('hidden');
+    document.getElementById('prodStatusFilter').closest('label').classList.add('hidden');
+    document.getElementById('prodSubtitle').textContent = 'Restock builds assigned to you. Open one to see what to build and mark your part Production Done.';
+  }
+
+  document.getElementById('prodSearchInput').addEventListener('input', (e) => {
+    clearTimeout(searchDebounceHandle);
+    const value = e.target.value.trim();
+    searchDebounceHandle = setTimeout(() => { currentSearch = value; currentPage = 1; loadProductionOrders(); }, 300);
+  });
+  document.getElementById('prodStatusFilter').addEventListener('change', (e) => {
+    currentStatus = e.target.value;
+    currentPage = 1;
+    loadProductionOrders();
+  });
+  document.getElementById('prodRefreshBtn').addEventListener('click', loadProductionOrders);
+  window.addEventListener('resize', fitGridToViewport);
+
+  document.getElementById('prodTableBody').addEventListener('click', (e) => {
+    const row = e.target.closest('tr[data-order-no]');
+    if (!row) return;
+    const order = lastRows.find((o) => o.order_no === row.dataset.orderNo);
+    if (order) openCard(order);
+  });
+
+  document.getElementById('newProdBtn').addEventListener('click', () => openCard(null));
+  document.getElementById('prodCardCloseBtn').addEventListener('click', closeCard);
+  document.getElementById('prodCardMaximizeBtn').addEventListener('click', () => {
+    const next = !document.getElementById('prodCardModal').classList.contains('modal-maximized');
+    applyMaximized(next);
+    writeStoredFlag(PROD_MAXIMIZED_KEY, next);
+  });
+  document.getElementById('prodSaveBtn').addEventListener('click', saveOrder);
+  document.getElementById('prodReleaseBtn').addEventListener('click', () => setReleased(true));
+  document.getElementById('prodReopenBtn').addEventListener('click', () => setReleased(false));
+  document.getElementById('prodPostOutputBtn').addEventListener('click', postOutput);
+  document.getElementById('prodPrintSerialsBtn').addEventListener('click', printSerials);
+  document.getElementById('prodDeleteBtn').addEventListener('click', deleteOrder);
+  document.getElementById('prodAddLineBtn').addEventListener('click', addLine);
+  document.getElementById('prodPartDoneActions').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-part-done]');
+    if (!btn) return;
+    const done = btn.dataset.done === '1';
+    if (done && !confirm(`Is the ${PART_LABEL[btn.dataset.partDone]} part of ${openOrder.order_no} completely finished?`)) return;
+    setPartDone(btn.dataset.partDone, done);
+  });
+  ['prodDescription', 'prodWarehouse', 'prodDueDate', 'prodNotes', 'prodTankMaker', 'prodStandMaker'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', () => { cardDirty = true; refreshGeneralSummary(); });
+  });
+  wireLinesGrid();
+
+  await Promise.all([loadWarehouses(), isManager ? loadMakers() : Promise.resolve(), loadProductionOrders()]);
+
+  // Opened from a My Assignments card (online-orders.html) - go straight to the order.
+  const directNo = new URLSearchParams(window.location.search).get('no');
+  if (directNo) {
+    try {
+      const row = lastRows.find((o) => o.order_no === directNo) || await fetchOrderRow(directNo);
+      if (row) openCard(row);
+    } catch (err) {
+      console.error('Could not open production order', directNo, err);
+    }
+  }
+})();
