@@ -2607,3 +2607,20 @@ a.bc-cue:hover {
 /* Next-step button (Online Orders): green when it's Ready to Ship. */
 #listNextStepBtn.is-ship, #cardNextStepBtn.is-ship { background: #1e7d3a; border-color: #1e7d3a; color: #fff; font-weight: 600; }
 #listNextStepBtn.is-ship .bc-ico, #cardNextStepBtn.is-ship .bc-ico { stroke: currentColor; }
+
+/* Production Done / Mark Shipped confirmation (confirmAction, onlineOrders.js). Sits above the order
+   card; big, well-separated buttons so a stray tap on the phone doesn't confirm. */
+#confirmActionDialog { z-index: 1200; }
+.bc-dialog.oo-confirm-dialog { width: min(460px, calc(100vw - 32px)); max-width: 460px; }
+.oo-confirm-dialog .bc-lede { font-size: 15px; line-height: 1.5; white-space: pre-line; color: inherit; }
+.oo-confirm-foot { gap: 12px; }
+.oo-confirm-foot .bc-btn { flex: 1 1 0; min-height: 46px; justify-content: center; font-size: 15px; font-weight: 600; }
+.oo-confirm-foot .bc-btn:disabled { opacity: .55; }
+.oo-confirm-dialog.is-done #confirmActionOkBtn { background: #1e7d3a; border-color: #1e7d3a; color: #fff; }
+.oo-confirm-dialog.is-ship #confirmActionOkBtn { background: #1f5fa8; border-color: #1f5fa8; color: #fff; }
+.oo-confirm-dialog.is-undo #confirmActionOkBtn { background: #9a2d2d; border-color: #9a2d2d; color: #fff; }
+@media (max-width: 640px) {
+  #confirmActionDialog { align-items: flex-end; }
+  .bc-dialog.oo-confirm-dialog { max-width: none; width: 100%; border-radius: 14px 14px 0 0; }
+  .oo-confirm-foot .bc-btn { min-height: 52px; font-size: 16px; }
+}

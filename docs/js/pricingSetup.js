@@ -24,7 +24,7 @@ function escapeHtml(value) {
 
 async function loadGlassPricing() {
   const tbody = document.getElementById('glassPricingTableBody');
-  tbody.innerHTML = '<tr><td colspan="5" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_glass_pricing', {
     p_admin_username: currentSession.username,
@@ -32,20 +32,23 @@ async function loadGlassPricing() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="5" class="error-text">${escapeHtml(error.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="muted">No rows yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">No rows yet.</td></tr>';
     return;
   }
 
+  // Turnaround Days (supabase_glass_turnaround_days_setup.sql): sets a custom order's Estimated
+  // Delivery Date when it's Assigned. Stored as text, so only a whole number is shown for editing.
   tbody.innerHTML = data
     .map((row) => `
-      <tr data-thickness="${escapeHtml(row.thickness)}">
+      <tr data-thickness="${escapeHtml(row.thickness)}" data-turnaround="${escapeHtml(row.turnaround_days)}">
         <td>${escapeHtml(row.thickness)}mm</td>
         <td><input type="number" min="0" step="0.01" value="${row.price_per_sqft}" class="pricing-input" style="max-width:120px;" /></td>
+        <td><input type="number" min="0" max="365" step="1" value="${escapeHtml((String(row.turnaround_days ?? '').match(/\d+/) || [''])[0])}" class="turnaround-input" placeholder="-" style="max-width:90px;" /></td>
         <td>${formatUpdated(row)}</td>
         <td>${escapeHtml(row.updated_by) || '<span class="muted">-</span>'}</td>
         <td><button class="btn btn-success btn-sm" type="button" data-action="save">Save</button></td>
@@ -67,6 +70,13 @@ async function saveGlassPricing(row) {
     return;
   }
 
+  const daysText = row.querySelector('.turnaround-input').value.trim();
+  const days = daysText === '' ? null : Number(daysText);
+  if (days !== null && !(Number.isInteger(days) && days >= 0 && days <= 365)) {
+    alert('Turnaround days must be a whole number from 0 to 365 (or blank).');
+    return;
+  }
+
   const btn = row.querySelector('button[data-action="save"]');
   btn.disabled = true;
   btn.textContent = 'Saving...';
@@ -78,8 +88,19 @@ async function saveGlassPricing(row) {
     p_price_per_sqft: price
   });
 
-  if (error) {
-    alert(`Failed to save: ${error.message}`);
+  // Turnaround saved only when it changed, so a price-only save never touches it.
+  const oldDays = (String(row.dataset.turnaround || '').match(/\d+/) || [null])[0];
+  const daysRes = !error && String(days ?? '') !== String(oldDays ?? '')
+    ? await supabaseClient.rpc('admin_set_glass_turnaround_days', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_thickness: thickness,
+      p_days: days
+    })
+    : {};
+
+  if (error || daysRes.error) {
+    alert(`Failed to save: ${(error || daysRes.error).message}`);
     btn.disabled = false;
     btn.textContent = 'Save';
     return;

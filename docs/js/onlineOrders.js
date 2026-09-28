@@ -549,13 +549,69 @@ function updateNextStepButton(btnId, o) {
   btn.innerHTML = `<svg class="bc-ico"><use href="#${step.icon}"/></svg>${escapeHtml(step.label)}`;
 }
 
+// Confirmation dialog for the actions that are easy to tap by accident (Production Done, Mark Shipped,
+// Ready to Ship) - per "on the production done and mark shipped can you put a confirmation message so
+// it will not accedentally clicked? this is for both mobile and portal". A real dialog (#confirmActionDialog)
+// rather than the browser's small confirm(): names the order and customer, Cancel has focus, and the
+// confirm button only becomes tappable after a moment so a double-tap on the original button can't
+// land on it. Resolves true only on the confirm button; Cancel, Escape or tapping outside -> false.
+function confirmAction({ caption = 'PLEASE CONFIRM', title, message, confirmLabel, tone = '' }) {
+  const dialog = document.getElementById('confirmActionDialog');
+  const panel = dialog.querySelector('.oo-confirm-dialog');
+  const okBtn = document.getElementById('confirmActionOkBtn');
+  const cancelBtn = document.getElementById('confirmActionCancelBtn');
+  document.getElementById('confirmActionCaption').textContent = caption;
+  document.getElementById('confirmActionTitle').textContent = title;
+  document.getElementById('confirmActionMessage').textContent = message;
+  okBtn.textContent = confirmLabel;
+  panel.classList.remove('is-done', 'is-ship', 'is-undo');
+  if (tone) panel.classList.add(tone);
+
+  return new Promise((resolve) => {
+    const finish = (answer) => {
+      dialog.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      dialog.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey, true);
+      resolve(answer);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onBackdrop = (e) => { if (e.target === dialog) finish(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopImmediatePropagation(); finish(false); }
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    dialog.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey, true);
+
+    okBtn.disabled = true;
+    dialog.classList.remove('hidden');
+    cancelBtn.focus();
+    setTimeout(() => { okBtn.disabled = false; }, 700);
+  });
+}
+
+function orderLabel(o) {
+  return `Order ${o.order_id}${o.customer_name ? ` · ${o.customer_name}` : ''}`;
+}
+
 async function handleNextStepClick(orderId, btn) {
   const o = findFlatOrder(orderId);
   if (!o) return;
   if (btn.dataset.action === 'assign') {
     openAssignDialog(orderId);
   } else if (btn.dataset.action === 'ship') {
-    if (!confirm(`Mark order ${o.order_id} as Ready to Ship?\n\nIt moves to To Ship in the portal and Pancake.`)) return;
+    const ok = await confirmAction({
+      caption: 'READY TO SHIP',
+      title: orderLabel(o),
+      message: 'Mark this order as Ready to Ship?\n\nIt moves to To Ship in the portal and Pancake.',
+      confirmLabel: 'Yes, Ready to Ship',
+      tone: 'is-ship'
+    });
+    if (!ok) return;
     await handleToShipClick(String(o.order_id), btn, { readyToShip: true });
   } else if (btn.dataset.action === 'shipped') {
     await markOrderShipped(String(o.order_id), btn);
@@ -566,7 +622,14 @@ async function handleNextStepClick(orderId, btn) {
 async function markOrderShipped(orderId, btn) {
   const o = findFlatOrder(orderId);
   if (!o || !canMarkShipped(o)) return;
-  if (!confirm(`Mark order ${o.order_id} as Shipped?\n\nIt changes to Shipped in the portal and Pancake. No message is sent to the customer.`)) return;
+  const ok = await confirmAction({
+    caption: 'MARK SHIPPED',
+    title: orderLabel(o),
+    message: `Has this order been shipped / handed to the customer?\n\nIt changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+    confirmLabel: 'Yes, Mark Shipped',
+    tone: 'is-ship'
+  });
+  if (!ok) return;
   btn.disabled = true;
   const { data, error } = await supabaseClient.rpc('admin_mark_online_order_shipped', {
     p_admin_username: currentSession.username,
@@ -679,10 +742,22 @@ async function handleProductionDoneClick(orderId, btn) {
   if (!mine.length) return;
   const undo = mine.every((role) => o.production_done?.[role]);
   const parts = mine.map((r) => MAKER_ROLES[r].label.replace(' Maker', '').toLowerCase()).join(' and ');
-  const question = undo
-    ? `Undo Production Done for your part (${parts}) of order ${o.order_id}?`
-    : `Mark your part (${parts}) of order ${o.order_id} as done?${myAssignmentsOnly ? ' It will leave your list.' : ''}`;
-  if (!confirm(question)) return;
+  const ok = await confirmAction(undo
+    ? {
+      caption: 'UNDO PRODUCTION DONE',
+      title: orderLabel(o),
+      message: `Undo Production Done for your part (${parts})?\n\nIt goes back to being in production.`,
+      confirmLabel: 'Yes, Undo',
+      tone: 'is-undo'
+    }
+    : {
+      caption: 'PRODUCTION DONE',
+      title: orderLabel(o),
+      message: `Is your part (${parts}) completely finished?${myAssignmentsOnly ? '\n\nThe order will leave your list.' : ''}`,
+      confirmLabel: 'Yes, Production Done',
+      tone: 'is-done'
+    });
+  if (!ok) return;
 
   btn.disabled = true;
   const { data, error } = await supabaseClient.rpc('staff_set_online_order_production_done', {
@@ -1717,16 +1792,28 @@ function assignOptionsHtml(order, role) {
 }
 
 async function openAssignDialog(orderId) {
-  const o = findFlatOrder(orderId);
-  if (!o || !canAssignOrders()) return;
-  assignDialogOrderId = String(o.order_id);
+  if (!findFlatOrder(orderId) || !canAssignOrders()) return;
 
   // Re-read the roster every time - roles ticked in User Setup after this page was opened must
-  // show up without a page reload.
-  await loadProductionMembers();
+  // show up without a page reload. Reload the list too: its aquarium/stand flags come from the
+  // portal's synced OnlineOrderLines, and the copy in memory is from when the list was last loaded -
+  // per "the new item i add is custom-stand but when I hit assign I cannot assign it to my stand
+  // maker", an item synced in after that wasn't counted.
+  showSendStatusBanner('Loading the latest order lines...');
+  try {
+    await Promise.all([refreshCurrentOrders(), loadProductionMembers()]);
+  } finally {
+    hideSendStatusBanner();
+  }
+
+  const o = findFlatOrder(orderId);
+  if (!o) return;
+  assignDialogOrderId = String(o.order_id);
 
   document.getElementById('assignDialogTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
-  const needs = [o.has_aquarium_line ? 'an aquarium' : null, o.has_stand_line ? 'a stand' : null].filter(Boolean);
+  // has_aquarium_line = any custom line that isn't a stand/top cover (Tank Maker); has_stand_line =
+  // custom stand or top cover (Stand Maker) - _online_order_line_part, supabase_online_order_maker_line_rules.sql.
+  const needs = [o.has_aquarium_line ? 'custom tank work' : null, o.has_stand_line ? 'a custom stand / top cover' : null].filter(Boolean);
   // Only custom orders go Confirmed > Assigned > To Ship here; normal orders still go through the
   // local POS (see _online_order_assignment_complete in supabase_online_order_assigned_status.sql).
   // Per "no need to asign a dispatcher since the dispatcher will be logged after shipping the order" -
@@ -1734,7 +1821,7 @@ async function openAssignDialog(orderId) {
   // (admin_mark_online_order_shipped, supabase_online_order_dispatcher_on_ship.sql).
   document.getElementById('assignDialogLede').textContent = needs.length
     ? `This order has ${needs.join(' and ')} to build. It moves to Assigned once every maker is set.`
-    : 'This order has no custom aquarium or stand to build - nothing to assign. Print and ship it from the local POS.';
+    : 'This order has no custom items to build - nothing to assign. Print and ship it from the local POS.';
 
   document.getElementById('assignTankRow').classList.toggle('hidden', !o.has_aquarium_line);
   document.getElementById('assignStandRow').classList.toggle('hidden', !o.has_stand_line);
@@ -1775,7 +1862,15 @@ async function saveAssignDialog() {
     return value !== (o[`assigned_${MAKER_ROLES[role].field}`] || null);
   });
 
-  if (!picks.length) return closeAssignDialog();
+  // Nothing changed - but if every needed maker is already set and the order still isn't Assigned
+  // (the last status update to Pancake failed, e.g. "SSL_ERROR_SYSCALL"), OK retries just the status.
+  const statusKey = (o.status || '').trim().toLowerCase();
+  const needsStatusRetry = !picks.length
+    && (o.has_aquarium_line || o.has_stand_line)
+    && (!o.has_aquarium_line || !!o.assigned_tank_maker)
+    && (!o.has_stand_line || !!o.assigned_stand_maker)
+    && ['confirmed', 'submitted', 'printed'].includes(statusKey);
+  if (!picks.length && !needsStatusRetry) return closeAssignDialog();
 
   const btn = document.getElementById('saveAssignDialogBtn');
   btn.disabled = true;
@@ -2504,7 +2599,7 @@ function wireOrderCard() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
-    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog', 'sendBackDialog']
+    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog', 'sendBackDialog', 'confirmActionDialog']
       .some((id) => !document.getElementById(id).classList.contains('hidden'));
     if (!stacked) closeOrderCard();
   });

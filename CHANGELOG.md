@@ -4,6 +4,22 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- Online Orders: Production Done (and its Undo), Mark Shipped and Ready to Ship now ask in a proper confirmation dialog (order + customer named, Cancel focused, confirm button enabled after a moment, bottom sheet on phones) instead of the browser's small confirm(), so they aren't tapped through by accident - phone cards, list and order card.
+
+- Assigning a new order timed out ("canceling statement due to statement timeout") because the every-minute Pancake syncs held order row locks while making Pancake calls for other orders. Header sync now runs headers only; detail (lines/glass/print note) and open-order status refresh moved into procedures that COMMIT after each order ([supabase_online_order_sync_no_long_locks.sql](sql/supabase_online_order_sync_no_long_locks.sql)).
+
+- Assign failed with "SSL_ERROR_SYSCALL" (Pancake connection dropped): the Pancake status PATCH now retries up to 3 times with pauses and a clearer error ([supabase_pancake_patch_retry.sql](sql/supabase_pancake_patch_retry.sql)); clicking OK in the Assign popup with no changes now retries the status update when all makers are set but the order isn't Assigned yet.
+
+- Maker rules for custom lines: custom stand / top cover -> Stand Maker, every other custom line (e.g. "Custom", "All-Custom-Item", sumps) -> Tank Maker; before, only "aquarium"/"stand" lines needed a maker. One shared `_online_order_line_part` drives production parts, list flags, Assigned filter and counts ([supabase_online_order_maker_line_rules.sql](sql/supabase_online_order_maker_line_rules.sql)); Assign popup wording updated.
+
+- Pricing Setup > Glass Thickness Pricing gets a Turnaround Days column (saved with the row's Save; blank clears it) - it drives the Estimated Delivery Date on Assign and could only be set by SQL before ([supabase_glass_turnaround_days_setup.sql](sql/supabase_glass_turnaround_days_setup.sql)).
+
+- Open-order status refresh cron now also saves each open order's lines from the detail it already fetches (and prunes deleted ones), plus covers 'Assigned' - order 103949's added CUSTOM-STAND still wasn't saved after the glass-pass fix ([supabase_online_order_open_refresh_lines.sql](sql/supabase_online_order_open_refresh_lines.sql)).
+
+- Fixed items added to an order in Pancake after it synced never reaching OnlineOrderLines: the cron's glass pass marked edited orders checked without saving lines, so the lines pass skipped them. Glass pass now saves (and prunes deleted) lines; re-checks open orders ([supabase_online_order_sync_edited_lines.sql](sql/supabase_online_order_sync_edited_lines.sql)).
+
+- Online Orders Assign popup now reloads the list (portal's synced OnlineOrderLines) before opening - it used the list loaded earlier, so a custom stand synced in afterwards got no Stand Maker field. Check query: [supabase_check_online_order_maker_lines.sql](sql/supabase_check_online_order_maker_lines.sql).
+
 - **Dispatcher recorded at shipping, not assigned**: the Assign popup asks only for the Tank / Stand Maker. Any Dispatcher can Mark Shipped a To Ship order and is recorded as its Dispatcher (plus a shipments log). Dispatchers' My Assignments lists all To Ship orders (their branch only, if they have one). A custom order with no custom aquarium or stand now has nothing to assign and follows the POS. The order card shows the Dispatcher as "Recorded when shipped" ([supabase_online_order_dispatcher_on_ship.sql](sql/supabase_online_order_dispatcher_on_ship.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html)).
 
 - **Fix: two Assign buttons on Online Orders**: on an unassigned custom order, the status-based button and the regular Assign button both read "Assign". The regular one is now hidden while the status-based button says Assign, and comes back at later stages for reassigning ([onlineOrders.js](docs/js/onlineOrders.js)).

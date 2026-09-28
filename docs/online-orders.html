@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=glass1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp7" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fp8" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -367,6 +367,26 @@
        Each dropdown lists only staff holding that Staff Role; OK saves whatever changed
        (js/onlineOrders.js openAssignDialog / saveAssignDialog). -->
   <!-- Send back for rework (js/onlineOrders.js openSendBackDialog, supabase_online_order_production_rework.sql) -->
+  <!-- Confirmation for Production Done / Mark Shipped (confirmAction in onlineOrders.js) - a real dialog
+       instead of the browser's small confirm(), so these aren't tapped through by accident. -->
+  <div id="confirmActionDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog oo-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmActionTitle" aria-describedby="confirmActionMessage">
+      <div class="bc-dialog-head">
+        <div>
+          <div id="confirmActionCaption" class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">PLEASE CONFIRM</div>
+          <h2 id="confirmActionTitle">Are you sure?</h2>
+        </div>
+      </div>
+      <div class="bc-dialog-body">
+        <p id="confirmActionMessage" class="bc-lede"></p>
+      </div>
+      <div class="bc-dialog-foot oo-confirm-foot">
+        <button class="bc-btn" id="confirmActionCancelBtn" type="button">Cancel</button>
+        <button class="bc-btn bc-btn-primary" id="confirmActionOkBtn" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <div id="sendBackDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="sendBackTitle">
       <div class="bc-dialog-head">
@@ -529,7 +549,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/glassCutList.js?v=po1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=bc25"></script>
+  <script src="js/onlineOrders.js?v=bc29"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
