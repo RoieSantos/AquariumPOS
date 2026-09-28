@@ -89,7 +89,7 @@
 
   <div class="page">
     <h1>Repair Calculator</h1>
-    <p class="muted">Price aquarium repairs - Panel Replacement is priced from the damaged panel's own area using the same live Glass Pricing Setup rate as new custom builds, plus a labor markup. Resealing/Leak Repair is priced by tank size tier (estimated from the dimensions below). Both are configurable on the Pricing Setup page. Client-side pricing only - nothing here is saved to the database; use "Copy Summary" to paste the breakdown into an order or note.</p>
+    <p class="muted">Price aquarium repairs - Panel Replacement is priced from each damaged panel's size, glass thickness and glass type. Resealing/Leak Repair is priced by tank size (estimated from the dimensions below). Client-side pricing only - nothing here is saved to the database; use "Copy Summary" to paste the breakdown into an order or note.</p>
 
     <div class="repair-type-tabs">
       <button type="button" class="repair-type-tab active" id="repairTabPanel" data-type="panel">Panel Replacement</button>
@@ -97,6 +97,15 @@
     </div>
 
     <div class="form-grid" style="margin-top:16px;">
+      <div class="form-row">
+        <label for="repairUnit">Unit of Measure</label>
+        <select id="repairUnit">
+          <option value="Inches" selected>Inches</option>
+          <option value="cm">Cm</option>
+          <option value="mm">mm</option>
+          <option value="ft">ft</option>
+        </select>
+      </div>
       <div class="form-row">
         <label for="repairAquariumLength">Aquarium Length (inches)</label>
         <input type="number" id="repairAquariumLength" min="0" step="0.1" placeholder="e.g. 24" />
@@ -117,7 +126,14 @@
           <option value="10mm">10mm</option>
           <option value="12mm">12mm</option>
         </select>
-        <span class="muted" id="repairMarkupNote" style="font-size:12px; display:block; margin-top:4px;"></span>
+      </div>
+      <div id="repairGlassTypeRow" class="form-row">
+        <label for="repairGlassType">Glass Type</label>
+        <select id="repairGlassType">
+          <option value="regular" selected>Regular</option>
+          <option value="tempered">Tempered</option>
+          <option value="low_iron">Low Iron</option>
+        </select>
       </div>
     </div>
 
@@ -183,7 +199,7 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=paymethods1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js"></script>
-  <script src="js/repairCalculator.js"></script>
+  <script src="js/repairCalculator.js?v=unit1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

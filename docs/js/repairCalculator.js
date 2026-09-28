@@ -23,6 +23,9 @@
 // (Custom Stand, Aquarium Calculator, Stickers). Alice (the AI bot) CAN also quote these two repair
 // types via compute_repair_quote (supabase/functions/_shared/chatbot-engine.ts) - a hand-ported
 // copy of this same pricing logic, not a shared import; keep both in sync manually if this changes.
+// Glass Type (Panel Replacement only) uses the same multipliers as calculateCustomAquarium: Tempered
+// = 2x the glass rate; Low Iron is always tempered (2x) and then x1.7. Applied to the glass cost
+// before the labor markup.
 
 const PANEL_LOCATIONS = ['Bottom', 'Front', 'Back', 'Left', 'Right'];
 
@@ -46,6 +49,17 @@ const RESEAL_TIERS = [
   { maxGallons: 150, label: '101-150 gal', settingKey: 'resealingXlFee' },
   { maxGallons: Infinity, label: '151+ gal (monster tank)', settingKey: 'resealingMonsterFee' }
 ];
+
+const REPAIR_GLASS_TYPES = {
+  regular: { label: 'Regular', multiplier: 1 },
+  tempered: { label: 'Tempered', multiplier: 2 },
+  low_iron: { label: 'Low Iron (tempered)', multiplier: 2 * 1.7 }
+};
+
+function repairGlassType() {
+  const value = document.getElementById('repairGlassType').value;
+  return REPAIR_GLASS_TYPES[value] || REPAIR_GLASS_TYPES.regular;
+}
 
 function repairResealTierFor(gallons) {
   return RESEAL_TIERS.find((tier) => gallons <= tier.maxGallons) || RESEAL_TIERS[RESEAL_TIERS.length - 1];
@@ -83,7 +97,6 @@ async function repairLoadPricingSetup() {
     errorEl.classList.remove('hidden');
     repairGlassLookup = window.CustomAquariumCalculator.buildGlassPriceLookup([], 'MM');
   }
-  document.getElementById('repairMarkupNote').textContent = `Includes a ${repairPricingSetup.panelReplacementMarkupPercent}% labor markup (configurable in Pricing Setup).`;
   repairRecalculate();
 }
 
@@ -94,6 +107,7 @@ function repairSetType(type) {
   document.getElementById('repairPanelFields').classList.toggle('hidden', type !== 'panel');
   document.getElementById('repairResealFields').classList.toggle('hidden', type !== 'reseal');
   document.getElementById('repairGlassThicknessRow').classList.toggle('hidden', type !== 'panel');
+  document.getElementById('repairGlassTypeRow').classList.toggle('hidden', type !== 'panel');
   repairRecalculate();
 }
 
@@ -122,6 +136,23 @@ function repairAquariumDims() {
   return { length, width, height };
 }
 
+// Dimensions are entered in the chosen unit (display uses them as entered); pricing always runs on
+// inches, converted with the shared CustomAquariumCalculator.toInches.
+function repairUnit() {
+  return document.getElementById('repairUnit').value || 'Inches';
+}
+
+function repairToInches(dims) {
+  const unit = repairUnit();
+  const toInches = window.CustomAquariumCalculator.toInches;
+  return { length: toInches(dims.length, unit), width: toInches(dims.width, unit), height: toInches(dims.height, unit) };
+}
+
+function repairFormatDim(value) {
+  const unit = repairUnit();
+  return unit === 'Inches' ? `${value}"` : `${value} ${unit}`;
+}
+
 // Same convention as getGlassAreaSqFt (custom-aquarium-calculator.js): Bottom = Length x Width,
 // Front/Back = Length x Height, Left/Right = Width x Height.
 function repairPanelDims(panel, aquarium) {
@@ -135,7 +166,8 @@ function repairRecalculate() {
 
   if (repairType === 'panel') {
     const thickness = document.getElementById('repairGlassThickness').value;
-    const glassRate = repairGlassLookup[thickness] || 0;
+    const glassType = repairGlassType();
+    const glassRate = (repairGlassLookup[thickness] || 0) * glassType.multiplier;
     const markupPercent = repairPricingSetup.panelReplacementMarkupPercent;
     const checkedPanels = repairCheckedPanels();
 
@@ -145,20 +177,23 @@ function repairRecalculate() {
     }
 
     const aquarium = repairAquariumDims();
+    const aquariumInches = repairToInches(aquarium);
     let total = 0;
     const rows = [];
 
     checkedPanels.forEach((panel) => {
       const { width, height } = repairPanelDims(panel, aquarium);
-      const areaSqFt = (width * height) / 144;
+      const inches = repairPanelDims(panel, aquariumInches);
+      const areaSqFt = (inches.width * inches.height) / 144;
       const glassCost = areaSqFt * glassRate;
       const markup = glassCost * (markupPercent / 100);
       const price = glassCost + markup;
       total += price;
 
-      rows.push({ label: `${panel}: ${width}" x ${height}" (${areaSqFt.toFixed(2)} sqft)`, value: repairFormatCurrency(price) });
+      rows.push({ label: `${panel}: ${repairFormatDim(width)} x ${repairFormatDim(height)} (${areaSqFt.toFixed(2)} sqft)`, value: repairFormatCurrency(price) });
     });
 
+    if (glassType.multiplier !== 1) rows.push({ label: 'Glass type', value: glassType.label });
     repairRenderSummary(rows, total);
   } else {
     const aquarium = repairAquariumDims();
@@ -169,14 +204,14 @@ function repairRecalculate() {
       return;
     }
 
-    const gallons = repairEstimateGallons(aquarium);
+    const gallons = repairEstimateGallons(repairToInches(aquarium));
     const tier = repairResealTierFor(gallons);
     const total = repairPricingSetup[tier.settingKey];
 
     repairRenderSummary([
       {
         label: `Resealing / Leak Repair (${tier.label})`,
-        value: `${aquarium.length}" x ${aquarium.width}" x ${aquarium.height}" (~${Math.round(gallons)} gal)`
+        value: `${repairFormatDim(aquarium.length)} x ${repairFormatDim(aquarium.width)} x ${repairFormatDim(aquarium.height)} (~${Math.round(gallons)} gal)`
       }
     ], total);
   }
@@ -191,18 +226,18 @@ function repairBuildSpecText() {
     const aquarium = repairAquariumDims();
     const parts = checkedPanels.map((panel) => {
       const { width, height } = repairPanelDims(panel, aquarium);
-      return `${panel} ${width}"x${height}"`;
+      return `${panel} ${repairFormatDim(width)} x ${repairFormatDim(height)}`;
     });
-    return `Repair - Panel Replacement (${aquarium.length}"x${aquarium.width}"x${aquarium.height}", ${thickness}): ${parts.join(', ')}`;
+    return `Repair - Panel Replacement (${repairFormatDim(aquarium.length)} x ${repairFormatDim(aquarium.width)} x ${repairFormatDim(aquarium.height)}, ${thickness} ${repairGlassType().label}): ${parts.join(', ')}`;
   }
   const aquarium = repairAquariumDims();
   const hasDims = aquarium.length > 0 && aquarium.width > 0 && aquarium.height > 0;
   if (!hasDims) return 'Repair - Resealing/Leak Repair: enter aquarium dimensions above';
 
-  const gallons = repairEstimateGallons(aquarium);
+  const gallons = repairEstimateGallons(repairToInches(aquarium));
   const tier = repairResealTierFor(gallons);
   const notes = document.getElementById('repairResealNotes').value.trim();
-  return `Repair - Resealing/Leak Repair (${aquarium.length}"x${aquarium.width}"x${aquarium.height}", ~${Math.round(gallons)} gal, ${tier.label})${notes ? ' - ' + notes : ''}`;
+  return `Repair - Resealing/Leak Repair (${repairFormatDim(aquarium.length)} x ${repairFormatDim(aquarium.width)} x ${repairFormatDim(aquarium.height)}, ~${Math.round(gallons)} gal, ${tier.label})${notes ? ' - ' + notes : ''}`;
 }
 
 async function repairCopySummary() {
@@ -226,6 +261,14 @@ async function repairCopySummary() {
   document.getElementById('repairCopyBtn').addEventListener('click', repairCopySummary);
 
   document.getElementById('repairGlassThickness').addEventListener('change', repairRecalculate);
+  document.getElementById('repairGlassType').addEventListener('change', repairRecalculate);
+  document.getElementById('repairUnit').addEventListener('change', () => {
+    const unit = repairUnit();
+    ['Length', 'Width', 'Height'].forEach((dim) => {
+      document.querySelector(`label[for="repairAquarium${dim}"]`).textContent = `Aquarium ${dim} (${unit === 'Inches' ? 'inches' : unit})`;
+    });
+    repairRecalculate();
+  });
   ['repairAquariumLength', 'repairAquariumWidth', 'repairAquariumHeight'].forEach((id) => {
     document.getElementById(id).addEventListener('input', repairRecalculate);
   });

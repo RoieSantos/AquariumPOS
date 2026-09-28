@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- **Repair Calculator: Unit of Measure**: new Inches / Cm / mm / ft selector. Dimensions are converted to inches for pricing (shared `toInches`) and shown in the chosen unit in the summary and Copy Summary ([repair-calculator.html](docs/repair-calculator.html), [repairCalculator.js](docs/js/repairCalculator.js)).
+
+- **Repair Calculator hides pricing internals**: removed the labor markup % note, the tempered/low-iron multipliers in the Glass Type dropdown, and the rate/markup wording in the intro. Pricing is unchanged ([repair-calculator.html](docs/repair-calculator.html), [repairCalculator.js](docs/js/repairCalculator.js)).
+
+- **Repair Calculator: Glass Type**: Panel Replacement now has a Glass Type option (Regular / Tempered / Low Iron). Tempered is 2x the glass rate; Low Iron is always tempered, 2x then x1.7, the same as the Aquarium Calculator. Applied before the labor markup. Alice's `compute_repair_quote` gets a matching `glass_type` input ([repair-calculator.html](docs/repair-calculator.html), [repairCalculator.js](docs/js/repairCalculator.js), [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
+
 - **Maker focus on the order card**: a maker-only account now opens an order as just the essentials: a short summary (customer, due date, delivery/pickup, their part, print note, rework note) and the lines as cards (item, quantity, spec note, attachments), plus the Glass Cut. General, Assignment, Delivery, Payment, Photos Sent and Rework History are hidden, and so is attachment removal. Full screen on phones ([onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css)).
 
 - **Rework count + history per order**: a red "↺ N" badge next to the status (list and phone cards) shows how many times an order was sent back; one click counts once however many parts it covered. The order card has a new Rework History section listing each send-back: when and by whom, part, reason, who had finished it, and whether and when it was fixed ([supabase_online_order_rework_history.sql](sql/supabase_online_order_rework_history.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css)).
