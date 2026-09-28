@@ -594,7 +594,7 @@ function nextStepFor(o) {
       : { action: 'ship', label: 'Ready to Ship', icon: 'ico-ship', disabled: true, title: 'Assign the order first - it has to be Assigned before it can ship' };
   }
   if (['confirmed', 'submitted', 'printed'].includes(status) && display !== 'Assigned') {
-    return { action: 'assign', label: 'Assign', icon: 'ico-assign', title: 'Assign the Tank Maker / Stand Maker / Dispatcher' };
+    return { action: 'assign', label: 'Assign', icon: 'ico-assign', title: 'Assign the Tank Maker / Stand Maker' };
   }
   if (status === 'assigned' || display === 'Assigned') {
     const done = needed.filter((role) => o.production_done?.[role]).length;
@@ -880,7 +880,12 @@ function assignSelectHtml(order) {
   const parts = [];
   if (order.has_aquarium_line) parts.push(makerSelectHtml(order, 'tank', order.assigned_tank_maker));
   if (order.has_stand_line) parts.push(makerSelectHtml(order, 'stand', order.assigned_stand_maker));
-  parts.push(makerSelectHtml(order, 'dispatcher', order.assigned_dispatcher));
+  // No Dispatcher dropdown - per "dispatcher's dont need to be assigned. any dispatcher can mark an order
+  // shipped". Whoever marks it Shipped is recorded as its Dispatcher (shown read-only once known).
+  if (order.assigned_dispatcher) {
+    parts.push(`<span class="muted" title="Recorded when the order was marked Shipped">Dispatcher: ${escapeHtml(order.assigned_dispatcher_name || order.assigned_dispatcher)}</span>`);
+  }
+  if (!parts.length) return '<span class="muted">-</span>';
   return `<div style="display:flex; flex-direction:column; gap:4px; align-items:flex-start;">${parts.join('')}</div>`;
 }
 
@@ -1044,6 +1049,11 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
   triggerEl.disabled = true;
   showSendStatusBanner("Hey there! Updating this order's status, please hold on...");
 
+  // The serial picker resolves { running, fresh }: existing serials to claim and new ones to create
+  // (supabase_online_order_ship_new_serials.sql). A plain array (older callers) is just "running".
+  const running = Array.isArray(serialRunningNos) ? serialRunningNos : (serialRunningNos?.running || []);
+  const fresh = Array.isArray(serialRunningNos) ? [] : (serialRunningNos?.fresh || []);
+
   try {
     const { data, error } = await supabaseClient.rpc('admin_update_online_order_status', {
       p_admin_username: currentSession.username,
@@ -1051,7 +1061,8 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
       p_order_id: orderId,
       p_new_status: newStatus,
       p_notify_customer: notifyCustomer,
-      p_serial_running_nos: serialRunningNos && serialRunningNos.length > 0 ? serialRunningNos : null
+      p_serial_running_nos: running.length > 0 ? running : null,
+      p_new_serials: fresh.length > 0 ? fresh : null
     });
 
     if (error) {
@@ -1061,6 +1072,12 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
     }
 
     const result = data && data[0];
+
+    // New serials were created - print their labels now, same as the desktop's To Ship.
+    const created = Array.isArray(result?.created_serials) ? result.created_serials : [];
+    if (created.length) {
+      printSerialLabels(created.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
+    }
     if (notifyCustomer && result && !result.message_sent) {
       alert('Status updated, but the customer notification failed to send: ' + (result.message_error || 'unknown error'));
     }
@@ -1109,6 +1126,73 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
   }
 }
 
+// Serial labels - per "is it possible to move the printout of serials": the same 100x30mm label the
+// desktop prints (MainForm.DrawSerialNumberLabel): serial in bold, item code, description (2 lines max),
+// Code128 barcode of the serial. One label per page, printed through the browser's print dialog - pick
+// the label printer there. Rendered in a hidden iframe so it isn't blocked as a popup.
+function printSerialLabels(labels) {
+  if (!labels || !labels.length) return;
+  document.getElementById('serialLabelFrame')?.remove();
+  const body = labels.map((l) => `
+    <div class="label">
+      <div class="sn">${escapeHtml(l.serialNo)}</div>
+      ${l.itemCode ? `<div class="ic">${escapeHtml(l.itemCode)}</div>` : ''}
+      ${l.description ? `<div class="desc">${escapeHtml(l.description)}</div>` : ''}
+      <svg class="bc" data-value="${escapeHtml(l.serialNo)}"></svg>
+    </div>`).join('');
+  const frame = document.createElement('iframe');
+  frame.id = 'serialLabelFrame';
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+  frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><title>Serial labels</title><style>
+    @page { size: 100mm 30mm; margin: 0; }
+    html, body { margin: 0; padding: 0; background: #fff; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #000; }
+    .label { width: 100mm; height: 30mm; box-sizing: border-box; padding: 1.5mm 2mm 1mm; display: flex; flex-direction: column;
+             align-items: center; overflow: hidden; break-after: page; page-break-after: always; }
+    .label:last-child { break-after: auto; page-break-after: auto; }
+    .sn { font-size: 9pt; font-weight: 700; line-height: 1.15; }
+    .ic { font-size: 7pt; font-weight: 700; line-height: 1.15; }
+    .desc { font-size: 6.5pt; line-height: 1.15; text-align: center; max-height: 2.3em; overflow: hidden; }
+    .bc { width: 92mm; flex: 1 1 auto; min-height: 6mm; margin-top: .5mm; }
+  </style></head><body>${body}
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+  <script>
+    window.onload = function () {
+      try {
+        document.querySelectorAll('svg.bc').forEach(function (el) {
+          JsBarcode(el, el.getAttribute('data-value'), { format: 'CODE128', displayValue: false, margin: 0, height: 60, width: 2 });
+          el.setAttribute('preserveAspectRatio', 'none');
+          el.removeAttribute('width'); el.removeAttribute('height');
+        });
+      } catch (e) { /* labels still print, without the barcode */ }
+      setTimeout(function () { window.focus(); window.print(); }, 200);
+    };
+  <\/script></body></html>`;
+  document.body.appendChild(frame);
+}
+
+// "Print Serial Labels" on the order card: every serial tied to the order (picked or created at Ready
+// to Ship) - for reprints (staff_get_online_order_serial_labels).
+async function printOrderSerialLabels(orderId, btn) {
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_serial_labels', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  btn.disabled = false;
+  if (error) {
+    alert('Could not load this order\'s serials: ' + error.message);
+    return;
+  }
+  if (!data || !data.length) {
+    alert(`Order ${orderId} has no serials yet - they're picked or created at Ready to Ship.`);
+    return;
+  }
+  printSerialLabels(data.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
+}
+
 // Fetches which of this order's lines need a serial pick before shipping, and how many - see
 // supabase_online_order_to_ship_serials.sql (resolves Pancake's item_code/category server-side and
 // applies the same prefix/IsProductionCategory rule OnlineOrdersForm.cs uses, so the client doesn't
@@ -1144,9 +1228,28 @@ function updateShipSerialTagCount(picker) {
   const required = Math.max(0, parseFloat(picker.dataset.required) || 0);
   const countEl = picker.querySelector('.serial-tag-count');
   const satisfied = selected.length === required;
-  countEl.textContent = `${selected.length} / ${required} selected`;
+  const fresh = selected.filter((s) => s.isNew).length;
+  countEl.textContent = `${selected.length} / ${required} selected${fresh ? ` (${fresh} new)` : ''}`;
   countEl.classList.toggle('satisfied', satisfied && required > 0);
   countEl.classList.toggle('unsatisfied', !satisfied);
+  const newBtn = picker.querySelector('.serial-tag-new');
+  if (newBtn) newBtn.disabled = selected.length >= required;
+}
+
+// "+ New serial" - per "is it possible to move the printout of serials" / "at ready to ship": a
+// placeholder for a unit with no In Stock serial. The real serial (RS-<ItemCode>-<YY>-000001) is
+// created by admin_update_online_order_status when the order ships, and its label printed then
+// (supabase_online_order_ship_new_serials.sql). Placeholders use negative ids so they never clash
+// with a real RunningSerialNo.
+let shipNewSerialSeq = 0;
+function addNewSerialPlaceholder(picker) {
+  const selected = getSelectedSerialsForShipPicker(picker);
+  const required = Math.max(0, parseFloat(picker.dataset.required) || 0);
+  if (selected.length >= required) return;
+  selected.push({ runningSerialNo: -(++shipNewSerialSeq), serialNo: 'New serial', isNew: true });
+  picker.dataset.selected = JSON.stringify(selected);
+  renderShipSerialTagChips(picker);
+  updateShipSerialTagCount(picker);
 }
 
 function renderShipSerialTagChips(picker) {
@@ -1154,8 +1257,8 @@ function renderShipSerialTagChips(picker) {
   const selected = getSelectedSerialsForShipPicker(picker);
   chipsEl.innerHTML = selected
     .map((s) => `
-      <span class="serial-tag-chip" data-running-serial-no="${s.runningSerialNo}">
-        ${escapeHtml(s.serialNo)}<span class="serial-tag-chip-remove" title="Remove">&times;</span>
+      <span class="serial-tag-chip${s.isNew ? ' is-new' : ''}" data-running-serial-no="${s.runningSerialNo}" ${s.isNew ? 'title="Created and printed when the order ships"' : ''}>
+        ${s.isNew ? '&#65291; New serial' : escapeHtml(s.serialNo)}<span class="serial-tag-chip-remove" title="Remove">&times;</span>
       </span>
     `)
     .join('');
@@ -1244,6 +1347,7 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
 
 function wireShipSerialPicker(lineEl, picker) {
   updateShipSerialTagCount(picker);
+  picker.querySelector('.serial-tag-new').addEventListener('click', () => addNewSerialPlaceholder(picker));
 
   const searchInput = picker.querySelector('.serial-tag-search');
   const dropdown = picker.querySelector('.serial-tag-dropdown');
@@ -1264,12 +1368,15 @@ function renderShipSerialModal(requirements) {
   const container = document.getElementById('shipSerialModalLines');
   container.innerHTML = requirements
     .map((r) => `
-      <div class="ship-serial-line" data-line-id="${r.line_id}" data-item-code="${escapeHtml(r.item_code)}" data-variation-id="${escapeHtml(r.variation_id || '')}" style="margin-bottom:18px;">
+      <div class="ship-serial-line" data-line-id="${r.line_id}" data-item-code="${escapeHtml(r.item_code)}" data-variation-id="${escapeHtml(r.variation_id || '')}" data-description="${escapeHtml(r.description || r.item_code)}" style="margin-bottom:18px;">
         <div class="ship-serial-line-label" style="font-weight:600; margin-bottom:6px;">${escapeHtml(r.description || r.item_code)} <span class="muted">(need ${r.quantity_needed})</span></div>
         <div class="serial-tag-picker" data-required="${r.quantity_needed}" data-selected="[]">
           <div class="serial-tag-count muted">0 / ${r.quantity_needed} selected</div>
           <div class="serial-tag-chips"></div>
-          <input type="text" class="serial-tag-search" placeholder="Search serial no..." autocomplete="off" />
+          <div class="serial-tag-row">
+            <input type="text" class="serial-tag-search" placeholder="Search serial no..." autocomplete="off" />
+            <button type="button" class="bc-btn serial-tag-new" title="No serial in stock - create one when the order ships and print its label">&#65291; New serial</button>
+          </div>
           <div class="serial-tag-dropdown hidden"></div>
         </div>
       </div>
@@ -1308,25 +1415,36 @@ function wireShipSerialModalButtons() {
     const pickers = Array.from(document.querySelectorAll('#shipSerialModalLines .serial-tag-picker'));
     const errorEl = document.getElementById('shipSerialModalError');
     const incompleteLabels = [];
-    const allSelected = [];
+    const running = [];
+    const fresh = [];
 
     pickers.forEach((picker) => {
+      const lineEl = picker.closest('.ship-serial-line');
       const required = Math.max(0, parseFloat(picker.dataset.required) || 0);
       const selected = getSelectedSerialsForShipPicker(picker);
       if (selected.length < required) {
-        const label = picker.closest('.ship-serial-line').querySelector('.ship-serial-line-label').textContent.trim();
-        incompleteLabels.push(label);
+        incompleteLabels.push(lineEl.querySelector('.ship-serial-line-label').textContent.trim());
       }
-      allSelected.push(...selected);
+      running.push(...selected.filter((s) => !s.isNew).map((s) => s.runningSerialNo));
+      const newCount = selected.filter((s) => s.isNew).length;
+      if (newCount) {
+        fresh.push({
+          item_code: lineEl.dataset.itemCode,
+          variation_id: lineEl.dataset.variationId || null,
+          description: lineEl.dataset.description,
+          quantity: newCount
+        });
+      }
     });
 
     if (incompleteLabels.length > 0) {
-      errorEl.textContent = `Pick a serial for every unit needed: ${incompleteLabels.join(', ')}. If there aren't enough available, finish this order on the desktop app instead.`;
+      errorEl.textContent = `Pick a serial for every unit needed: ${incompleteLabels.join(', ')}. No serial in stock? Tap "+ New serial".`;
       errorEl.classList.remove('hidden');
       return;
     }
 
-    closeShipSerialModal(allSelected.map((s) => s.runningSerialNo));
+    // { running: existing serials to claim, fresh: new serials to create } - see applyStatusChange.
+    closeShipSerialModal({ running, fresh });
   });
 }
 
@@ -1897,7 +2015,6 @@ async function openAssignDialog(orderId) {
   document.getElementById('assignStandRow').classList.toggle('hidden', !o.has_stand_line);
   document.getElementById('assignTankSelect').innerHTML = assignOptionsHtml(o, 'tank');
   document.getElementById('assignStandSelect').innerHTML = assignOptionsHtml(o, 'stand');
-  document.getElementById('assignDispatcherSelect').closest('.bc-field').classList.add('hidden');
 
   const missing = ['TankMaker', 'StandMaker']
     .filter((r) => !productionMembers.some((m) => (m.staff_roles || []).includes(r)))
@@ -2667,6 +2784,7 @@ function wireOrderCard() {
   document.getElementById('cardSendMessageBtn').addEventListener('click', () => openCardOrderId && openSendMessageModal(openCardOrderId));
   document.getElementById('cardToShipBtn').addEventListener('click', (e) => openCardOrderId && handleToShipClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardProductionDoneBtn').addEventListener('click', (e) => openCardOrderId && handleProductionDoneClick(openCardOrderId, e.currentTarget));
+  document.getElementById('cardPrintSerialsBtn').addEventListener('click', (e) => openCardOrderId && printOrderSerialLabels(openCardOrderId, e.currentTarget));
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.

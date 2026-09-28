@@ -2654,3 +2654,15 @@ a.bc-cue:hover {
 }
 :root[data-theme="dark"] .oo-eta.soon i { color: #f0b54a; }
 :root[data-theme="dark"] .oo-eta.late b, :root[data-theme="dark"] .oo-eta.late i { color: #f28b82; }
+
+/* Ready to Ship serial picker: "+ New serial" next to the search; new placeholders look distinct. */
+.serial-tag-row { display: flex; gap: 8px; align-items: stretch; }
+.serial-tag-row .serial-tag-search { flex: 1 1 auto; min-width: 0; }
+.serial-tag-row .serial-tag-new { flex: 0 0 auto; white-space: nowrap; }
+.serial-tag-chip.is-new { background: #e7f4ea; border: 1px dashed #1e7d3a; color: #1e5c2e; }
+:root[data-theme="dark"] .serial-tag-chip.is-new { background: #173323; color: #9fd8ae; border-color: #3f9a58; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .serial-tag-chip.is-new { background: #173323; color: #9fd8ae; border-color: #3f9a58; }
+}
+/* Makers on the phone don't print labels. */
+#orderCardModal.maker-focus #cardPrintSerialsBtn { display: none; }

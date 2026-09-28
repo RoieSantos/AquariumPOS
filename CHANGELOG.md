@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- Dispatchers are never assigned: removed the leftover Dispatcher dropdown from the grouped/card view's "Assigned To" (shows the recorded dispatcher read-only once shipped) and the hidden Dispatcher field in the Assign popup; Assign button titles updated; admin_assign_online_order_maker now refuses 'dispatcher' ([supabase_online_order_no_dispatcher_assign.sql](sql/supabase_online_order_no_dispatcher_assign.sql)).
+
+- Serial creation + label printing moved to the portal's Ready to Ship: the serial picker gets "+ New serial" for units with no In Stock serial; admin_update_online_order_status (new p_new_serials) creates them in the desktop's RS-<ItemCode>-<YY>-000001 format (shared per-item counter), SOLD to the order, in the same transaction as the Pancake update, and the portal prints 100x30mm Code128 labels via the browser. New "Print Serial Labels" on the order card for reprints (staff_get_online_order_serial_labels) ([supabase_online_order_ship_new_serials.sql](sql/supabase_online_order_ship_new_serials.sql)).
+
 - Reports: new Payment Methods Report (super users) - donut + ranked table of money collected per payment method (Cash, GCash, BDO...), filterable by period, online/walk-in and warehouse ([payment-method-report.html](docs/payment-method-report.html), [paymentMethodReport.js](docs/js/paymentMethodReport.js)).
 - Order payments are now stored: new `OnlineOrderPayments` table filled by a 5-minute Pancake sync plus a page-by-page history backfill button ([supabase_payment_method_report.sql](sql/supabase_payment_method_report.sql)).
 
