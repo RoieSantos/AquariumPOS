@@ -254,7 +254,9 @@ function neededProductionRoles(o) {
   const roles = [];
   if (o.has_aquarium_line) roles.push('tank');
   if (o.has_stand_line) roles.push('stand');
-  return roles.length ? roles : ['dispatcher'];
+  // No dispatcher part any more (the dispatcher is recorded at shipping) - a custom order with neither
+  // an aquarium nor a stand has nothing to make here and follows the POS like a normal order.
+  return roles;
 }
 
 function myProductionRoles(o) {
@@ -436,8 +438,9 @@ function renderMyAssignmentCards(rows) {
         <b>${escapeHtml(MAKER_ROLES[role].label)}</b> ${isMe ? 'You' : escapeHtml(who || 'Not assigned')}
         <i>${done ? '&#10003; Done' : rework ? '&#8634; Rework' : 'To do'}</i></span>`;
     }).join('');
-    const dispatcher = neededProductionRoles(o).includes('dispatcher') ? ''
-      : `<div class="oo-mc-line"><span>Dispatcher</span>${o.assigned_dispatcher === me ? 'You' : escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher || '-')}</div>`;
+    // Dispatcher is only known once someone has shipped it (recorded by Mark Shipped).
+    const dispatcher = !o.assigned_dispatcher ? ''
+      : `<div class="oo-mc-line"><span>Dispatcher</span>${o.assigned_dispatcher === me ? 'You' : escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher)}</div>`;
     // The assigned Dispatcher marks a To Ship order Shipped once it's delivered; otherwise the
     // maker's Production Done (hidden once the order has moved on).
     const pdBtn = canMarkShipped(o)
@@ -500,7 +503,8 @@ function isToShipOrder(o) {
 // checks the same server-side).
 function canMarkShipped(o) {
   if (!isToShipOrder(o)) return false;
-  return canAssignOrders() || (!!currentSession?.username && o.assigned_dispatcher === currentSession.username);
+  // Any Dispatcher - they're recorded as the order's dispatcher when they mark it Shipped.
+  return canAssignOrders() || (currentSession?.staffRoles || []).includes('Dispatcher');
 }
 
 function nextStepFor(o) {
@@ -532,6 +536,10 @@ function nextStepFor(o) {
 function updateNextStepButton(btnId, o) {
   const btn = document.getElementById(btnId);
   const step = nextStepFor(o);
+  // When this button already reads "Assign", hide the regular Assign button next to it so there
+  // aren't two (it comes back at later stages, for changing who's assigned).
+  const assignBtn = document.getElementById(btnId === 'listNextStepBtn' ? 'listAssignBtn' : 'cardAssignBtn');
+  if (canAssignOrders()) assignBtn.classList.toggle('hidden', step?.action === 'assign');
   btn.classList.toggle('hidden', !step);
   if (!step) return;
   btn.dataset.action = step.action;
@@ -1721,19 +1729,20 @@ async function openAssignDialog(orderId) {
   const needs = [o.has_aquarium_line ? 'an aquarium' : null, o.has_stand_line ? 'a stand' : null].filter(Boolean);
   // Only custom orders go Confirmed > Assigned > To Ship here; normal orders still go through the
   // local POS (see _online_order_assignment_complete in supabase_online_order_assigned_status.sql).
+  // Per "no need to asign a dispatcher since the dispatcher will be logged after shipping the order" -
+  // only the makers are assigned; whoever marks the order Shipped is recorded as its Dispatcher
+  // (admin_mark_online_order_shipped, supabase_online_order_dispatcher_on_ship.sql).
   document.getElementById('assignDialogLede').textContent = needs.length
-    ? `This order has ${needs.join(' and ')} to build. It moves to Assigned once everyone is set.`
-    : o.has_custom_line
-      ? 'This custom order has no aquarium or stand line - it moves to Assigned once a Dispatcher is set.'
-      : 'Normal order (no custom items) - print and ship it from the local POS. You can still record a Dispatcher; the status won\'t change.';
+    ? `This order has ${needs.join(' and ')} to build. It moves to Assigned once every maker is set.`
+    : 'This order has no custom aquarium or stand to build - nothing to assign. Print and ship it from the local POS.';
 
   document.getElementById('assignTankRow').classList.toggle('hidden', !o.has_aquarium_line);
   document.getElementById('assignStandRow').classList.toggle('hidden', !o.has_stand_line);
   document.getElementById('assignTankSelect').innerHTML = assignOptionsHtml(o, 'tank');
   document.getElementById('assignStandSelect').innerHTML = assignOptionsHtml(o, 'stand');
-  document.getElementById('assignDispatcherSelect').innerHTML = assignOptionsHtml(o, 'dispatcher');
+  document.getElementById('assignDispatcherSelect').closest('.bc-field').classList.add('hidden');
 
-  const missing = ['TankMaker', 'StandMaker', 'Dispatcher']
+  const missing = ['TankMaker', 'StandMaker']
     .filter((r) => !productionMembers.some((m) => (m.staff_roles || []).includes(r)))
     .map((r) => MAKER_ROLES[Object.keys(MAKER_ROLES).find((k) => MAKER_ROLES[k].staffRole === r)].label);
   document.getElementById('assignDialogHint').textContent = productionMembersError
@@ -1759,8 +1768,7 @@ async function saveAssignDialog() {
 
   const picks = [
     ['tank', 'assignTankSelect', o.has_aquarium_line],
-    ['stand', 'assignStandSelect', o.has_stand_line],
-    ['dispatcher', 'assignDispatcherSelect', true]
+    ['stand', 'assignStandSelect', o.has_stand_line]
   ].filter(([role, id, needed]) => {
     if (!needed) return false;
     const value = document.getElementById(id).value || null;
@@ -1788,12 +1796,23 @@ async function saveAssignDialog() {
   // filled, or back to 'Printed' if one was cleared - see admin_sync_online_order_assigned_status.
   if (!failures.length) {
     btn.textContent = 'Updating status...';
-    const { error } = await supabaseClient.rpc('admin_sync_online_order_assigned_status', {
+    const { data: syncData, error } = await supabaseClient.rpc('admin_sync_online_order_assigned_status', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_order_id: o.order_id
     });
-    if (error) failures.push(`Saved, but the status wasn't updated: ${error.message}`);
+    if (error) {
+      failures.push(`Saved, but the status wasn't updated: ${error.message}`);
+    } else {
+      // First time Assigned: the customer gets the "in production" message
+      // (supabase_online_order_assigned_message.sql) - say how it went.
+      const sync = Array.isArray(syncData) ? syncData[0] : syncData;
+      if (sync?.changed && sync.new_status === 'Assigned') {
+        const eta = sync.estimated_delivery_date ? `Estimated delivery date: ${sync.estimated_delivery_date}.` : 'No estimated delivery date was set (check the glass turnaround days).';
+        if (sync.message_sent) alert(`Order ${o.order_id} is now Assigned. The customer was sent the "in production" message.\n${eta}`);
+        else if (sync.message_error) alert(`Order ${o.order_id} is now Assigned, but the customer message failed: ${sync.message_error}\n${eta}`);
+      }
+    }
   }
   btn.disabled = false;
   btn.textContent = 'OK';
@@ -1951,7 +1970,10 @@ function renderOrderCardAssignments() {
   document.getElementById('ocStandMakerRow').classList.toggle('hidden', !o.has_stand_line);
   document.getElementById('ocTankMaker').innerHTML = o.has_aquarium_line ? makerSelectHtml(o, 'tank', o.assigned_tank_maker) + productionDoneTickHtml(o, 'tank') : '';
   document.getElementById('ocStandMaker').innerHTML = o.has_stand_line ? makerSelectHtml(o, 'stand', o.assigned_stand_maker) + productionDoneTickHtml(o, 'stand') : '';
-  document.getElementById('ocDispatcher').innerHTML = makerSelectHtml(o, 'dispatcher', o.assigned_dispatcher) + productionDoneTickHtml(o, 'dispatcher');
+  // Not assigned any more - recorded when the order is marked Shipped.
+  document.getElementById('ocDispatcher').innerHTML = o.assigned_dispatcher
+    ? escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher)
+    : '<span class="muted">Recorded when shipped</span>';
 
   const parts = [];
   if (o.has_aquarium_line) parts.push(`Tank: ${o.assigned_tank_maker_name || o.assigned_tank_maker || '-'}`);
