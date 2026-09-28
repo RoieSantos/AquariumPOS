@@ -168,6 +168,19 @@ function isOrderMakerOnly(session) {
 }
 const NO_PERMISSION_ALLOWED_PAGES = ['my-payslips.html', 'my-payslip-print.html', 'dashboard.html', 'change-password.html', 'staff-login.html'];
 
+// Whether requireAuth() below would let this session open `page` - same lockdown order, so a
+// button linking to another page (e.g. Online Orders' Glass Cut "Create Purchase Order") can hide
+// itself instead of bouncing a locked-down role straight back to its landing page.
+function canOpenPortalPage(session, page) {
+  if (!session) return false;
+  if (session.isDeliveryTeam) return DELIVERY_TEAM_ALLOWED_PAGES.includes(page);
+  if (isOrderMakerOnly(session)) return ORDER_MAKER_ALLOWED_PAGES.includes(page);
+  if (session.isOnlineOrderStaff) return ONLINE_ORDER_STAFF_ALLOWED_PAGES.includes(page);
+  if (session.isStoreManager) return STORE_MANAGER_ALLOWED_PAGES.includes(page);
+  if (hasNoPortalPermission(session)) return NO_PERMISSION_ALLOWED_PAGES.includes(page);
+  return true;
+}
+
 function currentPageFileName() {
   return (window.location.pathname.split('/').pop() || '').toLowerCase();
 }

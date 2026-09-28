@@ -149,8 +149,8 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=grouped2"></script>
-  <script src="js/glassCutList.js"></script>
+  <script src="js/nav.js?v=paymethods1"></script>
+  <script src="js/glassCutList.js?v=po1"></script>
   <script>
     (async function () {
       const session = await requireAuth();
@@ -376,19 +376,14 @@
       document.getElementById('createPoFromCutBtn').addEventListener('click', () => {
         const opts = readForm();
         const result = GlassCutList.buildCutList(opts);
-        const totalSqFt = result.panels
-          .reduce((sum, p) => sum + ((p.width * p.height * p.qty) / 144), 0);
 
         // Handed off via sessionStorage rather than a query param - purchase-orders.html reads
         // this once on load, drops it into the New Purchase Order modal's free-text Notes field,
         // and clears it. Only Notes is prefilled: which catalog item/vendor/warehouse to order
         // the glass from is a judgment call for whoever builds the PO, not something to guess at
-        // here.
-        const summary = [
-          orderIdParam ? `Glass for Online Order ${orderIdParam}` : 'Glass cut list',
-          `${opts.glass} glass - tank ${f(opts.length)}" x ${f(opts.width)}" x ${f(opts.height)}"`,
-          `${result.sheets.length} stock sheet(s) at ${f(opts.sheetWidth)}" x ${f(opts.sheetHeight)}" - ${totalSqFt.toFixed(2)} sq ft total`
-        ].join(' - ');
+        // here. The note lists every cut size (GlassCutList.buildPoNotes) so the supplier gets
+        // them on the printed PO - the Online Order card's Glass Cut section builds the same note.
+        const summary = GlassCutList.buildPoNotes(orderIdParam, [{ options: opts, result: result }]);
 
         sessionStorage.setItem('pendingGlassPoNotes', summary);
         window.location.href = 'purchase-orders.html';

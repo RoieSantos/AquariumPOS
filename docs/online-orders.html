@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=maker2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=8" />
+  <link rel="stylesheet" href="css/styles.css?v=glass1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fp5" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -28,6 +28,7 @@
     <symbol id="ico-ship" viewBox="0 0 16 16"><path d="M1.5 4h8v6.5h-8zM9.5 6.5h3l2 2.2v1.8h-5"/><circle cx="4.2" cy="11.8" r="1.2"/><circle cx="11.8" cy="11.8" r="1.2"/></symbol>
     <symbol id="ico-assign" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.3"/><path d="M1.8 13.5c.5-2.4 2.1-3.7 4.2-3.7 1.2 0 2.2.4 3 1.2"/><path d="M11.5 9v5M9 11.5h5"/></symbol>
     <symbol id="ico-done" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M5.2 8.2 7.1 10l3.7-4"/></symbol>
+    <symbol id="ico-sendback" viewBox="0 0 16 16"><path d="M6 3.5 2.5 7 6 10.5"/><path d="M2.8 7H10a3.5 3.5 0 0 1 0 7H8"/></symbol>
     <symbol id="ico-attach" viewBox="0 0 16 16"><path d="M12.5 7.5 7.8 12.2a3 3 0 0 1-4.2-4.2l5-5a2 2 0 0 1 2.8 2.8l-5 5a1 1 0 0 1-1.4-1.4L9.5 4.9"/></symbol>
   </svg>
 
@@ -78,6 +79,8 @@
         <button class="bc-cmd hidden" id="listAssignBtn" type="button" disabled title="Assign the Tank Maker / Stand Maker / Dispatcher for the selected order"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
         <!-- Tank Maker / Stand Maker / Dispatcher only: marks the user's own part of the selected order
              done (js/onlineOrders.js handleProductionDoneClick). -->
+        <!-- Production Manager / Super User only: send finished parts back for rework -->
+        <button class="bc-cmd hidden" id="listSendBackBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="listProductionDoneBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
         <span class="bc-cmd-sep"></span>
         <button class="bc-cmd" id="refreshOrdersBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
@@ -103,6 +106,7 @@
         <button type="button" class="bc-tab status-summary-pill" data-status="Confirmed">Confirmed <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Printed">Printed <span class="status-summary-count" id="statusCountPrinted">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Assigned">Assigned <span class="status-summary-count" id="statusCountAssigned">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="Production Done" title="Every part marked done by the makers - finish it with Production Done in the POS">Production Done <span class="status-summary-count" id="statusCountProductionDone">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="To Ship">To Ship <span class="status-summary-count" id="statusCountToShip">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Shipped">Shipped <span class="status-summary-count" id="statusCountShipped">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Cancelled">Cancelled <span class="status-summary-count" id="statusCountCancelled">-</span></button>
@@ -208,11 +212,16 @@
         <button class="bc-cmd" id="cardSendPhotoBtn" type="button"><svg class="bc-ico"><use href="#ico-camera"/></svg>Send Photo</button>
         <button class="bc-cmd" id="cardSendMessageBtn" type="button"><svg class="bc-ico"><use href="#ico-message"/></svg>To-Ship Message</button>
         <button class="bc-cmd" id="cardToShipBtn" type="button" title="Only a Printed or Assigned order can be marked To Ship"><svg class="bc-ico"><use href="#ico-ship"/></svg>To Ship</button>
+        <button class="bc-cmd hidden" id="cardSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="cardProductionDoneBtn" type="button"><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
         <button class="bc-cmd hidden" id="cardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker / Dispatcher"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
       </div>
 
       <div class="bc-doc-body">
+        <!-- Maker focus (js/onlineOrders.js fillMakerFocusSummary): the only header a maker-only account
+             sees on the order - due date, their part and any rework note - above the lines. -->
+        <div class="oc-maker-summary hidden" id="ocMakerSummary"></div>
+
         <details class="doc-fasttab" id="orderCardGeneralTab" open>
           <summary>General <span class="doc-fasttab-summary" id="orderCardGeneralSummary"></span></summary>
           <div class="doc-fasttab-body bc-doc-cols">
@@ -244,6 +253,20 @@
           </div>
         </details>
 
+        <!-- Every Send Back for rework on this order (js/onlineOrders.js loadOrderCardReworkHistory,
+             supabase_online_order_rework_history.sql). Hidden when it was never sent back. -->
+        <details class="doc-fasttab hidden" id="orderCardReworkTab" open>
+          <summary>Rework History <span class="doc-fasttab-summary" id="orderCardReworkSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="bc-grid-wrap">
+              <table class="bc-grid oo-rh-grid">
+                <thead><tr><th>Sent Back</th><th>Part</th><th>Reason</th><th>Was Done By</th><th>Fixed</th></tr></thead>
+                <tbody id="ocReworkBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+
         <details class="doc-fasttab" id="orderCardDeliveryTab" open>
           <summary>Delivery <span class="doc-fasttab-summary" id="orderCardDeliverySummary"></span></summary>
           <div class="doc-fasttab-body bc-doc-cols">
@@ -254,6 +277,24 @@
             <div>
               <div class="bc-doc-field" id="ocDeliveryFeeRow"><label>Delivery Fee</label><div class="bc-doc-value" id="ocDeliveryFee"></div></div>
               <div class="bc-doc-field bc-doc-field-top"><label>Print Note</label><div class="bc-doc-value" id="ocPrintNote"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Payment amounts as synced from Pancake (admin_list_online_orders). Hidden with the other
+             prices for maker-only accounts (hidePriceColumns). -->
+        <details class="doc-fasttab" id="orderCardPaymentTab" open>
+          <summary>Payment <span class="doc-fasttab-summary" id="orderCardPaymentSummary"></span></summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field"><label>Money To Collect</label><div class="bc-doc-value" id="ocMoneyToCollect"></div></div>
+              <div class="bc-doc-field"><label>Discount</label><div class="bc-doc-value" id="ocDiscount"></div></div>
+            </div>
+            <div>
+              <div class="bc-doc-field"><label>Amount Paid</label><div class="bc-doc-value" id="ocAmountPaid"></div></div>
+              <!-- Cash / GCASH / BDO / ... per method, live from Pancake (loadOrderCardPaymentMethods) -->
+              <div class="bc-doc-field bc-doc-field-top"><label>Paid Via</label><div class="bc-doc-value" id="ocPaidVia"></div></div>
+              <div class="bc-doc-field"><label>Balance</label><div class="bc-doc-value" id="ocBalance"></div></div>
             </div>
           </div>
         </details>
@@ -278,7 +319,29 @@
               <tfoot id="orderCardLinesFoot"></tfoot>
             </table>
           </div>
+          <!-- Maker focus: one card per line (item, quantity, note, attachments) instead of the table. -->
+          <div class="oc-line-cards" id="orderCardLineCards"></div>
         </div>
+
+        <!-- Glass cut list for every custom aquarium line on the order (any glass thickness), drawn
+             right here from the line's spec note by js/glassCutList.js - so the cut can be checked
+             and the glass ordered from the supplier (Create Purchase Order) without leaving the
+             order. Hidden when the order has no custom aquarium line. See renderOrderCardGlassCut
+             in js/onlineOrders.js. -->
+        <details class="doc-fasttab hidden" id="orderCardGlassTab" open>
+          <summary>Glass Cut <span class="doc-fasttab-summary" id="orderCardGlassSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="oc-glass-bar">
+              <label>Stock sheet
+                <input type="number" id="ocGlassSheetW" value="72" step="0.25" min="0" /> x
+                <input type="number" id="ocGlassSheetH" value="84" step="0.25" min="0" /> in
+              </label>
+              <button type="button" class="btn btn-primary btn-sm hidden" id="ocGlassPoBtn">Create Purchase Order</button>
+              <a class="btn btn-secondary btn-sm hidden" id="ocGlassFullLink" href="#" target="_blank" rel="noopener">Open Full Cut List</a>
+            </div>
+            <div id="ocGlassTanks"></div>
+          </div>
+        </details>
 
         <!-- Photos sent to the customer with Send Photo / To Ship (public."OnlineOrderStatusPhotos",
              kept 30 days) - order-level, separate from the per-line attachments above. Hidden when
@@ -299,6 +362,33 @@
        enforces the same server-side). Opened from the list's or the order card's Assign action.
        Each dropdown lists only staff holding that Staff Role; OK saves whatever changed
        (js/onlineOrders.js openAssignDialog / saveAssignDialog). -->
+  <!-- Send back for rework (js/onlineOrders.js openSendBackDialog, supabase_online_order_production_rework.sql) -->
+  <div id="sendBackDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="sendBackTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">SEND BACK FOR REWORK</div>
+          <h2 id="sendBackTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeSendBackBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">Tick the part(s) that need rework. They go back to the maker's list with your reason.</p>
+        <div id="sendBackParts" class="oo-sb-parts"></div>
+        <div class="bc-field oo-sb-reason">
+          <label for="sendBackReason">Reason</label>
+          <textarea id="sendBackReason" rows="3" placeholder="e.g. Silicone leaking at the back corner"></textarea>
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="sendBackError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveSendBackBtn" type="button">Send Back</button>
+        <button class="bc-btn" id="cancelSendBackBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="assignDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="assignDialogTitle">
       <div class="bc-dialog-head">
@@ -429,11 +519,13 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=maker2"></script>
+  <script src="js/nav.js?v=paymethods1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=bc11"></script>
+  <script src="js/glassCutList.js?v=po1"></script>
+  <script src="js/bcFilterPane.js?v=1"></script>
+  <script src="js/onlineOrders.js?v=bc19"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

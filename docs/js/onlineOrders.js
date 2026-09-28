@@ -162,6 +162,8 @@ const STATUS_SUMMARY_ELEMENT_IDS = {
   'Confirmed': 'statusCountConfirmed',
   'Printed': 'statusCountPrinted',
   'Assigned': 'statusCountAssigned',
+  // Every part marked done, waiting for the POS Production Done (supabase_online_order_production_done_tab.sql).
+  'Production Done': 'statusCountProductionDone',
   'To Ship': 'statusCountToShip',
   'Shipped': 'statusCountShipped',
   'Cancelled': 'statusCountCancelled'
@@ -272,7 +274,95 @@ function listDisplayStatus(o) {
   return isProductionDone(o) && canChangeProduction(o) ? 'Production Done' : orderDisplayStatus(o);
 }
 
+// Open "send back for rework" notes (supabase_online_order_production_rework.sql) - one per part,
+// until that part is marked done again.
+async function attachRework(rows, ids) {
+  await attachReworkCounts(rows, ids);
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_rework', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.error('staff_get_online_order_rework failed:', error);
+    return;
+  }
+  const byOrder = new Map(rows.map((o) => [String(o.order_id), o]));
+  (data || []).forEach((w) => {
+    const o = byOrder.get(String(w.order_id));
+    if (o) o.rework[w.role] = w;
+  });
+}
+
+// How many times each order was sent back (supabase_online_order_rework_history.sql) - one Send
+// Back click counts once however many parts it covered.
+async function attachReworkCounts(rows, ids) {
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_rework_counts', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.error('staff_get_online_order_rework_counts failed:', error);
+    return;
+  }
+  const byOrder = new Map(rows.map((o) => [String(o.order_id), o]));
+  (data || []).forEach((c) => {
+    const o = byOrder.get(String(c.order_id));
+    if (o) o.rework_count = c.send_back_count;
+  });
+}
+
+function reworkCountBadgeHtml(o) {
+  const n = Number(o.rework_count) || 0;
+  if (!n) return '';
+  return ` <span class="oo-rework-count" title="Sent back for rework ${n} time${n === 1 ? '' : 's'}">&#8634; ${n}</span>`;
+}
+
+// Order card: every send-back of this order, newest first.
+async function loadOrderCardReworkHistory(orderId) {
+  const tab = document.getElementById('orderCardReworkTab');
+  const o = findFlatOrder(orderId);
+  const n = Number(o?.rework_count) || 0;
+  tab.classList.toggle('hidden', !n);
+  if (!n) return;
+  document.getElementById('orderCardReworkSummary').textContent = `Sent back ${n} time${n === 1 ? '' : 's'}`;
+  const body = document.getElementById('ocReworkBody');
+  body.innerHTML = '<tr><td colspan="5" class="cell-msg">Loading...</td></tr>';
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_rework_history', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  if (openCardOrderId !== String(orderId)) return;
+  if (error) {
+    body.innerHTML = `<tr><td colspan="5" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    return;
+  }
+  const fmt = (t) => (t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+  body.innerHTML = (data || []).map((r) => `
+    <tr>
+      <td>${escapeHtml(fmt(r.sent_back_at))}<small class="oo-rh-sub">by ${escapeHtml(r.sent_back_by_name || '')}</small></td>
+      <td>${escapeHtml(MAKER_ROLES[r.role]?.label || r.role)}</td>
+      <td>${escapeHtml(r.reason || '')}</td>
+      <td>${escapeHtml(r.prev_done_by_name || '')}<small class="oo-rh-sub">${escapeHtml(fmt(r.prev_done_at))}</small></td>
+      <td>${r.fixed_at
+        ? `<span class="oo-done">&#10003; Fixed</span><small class="oo-rh-sub">${escapeHtml(r.fixed_by_name || '')} · ${escapeHtml(fmt(r.fixed_at))}</small>`
+        : '<span class="oo-rework">&#8634; Open</span>'}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="cell-msg">No send-backs.</td></tr>';
+}
+
+function reworkNoteText(o) {
+  return Object.entries(o.rework || {})
+    .map(([role, w]) => `${MAKER_ROLES[role].label}: ${w.reason}`)
+    .join(' · ');
+}
+
 function productionDoneTickHtml(o, role) {
+  const w = o.rework?.[role];
+  if (w && !o.production_done?.[role]) {
+    return ` <span class="oo-rework" title="Sent back by ${escapeHtml(w.sent_back_by_name || w.sent_back_by)}: ${escapeHtml(w.reason)}">&#8634; Rework</span>`;
+  }
   const d = o.production_done?.[role];
   if (!d) return '';
   const when = d.done_at ? new Date(d.done_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
@@ -281,8 +371,9 @@ function productionDoneTickHtml(o, role) {
 
 async function attachProductionDone(rows) {
   const ids = rows.filter((o) => neededProductionRoles(o).length).map((o) => String(o.order_id));
-  rows.forEach((o) => { o.production_done = {}; });
+  rows.forEach((o) => { o.production_done = {}; o.rework = {}; });
   if (!ids.length) return;
+  await attachRework(rows, ids);
   const { data, error } = await supabaseClient.rpc('staff_get_online_order_production_done', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
@@ -320,7 +411,7 @@ function updateProductionDoneButton(btnId, o) {
 function renderMyAssignmentCards(rows) {
   const box = document.getElementById('myAssignmentCards');
   if (!rows.length) {
-    box.innerHTML = '<div class="oo-mc-empty">No open orders are assigned to you right now.</div>';
+    box.innerHTML = '<div class="oo-mc-empty">Nothing to do right now - no open work is assigned to you.</div>';
     return;
   }
   const me = currentSession.username;
@@ -333,10 +424,11 @@ function renderMyAssignmentCards(rows) {
       const field = MAKER_ROLES[role].field;
       const who = o[`assigned_${field}_name`] || o[`assigned_${field}`];
       const done = !!o.production_done?.[role];
+      const rework = !done && !!o.rework?.[role];
       const isMe = o[`assigned_${field}`] === me;
-      return `<span class="oo-mc-part${done ? ' done' : ''}${isMe ? ' me' : ''}">
+      return `<span class="oo-mc-part${done ? ' done' : ''}${rework ? ' rework' : ''}${isMe ? ' me' : ''}">
         <b>${escapeHtml(MAKER_ROLES[role].label)}</b> ${isMe ? 'You' : escapeHtml(who || 'Not assigned')}
-        <i>${done ? '&#10003; Done' : 'To do'}</i></span>`;
+        <i>${done ? '&#10003; Done' : rework ? '&#8634; Rework' : 'To do'}</i></span>`;
     }).join('');
     const dispatcher = neededProductionRoles(o).includes('dispatcher') ? ''
       : `<div class="oo-mc-line"><span>Dispatcher</span>${o.assigned_dispatcher === me ? 'You' : escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher || '-')}</div>`;
@@ -346,13 +438,14 @@ function renderMyAssignmentCards(rows) {
       <article class="oo-mc" data-order-id="${escapeHtml(o.order_id)}">
         <header class="oo-mc-head">
           <a href="#" class="oo-mc-id" data-open-order="${escapeHtml(o.order_id)}">#${escapeHtml(o.order_id)}</a>
-          <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>
+          <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)}
         </header>
         <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
         <div class="oo-mc-line"><span>Due</span>${escapeHtml(o.estimated_delivery_date || 'Not set')}${o.for_delivery ? ' · Delivery' : ' · Pickup'}</div>
         <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse_name || o.location_id || '-')} ${glassBadgeHtml(o)}</div>
         ${dispatcher}
         <div class="oo-mc-parts">${partChips}</div>
+        ${reworkNoteText(o) ? `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(reworkNoteText(o))}</div>` : ''}
         ${o.note_print ? `<div class="oo-mc-note">${escapeHtml(o.note_print)}</div>` : ''}
         <div class="oo-mc-actions">
           <button type="button" class="oo-mc-btn" data-open-order="${escapeHtml(o.order_id)}">Open</button>
@@ -375,6 +468,88 @@ function wireMyAssignmentCards() {
   });
 }
 
+// ---------------------------------------------------------------- Send back for rework
+// Per "a production manager can click a button reassign after production done so it will go back to
+// the maker has issue or if needed to rework" - clears the chosen parts' done marks with a reason
+// (admin_send_back_online_order_production), so they return to that maker's My Assignments.
+let sendBackOrderId = null;
+
+function doneParts(o) {
+  return neededProductionRoles(o).filter((role) => o.production_done?.[role]);
+}
+
+function updateSendBackButton(btnId, o) {
+  const btn = document.getElementById(btnId);
+  btn.classList.toggle('hidden', !canAssignOrders());
+  btn.disabled = !o || !doneParts(o).length || !canChangeProduction(o);
+  btn.title = !o ? 'Select an order'
+    : !doneParts(o).length ? 'No part of this order has been marked done yet'
+    : !canChangeProduction(o) ? `This order is already ${o.status}`
+    : 'Send finished parts back to the maker for rework';
+}
+
+function openSendBackDialog(orderId) {
+  const o = findFlatOrder(orderId);
+  if (!o || !doneParts(o).length) return;
+  sendBackOrderId = String(o.order_id);
+  document.getElementById('sendBackTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  document.getElementById('sendBackParts').innerHTML = doneParts(o).map((role) => {
+    const d = o.production_done[role];
+    const when = d.done_at ? new Date(d.done_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+    return `<label class="oo-sb-part"><input type="checkbox" value="${role}" checked />
+      <span><b>${escapeHtml(MAKER_ROLES[role].label)}</b> - ${escapeHtml(d.done_by_name || d.done_by)}<small>${when ? 'Done ' + escapeHtml(when) : ''}</small></span></label>`;
+  }).join('');
+  document.getElementById('sendBackReason').value = '';
+  document.getElementById('sendBackError').classList.add('hidden');
+  document.getElementById('sendBackDialog').classList.remove('hidden');
+  document.getElementById('sendBackReason').focus();
+}
+
+function closeSendBackDialog() {
+  sendBackOrderId = null;
+  document.getElementById('sendBackDialog').classList.add('hidden');
+}
+
+async function saveSendBack() {
+  const cardOrderId = openCardOrderId;
+  const errorEl = document.getElementById('sendBackError');
+  const roles = [...document.querySelectorAll('#sendBackParts input:checked')].map((i) => i.value);
+  const reason = document.getElementById('sendBackReason').value.trim();
+  const fail = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+  if (!roles.length) return fail('Pick at least one part to send back.');
+  if (!reason) return fail('Please give a reason so the maker knows what to fix.');
+
+  const btn = document.getElementById('saveSendBackBtn');
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_send_back_online_order_production', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: sendBackOrderId,
+    p_roles: roles,
+    p_reason: reason
+  });
+  btn.disabled = false;
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) return fail(error?.message || result?.message || 'Could not send back.');
+
+  closeSendBackDialog();
+  await refreshCurrentOrders();
+  if (cardOrderId && openCardOrderId === cardOrderId) loadOrderCardReworkHistory(cardOrderId);
+  if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+}
+
+function wireSendBackDialog() {
+  if (!canAssignOrders()) return;
+  document.getElementById('listSendBackBtn').addEventListener('click', () => selectedOrderId && openSendBackDialog(selectedOrderId));
+  document.getElementById('cardSendBackBtn').addEventListener('click', () => openCardOrderId && openSendBackDialog(openCardOrderId));
+  document.getElementById('saveSendBackBtn').addEventListener('click', saveSendBack);
+  document.getElementById('cancelSendBackBtn').addEventListener('click', closeSendBackDialog);
+  document.getElementById('closeSendBackBtn').addEventListener('click', closeSendBackDialog);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.getElementById('sendBackDialog').classList.contains('hidden')) closeSendBackDialog();
+  });
+}
+
 async function handleProductionDoneClick(orderId, btn) {
   const o = findFlatOrder(orderId);
   if (!o) return;
@@ -384,7 +559,7 @@ async function handleProductionDoneClick(orderId, btn) {
   const parts = mine.map((r) => MAKER_ROLES[r].label.replace(' Maker', '').toLowerCase()).join(' and ');
   const question = undo
     ? `Undo Production Done for your part (${parts}) of order ${o.order_id}?`
-    : `Mark your part (${parts}) of order ${o.order_id} as done?`;
+    : `Mark your part (${parts}) of order ${o.order_id} as done?${myAssignmentsOnly ? ' It will leave your list.' : ''}`;
   if (!confirm(question)) return;
 
   btn.disabled = true;
@@ -397,10 +572,14 @@ async function handleProductionDoneClick(orderId, btn) {
   const result = Array.isArray(data) ? data[0] : data;
   if (error || !result?.success) {
     alert(error?.message || result?.message || 'Could not update production.');
+  } else if (!undo && myAssignmentsOnly) {
+    // Done orders drop out of My Assignments (supabase_online_order_my_assignments_hide_done.sql).
+    alert(`Order ${o.order_id}: your part is marked done and it's now off your list.${result.all_done ? ' Every part is done - the Production Manager will finish it.' : ''}`);
   } else if (!undo && result.all_done) {
     alert(`Order ${o.order_id}: every part is done - it now shows as Production Done.`);
   }
   await refreshCurrentOrders();
+  if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
 }
 
 function makerSelectHtml(order, role, currentUsername) {
@@ -463,7 +642,7 @@ function orderRowsHtml(orders) {
         <td>${o.order_date || ''}</td>
         <td>${o.order_time || ''}</td>
         <td>${escapeHtml(o.customer_name)}</td>
-        <td>${escapeHtml(listDisplayStatus(o))}</td>
+        <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}</td>
         <td>${escapeHtml(o.confirmed_by)}</td>
         <td>${escapeHtml(o.created_by)}</td>
         <td>${assigneeCellHtml(o, o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}${productionDoneTickHtml(o, 'tank')}</td>
@@ -1374,6 +1553,7 @@ function updateOrderActionState() {
   document.getElementById('listToShipBtn').disabled = !isPrintedOrder(o);
   document.getElementById('listAssignBtn').disabled = !o;
   updateProductionDoneButton('listProductionDoneBtn', o);
+  updateSendBackButton('listSendBackBtn', o);
 }
 
 // ---------------------------------------------------------------- Assign popup
@@ -1611,6 +1791,18 @@ function fillOrderCardHeader(o) {
   setCardText('ocPrintNote', o.note_print);
   document.getElementById('ocDeliveryFeeRow').classList.toggle('hidden', hidePriceColumns);
 
+  // Payment FastTab - same Pancake-synced amounts as the Excel export's Money To Collect /
+  // Amount Paid / Discount / Balance columns.
+  document.getElementById('orderCardPaymentTab').classList.toggle('hidden', hidePriceColumns);
+  setCardText('ocMoneyToCollect', money(o.money_to_collect));
+  setCardText('ocDiscount', money(o.discount));
+  setCardText('ocAmountPaid', money(o.amount_paid));
+  setCardText('ocBalance', money(o.balance));
+  const balance = Number(o.balance) || 0;
+  document.getElementById('ocBalance').classList.toggle('oc-balance-due', balance > 0);
+  document.getElementById('orderCardPaymentSummary').textContent =
+    balance > 0 ? `Balance ${money(balance)}` : (o.balance === null || o.balance === undefined ? '' : 'Paid in full');
+
   document.getElementById('orderCardGeneralSummary').textContent =
     [o.customer_name, displayStatus, o.warehouse_name || o.location_id].filter(Boolean).join(' · ');
   document.getElementById('orderCardDeliverySummary').textContent =
@@ -1618,6 +1810,8 @@ function fillOrderCardHeader(o) {
 
   document.getElementById('cardToShipBtn').disabled = !isPrintedOrder(o);
   updateProductionDoneButton('cardProductionDoneBtn', o);
+  fillMakerFocusSummary(o);
+  updateSendBackButton('cardSendBackBtn', o);
   renderOrderCardAssignments();
 }
 
@@ -1634,6 +1828,7 @@ function renderOrderCardAssignments() {
   if (o.has_aquarium_line) parts.push(`Tank: ${o.assigned_tank_maker_name || o.assigned_tank_maker || '-'}`);
   if (o.has_stand_line) parts.push(`Stand: ${o.assigned_stand_maker_name || o.assigned_stand_maker || '-'}`);
   parts.push(`Dispatcher: ${o.assigned_dispatcher_name || o.assigned_dispatcher || '-'}`);
+  if (reworkNoteText(o)) parts.push(`Rework - ${reworkNoteText(o)}`);
   document.getElementById('orderCardAssignSummary').textContent = parts.join(' · ');
 }
 
@@ -1685,6 +1880,46 @@ function cardAttachmentCellHtml(lineId) {
   return `<div class="attachment-cell">${chips}<button type="button" class="bc-link card-attach-btn" data-line-id="${escapeHtml(lineId)}">+ Attach</button></div>`;
 }
 
+// ---------------------------------------------------------------- Maker focus
+// Per "for the maker view in the mobile.. can you show him only the details of the order lines..
+// this way the maker can focus on the order details" - a maker-only account (myAssignmentsLocked)
+// opens an order as just: a short summary (due date, their part, rework note), the lines as cards
+// (item, quantity, spec note, attachments) and the glass cut. Everything else on the document
+// (General, Assignment, Delivery, Payment, Photos Sent, Rework History, most actions) is hidden by
+// #orderCardModal.maker-focus in css/bc-list.css.
+function isMakerFocus() {
+  return myAssignmentsLocked;
+}
+
+function renderOrderCardLineCards() {
+  const box = document.getElementById('orderCardLineCards');
+  if (!box) return;
+  if (!isMakerFocus()) { box.innerHTML = ''; return; }
+  box.innerHTML = cardLines.map((l) => `
+    <article class="oc-line-card">
+      <div class="oc-lc-head">
+        <div class="oc-lc-desc">${escapeHtml(l.description || l.item_code || '')}</div>
+        <div class="oc-lc-qty">x${escapeHtml(String(l.quantity ?? ''))}</div>
+      </div>
+      ${l.item_code || l.product_display_id ? `<div class="oc-lc-code">${escapeHtml(l.item_code || l.product_display_id)}</div>` : ''}
+      ${l.note ? `<div class="oc-lc-note">${escapeHtml(l.note)}</div>` : ''}
+      <div class="oc-lc-attach">${cardAttachmentCellHtml(l.line_id)}</div>
+    </article>`).join('') || '<div class="oo-mc-empty">No line items found for this order.</div>';
+}
+
+function fillMakerFocusSummary(o) {
+  const box = document.getElementById('ocMakerSummary');
+  box.classList.toggle('hidden', !isMakerFocus());
+  if (!isMakerFocus()) return;
+  const mine = myProductionRoles(o).map((r) => MAKER_ROLES[r].label);
+  box.innerHTML = `
+    <div class="oc-ms-row"><span>Customer</span>${escapeHtml(o.customer_name || '-')}</div>
+    <div class="oc-ms-row"><span>Due</span>${escapeHtml(o.estimated_delivery_date || 'Not set')}${o.for_delivery ? ' · Delivery' : ' · Pickup'}</div>
+    <div class="oc-ms-row"><span>Your part</span>${escapeHtml(mine.join(' + ') || 'Dispatcher')}</div>
+    ${o.note_print ? `<div class="oo-mc-note">${escapeHtml(o.note_print)}</div>` : ''}
+    ${reworkNoteText(o) ? `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(reworkNoteText(o))}</div>` : ''}`;
+}
+
 function renderOrderCardLines() {
   const tbody = document.getElementById('orderCardLinesBody');
   const tfoot = document.getElementById('orderCardLinesFoot');
@@ -1707,6 +1942,8 @@ function renderOrderCardLines() {
       <td style="white-space:normal;">${cardAttachmentCellHtml(l.line_id)}</td>
     </tr>`).join('');
 
+  renderOrderCardLineCards();
+
   const totalQty = cardLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
   const totalNet = cardLines.reduce((sum, l) => sum + (lineAmount(l) || 0), 0);
   tfoot.innerHTML = `<tr>
@@ -1723,6 +1960,8 @@ async function loadOrderCardLines(orderId) {
   tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">Loading lines from Pancake...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
   document.getElementById('orderCardPhotosPart').classList.add('hidden');
+  cardGlassTanks = [];
+  document.getElementById('orderCardGlassTab').classList.add('hidden');
 
   const [linesRes] = await Promise.all([
     supabaseClient.rpc('admin_get_online_order_detail_live', {
@@ -1745,6 +1984,150 @@ async function loadOrderCardLines(orderId) {
 
   cardLines = (linesRes.data || []).filter((l) => l.line_id || l.item_code || l.description);
   renderOrderCardLines();
+  loadOrderCardGlassTanks();
+}
+
+// ---------------------------------------------------------------------------
+// Glass Cut section - per "where is the glass cut sitting again? can we add it on the online
+// order?" / "my goal is to see the glass cut then directly order the glass to the supplier as PO".
+// Before this the cut list only lived on glass-cut-list.html, reachable from the 10mm/12mm badge.
+// Now every custom aquarium line (any thickness) gets its cut list drawn right on the card, and
+// Create Purchase Order hands ALL of them to the New PO as one note listing every cut size.
+//
+// "Custom aquarium line" uses the same custom + aquarium text match as the SQL production roles
+// (_online_order_production_roles in supabase_online_order_production_done.sql). Tank dimensions
+// come from the line's spec note, same parse as glass-cut-list.html (GlassCutList.parseAquariumLineSpec).
+const OC_GLASS_OPTIONS = ['3mm', '5mm', '6mm', '8mm', '10mm', '12mm', '15mm', '19mm'];
+const OC_GLASS_SHEET_KEY = 'onlineOrders.glassSheetSize';
+let cardGlassTanks = [];
+
+function isCustomAquariumLine(l) {
+  const text = `${l.description || ''} ${l.item_code || ''} ${l.product_display_id || ''}`;
+  return /custom/i.test(text) && /aquarium/i.test(`${l.description || ''} ${l.item_code || ''}`);
+}
+
+function loadOrderCardGlassTanks() {
+  cardGlassTanks = cardLines.filter(isCustomAquariumLine).map((line) => {
+    const spec = GlassCutList.parseAquariumLineSpec(line.note || '') ||
+      GlassCutList.parseAquariumLineSpec(`${line.description || ''} ${line.item_code || ''}`);
+    // Falls back to the order's flagged thickness (the 10mm/12mm badge) when the note doesn't say.
+    const glass = (spec && spec.glass) || findFlatOrder(openCardOrderId)?.glass_thickness || '10mm';
+    return { line, spec, glass: String(glass).toLowerCase().replace(/\s+/g, '') };
+  });
+  renderOrderCardGlassCut();
+}
+
+function ocGlassSheetSize() {
+  return {
+    sheetWidth: Number(document.getElementById('ocGlassSheetW').value) || 0,
+    sheetHeight: Number(document.getElementById('ocGlassSheetH').value) || 0
+  };
+}
+
+function ocGlassTankOptions(tank) {
+  return {
+    length: tank.spec.length,
+    width: tank.spec.width,
+    height: tank.spec.height,
+    glass: tank.glass,
+    quantity: Number(tank.line.quantity) || 1,
+    ...ocGlassSheetSize()
+  };
+}
+
+function renderOrderCardGlassCut() {
+  const tab = document.getElementById('orderCardGlassTab');
+  tab.classList.toggle('hidden', cardGlassTanks.length === 0);
+  if (cardGlassTanks.length === 0) return;
+
+  const f = GlassCutList.formatInches;
+  const orderId = openCardOrderId;
+  const canPo = typeof canOpenPortalPage !== 'function' || canOpenPortalPage(currentSession, 'purchase-orders.html');
+  const canFull = typeof canOpenPortalPage !== 'function' || canOpenPortalPage(currentSession, 'glass-cut-list.html');
+  document.getElementById('ocGlassPoBtn').classList.toggle('hidden', !canPo);
+  const fullLink = document.getElementById('ocGlassFullLink');
+  fullLink.classList.toggle('hidden', !canFull);
+  fullLink.href = `glass-cut-list.html?order=${encodeURIComponent(orderId)}`;
+
+  let totalSheets = 0;
+  let blocked = false;
+  document.getElementById('ocGlassTanks').innerHTML = cardGlassTanks.map((tank, i) => {
+    const title = escapeHtml(tank.line.note || tank.line.description || tank.line.item_code || `Line ${i + 1}`);
+    if (!tank.spec) {
+      blocked = true;
+      return `<div class="oc-glass-tank"><div class="oc-glass-tank-head"><strong>${title}</strong></div>
+        <p class="muted" style="margin:0;">Couldn't read the tank size from this line's note${canFull ? ' - use Open Full Cut List to enter it by hand' : ''}.</p></div>`;
+    }
+
+    const glassOptions = OC_GLASS_OPTIONS.includes(tank.glass) ? OC_GLASS_OPTIONS : [tank.glass, ...OC_GLASS_OPTIONS];
+    const opts = ocGlassTankOptions(tank);
+    const result = GlassCutList.buildCutList(opts);
+    totalSheets += result.sheets.length;
+    const qtyNote = opts.quantity > 1 ? ` &middot; ${opts.quantity} tanks` : '';
+    const head = `<div class="oc-glass-tank-head">
+        <strong>${title}</strong>
+        <span class="muted">Tank ${f(opts.length)}" x ${f(opts.width)}" x ${f(opts.height)}"${qtyNote}</span>
+        <select class="oc-glass-thickness" data-tank-index="${i}" title="Glass thickness">
+          ${glassOptions.map((g) => `<option value="${escapeHtml(g)}"${g === tank.glass ? ' selected' : ''}>${escapeHtml(g)}</option>`).join('')}
+        </select>
+      </div>`;
+    const panels = `<table class="oc-glass-panels"><thead><tr><th>Panel</th><th>Cut size</th><th>Qty</th></tr></thead><tbody>
+        ${result.panels.map((p) => `<tr><td>${escapeHtml(p.name)}</td><td><strong>${f(p.width)}" x ${f(p.height)}"</strong></td><td>${p.qty}</td></tr>`).join('')}
+      </tbody></table>`;
+
+    if (result.oversized.length > 0) {
+      blocked = true;
+      return `<div class="oc-glass-tank">${head}${panels}<p class="error-text" style="margin:0;">These panels don't fit a ${f(opts.sheetWidth)}" x ${f(opts.sheetHeight)}" sheet even rotated: ${escapeHtml(result.oversized.map((p) => p.label).join(', '))}. Use a bigger stock sheet size above.</p></div>`;
+    }
+
+    const sheets = result.sheets.map((sheet, s) =>
+      GlassCutList.renderSheetSvg(sheet, { caption: `Sheet ${s + 1} of ${result.sheets.length} - ${opts.glass}` })
+    ).join('');
+    return `<div class="oc-glass-tank">${head}${panels}<div class="oc-glass-sheets">${sheets}</div></div>`;
+  }).join('');
+
+  const poBtn = document.getElementById('ocGlassPoBtn');
+  poBtn.disabled = blocked;
+  poBtn.title = blocked ? 'Fix the tank(s) above first - one has no readable size or doesn\'t fit the stock sheet.' : 'Open a New Purchase Order with every cut size above in its Notes';
+  document.getElementById('orderCardGlassSummary').textContent =
+    `${cardGlassTanks.length} custom aquarium line(s) · ${totalSheets} stock sheet(s)`;
+}
+
+// Same sessionStorage handoff as glass-cut-list.html's Create Purchase Order button -
+// purchase-orders.html opens the New PO with this in Notes. Vendor / glass item / warehouse are
+// still picked there, as on the full page.
+function handleOrderCardGlassPo() {
+  const tanks = cardGlassTanks.filter((t) => t.spec).map((tank) => {
+    const options = ocGlassTankOptions(tank);
+    return { options, result: GlassCutList.buildCutList(options) };
+  });
+  if (tanks.length === 0) return;
+  sessionStorage.setItem('pendingGlassPoNotes', GlassCutList.buildPoNotes(openCardOrderId, tanks));
+  window.location.href = 'purchase-orders.html';
+}
+
+function wireOrderCardGlassCut() {
+  // Stock sheet size is remembered per browser - it's the supplier's sheet, not per order.
+  try {
+    const saved = JSON.parse(localStorage.getItem(OC_GLASS_SHEET_KEY) || 'null');
+    if (saved && saved.w > 0 && saved.h > 0) {
+      document.getElementById('ocGlassSheetW').value = saved.w;
+      document.getElementById('ocGlassSheetH').value = saved.h;
+    }
+  } catch (e) { /* storage unavailable - keep the defaults */ }
+
+  ['ocGlassSheetW', 'ocGlassSheetH'].forEach((id) => document.getElementById(id).addEventListener('input', () => {
+    const { sheetWidth, sheetHeight } = ocGlassSheetSize();
+    try { localStorage.setItem(OC_GLASS_SHEET_KEY, JSON.stringify({ w: sheetWidth, h: sheetHeight })); } catch (e) { /* ignore */ }
+    renderOrderCardGlassCut();
+  }));
+  document.getElementById('ocGlassTanks').addEventListener('change', (event) => {
+    const select = event.target.closest('.oc-glass-thickness');
+    if (!select) return;
+    cardGlassTanks[Number(select.dataset.tankIndex)].glass = select.value;
+    renderOrderCardGlassCut();
+  });
+  document.getElementById('ocGlassPoBtn').addEventListener('click', handleOrderCardGlassPo);
 }
 
 async function loadOrderCardAttachments(orderId, rerender = true) {
@@ -1874,7 +2257,7 @@ function wireOrderCardAttachments() {
   const fileInput = document.getElementById('cardAttachmentFileInput');
   let pendingTrigger = null;
 
-  document.getElementById('orderCardLinesBody').addEventListener('click', (event) => {
+  const onLinesClick = (event) => {
     const attachBtn = event.target.closest('.card-attach-btn');
     if (attachBtn) {
       cardPendingUploadLineId = attachBtn.dataset.lineId;
@@ -1884,7 +2267,9 @@ function wireOrderCardAttachments() {
     }
     const removeBtn = event.target.closest('.attachment-remove-btn');
     if (removeBtn) removeOrderCardAttachment(removeBtn.dataset.attachmentId);
-  });
+  };
+  document.getElementById('orderCardLinesBody').addEventListener('click', onLinesClick);
+  document.getElementById('orderCardLineCards').addEventListener('click', onLinesClick);
 
   fileInput.addEventListener('change', async (event) => {
     const file = event.target.files && event.target.files[0];
@@ -1905,10 +2290,38 @@ function openOrderCard(orderId) {
   const o = findFlatOrder(orderId);
   if (!o) return;
   openCardOrderId = String(o.order_id);
+  document.getElementById('orderCardModal').classList.toggle('maker-focus', isMakerFocus());
   document.querySelectorAll('#orderCardModal .oc-price').forEach((th) => th.classList.toggle('hidden', hidePriceColumns));
   fillOrderCardHeader(o);
   document.getElementById('orderCardModal').classList.remove('hidden');
   loadOrderCardLines(openCardOrderId);
+  if (!hidePriceColumns) loadOrderCardPaymentMethods(openCardOrderId);
+  loadOrderCardReworkHistory(openCardOrderId);
+}
+
+// Payment FastTab's "Paid Via": which method(s) the Amount Paid came in through (Cash, GCASH, BDO...),
+// read live from the Pancake order's cash + bank_payments (supabase_online_order_payment_methods.sql).
+async function loadOrderCardPaymentMethods(orderId) {
+  const el = document.getElementById('ocPaidVia');
+  el.textContent = 'Loading...';
+  const { data, error } = await supabaseClient.rpc('admin_get_online_order_payment_methods', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+  if (openCardOrderId !== String(orderId)) return;
+  if (error) {
+    el.textContent = 'Could not load from Pancake';
+    return;
+  }
+  const rows = data || [];
+  if (!rows.length) {
+    el.textContent = Number(findFlatOrder(orderId)?.amount_paid) > 0 ? 'Not recorded in Pancake' : 'No payment yet';
+    return;
+  }
+  // method is the Payment Methods name (supabase_payment_methods_master.sql), or "Unnamed (cbe9ddfa)"
+  // until a super user names that Pancake ID on payment-methods.html.
+  el.innerHTML = rows.map((r) => `<div title="${escapeHtml(r.code || '')}">${escapeHtml(r.method)}: ${money(r.amount)}</div>`).join('');
 }
 
 function closeOrderCard() {
@@ -1925,6 +2338,7 @@ function wireOrderCard() {
     applyOrderCardMaximized(next);
   });
   document.getElementById('closeOrderCardBtn').addEventListener('click', closeOrderCard);
+  wireOrderCardGlassCut();
   document.getElementById('orderCardModal').addEventListener('change', handleAssignProductionMemberChange);
   document.getElementById('cardSendPhotoBtn').addEventListener('click', (e) => openCardOrderId && handleSendPhotoClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardSendMessageBtn').addEventListener('click', () => openCardOrderId && openSendMessageModal(openCardOrderId));
@@ -1933,7 +2347,7 @@ function wireOrderCard() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
-    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog']
+    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog', 'sendBackDialog']
       .some((id) => !document.getElementById(id).classList.contains('hidden'));
     if (!stacked) closeOrderCard();
   });
@@ -2027,7 +2441,7 @@ async function loadOrders(search, status) {
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
-    ? `<tr><td colspan="17" class="cell-msg">${myAssignmentsOnly ? 'No open orders are assigned to you.' : 'No online orders found.'}</td></tr>`
+    ? `<tr><td colspan="17" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
 
   renderPaginationBar(
@@ -2303,6 +2717,7 @@ function wireOrderFilters() {
   wireOrderCard();
   wireAssignDialog();
   wireMyAssignmentCards();
+  wireSendBackDialog();
   wireOrderCardAttachments();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.

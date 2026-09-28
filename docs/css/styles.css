@@ -5059,3 +5059,34 @@ body:has(.wizard-page) {
   .topnav-links.topnav-links-compact .topnav-link { padding: 8px 12px; }
   .topnav-links.topnav-links-compact .topnav-logout { margin-left: auto; }
 }
+
+/* Online Order card - Glass Cut section (online-orders.html #orderCardGlassTab, rendered by
+   renderOrderCardGlassCut in js/onlineOrders.js). The sheet diagrams are white-backed SVGs from
+   GlassCutList.renderSheetSvg, so they stay readable in the dark theme as-is. */
+.oc-glass-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.oc-glass-bar input[type="number"] { width: 72px; }
+.oc-glass-tank {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.oc-glass-tank-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.oc-glass-panels { border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+.oc-glass-panels th, .oc-glass-panels td { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--panel-border); }
+.oc-glass-panels th { font-weight: 600; color: var(--text-muted); }
+.oc-glass-sheets { display: flex; flex-wrap: wrap; gap: 12px; }
+.oc-glass-sheets svg { display: block; max-width: min(100%, 460px); height: auto; border: 1px solid var(--panel-border); border-radius: 6px; }

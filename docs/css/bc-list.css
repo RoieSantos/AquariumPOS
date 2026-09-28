@@ -404,6 +404,78 @@
   padding: 10px 12px 12px;
 }
 
+/* Expandable / hideable "Filter list by" head (js/bcFilterPane.js) */
+.bc-ile .bc-filterpane .bc-pane-head {
+  padding: 0 4px 0 0;
+}
+
+.bc-ile .bc-fp-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 12px 0 8px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bc-ile .bc-fp-toggle:hover {
+  color: var(--bc-link);
+}
+
+.bc-ile .bc-fp-chev {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.bc-ile .bc-fp-count {
+  font-weight: 400;
+  color: var(--bc-link);
+}
+
+.bc-ile .bc-fp-close {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bc-ile .bc-fp-close:hover {
+  background: var(--bc-line);
+  color: inherit;
+}
+
+.bc-ile .bc-filterpane.fp-collapsed {
+  align-self: start;
+}
+
+.bc-ile .bc-filterpane.fp-collapsed .bc-pane-head {
+  border-bottom: none;
+}
+
+.bc-ile .bc-filterpane.fp-collapsed .bc-pane-body {
+  display: none;
+}
+
+.bc-ile .bc-filterpane.fp-collapsed .bc-fp-chev {
+  transform: none;
+}
+
 .bc-ile .bc-filterpane label {
   margin: 0 0 3px;
   font-size: 12px;
@@ -2442,3 +2514,71 @@ a.bc-cue:hover {
 :root[data-theme="dark"] .oo-mc-status.done { background: #1f3a27; color: #8fd6a4; }
 :root[data-theme="dark"] .oo-mc-part.me { background: #16283f; }
 :root[data-theme="dark"] .oo-mc-note { background: #3a3218; }
+
+/* Online Order card: outstanding balance in the Payment FastTab */
+.bc-doc .bc-doc-value.oc-balance-due { color: #b42318; font-weight: 700; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bc-doc .bc-doc-value.oc-balance-due { color: #ff8a80; } }
+:root[data-theme="dark"] .bc-doc .bc-doc-value.oc-balance-due { color: #ff8a80; }
+
+/* ---- Send back for rework (Online Orders) ---- */
+.oo-rework { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 9px; background: #fde7e4; color: #9a2d2d; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.oo-mc-part.rework { border-color: #d9534f; }
+.oo-mc-part.rework i { color: #9a2d2d; }
+.oo-mc-rework { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: #fde7e4; color: #6e1f1f; font-size: 13.5px; }
+.oo-mc-rework b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.oo-sb-parts { display: grid; gap: 8px; margin-bottom: 14px; }
+.oo-sb-part { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 8px; cursor: pointer; }
+.oo-sb-part input { width: 18px; height: 18px; }
+.oo-sb-part small { display: block; color: var(--bc-muted, #5f6b7a); font-size: 12.5px; }
+.oo-sb-reason { grid-template-columns: 1fr !important; }
+.oo-sb-reason textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 15px; padding: 8px 10px; border: 1px solid var(--bc-line, #c9d0d9); border-radius: 6px; background: var(--bc-surface, #fff); color: inherit; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .oo-rework, :root:not([data-theme="light"]) .oo-mc-rework { background: #3d1f1f; color: #f2a7a7; }
+}
+:root[data-theme="dark"] .oo-rework, :root[data-theme="dark"] .oo-mc-rework { background: #3d1f1f; color: #f2a7a7; }
+.oo-sb-part, .oo-sb-part span { font-size: 15px; font-weight: 400; color: var(--bc-text, inherit); text-transform: none; letter-spacing: normal; margin: 0; }
+.oo-sb-part b { font-weight: 700; }
+
+/* ---- Rework count badge + history (Online Orders) ---- */
+.oo-rework-count { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 9px; background: #fde7e4; color: #9a2d2d; font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: middle; }
+.oo-mc-head .oo-rework-count { margin-left: -4px; }
+.oo-rh-grid td { vertical-align: top; }
+.oo-rh-sub { display: block; color: var(--bc-muted, #5f6b7a); font-size: 12px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .oo-rework-count { background: #3d1f1f; color: #f2a7a7; } }
+:root[data-theme="dark"] .oo-rework-count { background: #3d1f1f; color: #f2a7a7; }
+
+/* ---- Maker focus: order card for maker-only accounts (Online Orders) ---- */
+.oc-line-cards { display: none; }
+#orderCardModal.maker-focus #orderCardGeneralTab,
+#orderCardModal.maker-focus #orderCardAssignTab,
+#orderCardModal.maker-focus #orderCardReworkTab,
+#orderCardModal.maker-focus #orderCardDeliveryTab,
+#orderCardModal.maker-focus #orderCardPaymentTab,
+#orderCardModal.maker-focus #orderCardPhotosPart,
+#orderCardModal.maker-focus #orderCardMaximizeBtn,
+#orderCardModal.maker-focus #cardSendBackBtn,
+#orderCardModal.maker-focus .line-items-wrap,
+#orderCardModal.maker-focus .attachment-remove-btn { display: none !important; }
+#orderCardModal.maker-focus .oc-line-cards { display: grid; gap: 10px; }
+.oc-maker-summary { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 10px; background: var(--bc-surface, #fff); }
+.oc-ms-row { display: flex; gap: 8px; font-size: 15px; padding: 2px 0; }
+.oc-ms-row > span { flex: 0 0 84px; color: var(--bc-muted, #5f6b7a); }
+.oc-maker-summary .oo-mc-note, .oc-maker-summary .oo-mc-rework { margin-top: 8px; }
+.oc-line-card { padding: 12px 14px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 10px; background: var(--bc-surface, #fff); }
+.oc-lc-head { display: flex; align-items: flex-start; gap: 12px; }
+.oc-lc-desc { flex: 1; font-size: 16px; font-weight: 600; line-height: 1.35; }
+.oc-lc-qty { flex: none; padding: 2px 10px; border-radius: 8px; background: #e5eefb; color: #1d4f8f; font-size: 16px; font-weight: 700; }
+.oc-lc-code { margin-top: 2px; color: var(--bc-muted, #5f6b7a); font-size: 12.5px; }
+.oc-lc-note { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #fff8e1; font-size: 14.5px; white-space: pre-wrap; }
+.oc-lc-attach { margin-top: 8px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .oc-lc-qty { background: #1e3350; color: #9cc3f5; }
+  :root:not([data-theme="light"]) .oc-lc-note { background: #3a3218; }
+}
+:root[data-theme="dark"] .oc-lc-qty { background: #1e3350; color: #9cc3f5; }
+:root[data-theme="dark"] .oc-lc-note { background: #3a3218; }
+/* Maker focus on a phone: the order fills the screen instead of floating as a small box. */
+@media (max-width: 760px) {
+  #orderCardModal.maker-focus { padding: 0; align-items: stretch; }
+  #orderCardModal.maker-focus .modal-panel.bc-doc { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border-radius: 0; overflow-y: auto; }
+}

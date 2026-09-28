@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Advance Orders - RS Pet Stop Portal</title>
+  <title>Payment Methods - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
@@ -17,58 +17,42 @@
   <div id="topnav"></div>
 
   <div class="page">
-    <h1>Advance Orders</h1>
-    <p class="muted">Read-only view of customer deposit/downpayment orders. Only visible to super users.</p>
+    <h1>Payment Methods</h1>
+    <p class="muted">Pancake records each payment against its own bank-account ID (a long code like cbe9ddfa-8cc8-...). This list gives each ID a name - the name is what the Online Order card's "Paid Via" shows. Sync from Pancake (also runs every night) pulls every payment method with its name from Pancake, plus any other ID used on recent orders; opening an order paid through a new account adds it too. Pancake's name shows by default - type a Name only to override it. Name, Type and Active are never overwritten by a sync. Only visible to super users.</p>
 
-    <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
     </div>
 
-    <!-- Shown only if the session was created before login started capturing the password
-         (edge case - existing logged-in users before this update); a fresh login fixes it.
-         No password re-entry prompt otherwise - super user status alone is enough, same trust
-         model as Online Orders/Expenses. -->
     <div id="unlockBox" class="hidden">
       <p class="error-text" id="unlockError"></p>
       <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
     </div>
 
-    <!-- Main content, shown once unlocked -->
     <div id="setupContent" class="hidden">
       <div class="toolbar">
-        <h2 style="margin:0;">Orders</h2>
-        <div style="display:flex; gap:12px; align-items:center;">
-          <input type="text" id="orderSearchInput" placeholder="Search by transaction no, receipt no, or customer..." style="max-width:320px;" />
-        </div>
+        <h2 style="margin:0;">Payment Methods</h2>
+        <button class="btn btn-primary" id="syncPaymentMethodsBtn" type="button">Sync from Pancake</button>
       </div>
+      <p class="muted hidden" id="syncResult"></p>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Transaction No</th>
-              <th>Receipt No</th>
-              <th>User</th>
-              <th>Customer</th>
-              <th>Description</th>
-              <th>Date</th>
-              <th>Time</th>
-              <th>Net Amount</th>
-              <th>Downpayment</th>
-              <th>Balance</th>
-              <th>Online Order ID</th>
-              <th>Fully Paid</th>
-              <th>Date Paid</th>
-              <th>Warehouse</th>
-              <th>Lines</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Active</th>
+              <th>Pancake ID</th>
+              <th>Name in Pancake</th>
+              <th>Last Used</th>
+              <th></th>
             </tr>
           </thead>
-          <tbody id="orderTableBody">
-            <tr><td colspan="15" class="muted">Loading...</td></tr>
+          <tbody id="paymentMethodTableBody">
+            <tr><td colspan="7" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
-      <div id="orderPaginationBar"></div>
     </div>
   </div>
 
@@ -77,8 +61,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=paymethods1"></script>
-  <script src="js/pagination.js"></script>
-  <script src="js/advanceOrders.js"></script>
+  <script src="js/paymentMethods.js?v=3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

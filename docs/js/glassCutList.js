@@ -397,10 +397,16 @@
     return segments;
   }
 
-  // One-call convenience wrapper: tank dimensions in, nested sheets out.
+  // One-call convenience wrapper: tank dimensions in, nested sheets out. opts.quantity (default 1)
+  // is how many identical tanks the order line is for - every panel's qty is multiplied by it
+  // before nesting, so two tanks' panels share sheets instead of being nested separately.
   function buildCutList(options) {
     var opts = options || {};
     var panels = derivePanels(opts);
+    var tanks = Math.max(1, Math.round(toNumber(opts.quantity) || 1));
+    if (tanks > 1) {
+      panels.forEach(function (p) { p.qty *= tanks; });
+    }
     var nested = nestPanels(
       explodePanels(panels),
       opts.sheetWidth,
@@ -413,6 +419,34 @@
       sheets: nested.sheets,
       oversized: nested.oversized
     };
+  }
+
+  // One-line Purchase Order note for the glass supplier - every cut size with its count, per tank,
+  // so the printed PO carries the actual sizes to cut, not just a sq ft total. Single line with
+  // " | " separators because the New PO's Notes field is a plain text input. `tanks` is a list of
+  // { options, result } pairs from buildCutList - one per custom aquarium line.
+  function buildPoNotes(orderId, tanks) {
+    var parts = [orderId ? 'Glass for Online Order ' + orderId : 'Glass cut list'];
+    var totalSqFt = 0;
+
+    (tanks || []).forEach(function (t) {
+      var o = t.options;
+      var r = t.result;
+      var qty = Math.max(1, Math.round(toNumber(o.quantity) || 1));
+      var cuts = r.panels.map(function (p) {
+        totalSqFt += (p.width * p.height * p.qty) / 144;
+        return p.name + ' ' + formatInches(p.width) + ' x ' + formatInches(p.height) + ' x' + p.qty;
+      });
+      parts.push(
+        o.glass + ' glass - tank ' + formatInches(o.length) + '" x ' + formatInches(o.width) + '" x ' + formatInches(o.height) + '"' +
+        (qty > 1 ? ' (' + qty + ' tanks)' : '') +
+        ' - cut: ' + cuts.join(', ') +
+        ' - ' + r.sheets.length + ' stock sheet(s) at ' + formatInches(o.sheetWidth) + '" x ' + formatInches(o.sheetHeight) + '"'
+      );
+    });
+
+    parts.push(totalSqFt.toFixed(2) + ' sq ft total');
+    return parts.join(' | ');
   }
 
   function escapeXml(value) {
@@ -494,6 +528,7 @@
     mergeOffcuts: mergeOffcuts,
     horizontalCutSegments: horizontalCutSegments,
     buildCutList: buildCutList,
+    buildPoNotes: buildPoNotes,
     renderSheetSvg: renderSheetSvg,
     formatInches: formatInches,
     glassThicknessInches: glassThicknessInches,

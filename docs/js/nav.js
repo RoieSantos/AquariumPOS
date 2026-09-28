@@ -205,6 +205,7 @@ function renderTopNav(activeLabel) {
     admin.push({ href: 'customers.html', label: 'Customers' });
     admin.push({ href: 'ai-bot-sandbox.html', label: 'AI Bot Sandbox' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
+    admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
     admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
   }
