@@ -2624,3 +2624,26 @@ a.bc-cue:hover {
   .bc-dialog.oo-confirm-dialog { max-width: none; width: 100%; border-radius: 14px 14px 0 0; }
   .oo-confirm-foot .bc-btn { min-height: 52px; font-size: 16px; }
 }
+
+/* My Assignments phone cards: whole card opens the order; Est. Delivery with time left. */
+.oo-mc.is-clickable { cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color .12s, box-shadow .12s; }
+.oo-mc.is-clickable:active { background: var(--bc-hover, #f3f2f1); }
+.oo-mc.is-clickable:focus-visible { outline: 2px solid var(--bc-link, #1560a8); outline-offset: 2px; }
+.oo-mc.is-clickable .oo-mc-head { justify-content: flex-start; }
+.oo-mc.is-clickable .oo-mc-id { margin-right: auto; }
+.oo-mc-chevron { font-size: 26px; line-height: 1; color: var(--bc-muted, #8a94a3); margin-left: 2px; }
+.oo-mc-line > span:first-child { flex-basis: 96px; }
+.oo-eta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.oo-eta b { font-weight: 700; }
+.oo-eta i { font-style: normal; font-size: 13px; color: var(--bc-muted, #5f6b7a); }
+.oo-eta.none { color: var(--bc-muted, #5f6b7a); }
+.oo-eta.soon i { color: #9a5b00; font-weight: 600; }
+.oo-eta.late b, .oo-eta.late i { color: #b42318; font-weight: 700; }
+.oc-ms-row > .oo-eta { flex: 1 1 auto; color: inherit; }
+.oc-ms-row > span:first-child { flex-basis: 100px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .oo-eta.soon i { color: #f0b54a; }
+  :root:not([data-theme="light"]) .oo-eta.late b, :root:not([data-theme="light"]) .oo-eta.late i { color: #f28b82; }
+}
+:root[data-theme="dark"] .oo-eta.soon i { color: #f0b54a; }
+:root[data-theme="dark"] .oo-eta.late b, :root[data-theme="dark"] .oo-eta.late i { color: #f28b82; }

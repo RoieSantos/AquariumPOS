@@ -4,6 +4,14 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- My Assignments phone cards: tapping anywhere on the card opens the order (Open button removed; Production Done / Mark Shipped buttons still act on their own), and Est. Delivery shows as a friendly date with time left ("Mon, Oct 5 · in 7 days", amber when due today/tomorrow, red when overdue) - same on the maker's order summary.
+
+- Ready to Ship / To Ship failed on "SSL_ERROR_SYSCALL": admin_update_online_order_status now uses the shared retrying Pancake PATCH (3 tries with pauses) instead of its own 2 back-to-back tries; time limit 45s -> 60s to fit the retries ([supabase_online_order_to_ship_retry.sql](sql/supabase_online_order_to_ship_retry.sql)).
+
+- Test script: 5 more dummy In Stock serials at Amaya per custom aquarium / stand / top cover item and variant ([supabase_test_dummy_serials_amaya_more.sql](sql/supabase_test_dummy_serials_amaya_more.sql)).
+
+- "In production" customer message no longer includes the estimated completion date - it stays maker-only ("Due" on My Assignments / the order) ([supabase_online_order_assigned_message_no_eta.sql](sql/supabase_online_order_assigned_message_no_eta.sql)).
+
 - Online Orders: Production Done (and its Undo), Mark Shipped and Ready to Ship now ask in a proper confirmation dialog (order + customer named, Cancel focused, confirm button enabled after a moment, bottom sheet on phones) instead of the browser's small confirm(), so they aren't tapped through by accident - phone cards, list and order card.
 
 - Assigning a new order timed out ("canceling statement due to statement timeout") because the every-minute Pancake syncs held order row locks while making Pancake calls for other orders. Header sync now runs headers only; detail (lines/glass/print note) and open-order status refresh moved into procedures that COMMIT after each order ([supabase_online_order_sync_no_long_locks.sql](sql/supabase_online_order_sync_no_long_locks.sql)).

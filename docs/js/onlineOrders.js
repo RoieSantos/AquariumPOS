@@ -416,6 +416,23 @@ function updateProductionDoneButton(btnId, o) {
 
 // Phone view of My Assignments - see #myAssignmentCards in online-orders.html. Rendered on every
 // My Assignments load; CSS decides whether it or the grid shows.
+// Est. Delivery for makers - per "in the mobile show the estimated delivery date": a friendly date plus
+// how long is left, e.g. "Mon, Oct 5 · in 7 days" / "Overdue 2 days". Dates are Manila calendar days.
+function etaHtml(dateStr) {
+  if (!dateStr) return '<span class="oo-eta none">Not set</span>';
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return `<span class="oo-eta">${escapeHtml(dateStr)}</span>`;
+  const due = new Date(y, m - 1, d);
+  const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((due - today) / 86400000);
+  const label = due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...(y !== today.getFullYear() ? { year: 'numeric' } : {}) });
+  const left = days < 0 ? `Overdue ${-days} day${days === -1 ? '' : 's'}`
+    : days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `in ${days} days`;
+  const tone = days < 0 ? 'late' : days <= 1 ? 'soon' : '';
+  return `<span class="oo-eta ${tone}"><b>${escapeHtml(label)}</b> <i>${escapeHtml(left)}</i></span>`;
+}
+
 function renderMyAssignmentCards(rows) {
   const box = document.getElementById('myAssignmentCards');
   if (!rows.length) {
@@ -448,22 +465,21 @@ function renderMyAssignmentCards(rows) {
       : mine.length && canChange ? `<button type="button" class="oo-mc-btn ${allMineDone ? 'undo' : 'primary'}" data-pd-order="${escapeHtml(o.order_id)}">
         ${allMineDone ? 'Undo Production Done' : '&#10003; Production Done'}</button>` : '';
     return `
-      <article class="oo-mc" data-order-id="${escapeHtml(o.order_id)}">
+      <article class="oo-mc is-clickable" data-order-id="${escapeHtml(o.order_id)}" data-open-order="${escapeHtml(o.order_id)}" role="button" tabindex="0" aria-label="Open order ${escapeHtml(o.order_id)}">
         <header class="oo-mc-head">
-          <a href="#" class="oo-mc-id" data-open-order="${escapeHtml(o.order_id)}">#${escapeHtml(o.order_id)}</a>
+          <span class="oo-mc-id">#${escapeHtml(o.order_id)}</span>
           <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)}
+          <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
         </header>
         <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
-        <div class="oo-mc-line"><span>Due</span>${escapeHtml(o.estimated_delivery_date || 'Not set')}${o.for_delivery ? ' · Delivery' : ' · Pickup'}</div>
+        <div class="oo-mc-line oo-mc-eta"><span>Est. Delivery</span>${etaHtml(o.estimated_delivery_date)}</div>
+        <div class="oo-mc-line"><span>Handover</span>${o.for_delivery ? 'Delivery' : 'Pickup'}</div>
         <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse_name || o.location_id || '-')} ${glassBadgeHtml(o)}</div>
         ${dispatcher}
         <div class="oo-mc-parts">${partChips}</div>
         ${reworkNoteText(o) ? `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(reworkNoteText(o))}</div>` : ''}
         ${o.note_print ? `<div class="oo-mc-note">${escapeHtml(o.note_print)}</div>` : ''}
-        <div class="oo-mc-actions">
-          <button type="button" class="oo-mc-btn" data-open-order="${escapeHtml(o.order_id)}">Open</button>
-          ${pdBtn}
-        </div>
+        ${pdBtn ? `<div class="oo-mc-actions">${pdBtn}</div>` : ''}
       </article>`;
   }).join('');
 }
@@ -474,12 +490,21 @@ function wireMyAssignmentCards() {
     if (pd) { handleProductionDoneClick(pd.dataset.pdOrder, pd); return; }
     const shipped = event.target.closest('[data-shipped-order]');
     if (shipped) { markOrderShipped(shipped.dataset.shippedOrder, shipped); return; }
+    // The whole card opens the order (per "allow the user to click the card to open the details
+    // instead of the open button") - the action buttons above are handled first and return.
     const open = event.target.closest('[data-open-order]');
     if (open) {
       event.preventDefault();
       selectedOrderId = open.dataset.openOrder;
       openOrderCard(open.dataset.openOrder);
     }
+  });
+  document.getElementById('myAssignmentCards').addEventListener('keydown', (event) => {
+    const card = event.target.closest('.oo-mc.is-clickable');
+    if (!card || event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    selectedOrderId = card.dataset.openOrder;
+    openOrderCard(card.dataset.openOrder);
   });
 }
 
@@ -2160,7 +2185,8 @@ function fillMakerFocusSummary(o) {
   const mine = myProductionRoles(o).map((r) => MAKER_ROLES[r].label);
   box.innerHTML = `
     <div class="oc-ms-row"><span>Customer</span>${escapeHtml(o.customer_name || '-')}</div>
-    <div class="oc-ms-row"><span>Due</span>${escapeHtml(o.estimated_delivery_date || 'Not set')}${o.for_delivery ? ' · Delivery' : ' · Pickup'}</div>
+    <div class="oc-ms-row"><span>Est. Delivery</span>${etaHtml(o.estimated_delivery_date)}</div>
+    <div class="oc-ms-row"><span>Handover</span>${o.for_delivery ? 'Delivery' : 'Pickup'}</div>
     <div class="oc-ms-row"><span>Your part</span>${escapeHtml(mine.join(' + ') || 'Dispatcher')}</div>
     ${o.note_print ? `<div class="oo-mc-note">${escapeHtml(o.note_print)}</div>` : ''}
     ${reworkNoteText(o) ? `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(reworkNoteText(o))}</div>` : ''}`;
