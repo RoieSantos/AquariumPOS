@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Purchase Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=grouped2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=5" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fp3" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -23,6 +23,7 @@
     <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
     <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
     <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3.2 8.4 6.4 11.5 12.8 4.6"/></symbol>
     <symbol id="ico-posted" viewBox="0 0 16 16"><path d="M3.5 2.5h6l3 3v8h-9z"/><path d="M5.8 9.2l1.6 1.6 3-3.2"/></symbol>
   </svg>
 
@@ -108,13 +109,31 @@
       <div class="bc-doc-head">
         <div>
           <div class="bc-doc-caption">PURCHASE ORDER</div>
-          <h2 id="poCardTitle">Purchase Order</h2>
+          <!-- Same title line as the Online Order / Transfer Order documents: "PO No. · Vendor" plus
+               the receiving status badge (js/purchaseOrders.js setPoCardStatus). -->
+          <div class="bc-doc-titleline">
+            <h2 id="poCardTitle">Purchase Order</h2>
+            <span id="poCardStatusBadge" class="badge badge-neutral hidden"></span>
+          </div>
         </div>
         <div class="bc-doc-window">
-          <a id="poCardPrintLink" href="#" class="bc-cmd hidden"><svg class="bc-ico"><use href="#ico-print"/></svg>Print</a>
           <button class="bc-cmd" id="poCardMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
           <button class="bc-iconbtn bc-doc-close" id="poCardCloseBtn" type="button" aria-label="Close" title="Close">&times;</button>
         </div>
+      </div>
+
+      <!-- BC action bar under the title - the document's actions live here, not in a footer.
+           poCardNewFooter / poCardExistingFooter keep their old IDs (applyPoCardMode toggles them)
+           but are now the new-order / existing-order action groups. -->
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <span id="poCardNewFooter" class="bc-cmd-group">
+          <button class="bc-cmd bc-cmd-accent" id="createNewPoBtn" type="button"><svg class="bc-ico"><use href="#ico-check"/></svg>Create Purchase Order</button>
+        </span>
+        <span id="poCardExistingFooter" class="bc-cmd-group hidden">
+          <button class="bc-cmd bc-cmd-accent" id="postPoBtn" type="button" title="Receive the Qty Received entered below into inventory; posts the order once nothing is outstanding"><svg class="bc-ico"><use href="#ico-posted"/></svg>Post</button>
+          <span class="bc-cmd-sep"></span>
+          <a id="poCardPrintLink" href="#" class="bc-cmd hidden"><svg class="bc-ico"><use href="#ico-print"/></svg>Print</a>
+        </span>
       </div>
 
       <div id="poCardError" class="bc-doc-error error-text hidden"></div>
@@ -154,6 +173,15 @@
               </div>
             </div>
             <div>
+              <!-- BC's No. / Status on the General FastTab - existing orders only. -->
+              <div class="bc-doc-field hidden" id="poCardNoRow">
+                <label>No.</label>
+                <div id="receivePoNo" class="bc-doc-value"></div>
+              </div>
+              <div class="bc-doc-field hidden" id="poCardStatusRow">
+                <label>Status</label>
+                <div id="receiveStatus" class="bc-doc-value"></div>
+              </div>
               <div class="bc-doc-field hidden" id="poCardOrderDateRow">
                 <label>Order Date</label>
                 <div id="receiveOrderDate" class="bc-doc-value"></div>
@@ -252,6 +280,7 @@
              received one field at a time through its own RPC. -->
         <div id="poCardExistingLines" class="bc-doc-part hidden">
           <div class="bc-doc-part-head">Lines</div>
+          <p class="bc-doc-hint">Fill in Qty Received for what arrived, then Post to add it to inventory. If only part arrived, it is received but the order stays open until the rest arrives.</p>
           <div class="doc-lines-wrap">
             <table class="doc-lines">
               <thead>
@@ -323,18 +352,6 @@
           </div>
         </div>
       </div>
-
-      <!-- New order footer. -->
-      <div class="bc-doc-foot" id="poCardNewFooter">
-        <span style="flex:1;"></span>
-        <button class="bc-btn bc-btn-primary" id="createNewPoBtn" type="button">Create Purchase Order</button>
-      </div>
-
-      <!-- Existing order footer. -->
-      <div class="bc-doc-foot hidden" id="poCardExistingFooter">
-        <span class="bc-doc-hint" style="flex:1 1 320px; margin:0;">Fill in Qty Received for what arrived, then Post Purchase Order to add it to inventory. If only part arrived, it is received but the order stays open until the rest arrives.</span>
-        <button class="bc-btn bc-btn-primary" id="postPoBtn" type="button">Post Purchase Order</button>
-      </div>
     </div>
   </div>
 
@@ -345,7 +362,7 @@
   <script src="js/nav.js?v=paymethods1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/purchaseOrders.js?v=bc1"></script>
+  <script src="js/purchaseOrders.js?v=bc2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

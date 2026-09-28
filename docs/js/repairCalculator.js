@@ -23,9 +23,11 @@
 // (Custom Stand, Aquarium Calculator, Stickers). Alice (the AI bot) CAN also quote these two repair
 // types via compute_repair_quote (supabase/functions/_shared/chatbot-engine.ts) - a hand-ported
 // copy of this same pricing logic, not a shared import; keep both in sync manually if this changes.
-// Glass Type (Panel Replacement only) uses the same multipliers as calculateCustomAquarium: Tempered
-// = 2x the glass rate; Low Iron is always tempered (2x) and then x1.7. Applied to the glass cost
-// before the labor markup.
+// Glass Type (Panel Replacement only), applied to the glass rate before the labor markup: Regular 1x,
+// Tempered 2x, Low Iron 1.7x (per "is it possible to do low iron only and not tempered?"), Low Iron +
+// Tempered 2 x 1.7 = 3.4x. Per "tempered only if height is 36\" or more": when the aquarium's HEIGHT
+// is 36 inches or more, every replacement panel is tempered - Regular becomes Tempered and Low Iron
+// becomes Low Iron + Tempered. Length/width don't trigger it.
 
 const PANEL_LOCATIONS = ['Bottom', 'Front', 'Back', 'Left', 'Right'];
 
@@ -50,11 +52,20 @@ const RESEAL_TIERS = [
   { maxGallons: Infinity, label: '151+ gal (monster tank)', settingKey: 'resealingMonsterFee' }
 ];
 
+// temperedAs: the type a panel switches to when the 36" rule forces tempering.
 const REPAIR_GLASS_TYPES = {
-  regular: { label: 'Regular', multiplier: 1 },
+  regular: { label: 'Regular', multiplier: 1, temperedAs: 'tempered' },
   tempered: { label: 'Tempered', multiplier: 2 },
-  low_iron: { label: 'Low Iron (tempered)', multiplier: 2 * 1.7 }
+  low_iron: { label: 'Low Iron', multiplier: 1.7, temperedAs: 'low_iron_tempered' },
+  low_iron_tempered: { label: 'Low Iron + Tempered', multiplier: 2 * 1.7 }
 };
+const REPAIR_TEMPERED_MIN_INCHES = 36;
+
+// The glass type a panel is actually priced at - forced tempered when the tank is 36"+ tall.
+function repairPanelGlassType(glassType, aquariumHeightInches) {
+  const forced = glassType.temperedAs && aquariumHeightInches >= REPAIR_TEMPERED_MIN_INCHES;
+  return forced ? { ...REPAIR_GLASS_TYPES[glassType.temperedAs], forced: true } : glassType;
+}
 
 function repairGlassType() {
   const value = document.getElementById('repairGlassType').value;
@@ -167,7 +178,7 @@ function repairRecalculate() {
   if (repairType === 'panel') {
     const thickness = document.getElementById('repairGlassThickness').value;
     const glassType = repairGlassType();
-    const glassRate = (repairGlassLookup[thickness] || 0) * glassType.multiplier;
+    const baseRate = repairGlassLookup[thickness] || 0;
     const markupPercent = repairPricingSetup.panelReplacementMarkupPercent;
     const checkedPanels = repairCheckedPanels();
 
@@ -180,12 +191,15 @@ function repairRecalculate() {
     const aquariumInches = repairToInches(aquarium);
     let total = 0;
     const rows = [];
+    const forcedPanels = [];
 
     checkedPanels.forEach((panel) => {
       const { width, height } = repairPanelDims(panel, aquarium);
       const inches = repairPanelDims(panel, aquariumInches);
       const areaSqFt = (inches.width * inches.height) / 144;
-      const glassCost = areaSqFt * glassRate;
+      const panelType = repairPanelGlassType(glassType, aquariumInches.height);
+      if (panelType.forced) forcedPanels.push(panel);
+      const glassCost = areaSqFt * baseRate * panelType.multiplier;
       const markup = glassCost * (markupPercent / 100);
       const price = glassCost + markup;
       total += price;
@@ -193,7 +207,13 @@ function repairRecalculate() {
       rows.push({ label: `${panel}: ${repairFormatDim(width)} x ${repairFormatDim(height)} (${areaSqFt.toFixed(2)} sqft)`, value: repairFormatCurrency(price) });
     });
 
-    if (glassType.multiplier !== 1) rows.push({ label: 'Glass type', value: glassType.label });
+    if (glassType.multiplier !== 1 || forcedPanels.length) rows.push({ label: 'Glass type', value: glassType.label });
+    if (forcedPanels.length) {
+      rows.push({
+        label: `Tempered required (aquarium height 36"+): ${forcedPanels.join(', ')}`,
+        value: `priced as ${REPAIR_GLASS_TYPES[glassType.temperedAs].label}`
+      });
+    }
     repairRenderSummary(rows, total);
   } else {
     const aquarium = repairAquariumDims();

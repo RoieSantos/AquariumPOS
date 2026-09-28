@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=glass1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp5x" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fp7" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -79,6 +79,9 @@
         <button class="bc-cmd hidden" id="listAssignBtn" type="button" disabled title="Assign the Tank Maker / Stand Maker / Dispatcher for the selected order"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
         <!-- Tank Maker / Stand Maker / Dispatcher only: marks the user's own part of the selected order
              done (js/onlineOrders.js handleProductionDoneClick). -->
+        <!-- Production Manager / Super User only: Assign -> In Production x/y -> Ready to Ship, following the
+             selected custom order's stage (js/onlineOrders.js nextStepFor). -->
+        <button class="bc-cmd hidden" id="listNextStepBtn" type="button"></button>
         <!-- Production Manager / Super User only: send finished parts back for rework -->
         <button class="bc-cmd hidden" id="listSendBackBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="listProductionDoneBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
@@ -212,6 +215,7 @@
         <button class="bc-cmd" id="cardSendPhotoBtn" type="button"><svg class="bc-ico"><use href="#ico-camera"/></svg>Send Photo</button>
         <button class="bc-cmd" id="cardSendMessageBtn" type="button"><svg class="bc-ico"><use href="#ico-message"/></svg>To-Ship Message</button>
         <button class="bc-cmd" id="cardToShipBtn" type="button" title="Only a Printed or Assigned order can be marked To Ship"><svg class="bc-ico"><use href="#ico-ship"/></svg>To Ship</button>
+        <button class="bc-cmd hidden" id="cardNextStepBtn" type="button"></button>
         <button class="bc-cmd hidden" id="cardSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="cardProductionDoneBtn" type="button"><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
         <button class="bc-cmd hidden" id="cardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker / Dispatcher"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
@@ -525,7 +529,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/glassCutList.js?v=po1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=bc19z"></script>
+  <script src="js/onlineOrders.js?v=bc22"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

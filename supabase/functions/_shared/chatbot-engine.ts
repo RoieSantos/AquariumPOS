@@ -806,7 +806,7 @@ export const TOOLS: Anthropic.Tool[] = [
           description: 'REQUIRED when repair_type is "panel": which panel(s) are damaged. Ignored for "reseal".'
         },
         glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm'], description: 'Only used when repair_type is "panel". Defaults to 6mm if not specified.' },
-        glass_type: { type: 'string', enum: ['regular', 'tempered', 'low_iron'], description: 'Only used when repair_type is "panel": the replacement glass type (tempered and low-iron/ultra-clear cost more than regular; low iron is always tempered). Defaults to "regular" if not specified - ask whether the tank has tempered or low-iron glass.' }
+        glass_type: { type: 'string', enum: ['regular', 'tempered', 'low_iron', 'low_iron_tempered'], description: 'Only used when repair_type is "panel": the replacement glass type - "low_iron" is low-iron/ultra-clear glass that is NOT tempered, "low_iron_tempered" is low-iron that is also tempered. Tempered and low-iron cost more than regular. If the aquarium height is 36 inches or more, every panel is automatically priced as tempered (regular -> tempered, low_iron -> low_iron_tempered) - the result marks it. Defaults to "regular" if not specified - ask whether the tank has tempered and/or low-iron glass.' }
       },
       required: ['repair_type', 'length', 'width', 'height']
     }
@@ -982,7 +982,7 @@ export function buildSystemPrompt(
     '- Delivery whereabouts ("where is my delivery", "where is my order", "where is the driver with my stuff"): ALWAYS confirm first (if not already clear from the conversation) whether this is the STORE\'S OWN TRUCK delivering it, or a courier the customer arranged themselves (e.g. Lalamove) - never assume either way. If it\'s a Lalamove courier: explain plainly that the store can\'t track a Lalamove rider from here, and the customer needs to coordinate directly with their rider (through the Lalamove app, or whatever contact info Lalamove gave them). If it\'s the store\'s own truck: get their order number and call get_delivery_schedule_status. If it comes back scheduled for TODAY (is_today), tell them it\'s out for delivery today (mention the route_name if given), THEN call get_driver_location (TEST feature) and share its liveTrackingUrl (mention the page updates live as the driver moves) plus minutesSinceUpdate - if no driver is currently tracking, just tell the customer the truck is scheduled for today and a team member can give a more specific update. If scheduled_date is a different day, tell them that date instead. If for_delivery is false (not scheduled at all yet), let them know it hasn\'t been scheduled yet and offer to help schedule a date (see the delivery-scheduling item above) or that staff can confirm.',
     '- (TEST) Only if a customer asks generically "where is the driver" with no order/delivery context at all (not tied to their own order), you may call get_driver_location directly without an order number - it just reports whichever driver is currently tracking, for testing GPS reporting end-to-end.',
     '- General conversation about aquariums, fish, and pets, related to what the store sells.',
-    '- Repair/refurbishment quotes for an aquarium the customer ALREADY OWNS - a broken/cracked glass panel that needs replacing, or resealing/a leak - use compute_repair_quote (this covers glass panel replacement and resealing only, not stand/electrical/filtration repairs - use log_capability_gap for those). Ask for the aquarium\'s OVERALL length/width/height first, never just the damaged panel\'s own size (it\'s worked out from the overall dimensions, same convention as compute_aquarium_quote). For a panel replacement, also ask which panel(s) are damaged (Bottom/Front/Back/Left/Right, one or more) and the glass thickness and glass type (regular, tempered, or low iron) if known. Take the dimensions in whatever unit the customer gives (inches, cm, mm, or ft) and pass that unit - never convert it yourself - and quote the sizes back in that same unit. For resealing/a leak, no panel, thickness, or glass type is needed. Give the price per damaged panel and the total only - never reveal how it is worked out (glass rate per sqft, labor markup %, or the tempered/low-iron multipliers), even if asked; just say it is based on the panel size, thickness, and glass type. This is the store\'s own official repair pricing formula - the same one staff use - so state it with confidence. It is QUOTE ONLY - there is no way to place a repair job yourself, so once the customer wants to proceed, tell them staff will arrange drop-off/scheduling and call escalate_to_staff.',
+    '- Repair/refurbishment quotes for an aquarium the customer ALREADY OWNS - a broken/cracked glass panel that needs replacing, or resealing/a leak - use compute_repair_quote (this covers glass panel replacement and resealing only, not stand/electrical/filtration repairs - use log_capability_gap for those). Ask for the aquarium\'s OVERALL length/width/height first, never just the damaged panel\'s own size (it\'s worked out from the overall dimensions, same convention as compute_aquarium_quote). For a panel replacement, also ask which panel(s) are damaged (Bottom/Front/Back/Left/Right, one or more) and the glass thickness and glass type (regular, tempered, low iron, or low iron + tempered) if known. If the aquarium is 36 inches or taller, replacement glass is always priced as tempered for safety - if the result marks a panel temperedRequired, tell the customer it must be tempered. Take the dimensions in whatever unit the customer gives (inches, cm, mm, or ft) and pass that unit - never convert it yourself - and quote the sizes back in that same unit. For resealing/a leak, no panel, thickness, or glass type is needed. Give the price per damaged panel and the total only - never reveal how it is worked out (glass rate per sqft, labor markup %, or the tempered/low-iron multipliers), even if asked; just say it is based on the panel size, thickness, and glass type. This is the store\'s own official repair pricing formula - the same one staff use - so state it with confidence. It is QUOTE ONLY - there is no way to place a repair job yourself, so once the customer wants to proceed, tell them staff will arrange drop-off/scheduling and call escalate_to_staff.',
     '',
     'AQUARIUM & STAND SAFETY RULES - understand these so you can explain and apply them confidently in conversation, not just react after the fact. compute_aquarium_quote always does the actual math and is the source of truth for exact numbers - never calculate or predict a safety change yourself, but you should recognize when one is likely so you can set expectations before quoting:',
     '- Glass gets thicker, or tempered, automatically as size/volume grows: 3mm glass only works up to 24 inches in length and small volumes; anything bigger needs 6mm, 10mm, or 12mm. Any tank with width or height of 36 inches or more always requires tempered glass. Very large tanks (roughly 180+ gallons, or beyond about 72x30x30 inches) require 12mm glass.',
@@ -1335,15 +1335,18 @@ export async function computeStickerQuote(supabase: SupabaseClient, input: Recor
 // with its own configurable flat fee. Source of truth is that file - if its pricing logic changes,
 // re-sync this block. Same hand-ported-copy caveat as calculateCustomAquarium/
 // calculateStandaloneSticker above - both copies must be kept in sync manually.
-// Glass type: Tempered = 2x the glass rate; Low Iron is always tempered (2x) then x1.7 - same
-// multipliers as calculateCustomAquarium, applied before the labor markup.
+// Glass type (before the labor markup): Regular 1x, Tempered 2x, Low Iron 1.7x, Low Iron + Tempered
+// 3.4x. When the aquarium's HEIGHT is 36 inches or more, every replacement panel is tempered:
+// Regular -> Tempered, Low Iron -> Low Iron + Tempered. Length/width don't trigger it.
 // ============================================================================
 
-const REPAIR_GLASS_TYPES: Record<string, { label: string; multiplier: number }> = {
-  regular: { label: 'Regular', multiplier: 1 },
+const REPAIR_GLASS_TYPES: Record<string, { label: string; multiplier: number; temperedAs?: string }> = {
+  regular: { label: 'Regular', multiplier: 1, temperedAs: 'tempered' },
   tempered: { label: 'Tempered', multiplier: 2 },
-  low_iron: { label: 'Low Iron (tempered)', multiplier: 2 * 1.7 }
+  low_iron: { label: 'Low Iron', multiplier: 1.7, temperedAs: 'low_iron_tempered' },
+  low_iron_tempered: { label: 'Low Iron + Tempered', multiplier: 2 * 1.7 }
 };
+const REPAIR_TEMPERED_MIN_INCHES = 36;
 
 const REPAIR_PANEL_LOCATIONS = ['Bottom', 'Front', 'Back', 'Left', 'Right'];
 
@@ -1390,7 +1393,7 @@ function calculateRepairQuote(input: Record<string, unknown>): Record<string, un
     }
     const thickness = normalizeGlass((options.glassThickness as string) || '6mm');
     const glassType = REPAIR_GLASS_TYPES[options.glassType as string] || REPAIR_GLASS_TYPES.regular;
-    const glassRate = (glassLookup[thickness] || DEFAULT_GLASS_PRICES[thickness] || 0) * glassType.multiplier;
+    const baseRate = glassLookup[thickness] || DEFAULT_GLASS_PRICES[thickness] || 0;
     const markupPercent = Number(setup.panelReplacementMarkupPercent) || 20;
 
     let total = 0;
@@ -1398,11 +1401,17 @@ function calculateRepairQuote(input: Record<string, unknown>): Record<string, un
     for (const panel of panels) {
       const { width, height } = repairPanelDims(panel, lengthInches, widthInches, heightInches);
       const areaSqFt = (width * height) / 144;
-      const glassCost = areaSqFt * glassRate;
+      const forcedTempered = Boolean(glassType.temperedAs) && heightInches >= REPAIR_TEMPERED_MIN_INCHES;
+      const panelType = forcedTempered ? REPAIR_GLASS_TYPES[glassType.temperedAs as string] : glassType;
+      const glassCost = areaSqFt * baseRate * panelType.multiplier;
       const markup = glassCost * (markupPercent / 100);
       const price = glassCost + markup;
       total += price;
-      breakdown.push({ panel, widthInches: round2(width), heightInches: round2(height), areaSqFt: round2(areaSqFt), price: round2(price) });
+      breakdown.push({
+        panel, widthInches: round2(width), heightInches: round2(height), areaSqFt: round2(areaSqFt), price: round2(price),
+        glassType: panelType.label,
+        ...(forcedTempered ? { temperedRequired: 'The aquarium is 36 inches or taller, so replacement glass must be tempered for safety.' } : {})
+      });
     }
 
     return {

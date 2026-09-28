@@ -41,6 +41,24 @@ function receivedBadgeHtml(po) {
   return `<span class="badge badge-warning">${received.toLocaleString()} / ${total.toLocaleString()}</span>`;
 }
 
+// The card's title-line badge and General > Status - the same Not Received / Partially Received /
+// Fully Received reading as the list's badge, from the open order's own lines. null hides it (new order).
+function setPoCardStatus(lines) {
+  const badge = document.getElementById('poCardStatusBadge');
+  if (!lines) {
+    badge.classList.add('hidden');
+    return;
+  }
+  const total = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+  const received = lines.reduce((sum, l) => sum + (Number(l.qty_received) || 0), 0);
+  const [label, cls] = received <= 0 ? ['Not Received', 'badge-neutral']
+    : received >= total ? ['Fully Received', 'badge-success']
+      : ['Partially Received', 'badge-warning'];
+  badge.textContent = label;
+  badge.className = `badge ${cls}`;
+  document.getElementById('receiveStatus').textContent = label;
+}
+
 function poRowsHtml(rows) {
   return rows
     .map((po) => `
@@ -200,6 +218,8 @@ function applyPoCardMode(mode) {
   document.getElementById('poCardVendorViewRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardWarehouseViewRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardOrderDateRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardNoRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardStatusRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardNotesViewRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardNewLines').classList.toggle('hidden', isExisting);
   document.getElementById('poCardExistingLines').classList.toggle('hidden', !isExisting);
@@ -679,7 +699,10 @@ async function openReceiveModal(poNo) {
   currentReceiveVendorCode = null;
   currentReceiveWarehouseId = '';
   applyPoCardMode('existing');
-  document.getElementById('poCardTitle').textContent = `Purchase Order ${poNo}`;
+  document.getElementById('poCardTitle').textContent = poNo;
+  document.getElementById('receivePoNo').textContent = poNo;
+  document.getElementById('receiveStatus').textContent = '-';
+  setPoCardStatus(null);
   document.getElementById('poCardError').classList.add('hidden');
   document.getElementById('poCardPrintLink').href = `purchase-order-print.html?po=${encodeURIComponent(poNo)}`;
   const body = document.getElementById('receiveLinesBody');
@@ -716,6 +739,7 @@ async function openReceiveModal(poNo) {
   currentReceiveWarehouseId = header.warehouse_id || '';
   const vendorLabel = header.vendor_name || header.vendor_code || '';
   document.getElementById('receiveVendor').textContent = vendorLabel;
+  document.getElementById('poCardTitle').textContent = [poNo, vendorLabel].filter(Boolean).join(' · ');
   // Blank on orders raised before the header carried one, and on any whose lines span several -
   // the Warehouse column on the lines below still says where each item goes.
   document.getElementById('receiveWarehouse').textContent = header.warehouse_name || '-';
@@ -738,6 +762,7 @@ async function openReceiveModal(poNo) {
     return;
   }
 
+  setPoCardStatus(lineRows || []);
   await renderReceiveLines(lineRows || []);
 }
 
@@ -1711,7 +1736,8 @@ function resetNewPoModal() {
 async function openNewPoModal() {
   currentPoCardMode = 'new';
   applyPoCardMode('new');
-  document.getElementById('poCardTitle').textContent = 'Purchase Order';
+  document.getElementById('poCardTitle').textContent = 'New Purchase Order';
+  setPoCardStatus(null);
   resetNewPoModal();
 
   // Restore the layout this browser last used before the panel is seen, same as the Receive

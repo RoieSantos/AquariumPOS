@@ -165,7 +165,13 @@ begin
           case
             when p_admin_username in (o."AssignedTankMaker", o."AssignedStandMaker", o."AssignedDispatcher")
               and lower(trim(coalesce(o."Status", ''))) not in ('shipped', 'delivered', '2', 'received', '3', 'canceled', 'cancelled')
-              then not public._online_order_my_parts_done(o."OrderID", p_admin_username)
+              then (
+                not public._online_order_my_parts_done(o."OrderID", p_admin_username)
+                -- The order's Dispatcher keeps its To Ship orders so they can Mark Shipped once delivered
+                -- (supabase_online_order_mark_shipped.sql), even after their own part is done.
+                or (o."AssignedDispatcher" = p_admin_username
+                    and lower(trim(coalesce(o."Status", ''))) in ('to ship', 'packing', 'packed'))
+              )
             else false
           end
         )
@@ -266,3 +272,6 @@ end;
 $$;
 
 grant execute on function public.admin_list_online_orders(text, text, text, text, text, text, boolean, int, int, text, text[], boolean) to anon;
+
+-- Internal helper: not callable from the website directly (see supabase_online_order_mark_shipped.sql).
+revoke execute on function public._online_order_my_parts_done(text, text) from public, anon, authenticated;

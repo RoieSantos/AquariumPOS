@@ -831,3 +831,8 @@ commit;
 --   update public."GlassPricingSetup" set "TurnAroundDays" = '5' where "Thickness" ilike '6%';
 --   update public."GlassPricingSetup" set "TurnAroundDays" = '7' where "Thickness" ilike '10%';
 --   update public."GlassPricingSetup" set "TurnAroundDays" = '10' where "Thickness" ilike '12%';
+
+-- Internal helpers: only callable from inside the login-checked functions, not from the website
+-- directly (see supabase_online_order_mark_shipped.sql).
+revoke execute on function public._pancake_patch_online_order_status(text, jsonb) from public, anon, authenticated;
+revoke execute on function public._online_order_assignment_complete(text) from public, anon, authenticated;

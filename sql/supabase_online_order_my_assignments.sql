@@ -240,3 +240,6 @@ end;
 $$;
 
 grant execute on function public.admin_list_online_orders(text, text, text, text, text, text, boolean, int, int, text, text[], boolean) to anon;
+
+-- Internal helper: not callable from the website directly (see supabase_online_order_mark_shipped.sql).
+revoke execute on function public._is_order_maker_only(text) from public, anon, authenticated;

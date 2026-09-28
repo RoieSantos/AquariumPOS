@@ -135,6 +135,9 @@ async function loadProductionMembers() {
 // unaffected - it was detached from this flow so it keeps working either way.
 const TO_SHIP_ENABLED = false;
 
+// Ready to Ship skips the photo prompt for now (see handleToShipClick) - set true to bring it back.
+const READY_TO_SHIP_ASKS_PHOTO = false;
+
 async function resolveIsProductionWarehouse(session) {
   if (!session?.warehouseName) return true;
 
@@ -395,8 +398,10 @@ async function attachProductionDone(rows) {
 function updateProductionDoneButton(btnId, o) {
   const btn = document.getElementById(btnId);
   if (!currentSession?.isOrderMaker) { btn.classList.add('hidden'); return; }
-  btn.classList.remove('hidden');
   const mine = o ? myProductionRoles(o) : [];
+  // Maker focus: no point showing a disabled Production Done (no part of theirs, or the order has
+  // moved on - e.g. a dispatcher's To Ship order shows Mark Shipped instead).
+  btn.classList.toggle('hidden', isMakerFocus() && (!mine.length || !canChangeProduction(o)));
   const allMineDone = mine.length > 0 && mine.every((role) => o.production_done?.[role]);
   btn.querySelector('.pd-label').textContent = allMineDone ? 'Undo Production Done' : 'Production Done';
   btn.classList.toggle('is-undo', allMineDone);
@@ -433,7 +438,11 @@ function renderMyAssignmentCards(rows) {
     }).join('');
     const dispatcher = neededProductionRoles(o).includes('dispatcher') ? ''
       : `<div class="oo-mc-line"><span>Dispatcher</span>${o.assigned_dispatcher === me ? 'You' : escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher || '-')}</div>`;
-    const pdBtn = mine.length ? `<button type="button" class="oo-mc-btn ${allMineDone ? 'undo' : 'primary'}" data-pd-order="${escapeHtml(o.order_id)}" ${canChange ? '' : 'disabled'}>
+    // The assigned Dispatcher marks a To Ship order Shipped once it's delivered; otherwise the
+    // maker's Production Done (hidden once the order has moved on).
+    const pdBtn = canMarkShipped(o)
+      ? `<button type="button" class="oo-mc-btn primary" data-shipped-order="${escapeHtml(o.order_id)}">&#128666; Mark Shipped</button>`
+      : mine.length && canChange ? `<button type="button" class="oo-mc-btn ${allMineDone ? 'undo' : 'primary'}" data-pd-order="${escapeHtml(o.order_id)}">
         ${allMineDone ? 'Undo Production Done' : '&#10003; Production Done'}</button>` : '';
     return `
       <article class="oo-mc" data-order-id="${escapeHtml(o.order_id)}">
@@ -460,6 +469,8 @@ function wireMyAssignmentCards() {
   document.getElementById('myAssignmentCards').addEventListener('click', (event) => {
     const pd = event.target.closest('[data-pd-order]');
     if (pd) { handleProductionDoneClick(pd.dataset.pdOrder, pd); return; }
+    const shipped = event.target.closest('[data-shipped-order]');
+    if (shipped) { markOrderShipped(shipped.dataset.shippedOrder, shipped); return; }
     const open = event.target.closest('[data-open-order]');
     if (open) {
       event.preventDefault();
@@ -467,6 +478,108 @@ function wireMyAssignmentCards() {
       openOrderCard(open.dataset.openOrder);
     }
   });
+}
+
+// ---------------------------------------------------------------- Next step (status-based)
+// Per "once the order is in production done status.. should we add a button there 'Ready to ship'
+// ... i want the button to change base on the status" - one Production Manager / Super User button
+// whose label follows the custom order's stage:
+//   Confirmed / Printed, not fully assigned  -> Assign        (opens the Assign popup)
+//   Assigned, parts still being made         -> In Production 1/2 (disabled, shows progress)
+//   Production Done (every part done)        -> Ready to Ship (To Ship in the portal + Pancake,
+//                                               asks to message the customer - handleToShipClick)
+//   To Ship (any order, custom or normal)    -> Mark Shipped (Pancake status 2 + portal 'Shipped',
+//                                               admin_mark_online_order_shipped - no customer message)
+// Other normal-order stages and anything already Shipped get no button (the POS carries on as before).
+function isToShipOrder(o) {
+  return ['to ship', 'packing', 'packed'].includes((o?.status || '').trim().toLowerCase());
+}
+
+// Per "i want that dispatcher assigned to mark it as shipped" - the Production Manager / Super User
+// on any To Ship order, or the order's own assigned Dispatcher (admin_mark_online_order_shipped
+// checks the same server-side).
+function canMarkShipped(o) {
+  if (!isToShipOrder(o)) return false;
+  return canAssignOrders() || (!!currentSession?.username && o.assigned_dispatcher === currentSession.username);
+}
+
+function nextStepFor(o) {
+  if (!o) return null;
+  if (canMarkShipped(o)) {
+    return { action: 'shipped', label: 'Mark Shipped', icon: 'ico-ship', title: 'Set this order to Shipped in the portal and Pancake' };
+  }
+  if (!canAssignOrders()) return null;
+  const status = (o.status || '').trim().toLowerCase();
+  const needed = neededProductionRoles(o);
+  if (!needed.length) return null;
+  const display = orderDisplayStatus(o);
+
+  if (isProductionDone(o) && canChangeProduction(o)) {
+    return ['printed', 'assigned'].includes(status)
+      ? { action: 'ship', label: 'Ready to Ship', icon: 'ico-ship', title: 'Move to To Ship in the portal and Pancake, then choose whether to message the customer' }
+      : { action: 'ship', label: 'Ready to Ship', icon: 'ico-ship', disabled: true, title: 'Assign the order first - it has to be Assigned before it can ship' };
+  }
+  if (['confirmed', 'submitted', 'printed'].includes(status) && display !== 'Assigned') {
+    return { action: 'assign', label: 'Assign', icon: 'ico-assign', title: 'Assign the Tank Maker / Stand Maker / Dispatcher' };
+  }
+  if (status === 'assigned' || display === 'Assigned') {
+    const done = needed.filter((role) => o.production_done?.[role]).length;
+    return { action: 'none', label: `In Production ${done}/${needed.length}`, icon: 'ico-done', disabled: true, title: 'Waiting for the makers to mark their parts done' };
+  }
+  return null;
+}
+
+function updateNextStepButton(btnId, o) {
+  const btn = document.getElementById(btnId);
+  const step = nextStepFor(o);
+  btn.classList.toggle('hidden', !step);
+  if (!step) return;
+  btn.dataset.action = step.action;
+  btn.disabled = !!step.disabled;
+  btn.title = step.title || '';
+  btn.classList.toggle('is-ship', step.action === 'ship' && !step.disabled);
+  btn.innerHTML = `<svg class="bc-ico"><use href="#${step.icon}"/></svg>${escapeHtml(step.label)}`;
+}
+
+async function handleNextStepClick(orderId, btn) {
+  const o = findFlatOrder(orderId);
+  if (!o) return;
+  if (btn.dataset.action === 'assign') {
+    openAssignDialog(orderId);
+  } else if (btn.dataset.action === 'ship') {
+    if (!confirm(`Mark order ${o.order_id} as Ready to Ship?\n\nIt moves to To Ship in the portal and Pancake.`)) return;
+    await handleToShipClick(String(o.order_id), btn, { readyToShip: true });
+  } else if (btn.dataset.action === 'shipped') {
+    await markOrderShipped(String(o.order_id), btn);
+  }
+}
+
+// Shared by the next-step button (list / card) and the Dispatcher's phone card.
+async function markOrderShipped(orderId, btn) {
+  const o = findFlatOrder(orderId);
+  if (!o || !canMarkShipped(o)) return;
+  if (!confirm(`Mark order ${o.order_id} as Shipped?\n\nIt changes to Shipped in the portal and Pancake. No message is sent to the customer.`)) return;
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_mark_online_order_shipped', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(o.order_id)
+  });
+  btn.disabled = false;
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) {
+    alert(error?.message || result?.message || 'Could not mark as shipped.');
+    return;
+  }
+  if (openCardOrderId === String(o.order_id) && myAssignmentsLocked) closeOrderCard();
+  await refreshCurrentOrders();
+  if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+}
+
+function wireNextStepButtons() {
+  if (!canAssignOrders() && !currentSession?.isOrderMaker) return;
+  document.getElementById('listNextStepBtn').addEventListener('click', (e) => selectedOrderId && handleNextStepClick(selectedOrderId, e.currentTarget));
+  document.getElementById('cardNextStepBtn').addEventListener('click', (e) => openCardOrderId && handleNextStepClick(openCardOrderId, e.currentTarget));
 }
 
 // ---------------------------------------------------------------- Send back for rework
@@ -837,6 +950,7 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
     }
 
     await refreshCurrentOrders();
+    if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
   } finally {
     hideSendStatusBanner();
   }
@@ -1280,8 +1394,10 @@ async function handleAssignProductionMemberChange(event) {
 // all when the logged-in staff's own warehouse is Production (currentSessionIsProductionWarehouse,
 // resolved once at init) - a regular store's To Ship never needed this, same as the desktop.
 // Cancelling the serial picker aborts the whole To Ship action (nothing sent, nothing changed).
-async function handleToShipClick(orderId, toShipBtn) {
-  if (!TO_SHIP_ENABLED) {
+async function handleToShipClick(orderId, toShipBtn, { readyToShip = false } = {}) {
+  // Ready to Ship (the Production Manager's next-step button on a Production Done order) runs this
+  // real flow even while the general To Ship button is still switched off - see nextStepFor.
+  if (!TO_SHIP_ENABLED && !readyToShip) {
     alert('To-Ship is under construction, please To-Ship through the local POS for now.');
     return;
   }
@@ -1319,6 +1435,14 @@ async function handleToShipClick(orderId, toShipBtn) {
 
   if (!notifyCustomer) {
     applyStatusChange(orderId, 'To Ship', false, null, null, serialRunningNos, toShipBtn);
+    return;
+  }
+
+  // Per "can we removed the picture requirement for now? ill put that back later" - Ready to Ship
+  // sends the text message without asking for a photo. Flip READY_TO_SHIP_ASKS_PHOTO back to true to
+  // restore the photo step.
+  if (readyToShip && !READY_TO_SHIP_ASKS_PHOTO) {
+    applyStatusChange(orderId, 'To Ship', true, null, null, serialRunningNos, toShipBtn);
     return;
   }
 
@@ -1557,6 +1681,7 @@ function updateOrderActionState() {
   document.getElementById('listAssignBtn').disabled = !o;
   updateProductionDoneButton('listProductionDoneBtn', o);
   updateSendBackButton('listSendBackBtn', o);
+  updateNextStepButton('listNextStepBtn', o);
 }
 
 // ---------------------------------------------------------------- Assign popup
@@ -1815,6 +1940,7 @@ function fillOrderCardHeader(o) {
   updateProductionDoneButton('cardProductionDoneBtn', o);
   fillMakerFocusSummary(o);
   updateSendBackButton('cardSendBackBtn', o);
+  updateNextStepButton('cardNextStepBtn', o);
   renderOrderCardAssignments();
 }
 
@@ -2727,6 +2853,7 @@ function wireOrderFilters() {
   wireAssignDialog();
   wireMyAssignmentCards();
   wireSendBackDialog();
+  wireNextStepButtons();
   wireOrderCardAttachments();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.

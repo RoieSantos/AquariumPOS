@@ -168,3 +168,6 @@ end;
 $$;
 
 grant execute on function public.staff_get_online_order_production_done(text, text, text[]) to anon;
+
+-- Internal helper: not callable from the website directly (see supabase_online_order_mark_shipped.sql).
+revoke execute on function public._online_order_production_roles(text) from public, anon, authenticated;
