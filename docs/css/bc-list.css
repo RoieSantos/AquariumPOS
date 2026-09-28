@@ -2582,3 +2582,13 @@ a.bc-cue:hover {
   #orderCardModal.maker-focus { padding: 0; align-items: stretch; }
   #orderCardModal.maker-focus .modal-panel.bc-doc { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border-radius: 0; overflow-y: auto; }
 }
+/* Maker focus: big Production Done button across the card's action bar. */
+#orderCardModal.maker-focus #cardProductionDoneBtn {
+  flex: 1 1 100%; width: 100%; min-height: 52px; justify-content: center; gap: 8px;
+  border-radius: 10px; background: #1e7d3a; border: 1px solid #1e7d3a; color: #fff;
+  font-size: 17px; font-weight: 700;
+}
+#orderCardModal.maker-focus #cardProductionDoneBtn .bc-ico { width: 20px; height: 20px; stroke: currentColor; }
+#orderCardModal.maker-focus #cardProductionDoneBtn.is-undo { background: var(--bc-surface, #fff); color: #9a2d2d; border-color: #d9a3a3; }
+#orderCardModal.maker-focus #cardProductionDoneBtn:disabled { opacity: .5; }
+#orderCardModal.maker-focus #ocGlassSheetW, #orderCardModal.maker-focus #ocGlassSheetH { background: transparent; border-color: transparent; color: inherit; pointer-events: none; }

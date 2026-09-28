@@ -399,6 +399,7 @@ function updateProductionDoneButton(btnId, o) {
   const mine = o ? myProductionRoles(o) : [];
   const allMineDone = mine.length > 0 && mine.every((role) => o.production_done?.[role]);
   btn.querySelector('.pd-label').textContent = allMineDone ? 'Undo Production Done' : 'Production Done';
+  btn.classList.toggle('is-undo', allMineDone);
   btn.disabled = !mine.length || !canChangeProduction(o);
   btn.title = !o ? 'Select an order'
     : !mine.length ? 'You are not assigned to a production part of this order'
@@ -2291,6 +2292,12 @@ function openOrderCard(orderId) {
   if (!o) return;
   openCardOrderId = String(o.order_id);
   document.getElementById('orderCardModal').classList.toggle('maker-focus', isMakerFocus());
+  // Makers can't change the glass stock sheet size - it's set by the Production Manager / office.
+  ['ocGlassSheetW', 'ocGlassSheetH'].forEach((id) => {
+    const input = document.getElementById(id);
+    input.readOnly = isMakerFocus();
+    input.title = isMakerFocus() ? 'Stock sheet size is set by the Production Manager' : '';
+  });
   document.querySelectorAll('#orderCardModal .oc-price').forEach((th) => th.classList.toggle('hidden', hidePriceColumns));
   fillOrderCardHeader(o);
   document.getElementById('orderCardModal').classList.remove('hidden');

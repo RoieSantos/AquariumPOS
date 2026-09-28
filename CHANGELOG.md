@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- **Maker focus: big Production Done + read-only stock sheet**: on the order card, a maker-only account's Production Done is now a full-width 52px green button ("Undo" shows as an outlined red button). The Glass Cut's stock sheet size is read-only for them and shows as plain text ([onlineOrders.js](docs/js/onlineOrders.js), [bc-list.css](docs/css/bc-list.css), [online-orders.html](docs/online-orders.html)).
+
+- **Alice learns repair glass type + units**: `compute_repair_quote` guidance now covers glass type (regular/tempered/low iron) and any unit (inches/cm/mm/ft, passed through as given). Alice gives per-panel prices and the total only, never the glass rate, markup % or multipliers; the markup % was also removed from the tool result ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
+
 - **Repair Calculator: Unit of Measure**: new Inches / Cm / mm / ft selector. Dimensions are converted to inches for pricing (shared `toInches`) and shown in the chosen unit in the summary and Copy Summary ([repair-calculator.html](docs/repair-calculator.html), [repairCalculator.js](docs/js/repairCalculator.js)).
 
 - **Repair Calculator hides pricing internals**: removed the labor markup % note, the tempered/low-iron multipliers in the Glass Type dropdown, and the rate/markup wording in the intro. Pricing is unchanged ([repair-calculator.html](docs/repair-calculator.html), [repairCalculator.js](docs/js/repairCalculator.js)).
