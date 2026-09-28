@@ -497,7 +497,7 @@ function openSendBackDialog(orderId) {
   document.getElementById('sendBackParts').innerHTML = doneParts(o).map((role) => {
     const d = o.production_done[role];
     const when = d.done_at ? new Date(d.done_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-    return `<label class="oo-sb-part"><input type="checkbox" value="${role}" checked />
+    return `<label class="oo-sb-part"><input type="checkbox" value="${role}" />
       <span><b>${escapeHtml(MAKER_ROLES[role].label)}</b> - ${escapeHtml(d.done_by_name || d.done_by)}<small>${when ? 'Done ' + escapeHtml(when) : ''}</small></span></label>`;
   }).join('');
   document.getElementById('sendBackReason').value = '';
@@ -574,7 +574,9 @@ async function handleProductionDoneClick(orderId, btn) {
   if (error || !result?.success) {
     alert(error?.message || result?.message || 'Could not update production.');
   } else if (!undo && myAssignmentsOnly) {
-    // Done orders drop out of My Assignments (supabase_online_order_my_assignments_hide_done.sql).
+    // Done orders drop out of My Assignments (supabase_online_order_my_assignments_hide_done.sql),
+    // so close the order card and land the maker back on their list.
+    if (openCardOrderId === orderId) closeOrderCard();
     alert(`Order ${o.order_id}: your part is marked done and it's now off your list.${result.all_done ? ' Every part is done - the Production Manager will finish it.' : ''}`);
   } else if (!undo && result.all_done) {
     alert(`Order ${o.order_id}: every part is done - it now shows as Production Done.`);

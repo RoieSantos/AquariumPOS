@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-28
 
+- **Send Back dialog: parts unticked by default**: Tank Maker / Stand Maker now start unticked, so the Production Manager picks exactly which part(s) need rework instead of sending everything back by accident ([onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html)).
+
+- **Maker view: Production Done closes the order**: when a maker marks their part done from the order card in My Assignments, the card now closes and they land back on their list (the order has already left it) ([onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html)).
+
 - **Aquarium Calculator: editable size on Undersump/Overheadsump**: those Options pre-filled Width/Height (18"/6") on every recalculation, so typed values snapped back. The defaults now fill only when the Option is switched, after which Length/Width/Height are freely editable ([index.html](docs/WebAquariumCalculator/index.html)).
 
 - **Maker focus: big Production Done + read-only stock sheet**: on the order card, a maker-only account's Production Done is now a full-width 52px green button ("Undo" shows as an outlined red button). The Glass Cut's stock sheet size is read-only for them and shows as plain text ([onlineOrders.js](docs/js/onlineOrders.js), [bc-list.css](docs/css/bc-list.css), [online-orders.html](docs/online-orders.html)).
