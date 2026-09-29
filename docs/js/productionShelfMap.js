@@ -17,6 +17,7 @@ let shelves = [];
 let currentShelfId = null;
 let currentLocation = null;
 let locationSerials = []; // every IN_STOCK serial at currentLocation
+let locationLedgerUnits = []; // Item Ledger on-hand at currentLocation, one entry per pc ('ledger' racks only)
 let findTerm = '';
 // While editing, a working copy - nothing is written until Save:
 //   grid:  { id, name, warehouse_id, layout: 'grid', rows: [[spot, ...], ...] }
@@ -188,10 +189,17 @@ function toggleFullScreen() {
   else el.requestFullscreen?.().catch(() => {});
 }
 
-// In-stock serials of the spot's aquarium at the location on screen (null = no aquarium linked).
+// The spot's aquarium in stock at the location on screen, one entry per unit (null = no aquarium
+// linked). From its serials, or - for a rack set to "Count from: Item Ledger" - from the ledger's
+// on-hand, expanded to one unit per pc so counts and the Black / Clear split work the same way.
 function spotSerials(spot) {
   if (!spot?.item_code) return null;
-  return locationSerials.filter((s) => unitFitsSpot(s, spot));
+  const units = spot.count_source === 'ledger' ? locationLedgerUnits : locationSerials;
+  return units.filter((s) => unitFitsSpot(s, spot));
+}
+
+function spotCountLabel(spot) {
+  return spot.count_source === 'ledger' ? 'on hand (Item Ledger)' : 'serial(s) in stock';
 }
 
 // Other racks at this location linked to the same aquarium - they share the same count, since serials
@@ -237,7 +245,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
   const tooltip = [
     spotName(spot, fallbackName) + (tag ? ` - ${tag}` : ''),
     spot.item_code ? `${spot.item_code}${spot.variant_name ? ' · ' + spot.variant_name : ''}` : 'No aquarium linked',
-    count !== null ? `${count} in stock${spot.capacity ? ` (fits ${spot.capacity})` : ''}` : '',
+    count !== null ? `${count} ${spotCountLabel(spot)}${spot.capacity ? ` (fits ${spot.capacity})` : ''}` : '',
     count ? colourBreakdown(serials).map((c) => `${c.colour}: ${c.count}`).join(' · ') : '',
     shared.length ? `Same aquarium as ${shared.join(', ')} - count is shared` : '',
     spot.notes || ''
@@ -373,10 +381,19 @@ function renderShelfSelect() {
 // ---------------------------------------------------------------- Loading
 
 async function loadLocationSerials() {
+  locationLedgerUnits = [];
   if (!currentLocation) { locationSerials = []; return; }
-  const { data, error } = await rpc('staff_list_production_location_serials', { p_warehouse_id: currentLocation });
-  locationSerials = error ? [] : (data || []);
-  if (error) showError(error.message);
+  const usesLedger = shelves.some((sh) => sh.warehouse_id === currentLocation && (sh.spots || []).some((sp) => sp.count_source === 'ledger'));
+  const [serialRes, ledgerRes] = await Promise.all([
+    rpc('staff_list_production_location_serials', { p_warehouse_id: currentLocation }),
+    usesLedger ? rpc('staff_list_production_location_ledger_qty', { p_warehouse_id: currentLocation }) : Promise.resolve({ data: [] })
+  ]);
+  locationSerials = serialRes.error ? [] : (serialRes.data || []);
+  if (serialRes.error) showError(serialRes.error.message);
+  if (ledgerRes.error) showError(`Item Ledger counts: ${ledgerRes.error.message}`);
+  (ledgerRes.data || []).forEach((row) => {
+    for (let n = 0; n < Math.floor(Number(row.qty) || 0); n++) locationLedgerUnits.push({ ...row, fromLedger: true });
+  });
 }
 
 async function loadShelves(keepId) {
@@ -429,11 +446,14 @@ function openSpotModal(spotId) {
   ].filter(Boolean).join(' · ');
   const stockEl = document.getElementById('spotModalStock');
   stockEl.innerHTML = serials
-    ? `<b>${serials.length}</b> serial(s) in stock at ${escapeHtml(spot.shelf.warehouse_name || 'this location')}${shared.length ? ` - same aquarium as ${escapeHtml(shared.join(', '))}, so the count is shared` : ''}.
+    ? `<b>${serials.length}</b> ${spotCountLabel(spot)} at ${escapeHtml(spot.shelf.warehouse_name || 'this location')}${shared.length ? ` - same aquarium as ${escapeHtml(shared.join(', '))}, so the count is shared` : ''}.
        ${serials.length ? `<div class="pspot-colours" style="margin-top:6px;">${colourChipsHtml(serials)}</div>` : ''}`
     : `No aquarium is linked to this rack${canEditLayout ? ' - Edit Layout, tap the rack and pick one under "Aquarium on this rack" to count it' : ''}.`;
-  // Grouped by version (Black / Clear / ...), each with its count.
+  // Grouped by version (Black / Clear / ...), each with its count. A ledger-counted rack has no serial
+  // numbers to list - the chips above already show the split.
   document.getElementById('spotSerials').innerHTML = !serials ? ''
+    : spot.count_source === 'ledger'
+      ? (serials.length ? '<p class="muted">Counted from the Item Ledger - no serial numbers to list.</p>' : '<p class="muted">None on hand.</p>')
     : serials.length
       ? colourBreakdown(serials).map(({ colour, count }) => `
         <div class="colour-group-head">${escapeHtml(colour)} <span class="muted">(${count})</span></div>
@@ -795,7 +815,8 @@ async function saveDraft() {
   const round = (v) => (v === null || v === undefined || v === '' ? null : Math.round(Number(v)));
   const base = (s) => ({
     id: s.id || null, label: s.label || '', capacity: s.capacity ? Number(s.capacity) : null, notes: s.notes || null,
-    size_tag: s.size_tag || null, item_code: s.item_code || null, variant_id: s.item_code ? (s.variant_id || null) : null
+    size_tag: s.size_tag || null, item_code: s.item_code || null, variant_id: s.item_code ? (s.variant_id || null) : null,
+    count_source: s.count_source === 'ledger' ? 'ledger' : 'serials'
   });
   const spots = draft.layout === 'floor'
     ? draft.spots.map((s, i) => ({ ...base(s), row_no: 0, col_no: i, pos_x: round(s.pos_x), pos_y: round(s.pos_y), width: round(s.width), height: round(s.height) }))
@@ -881,6 +902,7 @@ function openCellModal(ref) {
   document.getElementById('cellLabel').value = spot.label || '';
   document.getElementById('cellCapacity').value = spot.capacity || '';
   document.getElementById('cellNotes').value = spot.notes || '';
+  document.getElementById('cellCountSource').value = spot.count_source === 'ledger' ? 'ledger' : 'serials';
   document.getElementById('cellLeftBtn').classList.toggle('hidden', floor);
   document.getElementById('cellRightBtn').classList.toggle('hidden', floor);
   document.getElementById('cellRotateBtn').classList.toggle('hidden', !floor);
@@ -900,6 +922,7 @@ function applyCellModal() {
   spot.capacity = cap === '' ? null : Math.max(1, Math.round(Number(cap)));
   spot.notes = document.getElementById('cellNotes').value.trim();
   spot.size_tag = document.getElementById('cellSizeTag').value.trim();
+  spot.count_source = document.getElementById('cellCountSource').value === 'ledger' ? 'ledger' : 'serials';
   const variantSelect = document.getElementById('cellVariant');
   spot.item_code = cellItem ? cellItem.item_code : null;
   spot.item_name = cellItem ? cellItem.item_name : null;

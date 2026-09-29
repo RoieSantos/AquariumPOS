@@ -243,7 +243,16 @@
           <select id="cellVariant" title="Only this variant belongs here"><option value="">Any variant</option></select>
         </div>
         <button class="btn btn-secondary btn-sm hidden" id="cellUnlinkBtn" type="button" style="margin-top:6px;">Remove item</button>
-        <div class="muted" style="font-size:11px; margin-top:4px;">The rack counts the in-stock serials of this item (or just this variant, if picked).</div>
+        <div class="muted" style="font-size:11px; margin-top:4px;">The rack counts this item's stock at the shelf's location (or just this variant, if picked).</div>
+      </div>
+      <!-- Per "control if we will check on the serials or in the item ledger entry - by default its serials"
+           (sql/supabase_production_shelf_count_source.sql). -->
+      <div class="cell-field">
+        <label for="cellCountSource">Count from</label>
+        <select id="cellCountSource">
+          <option value="serials">Serials - in-stock serial numbers (default)</option>
+          <option value="ledger">Item Ledger - on-hand quantity</option>
+        </select>
       </div>
       <div class="cell-field"><label for="cellCapacity">Capacity (units that fit - optional)</label><input type="number" id="cellCapacity" min="1" inputmode="numeric" /></div>
       <div class="cell-field"><label for="cellNotes">Notes</label><input type="text" id="cellNotes" /></div>
@@ -263,7 +272,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=prod2"></script>
   <script src="js/nav.js?v=prod2"></script>
-  <script src="js/productionShelfMap.js?v=17"></script>
+  <script src="js/productionShelfMap.js?v=18"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

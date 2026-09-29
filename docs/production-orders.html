@@ -241,6 +241,35 @@
           </div>
         </div>
 
+        <!-- Materials Used (js/productionOrders.js loadCardMaterials, sql/supabase_production_order_consumption.sql)
+             - sealant / rubber matting / glass ... in pcs, posted as Consumption out of the order's
+             warehouse. Managers only, once the order is Released. -->
+        <div class="bc-doc-part hidden" id="prodMaterialsPart">
+          <div class="bc-doc-part-head">
+            Materials Used
+            <span id="prodMaterialsTotals" class="muted" style="font-weight:400; font-size:12px; margin-left:8px;"></span>
+            <button class="bc-cmd" id="prodAddMaterialBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>Add Material</button>
+            <button class="bc-cmd bc-cmd-accent" id="prodPostMaterialsBtn" type="button" title="Take the pcs entered below out of stock at this order's warehouse"><svg class="bc-ico"><use href="#ico-posted"/></svg>Post Materials</button>
+          </div>
+          <p class="bc-doc-hint">Log the sealant, rubber matting, glass and other materials this order used, in pcs. Posting takes them out of stock at the order's warehouse. To fix a mistake, reverse it on Item Ledger Entries.</p>
+          <div class="doc-lines-wrap">
+            <table class="doc-lines">
+              <thead>
+                <tr>
+                  <th style="width:22%;">Item</th>
+                  <th style="width:18%;">Variant</th>
+                  <th>Description</th>
+                  <th style="width:80px;">Part</th>
+                  <th style="width:80px; text-align:right;">Pcs</th>
+                  <th style="width:150px;">Posted</th>
+                  <th style="width:40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="prodMaterialsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- Undo Production Done = rework for the maker (js/productionOrders.js loadCardRework,
              sql/supabase_production_order_rework.sql) - managers only, hidden when there's none. -->
         <div class="bc-doc-part hidden" id="prodReworkPart">
@@ -278,7 +307,7 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/productionOrders.js?v=13"></script>
+  <script src="js/productionOrders.js?v=14"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

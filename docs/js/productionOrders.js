@@ -615,6 +615,178 @@ async function loadCardSerials() {
   return data;
 }
 
+// ---- Materials Used (supabase_production_order_consumption.sql) - per "can we log how many sealant /
+// rubber matting and glass material that we spend?": the manager adds the materials the order used, in
+// pcs, and posts them as Consumption out of the order's warehouse. Posted lines are read-only (reverse
+// on Item Ledger Entries); new lines are editable rows with the same item / variant search as Lines.
+
+function materialsAllowed() {
+  return isManager && !!openOrder?.order_no && ['Released', 'Finished'].includes(openOrder.status);
+}
+
+function defaultMaterialPart() {
+  return openOrder?.needs_tank === false && openOrder?.needs_stand ? 'stand' : 'tank';
+}
+
+function newMaterialRowHtml() {
+  const part = defaultMaterialPart();
+  return `
+    <tr class="mat-new" data-item-code="" data-item-name="" data-variant-id="">
+      <td><div class="item-search-cell" style="position:relative;">
+        <input type="text" class="prod-item-input" placeholder="Search material..." autocomplete="off" />
+        <div class="item-suggest-dropdown hidden"></div>
+      </div></td>
+      <td><div class="item-search-cell" style="position:relative;">
+        <input type="text" class="prod-variant-input" placeholder="Pick an item first" autocomplete="off" />
+        <div class="variant-suggest-dropdown hidden"></div>
+      </div></td>
+      <td class="mat-desc muted"></td>
+      <td><select class="mat-part-input">
+        <option value="tank"${part === 'tank' ? ' selected' : ''}>Tank</option>
+        <option value="stand"${part === 'stand' ? ' selected' : ''}>Stand</option>
+      </select></td>
+      <td class="doc-num"><input type="number" class="mat-qty-input" min="1" step="1" placeholder="0" style="width:70px; text-align:right;" /></td>
+      <td class="muted">not posted</td>
+      <td><button class="bc-row-action bc-row-action-danger" type="button" data-remove-material title="Remove">&times;</button></td>
+    </tr>`;
+}
+
+async function loadCardMaterials() {
+  const partEl = document.getElementById('prodMaterialsPart');
+  if (!materialsAllowed()) { partEl.classList.add('hidden'); return; }
+  const { data, error } = await supabaseClient.rpc('staff_list_production_order_consumption', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no
+  });
+  // Quietly hidden until supabase_production_order_consumption.sql has been run.
+  if (error) { console.warn('staff_list_production_order_consumption:', error.message); partEl.classList.add('hidden'); return; }
+  const rows = data || [];
+  const fmt = (t) => (t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+  document.getElementById('prodMaterialsBody').innerHTML = rows.map((m) => `
+    <tr class="mat-posted${m.reversed ? ' muted' : ''}">
+      <td><b>${escapeHtml(m.item_code)}</b></td>
+      <td>${escapeHtml(m.variant_name || '') || '<span class="muted">-</span>'}</td>
+      <td>${escapeHtml(m.item_name || '')}</td>
+      <td>${partBadgeHtml(m.part)}</td>
+      <td class="doc-num">${m.reversed ? `<s>${formatQty(m.quantity)}</s>` : `<b>${formatQty(m.quantity)}</b>`}</td>
+      <td>${escapeHtml(fmt(m.posted_at))}<div class="muted" style="font-size:11px;">by ${escapeHtml(m.posted_by_name || '')}</div></td>
+      <td>${m.reversed ? '<span class="badge badge-neutral" title="Reversed on Item Ledger Entries">Reversed</span>' : ''}</td>
+    </tr>`).join('') || '<tr class="mat-empty"><td colspan="7" class="cell-msg">No materials logged yet - click Add Material.</td></tr>';
+
+  // Totals per item (reversed lines left out), e.g. "SEAL-BLK 6 · GLASS-6MM 4".
+  const totals = new Map();
+  rows.filter((m) => !m.reversed).forEach((m) => {
+    const key = [m.item_code, m.variant_name].filter(Boolean).join(' ');
+    totals.set(key, (totals.get(key) || 0) + Number(m.quantity || 0));
+  });
+  document.getElementById('prodMaterialsTotals').textContent = totals.size
+    ? 'Total: ' + [...totals].map(([k, q]) => `${k} ${formatQty(q)}`).join(' · ') : '';
+  partEl.classList.remove('hidden');
+}
+
+function addMaterialRow() {
+  const body = document.getElementById('prodMaterialsBody');
+  body.querySelector('.mat-empty')?.remove();
+  body.insertAdjacentHTML('beforeend', newMaterialRowHtml());
+  body.lastElementChild.querySelector('.prod-item-input').focus();
+}
+
+async function postMaterials() {
+  showCardError('');
+  showCardNotice('');
+  const rows = [...document.querySelectorAll('#prodMaterialsBody tr.mat-new')];
+  const lines = [];
+  for (const row of rows) {
+    const qty = Number(row.querySelector('.mat-qty-input').value || 0);
+    if (!row.dataset.itemCode && !qty) continue;
+    if (!row.dataset.itemCode) { showCardError('Pick an item from the list on every material line.'); return; }
+    if (!(qty > 0) || !Number.isInteger(qty)) { showCardError(`${row.dataset.itemCode}: enter the pcs used as a whole number.`); return; }
+    lines.push({ item_code: row.dataset.itemCode, variant_id: row.dataset.variantId || null, quantity: qty,
+      part: row.querySelector('.mat-part-input').value, label: row.querySelector('.prod-variant-input').value });
+  }
+  if (!lines.length) { showCardError('Add a material with the pcs used first.'); return; }
+
+  const warehouse = openOrder.warehouse_name || openOrder.warehouse_id;
+  const summary = lines.map((l) => `  ${formatQty(l.quantity)} x ${l.item_code}${l.label ? ' - ' + l.label : ''} (${PART_LABEL[l.part]})`).join('\n');
+  if (!confirm(`Post materials used on ${openOrder.order_no}?\n\n${summary}\n\nThey come out of stock at ${warehouse}.`)) return;
+
+  const btn = document.getElementById('prodPostMaterialsBtn');
+  btn.disabled = true;
+  const { error } = await supabaseClient.rpc('staff_post_production_consumption', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no,
+    p_lines: lines.map(({ item_code, variant_id, quantity, part }) => ({ item_code, variant_id, quantity, part })),
+    p_posting_date: null
+  });
+  btn.disabled = false;
+  if (error) { showCardError(describeSupabaseError(error, 'Could not post the materials.')); return; }
+  showCardNotice(`Posted ${lines.length} material line(s) - taken out of stock at ${warehouse}.`);
+  await loadCardMaterials();
+}
+
+function wireMaterialsGrid() {
+  const body = document.getElementById('prodMaterialsBody');
+  const debounce = new WeakMap();
+  body.addEventListener('input', (e) => {
+    const row = e.target.closest('tr.mat-new');
+    if (!row) return;
+    if (e.target.classList.contains('prod-item-input')) {
+      row.dataset.itemCode = '';
+      row.dataset.variantId = '';
+      row.querySelector('.prod-variant-input').value = '';
+      row.querySelector('.mat-desc').textContent = '';
+      clearTimeout(debounce.get(e.target));
+      debounce.set(e.target, setTimeout(() => searchItemsForRow(row, e.target.value.trim()), 250));
+    } else if (e.target.classList.contains('prod-variant-input')) {
+      row.dataset.variantId = '';
+      clearTimeout(debounce.get(e.target));
+      debounce.set(e.target, setTimeout(() => searchVariantsForRow(row, e.target.value.trim()), 250));
+    }
+  });
+  body.addEventListener('focusin', (e) => {
+    const row = e.target.closest('tr.mat-new');
+    if (!row) return;
+    if (e.target.classList.contains('prod-item-input')) searchItemsForRow(row, e.target.value.trim());
+    if (e.target.classList.contains('prod-variant-input')) searchVariantsForRow(row, e.target.value.trim());
+  });
+  body.addEventListener('focusout', (e) => {
+    const dropdown = e.target.parentElement?.querySelector('.item-suggest-dropdown, .variant-suggest-dropdown');
+    if (dropdown) setTimeout(() => dropdown.classList.add('hidden'), 150);
+  });
+  body.addEventListener('mousedown', (e) => {
+    const opt = e.target.closest('.item-suggest-option');
+    if (!opt) return;
+    e.preventDefault();
+    const row = opt.closest('tr.mat-new');
+    if (opt.dataset.code !== undefined) {
+      row.dataset.itemCode = opt.dataset.code;
+      row.dataset.itemName = opt.dataset.name;
+      row.dataset.variantId = '';
+      row.querySelector('.prod-item-input').value = opt.dataset.code;
+      const variantInput = row.querySelector('.prod-variant-input');
+      variantInput.value = '';
+      variantInput.placeholder = 'Variant (if any)';
+      row.querySelector('.mat-desc').textContent = opt.dataset.name || '';
+    } else {
+      row.dataset.variantId = opt.dataset.variationId;
+      row.querySelector('.prod-variant-input').value = opt.dataset.label;
+    }
+    opt.parentElement.classList.add('hidden');
+  });
+  body.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-remove-material]')) return;
+    e.target.closest('tr').remove();
+    if (!body.querySelector('tr')) loadCardMaterials();
+  });
+  // Fixed-position suggestion lists would stay put while the card scrolls - close them instead.
+  document.querySelector('#prodCardModal .bc-doc-body').addEventListener('scroll', () => body
+    .querySelectorAll('.item-suggest-dropdown, .variant-suggest-dropdown').forEach((d) => d.classList.add('hidden')));
+  document.getElementById('prodAddMaterialBtn').addEventListener('click', addMaterialRow);
+  document.getElementById('prodPostMaterialsBtn').addEventListener('click', postMaterials);
+}
+
 function fillHeaderFields() {
   const o = openOrder;
   document.getElementById('prodDescription').value = o?.description || '';
@@ -634,6 +806,7 @@ async function openCard(orderRow) {
   renderCardHeader();
   document.getElementById('prodSerialsPart').classList.add('hidden');
   document.getElementById('prodReworkPart').classList.add('hidden');
+  document.getElementById('prodMaterialsPart').classList.add('hidden');
   document.getElementById('prodLinesBody').innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
   const makerView = !isManager && !!orderRow;
   document.getElementById('prodCardModal').classList.toggle('maker-view', makerView);
@@ -649,6 +822,7 @@ async function openCard(orderRow) {
   }
   await loadCardLines();
   await loadCardSerials();
+  await loadCardMaterials();
 }
 
 // Re-reads the open order after an action (status, output totals, maker done) and redraws the card.
@@ -667,6 +841,7 @@ async function reloadCard() {
   renderCardHeader();
   await loadCardLines();
   await loadCardSerials();
+  await loadCardMaterials();
 }
 
 function closeCard() {
@@ -1094,6 +1269,7 @@ function wireLinesGrid() {
     document.getElementById(id).addEventListener('input', () => { cardDirty = true; refreshGeneralSummary(); });
   });
   wireLinesGrid();
+  wireMaterialsGrid();
 
   await Promise.all([loadWarehouses(), isManager ? loadMakers() : Promise.resolve(), loadProductionOrders()]);
 
