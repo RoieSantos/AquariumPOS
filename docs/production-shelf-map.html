@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Production Shelf Map - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .shelf-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: stretch; }
+    .shelf-scroll { overflow-x: auto; }
+    .shelf-scroll .shelf-row { min-width: min-content; }
+    .pspot { flex: 1 1 0; min-width: 150px; border: 2px solid var(--border, #c9d3e0); border-radius: 8px; padding: 8px; background: var(--card-bg, #fff); display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+    .pspot:hover { border-color: #1d4f91; }
+    .pspot.empty { border-style: dashed; }
+    .pspot.full { border-color: #d98a00; }
+    .pspot.match { border-color: #1d4f91; box-shadow: 0 0 0 3px rgba(29, 79, 145, .35); }
+    .pspot.dim { opacity: .45; }
+    .pspot-head { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
+    .pspot-label { font-size: 13px; font-weight: 700; line-height: 1.2; }
+    .pspot-count { font-size: 20px; font-weight: 700; white-space: nowrap; }
+    .pspot-count small { font-size: 12px; font-weight: 400; color: var(--text-muted, #666); }
+    .pspot-items { font-size: 12px; line-height: 1.35; }
+    .pspot-items div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pspot-sub { font-size: 11px; color: var(--text-muted, #666); }
+    .shelf-add-cell { flex: 0 0 auto; align-self: center; }
+    .shelf-legend span { display: inline-block; margin-right: 12px; font-size: 12px; }
+    .shelf-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    .tray { margin-top: 18px; border-top: 1px solid var(--border, #e0e6ee); padding-top: 10px; }
+    .tray h3 { margin: 0 0 6px; font-size: 16px; }
+    .serial-chip { display: inline-flex; flex-direction: column; gap: 1px; margin: 0 6px 6px 0; padding: 6px 8px; border: 1px solid var(--border, #c9d3e0); border-radius: 6px; font-size: 12px; background: var(--card-bg, #fff); text-align: left; font: inherit; color: inherit; cursor: pointer; max-width: 260px; }
+    .serial-chip b { font-family: monospace; font-size: 12.5px; }
+    .serial-chip span { font-size: 11px; color: var(--text-muted, #666); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .serial-chip.selected { border-color: #1d4f91; background: rgba(29, 79, 145, .1); }
+    .spot-serial-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
+    .spot-serial-row .grow { flex: 1 1 auto; min-width: 0; }
+    .spot-serial-row b { font-family: monospace; }
+    .cell-field { display: block; margin-bottom: 10px; }
+    .cell-field label { display: block; font-size: 12px; margin-bottom: 2px; }
+    /* Floor plan layout - spots at their own position/size (js/productionShelfMap.js renderFloor) */
+    #shelfBody.floor-mode { overflow: auto; }
+    .floor-plan { position: relative; border: 1px solid var(--border, #e0e6ee); border-radius: 8px; background-image: radial-gradient(rgba(120, 130, 150, .18) 1px, transparent 1px); background-size: 20px 20px; }
+    .floor-plan .pspot { position: absolute; min-width: 0; box-sizing: border-box; overflow: hidden; padding: 6px; }
+    /* Small racks: label, tag and count wrap - side by side on a long short rack, stacked on a narrow upright one */
+    .floor-plan .pspot.compact { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; align-content: center; gap: 2px 6px; text-align: center; padding: 3px; }
+    .floor-plan .pspot.compact .pspot-head { flex-wrap: wrap; justify-content: center; align-items: center; gap: 0 6px; }
+    .floor-plan .pspot.compact .pspot-count { font-size: 16px; }
+    .floor-plan.editing .pspot { cursor: move; touch-action: none; user-select: none; }
+    .pspot-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, #1d4f91 50%); border-bottom-right-radius: 6px; }
+    /* Size tag badge (supabase_production_shelf_size_tags.sql) - "75g" on the rack */
+    .pspot-tag { display: inline-block; align-self: flex-start; padding: 1px 7px; border-radius: 999px; background: #e5eefb; color: #1d4f8f; font-size: 12px; font-weight: 700; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+    .pspot-tag.warn { background: #fff3d6; color: #a6720a; }
+    .floor-plan .pspot.compact .pspot-tag { align-self: center; font-size: 11px; padding: 0 5px; }
+    .serial-chip.fits { border-color: #2e9e5b; }
+    .pspot-stock { font-size: 11px; line-height: 1.3; color: var(--text-muted, #666); }
+    .pspot-stock b { font-size: 13px; color: var(--text, inherit); }
+    .floor-plan .pspot.compact .pspot-stock { font-size: 10.5px; white-space: nowrap; }
+    .size-summary { width: 100%; max-width: 900px; border-collapse: collapse; font-size: 13px; }
+    .size-summary th, .size-summary td { padding: 6px 8px; border-bottom: 1px solid var(--border, #e0e6ee); text-align: left; vertical-align: top; }
+    .size-summary th { font-size: 12px; color: var(--text-muted, #666); font-weight: 600; }
+    .size-summary .num { text-align: right; }
+    .size-summary tbody tr { cursor: pointer; }
+    .size-summary tbody tr:hover { background: rgba(29, 79, 145, 0.06); }
+    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
+    .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
+    .modal-panel { max-height: 90vh; overflow-y: auto; }
+    .zoom-controls { display: inline-flex; align-items: center; gap: 4px; }
+    .zoom-controls.hidden { display: none; }
+    .zoom-controls #zoomLabel { min-width: 40px; text-align: center; font-size: 12px; }
+    /* Floor plan racks: bigger text, readable at a glance */
+    .floor-plan .pspot { gap: 4px; padding: 8px 10px; }
+    .floor-plan .pspot-label { font-size: 16px; }
+    .floor-plan .pspot-count { font-size: 28px; line-height: 1; }
+    .floor-plan .pspot-tag { font-size: 14px; padding: 2px 9px; }
+    .floor-plan .pspot-sub { font-size: 12px; }
+    .floor-plan .pspot.compact .pspot-count { font-size: 22px; }
+    .floor-plan .pspot.compact .pspot-tag { font-size: 13px; }
+    .pspot-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .pspot.unlinked { border-style: dotted; }
+    .pspot-count.muted { color: var(--text-muted, #999); }
+    .size-summary-sep td { font-size: 12px; font-weight: 600; color: var(--text-muted, #666); background: rgba(120, 130, 150, .08); cursor: default; }
+    .size-summary tr.unlinked-row { cursor: default; }
+    .place-banner { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: rgba(29, 79, 145, .1); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Production Shelf Map</h1>
+    <p class="muted">Each rack shows how many serials of its aquarium (e.g. 75g) are in stock at this location - always live, nothing to put away. Tap a rack to see the serials. Racks are linked to an aquarium in Edit Layout.</p>
+
+    <div class="toolbar">
+      <label for="locationSelect" class="muted" style="margin:0;">Location</label>
+      <select id="locationSelect" style="max-width:200px;"></select>
+      <label for="shelfSelect" class="muted" style="margin:0;">Shelf</label>
+      <select id="shelfSelect" style="max-width:240px;"></select>
+      <input type="search" id="findInput" placeholder="Find serial or item..." style="max-width:220px;" autocomplete="off" />
+      <span class="muted" id="findResult"></span>
+      <span id="zoomControls" class="zoom-controls hidden" title="Make the floor plan bigger or smaller">
+        <button class="btn btn-secondary btn-sm" id="zoomOutBtn" type="button" aria-label="Zoom out">A&minus;</button>
+        <span id="zoomLabel" class="muted">150%</span>
+        <button class="btn btn-secondary btn-sm" id="zoomInBtn" type="button" aria-label="Zoom in">A+</button>
+      </span>
+      <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+      <button class="btn btn-secondary btn-sm hidden" id="newShelfBtn" type="button">New Shelf</button>
+      <button class="btn btn-primary btn-sm hidden" id="editBtn" type="button">Edit Layout</button>
+    </div>
+
+    <div id="editBar" class="toolbar hidden">
+      <input type="text" id="shelfNameInput" placeholder="Shelf name (e.g. Rack A)" style="max-width:240px;" />
+      <select id="shelfWarehouseSelect" style="max-width:220px;"><option value="">Pick a warehouse...</option></select>
+      <select id="shelfLayoutSelect" style="max-width:160px;" title="Floor plan: place and size each rack freely. Rows: rows of equal spots.">
+        <option value="floor">Floor plan</option>
+        <option value="grid">Rows</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" id="addRowBtn" type="button">+ Row</button>
+      <button class="btn btn-primary btn-sm" id="saveBtn" type="button">Save</button>
+      <button class="btn btn-secondary btn-sm" id="cancelBtn" type="button">Cancel</button>
+      <button class="btn btn-secondary btn-sm" id="deleteShelfBtn" type="button">Delete Shelf</button>
+    </div>
+    <p class="muted hidden" id="floorEditHint" style="font-size:12px; margin:4px 0 0;">Drag a rack to move it, drag its bottom-right corner to resize, tap it to rename or rotate. Save when done.</p>
+
+    <div class="shelf-legend muted" id="legend">
+      <span><i class="shelf-dot" style="background:#c9d3e0"></i>In stock</span>
+      <span><i class="shelf-dot" style="background:#d98a00"></i>At or over the rack's capacity</span>
+      <span><i class="shelf-dot" style="background:#999"></i>None in stock (dashed)</span>
+      <span><i class="shelf-dot" style="background:#e0e6ee"></i>No aquarium linked (dotted)</span>
+    </div>
+
+    <div id="shelfError" class="error-text hidden"></div>
+    <div id="shelfLoading" class="muted">Loading...</div>
+    <div id="shelfBody" class="shelf-scroll" style="margin-top:12px;"></div>
+
+    <div class="tray hidden" id="sizeSummary"></div>
+  </div>
+
+  <!-- A rack in view mode: its aquarium's in-stock serials (read only) -->
+  <div class="modal-backdrop hidden" id="spotModal">
+    <div class="modal-panel" style="max-width:560px;">
+      <h3 style="margin-top:0;" id="spotModalTitle">Spot</h3>
+      <div class="muted" id="spotModalSub" style="font-size:12px; margin-bottom:8px;"></div>
+      <div id="spotModalStock" class="place-banner" style="margin-top:0;"></div>
+      <div id="spotSerials"></div>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-secondary btn-sm" id="spotCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- A spot in layout editing -->
+  <div class="modal-backdrop hidden" id="cellModal">
+    <div class="modal-panel" style="max-width:420px;">
+      <h3 style="margin-top:0;">Shelf Spot</h3>
+      <div class="cell-field"><label for="cellLabel">Label (e.g. A1, Top-left)</label><input type="text" id="cellLabel" /></div>
+      <div class="cell-field"><label for="cellSizeTag">Size tag (e.g. 75g, 50g, 4ft stand) - shown on the rack</label><input type="text" id="cellSizeTag" maxlength="50" /></div>
+      <div class="cell-field">
+        <label>Aquarium on this rack: <strong id="cellItemLabel">none</strong></label>
+        <input type="text" id="cellItemSearch" placeholder="Search item code or name..." autocomplete="off" />
+        <div id="cellItemHits"></div>
+        <div id="cellVariantRow" class="hidden" style="margin-top:6px;">
+          <select id="cellVariant" title="Only this variant belongs here"><option value="">Any variant</option></select>
+        </div>
+        <button class="btn btn-secondary btn-sm hidden" id="cellUnlinkBtn" type="button" style="margin-top:6px;">Remove item</button>
+        <div class="muted" style="font-size:11px; margin-top:4px;">The rack counts the in-stock serials of this item (or just this variant, if picked).</div>
+      </div>
+      <div class="cell-field"><label for="cellCapacity">Capacity (units that fit - optional)</label><input type="number" id="cellCapacity" min="1" inputmode="numeric" /></div>
+      <div class="cell-field"><label for="cellNotes">Notes</label><input type="text" id="cellNotes" /></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" id="cellOkBtn" type="button">OK</button>
+        <button class="btn btn-secondary btn-sm" id="cellCancelBtn" type="button">Cancel</button>
+        <button class="btn btn-secondary btn-sm" id="cellLeftBtn" type="button">&larr; Move</button>
+        <button class="btn btn-secondary btn-sm" id="cellRightBtn" type="button">Move &rarr;</button>
+        <button class="btn btn-secondary btn-sm hidden" id="cellRotateBtn" type="button" title="Turn between upright and lengthwise">&#8635; Rotate</button>
+        <button class="btn btn-secondary btn-sm" id="cellDeleteBtn" type="button">Remove Spot</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=prod2"></script>
+  <script src="js/nav.js?v=prod2"></script>
+  <script src="js/productionShelfMap.js?v=6"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

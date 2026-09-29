@@ -162,8 +162,9 @@ function hasNoPortalPermission(session) {
 // Order Staff above; dashboard.html is left out so it redirects to their list.
 const ORDER_MAKER_ROLES = ['TankMaker', 'StandMaker', 'Dispatcher'];
 // production-orders.html: their assigned restock builds (supabase_production_orders.sql) - the page
-// only shows a maker their own Released orders.
-const ORDER_MAKER_ALLOWED_PAGES = ['online-orders.html', 'production-orders.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
+// only shows a maker their own Released orders. production-shelf-map.html: putting built units away
+// by serial (supabase_production_shelf_map.sql).
+const ORDER_MAKER_ALLOWED_PAGES = ['online-orders.html', 'production-orders.html', 'production-shelf-map.html','change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
 function isOrderMakerOnly(session) {
   return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });

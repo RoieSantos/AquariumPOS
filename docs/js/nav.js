@@ -56,6 +56,7 @@ function renderTopNav(activeLabel) {
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">My Assignments</a>
           <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>
+          <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
@@ -181,6 +182,8 @@ function renderTopNav(activeLabel) {
   const production = [];
   if (isSuperUser || session?.isProductionManager || session?.isOrderMaker) {
     production.push({ href: 'production-orders.html', label: 'Production Orders' });
+    // Where each built unit is stored, by serial (supabase_production_shelf_map.sql).
+    production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
   }
 
   const reports = [];
