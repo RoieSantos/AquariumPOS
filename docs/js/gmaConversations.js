@@ -2266,11 +2266,58 @@ async function importFacebookHistory() {
     }
 
     let summary = `Imported ${result.conversationsSeen} conversation(s), ${result.messagesProcessed} message(s), ${result.imagesStored} photo(s).`;
+    if (result.namesMissing) summary += ` ${describeNameResult(result)}`;
     if (result.note) summary += ` ${result.note}`;
     statusEl.textContent = summary;
     await loadConversations();
   } catch (err) {
     statusEl.textContent = `Import failed: ${err instanceof Error ? err.message : 'network error'}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function describeNameResult(result) {
+  let text = `Names: ${result.namesResolved} of ${result.namesMissing} found.`;
+  if (result.nameError && result.namesResolved < result.namesMissing) text += ` Facebook said: "${result.nameError}"`;
+  return text;
+}
+
+// Fills in the Facebook name for every conversation still showing a raw PSID - the live webhook
+// only looks names up when that customer sends a new message (facebook-conversations-backfill's
+// names_only mode).
+async function fetchMissingNames() {
+  const btn = document.getElementById('fetchNamesBtn');
+  const statusEl = document.getElementById('importHistoryStatus');
+
+  btn.disabled = true;
+  statusEl.classList.remove('hidden');
+  statusEl.textContent = 'Looking up names...';
+
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/facebook-conversations-backfill`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        mode: 'names_only'
+      })
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      statusEl.textContent = `Name lookup failed: ${result.error || response.status}`;
+      return;
+    }
+    statusEl.textContent = result.namesMissing ? describeNameResult(result) : 'Every conversation already has a name.';
+    await loadConversations();
+  } catch (err) {
+    statusEl.textContent = `Name lookup failed: ${err instanceof Error ? err.message : 'network error'}`;
   } finally {
     btn.disabled = false;
   }
@@ -3523,6 +3570,7 @@ async function handleGmaInboxEvent(payload) {
   document.getElementById('inboxContent').classList.remove('hidden');
   document.getElementById('refreshInboxBtn').addEventListener('click', loadConversations);
   document.getElementById('importHistoryBtn').addEventListener('click', importFacebookHistory);
+  document.getElementById('fetchNamesBtn').addEventListener('click', fetchMissingNames);
   document.getElementById('conversationSearchInput').addEventListener('input', (e) => onConversationSearchInput(e.target.value));
   document.getElementById('toggleQuickRepliesBtn').addEventListener('click', () => toggleQuickRepliesPanel());
   document.getElementById('toggleAttachmentBtn').addEventListener('click', () => document.getElementById('attachmentFileInput').click());

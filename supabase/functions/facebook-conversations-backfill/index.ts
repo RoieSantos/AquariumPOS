@@ -42,6 +42,14 @@
 // grants anon execute on that existing function) - same trust model as every other admin_*-gated
 // feature in this codebase, no stored session.
 //
+// Name resolution: every run (and the lighter { mode: 'names_only' } run behind the page's "Fetch
+// Names" button) also fills ChatbotConversations.CustomerName for any row still missing one - the
+// live webhook only looks a name up when that customer sends a NEW message, so conversations from
+// before pages_messaging was approved stayed as raw PSIDs forever. Tries the User Profile API
+// first (needs the separate Business Asset User Profile Access feature), then the Conversations
+// API participant name; the first Graph API error is returned
+// to the page so a missing permission/feature shows up there instead of only in the logs.
+//
 // Deploy: supabase functions deploy facebook-conversations-backfill --project-ref hymcmesqgpliyyeghpgq
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -101,6 +109,89 @@ async function downloadAndStoreImage(
   }
 }
 
+// Same lookup as facebook-messenger-webhook's fetchFacebookProfileName, but returns the Graph API
+// error text so resolveMissingNames can report WHY names aren't coming back.
+async function fetchProfileName(psid: string, pageAccessToken: string, graphVersion: string): Promise<{ name: string | null; error: string | null }> {
+  try {
+    const res = await fetch(`https://graph.facebook.com/${graphVersion}/${psid}?fields=first_name,last_name,name&access_token=${pageAccessToken}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      return { name: null, error: body?.error?.message || `HTTP ${res.status}` };
+    }
+    const body = await res.json();
+    const name = (body.name || [body.first_name, body.last_name].filter(Boolean).join(' ')).trim();
+    return { name: name || null, error: name ? null : 'Profile returned no name' };
+  } catch (err) {
+    return { name: null, error: err instanceof Error ? err.message : 'network error' };
+  }
+}
+
+// Participant names from /me/conversations, without the message payload - used by names_only mode
+// as the fallback source (the full import collects these while it walks the threads anyway).
+async function fetchParticipantNames(pageId: string, pageAccessToken: string, graphVersion: string): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  let url: string | null = `https://graph.facebook.com/${graphVersion}/me/conversations?fields=participants&limit=100&access_token=${pageAccessToken}`;
+  let pages = 0;
+  while (url && pages < MAX_CONVERSATION_PAGES) {
+    pages++;
+    const res = await fetch(url);
+    if (!res.ok) break;
+    const page = await res.json();
+    for (const conv of (page.data || []) as GraphConversation[]) {
+      const customer = conv.participants?.data?.find((p) => p.id && p.id !== pageId);
+      if (customer?.id && customer.name) names.set(customer.id, customer.name);
+    }
+    url = typeof page.paging?.next === 'string' ? page.paging.next : null;
+  }
+  return names;
+}
+
+// One customer's name from their own thread's participant list - catches anyone the bulk
+// fetchParticipantNames scan didn't reach (page cap / pagination).
+async function fetchThreadParticipantName(psid: string, pageId: string, pageAccessToken: string, graphVersion: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://graph.facebook.com/${graphVersion}/${pageId}/conversations?platform=messenger&user_id=${psid}&fields=participants&access_token=${pageAccessToken}`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    const participants: Array<{ id?: string; name?: string }> = body.data?.[0]?.participants?.data || [];
+    return participants.find((p) => p.id === psid)?.name?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveMissingNames(
+  supabase: ReturnType<typeof createClient>,
+  participantNames: Map<string, string>,
+  pageId: string,
+  pageAccessToken: string,
+  graphVersion: string
+): Promise<{ namesMissing: number; namesResolved: number; nameError: string | null }> {
+  const { data: rows } = await supabase
+    .from('ChatbotConversations')
+    .select('Psid')
+    .or('CustomerName.is.null,CustomerName.eq.');
+  const missing = (rows || []) as Array<{ Psid: string }>;
+  let namesResolved = 0;
+  let nameError: string | null = null;
+
+  for (const row of missing) {
+    // Profile API first - each call also counts toward the Business Asset User Profile Access
+    // test calls Meta's App Review wants to see - then the participant-name fallbacks.
+    const profile = await fetchProfileName(row.Psid, pageAccessToken, graphVersion);
+    if (profile.error) console.error(`Profile lookup failed for psid ${row.Psid}: ${profile.error}`);
+    let name = profile.name || participantNames.get(row.Psid) || null;
+    if (!name) name = await fetchThreadParticipantName(row.Psid, pageId, pageAccessToken, graphVersion);
+    if (!name) {
+      nameError = nameError || profile.error;
+      continue;
+    }
+    const { error } = await supabase.from('ChatbotConversations').update({ CustomerName: name }).eq('Psid', row.Psid);
+    if (!error) namesResolved++;
+  }
+  return { namesMissing: missing.length, namesResolved, nameError };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return jsonResponse({ error: 'Use POST.' }, 405);
@@ -122,10 +213,12 @@ Deno.serve(async (req) => {
 
   let adminUsername: string;
   let adminPassword: string;
+  let namesOnly = false;
   try {
     const body = await req.json();
     adminUsername = String(body.admin_username ?? '');
     adminPassword = String(body.admin_password ?? '');
+    namesOnly = body.mode === 'names_only';
     if (!adminUsername || !adminPassword) throw new Error('missing field');
   } catch {
     return jsonResponse({ error: 'Body must be JSON: { admin_username, admin_password }.' }, 400);
@@ -142,7 +235,17 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
+  if (namesOnly) {
+    try {
+      const participantNames = await fetchParticipantNames(pageId, pageAccessToken, graphVersion);
+      return jsonResponse({ ok: true, ...(await resolveMissingNames(supabase, participantNames, pageId, pageAccessToken, graphVersion)) });
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
+    }
+  }
+
   try {
+    const participantNames = new Map<string, string>();
     let conversationsSeen = 0;
     let conversationsUpserted = 0;
     let messagesProcessed = 0;
@@ -177,6 +280,7 @@ Deno.serve(async (req) => {
         if (!customer?.id) continue; // couldn't tell who the customer is - skip rather than guess
 
         const psid = customer.id;
+        if (customer.name) participantNames.set(psid, customer.name);
 
         const { error: upsertConvErr } = await supabase
           .from('ChatbotConversations')
@@ -237,8 +341,11 @@ Deno.serve(async (req) => {
       url = typeof next === 'string' ? next : null;
     }
 
+    const names = await resolveMissingNames(supabase, participantNames, pageId, pageAccessToken, graphVersion);
+
     return jsonResponse({
       ok: true,
+      ...names,
       conversationsSeen,
       conversationsUpserted,
       messagesProcessed,

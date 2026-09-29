@@ -189,6 +189,28 @@ async function fetchFacebookProfileName(psid: string, pageAccessToken: string, g
   }
 }
 
+// Fallback for fetchFacebookProfileName: the User Profile API needs Meta's separate "Business Asset
+// User Profile Access" feature (without it, it fails with code 100 / subcode 33 even though
+// pages_messaging is approved), but the Conversations API's participant list carries the
+// customer's name under pages_messaging alone.
+async function fetchConversationParticipantName(psid: string, pageId: string, pageAccessToken: string, graphVersion: string): Promise<string | null> {
+  try {
+    const url = `https://graph.facebook.com/${graphVersion}/${pageId}/conversations?platform=messenger&user_id=${psid}&fields=participants&access_token=${pageAccessToken}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '(could not read response body)');
+      console.error(`Conversation participant lookup failed for psid ${psid}: HTTP ${res.status} - ${errorBody}`);
+      return null;
+    }
+    const body = await res.json();
+    const participants: Array<{ id?: string; name?: string }> = body.data?.[0]?.participants?.data || [];
+    return participants.find((p) => p.id === psid)?.name?.trim() || null;
+  } catch (err) {
+    console.error(`Failed to fetch conversation participant name for psid ${psid}:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 // Downloads an inbound image attachment (e.g. a GCash payment screenshot) and re-hosts it in our
 // own private 'chatbot-attachments' Storage bucket (see sql/supabase_chatbot_message_attachments.
 // sql), rather than just keeping Facebook's own CDN url - that url isn't guaranteed to stay valid
@@ -719,9 +741,12 @@ async function processMessage(
   // Backfills CustomerName for both brand-new conversations and older ones that predate this
   // column - runs regardless of pause state so a paused conversation still gets a name attached.
   if (!convState?.CustomerName) {
-    const fetchedName = await fetchFacebookProfileName(psid, pageAccessToken, graphVersion);
+    const fetchedName =
+      (await fetchFacebookProfileName(psid, pageAccessToken, graphVersion)) ||
+      (await fetchConversationParticipantName(psid, pageId, pageAccessToken, graphVersion));
     if (fetchedName) {
       await supabase.from('ChatbotConversations').update({ CustomerName: fetchedName }).eq('Psid', psid);
+      if (convState) convState.CustomerName = fetchedName;
     }
   }
 
