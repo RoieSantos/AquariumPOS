@@ -13,6 +13,43 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    /* Maker view of an order (js/productionOrders.js renderMakerView): only what to build + Production Done. */
+    #prodCardModal.maker-view .bc-cmdbar,
+    #prodCardModal.maker-view #prodCardGeneralTab,
+    #prodCardModal.maker-view .bc-doc-part,
+    #prodCardModal.maker-view #prodCardMaximizeBtn { display: none !important; }
+    .pm-view.hidden { display: none; }
+    .pm-view { padding: 12px 16px 20px; }
+    .pm-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; color: var(--text-muted, #5f6b7a); margin-bottom: 10px; }
+    .pm-meta b { color: var(--text-main, inherit); }
+    .pm-note { margin-bottom: 12px; padding: 8px 10px; border-radius: 8px; background: #fff8e1; font-size: 14px; }
+    .pm-part-title { margin: 14px 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted, #5f6b7a); }
+    .pm-lines { display: grid; gap: 8px; }
+    .pm-line { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "desc qty" "colour qty"; gap: 4px 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 12px; background: var(--bc-surface, #fff); }
+    .pm-line.built { opacity: .55; }
+    .pm-desc { grid-area: desc; font-size: 16px; font-weight: 600; line-height: 1.25; }
+    .pm-colour { grid-area: colour; justify-self: start; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid #c9d3e0; font-size: 14px; font-weight: 700; }
+    .pm-colour i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+    .pm-colour.black { background: #1b1b1b; border-color: #1b1b1b; color: #fff; }
+    .pm-colour.black i { background: #fff; }
+    .pm-colour.clear i { background: #fff; border: 1.5px solid #7aa7d9; box-sizing: border-box; }
+    .pm-colour.none { color: var(--text-muted, #5f6b7a); font-weight: 400; }
+    .pm-qty { grid-area: qty; text-align: right; font-size: 28px; font-weight: 800; line-height: 1; }
+    .pm-qty small { display: block; font-size: 11px; font-weight: 600; color: var(--text-muted, #5f6b7a); }
+    .pm-total { display: flex; justify-content: space-between; padding: 8px 14px 0; font-weight: 700; font-size: 15px; }
+    .pm-actions { display: grid; gap: 10px; margin-top: 18px; }
+    .pm-btn { min-height: 54px; border-radius: 12px; border: 1px solid #1e7d3a; background: #1e7d3a; color: #fff; font: inherit; font-size: 17px; font-weight: 700; cursor: pointer; }
+    .pm-btn.undo { background: var(--bc-surface, #fff); color: #9a2d2d; border-color: var(--bc-line, #c9d0d9); }
+    .pm-btn:disabled { opacity: .5; }
+    .pm-done { padding: 12px 14px; border-radius: 12px; background: #dff3e4; color: #1e6b34; font-weight: 700; text-align: center; }
+    @media (max-width: 760px) {
+      #prodCardModal.maker-view { padding: 0; }
+      #prodCardModal.maker-view .modal-panel { width: 100%; max-width: none; height: 100%; max-height: none; border-radius: 0; }
+    }
+    :root[data-theme="dark"] .pm-note { background: #3a3218; }
+    :root[data-theme="dark"] .pm-done { background: #1f3a27; color: #8fd6a4; }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>
@@ -124,6 +161,10 @@
       <div id="prodCardNotice" class="bc-doc-hint hidden" style="margin:8px 16px 0; color:var(--success);"></div>
 
       <div class="bc-doc-body">
+        <!-- Maker view (js/productionOrders.js renderMakerView) - a Tank / Stand Maker opening their order
+             sees only this: their lines (description, colour, qty) and a big Production Done button. -->
+        <div id="prodMakerView" class="pm-view hidden"></div>
+
         <details class="doc-fasttab" id="prodCardGeneralTab" open>
           <summary>
             General
@@ -218,7 +259,7 @@
   <script src="js/nav.js?v=prod2"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/productionOrders.js?v=9"></script>
+  <script src="js/productionOrders.js?v=10"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-29
 
+- Production Orders maker view: a Tank/Stand Maker opening an order now sees only their lines as big rows (description, Black/Clear chip, qty to build) and a full-width Production Done button - General, lines grid and toolbar hidden; full-screen on phones ([productionOrders.js](docs/js/productionOrders.js), [production-orders.html](docs/production-orders.html)).
+
+- Fix: serials created by Production Order Post Output never reached the local POS - they were inserted with a NULL UpdatedAtUtc, which the POS's incremental pull (UpdatedAtUtc > watermark) never matches. Trigger stamps PRD- serials on insert + backfills existing ones ([supabase_production_serials_pos_sync.sql](sql/supabase_production_serials_pos_sync.sql)).
+
 - My Assignments restock Production Order cards now list only the maker's own lines still to build (item, Black/Clear colour, qty) with a Production Done button on the card, like the online order cards ([onlineOrders.js](docs/js/onlineOrders.js), [bc-list.css](docs/css/bc-list.css)).
 
 - Production Shelf Map: removed the "Stock by size" table under the map (rack counts, rack popups and Auto Production Order are unchanged) ([productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).

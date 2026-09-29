@@ -505,6 +505,59 @@ async function loadCardLines() {
   });
   if (error) { showCardError(describeSupabaseError(error, 'Could not load lines.')); return; }
   renderLines(data || []);
+  if (!isManager) renderMakerView(data || []);
+}
+
+// Per "in the mobile, i want the maker's view more Mobile friendly - just the Description / color of
+// variant / quantity and the button Production done": a maker opening their order gets only their
+// own part's lines as big rows and a full-width Production Done (the General tab, lines grid and
+// toolbar are hidden by #prodCardModal.maker-view in production-orders.html).
+function renderMakerView(lines) {
+  const box = document.getElementById('prodMakerView');
+  const o = openOrder;
+  if (!o) { box.innerHTML = ''; return; }
+  const me = currentSession.username;
+  const myParts = ['tank', 'stand'].filter((part) => o[`needs_${part}`] && o[`${part}_maker`] === me);
+
+  const sections = myParts.map((part) => {
+    const rows = lines.filter((l) => l.part === part);
+    const left = (l) => Math.max(0, Number(l.quantity || 0) - Number(l.qty_output || 0));
+    const total = rows.reduce((n, l) => n + left(l), 0);
+    return `
+      ${myParts.length > 1 ? `<div class="pm-part-title">${PART_LABEL[part]}</div>` : ''}
+      <div class="pm-lines">
+        ${rows.map((l) => {
+          const colour = lineColour(l);
+          const built = left(l) === 0;
+          return `<div class="pm-line${built ? ' built' : ''}">
+            <div class="pm-desc">${escapeHtml(printDescription(l))}</div>
+            ${colour
+              ? `<span class="pm-colour ${colour.toLowerCase()}"><i></i>${escapeHtml(colour)}</span>`
+              : `<span class="pm-colour none">${escapeHtml(l.variant_name && !l.variant_name.startsWith(l.item_code) ? l.variant_name : 'No colour')}</span>`}
+            <div class="pm-qty">${formatQty(left(l))}<small>${built ? 'built' : 'to build'}</small></div>
+          </div>`;
+        }).join('') || '<p class="muted">Nothing on this order for you.</p>'}
+      </div>
+      ${rows.length > 1 ? `<div class="pm-total"><span>Total</span><span>${formatQty(total)}</span></div>` : ''}`;
+  }).join('');
+
+  const actions = o.status !== 'Released' ? '' : myParts.map((part) => {
+    const done = !!o[`${part}_done_at`];
+    const label = myParts.length > 1 ? `${PART_LABEL[part]} ` : '';
+    return done
+      ? `<div class="pm-done">&#10003; ${label}Production Done</div>
+         <button type="button" class="pm-btn undo" data-part-done="${part}" data-done="0">Undo ${label}Production Done</button>`
+      : `<button type="button" class="pm-btn" data-part-done="${part}" data-done="1">&#10003; ${label}Production Done</button>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="pm-meta">
+      <span>Due <b>${escapeHtml(o.due_date ? formatDate(o.due_date) : 'not set')}</b></span>
+      <span>${escapeHtml(o.warehouse_name || '')}</span>
+    </div>
+    ${o.notes ? `<div class="pm-note">${escapeHtml(o.notes)}</div>` : ''}
+    ${sections || '<p class="muted">You are not a maker on this order.</p>'}
+    ${actions ? `<div class="pm-actions">${actions}</div>` : ''}`;
 }
 
 async function loadCardSerials() {
@@ -548,6 +601,10 @@ async function openCard(orderRow) {
   renderCardHeader();
   document.getElementById('prodSerialsPart').classList.add('hidden');
   document.getElementById('prodLinesBody').innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
+  const makerView = !isManager && !!orderRow;
+  document.getElementById('prodCardModal').classList.toggle('maker-view', makerView);
+  document.getElementById('prodMakerView').classList.toggle('hidden', !makerView);
+  document.getElementById('prodMakerView').innerHTML = makerView ? '<p class="muted">Loading...</p>' : '';
   applyMaximized(readStoredFlag(PROD_MAXIMIZED_KEY, false));
   document.getElementById('prodCardModal').classList.remove('hidden');
   if (!orderRow) {
@@ -957,13 +1014,15 @@ function wireLinesGrid() {
   document.getElementById('prodPrintOrderBtn').addEventListener('click', printOrder);
   document.getElementById('prodDeleteBtn').addEventListener('click', deleteOrder);
   document.getElementById('prodAddLineBtn').addEventListener('click', addLine);
-  document.getElementById('prodPartDoneActions').addEventListener('click', (e) => {
+  const onPartDoneClick = (e) => {
     const btn = e.target.closest('[data-part-done]');
     if (!btn) return;
     const done = btn.dataset.done === '1';
     if (done && !confirm(`Is the ${PART_LABEL[btn.dataset.partDone]} part of ${openOrder.order_no} completely finished?`)) return;
     setPartDone(btn.dataset.partDone, done);
-  });
+  };
+  document.getElementById('prodPartDoneActions').addEventListener('click', onPartDoneClick);
+  document.getElementById('prodMakerView').addEventListener('click', onPartDoneClick);
   ['prodDescription', 'prodWarehouse', 'prodDueDate', 'prodNotes', 'prodTankMaker', 'prodStandMaker'].forEach((id) => {
     document.getElementById(id).addEventListener('input', () => { cardDirty = true; refreshGeneralSummary(); });
   });
