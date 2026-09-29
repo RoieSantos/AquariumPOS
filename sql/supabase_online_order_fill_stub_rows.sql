@@ -17,8 +17,15 @@
 --
 -- Run AFTER supabase_online_order_sync_no_long_locks.sql. Replaces one function + one procedure (the cron
 -- job calls the procedure by name - no reschedule). No table locks.
+--
+-- p_force_header (default false): also re-fill the full header of an order that ISN'T a stub - used by
+-- supabase_online_order_resync_specific.sql to resync chosen orders on demand. The cron passes one argument,
+-- so it's unaffected.
 
-create or replace function public._refresh_open_online_order(p_order_id text)
+-- Replaces the old one-argument version: keeping both would make the cron's one-argument call ambiguous.
+drop function if exists public._refresh_open_online_order(text);
+
+create or replace function public._refresh_open_online_order(p_order_id text, p_force_header boolean default false)
 returns void
 language plpgsql
 security definer
@@ -124,8 +131,8 @@ begin
         "SyncedAtUtc" = now()
     where "OrderID" = p_order_id;
 
-  -- Stub row: fill the header the same way the header sync does.
-  if v_is_stub then
+  -- Stub row (or a forced resync): fill the header the same way the header sync does.
+  if v_is_stub or p_force_header then
     v_created_utc := public.pancake_try_parse_timestamptz(coalesce(v_el ->> 'inserted_at', v_el ->> 'insertedAt', v_el ->> 'created_at', v_el ->> 'createdAt', v_el ->> 'date', v_el ->> 'created'));
     v_money := public.pancake_parse_decimal(coalesce(
       v_el -> 'money_to_collect' ->> 'amount', v_el -> 'money_to_collect' ->> 'value', v_el -> 'money_to_collect' ->> 'total',
@@ -141,6 +148,7 @@ begin
       set "Date" = (v_created_utc at time zone 'Asia/Manila')::date,
           "Time" = to_char(v_created_utc at time zone 'Asia/Manila', 'HH24:MI:SS'),
           "CustomerName" = coalesce(
+            nullif(trim(v_el -> 'shipping_address' ->> 'full_name'), ''), nullif(trim(v_el ->> 'bill_full_name'), ''), -- the order's recipient name first, then the FB profile name
             v_el -> 'customer' ->> 'name', v_el -> 'customer' ->> 'customer_name', v_el -> 'customer' ->> 'full_name',
             v_el ->> 'customer_name', v_el ->> 'bill_full_name', v_el ->> 'client_name', v_el ->> 'buyer_name'),
           "Page_ID" = coalesce(v_el ->> 'page_id', v_el ->> 'pageId', v_el ->> 'page'),
@@ -175,7 +183,7 @@ begin
 end;
 $$;
 
-revoke execute on function public._refresh_open_online_order(text) from public, anon, authenticated;
+revoke execute on function public._refresh_open_online_order(text, boolean) from public, anon, authenticated;
 
 -- Same as supabase_online_order_sync_no_long_locks.sql's version, plus stub rows (blank Status).
 create or replace procedure public.cron_refresh_open_online_orders(p_max_orders int default 40)

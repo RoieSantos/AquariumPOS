@@ -166,6 +166,11 @@ revoke execute on procedure public.cron_sync_online_order_details(int) from publ
 
 -- ---------------------------------------------------------------------------
 -- One open order: status (and Last_Updated_At) from Pancake, plus its lines/glass/print note.
+-- supabase_online_order_fill_stub_rows.sql replaces this with a (text, boolean) version - drop that first so
+-- re-running this file never leaves both (the cron's one-argument call would be ambiguous). Re-run
+-- fill_stub_rows.sql after this file.
+drop function if exists public._refresh_open_online_order(text, boolean);
+
 create or replace function public._refresh_open_online_order(p_order_id text)
 returns void
 language plpgsql

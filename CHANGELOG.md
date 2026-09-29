@@ -4,6 +4,14 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-29
 
+- Online Orders Customer now uses Pancake's shipping_address.full_name (the order's recipient name), then bill_full_name, falling back to the FB profile name - in the cron sync, manual sync, live list and stub/resync fill ([supabase_online_order_balance_local_calc.sql](sql/supabase_online_order_balance_local_calc.sql), [supabase_online_order_sync_edited_lines.sql](sql/supabase_online_order_sync_edited_lines.sql), [supabase_online_order_fill_stub_rows.sql](sql/supabase_online_order_fill_stub_rows.sql)).
+
+- Resync specific orders from Pancake on demand: _refresh_open_online_order gets p_force_header to re-fill a non-stub order's full header; new script resyncs 103279/100180 (header + lines) ([supabase_online_order_fill_stub_rows.sql](sql/supabase_online_order_fill_stub_rows.sql), [supabase_online_order_resync_specific.sql](sql/supabase_online_order_resync_specific.sql)).
+
+- Added a Pancake -> Online Orders resync helper: rewinds the order-sync cursor (and optionally re-queues line re-reads) for a chosen number of days so the existing cron jobs re-pull them, plus a progress check ([supabase_online_orders_full_resync.sql](sql/supabase_online_orders_full_resync.sql)).
+
+- Added a bulk "resync all Failed orders to Pancake" helper - retries only orders whose failure happened before anything reached Pancake (no duplicate risk), skips ones with an unmapped line, batches of 10 ([supabase_resync_failed_automated_orders.sql](sql/supabase_resync_failed_automated_orders.sql)).
+
 - AO-00023 still failed after the timeout fix (Custom Aquarium line saved as ItemCode by the not-yet-deployed old GMA quote code); widened the repair script's check to all unsynced orders ([supabase_fix_gma_custom_aquarium_lines.sql](sql/supabase_fix_gma_custom_aquarium_lines.sql)).
 
 - Fix: "Retry Push to Pancake" timed out (AO-00023, "canceling statement due to statement timeout") - its RPC now gets the same 90s statement_timeout as GMA Create/Edit Order ([supabase_gma_conversation_order_statement_timeout.sql](sql/supabase_gma_conversation_order_statement_timeout.sql)).

@@ -210,6 +210,7 @@ begin
         end;
 
         v_customer := coalesce(
+          nullif(trim(v_item -> 'shipping_address' ->> 'full_name'), ''), nullif(trim(v_item ->> 'bill_full_name'), ''), -- the order's recipient name first, then the FB profile name
           v_item -> 'customer' ->> 'name', v_item -> 'customer' ->> 'customer_name', v_item -> 'customer' ->> 'full_name',
           v_item ->> 'customer_name', v_item ->> 'customer', v_item ->> 'client_name', v_item ->> 'buyer_name'
         );
@@ -669,6 +670,7 @@ begin
         end;
 
         v_customer := coalesce(
+          nullif(trim(v_item -> 'shipping_address' ->> 'full_name'), ''), nullif(trim(v_item ->> 'bill_full_name'), ''), -- the order's recipient name first, then the FB profile name
           v_item -> 'customer' ->> 'name', v_item -> 'customer' ->> 'customer_name', v_item -> 'customer' ->> 'full_name',
           v_item ->> 'customer_name', v_item ->> 'customer', v_item ->> 'client_name', v_item ->> 'buyer_name'
         );
@@ -1202,6 +1204,7 @@ begin
       v_matches_filters := not (p_status is not null and trim(p_status) <> '' and v_status not ilike '%' || p_status || '%');
 
       v_customer := coalesce(
+        nullif(trim(v_item -> 'shipping_address' ->> 'full_name'), ''), nullif(trim(v_item ->> 'bill_full_name'), ''), -- the order's recipient name first, then the FB profile name
         v_item -> 'customer' ->> 'name', v_item -> 'customer' ->> 'customer_name', v_item -> 'customer' ->> 'full_name',
         v_item ->> 'customer_name', v_item ->> 'customer', v_item ->> 'client_name', v_item ->> 'buyer_name'
       );
