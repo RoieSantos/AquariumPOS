@@ -2,6 +2,16 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-09-29
+
+- Production Shelf Map: each rack's count is split by aquarium variant - **Black / Clear** (sealant colour of e.g. the 75G) - on the rack, in its popup (serials grouped by colour) and as Black / Clear columns in Stock by size. A rack linked to an item with "Any variant" now counts every variant of it (serial list returns the variant's parent item). The sealant-stock strip / Materials button from earlier today is removed - it answered the wrong question ([supabase_production_shelf_serial_counts.sql](sql/supabase_production_shelf_serial_counts.sql), [productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).
+
+- Production Shelf Map toolbar tidied: filters (Location, Shelf, Find) grouped on the left and actions (zoom, Full screen, Refresh | Materials, New Shelf, Edit Layout) on the right, same height and aligned, instead of being spread across the full-width row; Edit Layout bar likewise (fields left, Delete | Cancel / Save right) ([production-shelf-map.html](docs/production-shelf-map.html)).
+
+- Production Shelf Map: sealant counted **per variant** - the seed adds the Black / Clear variants of the sealant item (and replaces an earlier whole-item row that added both together); adding an item with variants in Materials adds one row per variant. Page now uses the full window width, the floor plan fits the screen (100% = whole plan visible, A−/A+ 50%-200%), plus a Full screen button ([supabase_production_shelf_materials.sql](sql/supabase_production_shelf_materials.sql), [productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).
+
+- Production Shelf Map: each shelf shows a materials strip above the map - e.g. Black Sealant / Clear Sealant with their live Item Ledger on-hand at the shelf's location (red at 0). Super User / Production Manager choose the items with the new Materials button; the SQL seeds black/clear sealant items found by name ([supabase_production_shelf_materials.sql](sql/supabase_production_shelf_materials.sql), [productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).
+
 ## 2026-09-28
 
 - Production Shelf Map readability: floor plan opens at 150% with A−/A+ zoom (100% to 250%, remembered), larger rack text, and racks show a short size (e.g. "50G" pulled from the variant name) instead of the full long name, which stays in the tooltip / popup ([productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).

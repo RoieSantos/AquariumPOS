@@ -112,7 +112,36 @@ function serialMatches(s, term) {
 function unitFitsSpot(unit, spot) {
   if (!spot || !spot.item_code) return null;
   if (spot.variant_id) return unit.variant_code === spot.variant_id;
-  return unit.item_code === spot.item_code;
+  // "Any variant": every variant of the item, including one that has its own item row.
+  return unit.item_code === spot.item_code || unit.main_item_code === spot.item_code;
+}
+
+// Which version a serial is - per "i want to see if there is black variant and clear variant of 75g
+// on that shelf". Black / Clear when the variant (or failing that the description) says so,
+// otherwise the variant's own name.
+function unitColour(unit) {
+  const variantText = `${unit.variant_name || ''}`;
+  if (/black/i.test(variantText)) return 'Black';
+  if (/clear/i.test(variantText)) return 'Clear';
+  const descText = `${unit.item_description || ''} ${unit.item_code || ''}`;
+  if (/black/i.test(descText)) return 'Black';
+  if (/clear/i.test(descText)) return 'Clear';
+  return unit.variant_name || 'Other';
+}
+
+// [{ colour, count }] - Black first, Clear second, the rest by name.
+function colourBreakdown(units) {
+  const counts = new Map();
+  units.forEach((u) => counts.set(unitColour(u), (counts.get(unitColour(u)) || 0) + 1));
+  const rank = (c) => (c === 'Black' ? 0 : c === 'Clear' ? 1 : 2);
+  return Array.from(counts, ([colour, count]) => ({ colour, count }))
+    .sort((a, b) => rank(a.colour) - rank(b.colour) || a.colour.localeCompare(b.colour));
+}
+
+function colourChipsHtml(units) {
+  return colourBreakdown(units).map(({ colour, count }) =>
+    `<span class="colour-chip colour-${colour === 'Black' ? 'black' : colour === 'Clear' ? 'clear' : 'other'}" title="${escapeHtml(colour)}: ${count}"><i></i>${escapeHtml(colour)} <b>${count}</b></span>`
+  ).join('');
 }
 
 function spotTagText(spot) {
@@ -131,19 +160,28 @@ function spotShortTag(spot) {
   return gallons ? `${gallons[1]}G` : spot.item_code;
 }
 
-// Floor plan zoom on top of fit-to-width, remembered per browser.
-const ZOOM_STEPS = [1, 1.25, 1.5, 1.75, 2, 2.5];
-let floorZoom = 1.5;
+// Floor plan zoom on top of fit-to-width (100% = the plan fills the page width), remembered per
+// browser. New key: the old one's 150% was relative to a narrower fit.
+const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const ZOOM_KEY = 'prod-shelf-zoom-fit';
+let floorZoom = 1;
 try {
-  const saved = Number(localStorage.getItem('prod-shelf-zoom'));
+  const saved = Number(localStorage.getItem(ZOOM_KEY));
   if (ZOOM_STEPS.includes(saved)) floorZoom = saved;
 } catch (err) { /* default zoom */ }
 
 function setZoom(step) {
   const i = Math.max(0, Math.min(ZOOM_STEPS.length - 1, ZOOM_STEPS.indexOf(floorZoom) + step));
   floorZoom = ZOOM_STEPS[i];
-  try { localStorage.setItem('prod-shelf-zoom', String(floorZoom)); } catch (err) { /* not remembered */ }
+  try { localStorage.setItem(ZOOM_KEY, String(floorZoom)); } catch (err) { /* not remembered */ }
   renderShelf();
+}
+
+// Full screen for the map page (e.g. a wall-mounted screen on the production floor).
+function toggleFullScreen() {
+  const el = document.documentElement;
+  if (document.fullscreenElement) document.exitFullscreen?.();
+  else el.requestFullscreen?.().catch(() => {});
 }
 
 // In-stock serials of the spot's aquarium at the location on screen (null = no aquarium linked).
@@ -196,6 +234,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
     spotName(spot, fallbackName) + (tag ? ` - ${tag}` : ''),
     spot.item_code ? `${spot.item_code}${spot.variant_name ? ' · ' + spot.variant_name : ''}` : 'No aquarium linked',
     count !== null ? `${count} in stock${spot.capacity ? ` (fits ${spot.capacity})` : ''}` : '',
+    count ? colourBreakdown(serials).map((c) => `${c.colour}: ${c.count}`).join(' · ') : '',
     shared.length ? `Same aquarium as ${shared.join(', ')} - count is shared` : '',
     spot.notes || ''
   ].filter(Boolean).join('\n');
@@ -209,6 +248,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
       ${countHtml}
     </div>
     ${shortTag ? `<span class="pspot-tag">${escapeHtml(shortTag)}</span>` : ''}
+    ${count ? `<span class="pspot-colours">${colourChipsHtml(serials)}</span>` : ''}
     ${!compact && spot.item_code ? `<span class="pspot-sub pspot-clamp">${escapeHtml(spot.item_code)}${spot.variant_name ? ' · ' + escapeHtml(spot.variant_name) : ''}</span>` : ''}
     ${!compact && shared.length ? `<span class="pspot-sub">shared with ${escapeHtml(shared.join(', '))}</span>` : ''}
     ${!compact && !editing && !spot.item_code ? '<span class="pspot-sub">No aquarium linked</span>' : ''}
@@ -235,17 +275,28 @@ function renderSizeSummary() {
   });
 
   const linkedRows = Array.from(groups.values())
-    .map((g) => ({ g, count: spotSerials(g.spot).length }))
+    .map((g) => ({ g, count: spotSerials(g.spot).length, colours: colourBreakdown(spotSerials(g.spot)) }))
     .sort((a, b) => Array.from(a.g.tags).join().localeCompare(Array.from(b.g.tags).join(), undefined, { numeric: true }));
 
   const linkedSpots = Array.from(groups.values()).map((g) => g.spot);
   const other = new Map();
   locationSerials.filter((s) => !linkedSpots.some((sp) => unitFitsSpot(s, sp))).forEach((s) => {
     const key = `${s.item_code}|${s.variant_code || ''}`;
-    const o = other.get(key) || { item_code: s.item_code, variant_name: s.variant_name, description: s.item_description, count: 0 };
+    const o = other.get(key) || { item_code: s.item_code, variant_name: s.variant_name, description: s.item_description, count: 0, units: [] };
     o.count += 1;
+    o.units.push(s);
     other.set(key, o);
   });
+  // Black / Clear columns always; any other version name found gets its own column after them.
+  const extraColours = new Set();
+  const addExtra = (c) => { if (c.colour !== 'Black' && c.colour !== 'Clear') extraColours.add(c.colour); };
+  linkedRows.forEach((r) => r.colours.forEach(addExtra));
+  other.forEach((o) => colourBreakdown(o.units).forEach(addExtra));
+  const colourCols = ['Black', 'Clear', ...Array.from(extraColours).sort()];
+  const colourCells = (colours) => colourCols.map((col) => {
+    const n = (colours.find((c) => c.colour === col) || {}).count || 0;
+    return `<td class="num">${n ? n : '<span class="muted">0</span>'}</td>`;
+  }).join('');
   const otherRows = Array.from(other.values()).sort((a, b) => a.item_code.localeCompare(b.item_code, undefined, { numeric: true }));
 
   if (!linkedRows.length && !otherRows.length) {
@@ -257,21 +308,23 @@ function renderSizeSummary() {
   box.innerHTML = `
     <h3>Stock by size <span class="muted" style="font-size:12px; font-weight:400;">${total} serial(s) in stock at this location</span></h3>
     <table class="size-summary">
-      <thead><tr><th>Size</th><th>Aquarium</th><th>Racks</th><th class="num">In stock</th></tr></thead>
+      <thead><tr><th>Size</th><th>Aquarium</th><th>Racks</th>${colourCols.map((c) => `<th class="num">${escapeHtml(c)}</th>`).join('')}<th class="num">Total</th></tr></thead>
       <tbody>
-        ${linkedRows.map(({ g, count }) => `
+        ${linkedRows.map(({ g, count, colours }) => `
           <tr data-find="${escapeHtml(Array.from(g.tags)[0] || g.spot.item_code)}" title="Highlight these racks">
             <td><span class="pspot-tag">${escapeHtml(Array.from(g.tags).join(', ') || '-')}</span></td>
             <td>${escapeHtml(g.spot.item_code)}${g.spot.variant_name ? ' · ' + escapeHtml(g.spot.variant_name) : ''}<div class="muted" style="font-size:11px;">${escapeHtml(g.spot.item_name || '')}</div></td>
             <td>${escapeHtml(g.racks.join(', '))}</td>
+            ${colourCells(colours)}
             <td class="num"><b>${count}</b></td>
           </tr>`).join('')}
-        ${otherRows.length ? `<tr class="size-summary-sep"><td colspan="4">Not linked to any rack</td></tr>` : ''}
+        ${otherRows.length ? `<tr class="size-summary-sep"><td colspan="${colourCols.length + 4}">Not linked to any rack</td></tr>` : ''}
         ${otherRows.map((o) => `
           <tr class="unlinked-row" data-serials-item="${escapeHtml(o.item_code)}">
             <td><span class="muted">-</span></td>
             <td>${escapeHtml(o.item_code)}${o.variant_name ? ' · ' + escapeHtml(o.variant_name) : ''}<div class="muted" style="font-size:11px;">${escapeHtml(o.description || '')}</div></td>
             <td class="muted">-</td>
+            ${colourCells(colourBreakdown(o.units))}
             <td class="num"><b>${o.count}</b></td>
           </tr>`).join('')}
       </tbody>
@@ -329,7 +382,9 @@ function renderFloor(body) {
   const planH = Math.max(...spots.map((s) => Number(s.pos_y) + Number(s.height))) + FLOOR_PAD + (editing ? 120 : 0);
   // Fit the plan to the page width, then apply the zoom (A-/A+); anything wider scrolls sideways.
   const available = Math.max(320, body.clientWidth - 4);
-  floorScale = Math.max(0.75, Math.min(1.6, available / planW)) * floorZoom;
+  // 100% = the whole plan fits on screen (width AND height), so a full-screen view shows it all.
+  const availableH = Math.max(300, window.innerHeight - (body.getBoundingClientRect().top + window.scrollY) - 16);
+  floorScale = Math.max(0.5, Math.min(available / planW, availableH / planH)) * floorZoom;
   document.getElementById('zoomLabel').textContent = `${Math.round(floorZoom * 100)}%`;
 
   let matchCount = 0;
@@ -445,18 +500,22 @@ function openSpotModal(spotId) {
   ].filter(Boolean).join(' · ');
   const stockEl = document.getElementById('spotModalStock');
   stockEl.innerHTML = serials
-    ? `<b>${serials.length}</b> serial(s) in stock at ${escapeHtml(spot.shelf.warehouse_name || 'this location')}${shared.length ? ` - same aquarium as ${escapeHtml(shared.join(', '))}, so the count is shared` : ''}.`
-    : `No aquarium is linked to this rack${canEditLayout ? ' - Edit Layout, tap the rack and pick one under "Item for this spot" to count it' : ''}.`;
+    ? `<b>${serials.length}</b> serial(s) in stock at ${escapeHtml(spot.shelf.warehouse_name || 'this location')}${shared.length ? ` - same aquarium as ${escapeHtml(shared.join(', '))}, so the count is shared` : ''}.
+       ${serials.length ? `<div class="pspot-colours" style="margin-top:6px;">${colourChipsHtml(serials)}</div>` : ''}`
+    : `No aquarium is linked to this rack${canEditLayout ? ' - Edit Layout, tap the rack and pick one under "Aquarium on this rack" to count it' : ''}.`;
+  // Grouped by version (Black / Clear / ...), each with its count.
   document.getElementById('spotSerials').innerHTML = !serials ? ''
     : serials.length
-      ? serials.map((s) => `
-        <div class="spot-serial-row">
-          <div class="grow">
-            <b>${escapeHtml(s.serial_no)}</b>
-            <div class="muted" style="font-size:12px;">${escapeHtml(s.item_code)}${s.variant_name ? ' · ' + escapeHtml(s.variant_name) : ''} - ${escapeHtml(s.item_description || '')}</div>
-            <div class="muted" style="font-size:11px;">${s.source_document_no ? escapeHtml(s.source_document_no) + ' · ' : ''}${s.created_at ? 'created ' + escapeHtml(new Date(s.created_at).toLocaleDateString()) : ''}</div>
-          </div>
-        </div>`).join('')
+      ? colourBreakdown(serials).map(({ colour, count }) => `
+        <div class="colour-group-head">${escapeHtml(colour)} <span class="muted">(${count})</span></div>
+        ${serials.filter((s) => unitColour(s) === colour).map((s) => `
+          <div class="spot-serial-row">
+            <div class="grow">
+              <b>${escapeHtml(s.serial_no)}</b>
+              <div class="muted" style="font-size:12px;">${escapeHtml(s.item_code)}${s.variant_name ? ' · ' + escapeHtml(s.variant_name) : ''} - ${escapeHtml(s.item_description || '')}</div>
+              <div class="muted" style="font-size:11px;">${s.source_document_no ? escapeHtml(s.source_document_no) + ' · ' : ''}${s.created_at ? 'created ' + escapeHtml(new Date(s.created_at).toLocaleDateString()) : ''}</div>
+            </div>
+          </div>`).join('')}`).join('')
       : '<p class="muted">None in stock.</p>';
   document.getElementById('spotModal').classList.remove('hidden');
 }
@@ -768,6 +827,11 @@ function wireFloorDrag() {
   });
 
   document.getElementById('refreshBtn').addEventListener('click', () => loadShelves(currentShelfId));
+  document.getElementById('fullScreenBtn').addEventListener('click', toggleFullScreen);
+  document.addEventListener('fullscreenchange', () => {
+    document.getElementById('fullScreenBtn').textContent = document.fullscreenElement ? 'Exit full screen' : 'Full screen';
+    setTimeout(renderShelf, 50); // refit to the new width
+  });
   document.getElementById('zoomOutBtn').addEventListener('click', () => setZoom(-1));
   document.getElementById('zoomInBtn').addEventListener('click', () => setZoom(1));
   document.getElementById('editBtn').addEventListener('click', () => { if (currentShelf()) startEdit(false); });

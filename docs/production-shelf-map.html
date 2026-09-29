@@ -70,6 +70,36 @@
     .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
     .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
     .modal-panel { max-height: 90vh; overflow-y: auto; }
+    .page.page-full { max-width: none; }
+    /* Toolbar: filters left, actions right, everything vertically centred and same height */
+    .psm-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .psm-toolbar.hidden { display: none; }
+    .psm-editbar { padding: 8px 10px; border: 1px solid var(--border, #e0e6ee); border-radius: 8px; background: rgba(29, 79, 145, .05); }
+    .psm-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    .psm-actions { margin-left: auto; justify-content: flex-end; }
+    .psm-field { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--text-muted, #666); white-space: nowrap; }
+    .psm-field select { width: auto; min-width: 150px; max-width: 240px; }
+    .psm-toolbar select, .psm-toolbar input, .psm-toolbar .btn { margin: 0; height: 34px; box-sizing: border-box; }
+    .psm-toolbar .btn { display: inline-flex; align-items: center; white-space: nowrap; }
+    .psm-find { width: 240px; max-width: 100%; }
+    .psm-find-result { font-size: 12px; }
+    .psm-sep { width: 1px; height: 22px; background: var(--border, #d9dee5); margin: 0 2px; }
+    @media (max-width: 700px) {
+      .psm-actions { margin-left: 0; justify-content: flex-start; }
+      .psm-find { width: 100%; }
+    }
+    :fullscreen body { overflow: auto; }
+    /* Black / Clear split of a rack's serials (js/productionShelfMap.js colourChipsHtml) */
+    .pspot-colours { display: flex; flex-wrap: wrap; gap: 4px 6px; justify-content: inherit; }
+    .colour-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border: 1px solid var(--border, #c9d3e0); border-radius: 999px; font-size: 12px; white-space: nowrap; background: var(--card-bg, #fff); }
+    .colour-chip b { font-size: 14px; }
+    .colour-chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .colour-chip.colour-black i { background: #1b1b1b; }
+    .colour-chip.colour-clear i { background: #fff; border: 1.5px solid #7aa7d9; box-sizing: border-box; }
+    .colour-chip.colour-other i { background: #9aa4b2; }
+    .floor-plan .pspot.compact .pspot-colours { justify-content: center; }
+    .floor-plan .colour-chip { font-size: 13px; }
+    .colour-group-head { margin-top: 10px; padding: 4px 0; font-weight: 700; border-bottom: 2px solid var(--border, #e0e6ee); }
     .zoom-controls { display: inline-flex; align-items: center; gap: 4px; }
     .zoom-controls.hidden { display: none; }
     .zoom-controls #zoomLabel { min-width: 40px; text-align: center; font-size: 12px; }
@@ -92,38 +122,50 @@
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
+  <!-- Full window width (the floor plan fits itself to it) - see .page.page-full below -->
+  <div class="page page-full">
     <h1>Production Shelf Map</h1>
     <p class="muted">Each rack shows how many serials of its aquarium (e.g. 75g) are in stock at this location - always live, nothing to put away. Tap a rack to see the serials. Racks are linked to an aquarium in Edit Layout.</p>
 
-    <div class="toolbar">
-      <label for="locationSelect" class="muted" style="margin:0;">Location</label>
-      <select id="locationSelect" style="max-width:200px;"></select>
-      <label for="shelfSelect" class="muted" style="margin:0;">Shelf</label>
-      <select id="shelfSelect" style="max-width:240px;"></select>
-      <input type="search" id="findInput" placeholder="Find serial or item..." style="max-width:220px;" autocomplete="off" />
-      <span class="muted" id="findResult"></span>
-      <span id="zoomControls" class="zoom-controls hidden" title="Make the floor plan bigger or smaller">
-        <button class="btn btn-secondary btn-sm" id="zoomOutBtn" type="button" aria-label="Zoom out">A&minus;</button>
-        <span id="zoomLabel" class="muted">150%</span>
-        <button class="btn btn-secondary btn-sm" id="zoomInBtn" type="button" aria-label="Zoom in">A+</button>
-      </span>
-      <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
-      <button class="btn btn-secondary btn-sm hidden" id="newShelfBtn" type="button">New Shelf</button>
-      <button class="btn btn-primary btn-sm hidden" id="editBtn" type="button">Edit Layout</button>
+    <!-- Filters on the left, actions on the right (not the site-wide .toolbar's space-between, which
+         scatters every control across a full-width page). -->
+    <div class="psm-toolbar">
+      <div class="psm-group">
+        <label class="psm-field"><span>Location</span><select id="locationSelect"></select></label>
+        <label class="psm-field"><span>Shelf</span><select id="shelfSelect"></select></label>
+        <input type="search" id="findInput" class="psm-find" placeholder="Find size, serial or item..." autocomplete="off" />
+        <span class="muted psm-find-result" id="findResult"></span>
+      </div>
+      <div class="psm-group psm-actions">
+        <span id="zoomControls" class="zoom-controls hidden" title="Make the floor plan bigger or smaller">
+          <button class="btn btn-secondary btn-sm" id="zoomOutBtn" type="button" aria-label="Zoom out">A&minus;</button>
+          <span id="zoomLabel" class="muted">100%</span>
+          <button class="btn btn-secondary btn-sm" id="zoomInBtn" type="button" aria-label="Zoom in">A+</button>
+        </span>
+        <button class="btn btn-secondary btn-sm" id="fullScreenBtn" type="button" title="Use the whole screen for the map">Full screen</button>
+        <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+        <span class="psm-sep" aria-hidden="true"></span>
+        <button class="btn btn-secondary btn-sm hidden" id="newShelfBtn" type="button">New Shelf</button>
+        <button class="btn btn-primary btn-sm hidden" id="editBtn" type="button">Edit Layout</button>
+      </div>
     </div>
 
-    <div id="editBar" class="toolbar hidden">
-      <input type="text" id="shelfNameInput" placeholder="Shelf name (e.g. Rack A)" style="max-width:240px;" />
-      <select id="shelfWarehouseSelect" style="max-width:220px;"><option value="">Pick a warehouse...</option></select>
-      <select id="shelfLayoutSelect" style="max-width:160px;" title="Floor plan: place and size each rack freely. Rows: rows of equal spots.">
-        <option value="floor">Floor plan</option>
-        <option value="grid">Rows</option>
-      </select>
-      <button class="btn btn-secondary btn-sm" id="addRowBtn" type="button">+ Row</button>
-      <button class="btn btn-primary btn-sm" id="saveBtn" type="button">Save</button>
-      <button class="btn btn-secondary btn-sm" id="cancelBtn" type="button">Cancel</button>
-      <button class="btn btn-secondary btn-sm" id="deleteShelfBtn" type="button">Delete Shelf</button>
+    <div id="editBar" class="psm-toolbar psm-editbar hidden">
+      <div class="psm-group">
+        <input type="text" id="shelfNameInput" placeholder="Shelf name (e.g. Rack A)" style="width:220px;" />
+        <select id="shelfWarehouseSelect" style="width:200px;"><option value="">Pick a warehouse...</option></select>
+        <select id="shelfLayoutSelect" style="width:130px;" title="Floor plan: place and size each rack freely. Rows: rows of equal spots.">
+          <option value="floor">Floor plan</option>
+          <option value="grid">Rows</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="addRowBtn" type="button">+ Row</button>
+      </div>
+      <div class="psm-group psm-actions">
+        <button class="btn btn-secondary btn-sm" id="deleteShelfBtn" type="button">Delete Shelf</button>
+        <span class="psm-sep" aria-hidden="true"></span>
+        <button class="btn btn-secondary btn-sm" id="cancelBtn" type="button">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn" type="button">Save</button>
+      </div>
     </div>
     <p class="muted hidden" id="floorEditHint" style="font-size:12px; margin:4px 0 0;">Drag a rack to move it, drag its bottom-right corner to resize, tap it to rename or rotate. Save when done.</p>
 
@@ -188,7 +230,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=prod2"></script>
   <script src="js/nav.js?v=prod2"></script>
-  <script src="js/productionShelfMap.js?v=6"></script>
+  <script src="js/productionShelfMap.js?v=10"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
