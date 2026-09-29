@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-29
 
+- Shelf Map now uses the full window width (was capped at 1200px), so more shelf spots are visible without scrolling ([shelf-map.html](docs/shelf-map.html)).
+
+- Fix: some orders never deducted Item Ledger stock (105080) - the sales-posting cron could reconcile an order mid-refresh (seeing it empty) and the refresh's earlier SyncedAtUtc stamp then never triggered a revisit. Picker now re-checks anything written within 5 min of the last reconcile; includes a catch-up for orders already missed ([supabase_item_ledger_sales_race_fix.sql](sql/supabase_item_ledger_sales_race_fix.sql)).
+
+- Added a read-only per-order Item Ledger diagnostic: checks each condition an order needs to take its stock out (posting on, status, cutover, warehouse, lines, item matching, last error) and shows each line's match reason ([supabase_diagnose_item_ledger_order.sql](sql/supabase_diagnose_item_ledger_order.sql)).
+
 - Online Orders Customer now uses Pancake's shipping_address.full_name (the order's recipient name), then bill_full_name, falling back to the FB profile name - in the cron sync, manual sync, live list and stub/resync fill ([supabase_online_order_balance_local_calc.sql](sql/supabase_online_order_balance_local_calc.sql), [supabase_online_order_sync_edited_lines.sql](sql/supabase_online_order_sync_edited_lines.sql), [supabase_online_order_fill_stub_rows.sql](sql/supabase_online_order_fill_stub_rows.sql)).
 
 - Resync specific orders from Pancake on demand: _refresh_open_online_order gets p_force_header to re-fill a non-stub order's full header; new script resyncs 103279/100180 (header + lines) ([supabase_online_order_fill_stub_rows.sql](sql/supabase_online_order_fill_stub_rows.sql), [supabase_online_order_resync_specific.sql](sql/supabase_online_order_resync_specific.sql)).

@@ -34,12 +34,15 @@
     .cell-field label { display: block; font-size: 12px; margin-bottom: 2px; }
     .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
     .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
+    /* Use the whole window instead of the site-wide 1200px cap - same as production-shelf-map.html. */
+    .page.page-full { max-width: none; }
   </style>
 </head>
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
+  <!-- Full window width so more shelf spots fit side by side - see .page.page-full below -->
+  <div class="page page-full">
     <h1>Shelf Map</h1>
     <p class="muted">Each box is a spot on the shelf. The big number is the current count on that shelf spot - type a new number to update it. "Ledger" is the item's quantity on hand at the location (from the Item Ledger, always current), added up across every shelf spot holding that item; "Drawing" is the count written on the paper sketch.</p>
 
