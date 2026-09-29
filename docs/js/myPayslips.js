@@ -40,23 +40,53 @@ function renderRows(rows) {
   `).join('');
 }
 
+// "TypeError: Load failed" (iPhone Safari) / "Failed to fetch" (Chrome) = the request never got an
+// answer - a mobile-data / Wi-Fi blip or the app resuming from the background, not a server error.
+// This page only reads, so it's safe to retry a couple of times before showing anything.
+function isNetworkError(error) {
+  return /load failed|failed to fetch|network/i.test(error?.message || '');
+}
+
+async function loadPayslips() {
+  const errorEl = document.getElementById('payslipsError');
+  errorEl.classList.add('hidden');
+  const tbody = document.getElementById('payslipTableBody');
+  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
+
+  let data = null;
+  let error = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    ({ data, error } = await supabaseClient.rpc('my_list_payslips', {
+      p_username: currentSession.username,
+      p_password: currentSession.password
+    }));
+    if (!error || !isNetworkError(error)) break;
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+  }
+
+  if (error) {
+    errorEl.innerHTML = '';
+    errorEl.append(isNetworkError(error)
+      ? "Couldn't reach the server - check your internet connection. "
+      : error.message + ' ');
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-secondary btn-sm';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', loadPayslips);
+    errorEl.append(retry);
+    errorEl.classList.remove('hidden');
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">-</td></tr>';
+    return;
+  }
+
+  renderRows(data || []);
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
   currentSession = session;
   renderTopNav('My Payslips');
-
-  const { data, error } = await supabaseClient.rpc('my_list_payslips', {
-    p_username: currentSession.username,
-    p_password: currentSession.password
-  });
-
-  if (error) {
-    document.getElementById('payslipsError').textContent = error.message;
-    document.getElementById('payslipsError').classList.remove('hidden');
-    document.getElementById('payslipTableBody').innerHTML = '<tr><td colspan="8" class="muted">-</td></tr>';
-    return;
-  }
-
-  renderRows(data || []);
+  await loadPayslips();
 })();
