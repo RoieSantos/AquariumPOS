@@ -1,3 +1,13 @@
+// Production links for the compact navs below - a Delivery Team / Online Order Staff account that is
+// also a Production Manager (or Tank / Stand Maker) can open the Production pages (see
+// canOpenProductionPage in js/auth.js).
+function compactProductionLinks(session, activeLabel) {
+  if (!(session?.isProductionManager || session?.isOrderMaker)) return '';
+  return `
+          <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>
+          <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>`;
+}
+
 // Renders the shared top navigation bar into <div id="topnav"></div>.
 // Requires: auth.js to be loaded first (for wireLogoutButton, getPortalSession).
 function renderTopNav(activeLabel) {
@@ -18,7 +28,7 @@ function renderTopNav(activeLabel) {
         <span class="topnav-brand">RS Pet Stop Portal</span>
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
-          <a class="topnav-link${activeLabel === 'Delivery' ? ' active' : ''}" href="delivery.html">Delivery</a>
+          <a class="topnav-link${activeLabel === 'Delivery' ? ' active' : ''}" href="delivery.html">Delivery</a>${compactProductionLinks(session, activeLabel)}
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
@@ -37,7 +47,7 @@ function renderTopNav(activeLabel) {
         <span class="topnav-brand">RS Pet Stop Portal</span>
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
-          <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">Online Orders</a>
+          <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">Online Orders</a>${compactProductionLinks(session, activeLabel)}
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>

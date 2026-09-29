@@ -166,6 +166,15 @@ const ORDER_MAKER_ROLES = ['TankMaker', 'StandMaker', 'Dispatcher'];
 // by serial (supabase_production_shelf_map.sql).
 const ORDER_MAKER_ALLOWED_PAGES = ['online-orders.html', 'production-orders.html', 'production-shelf-map.html','change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
+// Per "in the production shelf map.. can you allow to see the production manager" - the Production
+// pages are open to a Production Manager / Tank / Stand Maker even when another setting (Store
+// Manager, Online Order Staff, Delivery Team) would otherwise confine the account to its own
+// allowlist. The RPCs behind them re-check the role (supabase_production_orders.sql).
+const PRODUCTION_PAGES = ['production-orders.html', 'production-shelf-map.html'];
+function canOpenProductionPage(session, page) {
+  return PRODUCTION_PAGES.includes(page) && !!(session?.isSuperUser || session?.isProductionManager || session?.isOrderMaker);
+}
+
 function isOrderMakerOnly(session) {
   return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });
 }
@@ -176,6 +185,7 @@ const NO_PERMISSION_ALLOWED_PAGES = ['my-payslips.html', 'my-payslip-print.html'
 // itself instead of bouncing a locked-down role straight back to its landing page.
 function canOpenPortalPage(session, page) {
   if (!session) return false;
+  if (canOpenProductionPage(session, page)) return true;
   if (session.isDeliveryTeam) return DELIVERY_TEAM_ALLOWED_PAGES.includes(page);
   if (isOrderMakerOnly(session)) return ORDER_MAKER_ALLOWED_PAGES.includes(page);
   if (session.isOnlineOrderStaff) return ONLINE_ORDER_STAFF_ALLOWED_PAGES.includes(page);
@@ -210,17 +220,19 @@ async function requireAuth() {
   // Same "enforced on every page load, not just at login" reasoning as the password-change gate
   // above - catches an admin flipping the flag on mid-session, and can't be bypassed by
   // bookmarking/typing a different URL directly.
-  if (refreshed.isDeliveryTeam && !DELIVERY_TEAM_ALLOWED_PAGES.includes(currentPageFileName())) {
+  const productionPageOk = canOpenProductionPage(refreshed, currentPageFileName());
+
+  if (!productionPageOk && refreshed.isDeliveryTeam && !DELIVERY_TEAM_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'delivery.html';
     return null;
   }
 
-  if (isOrderMakerOnly(refreshed) && !ORDER_MAKER_ALLOWED_PAGES.includes(currentPageFileName())) {
+  if (!productionPageOk && isOrderMakerOnly(refreshed) && !ORDER_MAKER_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'online-orders.html';
     return null;
   }
 
-  if (refreshed.isOnlineOrderStaff && !ONLINE_ORDER_STAFF_ALLOWED_PAGES.includes(currentPageFileName())) {
+  if (!productionPageOk && refreshed.isOnlineOrderStaff && !ONLINE_ORDER_STAFF_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'online-orders.html';
     return null;
   }
@@ -230,7 +242,7 @@ async function requireAuth() {
   // access Delivery calendar, Payslips, Serial tracker, inventory Summary, Stock on hand, Transfer
   // Orders, Calculators, online Orders, Automated Orders." Redirects to dashboard.html (their real,
   // if trimmed, home) rather than one specific page, since there's no single "the" Store Manager page.
-  if (refreshed.isStoreManager && !STORE_MANAGER_ALLOWED_PAGES.includes(currentPageFileName())) {
+  if (!productionPageOk && refreshed.isStoreManager && !STORE_MANAGER_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'dashboard.html';
     return null;
   }
@@ -239,7 +251,7 @@ async function requireAuth() {
   // per "why it can see all the buttons? it suppose to be My payslips only right?" Checked after
   // the two role-specific locks above (mutually exclusive with both, since either flag already
   // makes hasNoPortalPermission false).
-  if (hasNoPortalPermission(refreshed) && !NO_PERMISSION_ALLOWED_PAGES.includes(currentPageFileName())) {
+  if (!productionPageOk && hasNoPortalPermission(refreshed) && !NO_PERMISSION_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'my-payslips.html';
     return null;
   }

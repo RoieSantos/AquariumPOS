@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-29
 
+- Production pages (Production Orders, Production Shelf Map) now open for a Production Manager / Tank / Stand Maker even when the account is also Store Manager, Online Order Staff or Delivery Team - those settings' page allowlists were bouncing them; their compact menus also get the two links ([auth.js](docs/js/auth.js), [nav.js](docs/js/nav.js)).
+
 - Production Shelf Map: each rack's count is split by aquarium variant - **Black / Clear** (sealant colour of e.g. the 75G) - on the rack, in its popup (serials grouped by colour) and as Black / Clear columns in Stock by size. A rack linked to an item with "Any variant" now counts every variant of it (serial list returns the variant's parent item). The sealant-stock strip / Materials button from earlier today is removed - it answered the wrong question ([supabase_production_shelf_serial_counts.sql](sql/supabase_production_shelf_serial_counts.sql), [productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).
 
 - Production Shelf Map toolbar tidied: filters (Location, Shelf, Find) grouped on the left and actions (zoom, Full screen, Refresh | Materials, New Shelf, Edit Layout) on the right, same height and aligned, instead of being spread across the full-width row; Edit Layout bar likewise (fields left, Delete | Cancel / Save right) ([production-shelf-map.html](docs/production-shelf-map.html)).
