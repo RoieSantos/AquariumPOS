@@ -918,9 +918,14 @@
         var glass = byId('glass');
         var sumpEnabled = byId('sumpEnabled');
         var previousTemperedMandatory = ruleNoticeState.temperedMandatory;
+        // The 36" rule is in inches - convert from the selected Unit of Measure first (a raw
+        // compare treated 36 CM, ~14", as 36 inches and wrongly forced Tempered on).
+        var unitOfMeasure = byId('unit').value;
         var width = parsePositiveNumber('width');
         var height = parsePositiveNumber('height');
-        var temperedMandatory = Boolean(width && width >= 36 || height && height >= 36);
+        var widthInches = width ? window.CustomAquariumCalculator.toInches(width, unitOfMeasure) : 0;
+        var heightInches = height ? window.CustomAquariumCalculator.toInches(height, unitOfMeasure) : 0;
+        var temperedMandatory = widthInches >= 36 || heightInches >= 36;
         var isCompleteSetup = optionValue === 'Complete setup';
 
         ruleNoticeState.temperedMandatory = temperedMandatory;

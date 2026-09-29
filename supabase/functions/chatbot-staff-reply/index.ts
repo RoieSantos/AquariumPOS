@@ -125,12 +125,24 @@ async function callSendApi(
 // Verification + separate App Review approval - see App Dashboard > Permissions and Features). This
 // function attempts that fallback automatically; if the tag itself isn't approved yet (error_subcode
 // 2018276), it returns a plain-language explanation rather than that raw rejection.
+//
+// forceHumanAgent skips straight to the tagged send - only used by GMA Conversations' SuperUser-only
+// "Test Human Agent" button, to make the App Dashboard's required Human Agent test call without
+// waiting 24h for the normal fallback to kick in. Its error keeps Facebook's raw code/subcode.
 async function sendWithFallback(
   psid: string,
   messageBody: Record<string, unknown>,
   pageAccessToken: string,
-  graphVersion: string
+  graphVersion: string,
+  forceHumanAgent = false
 ): Promise<{ ok: true } | { ok: false; friendlyError: string }> {
+  if (forceHumanAgent) {
+    const forced = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' });
+    if (forced.ok) return { ok: true };
+    const e = forced.bodyJson?.error;
+    return { ok: false, friendlyError: `HUMAN_AGENT send rejected (code ${e?.code ?? '?'}, subcode ${e?.error_subcode ?? '?'}): ${e?.message || forced.bodyText}` };
+  }
+
   const first = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'RESPONSE' });
   if (first.ok) return { ok: true };
 
@@ -179,6 +191,7 @@ Deno.serve(async (req) => {
   let message: string;
   let images: { url: string; path: string | null; kind: 'image' | 'video' }[];
   let isLike: boolean;
+  let forceHumanAgent: boolean;
   try {
     const body = await req.json();
     adminUsername = String(body.admin_username ?? '');
@@ -186,6 +199,7 @@ Deno.serve(async (req) => {
     psid = String(body.psid ?? '');
     message = String(body.message ?? '').trim();
     isLike = body.like === true;
+    forceHumanAgent = body.force_human_agent === true;
     // images (array of {url, path, type}) is the current shape - path is the Storage object path
     // for a one-off ad-hoc attachment (see supabase_chatbot_staff_attachment_upload.sql), so it can
     // be recorded as ChatbotMessages.AttachmentPath and picked up by the existing 60-day cleanup
@@ -259,7 +273,7 @@ Deno.serve(async (req) => {
         ? await sendWithFallback(psid, { attachment: { type: 'image', payload: { sticker_id: LIKE_STICKER_ID } } }, pageAccessToken, graphVersion)
         : item.attachmentUrl
           ? await sendWithFallback(psid, { attachment: { type: item.attachmentKind, payload: { url: item.attachmentUrl, is_reusable: true } } }, pageAccessToken, graphVersion)
-          : await sendWithFallback(psid, { text: item.message }, pageAccessToken, graphVersion);
+          : await sendWithFallback(psid, { text: item.message }, pageAccessToken, graphVersion, forceHumanAgent);
 
       // DeliveryStatus can't be known by admin_send_chatbot_message itself (it runs before this Send
       // API attempt), so it's set here directly - this is the one place chatbot-staff-reply touches

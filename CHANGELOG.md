@@ -4,6 +4,38 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-29
 
+- AO-00023 still failed after the timeout fix (Custom Aquarium line saved as ItemCode by the not-yet-deployed old GMA quote code); widened the repair script's check to all unsynced orders ([supabase_fix_gma_custom_aquarium_lines.sql](sql/supabase_fix_gma_custom_aquarium_lines.sql)).
+
+- Fix: "Retry Push to Pancake" timed out (AO-00023, "canceling statement due to statement timeout") - its RPC now gets the same 90s statement_timeout as GMA Create/Edit Order ([supabase_gma_conversation_order_statement_timeout.sql](sql/supabase_gma_conversation_order_statement_timeout.sql)).
+
+- Added a one-off fix script for AO-00023's failed Pancake push: its Custom Accessory/Sticker line has no Items row mapping CUSTOM-STICKER to a Pancake product, so the push refused a partial order ([supabase_fix_custom_sticker_pancake_push.sql](sql/supabase_fix_custom_sticker_pancake_push.sql)).
+
+- Fix: Aquarium Calculator forced Tempered Glass for e.g. 36 CM (~14") because its "36 inches+" rule compared the raw typed width/height without converting from the Unit of Measure - now converts to inches first ([index.html](docs/WebAquariumCalculator/index.html)).
+
+- Portal Messages widget redesign: SVG icons, color initials avatars with presence dots, conversation search + newest-first sort, unread dots/pulse, date separators, stacked same-sender bubbles, "Alice is typing" indicator, auto-growing composer (Enter sends, Shift+Enter new line), Esc to close, dark-mode + mobile full-height layout. Same data/realtime logic ([chat.js](docs/js/chat.js), [styles.css](docs/css/styles.css)).
+
+- Fix: Assign timed out ("Tank Maker: canceling statement due to statement timeout", 104640) because the open-order refresh saved lines (a Pancake call) AFTER updating the order, holding its row lock for the call - the lines save now runs before any update ([supabase_online_order_fill_stub_rows.sql](sql/supabase_online_order_fill_stub_rows.sql)).
+
+- Online Orders: the open-order refresh now also saves an order's lines when it has none yet, so a newly synced GMA custom order gets its Custom badge / Tank Maker slot right away (the order card shows Pancake's lines live, hiding that they weren't saved; e.g. 104609) ([supabase_online_order_fill_stub_rows.sql](sql/supabase_online_order_fill_stub_rows.sql)).
+
+- GMA Conversations: Create Order's Location now defaults to GMA instead of Amaya (editing an existing order still shows its saved location) ([gmaConversations.js](docs/js/gmaConversations.js)).
+
+- Diagnostic for GMA orders' Assigned message still going through Pancake ("missing Page_ID/Conversation_ID", order 104607) ([supabase_check_gma_assigned_message.sql](sql/supabase_check_gma_assigned_message.sql)).
+
+- Online Orders: GMA orders confirmed from GMA Conversations could stay a blank "stub" row forever (no status/customer/warehouse → not Custom, can't Assign; e.g. 104569) - the every-minute open-order refresh now also picks stub rows and fills their header from Pancake with the header sync's mapping ([supabase_online_order_fill_stub_rows.sql](sql/supabase_online_order_fill_stub_rows.sql)).
+
+- GMA Conversations: Custom Aquarium / Stand / Sticker order lines now get a full labeled build sheet as their note (size + entered unit, gallons, glass/tempered/low-iron + safety upgrades, frame, AIO/enclosure, sump + extras, stickers, aquascape, drawing link; stand frame/height/footing/cabinet/sump holder; sticker type/thickness/repair/area/qty) instead of a one-line spec ([gmaConversations.js](docs/js/gmaConversations.js)).
+
+- GMA Conversations: Custom Aquarium/Stand order lines now save the tag as CategoryCode (ItemCode empty), same as Order Now and the bot - saving it as ItemCode matched no Items row and failed the Pancake push (AO-00019). One-off repair for already-saved lines ([gmaConversations.js](docs/js/gmaConversations.js), [supabase_fix_gma_custom_aquarium_lines.sql](sql/supabase_fix_gma_custom_aquarium_lines.sql)).
+
+- GMA Conversations: Create Order / Edit Order failed with "canceling statement due to statement timeout" when Pancake was slow - the synchronous Pancake push (up to ~63s with retries) ran under the anon role's short default timeout; both RPCs now allow 90s ([supabase_gma_conversation_order_statement_timeout.sql](sql/supabase_gma_conversation_order_statement_timeout.sql)).
+
+- Online Orders: the To Ship "ready for pickup" message and status photos (To Ship photo + standalone Send Photo) now reach GMA Page customers through `chatbot-staff-reply` instead of silently skipping / failing on the missing Pancake conversation; Pancake orders unchanged (same templates, now in `_online_order_status_message_text`) ([supabase_online_order_status_message_gma.sql](sql/supabase_online_order_status_message_gma.sql), [onlineOrders.js](docs/js/onlineOrders.js)).
+
+- GMA Conversations: SuperUser-only **Test Human Agent** button sends a `HUMAN_AGENT`-tagged test message to the open conversation (new `force_human_agent` flag skips the normal send) and shows Facebook's exact result, for Meta's Human Agent test call ([chatbot-staff-reply/index.ts](supabase/functions/chatbot-staff-reply/index.ts), [gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html)).
+
+- Online Orders: the first-Assigned "in production" message now also reaches GMA Page customers. It used to fail because those orders have no Pancake conversation; the SQL now returns the GMA PSID + text and the portal sends it through `chatbot-staff-reply` (subject to Facebook's 24h window) ([supabase_online_order_assigned_message_gma.sql](sql/supabase_online_order_assigned_message_gma.sql), [onlineOrders.js](docs/js/onlineOrders.js)).
+
 - Customer names: Facebook's profile lookup fails (code 100 / subcode 33) without Meta's separate "Business Asset User Profile Access" feature, so the Messenger webhook and Fetch Names still try it first (each try counts as a Meta App Review test call) and then fall back to the customer's name from their conversation's participant list, which `pages_messaging` alone allows ([facebook-messenger-webhook/index.ts](supabase/functions/facebook-messenger-webhook/index.ts), [facebook-conversations-backfill/index.ts](supabase/functions/facebook-conversations-backfill/index.ts)).
 
 - GMA Conversations: new **Fetch Names** button fills in the Facebook name for every conversation still showing a raw PSID (the webhook only looked names up on a customer's next message). If Facebook still refuses, its exact error shows next to the button. Import Facebook History now also fills names on conversations that already existed ([facebook-conversations-backfill/index.ts](supabase/functions/facebook-conversations-backfill/index.ts), [gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html)).

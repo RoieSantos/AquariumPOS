@@ -1078,11 +1078,24 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
     if (created.length) {
       printSerialLabels(created.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
     }
+    // GMA Page order: the SQL hands back the psid + text instead of sending
+    // (supabase_online_order_status_message_gma.sql) - send it through the GMA Page here.
+    if (result?.gma_psid && result.gma_message) {
+      showSendStatusBanner("Messaging the customer on the GMA Page...");
+      const gma = await sendGmaMessage(result.gma_psid, result.gma_message);
+      result.message_sent = gma.sent;
+      result.message_error = gma.error;
+    }
     if (notifyCustomer && result && !result.message_sent) {
       alert('Status updated, but the customer notification failed to send: ' + (result.message_error || 'unknown error'));
     }
 
-    if (photoUrl) {
+    const gmaPhotoPsid = photoUrl ? (result?.gma_psid || await getGmaPsid(orderId)) : null;
+    if (photoUrl && gmaPhotoPsid) {
+      showSendStatusBanner("Sending the photo to the customer on the GMA Page...");
+      const gmaPhoto = await sendGmaOrderPhoto(orderId, gmaPhotoPsid, photoUrl, photoStoragePath);
+      if (!gmaPhoto.sent) alert('Status updated, but the photo could not be attached: ' + (gmaPhoto.error || 'unknown error'));
+    } else if (photoUrl) {
       // The retry loop inside admin_send_online_order_status_photo can take several seconds (up to
       // 8 attempts with a short pause between each) - update the banner text so it's clear this
       // specific step, not the whole action, is what's still working.
@@ -1800,6 +1813,19 @@ async function sendOrderStatusPhoto(orderId, photoUrl, photoStoragePath, trigger
 
   let sent = false;
   try {
+    // GMA Page order: no Pancake conversation - send through the GMA Page instead.
+    const gmaPsid = await getGmaPsid(orderId);
+    if (gmaPsid) {
+      const gma = await sendGmaOrderPhoto(orderId, gmaPsid, photoUrl, photoStoragePath);
+      if (!gma.sent) alert('Could not send the photo: ' + (gma.error || 'unknown error'));
+      else {
+        sent = true;
+        showSendStatusBanner('Photo sent!');
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      return sent;
+    }
+
     const { data, error } = await supabaseClient.rpc('admin_send_online_order_status_photo', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -2089,6 +2115,14 @@ async function saveAssignDialog() {
       // First time Assigned: the customer gets the "in production" message
       // (supabase_online_order_assigned_message.sql) - say how it went.
       const sync = Array.isArray(syncData) ? syncData[0] : syncData;
+      // GMA Page order: the SQL can't reach the GMA Page's Send API, so it hands back the psid + text
+      // and it's sent here (supabase_online_order_assigned_message_gma.sql).
+      if (sync?.gma_psid && sync.gma_message) {
+        btn.textContent = 'Messaging customer...';
+        const gma = await sendGmaAssignedMessage(o.order_id, sync.gma_psid, sync.gma_message);
+        sync.message_sent = gma.sent;
+        sync.message_error = gma.error;
+      }
       if (sync?.changed && sync.new_status === 'Assigned') {
         const eta = sync.estimated_delivery_date ? `Estimated delivery date: ${sync.estimated_delivery_date}.` : 'No estimated delivery date was set (check the glass turnaround days).';
         if (sync.message_sent) alert(`Order ${o.order_id} is now Assigned. The customer was sent the "in production" message.\n${eta}`);
@@ -2110,6 +2144,77 @@ async function saveAssignDialog() {
     return;
   }
   closeAssignDialog();
+}
+
+// Sends to a GMA Page customer through chatbot-staff-reply (same as the Send Message modal's GMA
+// route) - normal send inside Facebook's 24h window, HUMAN_AGENT-tagged after it. Never throws.
+async function sendGmaMessage(psid, message, images) {
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        psid,
+        message: message || '',
+        images: images || []
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.ok) return { sent: true, error: null };
+    return { sent: false, error: result.error || `Send failed (${response.status}).` };
+  } catch (err) {
+    return { sent: false, error: err?.message || 'Could not reach the GMA Page.' };
+  }
+}
+
+// The GMA psid for a GMA Page order, or null for a Pancake order (supabase_online_order_send_message.sql).
+async function getGmaPsid(orderId) {
+  const { data, error } = await supabaseClient.rpc('admin_get_online_order_messaging_route', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+  const route = !error && Array.isArray(data) ? data[0] : null;
+  return route?.is_gma_order ? route.gma_psid : null;
+}
+
+// Sends a status photo to a GMA Page customer and logs it in the same photo history as Pancake orders
+// (supabase_online_order_status_message_gma.sql). The photo's own Storage cleanup cron still owns the
+// file, so no path is passed to chatbot-staff-reply.
+async function sendGmaOrderPhoto(orderId, psid, photoUrl, photoStoragePath) {
+  const { sent, error } = await sendGmaMessage(psid, '', [{ url: photoUrl, path: null, type: 'image' }]);
+  const { error: logError } = await supabaseClient.rpc('admin_record_online_order_status_photo', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId,
+    p_photo_url: photoUrl,
+    p_photo_storage_path: photoStoragePath,
+    p_sent: sent,
+    p_error: error
+  });
+  if (logError) console.error('Could not log the GMA status photo:', logError.message);
+  return { sent, error };
+}
+
+// Sends the first-Assigned "in production" message to a GMA Page customer, then logs the outcome so it
+// isn't sent twice.
+async function sendGmaAssignedMessage(orderId, psid, message) {
+  const { sent, error } = await sendGmaMessage(psid, message);
+  const { error: logError } = await supabaseClient.rpc('admin_record_online_order_assigned_message', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId,
+    p_sent: sent,
+    p_error: error
+  });
+  if (logError) console.error('Could not log the GMA assigned message:', logError.message);
+  return { sent, error };
 }
 
 function wireAssignDialog() {

@@ -23,6 +23,8 @@ const chatReceipts = new Map(); // conversationId -> { deliveredUpTo: iso|null, 
 const chatLastMineAt = new Map(); // conversationId -> ISO timestamp of the last message *I* sent in it
 const chatConversationHasAlice = new Map(); // conversationId -> boolean, refreshed each time a thread is opened
 const chatConversationIsGroup = new Map(); // conversationId -> boolean, so send-time logic doesn't need to re-find it in chatConversations
+const chatConversationMemberCount = new Map(); // conversationId -> member count, for the group thread header's "N members"
+const CHAT_GROUP_WINDOW_MS = 5 * 60 * 1000; // consecutive messages from one sender within this window stack as one block
 let chatNewMode = 'dm'; // 'dm' | 'group' - which tab is active in the "New" view
 const chatSelectedGroupMembers = new Set(); // usernames picked so far while chatNewMode === 'group'
 const ALICE_USERNAME = 'alice';
@@ -52,6 +54,51 @@ function chatUpdateBubbleBadge() {
   const count = chatUnreadCount();
   badge.textContent = count > 9 ? '9+' : String(count);
   badge.classList.toggle('hidden', count === 0);
+  document.getElementById('chatWidgetBubble')?.classList.toggle('chat-widget-bubble-unread', count > 0);
+  const listBadge = document.getElementById('chatListUnread');
+  if (listBadge) {
+    listBadge.textContent = count === 0 ? '' : `${count} unread`;
+  }
+}
+
+// Inline SVG icons (stroke = currentColor) - replaces the old emoji buttons, which rendered
+// differently per OS and looked out of place next to the rest of the portal's UI.
+const CHAT_ICONS = {
+  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.8-.8L3 20.5l1.4-4.3A8.2 8.2 0 0 1 3 11.5 8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>',
+  chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
+  compose: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.4 20.4l17.4-7.5a1 1 0 0 0 0-1.8L3.4 3.6a1 1 0 0 0-1.4 1.2L4.2 11 13 12l-8.8 1-2.2 6.2a1 1 0 0 0 1.4 1.2z"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
+  group: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>'
+};
+
+function chatInitials(name) {
+  const words = String(name || '?').replace(/\(.*?\)/g, '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  return (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
+}
+
+// Stable per-person color, so the same staff member always gets the same avatar color.
+function chatAvatarHue(key) {
+  let hash = 0;
+  for (const ch of String(key || '')) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  return Math.abs(hash) % 360;
+}
+
+// presence: undefined = don't show a presence dot at all (groups, Alice), true/false = online/offline.
+function chatAvatarHtml({ username, name, isGroup, presence, small }) {
+  const sizeClass = small ? ' chat-avatar-sm' : '';
+  const dot = presence === undefined ? '' : `<span class="chat-presence${presence ? ' chat-online' : ''}"></span>`;
+  if (isGroup) {
+    return `<span class="chat-avatar chat-avatar-group${sizeClass}">${CHAT_ICONS.group}</span>`;
+  }
+  if (username === ALICE_USERNAME) {
+    return `<span class="chat-avatar chat-avatar-alice${sizeClass}">AI</span>`;
+  }
+  return `<span class="chat-avatar${sizeClass}" style="--chat-avatar-hue:${chatAvatarHue(username)}">${chatEscapeHtml(chatInitials(name))}${dot}</span>`;
 }
 
 function chatFormatTime(iso) {
@@ -62,6 +109,29 @@ function chatFormatTime(iso) {
   return sameDay
     ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function chatFormatClock(iso) {
+  return iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+}
+
+function chatFormatDayLabel(iso) {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    ...(d.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {})
+  });
+}
+
+function chatOnlineCount() {
+  return Array.from(chatOnlineUsernames).filter((u) => u !== chatSession?.username).length;
 }
 
 function chatEscapeHtml(text) {
@@ -248,61 +318,89 @@ function chatBuildWidgetShell() {
   const root = document.createElement('div');
   root.id = 'chatWidgetRoot';
   root.innerHTML = `
-    <button id="chatWidgetBubble" class="chat-widget-bubble" type="button" aria-label="Messages">
-      💬
+    <button id="chatWidgetBubble" class="chat-widget-bubble" type="button" aria-label="Messages" aria-expanded="false" aria-controls="chatWidgetPanel">
+      <span class="chat-bubble-icon chat-bubble-icon-chat">${CHAT_ICONS.chat}</span>
+      <span class="chat-bubble-icon chat-bubble-icon-close">${CHAT_ICONS.chevronDown}</span>
       <span id="chatWidgetBadge" class="chat-widget-badge hidden">0</span>
     </button>
-    <div id="chatWidgetPanel" class="chat-widget-panel hidden">
+    <div id="chatWidgetPanel" class="chat-widget-panel hidden" role="dialog" aria-label="Messages">
       <div id="chatListView" class="chat-view">
         <div class="chat-widget-header">
-          <span>Messages</span>
-          <div>
-            <button id="chatNewBtn" class="chat-icon-btn" type="button" title="New message">✏️</button>
-            <button id="chatCloseBtn" class="chat-icon-btn" type="button" title="Close">✕</button>
+          <div class="chat-header-text">
+            <div class="chat-header-title">Messages</div>
+            <div class="chat-header-sub"><span id="chatListOnline"></span><span id="chatListUnread" class="chat-header-unread"></span></div>
           </div>
+          <div class="chat-header-actions">
+            <button id="chatNewBtn" class="chat-icon-btn" type="button" title="New message" aria-label="New message">${CHAT_ICONS.compose}</button>
+            <button id="chatCloseBtn" class="chat-icon-btn" type="button" title="Close (Esc)" aria-label="Close">${CHAT_ICONS.close}</button>
+          </div>
+        </div>
+        <div class="chat-widget-search">
+          <label class="chat-search-field">
+            ${CHAT_ICONS.search}
+            <input id="chatConversationSearch" type="text" placeholder="Search conversations" autocomplete="off" />
+          </label>
         </div>
         <div id="chatConversationList" class="chat-widget-body"></div>
       </div>
       <div id="chatThreadView" class="chat-view hidden">
         <div class="chat-widget-header">
-          <button id="chatBackBtn" class="chat-icon-btn" type="button" title="Back">←</button>
-          <span id="chatThreadTitle"></span>
-          <button id="chatThreadCloseBtn" class="chat-icon-btn" type="button" title="Close">✕</button>
+          <button id="chatBackBtn" class="chat-icon-btn" type="button" title="Back" aria-label="Back">${CHAT_ICONS.back}</button>
+          <span id="chatThreadAvatar" class="chat-header-avatar"></span>
+          <div class="chat-header-text">
+            <div id="chatThreadTitle" class="chat-header-title"></div>
+            <div id="chatThreadStatus" class="chat-header-sub"></div>
+          </div>
+          <button id="chatThreadCloseBtn" class="chat-icon-btn" type="button" title="Close (Esc)" aria-label="Close">${CHAT_ICONS.close}</button>
         </div>
-        <div id="chatThreadMessages" class="chat-widget-body chat-thread-messages"></div>
+        <div id="chatThreadMessages" class="chat-widget-body chat-thread-messages" aria-live="polite"></div>
         <div id="chatThreadReceipt" class="chat-thread-receipt"></div>
-        <div id="chatMentionDropdown" class="chat-mention-dropdown hidden"></div>
-        <form id="chatThreadForm" class="chat-thread-input-row">
-          <input id="chatThreadInput" type="text" placeholder="Type a message... (@ to mention)" maxlength="4000" autocomplete="off" />
-          <button type="submit" class="btn btn-primary btn-sm">Send</button>
+        <form id="chatThreadForm" class="chat-thread-input-row chat-composer">
+          <div id="chatMentionDropdown" class="chat-mention-dropdown hidden"></div>
+          <textarea id="chatThreadInput" rows="1" placeholder="Message... (@ to mention)" maxlength="4000" autocomplete="off"></textarea>
+          <button id="chatSendBtn" type="submit" class="chat-send-btn" title="Send (Enter)" aria-label="Send" disabled>${CHAT_ICONS.send}</button>
         </form>
+        <div class="chat-composer-hint">Enter to send · Shift+Enter for a new line</div>
       </div>
       <div id="chatNewView" class="chat-view hidden">
         <div class="chat-widget-header">
-          <button id="chatNewBackBtn" class="chat-icon-btn" type="button" title="Back">←</button>
-          <span>New</span>
-          <button id="chatNewCloseBtn" class="chat-icon-btn" type="button" title="Close">✕</button>
+          <button id="chatNewBackBtn" class="chat-icon-btn" type="button" title="Back" aria-label="Back">${CHAT_ICONS.back}</button>
+          <div class="chat-header-text">
+            <div class="chat-header-title">New conversation</div>
+          </div>
+          <button id="chatNewCloseBtn" class="chat-icon-btn" type="button" title="Close (Esc)" aria-label="Close">${CHAT_ICONS.close}</button>
         </div>
-        <div class="chat-new-tabs">
-          <button type="button" class="chat-new-tab active" data-mode="dm">Message</button>
-          <button type="button" class="chat-new-tab" data-mode="group">Group</button>
+        <div class="chat-new-tabs" role="tablist">
+          <button type="button" class="chat-new-tab active" data-mode="dm" role="tab">Direct message</button>
+          <button type="button" class="chat-new-tab" data-mode="group" role="tab">New group</button>
         </div>
         <div id="chatGroupNameRow" class="chat-widget-search hidden">
-          <input id="chatGroupNameInput" type="text" placeholder="Group name (e.g. Sales Team)" autocomplete="off" />
+          <input id="chatGroupNameInput" class="chat-plain-input" type="text" placeholder="Group name (e.g. Sales Team)" autocomplete="off" />
         </div>
         <div class="chat-widget-search">
-          <input id="chatDirectorySearch" type="text" placeholder="Search staff..." autocomplete="off" />
+          <label class="chat-search-field">
+            ${CHAT_ICONS.search}
+            <input id="chatDirectorySearch" type="text" placeholder="Search staff" autocomplete="off" />
+          </label>
         </div>
         <div id="chatDirectoryList" class="chat-widget-body"></div>
         <div id="chatGroupCreateRow" class="chat-thread-input-row hidden">
-          <button id="chatCreateGroupBtn" class="btn btn-primary btn-sm" type="button" style="width:100%;">Create Group</button>
+          <button id="chatCreateGroupBtn" class="chat-primary-btn" type="button" disabled>Create group</button>
         </div>
       </div>
     </div>
   `;
   document.body.appendChild(root);
 
-  document.getElementById('chatWidgetBubble').addEventListener('click', chatOpenPanel);
+  document.getElementById('chatWidgetBubble').addEventListener('click', () => {
+    if (chatIsPanelOpen()) chatClosePanel();
+    else chatOpenPanel();
+  });
+  document.getElementById('chatConversationSearch').addEventListener('input', chatRenderConversationList);
+  document.getElementById('chatThreadInput').addEventListener('input', chatAutosizeComposer);
+  document.addEventListener('keydown', (evt) => {
+    if (evt.key === 'Escape' && !evt.defaultPrevented && chatIsPanelOpen()) chatClosePanel();
+  });
   document.getElementById('chatCloseBtn').addEventListener('click', chatClosePanel);
   document.getElementById('chatThreadCloseBtn').addEventListener('click', chatClosePanel);
   document.getElementById('chatNewCloseBtn').addEventListener('click', chatClosePanel);
@@ -331,16 +429,37 @@ function chatSetNewMode(mode) {
   chatRenderDirectoryList();
 }
 
+function chatSetBubbleOpenState(isOpen) {
+  const bubble = document.getElementById('chatWidgetBubble');
+  bubble.classList.toggle('chat-widget-bubble-open', isOpen);
+  bubble.setAttribute('aria-expanded', String(isOpen));
+  bubble.setAttribute('aria-label', isOpen ? 'Close messages' : 'Messages');
+}
+
 function chatOpenPanel() {
   document.getElementById('chatWidgetPanel').classList.remove('hidden');
+  chatSetBubbleOpenState(true);
   chatShowListView();
   chatLoadConversations().catch((err) => console.error('Chat: failed to load conversations', err));
 }
 
 function chatClosePanel() {
   document.getElementById('chatWidgetPanel').classList.add('hidden');
+  chatSetBubbleOpenState(false);
   chatOpenConversationId = null;
   chatHideMentionDropdown();
+}
+
+// The composer is a textarea (so Shift+Enter can add a line break) that grows with its content up
+// to a few lines, then scrolls - the send button only enables once there's something to send.
+function chatAutosizeComposer() {
+  const input = document.getElementById('chatThreadInput');
+  input.style.height = 'auto';
+  // +2 for the 1px top/bottom border (box-sizing: border-box), else a stray scrollbar appears.
+  const fullHeight = input.scrollHeight + 2;
+  input.style.height = `${Math.min(fullHeight, 120)}px`;
+  input.style.overflowY = fullHeight > 120 ? 'auto' : 'hidden';
+  document.getElementById('chatSendBtn').disabled = input.value.trim() === '';
 }
 
 function chatShowListView() {
@@ -366,27 +485,59 @@ function chatRenderConversationList() {
   const container = document.getElementById('chatConversationList');
   if (!container) return;
 
+  const onlineEl = document.getElementById('chatListOnline');
+  if (onlineEl) {
+    const online = chatOnlineCount();
+    onlineEl.textContent = online === 0 ? 'No one else online' : `${online} online`;
+  }
+
   if (chatConversations.length === 0) {
-    container.innerHTML = '<p class="muted" style="padding:16px;">No conversations yet. Tap ✏️ to message someone.</p>';
+    container.innerHTML = `
+      <div class="chat-empty">
+        <span class="chat-empty-icon">${CHAT_ICONS.chat}</span>
+        <div class="chat-empty-title">No conversations yet</div>
+        <div class="chat-empty-sub">Message a teammate or start a group.</div>
+        <button type="button" class="chat-primary-btn chat-empty-action" data-action="new">${CHAT_ICONS.compose} New message</button>
+      </div>`;
+    container.querySelector('[data-action="new"]').addEventListener('click', chatShowNewView);
     return;
   }
 
-  container.innerHTML = chatConversations
-    .map((c) => {
-      const name = c.is_group ? (c.name || 'Group') : chatOtherDisplayName(c.other_username);
-      const isOnline = !c.is_group && chatOnlineUsernames.has(c.other_username);
-      const preview = c.last_message
-        ? `${c.last_message_sender === chatSession.username ? 'You: ' : ''}${chatEscapeHtml(c.last_message)}`
-        : 'Say hello!';
+  const search = (document.getElementById('chatConversationSearch')?.value || '').trim().toLowerCase();
+  const rows = chatConversations
+    .map((c) => ({ c, name: c.is_group ? (c.name || 'Group') : chatOtherDisplayName(c.other_username) }))
+    .filter(({ c, name }) => !search || name.toLowerCase().includes(search) || (c.last_message || '').toLowerCase().includes(search))
+    // Newest activity first - a live message updates last_message_at in place, so re-sort here
+    // rather than leaving a just-active conversation stuck where the last load put it.
+    .sort((a, b) => new Date(b.c.last_message_at || 0) - new Date(a.c.last_message_at || 0));
+
+  if (rows.length === 0) {
+    container.innerHTML = `<div class="chat-empty"><div class="chat-empty-sub">No conversations match "${chatEscapeHtml(search)}".</div></div>`;
+    return;
+  }
+
+  container.innerHTML = rows
+    .map(({ c, name }) => {
+      const isAlice = !c.is_group && c.other_username === ALICE_USERNAME;
+      const presence = c.is_group || isAlice ? undefined : chatOnlineUsernames.has(c.other_username);
+      let senderPrefix = '';
+      if (c.last_message && c.last_message_sender === chatSession.username) senderPrefix = 'You: ';
+      else if (c.last_message && c.is_group && c.last_message_sender) senderPrefix = `${chatOtherDisplayName(c.last_message_sender).split(' ')[0]}: `;
+      const preview = c.last_message ? `${chatEscapeHtml(senderPrefix)}${chatEscapeHtml(c.last_message)}` : '<em>Say hello 👋</em>';
       return `
-        <div class="chat-conv-item${c.unread ? ' chat-conv-unread' : ''}" data-conversation-id="${c.conversation_id}">
-          <span class="chat-avatar-dot${isOnline ? ' chat-online' : ''}"></span>
+        <button type="button" class="chat-conv-item${c.unread ? ' chat-conv-unread' : ''}" data-conversation-id="${c.conversation_id}">
+          ${chatAvatarHtml({ username: c.other_username, name, isGroup: c.is_group, presence })}
           <div class="chat-conv-text">
-            <div class="chat-conv-name">${chatEscapeHtml(name)}</div>
-            <div class="chat-conv-preview">${preview}</div>
+            <div class="chat-conv-top">
+              <span class="chat-conv-name">${chatEscapeHtml(name)}</span>
+              <span class="chat-conv-time">${chatFormatTime(c.last_message_at)}</span>
+            </div>
+            <div class="chat-conv-bottom">
+              <span class="chat-conv-preview">${preview}</span>
+              ${c.unread ? '<span class="chat-unread-dot" aria-label="Unread"></span>' : ''}
+            </div>
           </div>
-          <div class="chat-conv-time">${chatFormatTime(c.last_message_at)}</div>
-        </div>
+        </button>
       `;
     })
     .join('');
@@ -410,22 +561,39 @@ function chatRenderDirectoryList() {
     : chatDirectory.filter((u) => u.username !== ALICE_USERNAME);
   const filtered = candidates.filter((u) => !search || u.display_name.toLowerCase().includes(search));
 
+  const createBtn = document.getElementById('chatCreateGroupBtn');
+  if (createBtn) {
+    const picked = chatSelectedGroupMembers.size;
+    createBtn.disabled = picked === 0;
+    createBtn.textContent = picked === 0 ? 'Pick people to add' : `Create group · ${picked + 1} people`;
+  }
+
   if (filtered.length === 0) {
-    container.innerHTML = '<p class="muted" style="padding:16px;">No staff found.</p>';
+    container.innerHTML = '<div class="chat-empty"><div class="chat-empty-sub">No staff found.</div></div>';
     return;
   }
 
-  container.innerHTML = filtered
+  // Online people first, then alphabetical - the person you want to reach right now is usually online.
+  const sorted = filtered.slice().sort((a, b) => {
+    const onlineDiff = Number(chatOnlineUsernames.has(b.username)) - Number(chatOnlineUsernames.has(a.username));
+    return onlineDiff || a.display_name.localeCompare(b.display_name);
+  });
+
+  container.innerHTML = sorted
     .map((u) => {
+      const isAlice = u.username === ALICE_USERNAME;
       const isOnline = chatOnlineUsernames.has(u.username);
       const checked = chatSelectedGroupMembers.has(u.username);
+      const status = isAlice ? 'AI assistant' : (isOnline ? 'Online' : 'Offline');
       return `
-        <div class="chat-conv-item${isGroupMode && checked ? ' chat-conv-selected' : ''}" data-username="${chatEscapeHtml(u.username)}">
-          ${isGroupMode ? `<input type="checkbox" ${checked ? 'checked' : ''} tabindex="-1" style="pointer-events:none;" />` : `<span class="chat-avatar-dot${isOnline ? ' chat-online' : ''}"></span>`}
+        <button type="button" class="chat-conv-item${isGroupMode && checked ? ' chat-conv-selected' : ''}" data-username="${chatEscapeHtml(u.username)}"${isGroupMode ? ` aria-pressed="${checked}"` : ''}>
+          ${chatAvatarHtml({ username: u.username, name: u.display_name, presence: isAlice ? undefined : isOnline })}
           <div class="chat-conv-text">
             <div class="chat-conv-name">${chatEscapeHtml(u.display_name)}</div>
+            <div class="chat-conv-preview">${status}</div>
           </div>
-        </div>
+          ${isGroupMode ? `<span class="chat-check${checked ? ' chat-check-on' : ''}">${checked ? CHAT_ICONS.check : ''}</span>` : ''}
+        </button>
       `;
     })
     .join('');
@@ -526,8 +694,36 @@ function chatRenderThreadHeader(conversationId) {
   const conv = chatConversations.find((c) => c.conversation_id === conversationId);
   if (!conv) return;
   const name = conv.is_group ? (conv.name || 'Group') : chatOtherDisplayName(conv.other_username);
+  const isAlice = !conv.is_group && conv.other_username === ALICE_USERNAME;
   const isOnline = !conv.is_group && chatOnlineUsernames.has(conv.other_username);
-  document.getElementById('chatThreadTitle').textContent = isOnline ? `${name} · Online` : name;
+
+  let status;
+  if (conv.is_group) {
+    const count = chatConversationMemberCount.get(conversationId);
+    status = count ? `${count} members` : 'Group';
+  } else if (isAlice) {
+    status = 'AI assistant · always available';
+  } else {
+    status = isOnline ? 'Online' : 'Offline';
+  }
+
+  document.getElementById('chatThreadAvatar').innerHTML = chatAvatarHtml({
+    username: conv.other_username,
+    name,
+    isGroup: conv.is_group,
+    presence: conv.is_group || isAlice ? undefined : isOnline,
+    small: true
+  });
+  document.getElementById('chatThreadTitle').textContent = name;
+  const statusEl = document.getElementById('chatThreadStatus');
+  statusEl.textContent = status;
+  statusEl.classList.toggle('chat-status-online', isOnline);
+}
+
+function chatResetThreadMessages(html) {
+  const messagesEl = document.getElementById('chatThreadMessages');
+  messagesEl.innerHTML = html || '';
+  delete messagesEl.dataset.lastDay;
 }
 
 async function chatOpenThread(conversationId) {
@@ -538,8 +734,12 @@ async function chatOpenThread(conversationId) {
   chatRenderThreadHeader(conversationId);
   chatJoinConversationChannel(conversationId);
 
+  const input = document.getElementById('chatThreadInput');
+  input.value = '';
+  chatAutosizeComposer();
+
   const messagesEl = document.getElementById('chatThreadMessages');
-  messagesEl.innerHTML = '<p class="muted" style="padding:16px;">Loading...</p>';
+  chatResetThreadMessages('<div class="chat-loading"><span></span><span></span><span></span></div>');
 
   const [{ data, error }, { data: memberRows }] = await Promise.all([
     supabaseClient
@@ -553,8 +753,11 @@ async function chatOpenThread(conversationId) {
       .eq('ConversationID', conversationId)
   ]);
 
+  // The user may have clicked into another conversation while this one was still loading.
+  if (chatOpenConversationId !== conversationId) return;
+
   if (error) {
-    messagesEl.innerHTML = `<p class="muted" style="padding:16px;">Failed to load messages: ${chatEscapeHtml(error.message)}</p>`;
+    chatResetThreadMessages(`<div class="chat-empty"><div class="chat-empty-sub">Failed to load messages: ${chatEscapeHtml(error.message)}</div></div>`);
     return;
   }
 
@@ -569,12 +772,23 @@ async function chatOpenThread(conversationId) {
   const isGroup = Boolean(conv?.is_group);
   chatConversationIsGroup.set(conversationId, isGroup);
   chatConversationHasAlice.set(conversationId, (memberRows || []).some((m) => m.Username === ALICE_USERNAME));
+  chatConversationMemberCount.set(conversationId, (memberRows || []).length);
+  chatRenderThreadHeader(conversationId);
   chatMentionCandidates = (memberRows || [])
     .map((m) => m.Username)
     .filter((u) => u !== chatSession.username)
     .map((u) => ({ username: u, displayName: chatOtherDisplayName(u) }));
 
-  messagesEl.innerHTML = '';
+  chatResetThreadMessages();
+  if (!data || data.length === 0) {
+    const otherName = conv?.is_group ? (conv.name || 'the group') : chatOtherDisplayName(conv?.other_username);
+    messagesEl.innerHTML = `
+      <div class="chat-empty chat-thread-empty">
+        ${chatAvatarHtml({ username: conv?.other_username, name: otherName, isGroup: isGroup })}
+        <div class="chat-empty-title">${chatEscapeHtml(otherName)}</div>
+        <div class="chat-empty-sub">No messages yet - say hello!</div>
+      </div>`;
+  }
   let lastMineAt = null;
   (data || []).forEach((m) => {
     chatAppendMessageBubble({ senderUsername: m.SenderUsername, body: m.Body, createdAtUtc: m.CreatedAtUtc }, isGroup);
@@ -591,18 +805,63 @@ function chatAppendMessageBubble(message, isGroup) {
   const messagesEl = document.getElementById('chatThreadMessages');
   if (!messagesEl) return;
 
+  messagesEl.querySelector('.chat-thread-empty')?.remove();
+  // New messages go above Alice's typing indicator (if showing) so it stays at the bottom.
+  const typingEl = document.getElementById('chatAliceTyping');
+  const insert = (el) => (typingEl ? messagesEl.insertBefore(el, typingEl) : messagesEl.appendChild(el));
+
+  const createdAt = message.createdAtUtc || new Date().toISOString();
+  const dayKey = new Date(createdAt).toDateString();
+  if (messagesEl.dataset.lastDay !== dayKey) {
+    const separator = document.createElement('div');
+    separator.className = 'chat-day-separator';
+    separator.innerHTML = `<span>${chatEscapeHtml(chatFormatDayLabel(createdAt))}</span>`;
+    insert(separator);
+    messagesEl.dataset.lastDay = dayKey;
+  }
+
+  // Stack consecutive messages from the same sender (within a few minutes) into one block: the
+  // sender name shows once at the top and the time once at the bottom, like Messenger/iMessage.
+  const prev = typingEl ? typingEl.previousElementSibling : messagesEl.lastElementChild;
+  const continuesPrev = Boolean(
+    prev?.classList.contains('chat-msg') &&
+    prev.dataset.sender === message.senderUsername &&
+    new Date(createdAt) - new Date(prev.dataset.createdAt) < CHAT_GROUP_WINDOW_MS
+  );
+  if (continuesPrev) prev.classList.add('chat-msg-has-next');
+
   const mine = message.senderUsername === chatSession.username;
   const bubble = document.createElement('div');
-  bubble.className = `chat-msg${mine ? ' chat-msg-mine' : ' chat-msg-theirs'}`;
+  bubble.className = `chat-msg${mine ? ' chat-msg-mine' : ' chat-msg-theirs'}${continuesPrev ? ' chat-msg-has-prev' : ''}`;
+  bubble.dataset.sender = message.senderUsername;
+  bubble.dataset.createdAt = createdAt;
   // Sender name label only makes sense in a group (a DM's "theirs" bubble is obviously the other
   // person) - and only on messages that aren't mine.
-  const senderLabel = isGroup && !mine ? `<div class="chat-msg-sender">${chatEscapeHtml(chatOtherDisplayName(message.senderUsername))}</div>` : '';
+  const senderLabel = isGroup && !mine && !continuesPrev
+    ? `<div class="chat-msg-sender">${chatEscapeHtml(chatOtherDisplayName(message.senderUsername))}</div>`
+    : '';
   bubble.innerHTML = `
     ${senderLabel}
-    <div class="chat-msg-bubble">${chatLinkify(message.body)}</div>
-    <div class="chat-msg-time">${chatFormatTime(message.createdAtUtc)}</div>
+    <div class="chat-msg-bubble" title="${chatEscapeHtml(new Date(createdAt).toLocaleString())}">${chatLinkify(message.body)}</div>
+    <div class="chat-msg-time">${chatFormatClock(createdAt)}</div>
   `;
-  messagesEl.appendChild(bubble);
+  insert(bubble);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function chatShowAliceTyping(show) {
+  const messagesEl = document.getElementById('chatThreadMessages');
+  const existing = document.getElementById('chatAliceTyping');
+  if (!show) {
+    existing?.remove();
+    return;
+  }
+  if (existing || !messagesEl) return;
+  const el = document.createElement('div');
+  el.id = 'chatAliceTyping';
+  el.className = 'chat-msg chat-msg-theirs chat-typing';
+  el.innerHTML = '<div class="chat-msg-bubble" aria-label="Alice is typing"><span></span><span></span><span></span></div>';
+  messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -687,7 +946,14 @@ function chatHandleThreadInputForMentions() {
 }
 
 function chatHandleThreadInputKeydown(evt) {
-  if (chatMentionStartIndex === -1 || chatMentionMatches.length === 0) return;
+  if (chatMentionStartIndex === -1 || chatMentionMatches.length === 0) {
+    // Enter sends, Shift+Enter adds a new line (isComposing: don't send mid-IME composition).
+    if (evt.key === 'Enter' && !evt.shiftKey && !evt.isComposing) {
+      evt.preventDefault();
+      document.getElementById('chatThreadForm').requestSubmit();
+    }
+    return;
+  }
 
   if (evt.key === 'ArrowDown') {
     evt.preventDefault();
@@ -701,6 +967,7 @@ function chatHandleThreadInputKeydown(evt) {
     evt.preventDefault();
     chatInsertMention(chatMentionMatches[chatMentionHighlightIndex].username);
   } else if (evt.key === 'Escape') {
+    evt.preventDefault(); // only close the dropdown, not the whole panel
     chatHideMentionDropdown();
   }
 }
@@ -719,6 +986,7 @@ function chatInsertMention(username) {
   const newCaret = before.length + inserted.length;
   input.setSelectionRange(newCaret, newCaret);
   chatHideMentionDropdown();
+  chatAutosizeComposer();
   input.focus();
 }
 
@@ -729,6 +997,7 @@ async function chatHandleSendMessage(evt) {
   if (!body || !chatOpenConversationId) return;
 
   input.value = '';
+  chatAutosizeComposer();
   chatHideMentionDropdown();
   const conversationId = chatOpenConversationId;
   const isGroup = Boolean(chatConversationIsGroup.get(conversationId));
@@ -743,6 +1012,7 @@ async function chatHandleSendMessage(evt) {
   if (error) {
     alert('Failed to send: ' + error.message);
     input.value = body;
+    chatAutosizeComposer();
     return;
   }
 
@@ -774,6 +1044,7 @@ async function chatHandleSendMessage(evt) {
 }
 
 async function chatRequestAliceReply(conversationId, isGroup) {
+  if (chatOpenConversationId === conversationId) chatShowAliceTyping(true);
   try {
     const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/portal-chat-alice-reply`, {
       method: 'POST',
@@ -790,6 +1061,7 @@ async function chatRequestAliceReply(conversationId, isGroup) {
     });
 
     const result = await response.json().catch(() => ({}));
+    if (chatOpenConversationId === conversationId) chatShowAliceTyping(false);
     if (!response.ok || !result.reply) return;
 
     const nowIso = new Date().toISOString();
@@ -813,6 +1085,7 @@ async function chatRequestAliceReply(conversationId, isGroup) {
 
     chatConversationChannels.get(conversationId)?.send({ type: 'broadcast', event: 'message', payload: message });
   } catch (err) {
+    if (chatOpenConversationId === conversationId) chatShowAliceTyping(false);
     console.error('Chat: Alice reply failed', err);
   }
 }

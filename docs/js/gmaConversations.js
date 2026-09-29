@@ -1204,7 +1204,7 @@ function renderCreateOrderTab(conv) {
           <label>Location</label>
           <select id="newOrderLocation">
             <option value="Amaya">Amaya</option>
-            <option value="GMA">GMA</option>
+            <option value="GMA" selected>GMA</option>
           </select>
         </div>
       </div>
@@ -1764,6 +1764,76 @@ function customAquariumSpecText(result) {
   return bits.join(', ');
 }
 
+// Full build sheet for the order line's note - per "do better details on the note if the order is
+// customized.. be specific". customAquariumSpecText above stays the short one-liner for the line name;
+// this is what the makers (Pancake note, maker lists, the Assigned message's "Note :") actually read.
+const fmtIn = (v) => `${Number(v).toFixed(2).replace(/\.?0+$/, '')}`;
+
+function customEnteredSizeText(unit, values) {
+  if (!unit || unit === 'Inches') return '';
+  return ` (entered as ${values.map(fmtIn).join(' x ')} ${unit.toLowerCase()})`;
+}
+
+function customAquariumNoteText(result) {
+  const n = result.normalized;
+  const checked = (id) => document.getElementById(id).checked;
+  const selectedText = (id) => document.getElementById(id).selectedOptions[0].textContent;
+  const lines = [];
+
+  lines.push(`CUSTOM AQUARIUM`);
+  lines.push(`Size (L x W x H): ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} x ${fmtIn(n.heightInches)} in`
+    + customEnteredSizeText(n.unit, ['customQuoteLength', 'customQuoteWidth', 'customQuoteHeight'].map((id) => document.getElementById(id).value)));
+  lines.push(`Volume: approx. ${fmtIn(result.gallons)} gallons`);
+
+  const glass = [n.glassThickness, n.temperedGlass ? 'Tempered' : 'Regular (non-tempered)'];
+  if (checked('customQuoteLowIron')) glass.push('Low-Iron (ultra clear)');
+  let glassLine = `Glass: ${glass.join(', ')}`;
+  const requested = result.requested || {};
+  if (requested.glassThickness && requested.glassThickness !== n.glassThickness) glassLine += ` - upgraded from ${requested.glassThickness} for safety`;
+  if (requested.temperedGlass === false && n.temperedGlass) glassLine += ' - tempered required for this size';
+  lines.push(glassLine);
+
+  lines.push(`Frame: ${n.rimless ? 'Rimless' : 'With rim/bracing'}${checked('customQuoteHighStrip') ? ', High Strip' : ''}`);
+  if (checked('customQuoteAio')) lines.push('Type: AIO (all-in-one, built-in rear filter compartment)');
+  if (checked('customQuoteEnclosure')) lines.push('Type: Enclosure');
+
+  if (n.sump) {
+    const s = n.sump;
+    const extras = [];
+    if (checked('customQuoteSumpFilterMedias')) extras.push('Filter Media');
+    if (checked('customQuoteSumpOverflowBox')) extras.push('Overflow Box');
+    if (checked('customQuoteSumpPiping')) extras.push('Piping');
+    if (checked('customQuoteSumpAllumTopCover')) extras.push('Allum Top Cover');
+    lines.push(`Filtration: ${s.type} ${fmtIn(s.lengthInches)} x ${fmtIn(s.widthInches)} x ${fmtIn(s.heightInches)} in`
+      + (extras.length ? ` - with ${extras.join(', ')}` : ' - glass only'));
+  }
+
+  if (checked('customQuoteStickerBgEnabled')) {
+    lines.push(`Background Sticker: ${selectedText('customQuoteStickerBgType')}${checked('customQuoteStickerBgAllSides') ? ' - all sides (back + left + right)' : ' - back panel only'}`);
+  }
+  if (checked('customQuoteStickerBottomEnabled')) lines.push(`Bottom Sticker: ${selectedText('customQuoteStickerBottomType')}`);
+  if (checked('customQuoteAquascape')) lines.push('Aquascape Service: Yes');
+  lines.push(`Stand: ${n.stand ? 'Yes - see Custom Stand line' : 'None (aquarium only)'}`);
+  lines.push(`Drawing: ${buildAquariumDrawingUrl(result)}`);
+  return lines.join('\n');
+}
+
+function customStandNoteText(result) {
+  const stand = result.normalized.stand;
+  if (!stand) return '';
+  const n = result.normalized;
+  const tubularLabel = { '1x1': '1x1', '1.5x1.5': '1 1/2 x 1 1/2', '2x2': '2x2' }[stand.tubular] || stand.tubular;
+  const lines = [
+    'CUSTOM STAND',
+    `For aquarium: ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} x ${fmtIn(n.heightInches)} in (stand top = ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} in)`,
+    `Frame: ${stand.layers}-layer, ${tubularLabel} in tubular, ${stand.stainless ? 'Stainless steel' : 'Standard (painted) steel'}`,
+    `Height: ${fmtIn(stand.heightInches)} in total floor-to-top${Number(stand.footingInches) > 0 ? ` (includes ${fmtIn(stand.footingInches)} in footing)` : ''}`,
+    `Cabinet: ${stand.cabinet ? 'Yes' : 'No (open frame)'}`,
+    `Sump Holder: ${stand.sumpHolder ? `Yes - ${fmtIn(stand.sumpWidth)} in wide` : 'No'}`
+  ];
+  return lines.join('\n');
+}
+
 function customStandSpecText(result) {
   const stand = result.normalized.stand;
   if (!stand) return '';
@@ -1958,25 +2028,28 @@ function addCustomQuoteToSale() {
   const stand = result.normalized.stand;
   const aquariumSpec = customAquariumSpecText(result);
 
+  // CategoryCode (not ItemCode) = 'CUSTOM-AQUARIUM', same as orderNow.js and the bot: the Items row is
+  // Code CI-005 / Name CUSTOM-AQUARIUM, which _push_automated_order_to_pancake only finds by Name when
+  // ItemCode is empty - an ItemCode of 'CUSTOM-AQUARIUM' matched nothing and failed the Pancake push.
   newOrderLines.push({
-    category_code: null,
-    item_code: 'CUSTOM-AQUARIUM',
+    category_code: 'CUSTOM-AQUARIUM',
+    item_code: null,
     item_name: `Custom Aquarium (${aquariumSpec})`,
     price: stand ? result.aquariumOnlyPrice : result.totalPrice,
     quantity: 1,
-    note: aquariumSpec,
+    note: customAquariumNoteText(result),
     variation_id: null
   });
 
   if (stand) {
     const standSpec = customStandSpecText(result);
     newOrderLines.push({
-      category_code: null,
-      item_code: 'CUSTOM-STAND',
+      category_code: 'CUSTOM-STAND',
+      item_code: null,
       item_name: `Custom Stand (${standSpec})`,
       price: Number(result.components.stand || 0),
       quantity: 1,
-      note: standSpec,
+      note: customStandNoteText(result),
       variation_id: null
     });
   }
@@ -2129,6 +2202,22 @@ function renderCustomStickerResult(result) {
   document.getElementById('addCustomStickerToSaleBtn').classList.remove('hidden');
 }
 
+// Full build sheet for a custom sticker/accessory line's note (see customAquariumNoteText).
+function customStickerNoteText(result, qty) {
+  const n = result.normalized;
+  const hasThickness = window.CustomAquariumCalculator.stickerTypeHasThickness(n.type);
+  const lines = [
+    `CUSTOM ${n.isRepair ? 'REPAIR - ' : ''}${String(n.type).toUpperCase()}`,
+    `Size (L x W): ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} in`
+      + customEnteredSizeText(n.unit, [document.getElementById('customStickerLength').value, document.getElementById('customStickerWidth')?.value]),
+    `Area: ${fmtIn(n.areaSqFt)} sq ft per piece`
+  ];
+  if (hasThickness) lines.push(`Thickness: ${n.thickness}${n.isTempered ? ', Tempered' : ''}`);
+  if (n.isRepair) lines.push('Job: Repair (existing glass)');
+  lines.push(`Quantity: ${qty} piece(s) - ₱${Number(result.totalPrice).toFixed(2)} each`);
+  return lines.join('\n');
+}
+
 function addCustomStickerToSale() {
   if (!customStickerResult) return;
   const result = customStickerResult;
@@ -2141,7 +2230,7 @@ function addCustomStickerToSale() {
     item_name: `Custom Accessory/Sticker - ${spec}`,
     price: result.totalPrice,
     quantity: qty,
-    note: spec,
+    note: customStickerNoteText(result, qty),
     variation_id: null
   });
 
@@ -2318,6 +2407,50 @@ async function fetchMissingNames() {
     await loadConversations();
   } catch (err) {
     statusEl.textContent = `Name lookup failed: ${err instanceof Error ? err.message : 'network error'}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// SuperUser-only: sends "Human Agent test" to the open conversation with the HUMAN_AGENT tag forced
+// (chatbot-staff-reply's force_human_agent) - the App Dashboard's Human Agent test call, without
+// waiting for a customer to fall outside the 24h window. Shows Facebook's exact result.
+async function testHumanAgent() {
+  const btn = document.getElementById('testHumanAgentBtn');
+  const statusEl = document.getElementById('importHistoryStatus');
+  statusEl.classList.remove('hidden');
+  if (!selectedPsid) {
+    statusEl.textContent = 'Open a conversation first (your own, as an app admin/tester).';
+    return;
+  }
+  if (!confirm('Send "Human Agent test" to this conversation using the HUMAN_AGENT tag?')) return;
+
+  btn.disabled = true;
+  statusEl.textContent = 'Sending Human Agent test...';
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        psid: selectedPsid,
+        message: 'Human Agent test',
+        images: [],
+        force_human_agent: true
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    statusEl.textContent = response.ok
+      ? 'Human Agent test sent. The App Dashboard counter can take up to 24h to update.'
+      : `Human Agent test failed: ${result.error || response.status}`;
+    await loadMessages(selectedPsid);
+  } catch (err) {
+    statusEl.textContent = `Human Agent test failed: ${err instanceof Error ? err.message : 'network error'}`;
   } finally {
     btn.disabled = false;
   }
@@ -3571,6 +3704,10 @@ async function handleGmaInboxEvent(payload) {
   document.getElementById('refreshInboxBtn').addEventListener('click', loadConversations);
   document.getElementById('importHistoryBtn').addEventListener('click', importFacebookHistory);
   document.getElementById('fetchNamesBtn').addEventListener('click', fetchMissingNames);
+  if (session.isSuperUser) {
+    document.getElementById('testHumanAgentBtn').classList.remove('hidden');
+    document.getElementById('testHumanAgentBtn').addEventListener('click', testHumanAgent);
+  }
   document.getElementById('conversationSearchInput').addEventListener('input', (e) => onConversationSearchInput(e.target.value));
   document.getElementById('toggleQuickRepliesBtn').addEventListener('click', () => toggleQuickRepliesPanel());
   document.getElementById('toggleAttachmentBtn').addEventListener('click', () => document.getElementById('attachmentFileInput').click());
