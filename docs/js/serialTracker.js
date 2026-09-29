@@ -324,7 +324,7 @@ async function resolveAndOpenSourceDoc(docNo) {
 // always finds a matching row regardless of table size.
 async function loadSerials() {
   const tbody = document.getElementById('serialTableBody');
-  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
 
   const search = document.getElementById('searchInput').value.trim();
   const status = document.getElementById('statusFilter').value;
@@ -347,7 +347,7 @@ async function loadSerials() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
@@ -363,9 +363,36 @@ async function loadSerials() {
     SoldOnlineOrderId: r.sold_online_order_id,
     CreatedAtUtc: r.created_at_utc,
     UpdatedAtUtc: r.updated_at_utc,
-    UpdatedBy: r.updated_by
+    UpdatedBy: r.updated_by,
+    Maker: null
   }));
   renderSerials();
+  attachSerialMakers();
+}
+
+// Maker column - per "in the Serial tracker can you show who is the maker?": the Tank / Stand Maker
+// of the Production Order (or online order) that built each serial (supabase_serial_tracker_maker.sql).
+// Loaded after the list so it never slows the search down; quietly "-" until that file is run.
+async function attachSerialMakers() {
+  const serialNos = allSerials.map((r) => r.SerialNo).filter(Boolean);
+  if (!serialNos.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_get_serial_makers', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_nos: serialNos
+  });
+  if (error) { console.warn('staff_get_serial_makers:', error.message); return; }
+  const bySerial = new Map((data || []).map((m) => [m.serial_no, m]));
+  allSerials.forEach((r) => { r.Maker = bySerial.get(r.SerialNo) || null; });
+  renderSerials();
+}
+
+// The list grid fills the rest of the window (css/bc-list.css .bc-grid-wrap) - same as Purchase Orders.
+function fitGridToViewport() {
+  const el = document.getElementById('serialGridWrap');
+  if (!el || el.offsetParent === null) return;
+  const available = window.innerHeight - el.getBoundingClientRect().top - 24;
+  el.style.maxHeight = Math.max(240, available) + 'px';
 }
 
 function renderSerials() {
@@ -399,7 +426,8 @@ function renderSerials() {
   }
 
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="muted">No serial records found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No serial records found.</td></tr>';
+    document.getElementById('serialCount').textContent = '0 serials';
     return;
   }
 
@@ -414,32 +442,42 @@ function renderSerials() {
   // other exception, same admin gate. Both Mark buttons only show when the serial's current
   // Location already matches the admin's own warehouse - acting on a serial physically tagged to
   // a DIFFERENT store here would misrepresent stock that isn't actually on hand locally.
+  // Business Central list look (css/bc-list.css .bc-grid): the serial reads as the row's document
+  // no., actions are text links (.bc-row-action) instead of grey buttons, Sold Receipt / Sold Online
+  // share one "Sold To" column and the update date / user share "Last Updated".
+  document.getElementById('serialCount').textContent = `${rows.length.toLocaleString()} serial${rows.length === 1 ? '' : 's'}`;
+  const sub = (text) => (text ? `<div class="muted" style="font-size:11px; line-height:1.3;">${text}</div>` : '');
   tbody.innerHTML = rows
     .map((r) => {
       const canAct = isSerialAdmin && isOwnWarehouseLocation(r.Location);
       const statusUpper = (r.Status || '').toUpperCase();
-      const markInStockBtn = canAct && statusUpper !== 'IN_STOCK'
-        ? ` <button class="btn btn-secondary btn-sm mark-in-stock-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark In Stock</button>`
+      const markInStockBtn = canMarkInStock(r)
+        ? `<button class="bc-row-action mark-in-stock-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark In Stock</button>`
         : '';
       const markSoldBtn = canAct && statusUpper === 'IN_STOCK'
-        ? ` <button class="btn btn-secondary btn-sm mark-sold-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark Sold</button>`
+        ? `<button class="bc-row-action mark-sold-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark Sold</button>`
         : '';
+      const soldTo = r.SoldReceiptNo
+        ? `${escapeHtml(r.SoldReceiptNo)}${sub('POS receipt')}`
+        : r.SoldOnlineOrderId
+          ? `${escapeHtml(r.SoldOnlineOrderId)}${sub('Online order')}`
+          : '<span class="muted">-</span>';
       return `
       <tr>
-        <td>${escapeHtml(r.SerialNo)}</td>
-        <td>${escapeHtml(r.ItemCode)}</td>
-        <td>${escapeHtml(r.ItemDescription)}</td>
-        <td>${escapeHtml(r.Location)}${isSerialAdmin ? ` <button class="btn btn-secondary btn-sm edit-location-btn" data-serial="${encodeURIComponent(r.SerialNo)}" data-location="${encodeURIComponent(r.Location || '')}" type="button">Edit</button>` : ''}</td>
-        <td><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span>${markInStockBtn}${markSoldBtn}</td>
-        <td>${renderSourceDocCell(r.SourceDocumentNo)}</td>
-        <td>${escapeHtml(r.SoldReceiptNo)}</td>
-        <td>${escapeHtml(r.SoldOnlineOrderId)}</td>
-        <td>${formatDateTime(r.UpdatedAtUtc)}</td>
-        <td>${escapeHtml(r.UpdatedBy)}</td>
+        <td><span class="bc-doc-no" style="white-space:nowrap;">${escapeHtml(r.SerialNo)}</span></td>
+        <td style="white-space:nowrap;">${escapeHtml(r.ItemCode)}</td>
+        <td class="cell-text" title="${escapeHtml(r.ItemDescription)}">${escapeHtml(r.ItemDescription)}</td>
+        <td style="white-space:nowrap;">${escapeHtml(r.Location) || '<span class="muted">Unassigned</span>'}${isSerialAdmin ? `<button class="bc-row-action edit-location-btn" data-serial="${encodeURIComponent(r.SerialNo)}" data-location="${encodeURIComponent(r.Location || '')}" type="button">Edit</button>` : ''}</td>
+        <td style="white-space:nowrap;"><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span>${markInStockBtn}${markSoldBtn}</td>
+        <td style="white-space:nowrap;">${renderSourceDocCell(r.SourceDocumentNo) || '<span class="muted">-</span>'}</td>
+        <td style="white-space:nowrap;">${r.Maker ? `${escapeHtml(r.Maker.maker_name || 'Not assigned')}${sub(`${r.Maker.part === 'stand' ? 'Stand' : 'Tank'} maker`)}` : '<span class="muted">-</span>'}</td>
+        <td style="white-space:nowrap;">${soldTo}</td>
+        <td style="white-space:nowrap;">${formatDateTime(r.UpdatedAtUtc) || '<span class="muted">-</span>'}${sub(escapeHtml(r.UpdatedBy))}</td>
       </tr>
     `;
     })
     .join('');
+  fitGridToViewport();
 
   tbody.querySelectorAll('.source-doc-link').forEach((link) => {
     link.addEventListener('click', (event) => {
@@ -463,18 +501,36 @@ function renderSerials() {
   });
 }
 
+// Per "in the serial tracker once its sold dont let it mark in stock unless if your a super user": a
+// SOLD serial is a unit that left with a customer, so putting it back In Stock is Super User only (and
+// they may do it from any location - e.g. a return handled from head office). Every other status
+// (Returned, In Transit, Reserved...) keeps the Serial Admin + own-warehouse rule.
+function isSuperUserSession() {
+  return !!currentSession?.isSuperUser;
+}
+
+function canMarkInStock(r) {
+  const statusUpper = (r.Status || '').toUpperCase();
+  if (statusUpper === 'IN_STOCK') return false;
+  if (statusUpper === 'SOLD') return isSuperUserSession();
+  return isSerialAdmin && isOwnWarehouseLocation(r.Location);
+}
+
 async function markInStock(serialNo) {
-  // Re-check against the row's actual current Location, not just the (already-filtered) button
-  // that was clicked - matches saveEditLocation's own defensive re-check rather than trusting the
-  // DOM alone.
+  // Re-check against the row itself, not just the (already-filtered) button that was clicked -
+  // matches saveEditLocation's own defensive re-check rather than trusting the DOM alone.
   const row = allSerials.find((r) => r.SerialNo === serialNo);
-  if (!row || !isOwnWarehouseLocation(row.Location)) {
-    alert('This serial is tagged to a different warehouse - it can only be marked In Stock from its own location.');
+  if (!row || !canMarkInStock(row)) {
+    alert((row?.Status || '').toUpperCase() === 'SOLD'
+      ? 'This serial is already SOLD - only a Super User can put a sold serial back In Stock.'
+      : 'This serial is tagged to a different warehouse - it can only be marked In Stock from its own location.');
     renderSerials();
     return;
   }
+  if ((row.Status || '').toUpperCase() === 'SOLD'
+    && !confirm(`${serialNo} is SOLD${row.SoldReceiptNo ? ` (receipt ${row.SoldReceiptNo})` : row.SoldOnlineOrderId ? ` (online order ${row.SoldOnlineOrderId})` : ''}.\n\nPutting it back In Stock means the unit is physically back on hand (e.g. a return). Continue?`)) return;
 
-  if (!confirm(`Mark ${serialNo} as IN_STOCK?`)) return;
+  if ((row.Status || '').toUpperCase() !== 'SOLD' && !confirm(`Mark ${serialNo} as IN_STOCK?`)) return;
 
   const { error } = await supabaseClient
     .from('ItemSerialTracking')
@@ -573,6 +629,7 @@ async function markSold(serialNo) {
   document.getElementById('statusFilter').addEventListener('change', loadSerials);
   document.getElementById('categoryFilter').addEventListener('change', loadSerials);
   document.getElementById('refreshBtn').addEventListener('click', loadSerials);
+  window.addEventListener('resize', fitGridToViewport);
   document.getElementById('closeViewTransferBtn').addEventListener('click', () =>
     document.getElementById('viewTransferModal').classList.add('hidden')
   );

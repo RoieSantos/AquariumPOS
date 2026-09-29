@@ -147,6 +147,85 @@
 
       <div class="section-divider"></div>
 
+      <!-- Barcode Printer (js/generalSetup.js + js/labelPrinter.js, sql/supabase_barcode_printer_settings.sql,
+           supabase/functions/qz-sign) - serial labels print straight to this printer through QZ Tray. -->
+      <div class="toolbar">
+        <h2 style="margin:0;">Barcode Printer</h2>
+      </div>
+      <p class="muted">Serial barcode labels (100 &times; 30 mm) print straight to this printer, with no print dialog. Order printouts keep using the normal printer. Needs <a href="https://qz.io/download/" target="_blank" rel="noopener">QZ Tray</a> installed and running on the PC that prints. Without it, labels open in the normal print dialog.</p>
+      <p class="muted" id="qzStatus" style="font-weight:600;">Checking QZ Tray on this PC...</p>
+
+      <div class="form-row">
+        <label for="barcodePrinterSelect">Barcode printer</label>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <select id="barcodePrinterSelect" style="min-width:260px; width:auto;"><option value="">(type the name below, or Find Printers)</option></select>
+          <button class="btn btn-secondary" id="findPrintersBtn" type="button">Find Printers</button>
+        </div>
+        <input type="text" id="barcodePrinterInput" placeholder="Printer name exactly as Windows lists it, e.g. XP-365B" style="margin-top:6px;" />
+      </div>
+
+      <div class="form-row">
+        <label for="qzCertificateInput">QZ Tray certificate (public, PEM)</label>
+        <textarea id="qzCertificateInput" rows="5" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" style="width:100%; font-family:monospace; font-size:12px;"></textarea>
+        <span class="muted" style="font-size:12px; display:block; margin-top:2px;">
+          Lets QZ Tray print silently instead of asking "Allow this site?" every time. One-time setup:
+          (1) In QZ Tray: Advanced &rarr; Site Manager &rarr; + &rarr; Create New. It makes a certificate and private key and trusts them on this PC.
+          (2) Paste the <b>certificate</b> (digital-certificate.txt) here and Save.
+          (3) Put the <b>private key</b> (private-key.pem) in the Supabase secret <code>QZ_PRIVATE_KEY</code> and deploy the <code>qz-sign</code> function. The key never goes in this page.
+          (4) On any other PC that prints labels, copy the certificate into QZ Tray's Site Manager too.
+        </span>
+      </div>
+
+      <!-- Label layout (js/labelPrinter.js DEFAULT_LAYOUT, saved as PortalSettings BARCODE_LABEL_LAYOUT) -->
+      <h3 style="margin:16px 0 6px;">Label layout</h3>
+      <p class="muted" style="margin-top:0;">Adjust until the Test Print lines up on your labels. The preview updates as you change things. Save to use it for every serial label.</p>
+      <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;">
+        <div style="display:grid; grid-template-columns:repeat(2, minmax(150px, 1fr)); gap:8px 14px; flex:1 1 360px; max-width:520px;">
+          <label class="label-layout-field">Label width (mm)<input type="number" id="llWidth" min="20" max="200" step="1" /></label>
+          <label class="label-layout-field">Label height (mm)<input type="number" id="llHeight" min="10" max="200" step="1" /></label>
+          <label class="label-layout-field">Move right / left (mm)<input type="number" id="llOffsetX" min="-20" max="20" step="0.5" title="+ moves right, - moves left" /></label>
+          <label class="label-layout-field">Move down / up (mm)<input type="number" id="llOffsetY" min="-20" max="20" step="0.5" title="+ moves down, - moves up" /></label>
+          <label class="label-layout-field">Text size
+            <select id="llTextScale">
+              <option value="0.8">Small</option>
+              <option value="1">Normal</option>
+              <option value="1.2">Large</option>
+              <option value="1.4">Extra large</option>
+            </select>
+          </label>
+          <label class="label-layout-field">Rotation
+            <select id="llRotation" title="Only if the printer feeds labels sideways or upside down">
+              <option value="0">None</option>
+              <option value="90">90&deg;</option>
+              <option value="180">180&deg; (upside down)</option>
+              <option value="270">270&deg;</option>
+            </select>
+          </label>
+          <label class="label-layout-field">Barcode height (%)<input type="number" id="llBarcodeHeight" min="30" max="100" step="5" /></label>
+          <label class="label-layout-field">Barcode width (%)<input type="number" id="llBarcodeWidth" min="30" max="100" step="2" /></label>
+          <label class="label-layout-field">Description lines<input type="number" id="llDescLines" min="1" max="4" step="1" /></label>
+          <label class="label-layout-field">Copies per serial<input type="number" id="llCopies" min="1" max="5" step="1" /></label>
+          <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="llShowItemCode" style="width:auto;" /> Show item code</label>
+          <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="llShowSku" style="width:auto;" /> Show SKU</label>
+          <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="llShowDescription" style="width:auto;" /> Show description</label>
+        </div>
+        <div style="flex:0 1 420px;">
+          <div class="muted" style="font-size:12px; margin-bottom:4px;">Preview (rotation is applied by the printer, not shown here)</div>
+          <img id="labelPreview" alt="Label preview" style="display:block; max-width:100%; border:1px dashed #999; background:#fff;" />
+          <button class="btn btn-secondary" id="resetLabelLayoutBtn" type="button" style="margin-top:8px;">Reset to default</button>
+        </div>
+      </div>
+      <style>.label-layout-field { display:flex; flex-direction:column; gap:2px; font-size:13px; } .label-layout-field input, .label-layout-field select { margin:0; }</style>
+
+      <div id="barcodePrinterError" class="error-text hidden"></div>
+      <div id="barcodePrinterNotice" class="muted hidden" style="color:var(--success);"></div>
+      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-success" id="saveBarcodePrinterBtn" type="button">Save Printer &amp; Layout</button>
+        <button class="btn btn-secondary" id="testBarcodePrinterBtn" type="button">Test Print</button>
+      </div>
+
+      <div class="section-divider"></div>
+
       <div class="toolbar">
         <h2 id="noSeriesFormTitle" style="margin:0;">Add No. Series</h2>
       </div>
@@ -330,7 +409,8 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=paymethods1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/generalSetup.js"></script>
+  <script src="js/labelPrinter.js?v=3"></script>
+  <script src="js/generalSetup.js?v=bp3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

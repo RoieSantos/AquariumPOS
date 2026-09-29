@@ -1110,6 +1110,11 @@ WHERE OrderID = @OrderID
                 }
                 catch { }
                 string orderId = GetOrderIdForRow(idx);
+                if (!string.IsNullOrWhiteSpace(orderId) && OrderHasCustomBuildLines(orderId))
+                {
+                    try { MessageBox.Show(string.Format(CustomOrderPortalOnlyMessage, orderId), "Custom Order - Use the Portal", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                    return;
+                }
                 if (!string.IsNullOrWhiteSpace(orderId))
                 {
                     await ChangeOrderStatusAsync(idx, orderId, "Printed").ConfigureAwait(false);
@@ -3428,6 +3433,54 @@ WHERE Code = @Code
 
             return quantity.ToString("N2");
         }
+
+        // Per "in the local POS can you control that custom items will need assignment in the portal and
+        // cannot be print on the local pos": an order with a custom BUILD line (custom aquarium / tank /
+        // stand / sump / cabinet) is handled on the Web Portal - Online Orders -> Assign sets its Tank /
+        // Stand Makers and moves it to Assigned - so the POS refuses to Print it or mark it Printed.
+        // Same detection as the portal's Ready to Ship (docs/js/onlineOrders.js isCustomBuildItem): the
+        // item code OR the description, since a custom aquarium line often carries its variant's own item
+        // code with "CUSTOM-AQUARIUM" only in the description. A custom sticker/accessory is not a build
+        // and is not blocked. ('_' in LIKE matches any one character, so CUSTOM_STAND = CUSTOM-STAND too.)
+        private bool OrderHasCustomBuildLines(string orderId)
+        {
+            if (string.IsNullOrWhiteSpace(orderId)) return false;
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+
+                bool hasDescription = false;
+                using (var colCmd = new SqlCommand(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='OnlineOrderLines' AND COLUMN_NAME='Description'", conn))
+                {
+                    hasDescription = colCmd.ExecuteScalar() != null;
+                }
+
+                string[] builds = { "AQUARIUM", "TANK", "STAND", "SUMP", "CABINET" };
+                var predicates = new System.Collections.Generic.List<string>();
+                foreach (var b in builds)
+                {
+                    predicates.Add($"ISNULL(ItemCode, '') LIKE 'CUSTOM_{b}%'");
+                    predicates.Add($"ISNULL(product_display_id, '') LIKE 'CUSTOM_{b}%'");
+                    if (hasDescription) predicates.Add($"ISNULL(Description, '') LIKE '%CUSTOM[-_ ]{b}%'");
+                }
+
+                using var cmd = new SqlCommand(
+                    $"SELECT TOP 1 1 FROM dbo.OnlineOrderLines WHERE OrderID = @OrderID AND ({string.Join(" OR ", predicates)})", conn);
+                cmd.Parameters.AddWithValue("@OrderID", orderId.Trim());
+                return cmd.ExecuteScalar() != null;
+            }
+            catch
+            {
+                return false; // can't tell - don't block the POS on a lookup failure
+            }
+        }
+
+        private const string CustomOrderPortalOnlyMessage =
+            "Order {0} has custom item(s) (custom aquarium / stand / sump).\n\n" +
+            "Custom orders are handled on the Web Portal: Online Orders -> Assign the Tank / Stand Maker there. " +
+            "It can't be printed or marked Printed from the POS.";
 
         private bool IsPrintedStatusForRow(int rowIndex)
         {
@@ -6462,6 +6515,13 @@ END", conn);
                 {
                     if (showSuccessMessage)
                         MessageBox.Show("Cannot print orders with status 'canceled'.", "Invalid Status", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return false;
+                }
+
+                // Custom builds are assigned and tracked on the Web Portal, not printed here.
+                if (OrderHasCustomBuildLines(orderId))
+                {
+                    MessageBox.Show(string.Format(CustomOrderPortalOnlyMessage, orderId), "Custom Order - Use the Portal", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
 

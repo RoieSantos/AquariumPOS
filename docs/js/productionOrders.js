@@ -505,7 +505,38 @@ async function loadCardLines() {
   });
   if (error) { showCardError(describeSupabaseError(error, 'Could not load lines.')); return; }
   renderLines(data || []);
+  await loadCardRework();
   if (!isManager) renderMakerView(data || []);
+}
+
+// Rework log for the open order (supabase_production_order_rework.sql). Quietly empty until that file
+// is run. Managers get a history table on the card; makers see the open entry for their part in the
+// maker view.
+let cardRework = [];
+
+async function loadCardRework() {
+  cardRework = [];
+  const part = document.getElementById('prodReworkPart');
+  if (!openOrder) { part.classList.add('hidden'); return; }
+  const { data, error } = await supabaseClient.rpc('staff_list_production_order_rework', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: openOrder.order_no
+  });
+  cardRework = error ? [] : (data || []);
+  if (!isManager || !cardRework.length) { part.classList.add('hidden'); return; }
+  const fmt = (t) => (t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+  document.getElementById('prodReworkBody').innerHTML = cardRework.map((r) => `
+    <tr>
+      <td>${escapeHtml(fmt(r.sent_back_at))}<div class="muted" style="font-size:11px;">by ${escapeHtml(r.sent_back_by_name || '')}</div></td>
+      <td>${escapeHtml(PART_LABEL[r.part] || r.part)}</td>
+      <td>${escapeHtml(r.maker_name || 'Not assigned')}<div class="muted" style="font-size:11px;">${r.prev_done_at ? 'done ' + escapeHtml(fmt(r.prev_done_at)) : ''}</div></td>
+      <td style="white-space:normal;">${escapeHtml(r.reason || '')}</td>
+      <td>${r.fixed_at
+        ? `<span class="badge badge-success">&#10003; Fixed</span><div class="muted" style="font-size:11px;">${escapeHtml(r.fixed_by_name || '')} · ${escapeHtml(fmt(r.fixed_at))}</div>`
+        : '<span class="badge badge-warning">&#8634; Rework</span>'}</td>
+    </tr>`).join('');
+  part.classList.remove('hidden');
 }
 
 // Per "in the mobile, i want the maker's view more Mobile friendly - just the Description / color of
@@ -523,8 +554,10 @@ function renderMakerView(lines) {
     const rows = lines.filter((l) => l.part === part);
     const left = (l) => Math.max(0, Number(l.quantity || 0) - Number(l.qty_output || 0));
     const total = rows.reduce((n, l) => n + left(l), 0);
+    const rework = cardRework.find((r) => r.part === part && !r.fixed_at);
     return `
       ${myParts.length > 1 ? `<div class="pm-part-title">${PART_LABEL[part]}</div>` : ''}
+      ${rework ? `<div class="pm-rework"><b>&#8634; Rework</b>${escapeHtml(rework.reason || '')}<small>Sent back by ${escapeHtml(rework.sent_back_by_name || '')} · ${escapeHtml(new Date(rework.sent_back_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</small></div>` : ''}
       <div class="pm-lines">
         ${rows.map((l) => {
           const colour = lineColour(l);
@@ -600,6 +633,7 @@ async function openCard(orderRow) {
   fillHeaderFields();
   renderCardHeader();
   document.getElementById('prodSerialsPart').classList.add('hidden');
+  document.getElementById('prodReworkPart').classList.add('hidden');
   document.getElementById('prodLinesBody').innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
   const makerView = !isManager && !!orderRow;
   document.getElementById('prodCardModal').classList.toggle('maker-view', makerView);
@@ -729,19 +763,38 @@ async function postOutput() {
   const serialCount = rows.reduce((n, r) => n + (r.serial_nos?.length || 0), 0);
   const finalStatus = (data || []).find((r) => r.order_status)?.order_status;
   await reloadCard();
-  showCardNotice(`Output posted: ${rows.length} line(s)${serialCount ? `, ${serialCount} serial(s) created` : ''}.${finalStatus === 'Finished' ? ' The order is now Finished.' : ''}`);
+  let labelNote = '';
+  if (serialCount) {
+    // Per "i have a barcode printer.. so everytime we print a barcode it will print on the barcode
+    // printer": the new serials' labels go straight out (js/labelPrinter.js - QZ Tray to General
+    // Setup's Barcode Printer, else the print dialog).
+    const created = new Set(rows.flatMap((r) => r.serial_nos || []));
+    const serials = (await loadCardSerials()).filter((s) => created.has(s.serial_no));
+    const result = await LabelPrinter.printSerialLabels(serials.map(serialToLabel));
+    labelNote = ` ${result.message}`;
+  }
+  showCardNotice(`Output posted: ${rows.length} line(s)${serialCount ? `, ${serialCount} serial(s) created` : ''}.${finalStatus === 'Finished' ? ' The order is now Finished.' : ''}${labelNote}`);
   loadProductionOrders();
 }
 
-async function setPartDone(part, done) {
+function serialToLabel(s) {
+  return { serialNo: s.serial_no, itemCode: s.item_code, description: s.item_description || '' };
+}
+
+// Undo = rework for the maker (supabase_production_order_rework.sql): p_reason is logged and shown to
+// them until they mark the part done again. Only sent on an undo, so marking done still works before
+// that file is run (an undo needs it).
+async function setPartDone(part, done, reason) {
   showCardError('');
-  const { error } = await supabaseClient.rpc('staff_set_production_order_part_done', {
+  const args = {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_no: openOrder.order_no,
     p_part: part,
     p_done: done
-  });
+  };
+  if (!done) args.p_reason = reason || null;
+  const { error } = await supabaseClient.rpc('staff_set_production_order_part_done', args);
   if (error) { showCardError(describeSupabaseError(error, 'Could not update Production Done.')); return; }
   if (!isManager && done) {
     // Done work drops off a maker's list, same as Online Orders' My Assignments.
@@ -751,7 +804,7 @@ async function setPartDone(part, done) {
     return;
   }
   await reloadCard();
-  showCardNotice(done ? `${PART_LABEL[part]} marked Production Done.` : `${PART_LABEL[part]} Production Done undone.`);
+  showCardNotice(done ? `${PART_LABEL[part]} marked Production Done.` : `${PART_LABEL[part]} Production Done undone - logged as rework for the maker.`);
   loadProductionOrders();
 }
 
@@ -860,21 +913,15 @@ async function printOrder() {
   win.document.close();
 }
 
-// A plain printable sheet of the order's serials - for writing / sticking on the finished units.
+// Reprint the order's in-stock serials as barcode labels (100x30mm, Code128) - to the barcode printer
+// through js/labelPrinter.js, same as right after Post Output.
 async function printSerials() {
+  showCardError('');
   const serials = (await loadCardSerials()).filter((s) => s.status === 'IN_STOCK');
   if (!serials.length) { showCardError('No in-stock serials on this order to print.'); return; }
-  const win = window.open('', '_blank');
-  if (!win) { showCardError('Allow pop-ups to print the serials.'); return; }
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(openOrder.order_no)} serials</title>
-    <style>body{font-family:Arial,sans-serif;margin:16px}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 12px;color:#555;font-size:12px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
-    .lbl{border:1px dashed #999;padding:10px;break-inside:avoid}.sn{font-size:16px;font-weight:bold;font-family:monospace}.d{font-size:12px;margin-top:4px}</style></head>
-    <body><h1>${escapeHtml(openOrder.order_no)}${openOrder.description ? ' - ' + escapeHtml(openOrder.description) : ''}</h1>
-    <p>${escapeHtml(openOrder.warehouse_name || '')} · ${serials.length} serial(s)</p>
-    <div class="grid">${serials.map((s) => `<div class="lbl"><div class="sn">${escapeHtml(s.serial_no)}</div><div class="d">${escapeHtml(s.item_description || s.item_code)}</div></div>`).join('')}</div>
-    <script>window.onload=function(){window.print();}<\/script></body></html>`);
-  win.document.close();
+  if (!confirm(`Print ${serials.length} serial label(s) for ${openOrder.order_no}?`)) return;
+  const result = await LabelPrinter.printSerialLabels(serials.map(serialToLabel));
+  showCardNotice(result.message);
 }
 
 // ---------------------------------------------------------------- Wiring
@@ -963,6 +1010,7 @@ function wireLinesGrid() {
   const session = await requireAuth();
   if (!session) return;
   currentSession = session;
+  LabelPrinter.init(session);
   renderTopNav('Production Orders');
 
   isManager = !!(session.isSuperUser || session.isProductionManager);
@@ -1018,8 +1066,16 @@ function wireLinesGrid() {
     const btn = e.target.closest('[data-part-done]');
     if (!btn) return;
     const done = btn.dataset.done === '1';
-    if (done && !confirm(`Is the ${PART_LABEL[btn.dataset.partDone]} part of ${openOrder.order_no} completely finished?`)) return;
-    setPartDone(btn.dataset.partDone, done);
+    const part = btn.dataset.partDone;
+    if (done) {
+      if (!confirm(`Is the ${PART_LABEL[part]} part of ${openOrder.order_no} completely finished?`)) return;
+      setPartDone(part, true);
+      return;
+    }
+    // Undo goes back to the maker as rework - ask what needs fixing (Cancel keeps it done).
+    const reason = prompt(`Undo ${PART_LABEL[part]} Production Done on ${openOrder.order_no}?\n\nIt goes back to the ${PART_LABEL[part]} Maker as REWORK. What needs to be fixed?`, '');
+    if (reason === null) return;
+    setPartDone(part, false, reason.trim());
   };
   document.getElementById('prodPartDoneActions').addEventListener('click', onPartDoneClick);
   document.getElementById('prodMakerView').addEventListener('click', onPartDoneClick);

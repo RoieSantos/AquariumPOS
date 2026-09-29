@@ -246,6 +246,140 @@ function handleUploadBackground() {
   });
 }
 
+// Barcode Printer - per "i have a barcode printer.. can we add a setup in the general setup? so
+// everytime we print a barcode it will print on the barcode printer". Two PortalSettings rows
+// (sql/supabase_barcode_printer_settings.sql), staff-readable so whoever prints can use them:
+// BARCODE_PRINTER_NAME and QZ_CERTIFICATE (public cert - the private key is the qz-sign Edge Function's
+// QZ_PRIVATE_KEY secret, never on this page). Printing itself is js/labelPrinter.js.
+function showBarcodePrinterMessage(error, notice) {
+  const errorEl = document.getElementById('barcodePrinterError');
+  const noticeEl = document.getElementById('barcodePrinterNotice');
+  errorEl.textContent = error || '';
+  errorEl.classList.toggle('hidden', !error);
+  noticeEl.textContent = notice || '';
+  noticeEl.classList.toggle('hidden', !notice);
+}
+
+async function getPublicSetting(key) {
+  const { data } = await supabaseClient.rpc('admin_get_public_portal_setting', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_setting_key: key
+  });
+  return data || '';
+}
+
+async function loadBarcodePrinter() {
+  LabelPrinter.init(currentSession);
+  const [printer, certificate] = await Promise.all([getPublicSetting('BARCODE_PRINTER_NAME'), getPublicSetting('QZ_CERTIFICATE')]);
+  document.getElementById('barcodePrinterInput').value = printer;
+  document.getElementById('qzCertificateInput').value = certificate;
+  fillLabelLayoutForm(await LabelPrinter.getLayout());
+  refreshQzStatus(printer);
+}
+
+// ---- Label layout - per "how can we adjust the barcode printout?". Saved as JSON in PortalSettings
+// BARCODE_LABEL_LAYOUT; js/labelPrinter.js applies it to every serial label (QZ Tray and dialog).
+const LABEL_LAYOUT_FIELDS = {
+  widthMm: 'llWidth', heightMm: 'llHeight', offsetXMm: 'llOffsetX', offsetYMm: 'llOffsetY',
+  textScale: 'llTextScale', rotation: 'llRotation', barcodeHeightPct: 'llBarcodeHeight',
+  barcodeWidthPct: 'llBarcodeWidth', descriptionLines: 'llDescLines', copies: 'llCopies'
+};
+const PREVIEW_LABEL = { serialNo: 'RS-AQ-042-26-000001', itemCode: 'AQ-042', sku: 'AQ-042-BLK', description: 'TEST AQUARIUM ONLY - Black' };
+
+function fillLabelLayoutForm(layout) {
+  Object.entries(LABEL_LAYOUT_FIELDS).forEach(([key, id]) => { document.getElementById(id).value = String(layout[key]); });
+  document.getElementById('llShowItemCode').checked = layout.showItemCode;
+  document.getElementById('llShowSku').checked = layout.showSku;
+  document.getElementById('llShowDescription').checked = layout.showDescription;
+  refreshLabelPreview();
+}
+
+function readLabelLayoutForm() {
+  const layout = {};
+  Object.entries(LABEL_LAYOUT_FIELDS).forEach(([key, id]) => { layout[key] = Number(document.getElementById(id).value); });
+  layout.showItemCode = document.getElementById('llShowItemCode').checked;
+  layout.showSku = document.getElementById('llShowSku').checked;
+  layout.showDescription = document.getElementById('llShowDescription').checked;
+  return LabelPrinter.normalizeLayout(layout);
+}
+
+let labelPreviewTimer = null;
+function refreshLabelPreview() {
+  clearTimeout(labelPreviewTimer);
+  labelPreviewTimer = setTimeout(async () => {
+    try {
+      document.getElementById('labelPreview').src = await LabelPrinter.preview(PREVIEW_LABEL, readLabelLayoutForm());
+    } catch (err) {
+      console.error('Label preview failed:', err);
+    }
+  }, 150);
+}
+
+async function refreshQzStatus(printer) {
+  const status = document.getElementById('qzStatus');
+  const available = await LabelPrinter.isQzAvailable();
+  status.textContent = available
+    ? `QZ Tray is running on this PC.${printer ? ` Labels go to: ${printer}` : ' Pick the barcode printer below.'}`
+    : 'QZ Tray is not running on this PC - install / start it (qz.io/download), then reload this page. Until then labels use the print dialog.';
+  status.style.color = available ? 'var(--success)' : 'var(--danger, #b42318)';
+}
+
+async function findBarcodePrinters() {
+  showBarcodePrinterMessage('', '');
+  const printers = await LabelPrinter.listPrinters();
+  if (!printers) { showBarcodePrinterMessage('QZ Tray is not running on this PC, so the printer list can\'t be read. Type the printer name instead.'); return; }
+  const select = document.getElementById('barcodePrinterSelect');
+  const current = document.getElementById('barcodePrinterInput').value.trim();
+  select.innerHTML = '<option value="">(pick a printer)</option>';
+  printers.forEach((p) => {
+    const option = document.createElement('option');
+    option.value = p;
+    option.textContent = p;
+    select.appendChild(option);
+  });
+  if (printers.includes(current)) select.value = current;
+  showBarcodePrinterMessage('', `Found ${printers.length} printer(s) on this PC.`);
+}
+
+async function saveBarcodePrinter() {
+  showBarcodePrinterMessage('', '');
+  const printer = document.getElementById('barcodePrinterInput').value.trim();
+  const certificate = document.getElementById('qzCertificateInput').value.trim();
+  if (certificate && !certificate.includes('BEGIN CERTIFICATE')) {
+    showBarcodePrinterMessage('That doesn\'t look like a certificate - paste the whole digital-certificate.txt (-----BEGIN CERTIFICATE----- ...). Never paste the private key here.');
+    return;
+  }
+  const save = (key, value, description) => supabaseClient.rpc('admin_upsert_portal_setting', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_setting_key: key,
+    p_setting_value: value,
+    p_description: description,
+    p_is_public_to_staff: true
+  });
+  const results = await Promise.all([
+    save('BARCODE_PRINTER_NAME', printer, 'Barcode / label printer name for serial labels (QZ Tray). Set from General Setup -> Barcode Printer.'),
+    save('QZ_CERTIFICATE', certificate, 'Public certificate (PEM) QZ Tray trusts for silent printing. Its private key is the qz-sign Edge Function secret QZ_PRIVATE_KEY.'),
+    save('BARCODE_LABEL_LAYOUT', JSON.stringify(readLabelLayoutForm()), 'Serial label layout (size, offset, rotation, text size...) as JSON. Edit from General Setup -> Barcode Printer -> Label layout.')
+  ]);
+  const failed = results.find((r) => r.error);
+  if (failed) { showBarcodePrinterMessage(failed.error.message); return; }
+  await LabelPrinter.reloadSettings();
+  showBarcodePrinterMessage('', 'Saved. Serial labels will print to this printer.');
+  refreshQzStatus(printer);
+  loadSettings();
+}
+
+async function testBarcodePrinter() {
+  showBarcodePrinterMessage('', '');
+  await LabelPrinter.reloadSettings();
+  // Uses the layout on screen (saved or not), so it can be tuned before saving.
+  const result = await LabelPrinter.printSerialLabels([PREVIEW_LABEL], { layout: readLabelLayoutForm() });
+  if (result.via === 'qz') showBarcodePrinterMessage('', result.message);
+  else showBarcodePrinterMessage(result.message);
+}
+
 // No. Series - running-number setups. No pagination (a handful of rows expected), unlike
 // Settings below which can grow large.
 //
@@ -877,6 +1011,17 @@ async function deleteSetting(key) {
   document.getElementById('saveTelegramBotTokenBtn').addEventListener('click', saveTelegramBotToken);
   document.getElementById('testTelegramNotificationBtn').addEventListener('click', testTelegramNotification);
   document.getElementById('testWebPushBtn').addEventListener('click', testWebPush);
+  document.getElementById('findPrintersBtn').addEventListener('click', findBarcodePrinters);
+  document.getElementById('barcodePrinterSelect').addEventListener('change', (e) => {
+    if (e.target.value) document.getElementById('barcodePrinterInput').value = e.target.value;
+  });
+  document.getElementById('saveBarcodePrinterBtn').addEventListener('click', saveBarcodePrinter);
+  document.getElementById('testBarcodePrinterBtn').addEventListener('click', testBarcodePrinter);
+  [...Object.values(LABEL_LAYOUT_FIELDS), 'llShowItemCode', 'llShowSku', 'llShowDescription'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', refreshLabelPreview);
+    document.getElementById(id).addEventListener('change', refreshLabelPreview);
+  });
+  document.getElementById('resetLabelLayoutBtn').addEventListener('click', () => fillLabelLayoutForm(LabelPrinter.normalizeLayout({})));
   populateNoSeriesCodeOptions();
 
   await loadCompanyInfo();
@@ -887,5 +1032,6 @@ async function deleteSetting(key) {
   await loadPancakePublicApiKeyStatus();
   await loadTelegramBotTokenStatus();
   await loadWebPushSubscriberCount();
+  await loadBarcodePrinter();
   await loadSettings();
 })();

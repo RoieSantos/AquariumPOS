@@ -42,6 +42,10 @@
     .pm-btn { min-height: 54px; border-radius: 12px; border: 1px solid #1e7d3a; background: #1e7d3a; color: #fff; font: inherit; font-size: 17px; font-weight: 700; cursor: pointer; }
     .pm-btn.undo { background: var(--bc-surface, #fff); color: #9a2d2d; border-color: var(--bc-line, #c9d0d9); }
     .pm-btn:disabled { opacity: .5; }
+    .pm-rework { margin-bottom: 10px; padding: 10px 12px; border-radius: 10px; background: #fde7e4; color: #6e1f1f; font-size: 15px; }
+    .pm-rework b { display: block; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 2px; }
+    .pm-rework small { display: block; margin-top: 4px; font-size: 12px; opacity: .8; }
+    :root[data-theme="dark"] .pm-rework { background: #3d1f1f; color: #f2a7a7; }
     .pm-done { padding: 12px 14px; border-radius: 12px; background: #dff3e4; color: #1e6b34; font-weight: 700; text-align: center; }
     @media (max-width: 760px) {
       #prodCardModal.maker-view { padding: 0; }
@@ -147,7 +151,7 @@
           <button class="bc-cmd" id="prodReopenBtn" type="button" title="Take it back to Open (only while nothing has been output)">Reopen</button>
           <button class="bc-cmd bc-cmd-accent" id="prodPostOutputBtn" type="button" title="Put the Qty to Output entered below into stock, with new serials"><svg class="bc-ico"><use href="#ico-posted"/></svg>Post Output</button>
           <span class="bc-cmd-sep"></span>
-          <button class="bc-cmd" id="prodPrintSerialsBtn" type="button"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serials</button>
+          <button class="bc-cmd" id="prodPrintSerialsBtn" type="button"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serial Labels</button>
           <button class="bc-cmd bc-row-action-danger" id="prodDeleteBtn" type="button">Delete</button>
         </span>
         <!-- Tank / Stand Production Done - the assigned maker (or a manager) marks their part. -->
@@ -237,6 +241,20 @@
           </div>
         </div>
 
+        <!-- Undo Production Done = rework for the maker (js/productionOrders.js loadCardRework,
+             sql/supabase_production_order_rework.sql) - managers only, hidden when there's none. -->
+        <div class="bc-doc-part hidden" id="prodReworkPart">
+          <div class="bc-doc-part-head">Rework</div>
+          <div class="doc-lines-wrap">
+            <table class="doc-lines">
+              <thead>
+                <tr><th>Sent back</th><th>Part</th><th>Maker</th><th>Reason</th><th>Status</th></tr>
+              </thead>
+              <tbody id="prodReworkBody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="bc-doc-part hidden" id="prodSerialsPart">
           <div class="bc-doc-part-head">Output Serials</div>
           <div class="doc-lines-wrap">
@@ -259,7 +277,8 @@
   <script src="js/nav.js?v=prod2"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/productionOrders.js?v=10"></script>
+  <script src="js/labelPrinter.js?v=3"></script>
+  <script src="js/productionOrders.js?v=12"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

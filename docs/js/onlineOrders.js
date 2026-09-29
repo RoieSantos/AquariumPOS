@@ -514,6 +514,7 @@ async function loadMyProductionOrderCards() {
   // variant, Qty, and the button production done.. same as the online orders": each card lists just
   // this maker's part of the order (Tank or Stand lines), with a big Production Done button.
   const linesByOrder = new Map();
+  const reworkByOrder = new Map();
   await Promise.all(open.map(async (o) => {
     const { data: lines, error: linesError } = await supabaseClient.rpc('staff_list_production_order_lines', {
       p_admin_username: currentSession.username,
@@ -521,6 +522,13 @@ async function loadMyProductionOrderCards() {
       p_no: o.order_no
     });
     linesByOrder.set(o.order_no, linesError ? null : (lines || []));
+    // Undone Production Done = rework (supabase_production_order_rework.sql) - none until it's run.
+    const { data: rework } = await supabaseClient.rpc('staff_list_production_order_rework', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_no: o.order_no
+    });
+    reworkByOrder.set(o.order_no, (rework || []).filter((r) => !r.fixed_at));
   }));
   if (!myAssignmentsOnly) { box.classList.add('hidden'); return; }
 
@@ -530,12 +538,14 @@ async function loadMyProductionOrderCards() {
     const mine = (lines || []).filter((l) => parts.includes(l.part) && Number(l.quantity) > Number(l.qty_output || 0));
     const total = mine.reduce((n, l) => n + Number(l.quantity) - Number(l.qty_output || 0), 0);
     const partLabel = parts.map((p) => (p === 'tank' ? 'Tank Maker' : 'Stand Maker')).join(' + ');
+    const rework = (reworkByOrder.get(o.order_no) || []).filter((r) => parts.includes(r.part));
     return `
       <article class="oo-mc oo-prod-mc" data-prod-no="${escapeHtml(o.order_no)}" data-prod-parts="${escapeHtml(parts.join(','))}">
         <header class="oo-mc-head">
           <a class="oo-mc-id" href="production-orders.html?no=${encodeURIComponent(o.order_no)}" title="Open the full order">${escapeHtml(o.order_no)}</a>
-          <span class="oo-mc-status">${escapeHtml(partLabel)}</span>
+          <span class="oo-mc-status">${escapeHtml(partLabel)}</span>${rework.length ? '<span class="oo-rework">&#8634; Rework</span>' : ''}
         </header>
+        ${rework.map((r) => `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(r.reason || '')}</div>`).join('')}
         ${o.description ? `<div class="oo-mc-customer">${escapeHtml(o.description)}</div>` : ''}
         <div class="oo-mc-line oo-mc-eta"><span>Due</span>${etaHtml(o.due_date)}</div>
         <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse_name || '')}</div>
@@ -1239,7 +1249,21 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
 // desktop prints (MainForm.DrawSerialNumberLabel): serial in bold, item code, description (2 lines max),
 // Code128 barcode of the serial. One label per page, printed through the browser's print dialog - pick
 // the label printer there. Rendered in a hidden iframe so it isn't blocked as a popup.
+//
+// Now goes through js/labelPrinter.js first: with QZ Tray running and General Setup's Barcode Printer
+// set, labels print straight to the barcode printer (no dialog); otherwise LabelPrinter falls back to
+// the same dialog printing as below. printSerialLabelsDialog is kept only for a page without it loaded.
 function printSerialLabels(labels) {
+  if (!labels || !labels.length) return;
+  if (window.LabelPrinter) {
+    LabelPrinter.init(currentSession);
+    LabelPrinter.printSerialLabels(labels).then((r) => { if (r.via !== 'qz') console.info('Serial labels:', r.message); });
+    return;
+  }
+  printSerialLabelsDialog(labels);
+}
+
+function printSerialLabelsDialog(labels) {
   if (!labels || !labels.length) return;
   document.getElementById('serialLabelFrame')?.remove();
   const body = labels.map((l) => `
@@ -1343,6 +1367,9 @@ function updateShipSerialTagCount(picker) {
   countEl.classList.toggle('unsatisfied', !satisfied);
   const newBtn = picker.querySelector('.serial-tag-new');
   if (newBtn) newBtn.disabled = selected.length >= required;
+  // A "Pick a serial for every unit" error from an earlier Confirm is stale once the selection
+  // changes - clear it so a now-complete picker doesn't still show it.
+  document.getElementById('shipSerialModalError')?.classList.add('hidden');
 }
 
 // "+ New serial" - per "is it possible to move the printout of serials" / "at ready to ship": a
@@ -1493,8 +1520,26 @@ function renderShipSerialModal(requirements) {
     .join('');
 
   container.querySelectorAll('.ship-serial-line').forEach((lineEl) => {
-    wireShipSerialPicker(lineEl, lineEl.querySelector('.serial-tag-picker'));
+    const picker = lineEl.querySelector('.serial-tag-picker');
+    wireShipSerialPicker(lineEl, picker);
+    // Custom builds start pre-filled with "+ New serial" (see isCustomBuildItem) - removable if a
+    // unit does have a serial already.
+    if (isCustomBuildItem(lineEl.dataset.itemCode, lineEl.dataset.description)) {
+      const required = Math.max(0, Math.round(parseFloat(picker.dataset.required) || 0));
+      for (let i = 0; i < required; i++) addNewSerialPlaceholder(picker);
+    }
   });
+}
+
+// Per "if its a custom item and there is no serial.. should we print the serial automatically": a
+// custom aquarium / stand / sump is built for this one order, so there's never an In Stock serial to
+// pick - it always gets a new serial (created and label printed when the order ships). Stock items
+// (AQ-..., production categories) still have their built units picked.
+// Checks the item code AND the line description: a custom aquarium's line often resolves to its
+// variant's own item code (not "CUSTOM-..."), with "CUSTOM-AQUARIUM" only in the description.
+function isCustomBuildItem(itemCode, description) {
+  const pattern = /(^|[^a-z])custom[\s_-]*(aquarium|tank|stand|sump|cabinet)/i;
+  return pattern.test(itemCode || '') || pattern.test(description || '');
 }
 
 // Resolves with an array of runningSerialNo once every line is fully picked and Confirm is
@@ -1502,6 +1547,19 @@ function renderShipSerialModal(requirements) {
 let shipSerialModalResolve = null;
 
 function openShipSerialModal(requirements) {
+  // Only custom builds on the order - nothing to pick, so no picker at all: every unit gets a new
+  // serial and its label prints once the status change goes through.
+  if (requirements.length && requirements.every((r) => isCustomBuildItem(r.item_code, r.description))) {
+    return Promise.resolve({
+      running: [],
+      fresh: requirements.map((r) => ({
+        item_code: r.item_code,
+        variation_id: r.variation_id || null,
+        description: r.description || r.item_code,
+        quantity: Math.max(1, Math.round(parseFloat(r.quantity_needed) || 1))
+      }))
+    });
+  }
   return new Promise((resolve) => {
     shipSerialModalResolve = resolve;
     document.getElementById('shipSerialModalError').classList.add('hidden');

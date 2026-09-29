@@ -2,7 +2,31 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-09-30
+
+- Serial Tracker: a SOLD serial can only be put back In Stock by a Super User (button hidden and refused otherwise, with an extra "is it physically back?" confirm); other statuses keep the Serial Admin + own-warehouse rule ([serialTracker.js](docs/js/serialTracker.js)).
+
+- Serial Tracker restyled as a Business Central list like Purchase / Production Orders: title bar with search, command bar (Refresh, Inventory Summary, Status + Category filters, serial count), resizable full-height grid; Sold Receipt/Online merged into "Sold To", date/user into "Last Updated", row actions as text links; added In Transit / Reversed to the Status filter ([serial-tracker.html](docs/serial-tracker.html), [serialTracker.js](docs/js/serialTracker.js)).
+
+- Serial Tracker: new Maker column - the Tank/Stand Maker of the Production Order that built the serial, or of the online order for serials created at Ready to Ship ([supabase_serial_tracker_maker.sql](sql/supabase_serial_tracker_maker.sql), [serialTracker.js](docs/js/serialTracker.js), [serial-tracker.html](docs/serial-tracker.html)).
+
+- Local POS: online orders with custom build lines (custom aquarium / tank / stand / sump / cabinet, by item code or description) can no longer be Printed or marked Printed from Online Orders - a message points staff to the Web Portal's Assign instead. Custom stickers/accessories aren't affected ([OnlineOrdersForm.cs](OnlineOrdersForm.cs)).
+
+- Fix: Ready to Ship didn't recognise a custom aquarium whose line resolves to its variant's own item code (only the description says CUSTOM-AQUARIUM) - custom detection now checks the description too, so it's auto-set to a new serial / the picker is skipped. The "Pick a serial for every unit" error now clears once the selection changes ([onlineOrders.js](docs/js/onlineOrders.js)).
+
+- Ready to Ship: custom items (CUSTOM-AQUARIUM / CUSTOM_STAND / CUSTOM-SUMP...) are pre-filled with "+ New serial" in the serial picker, and when every serial line is custom the picker is skipped - new serials are created and their labels print automatically. Stock items (AQ-...) still pick a built unit ([onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html)).
+
+- Added a one-off script to mark IN_STOCK serials of TEST items (item name/description with the word "test", e.g. AQ-042) as SOLD, with a preview step; stamps UpdatedAtUtc so the POS syncs it ([supabase_mark_test_serials_sold.sql](sql/supabase_mark_test_serials_sold.sql)).
+
+- Serial barcode labels now show the SKU (variant SKU, else item SKU) on the item-code line ("AQ-042 · SKU: ..."), with a Show SKU toggle in the label layout; looked up per print by the new staff_get_serial_skus, so Production and Online Orders labels both get it ([supabase_serial_label_skus.sql](sql/supabase_serial_label_skus.sql), [labelPrinter.js](docs/js/labelPrinter.js), [generalSetup.js](docs/js/generalSetup.js), [general-setup.html](docs/general-setup.html)).
+
 ## 2026-09-29
+
+- Adjustable barcode label layout in General Setup -> Barcode Printer: size, move left/right/up/down, rotation, text size, show item code/description, description lines, barcode height/width, copies per serial, with a live preview; Test Print uses the on-screen layout. Saved as BARCODE_LABEL_LAYOUT; the print-dialog fallback now prints the same drawn labels ([labelPrinter.js](docs/js/labelPrinter.js), [generalSetup.js](docs/js/generalSetup.js), [general-setup.html](docs/general-setup.html), [supabase_barcode_printer_settings.sql](sql/supabase_barcode_printer_settings.sql)).
+
+- Barcode printer via QZ Tray: new General Setup -> Barcode Printer (printer name, Find Printers, QZ certificate, Test Print); serial labels (100x30mm, Code128) now print straight to it with no dialog, signed by the new qz-sign Edge Function so QZ Tray prints silently; falls back to the print dialog when QZ Tray isn't running. Production Orders auto-print labels after Post Output and "Print Serial Labels" reprints them; Online Orders' serial labels use the same path. Order printouts unchanged (normal printer) ([labelPrinter.js](docs/js/labelPrinter.js), [qz-sign](supabase/functions/qz-sign/index.ts), [supabase_barcode_printer_settings.sql](sql/supabase_barcode_printer_settings.sql), [generalSetup.js](docs/js/generalSetup.js), [productionOrders.js](docs/js/productionOrders.js), [onlineOrders.js](docs/js/onlineOrders.js)).
+
+- Production Orders: Undo Production Done is now logged as rework for the maker (asks what to fix; entry closes as Fixed when they mark it done again). Rework history on the manager's card, red Rework banner with the reason on the maker view and My Assignments cards ([supabase_production_order_rework.sql](sql/supabase_production_order_rework.sql), [productionOrders.js](docs/js/productionOrders.js), [onlineOrders.js](docs/js/onlineOrders.js), [production-orders.html](docs/production-orders.html)).
 
 - Production Orders maker view: a Tank/Stand Maker opening an order now sees only their lines as big rows (description, Black/Clear chip, qty to build) and a full-width Production Done button - General, lines grid and toolbar hidden; full-screen on phones ([productionOrders.js](docs/js/productionOrders.js), [production-orders.html](docs/production-orders.html)).
 
