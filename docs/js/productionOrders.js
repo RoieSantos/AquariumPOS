@@ -317,7 +317,7 @@ function lineRowHtml(l, index) {
   const released = openOrder?.status === 'Released' && isManager;
   const part = l.part || linePart(l.description, l.item_code);
   return `
-    <tr data-line-no="${l.line_no ?? ''}" data-item-code="${escapeHtml(l.item_code || '')}" data-item-name="${escapeHtml(l.item_name || '')}"
+    <tr data-line-no="${l.line_no ?? ''}" data-part="${part}" data-item-code="${escapeHtml(l.item_code || '')}" data-item-name="${escapeHtml(l.item_name || '')}"
         data-variant-id="${escapeHtml(l.variant_id || '')}" data-qty-output="${Number(l.qty_output || 0)}">
       <td class="doc-num">${index + 1}</td>
       <td>
@@ -739,9 +739,20 @@ async function postOutput() {
       showCardError(`${row.dataset.itemCode}: Qty to Output must be between 0 and ${input.max}.`);
       return;
     }
-    requests.push({ line_no: Number(row.dataset.lineNo), quantity: qty, item_code: row.dataset.itemCode });
+    requests.push({ line_no: Number(row.dataset.lineNo), quantity: qty, item_code: row.dataset.itemCode, part: row.dataset.part || 'tank' });
   }
   if (!requests.length) { showCardError('Enter a Qty to Output on at least one line.'); return; }
+
+  // Per "dont allow to post output if the maker is not finished production done" - the server refuses
+  // too (supabase_production_output_requires_done.sql); this just says so before the confirm box.
+  const notDone = [...new Set(requests.map((r) => r.part))].filter((p) => !openOrder[`${p}_done_at`]);
+  if (notDone.length) {
+    showCardError(notDone.map((p) => {
+      const maker = openOrder[`${p}_maker_name`];
+      return `${PART_LABEL[p]} Maker${maker ? ` (${maker})` : ''} hasn't marked Production Done yet`;
+    }).join(' · ') + ' - output can be posted once they have.');
+    return;
+  }
 
   const summary = requests.map((r) => `  ${formatQty(r.quantity)} x ${r.item_code}`).join('\n');
   const warehouse = openOrder.warehouse_name || openOrder.warehouse_id;

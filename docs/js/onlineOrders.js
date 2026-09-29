@@ -508,7 +508,13 @@ async function loadMyProductionOrderCards() {
   if (error) { console.warn('staff_list_production_orders:', error.message); box.classList.add('hidden'); return; }
   const myOpenParts = (o) => ['tank', 'stand'].filter((p) => o[`${p}_maker`] === me && o[`needs_${p}`] && !o[`${p}_done_at`]);
   const open = (data || []).filter((o) => myOpenParts(o).length);
+  myProductionOrderCount = open.length;
+  setMyAssignmentsCount(null);
   if (!myAssignmentsOnly || !open.length) { box.classList.add('hidden'); return; }
+  // Production work waiting - drop the "Nothing to do right now" line the online-order list left.
+  document.querySelectorAll('#myAssignmentCards .oo-mc-empty, #orderTableBody .cell-msg').forEach((el) => {
+    el.textContent = 'No online orders assigned to you - see your Production Orders below.';
+  });
 
   // Per "i want the maker to see only the lines of what needs to be done together with the color
   // variant, Qty, and the button production done.. same as the online orders": each card lists just
@@ -683,6 +689,151 @@ function canMarkShipped(o) {
   return canAssignOrders() || (currentSession?.staffRoles || []).includes('Dispatcher');
 }
 
+// ---- Stock tank / stand / sump orders - per "if the orders is tank / stand or sump can we check the
+// serials if there are no serials available is it possible we can assign the order? then if there is an
+// serial can we to-ship the order directly?" (supabase_online_order_stock_ship.sql). For an order whose
+// serial-tracked lines are STOCK items (no custom line), counted at the order's own branch:
+//   every unit has an In Stock serial           -> Ready to Ship now (pick the serials, To Ship)
+//   some don't, no build yet                    -> Assign: creates a Production Order for the missing
+//                                                  units with the chosen makers, linked to this order
+//   that Production Order is Open / Released    -> "In Production PRD-..." (opens it)
+// Loaded per selected / opened order and cached until the list reloads.
+const stockStatusCache = new Map(); // order_id -> row of staff_get_online_order_stock_status, or 'loading'
+const shipFromStockOrderIds = new Set();
+let shipSerialWarehouse = null; // order's branch while picking serials for a ship-from-stock order
+
+function stockStatusFor(o) {
+  const s = o ? stockStatusCache.get(String(o.order_id)) : null;
+  return s && s !== 'loading' ? s : null;
+}
+
+function isStockCheckCandidate(o) {
+  if (!o || !canAssignOrders() || neededProductionRoles(o).length) return false;
+  return ['confirmed', 'submitted', 'printed'].includes((o.status || '').trim().toLowerCase());
+}
+
+async function ensureStockStatus(o) {
+  if (!isStockCheckCandidate(o)) return;
+  const key = String(o.order_id);
+  if (stockStatusCache.has(key)) return;
+  stockStatusCache.set(key, 'loading');
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_stock_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: [key]
+  });
+  if (error) {
+    // Quietly nothing until supabase_online_order_stock_ship.sql is run.
+    console.warn('staff_get_online_order_stock_status:', error.message);
+    stockStatusCache.delete(key);
+    return;
+  }
+  stockStatusCache.set(key, (data || [])[0] || { order_id: key, needs_serial: false });
+  if (String(selectedOrderId) === key) updateOrderActionState();
+  if (String(openCardOrderId) === key) updateNextStepButton('cardNextStepBtn', o);
+}
+
+function stockLinesSummary(s) {
+  return (s?.lines || []).map((l) => `${l.description || l.item_code}${l.variant_name ? ` (${l.variant_name})` : ''}: ${l.available}/${l.needed} in stock`).join('\n');
+}
+
+function nextStepForStock(o) {
+  const s = stockStatusFor(o);
+  if (!s || !s.needs_serial || s.has_custom_line) return null;
+  if (s.all_available) {
+    return { action: 'ship-stock', label: 'Ready to Ship', icon: 'ico-ship', title: `In stock at ${s.warehouse_name || 'this branch'} - pick the serial(s) and move it to To Ship.\n${stockLinesSummary(s)}` };
+  }
+  if (s.production_order_no && ['Open', 'Released'].includes(s.production_order_status)) {
+    return { action: 'open-prod', label: `In Production ${s.production_order_no}`, icon: 'ico-done', title: `Being built on ${s.production_order_no} (${s.production_order_status}). It can ship once its output is posted.\n${stockLinesSummary(s)}` };
+  }
+  return { action: 'build', label: 'Assign', icon: 'ico-assign', title: `Not enough in stock at ${s.warehouse_name || 'this branch'} - assign makers to build the missing units (creates a Production Order).\n${stockLinesSummary(s)}` };
+}
+
+// "Assign" for a stock order with missing units: a Production Order for just the shortfall, with the
+// makers picked here, linked to the online order, Released so the makers see it right away.
+async function openStockBuildDialog(o) {
+  const s = stockStatusFor(o);
+  if (!s) return;
+  const missing = (s.lines || []).filter((l) => l.available < l.needed)
+    .map((l) => ({ ...l, qty: l.needed - l.available, part: /(stand|top[\s_-]*cover)/i.test(`${l.description || ''} ${l.item_code || ''}`) ? 'stand' : 'tank' }));
+  if (!missing.length) return;
+  await loadProductionMembers();
+  const parts = [...new Set(missing.map((m) => m.part))];
+  const makerOptions = (role) => '<option value="">(Not assigned)</option>' + productionMembers
+    .filter((m) => (m.staff_roles || []).includes(role))
+    .map((m) => `<option value="${escapeHtml(m.username)}">${escapeHtml(m.display_name)}</option>`).join('');
+
+  let dialog = document.getElementById('stockBuildDialog');
+  if (!dialog) {
+    dialog = document.createElement('div');
+    dialog.id = 'stockBuildDialog';
+    dialog.className = 'modal-backdrop hidden';
+    document.body.appendChild(dialog);
+  }
+  dialog.innerHTML = `
+    <div class="modal-panel" style="max-width:560px;" role="dialog" aria-modal="true">
+      <div class="bc-doc-caption" style="font-size:11px; letter-spacing:.06em; color:var(--text-muted);">ASSIGN - BUILD MISSING UNITS</div>
+      <h3 style="margin:2px 0 6px;">${escapeHtml(orderLabel(o))}</h3>
+      <p class="muted" style="margin:0 0 10px;">Not enough in stock at <b>${escapeHtml(s.warehouse_name || 'this branch')}</b>. This creates a Production Order for the missing units and hands it to the makers. Once its output is posted, the new serials are in stock and this order can go Ready to Ship.</p>
+      <table class="bc-grid" style="width:100%; margin-bottom:12px;">
+        <thead><tr><th>Build</th><th>Variant</th><th class="num">Need</th><th class="num">In stock</th><th class="num">To build</th></tr></thead>
+        <tbody>${missing.map((m) => `<tr><td>${escapeHtml(m.description || m.item_code)}</td><td>${escapeHtml(m.variant_name || '-')}</td><td class="num">${m.needed}</td><td class="num">${m.available}</td><td class="num"><b>${m.qty}</b></td></tr>`).join('')}</tbody>
+      </table>
+      ${parts.includes('tank') ? `<label style="display:block; margin-bottom:8px;">Tank Maker<select id="sbTankMaker" style="width:100%;">${makerOptions('TankMaker')}</select></label>` : ''}
+      ${parts.includes('stand') ? `<label style="display:block; margin-bottom:8px;">Stand Maker<select id="sbStandMaker" style="width:100%;">${makerOptions('StandMaker')}</select></label>` : ''}
+      <label style="display:block; margin-bottom:8px;">Due date<input type="date" id="sbDueDate" value="${escapeHtml(o.estimated_delivery_date || '')}" /></label>
+      <div id="sbError" class="error-text hidden"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">
+        <button class="btn btn-secondary" type="button" id="sbCancelBtn">Cancel</button>
+        <button class="btn btn-primary" type="button" id="sbCreateBtn">Create &amp; Assign</button>
+      </div>
+    </div>`;
+  dialog.classList.remove('hidden');
+  const close = () => dialog.classList.add('hidden');
+  dialog.querySelector('#sbCancelBtn').addEventListener('click', close);
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) close(); });
+
+  dialog.querySelector('#sbCreateBtn').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const errEl = dialog.querySelector('#sbError');
+    const fail = (msg) => { errEl.textContent = msg; errEl.classList.remove('hidden'); btn.disabled = false; btn.textContent = 'Create & Assign'; };
+    errEl.classList.add('hidden');
+    const tankMaker = dialog.querySelector('#sbTankMaker')?.value || null;
+    const standMaker = dialog.querySelector('#sbStandMaker')?.value || null;
+    if ((parts.includes('tank') && !tankMaker) || (parts.includes('stand') && !standMaker)) {
+      fail('Pick a maker for every part to build.');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Creating...';
+    const creds = { p_admin_username: currentSession.username, p_admin_password: currentSession.password };
+    const { data: prodNo, error } = await supabaseClient.rpc('staff_save_production_order', {
+      ...creds,
+      p_no: null,
+      p_description: `For online order ${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`,
+      p_warehouse_id: o.location_id,
+      p_due_date: dialog.querySelector('#sbDueDate').value || null,
+      p_notes: `Built for online order ${o.order_id} - not enough in stock at ${s.warehouse_name || 'the branch'}.`,
+      p_tank_maker: tankMaker,
+      p_stand_maker: standMaker,
+      p_lines: missing.map((m) => ({
+        line_no: null, item_code: m.item_code, variant_id: m.variation_id || null,
+        description: [m.description || m.item_code, m.variant_name].filter(Boolean).join(' - '), quantity: m.qty
+      }))
+    });
+    if (error) { fail(error.message); return; }
+    const link = await supabaseClient.rpc('staff_link_production_order_to_online_order', { ...creds, p_no: prodNo, p_order_id: String(o.order_id) });
+    if (link.error) { fail(`Created ${prodNo}, but could not link it to this order: ${link.error.message}`); return; }
+    const rel = await supabaseClient.rpc('staff_set_production_order_released', { ...creds, p_no: prodNo, p_released: true });
+    close();
+    stockStatusCache.delete(String(o.order_id));
+    await ensureStockStatus(o);
+    alert(rel.error
+      ? `Created ${prodNo} for order ${o.order_id}, but it couldn't be Released (${rel.error.message}) - release it on Production Orders so the makers see it.`
+      : `Created and released ${prodNo} for order ${o.order_id}. The makers can see it now; once its output is posted, this order can go Ready to Ship.`);
+  });
+}
+
 function nextStepFor(o) {
   if (!o) return null;
   if (canMarkShipped(o)) {
@@ -691,7 +842,7 @@ function nextStepFor(o) {
   if (!canAssignOrders()) return null;
   const status = (o.status || '').trim().toLowerCase();
   const needed = neededProductionRoles(o);
-  if (!needed.length) return null;
+  if (!needed.length) return nextStepForStock(o);
   const display = orderDisplayStatus(o);
 
   if (isProductionDone(o) && canChangeProduction(o)) {
@@ -715,13 +866,13 @@ function updateNextStepButton(btnId, o) {
   // When this button already reads "Assign", hide the regular Assign button next to it so there
   // aren't two (it comes back at later stages, for changing who's assigned).
   const assignBtn = document.getElementById(btnId === 'listNextStepBtn' ? 'listAssignBtn' : 'cardAssignBtn');
-  if (canAssignOrders()) assignBtn.classList.toggle('hidden', step?.action === 'assign');
+  if (canAssignOrders()) assignBtn.classList.toggle('hidden', step?.action === 'assign' || step?.action === 'build');
   btn.classList.toggle('hidden', !step);
   if (!step) return;
   btn.dataset.action = step.action;
   btn.disabled = !!step.disabled;
   btn.title = step.title || '';
-  btn.classList.toggle('is-ship', step.action === 'ship' && !step.disabled);
+  btn.classList.toggle('is-ship', (step.action === 'ship' || step.action === 'ship-stock') && !step.disabled);
   btn.innerHTML = `<svg class="bc-ico"><use href="#${step.icon}"/></svg>${escapeHtml(step.label)}`;
 }
 
@@ -789,6 +940,23 @@ async function handleNextStepClick(orderId, btn) {
     });
     if (!ok) return;
     await handleToShipClick(String(o.order_id), btn, { readyToShip: true });
+  } else if (btn.dataset.action === 'ship-stock') {
+    const s = stockStatusFor(o);
+    const ok = await confirmAction({
+      caption: 'READY TO SHIP - FROM STOCK',
+      title: orderLabel(o),
+      message: `Everything is in stock at ${s?.warehouse_name || 'this branch'}:\n${stockLinesSummary(s)}\n\nPick the serial(s) and move this order to To Ship in the portal and Pancake?`,
+      confirmLabel: 'Yes, Ready to Ship',
+      tone: 'is-ship'
+    });
+    if (!ok) return;
+    await handleToShipClick(String(o.order_id), btn, { readyToShip: true, fromStock: true });
+    stockStatusCache.delete(String(o.order_id));
+  } else if (btn.dataset.action === 'build') {
+    await openStockBuildDialog(o);
+  } else if (btn.dataset.action === 'open-prod') {
+    const s = stockStatusFor(o);
+    if (s?.production_order_no) window.open(`production-orders.html?no=${encodeURIComponent(s.production_order_no)}`, '_blank');
   } else if (btn.dataset.action === 'shipped') {
     await markOrderShipped(String(o.order_id), btn);
   }
@@ -1161,7 +1329,10 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
   const fresh = Array.isArray(serialRunningNos) ? [] : (serialRunningNos?.fresh || []);
 
   try {
-    const { data, error } = await supabaseClient.rpc('admin_update_online_order_status', {
+    // Ship-from-stock orders may still be Confirmed - admin_ship_online_order_from_stock allows that
+    // (supabase_online_order_stock_ship.sql); same parameters and result as the regular RPC.
+    const rpcName = shipFromStockOrderIds.has(String(orderId)) ? 'admin_ship_online_order_from_stock' : 'admin_update_online_order_status';
+    const { data, error } = await supabaseClient.rpc(rpcName, {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_order_id: orderId,
@@ -1172,6 +1343,28 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
     });
 
     if (error) {
+      // "Failed to fetch" = the connection dropped (e.g. the API gateway's ~60s limit while Pancake was
+      // slow), NOT a rejection - the server may have finished anyway. Ask for the order's status
+      // before telling staff anything (supabase_online_order_stock_ship.sql).
+      if (/failed to fetch|network|load failed/i.test(error.message || '')) {
+        showSendStatusBanner('The connection dropped - checking whether the order went through...');
+        const { data: nowStatus } = await supabaseClient.rpc('staff_get_online_order_current_status', {
+          p_admin_username: currentSession.username,
+          p_admin_password: currentSession.password,
+          p_order_id: orderId
+        });
+        if (String(nowStatus || '').trim().toLowerCase() === String(newStatus).trim().toLowerCase()) {
+          alert(`Order ${orderId} is now ${newStatus} - the connection dropped before the reply came back, but it went through.`
+            + (notifyCustomer ? ' Check the customer got the message.' : '')
+            + (fresh.length ? ' Reprint any new serial labels from the Serial Tracker.' : ''));
+          await refreshCurrentOrders();
+          return;
+        }
+        alert(`Could not update status - the connection dropped and order ${orderId} is still ${nowStatus || 'unchanged'}. `
+          + 'Pancake may be slow right now; wait a minute and try again.');
+        triggerEl.disabled = false;
+        return;
+      }
       alert('Could not update status: ' + error.message);
       triggerEl.disabled = false;
       return;
@@ -1434,8 +1627,10 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
   // Only offer serials physically at the staff member's own location - same reasoning as Transfer
   // Orders' identical restriction (searchAvailableSerialsForRow). Staff with no assigned warehouse
   // stay unrestricted, same convention used everywhere else this session field is checked.
-  if (currentSession?.warehouseName) {
-    query = query.eq('Location', currentSession.warehouseName);
+  // Shipping from stock: the order's own branch instead (shipSerialWarehouse, set by handleToShipClick).
+  const serialLocation = shipSerialWarehouse || currentSession?.warehouseName;
+  if (serialLocation) {
+    query = query.eq('Location', serialLocation);
   }
   if (searchText && searchText.trim()) {
     query = query.ilike('SerialNo', `%${searchText.trim()}%`);
@@ -1832,7 +2027,7 @@ async function handleAssignProductionMemberChange(event) {
 // all when the logged-in staff's own warehouse is Production (currentSessionIsProductionWarehouse,
 // resolved once at init) - a regular store's To Ship never needed this, same as the desktop.
 // Cancelling the serial picker aborts the whole To Ship action (nothing sent, nothing changed).
-async function handleToShipClick(orderId, toShipBtn, { readyToShip = false } = {}) {
+async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, fromStock = false } = {}) {
   // Ready to Ship (the Production Manager's next-step button on a Production Done order) runs this
   // real flow even while the general To Ship button is still switched off - see nextStepFor.
   if (!TO_SHIP_ENABLED && !readyToShip) {
@@ -1841,8 +2036,13 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false } = {
   }
 
   let serialRunningNos = null;
+  // Shipping from stock (see stockStatusFor): the serials must be picked no matter which warehouse the
+  // manager is logged in at, and they're searched at the ORDER's branch, where the stock was counted.
+  shipSerialWarehouse = fromStock ? (stockStatusFor(findFlatOrder(orderId))?.warehouse_name || null) : null;
+  if (fromStock) shipFromStockOrderIds.add(String(orderId));
+  else shipFromStockOrderIds.delete(String(orderId));
 
-  if (currentSessionIsProductionWarehouse) {
+  if (currentSessionIsProductionWarehouse || fromStock) {
     toShipBtn.disabled = true;
     let requirements;
     try {
@@ -2133,6 +2333,7 @@ function updateOrderActionState() {
   updateProductionDoneButton('listProductionDoneBtn', o);
   updateSendBackButton('listSendBackBtn', o);
   updateNextStepButton('listNextStepBtn', o);
+  ensureStockStatus(o);
 }
 
 // ---------------------------------------------------------------- Assign popup
@@ -2501,6 +2702,7 @@ function fillOrderCardHeader(o) {
   fillMakerFocusSummary(o);
   updateSendBackButton('cardSendBackBtn', o);
   updateNextStepButton('cardNextStepBtn', o);
+  ensureStockStatus(o);
   renderOrderCardAssignments();
 }
 
@@ -3132,6 +3334,7 @@ async function loadOrders(search, status) {
   }
 
   lastFlatRows = rows;
+  stockStatusCache.clear(); // stock may have moved since - re-checked for the selected / opened order
   if (selectedOrderId && !rows.some((o) => String(o.order_id) === String(selectedOrderId))) selectedOrderId = null;
   updateOrderActionState();
   refreshOpenOrderCardHeader();
@@ -3297,8 +3500,14 @@ function updateStatusPillActiveState() {
   });
 }
 
+// The My Assignments count = assigned online orders + Released Production Orders where this user's
+// part isn't done yet (loadMyProductionOrderCards) - per "if maker has an production order mark it
+// under my assignments for that user".
+let myOnlineAssignmentCount = 0;
+let myProductionOrderCount = 0;
 function setMyAssignmentsCount(count) {
-  document.getElementById('myAssignmentsCount').textContent = String(count);
+  if (count != null) myOnlineAssignmentCount = Number(count) || 0;
+  document.getElementById('myAssignmentsCount').textContent = String(myOnlineAssignmentCount + myProductionOrderCount);
 }
 
 // Tab buttons for the grouped (Online Order Staff) view - switching tabs re-renders from the
