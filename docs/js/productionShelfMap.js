@@ -4,8 +4,8 @@
 //
 // COUNT MODE - per "i dont need to place.. i just want to see the count per serial": nothing is put
 // on a rack. A rack linked to an aquarium (e.g. B4 = 75g) shows how many serials of that aquarium are
-// IN_STOCK at the shelf's location, and tapping it lists them. Stock by size sums it up, plus what's
-// in stock that no rack is linked to.
+// IN_STOCK at the shelf's location, and tapping it lists them. (The "Stock by size" table under the
+// map was removed per "in the production shelf no need to show stock by size".)
 //
 // Two layouts per shelf:
 //   grid  - rows of equal spots
@@ -120,13 +120,17 @@ function unitFitsSpot(unit, spot) {
 // on that shelf". Black / Clear when the variant (or failing that the description) says so,
 // otherwise the variant's own name.
 function unitColour(unit) {
-  const variantText = `${unit.variant_name || ''}`;
-  if (/black/i.test(variantText)) return 'Black';
-  if (/clear/i.test(variantText)) return 'Clear';
-  const descText = `${unit.item_description || ''} ${unit.item_code || ''}`;
-  if (/black/i.test(descText)) return 'Black';
-  if (/clear/i.test(descText)) return 'Clear';
-  return unit.variant_name || 'Other';
+  return textColour(unit.variant_name) || textColour(unit.item_description, unit.item_code) || unit.variant_name || 'Other';
+}
+
+// 'Black' / 'Clear' from the first text that says black|BLK or clear|CLR (same rule as
+// _production_colour in supabase_production_variant_colour.sql), else null.
+function textColour(...texts) {
+  for (const t of texts) {
+    if (/black|\bblk\b/i.test(t || '')) return 'Black';
+    if (/clear|\bclr\b/i.test(t || '')) return 'Clear';
+  }
+  return null;
 }
 
 // [{ colour, count }] - Black first, Clear second, the rest by name.
@@ -152,7 +156,7 @@ function spotTagText(spot) {
 
 // Short size for the rack face - the typed size tag, else the gallons pulled out of the aquarium's
 // name ("STANDARD-50G (36×18×18in, 6MM GLASS)" -> "50G"), else the item code. The full name is in
-// the tooltip, the rack popup and Stock by size.
+// the tooltip and the rack popup.
 function spotShortTag(spot) {
   if (spot.size_tag) return spot.size_tag;
   if (!spot.item_code) return '';
@@ -257,83 +261,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
   </div>`;
 }
 
-// "Stock by size" under the map: in-stock serial count per linked aquarium at the location on screen,
-// then everything in stock there that no rack is linked to (by item/variant).
-function renderSizeSummary() {
-  const box = document.getElementById('sizeSummary');
-  if (draft || !currentLocation) { box.classList.add('hidden'); return; }
-  const groups = new Map();
-  shelves.filter((sh) => sh.warehouse_id === currentLocation).forEach((sh) => {
-    (sh.spots || []).forEach((sp) => {
-      if (!sp.item_code) return;
-      const key = `${sp.item_code}|${sp.variant_id || ''}`;
-      const g = groups.get(key) || { spot: sp, tags: new Set(), racks: [] };
-      if (spotTagText(sp)) g.tags.add(spotTagText(sp));
-      g.racks.push(spotName(sp));
-      groups.set(key, g);
-    });
-  });
-
-  const linkedRows = Array.from(groups.values())
-    .map((g) => ({ g, count: spotSerials(g.spot).length, colours: colourBreakdown(spotSerials(g.spot)) }))
-    .sort((a, b) => Array.from(a.g.tags).join().localeCompare(Array.from(b.g.tags).join(), undefined, { numeric: true }));
-
-  const linkedSpots = Array.from(groups.values()).map((g) => g.spot);
-  const other = new Map();
-  locationSerials.filter((s) => !linkedSpots.some((sp) => unitFitsSpot(s, sp))).forEach((s) => {
-    const key = `${s.item_code}|${s.variant_code || ''}`;
-    const o = other.get(key) || { item_code: s.item_code, variant_name: s.variant_name, description: s.item_description, count: 0, units: [] };
-    o.count += 1;
-    o.units.push(s);
-    other.set(key, o);
-  });
-  // Black / Clear columns always; any other version name found gets its own column after them.
-  const extraColours = new Set();
-  const addExtra = (c) => { if (c.colour !== 'Black' && c.colour !== 'Clear') extraColours.add(c.colour); };
-  linkedRows.forEach((r) => r.colours.forEach(addExtra));
-  other.forEach((o) => colourBreakdown(o.units).forEach(addExtra));
-  const colourCols = ['Black', 'Clear', ...Array.from(extraColours).sort()];
-  const colourCells = (colours) => colourCols.map((col) => {
-    const n = (colours.find((c) => c.colour === col) || {}).count || 0;
-    return `<td class="num">${n ? n : '<span class="muted">0</span>'}</td>`;
-  }).join('');
-  const otherRows = Array.from(other.values()).sort((a, b) => a.item_code.localeCompare(b.item_code, undefined, { numeric: true }));
-
-  if (!linkedRows.length && !otherRows.length) {
-    box.innerHTML = '<h3>Stock by size</h3><p class="muted" style="margin:0;">No serials in stock at this location.</p>';
-    box.classList.remove('hidden');
-    return;
-  }
-  const total = locationSerials.length;
-  box.innerHTML = `
-    <h3>Stock by size <span class="muted" style="font-size:12px; font-weight:400;">${total} serial(s) in stock at this location</span></h3>
-    <table class="size-summary">
-      <thead><tr><th>Size</th><th>Aquarium</th><th>Racks</th>${colourCols.map((c) => `<th class="num">${escapeHtml(c)}</th>`).join('')}<th class="num">Total</th></tr></thead>
-      <tbody>
-        ${linkedRows.map(({ g, count, colours }) => `
-          <tr data-find="${escapeHtml(Array.from(g.tags)[0] || g.spot.item_code)}" title="Highlight these racks">
-            <td><span class="pspot-tag">${escapeHtml(Array.from(g.tags).join(', ') || '-')}</span></td>
-            <td>${escapeHtml(g.spot.item_code)}${g.spot.variant_name ? ' · ' + escapeHtml(g.spot.variant_name) : ''}<div class="muted" style="font-size:11px;">${escapeHtml(g.spot.item_name || '')}</div></td>
-            <td>${escapeHtml(g.racks.join(', '))}</td>
-            ${colourCells(colours)}
-            <td class="num"><b>${count}</b></td>
-          </tr>`).join('')}
-        ${otherRows.length ? `<tr class="size-summary-sep"><td colspan="${colourCols.length + 4}">Not linked to any rack</td></tr>` : ''}
-        ${otherRows.map((o) => `
-          <tr class="unlinked-row" data-serials-item="${escapeHtml(o.item_code)}">
-            <td><span class="muted">-</span></td>
-            <td>${escapeHtml(o.item_code)}${o.variant_name ? ' · ' + escapeHtml(o.variant_name) : ''}<div class="muted" style="font-size:11px;">${escapeHtml(o.description || '')}</div></td>
-            <td class="muted">-</td>
-            ${colourCells(colourBreakdown(o.units))}
-            <td class="num"><b>${o.count}</b></td>
-          </tr>`).join('')}
-      </tbody>
-    </table>`;
-  box.classList.remove('hidden');
-}
-
 function renderShelf() {
-  renderSizeSummary();
   const body = document.getElementById('shelfBody');
   if (!draft && !currentShelf()) {
     body.innerHTML = `<p class="muted">No production shelves yet.${canEditLayout ? ' Use "New Shelf" to draw one.' : ''}</p>`;
@@ -468,6 +396,7 @@ async function loadShelves(keepId) {
   await loadLocationSerials();
   document.getElementById('shelfLoading').classList.add('hidden');
   renderShelf();
+  loadLastOrders();
 }
 
 async function loadWarehouseOptions() {
@@ -524,10 +453,288 @@ function closeSpotModal() {
   document.getElementById('spotModal').classList.add('hidden');
 }
 
+// ---------------------------------------------------------------- Last production orders
+// Per "show what is the last production order created for Tank and Stand maker": the newest order
+// into the location on screen that has Tank lines, and the newest with Stand lines
+// (supabase_production_shelf_last_orders.sql). Quietly hidden until that file has been run.
+
+async function loadLastOrders() {
+  const box = document.getElementById('lastOrders');
+  if (!currentLocation) { box.classList.add('hidden'); return; }
+  const location = currentLocation;
+  const { data, error } = await rpc('staff_get_last_production_orders', { p_warehouse_id: location });
+  if (location !== currentLocation) return; // switched location while loading
+  if (error) { console.warn('staff_get_last_production_orders:', error.message); box.classList.add('hidden'); return; }
+  renderLastOrders(data || []);
+}
+
+function renderLastOrders(rows) {
+  const box = document.getElementById('lastOrders');
+  const cards = ['tank', 'stand'].map((part) => {
+    const label = part === 'tank' ? 'Tank Maker' : 'Stand Maker';
+    const o = rows.find((r) => r.part === part);
+    if (!o) {
+      return `<div class="last-order part-${part}"><div class="last-order-head"><span class="lo-part">${label}</span><span class="muted">No production order yet at this location</span></div></div>`;
+    }
+    const qty = Number(o.total_quantity || 0);
+    const out = Number(o.total_output || 0);
+    const statusCls = o.status === 'Finished' ? 'badge-success' : o.status === 'Released' ? 'badge-warning' : 'badge-neutral';
+    return `<a class="last-order part-${part}" href="production-orders.html?no=${encodeURIComponent(o.order_no)}" title="Open ${escapeHtml(o.order_no)} on Production Orders">
+      <div class="last-order-head">
+        <span class="lo-part">${label}</span>
+        <span class="lo-no">${escapeHtml(o.order_no)}</span>
+        <span class="badge ${statusCls}">${escapeHtml(o.status)}</span>
+        ${o.part_done_at ? '<span class="badge badge-success">&#10003; Done</span>' : ''}
+      </div>
+      <div>${escapeHtml(o.maker_name || 'Not assigned')} · ${out ? `${out} / ${qty} built` : `${qty} to build`}${o.description ? ` · ${escapeHtml(o.description)}` : ''}</div>
+      <div class="lo-sub">Created ${escapeHtml(o.created_at ? new Date(o.created_at).toLocaleString() : '')}${o.created_by ? ' by ' + escapeHtml(o.created_by) : ''}${o.due_date ? ` · Due ${escapeHtml(new Date(o.due_date + 'T00:00:00').toLocaleDateString())}` : ''}</div>
+    </a>`;
+  }).join('');
+  box.innerHTML = cards;
+  box.classList.remove('hidden');
+}
+
+// ---------------------------------------------------------------- Auto Production Order
+// Per "can we auto populate the production order base on what we are lacking quantity?": for each
+// aquarium linked to a rack at this location, short = total capacity of its racks - in stock - still
+// to be built on Open/Released production orders into this location (supabase_production_shelf_auto_order.sql).
+// The rows are editable, then saved as an Open order with staff_save_production_order and opened on
+// Production Orders to assign makers and Release.
+
+let autoOrderRows = [];
+
+function openLineFitsSpot(line, spot) {
+  if (spot.variant_id) return line.variant_id === spot.variant_id;
+  return line.item_code === spot.item_code || line.main_item_code === spot.item_code;
+}
+
+function locationName() {
+  const sel = document.getElementById('locationSelect');
+  return sel.options[sel.selectedIndex]?.textContent || currentShelf()?.warehouse_name || currentLocation || '';
+}
+
+async function openAutoOrderModal() {
+  if (!currentLocation) return;
+  const errEl = document.getElementById('autoOrderError');
+  errEl.classList.add('hidden');
+  document.getElementById('autoOrderBody').innerHTML = '<p class="muted">Working out shortages...</p>';
+  document.getElementById('autoOrderSub').textContent = `${locationName()} - rack capacity minus what's in stock and what's already on an Open / Released production order here.`;
+  document.getElementById('autoOrderDesc').value = `Shelf restock - ${locationName()} ${new Date().toLocaleDateString()}`;
+  document.getElementById('autoOrderCreateBtn').disabled = true;
+  document.getElementById('autoOrderModal').classList.remove('hidden');
+
+  await loadLocationSerials(); // fresh counts, not whatever was on screen
+  renderShelf();
+  let openLines = [];
+  let openWarning = '';
+  const { data: openData, error: openError } = await rpc('staff_list_production_open_qty', { p_warehouse_id: currentLocation });
+  if (openError) openWarning = `Couldn't read open production orders (${openError.message}) - run supabase_production_shelf_auto_order.sql. Quantities below don't subtract what's already on order.`;
+  else openLines = openData || [];
+
+  // One row per linked aquarium (racks linked to the same one share its stock).
+  const groups = new Map();
+  shelves.filter((sh) => sh.warehouse_id === currentLocation).forEach((sh) => {
+    (sh.spots || []).forEach((sp) => {
+      if (!sp.item_code) return;
+      const key = `${sp.item_code}|${sp.variant_id || ''}`;
+      const g = groups.get(key) || { spot: sp, tags: new Set(), racks: [], capacity: 0, noCapacity: 0 };
+      if (spotTagText(sp)) g.tags.add(spotTagText(sp));
+      g.racks.push(spotName(sp));
+      if (sp.capacity) g.capacity += sp.capacity; else g.noCapacity += 1;
+      groups.set(key, g);
+    });
+  });
+
+  const sortedGroups = Array.from(groups.values())
+    .sort((a, b) => Array.from(a.tags).join().localeCompare(Array.from(b.tags).join(), undefined, { numeric: true }));
+  const expanded = await Promise.all(sortedGroups.map((g) => autoOrderRowsForGroup(g, openLines)));
+  autoOrderRows = expanded.flat();
+
+  renderAutoOrder(openWarning);
+}
+
+const openQtyOf = (lines) => lines.reduce((n, l) => n + Number(l.open_qty || 0), 0);
+
+// Every variant of an item with its colour (supabase_production_variant_colour.sql - no category
+// filter, and the colour read from the variant name, SKU or the variant's own item name). Falls back to
+// staff_search_variants until that file has been run.
+async function loadItemVariants(itemCode) {
+  const { data, error } = await rpc('staff_list_production_item_variants', { p_item_code: itemCode });
+  if (!error) return data || [];
+  const { data: fallback } = await rpc('staff_search_variants', { p_item_code: itemCode, p_search: null, p_limit: 100 });
+  return fallback || [];
+}
+
+// The order line's description names the colour outright (e.g. "75G Aquarium - Black"), even when the
+// variant's own name doesn't say it.
+function autoOrderLineDescription(r) {
+  const name = r.spot.item_name || r.spot.item_code;
+  const colourTag = (r.colour === 'Black' || r.colour === 'Clear') ? r.colour : '';
+  // With a colour, just "name - Black" (the variant names here are often "AQ-013 - BETTA-CUBE (...)",
+  // which only repeated the item); without one, the variant tells the lines apart.
+  if (colourTag) return `${name} - ${colourTag}`;
+  return [name, r.variantName].filter(Boolean).join(' - ');
+}
+
+// Per "if capacity is 10 but the stock is 5 black, the order only creates 5 clear": an "Any variant"
+// rack whose item has Black and Clear variants gets one row per colour, each filling its even share of
+// the capacity (10 -> 5 Black + 5 Clear; an odd unit goes to the colour with less in stock). Items with
+// several variants but no Black / Clear split evenly across all of them. A rack linked to one variant,
+// or an item without variants, stays a single row.
+async function autoOrderRowsForGroup(g, openLines) {
+  const serials = spotSerials(g.spot);
+  const base = { ...g, hasCapacity: g.capacity > 0, split: false };
+  const single = () => {
+    const inStock = serials.length;
+    const onOrder = openQtyOf(openLines.filter((l) => openLineFitsSpot(l, g.spot)));
+    return [{
+      ...base, variantId: g.spot.variant_id || null, variantName: g.spot.variant_name || '',
+      colour: g.spot.variant_id ? textColour(g.spot.variant_name, g.spot.item_name) : null,
+      inStock, onOrder, short: g.capacity ? Math.max(0, g.capacity - inStock - onOrder) : 0
+    }];
+  };
+  if (g.spot.variant_id || !g.capacity) return single();
+
+  const variantList = await loadItemVariants(g.spot.item_code);
+  if (variantList.length < 2) return single();
+  const all = variantList.map((v) => ({
+    id: v.variation_id,
+    name: v.variant_name || v.sku || v.item_name || v.variation_id,
+    colour: v.colour || textColour(v.variant_name, v.sku, v.item_name) || v.variant_name || v.sku || 'Other'
+  }));
+  const blackClear = all.filter((v) => v.colour === 'Black' || v.colour === 'Clear');
+  const variants = blackClear.length >= 2 ? blackClear : all;
+
+  // In stock per variant: by the serial's variant, or - for a serial with no (or another) variant - by
+  // its colour when exactly one of these variants has that colour.
+  const ids = new Set(variants.map((v) => v.id));
+  variants.forEach((v) => {
+    const colourUnique = variants.filter((x) => x.colour === v.colour).length === 1;
+    v.inStock = serials.filter((s) => s.variant_code === v.id
+      || (!ids.has(s.variant_code) && colourUnique && unitColour(s) === v.colour)).length;
+    v.onOrder = openQtyOf(openLines.filter((l) => l.variant_id === v.id));
+  });
+
+  const share = Math.floor(g.capacity / variants.length);
+  let extra = g.capacity % variants.length;
+  [...variants].sort((a, b) => a.inStock - b.inStock).forEach((v) => { v.capacity = share + (extra > 0 ? 1 : 0); extra -= 1; });
+
+  const rank = (c) => (c === 'Black' ? 0 : c === 'Clear' ? 1 : 2);
+  return variants.sort((a, b) => rank(a.colour) - rank(b.colour) || a.name.localeCompare(b.name)).map((v) => ({
+    ...base, split: true, groupCapacity: g.capacity, capacity: v.capacity,
+    variantId: v.id, variantName: v.name, colour: v.colour, inStock: v.inStock, onOrder: v.onOrder,
+    short: Math.max(0, v.capacity - v.inStock - v.onOrder)
+  }));
+}
+
+function renderAutoOrder(warning) {
+  const body = document.getElementById('autoOrderBody');
+  if (!autoOrderRows.length) {
+    body.innerHTML = '<p class="muted">No racks at this location are linked to an aquarium. Link them in Edit Layout first.</p>';
+    return;
+  }
+  const noCap = autoOrderRows.filter((r) => !r.hasCapacity);
+  body.innerHTML = `
+    ${warning ? `<div class="place-banner" style="margin-top:0;">${escapeHtml(warning)}</div>` : ''}
+    <table class="size-summary auto-order-table">
+      <thead><tr><th></th><th>Size</th><th>Aquarium</th><th class="num">Capacity</th><th class="num">In stock</th><th class="num">On order</th><th class="num">Short</th><th class="num">Build</th></tr></thead>
+      <tbody>
+        ${autoOrderRows.map((r, i) => r.hasCapacity ? `
+          <tr data-i="${i}" class="${r.short > 0 ? '' : 'skip'}">
+            <td><input type="checkbox" class="ao-include" ${r.short > 0 ? 'checked' : ''} /></td>
+            <td><span class="pspot-tag">${escapeHtml(Array.from(r.tags).join(', ') || '-')}</span></td>
+            <td>${escapeHtml(r.spot.item_code)}${r.colour === 'Black' || r.colour === 'Clear' ? ` <span class="colour-chip colour-${r.colour.toLowerCase()}"><i></i>${r.colour}</span>` : ''}${r.variantName ? ' · <b>' + escapeHtml(r.variantName) + '</b>' : ''}
+              <span class="muted" style="font-size:11px;">- ${autoOrderLinePart({ description: r.spot.item_name, item_code: r.spot.item_code }) === 'stand' ? 'Stand order' : 'Aquarium order'}</span>
+              <div class="muted" style="font-size:11px;">${escapeHtml(r.racks.join(', '))}${r.noCapacity ? ` · ${r.noCapacity} rack(s) without a capacity not counted` : ''}</div>
+            </td>
+            <td class="num">${r.capacity}${r.split ? `<div class="muted" style="font-size:11px;">of ${r.groupCapacity}</div>` : ''}</td>
+            <td class="num">${r.inStock}</td>
+            <td class="num">${r.onOrder || '<span class="muted">0</span>'}</td>
+            <td class="num"><b>${r.short}</b></td>
+            <td class="num"><input type="number" class="ao-qty" min="0" step="1" value="${r.short}" /></td>
+          </tr>` : '').join('')}
+      </tbody>
+    </table>
+    ${noCap.length ? `<p class="muted" style="font-size:12px;">Skipped - no rack capacity set, so there's nothing to fill up to: ${escapeHtml(noCap.map((r) => Array.from(r.tags)[0] || r.spot.item_code).join(', '))}. Set a Capacity on those racks in Edit Layout.</p>` : ''}
+    ${!autoOrderRows.some((r) => r.short > 0) ? '<p class="muted">Nothing is short - every rack is full or already on order.</p>' : ''}`;
+  document.getElementById('autoOrderCreateBtn').disabled = false;
+}
+
+function closeAutoOrderModal() {
+  document.getElementById('autoOrderModal').classList.add('hidden');
+}
+
+async function createAutoOrder() {
+  const errEl = document.getElementById('autoOrderError');
+  const fail = (msg) => { errEl.textContent = msg; errEl.classList.remove('hidden'); };
+  errEl.classList.add('hidden');
+  const lines = [];
+  for (const tr of document.querySelectorAll('#autoOrderBody tr[data-i]')) {
+    if (!tr.querySelector('.ao-include').checked) continue;
+    const qty = Number(tr.querySelector('.ao-qty').value || 0);
+    if (!(qty > 0)) continue;
+    if (qty !== Math.trunc(qty)) { fail('Quantities must be whole numbers.'); return; }
+    const r = autoOrderRows[Number(tr.dataset.i)];
+    lines.push({
+      line_no: null,
+      item_code: r.spot.item_code,
+      variant_id: r.variantId,
+      description: autoOrderLineDescription(r),
+      quantity: qty
+    });
+  }
+  if (!lines.length) { fail('Tick at least one aquarium with a quantity above zero.'); return; }
+
+  // Per "can we seperate the production order for Aquarium and Stand": one order per part, so the Tank
+  // Maker and Stand Maker each get their own order to work and Release.
+  const desc = document.getElementById('autoOrderDesc').value.trim();
+  const parts = [
+    { label: 'Aquarium', lines: lines.filter((l) => autoOrderLinePart(l) === 'tank') },
+    { label: 'Stand', lines: lines.filter((l) => autoOrderLinePart(l) === 'stand') }
+  ].filter((p) => p.lines.length);
+
+  const btn = document.getElementById('autoOrderCreateBtn');
+  btn.disabled = true;
+  const created = [];
+  for (const part of parts) {
+    const { data, error } = await rpc('staff_save_production_order', {
+      p_no: null,
+      p_description: parts.length > 1 ? `${desc} (${part.label})` : desc,
+      p_warehouse_id: currentLocation,
+      p_due_date: null,
+      p_notes: 'Auto-created from the Production Shelf Map (rack capacity - in stock - already on order).',
+      p_tank_maker: null,
+      p_stand_maker: null,
+      p_lines: part.lines
+    });
+    if (error) {
+      btn.disabled = false;
+      fail(`${part.label} order: ${error.message}${created.length ? ` (${created.map((c) => `${c.label} order ${c.no}`).join(', ')} was already created)` : ''}`);
+      return;
+    }
+    created.push({ label: part.label, no: data });
+  }
+  btn.disabled = false;
+  // One order: open it on Production Orders to assign the maker and Release. Two: the list, where
+  // both show at the top as Open.
+  if (created.length === 1) {
+    window.location.href = `production-orders.html?no=${encodeURIComponent(created[0].no)}`;
+    return;
+  }
+  window.alert(`Created ${created.map((c) => `${c.label} order ${c.no}`).join(' and ')}.`);
+  window.location.href = 'production-orders.html';
+}
+
+// Same "Stand / Top Cover goes to the Stand Maker" split the server applies (_production_line_part).
+function autoOrderLinePart(line) {
+  return /(stand|top[\s_-]*cover)/i.test(`${line.description || ''} ${line.item_code || ''}`) ? 'stand' : 'tank';
+}
+
 // ---------------------------------------------------------------- Layout editing
 
 function setEditing(on) {
   document.getElementById('editBar').classList.toggle('hidden', !on);
+  document.getElementById('autoOrderBtn').classList.toggle('hidden', on || !canEditLayout);
   document.getElementById('editBtn').classList.toggle('hidden', on || !canEditLayout || !currentShelf());
   document.getElementById('newShelfBtn').classList.toggle('hidden', on || !canEditLayout);
   document.getElementById('findInput').disabled = on;
@@ -795,6 +1002,7 @@ function wireFloorDrag() {
     currentShelfId = first ? first.id : null;
     currentLocation = e.target.value;
     renderShelfSelect();
+    loadLastOrders();
     await loadLocationSerials();
     renderShelf();
   });
@@ -895,17 +1103,18 @@ function wireFloorDrag() {
   });
   wireFloorDrag();
 
-  // Clicking a Stock by size row finds its racks on the map.
-  document.getElementById('sizeSummary').addEventListener('click', (e) => {
-    const row = e.target.closest('tr[data-find]');
-    if (!row) return;
-    const input = document.getElementById('findInput');
-    input.value = row.dataset.find;
-    input.dispatchEvent(new Event('input'));
-    document.getElementById('shelfBody').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
 
   document.getElementById('spotCloseBtn').addEventListener('click', closeSpotModal);
+
+  document.getElementById('autoOrderBtn').addEventListener('click', openAutoOrderModal);
+  document.getElementById('autoOrderCloseBtn').addEventListener('click', closeAutoOrderModal);
+  document.getElementById('autoOrderCreateBtn').addEventListener('click', createAutoOrder);
+  document.getElementById('autoOrderBody').addEventListener('change', (e) => {
+    const tr = e.target.closest('tr[data-i]');
+    if (!tr) return;
+    if (e.target.classList.contains('ao-qty')) tr.querySelector('.ao-include').checked = Number(e.target.value) > 0;
+    tr.classList.toggle('skip', !tr.querySelector('.ao-include').checked);
+  });
 
   document.getElementById('cellOkBtn').addEventListener('click', applyCellModal);
   document.getElementById('cellCancelBtn').addEventListener('click', closeCellModal);

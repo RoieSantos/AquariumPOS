@@ -5807,3 +5807,42 @@ body:has(.wizard-page) {
 .pm-share-track { flex: 1; height: 8px; border-radius: 4px; background: var(--pm-track); overflow: hidden; }
 .pm-share-fill { height: 100%; border-radius: 0 4px 4px 0; }
 .pm-share-pct { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 13px; }
+
+/* Sealant Sales report (sealant-sales-report.html). Swatches stand for the actual sealant colour:
+   black is kept distinguishable from the dark-mode panel with a lighter charcoal + outline. */
+:root {
+  --ss-black: #2b2f36;
+  --ss-clear: #5bb8e6;
+  --ss-outline: rgba(0, 0, 0, 0.15);
+}
+
+:root[data-theme="dark"] {
+  --ss-black: #5a6475;
+  --ss-clear: #6cc4ee;
+  --ss-outline: rgba(255, 255, 255, 0.35);
+}
+
+.ss-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+  margin-right: 8px; flex-shrink: 0; vertical-align: -1px;
+  box-shadow: inset 0 0 0 1px var(--ss-outline);
+}
+.ss-black { background: var(--ss-black); }
+.ss-clear { background: var(--ss-clear); }
+
+.ss-split-card { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.ss-split-bar {
+  display: flex; gap: 2px; height: 28px; border-radius: 6px; overflow: hidden;
+  background: var(--pm-track);
+}
+.ss-split-bar-sm { height: 10px; border-radius: 4px; min-width: 140px; }
+.ss-split-seg { flex-basis: 0; min-width: 2px; }
+.ss-split-empty { flex: 1; background: var(--pm-empty); }
+.ss-split-legend { display: flex; gap: 24px; flex-wrap: wrap; font-size: 14px; }
+.ss-split-legend-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ss-split-legend-row .ss-swatch { margin-right: 0; }
+
+/* Category Sales report (category-sales-report.html) - category rows open that category. */
+.cs-row-link { cursor: pointer; }
+.cs-row-link:hover, .cs-row-link:focus { background: var(--pm-track); outline: none; }
+.cs-link { font-weight: 600; text-decoration: none; }

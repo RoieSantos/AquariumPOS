@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Category Sales Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=catsales1" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Category Sales</h1>
+    <p class="muted">Sales per category - e.g. Accessories - and the best-selling items and variants inside each one. Covers online and walk-in orders by order date; cancelled orders are left out. Click a category to see its items.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" data-period="today" type="button">Today</button>
+        <button class="btn btn-primary btn-sm" data-period="month" type="button">This Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="prevmonth" type="button">Last Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="90d" type="button">Last 90 Days</button>
+        <button class="btn btn-secondary btn-sm" data-period="year" type="button">This Year</button>
+        <button class="btn btn-secondary btn-sm" data-period="custom" type="button">Custom</button>
+      </div>
+      <div class="pm-filter-group hidden" id="customRange">
+        <input type="date" id="dateFrom" aria-label="From date" />
+        <span class="muted">to</span>
+        <input type="date" id="dateTo" aria-label="To date" />
+        <button class="btn btn-primary btn-sm" id="applyRangeBtn" type="button">Apply</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="scopeSelect" aria-label="Order type">
+          <option value="all">Online + Walk-in</option>
+          <option value="online">Online only</option>
+          <option value="walkin">Walk-in only</option>
+        </select>
+        <select id="warehouseSelect" aria-label="Warehouse">
+          <option value="">All warehouses</option>
+        </select>
+        <select id="categorySelect" aria-label="Category">
+          <option value="">All categories</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="csLoading" class="muted">Loading...</div>
+    <div id="csError" class="error-text hidden"></div>
+
+    <div id="csResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💰</span> <span id="statRevenueLabel">Revenue</span></div>
+          <div class="stat-value" id="statRevenue">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📦</span> Units Sold</div>
+          <div class="stat-value" id="statUnits">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏆</span> <span id="statTopLabel">Top Category</span></div>
+          <div class="stat-value" id="statTop" style="font-size:18px;">-</div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <div class="pm-filter-group">
+          <button class="btn btn-secondary btn-sm hidden" id="backBtn" type="button">&larr; All categories</button>
+          <h2 id="tableTitle" style="margin:0;">Categories</h2>
+        </div>
+        <div class="pm-filter-group">
+          <span id="viewToggle" class="pm-filter-group hidden">
+            <button class="btn btn-primary btn-sm" data-view="items" type="button">Per Item</button>
+            <button class="btn btn-secondary btn-sm" data-view="variants" type="button">Per Variant</button>
+          </span>
+          <span class="muted">Rank by</span>
+          <select id="rankSelect" aria-label="Rank by">
+            <option value="revenue">Revenue</option>
+            <option value="qty">Units sold</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead id="csTableHead"></thead>
+          <tbody id="csTableBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Revenue is the line amount. Items sold inside a set show ₱0 on their own line - the set's price counts under the set's category.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=catsales1"></script>
+  <script src="js/categorySalesReport.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

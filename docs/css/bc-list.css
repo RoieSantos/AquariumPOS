@@ -2482,6 +2482,21 @@ a.bc-cue:hover {
 .oo-prod-cards-title { grid-column: 1 / -1; margin: 0; font-size: 16px; font-weight: 600; }
 .oo-prod-cards a.oo-mc { display: block; color: inherit; text-decoration: none; }
 .oo-prod-cards a.oo-mc:hover { border-color: var(--bc-link, #1560a8); }
+/* A restock card lists just the maker's own lines: what to build, colour, qty (js/onlineOrders.js). */
+.oo-prod-mc .oo-mc-id { text-decoration: none; }
+.oo-prod-lines { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14.5px; }
+.oo-prod-lines th { text-align: left; font-size: 12px; font-weight: 600; color: var(--bc-muted, #5f6b7a); padding: 4px 6px; border-bottom: 1px solid var(--bc-line, #d9dee5); }
+.oo-prod-lines td { padding: 8px 6px; border-bottom: 1px solid var(--bc-line, #eef1f5); vertical-align: middle; }
+.oo-prod-lines .num { text-align: right; white-space: nowrap; }
+.oo-prod-lines td.num b { font-size: 18px; }
+.oo-prod-lines tfoot td { border-bottom: none; font-weight: 600; }
+.oo-prod-lines .oo-prod-none { color: var(--bc-muted, #5f6b7a); text-align: center; }
+.oo-prod-colour { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--bc-line, #c9d3e0); font-size: 13px; font-weight: 700; white-space: nowrap; }
+.oo-prod-colour i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.oo-prod-colour.black { background: #1b1b1b; border-color: #1b1b1b; color: #fff; }
+.oo-prod-colour.black i { background: #fff; }
+.oo-prod-colour.clear i { background: #fff; border: 1.5px solid #7aa7d9; box-sizing: border-box; }
+.oo-prod-variant { font-size: 13px; color: var(--bc-muted, #5f6b7a); }
 
 /* ---- My Assignments on a phone (online-orders.html #myAssignmentCards) ---- */
 .oo-mine-cards { display: none; }

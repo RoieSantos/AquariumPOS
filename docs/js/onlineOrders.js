@@ -506,27 +506,123 @@ async function loadMyProductionOrderCards() {
   });
   // Quietly skipped until supabase_production_orders.sql has been run.
   if (error) { console.warn('staff_list_production_orders:', error.message); box.classList.add('hidden'); return; }
-  const open = (data || []).filter((o) =>
-    (o.tank_maker === me && o.needs_tank && !o.tank_done_at) || (o.stand_maker === me && o.needs_stand && !o.stand_done_at));
+  const myOpenParts = (o) => ['tank', 'stand'].filter((p) => o[`${p}_maker`] === me && o[`needs_${p}`] && !o[`${p}_done_at`]);
+  const open = (data || []).filter((o) => myOpenParts(o).length);
   if (!myAssignmentsOnly || !open.length) { box.classList.add('hidden'); return; }
+
+  // Per "i want the maker to see only the lines of what needs to be done together with the color
+  // variant, Qty, and the button production done.. same as the online orders": each card lists just
+  // this maker's part of the order (Tank or Stand lines), with a big Production Done button.
+  const linesByOrder = new Map();
+  await Promise.all(open.map(async (o) => {
+    const { data: lines, error: linesError } = await supabaseClient.rpc('staff_list_production_order_lines', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_no: o.order_no
+    });
+    linesByOrder.set(o.order_no, linesError ? null : (lines || []));
+  }));
+  if (!myAssignmentsOnly) { box.classList.add('hidden'); return; }
+
   box.innerHTML = `<h3 class="oo-prod-cards-title">Production Orders (restock)</h3>` + open.map((o) => {
-    const parts = ['tank', 'stand'].filter((p) => o[`${p}_maker`] === me && o[`needs_${p}`] && !o[`${p}_done_at`])
-      .map((p) => (p === 'tank' ? 'Tank Maker' : 'Stand Maker')).join(' + ');
+    const parts = myOpenParts(o);
+    const lines = linesByOrder.get(o.order_no);
+    const mine = (lines || []).filter((l) => parts.includes(l.part) && Number(l.quantity) > Number(l.qty_output || 0));
+    const total = mine.reduce((n, l) => n + Number(l.quantity) - Number(l.qty_output || 0), 0);
+    const partLabel = parts.map((p) => (p === 'tank' ? 'Tank Maker' : 'Stand Maker')).join(' + ');
     return `
-      <a class="oo-mc is-clickable" href="production-orders.html?no=${encodeURIComponent(o.order_no)}" aria-label="Open production order ${escapeHtml(o.order_no)}">
+      <article class="oo-mc oo-prod-mc" data-prod-no="${escapeHtml(o.order_no)}" data-prod-parts="${escapeHtml(parts.join(','))}">
         <header class="oo-mc-head">
-          <span class="oo-mc-id">${escapeHtml(o.order_no)}</span>
-          <span class="oo-mc-status">Restock</span>
-          <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
+          <a class="oo-mc-id" href="production-orders.html?no=${encodeURIComponent(o.order_no)}" title="Open the full order">${escapeHtml(o.order_no)}</a>
+          <span class="oo-mc-status">${escapeHtml(partLabel)}</span>
         </header>
-        <div class="oo-mc-customer">${escapeHtml(o.description || `${o.line_count} line(s) to build`)}</div>
+        ${o.description ? `<div class="oo-mc-customer">${escapeHtml(o.description)}</div>` : ''}
         <div class="oo-mc-line oo-mc-eta"><span>Due</span>${etaHtml(o.due_date)}</div>
-        <div class="oo-mc-line"><span>Build</span>${Number(o.total_quantity || 0).toLocaleString()} unit(s) · ${escapeHtml(o.warehouse_name || '')}</div>
-        <div class="oo-mc-line"><span>Your part</span>${escapeHtml(parts)}</div>
+        <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse_name || '')}</div>
+        ${lines === null
+          ? '<div class="oo-mc-note">Could not load the lines - open the order to see them.</div>'
+          : `<table class="oo-prod-lines">
+              <thead><tr><th>Build</th><th>Color</th><th class="num">Qty</th></tr></thead>
+              <tbody>${mine.map((l) => {
+                const colour = prodLineColour(l);
+                return `<tr>
+                  <td>${escapeHtml(prodLineName(l))}</td>
+                  <td>${colour ? `<span class="oo-prod-colour ${colour.toLowerCase()}"><i></i>${escapeHtml(colour)}</span>` : `<span class="oo-prod-variant">${escapeHtml(l.variant_name && !l.variant_name.startsWith(l.item_code) ? l.variant_name : '-')}</span>`}</td>
+                  <td class="num"><b>${formatProdQty(Number(l.quantity) - Number(l.qty_output || 0))}</b></td>
+                </tr>`;
+              }).join('') || '<tr><td colspan="3" class="oo-prod-none">Nothing left to build.</td></tr>'}</tbody>
+              ${mine.length > 1 ? `<tfoot><tr><td colspan="2">Total</td><td class="num"><b>${formatProdQty(total)}</b></td></tr></tfoot>` : ''}
+            </table>`}
         ${o.notes ? `<div class="oo-mc-note">${escapeHtml(o.notes)}</div>` : ''}
-      </a>`;
+        <div class="oo-mc-actions">
+          <button type="button" class="oo-mc-btn primary" data-prod-done="${escapeHtml(o.order_no)}">&#10003; Production Done</button>
+        </div>
+      </article>`;
   }).join('');
   box.classList.remove('hidden');
+
+  if (!box.dataset.wired) {
+    box.dataset.wired = '1';
+    box.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-prod-done]');
+      if (btn) handleProdOrderDoneClick(btn);
+    });
+  }
+}
+
+// Same colour rule as the Production Orders page (supabase_production_variant_colour.sql's colour,
+// else black|BLK / clear|CLR in the variant or description).
+function prodLineColour(l) {
+  if (l.colour) return l.colour;
+  for (const t of [l.variant_name, l.description]) {
+    if (/black|\bblk\b/i.test(t || '')) return 'Black';
+    if (/clear|\bclr\b/i.test(t || '')) return 'Clear';
+  }
+  return null;
+}
+
+// The item's plain name - not the generated "name - Black - variant" description.
+function prodLineName(l) {
+  const desc = (l.description || '').trim();
+  const name = (l.item_name || '').trim();
+  if (name && (!desc || desc.toLowerCase().startsWith(name.toLowerCase()))) return name;
+  return desc || l.item_code || '';
+}
+
+function formatProdQty(n) {
+  return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+async function handleProdOrderDoneClick(btn) {
+  const card = btn.closest('[data-prod-no]');
+  const orderNo = card.dataset.prodNo;
+  const parts = card.dataset.prodParts.split(',').filter(Boolean);
+  const partText = parts.map((p) => (p === 'tank' ? 'tank' : 'stand')).join(' and ');
+  const ok = await confirmAction({
+    caption: 'PRODUCTION DONE',
+    title: orderNo,
+    message: `Is your part (${partText}) completely finished?\n\nThe order will leave your list.`,
+    confirmLabel: 'Yes, Production Done',
+    tone: 'is-done'
+  });
+  if (!ok) return;
+
+  btn.disabled = true;
+  for (const part of parts) {
+    const { error } = await supabaseClient.rpc('staff_set_production_order_part_done', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_no: orderNo,
+      p_part: part,
+      p_done: true
+    });
+    if (error) {
+      btn.disabled = false;
+      window.alert(`Could not mark ${orderNo} Production Done: ${error.message}`);
+      return;
+    }
+  }
+  loadMyProductionOrderCards();
 }
 
 function wireMyAssignmentCards() {

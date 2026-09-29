@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sealant Sales Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=sealant1" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Sealant Sales</h1>
+    <p class="muted">Which sealant variant sells best - Black or Clear, per aquarium and sump. Counts units sold on online and walk-in orders by order date; cancelled orders are left out. Custom builds are included when their spec names the sealant.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" data-period="month" type="button">This Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="prevmonth" type="button">Last Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="90d" type="button">Last 90 Days</button>
+        <button class="btn btn-primary btn-sm" data-period="year" type="button">This Year</button>
+        <button class="btn btn-secondary btn-sm" data-period="custom" type="button">Custom</button>
+      </div>
+      <div class="pm-filter-group hidden" id="customRange">
+        <input type="date" id="dateFrom" aria-label="From date" />
+        <span class="muted">to</span>
+        <input type="date" id="dateTo" aria-label="To date" />
+        <button class="btn btn-primary btn-sm" id="applyRangeBtn" type="button">Apply</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="scopeSelect" aria-label="Order type">
+          <option value="all">Online + Walk-in</option>
+          <option value="online">Online only</option>
+          <option value="walkin">Walk-in only</option>
+        </select>
+        <select id="warehouseSelect" aria-label="Warehouse">
+          <option value="">All warehouses</option>
+        </select>
+        <select id="categorySelect" aria-label="Category">
+          <option value="">All categories</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="ssLoading" class="muted">Loading...</div>
+    <div id="ssError" class="error-text hidden"></div>
+
+    <div id="ssResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="ss-swatch ss-black"></span> Black Sealant</div>
+          <div class="stat-value" id="statBlack">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="ss-swatch ss-clear"></span> Clear Sealant</div>
+          <div class="stat-value" id="statClear">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏆</span> Best Seller</div>
+          <div class="stat-value" id="statTop" style="font-size:18px;">-</div>
+        </div>
+      </div>
+
+      <div class="card ss-split-card">
+        <div class="ss-split-bar" id="splitBar" role="img" aria-label="Black vs Clear share of units sold"></div>
+        <div class="ss-split-legend" id="splitLegend"></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="pm-filter-group">
+          <button class="btn btn-primary btn-sm" data-view="variants" type="button">Per Variant</button>
+          <button class="btn btn-secondary btn-sm" data-view="products" type="button">Black vs Clear per Product</button>
+        </div>
+        <div class="pm-filter-group">
+          <span class="muted">Rank by</span>
+          <select id="rankSelect" aria-label="Rank by">
+            <option value="qty">Units sold</option>
+            <option value="revenue">Revenue</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead id="ssTableHead"></thead>
+          <tbody id="ssTableBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Revenue is the line amount. An aquarium sold inside a set shows ₱0 on its own line, so rank by units to compare fairly.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=sealant1"></script>
+  <script src="js/sealantSalesReport.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

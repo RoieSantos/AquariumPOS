@@ -116,6 +116,20 @@
     .pspot-count.muted { color: var(--text-muted, #999); }
     .size-summary-sep td { font-size: 12px; font-weight: 600; color: var(--text-muted, #666); background: rgba(120, 130, 150, .08); cursor: default; }
     .size-summary tr.unlinked-row { cursor: default; }
+    .last-orders { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 10px 0 0; }
+    .last-orders.hidden { display: none; }
+    .last-order { flex: 1 1 320px; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--border, #e0e6ee); border-left-width: 4px; border-radius: 8px; background: var(--card-bg, #fff); font-size: 13px; color: inherit; text-decoration: none; }
+    a.last-order:hover { border-color: #1d4f91; }
+    .last-order.part-tank { border-left-color: #1d4f91; }
+    .last-order.part-stand { border-left-color: #d98a00; }
+    .last-order-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .last-order-head .lo-part { font-weight: 700; }
+    .last-order-head .lo-no { font-family: monospace; font-weight: 700; font-size: 14px; }
+    .last-order .lo-sub { font-size: 12px; color: var(--text-muted, #666); }
+    .auto-order-table input[type=number] { width: 70px; }
+    .auto-order-table select { width: auto; max-width: 200px; }
+    .auto-order-table tbody tr { cursor: default; }
+    .auto-order-table tr.skip td { opacity: .5; }
     .place-banner { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: rgba(29, 79, 145, .1); font-size: 13px; }
   </style>
 </head>
@@ -144,6 +158,7 @@
         </span>
         <button class="btn btn-secondary btn-sm" id="fullScreenBtn" type="button" title="Use the whole screen for the map">Full screen</button>
         <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+        <button class="btn btn-secondary btn-sm hidden" id="autoOrderBtn" type="button" title="Create a production order for what the racks at this location are short of">Auto Production Order</button>
         <span class="psm-sep" aria-hidden="true"></span>
         <button class="btn btn-secondary btn-sm hidden" id="newShelfBtn" type="button">New Shelf</button>
         <button class="btn btn-primary btn-sm hidden" id="editBtn" type="button">Edit Layout</button>
@@ -176,11 +191,13 @@
       <span><i class="shelf-dot" style="background:#e0e6ee"></i>No aquarium linked (dotted)</span>
     </div>
 
+    <!-- Last production order per maker part at this location (js/productionShelfMap.js renderLastOrders) -->
+    <div id="lastOrders" class="last-orders hidden"></div>
+
     <div id="shelfError" class="error-text hidden"></div>
     <div id="shelfLoading" class="muted">Loading...</div>
     <div id="shelfBody" class="shelf-scroll" style="margin-top:12px;"></div>
 
-    <div class="tray hidden" id="sizeSummary"></div>
   </div>
 
   <!-- A rack in view mode: its aquarium's in-stock serials (read only) -->
@@ -192,6 +209,22 @@
       <div id="spotSerials"></div>
       <div style="display:flex; gap:8px; margin-top:12px;">
         <button class="btn btn-secondary btn-sm" id="spotCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auto Production Order: each linked aquarium's shortfall at the location (rack capacity - in stock
+       - already on open orders), editable, then saved as an Open production order -->
+  <div class="modal-backdrop hidden" id="autoOrderModal">
+    <div class="modal-panel" style="max-width:760px;">
+      <h3 style="margin-top:0;">Auto Production Order</h3>
+      <div class="muted" id="autoOrderSub" style="font-size:12px; margin-bottom:8px;"></div>
+      <div id="autoOrderBody"></div>
+      <div class="cell-field" style="margin-top:10px;"><label for="autoOrderDesc">Description</label><input type="text" id="autoOrderDesc" maxlength="500" /></div>
+      <div id="autoOrderError" class="error-text hidden"></div>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-primary btn-sm" id="autoOrderCreateBtn" type="button" title="Aquariums and stands go on separate orders">Create Production Order(s)</button>
+        <button class="btn btn-secondary btn-sm" id="autoOrderCloseBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -230,7 +263,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=prod2"></script>
   <script src="js/nav.js?v=prod2"></script>
-  <script src="js/productionShelfMap.js?v=10"></script>
+  <script src="js/productionShelfMap.js?v=17"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

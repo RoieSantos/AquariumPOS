@@ -200,6 +200,10 @@ function renderTopNav(activeLabel) {
   if (!isSalesOnlyUser && !isStoreManager) {
     reports.push({ href: 'reports.html', label: 'Reports' });
     reports.push({ href: 'top-selling-items.html', label: 'Top Selling Items' });
+    // Black vs Clear sealant variants sold (supabase_sealant_sales_report.sql), same audience.
+    reports.push({ href: 'sealant-sales-report.html', label: 'Sealant Sales' });
+    // Sales per category, drilling into items / variants (supabase_category_sales_report.sql).
+    reports.push({ href: 'category-sales-report.html', label: 'Category Sales' });
     reports.push({ href: 'customer-aquarium.html', label: 'Customer Aquarium' });
   }
   if (isSuperUser) {

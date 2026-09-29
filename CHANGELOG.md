@@ -4,6 +4,32 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-29
 
+- My Assignments restock Production Order cards now list only the maker's own lines still to build (item, Black/Clear colour, qty) with a Production Done button on the card, like the online order cards ([onlineOrders.js](docs/js/onlineOrders.js), [bc-list.css](docs/css/bc-list.css)).
+
+- Production Shelf Map: removed the "Stock by size" table under the map (rack counts, rack popups and Auto Production Order are unchanged) ([productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).
+
+- Production Shelf Map shows the last production order created at the location for the Tank Maker and for the Stand Maker (order no., status, maker, qty built / to build, created date; click opens it) ([supabase_production_shelf_last_orders.sql](sql/supabase_production_shelf_last_orders.sql), [productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).
+
+- Fix: blurry Part column on the Production Order lines - the Description input (width 100% + padding) overflowed into it; now border-box, and Part shows as a solid Tank (blue) / Stand (amber) badge ([productionOrders.js](docs/js/productionOrders.js)).
+
+- Production Order printout simplified to Description / Variant Color / Qty to Build / Quantity Built (plain item name, bold Black/Clear tag, bigger rows, totals); Auto Production Order lines now get short descriptions like "BETTA-CUBE (...) - Black" instead of repeating the variant name ([productionOrders.js](docs/js/productionOrders.js), [productionShelfMap.js](docs/js/productionShelfMap.js)).
+
+- Added a script to reset the Production Order number counter to just after the highest remaining PRD- number (PRD-000001 if none) ([supabase_production_order_reset_counter.sql](sql/supabase_production_order_reset_counter.sql)).
+
+- Black / Clear tagging on production orders: Auto Production Order now reads every variant (no transfer-order category filter) and detects colour from variant name, SKU, the variant's own item name, or BLK/CLR; line descriptions name the colour ("75G Aquarium - Black"); order card and printout show a Black/Clear tag per line ([supabase_production_variant_colour.sql](sql/supabase_production_variant_colour.sql), [productionShelfMap.js](docs/js/productionShelfMap.js), [productionOrders.js](docs/js/productionOrders.js)).
+
+- Production Orders: a Tank / Stand Maker can only be assigned when the order has a line of their part - the picker is cleared and disabled otherwise, and a deferred constraint trigger refuses it server-side (also clears existing mismatches) ([productionOrders.js](docs/js/productionOrders.js), [supabase_production_order_maker_parts.sql](sql/supabase_production_order_maker_parts.sql)).
+
+- New **Category Sales** report (Reports menu): revenue/units per category (e.g. Accessories), click a category to rank its items or variants; category resolved from the line's variant, then its item. New RPC `admin_get_category_sales_report` ([supabase_category_sales_report.sql](sql/supabase_category_sales_report.sql)), page [category-sales-report.html](docs/category-sales-report.html) + [categorySalesReport.js](docs/js/categorySalesReport.js), nav link, styles.
+- Production Orders: new "Print Order" button (managers and makers) - printable work sheet with the order header, lines grouped Tank / Stand with maker, qty/output/remaining, tick boxes and sign-off lines ([productionOrders.js](docs/js/productionOrders.js), [production-orders.html](docs/production-orders.html)).
+
+- New **Sealant Sales** report (Reports menu): units/revenue per Black/Clear sealant variant per aquarium & sump, Black vs Clear split, per-product preference view; custom builds counted from their spec text. New RPC `admin_get_sealant_sales_report` ([supabase_sealant_sales_report.sql](sql/supabase_sealant_sales_report.sql)), page [sealant-sales-report.html](docs/sealant-sales-report.html) + [sealantSalesReport.js](docs/js/sealantSalesReport.js), nav link, styles.
+- Auto Production Order splits "Any variant" racks by colour: capacity is shared evenly between Black and Clear (odd unit to the colour with less stock), each colour's short = its share - its stock - its open orders, e.g. cap 10 with 5 Black in stock -> 5 Clear only. Replaces the single variant dropdown ([productionShelfMap.js](docs/js/productionShelfMap.js)).
+
+- Auto Production Order now creates separate orders for Aquariums and Stands (same stand/top-cover rule as the server's Part split), so each maker gets their own order; preview shows which order each row goes to ([productionShelfMap.js](docs/js/productionShelfMap.js)).
+
+- Production Shelf Map: new "Auto Production Order" button (Super User / Production Manager) - per linked aquarium, short = rack capacity - in stock - already on Open/Released orders; editable preview, then creates an Open production order and opens it on Production Orders ([productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html), [supabase_production_shelf_auto_order.sql](sql/supabase_production_shelf_auto_order.sql)).
+
 - Shelf Map now uses the full window width (was capped at 1200px), so more shelf spots are visible without scrolling ([shelf-map.html](docs/shelf-map.html)).
 
 - Fix: some orders never deducted Item Ledger stock (105080) - the sales-posting cron could reconcile an order mid-refresh (seeing it empty) and the refresh's earlier SyncedAtUtc stamp then never triggered a revisit. Picker now re-checks anything written within 5 min of the last reconcile; includes a catch-up for orders already missed ([supabase_item_ledger_sales_race_fix.sql](sql/supabase_item_ledger_sales_race_fix.sql)).

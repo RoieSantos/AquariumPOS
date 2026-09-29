@@ -258,6 +258,7 @@ function renderCardHeader() {
   document.getElementById('prodReopenBtn').classList.toggle('hidden', !o || status !== 'Released' || Number(o.total_output) > 0);
   document.getElementById('prodPostOutputBtn').classList.toggle('hidden', !o || status !== 'Released');
   document.getElementById('prodPrintSerialsBtn').classList.toggle('hidden', !o || Number(o.total_output) <= 0);
+  document.getElementById('prodPrintOrderBtn').classList.toggle('hidden', !o);
   document.getElementById('prodDeleteBtn').classList.toggle('hidden', !o || Number(o.total_output) > 0);
   document.getElementById('prodAddLineBtn').classList.toggle('hidden', !editable);
 
@@ -291,6 +292,23 @@ function renderPartDoneButtons() {
 
 // ---- Lines grid
 
+// Black / Clear for a line - the server's colour (supabase_production_variant_colour.sql), else read
+// from the variant / description the same way (black|BLK, clear|CLR).
+function lineColour(l) {
+  if (l.colour) return l.colour;
+  for (const t of [l.variant_name, l.description]) {
+    if (/black|\bblk\b/i.test(t || '')) return 'Black';
+    if (/clear|\bclr\b/i.test(t || '')) return 'Clear';
+  }
+  return null;
+}
+
+function colourTagHtml(colour) {
+  if (!colour) return '';
+  const dot = colour === 'Black' ? 'background:#1b1b1b' : 'background:#fff;border:1.5px solid #7aa7d9;box-sizing:border-box';
+  return ` <span class="prod-colour-tag" title="${escapeHtml(colour)}" style="display:inline-flex;align-items:center;gap:4px;padding:0 7px;border:1px solid #c9d3e0;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;"><i style="width:9px;height:9px;border-radius:50%;display:inline-block;${dot}"></i>${escapeHtml(colour)}</span>`;
+}
+
 function lineRowHtml(l, index) {
   const editable = cardEditable();
   const hasOutput = Number(l.qty_output) > 0;
@@ -310,15 +328,15 @@ function lineRowHtml(l, index) {
             </div>`}
       </td>
       <td>
-        ${lockItem ? escapeHtml(l.variant_name || (l.variant_id ? l.variant_id : '')) || '<span class="muted">-</span>'
+        ${lockItem ? (escapeHtml(l.variant_name || (l.variant_id ? l.variant_id : '')) || '<span class="muted">-</span>') + colourTagHtml(lineColour(l))
           : `<div class="item-search-cell" style="position:relative;">
               <input type="text" class="prod-variant-input" value="${escapeHtml(l.variant_name || '')}" placeholder="${l.item_code ? 'Variant (if any)' : 'Pick an item first'}" autocomplete="off" />
               <div class="variant-suggest-dropdown hidden"></div>
-            </div>`}
+            </div>${colourTagHtml(lineColour(l))}`}
       </td>
-      <td>${editable ? `<input type="text" class="prod-desc-input" value="${escapeHtml(l.description || '')}" maxlength="500" style="width:100%;" />`
+      <td>${editable ? `<input type="text" class="prod-desc-input" value="${escapeHtml(l.description || '')}" maxlength="500" style="width:100%; box-sizing:border-box;" />`
         : escapeHtml(l.description || '')}${l.needs_serial ? ' <span class="badge badge-neutral" title="A serial is created per unit on output">Serial</span>' : ''}</td>
-      <td class="prod-part-cell">${PART_LABEL[part]}</td>
+      <td class="prod-part-cell-wrap">${partBadgeHtml(part)}</td>
       <td class="doc-num">${editable ? `<input type="number" class="prod-qty-input" min="${Number(l.qty_output || 0) || 1}" step="1" value="${l.quantity ?? 1}" style="width:70px; text-align:right;" />` : formatQty(l.quantity)}</td>
       <td class="doc-num">${l.line_no ? formatQty(l.qty_output) : ''}</td>
       <td class="doc-num">${l.line_no ? formatQty(remaining) : ''}</td>
@@ -335,6 +353,7 @@ function renderLines(lines) {
     : '<tr><td colspan="10" class="cell-msg">No lines yet.</td></tr>';
   const showOutput = openOrder?.status === 'Released' && isManager;
   document.querySelectorAll('.prod-output-col').forEach((el) => el.classList.toggle('hidden', !showOutput));
+  refreshMakerAvailability();
 }
 
 function renumberLines() {
@@ -356,7 +375,34 @@ function addLine() {
 
 function refreshRowPart(row) {
   const desc = row.querySelector('.prod-desc-input')?.value || '';
-  row.querySelector('.prod-part-cell').textContent = PART_LABEL[linePart(desc, row.dataset.itemCode)];
+  row.querySelector('.prod-part-cell-wrap').innerHTML = partBadgeHtml(linePart(desc, row.dataset.itemCode));
+  refreshMakerAvailability();
+}
+
+// The line's Part as a solid, crisp badge (Tank blue / Stand amber). Its own opaque background and
+// stacking so nothing from the neighbouring Description input can show through it.
+function partBadgeHtml(part) {
+  const style = part === 'stand' ? 'background:#fff3d6;color:#8a5a00;border-color:#e8c46a' : 'background:#e5eefb;color:#1d4f8f;border-color:#a9c2e8';
+  return `<span class="prod-part-cell" style="position:relative;z-index:1;display:inline-block;padding:1px 8px;border:1px solid;border-radius:999px;font-size:12px;font-weight:600;line-height:18px;text-shadow:none;filter:none;opacity:1;${style}">${PART_LABEL[part]}</span>`;
+}
+
+// Per "not allow a maker if their specific category is not present in the production order": the
+// Tank Maker picker only works while there's a Tank line, the Stand Maker only while there's a Stand
+// line - otherwise it's cleared and disabled (the server refuses it too,
+// supabase_production_order_maker_parts.sql). Runs after the lines render, so never on the
+// "Loading..." placeholder.
+function refreshMakerAvailability() {
+  const present = new Set(Array.from(document.querySelectorAll('#prodLinesBody tr[data-item-code]'))
+    .filter((row) => row.dataset.itemCode)
+    .map((row) => row.querySelector('.prod-part-cell')?.textContent));
+  [['prodTankMaker', 'tank'], ['prodStandMaker', 'stand']].forEach(([id, part]) => {
+    const select = document.getElementById(id);
+    const has = present.has(PART_LABEL[part]);
+    if (!has && select.value) select.value = '';
+    select.disabled = !cardEditable() || !has;
+    select.title = has ? (part === 'tank' ? 'Builds the aquarium / sump lines' : 'Builds the stand / top cover lines')
+      : `No ${PART_LABEL[part].toLowerCase()} lines on this order - add one to assign a ${PART_LABEL[part]} Maker`;
+  });
 }
 
 // The lines grid scrolls inside .doc-lines-wrap, which clips an absolutely positioned suggestion
@@ -665,6 +711,98 @@ async function deleteOrder() {
   loadProductionOrders();
 }
 
+// The item's plain name for the printout: "BETTA-CUBE (4x4x4in, 3MM GLASS)" instead of the generated
+// "BETTA-CUBE (...) - Black - AQ-013 - BETTA-CUBE (...)". A description someone typed that doesn't start
+// with the item name is kept as written.
+function printDescription(l) {
+  const desc = (l.description || '').trim();
+  const name = (l.item_name || '').trim();
+  if (name && (!desc || desc.toLowerCase().startsWith(name.toLowerCase()))) return name;
+  return desc || l.item_code || '';
+}
+
+// Per "can you put a printout for the order": the order as a work sheet for the shop floor - header,
+// then the lines grouped by part (Tank Maker / Stand Maker), each with a tick box and sign-off.
+async function printOrder() {
+  showCardError('');
+  if (cardDirty && isManager && !confirm('This order has unsaved changes - the printout shows the last saved version. Print anyway?')) return;
+  const o = openOrder;
+  const { data, error } = await supabaseClient.rpc('staff_list_production_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_no: o.order_no
+  });
+  if (error) { showCardError(describeSupabaseError(error, 'Could not load the lines to print.')); return; }
+  const lines = data || [];
+  const win = window.open('', '_blank');
+  if (!win) { showCardError('Allow pop-ups to print the order.'); return; }
+
+  const makerName = { tank: o.tank_maker_name, stand: o.stand_maker_name };
+  const doneAt = { tank: o.tank_done_at, stand: o.stand_done_at };
+  const sections = ['tank', 'stand'].map((part) => {
+    const rows = lines.filter((l) => l.part === part);
+    if (!rows.length) return '';
+    const total = rows.reduce((n, l) => n + Number(l.quantity || 0), 0);
+    const built = rows.reduce((n, l) => n + Number(l.qty_output || 0), 0);
+    // Per "i just want to show Description, Variant Color, Qty to Build, Quantity Build": the item's
+    // plain name (not the long "name - colour - variant" line description), the colour on its own, and
+    // a Quantity Built column left blank to write in until output is posted.
+    return `
+      <h2>${PART_LABEL[part]} <span>Maker: ${escapeHtml(makerName[part] || '________________')}${doneAt[part] ? ` · Done ${escapeHtml(new Date(doneAt[part]).toLocaleDateString())}` : ''}</span></h2>
+      <table>
+        <thead><tr><th>Description</th><th class="c">Variant Color</th><th class="n">Qty to Build</th><th class="n">Quantity Built</th></tr></thead>
+        <tbody>
+          ${rows.map((l) => {
+            const colour = lineColour(l);
+            return `<tr>
+            <td class="desc">${escapeHtml(printDescription(l))}</td>
+            <td class="c">${colour ? `<span class="col col-${colour.toLowerCase()}">${escapeHtml(colour.toUpperCase())}</span>` : escapeHtml(l.variant_name && l.variant_name !== l.item_code ? l.variant_name : '-')}</td>
+            <td class="n big">${formatQty(l.quantity)}</td>
+            <td class="n big">${Number(l.qty_output) ? formatQty(l.qty_output) : ''}</td>
+          </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="n big">${formatQty(total)}</td><td class="n big">${built ? formatQty(built) : ''}</td></tr></tfoot>
+      </table>
+      <div class="sign"><div>Built by</div><div>Checked by</div><div>Date finished</div></div>`;
+  }).join('');
+
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(o.order_no)}</title>
+    <style>
+      body{font-family:Arial,sans-serif;margin:18px;color:#111;font-size:13px}
+      h1{font-size:20px;margin:0}.sub{color:#555;margin:2px 0 12px}
+      .meta{display:grid;grid-template-columns:repeat(3,1fr);gap:4px 16px;border:1px solid #bbb;padding:8px 10px;margin-bottom:12px}
+      .meta div span{display:block;font-size:10px;color:#666;text-transform:uppercase}
+      .notes{border:1px solid #bbb;padding:6px 10px;margin-bottom:12px;white-space:pre-wrap}
+      h2{font-size:15px;margin:16px 0 6px;border-bottom:2px solid #111;padding-bottom:3px}h2 span{font-size:12px;font-weight:400;color:#444;margin-left:8px}
+      table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:5px 6px;text-align:left;vertical-align:top}
+      th{background:#eee;font-size:12px}.n{text-align:right;width:110px}.c{text-align:center;width:120px}.big{font-size:17px;font-weight:700}
+      td{padding:9px 8px;vertical-align:middle}td.desc{font-size:14px}
+      tbody tr:nth-child(even){background:#f7f7f7}
+      tfoot td{font-weight:700;background:#eee}
+      .col{display:inline-block;min-width:56px;border:1.5px solid #111;border-radius:3px;padding:2px 6px;font-size:12px;font-weight:700}
+      .col-black{background:#111;color:#fff}
+      @media print{tbody tr:nth-child(even){background:#f7f7f7;-webkit-print-color-adjust:exact;print-color-adjust:exact}.col-black{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+      .box{display:inline-block;width:14px;height:14px;border:1.5px solid #333}
+      .sign{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:28px}.sign div{border-top:1px solid #333;padding-top:3px;font-size:11px;color:#444}
+      section{break-inside:avoid}@media print{body{margin:10mm}}
+    </style></head><body>
+    <h1>Production Order ${escapeHtml(o.order_no)}</h1>
+    <div class="sub">${escapeHtml(o.description || '')}</div>
+    <div class="meta">
+      <div><span>Status</span>${escapeHtml(o.status)}</div>
+      <div><span>Warehouse</span>${escapeHtml(o.warehouse_name || o.warehouse_id || '')}</div>
+      <div><span>Due date</span>${escapeHtml(formatDate(o.due_date) || '-')}</div>
+      <div><span>Created</span>${escapeHtml(o.created_at ? new Date(o.created_at).toLocaleDateString() : '')}${o.created_by ? ' by ' + escapeHtml(o.created_by) : ''}</div>
+      <div><span>Released</span>${escapeHtml(o.released_at ? new Date(o.released_at).toLocaleDateString() : '-')}</div>
+      <div><span>Printed</span>${escapeHtml(new Date().toLocaleString())}</div>
+    </div>
+    ${o.notes ? `<div class="notes"><b>Notes:</b> ${escapeHtml(o.notes)}</div>` : ''}
+    ${sections || '<p>No lines on this order.</p>'}
+    <script>window.onload=function(){window.print();}<\/script></body></html>`);
+  win.document.close();
+}
+
 // A plain printable sheet of the order's serials - for writing / sticking on the finished units.
 async function printSerials() {
   const serials = (await loadCardSerials()).filter((s) => s.status === 'IN_STOCK');
@@ -759,6 +897,7 @@ function wireLinesGrid() {
     if (!e.target.closest('[data-remove-line]')) return;
     e.target.closest('tr').remove();
     renumberLines();
+    refreshMakerAvailability();
     cardDirty = true;
   });
 }
@@ -815,6 +954,7 @@ function wireLinesGrid() {
   document.getElementById('prodReopenBtn').addEventListener('click', () => setReleased(false));
   document.getElementById('prodPostOutputBtn').addEventListener('click', postOutput);
   document.getElementById('prodPrintSerialsBtn').addEventListener('click', printSerials);
+  document.getElementById('prodPrintOrderBtn').addEventListener('click', printOrder);
   document.getElementById('prodDeleteBtn').addEventListener('click', deleteOrder);
   document.getElementById('prodAddLineBtn').addEventListener('click', addLine);
   document.getElementById('prodPartDoneActions').addEventListener('click', (e) => {
