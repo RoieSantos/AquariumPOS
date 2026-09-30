@@ -365,3 +365,121 @@ function mountChatWidget(session) {
     .then(() => initChatWidget(session))
     .catch((err) => console.error('Chat: failed to load chat widget', err));
 }
+
+// Browser Back/Forward for modals - per "from the transfer order i open the order then when I hit
+// back it will go to the production shelf map". Every portal "document" (Transfer Order, Production
+// Order, PO, ...) opens as a .modal-backdrop on the list page, which never touched browser history,
+// so Back skipped past it to the previous page. Now each modal that opens gets its own history entry:
+// Back closes the top modal (via its own close button, so the page's cleanup/unsaved-changes prompt
+// still runs), and closing a modal with X/Cancel drops that entry again so Back stays one step.
+// A page can set modal.dataset.historyUrl (e.g. '?doc=TO-0001') before showing a modal to also put
+// the open document in the URL - then leaving to another page and coming Back reopens it (the page's
+// own deep-link handling does the reopening).
+(function initModalHistory() {
+  if (window.__modalHistoryInit) return;
+  window.__modalHistoryInit = true;
+
+  const stack = [];        // [{ el, pushed, baseUrl }] - open modals, oldest first
+  let pendingPops = 0;     // our own history.back() calls whose popstate we must ignore
+  let queuedPushes = [];   // opens that happened while a back() was still in flight
+  const openState = new WeakMap(); // el -> last seen "is open"
+
+  const isOpen = (el) => !el.classList.contains('hidden');
+  const currentUrl = () => location.pathname + location.search + location.hash;
+  const baseUrlWithout = () => location.pathname + location.hash;
+
+  function targetUrlFor(el) {
+    const u = el.dataset.historyUrl;
+    if (!u) return null;
+    return u.startsWith('?') ? location.pathname + u : u;
+  }
+
+  function pushFor(entry) {
+    const url = targetUrlFor(entry.el);
+    // Deep-link load (the URL already names this document): don't add a duplicate entry - closing it
+    // just strips the parameter again instead of stepping Back off the page.
+    if (url && url === currentUrl() && stack.length === 1) {
+      // Came Back/Forward onto an entry we pushed earlier (fresh load of it): that entry is ours,
+      // so closing should step Back to the list entry rather than leave a duplicate behind.
+      entry.pushed = !!(history.state && history.state.modalHistory);
+      entry.baseUrl = baseUrlWithout();
+      return;
+    }
+    entry.pushed = true;
+    entry.baseUrl = currentUrl();
+    history.pushState({ modalHistory: stack.length }, '', url || currentUrl());
+  }
+
+  function onOpened(el) {
+    const entry = { el, pushed: false, baseUrl: null };
+    stack.push(entry);
+    if (pendingPops > 0) queuedPushes.push(entry);
+    else pushFor(entry);
+  }
+
+  function onClosed(el) {
+    const idx = stack.findIndex((e) => e.el === el);
+    if (idx === -1) return; // already removed by a Back press
+    const [entry] = stack.splice(idx, 1);
+    const q = queuedPushes.indexOf(entry);
+    if (q !== -1) { queuedPushes.splice(q, 1); return; }
+    if (entry.pushed) {
+      pendingPops++;
+      history.back();
+    } else if (entry.baseUrl && entry.baseUrl !== currentUrl()) {
+      history.replaceState(history.state, '', entry.baseUrl);
+    }
+  }
+
+  function closeModal(el) {
+    const btn = Array.from(el.querySelectorAll('.bc-doc-close, button[aria-label="Close"], button[id^="close"], button[id$="CloseBtn"]'))
+      .find((b) => b.closest('.modal-backdrop') === el);
+    if (btn) btn.click();
+    else el.classList.add('hidden');
+  }
+
+  window.addEventListener('popstate', () => {
+    if (pendingPops > 0) {
+      pendingPops--;
+      if (pendingPops === 0 && queuedPushes.length) {
+        const q = queuedPushes; queuedPushes = [];
+        q.forEach((entry) => { if (stack.includes(entry)) pushFor(entry); });
+      }
+      return;
+    }
+    const entry = stack.pop();
+    if (!entry || !isOpen(entry.el)) return;
+    closeModal(entry.el);
+    // The close was refused (e.g. "unsaved changes?" -> Cancel): keep the modal and its entry.
+    setTimeout(() => {
+      if (isOpen(entry.el) && !stack.includes(entry)) {
+        stack.push(entry);
+        entry.pushed = true;
+        history.pushState({ modalHistory: stack.length }, '', targetUrlFor(entry.el) || currentUrl());
+      }
+    }, 0);
+  });
+
+  function scan() {
+    document.querySelectorAll('.modal-backdrop').forEach((el) => {
+      const was = openState.get(el);
+      const now = isOpen(el);
+      openState.set(el, now);
+      if (was === undefined) { if (now) onOpened(el); return; }
+      if (now && !was) onOpened(el);
+      else if (!now && was) onClosed(el);
+    });
+  }
+
+  function start() {
+    // Modals already open at load are left alone (no entry) only if they were open before we
+    // started watching - record their state first, then react to changes.
+    document.querySelectorAll('.modal-backdrop').forEach((el) => openState.set(el, isOpen(el)));
+    new MutationObserver(scan).observe(document.body, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ['class']
+    });
+  }
+
+  if (document.body) start();
+  else document.addEventListener('DOMContentLoaded', start);
+})();

@@ -707,6 +707,8 @@ async function openManageModal(docNo) {
   document.getElementById('viewLinesError').classList.add('hidden');
   const body = document.getElementById('viewLinesBody');
   body.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
+  // Browser Back closes the order; the ?doc= keeps it reopenable when coming Back from another page (js/nav.js).
+  document.getElementById('viewLinesModal').dataset.historyUrl = `?doc=${encodeURIComponent(docNo)}`;
   document.getElementById('viewLinesModal').classList.remove('hidden');
 
   // Restore the layout this browser last used, before the panel is seen.

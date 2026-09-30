@@ -199,6 +199,7 @@ function linkedDocumentKind(e) {
   const type = String(e.document_type || '').replace(/ Reversal$/, '');
   if (type === 'Sales Order') return { kind: 'sales', docNo };
   if (type === 'Defect') return { kind: 'defect', docNo };
+  if (type === 'POS Expense') return { kind: 'expense', docNo };
   if (type === 'Purchase Receipt') return { kind: 'purchase', docNo };
   if (type === 'Transfer Shipment' || type === 'Transfer Receipt') return { kind: 'transfer', docNo };
   return null;
@@ -209,6 +210,7 @@ async function resolveLinkedDocumentUrl({ kind, docNo }) {
   const enc = encodeURIComponent(docNo);
   if (kind === 'sales') return 'online-order-lines.html?order=' + enc;
   if (kind === 'defect') return 'defect-items.html?search=' + enc;
+  if (kind === 'expense') return 'expense-entry-lines.html?receipt=' + enc;
 
   if (kind === 'purchase') {
     const { data } = await supabaseClient.rpc('staff_get_purchase_order', {

@@ -813,6 +813,9 @@ async function openCard(orderRow) {
   document.getElementById('prodMakerView').classList.toggle('hidden', !makerView);
   document.getElementById('prodMakerView').innerHTML = makerView ? '<p class="muted">Loading...</p>' : '';
   applyMaximized(readStoredFlag(PROD_MAXIMIZED_KEY, false));
+  // Browser Back closes the card; the ?no= keeps it reopenable when coming Back from another page (js/nav.js).
+  if (orderRow?.order_no) document.getElementById('prodCardModal').dataset.historyUrl = `?no=${encodeURIComponent(orderRow.order_no)}`;
+  else delete document.getElementById('prodCardModal').dataset.historyUrl;
   document.getElementById('prodCardModal').classList.remove('hidden');
   if (!orderRow) {
     renderLines([]);
