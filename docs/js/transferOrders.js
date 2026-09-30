@@ -445,6 +445,15 @@ function updateManageActionButtons(status, lines) {
     !hasRemainingToShip || !!currentSession?.isStoreManager
   );
 
+  // Create Production Order: only when a serial-tracked (Production Category - tank / stand / sump)
+  // line still has something to ship, and only for those who can create production orders
+  // (_production_is_manager: Super User or Production Manager).
+  document.getElementById('createProdFromTransferBtn').classList.toggle(
+    'hidden',
+    !(currentSession?.isSuperUser || currentSession?.isProductionManager)
+      || !(active && lines.some((l) => lineRemainingToShip(l) > 0 && currentManageProductionItemCodes.has(l['Item No.'])))
+  );
+
   // Super-user-only "Delete Order" - removes the header and lines outright. Only offered while
   // nothing has shipped: shipping/receiving write Item Ledger entries, which deleting the order
   // wouldn't undo. Any status qualifies (a Cancelled order can be deleted too).
@@ -1192,6 +1201,169 @@ async function confirmCreatePo() {
   } else if (!failures.length) {
     errorEl.textContent = 'Nothing to create - tick a supplier and enter a quantity above 0.';
     errorEl.classList.remove('hidden');
+  }
+}
+
+// ---- Create Production Order(s) for serial-tracked units with no serial yet ----
+// Per "if the transfer order is lacking of serials in Stand / Tank and Sump can we directly create a
+// production order from there". For each serial-tracked line still to ship: short = still to ship -
+// IN_STOCK serials at the From Warehouse - already on an Open/Released production order into it. Built
+// at the From Warehouse (where it ships from); one order per maker part, same split as the Production
+// Shelf Map's Auto Order (supabase_production_orders.sql _production_line_part). Created Open - assign
+// makers and Release on Production Orders.
+let createProdRows = []; // [{ itemCode, variantId, variantName, description, part, need, serials, onOrder, short }]
+
+// Same "Stand / Top Cover goes to the Stand Maker" split the server applies (_production_line_part).
+function transferLinePart(description, itemCode) {
+  return /(stand(?!ard)|top[\s_-]*cover)/i.test(`${description || ''} ${itemCode || ''}`) ? 'stand' : 'tank';
+}
+
+async function openCreateProdModal(docNo) {
+  const errorEl = document.getElementById('viewLinesError');
+  errorEl.classList.add('hidden');
+  const fromId = currentManageHeader?.['From Warehouse ID'];
+  const fromName = currentManageHeader?.['From Warehouse'] || '';
+  if (!fromId) {
+    errorEl.textContent = 'This order has no From Warehouse ID.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  // Still-to-ship per item/variant, serial-tracked lines only.
+  const needs = new Map();
+  document.querySelectorAll('#viewLinesBody tr[data-line-no]').forEach((row) => {
+    if (!currentManageProductionItemCodes.has(row.dataset.itemNo)) return;
+    const remaining = Math.max(0, (Number(row.dataset.qtyToTransfer) || 0) - (Number(row.dataset.qtyShipped) || 0));
+    if (remaining <= 0) return;
+    const key = `${row.dataset.itemNo}|${row.dataset.variantId || ''}`;
+    const description = row.cells[2]?.textContent.trim() || row.dataset.itemNo;
+    const n = needs.get(key) || {
+      itemCode: row.dataset.itemNo,
+      variantId: row.dataset.variantId || '',
+      variantName: row.cells[1]?.textContent.trim() || '',
+      description,
+      part: transferLinePart(description, row.dataset.itemNo),
+      need: 0
+    };
+    n.need += remaining;
+    needs.set(key, n);
+  });
+  if (needs.size === 0) {
+    errorEl.textContent = 'No serial-tracked line has anything left to ship.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const [{ data: openData, error: openError }, serialCounts] = await Promise.all([
+    supabaseClient.rpc('staff_list_production_open_qty', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_warehouse_id: fromId
+    }),
+    Promise.all(Array.from(needs.values()).map(async (n) => {
+      let query = supabaseClient
+        .from('ItemSerialTracking')
+        .select('RunningSerialNo', { count: 'exact', head: true })
+        .eq('Status', 'IN_STOCK')
+        .eq('ItemCode', n.itemCode)
+        .eq('Location', fromName);
+      query = n.variantId ? query.eq('VariantCode', n.variantId) : query.or('VariantCode.is.null,VariantCode.eq.');
+      const { count, error } = await query;
+      return error ? null : (count || 0);
+    }))
+  ]);
+
+  const openLines = openError ? [] : (openData || []);
+  createProdRows = Array.from(needs.values()).map((n, i) => {
+    const serials = serialCounts[i];
+    const onOrder = openLines
+      .filter((l) => l.item_code === n.itemCode && (l.variant_id || '') === n.variantId)
+      .reduce((sum, l) => sum + Number(l.open_qty || 0), 0);
+    return { ...n, serials, onOrder, short: serials == null ? 0 : Math.max(0, n.need - serials - onOrder) };
+  });
+
+  document.getElementById('createProdIntro').textContent =
+    `Transfer Order ${docNo}: serial-tracked units still to ship vs. serials in stock at ${fromName} and what's already on an Open / Released production order there. ` +
+    'Aquarium and Stand lines become separate orders (Tank Maker / Stand Maker). They are created Open - assign the makers and Release them on Production Orders.';
+  const warning = openError
+    ? `<div class="error-text" style="margin-bottom:8px;">Couldn't read open production orders (${escapeHtml(openError.message)}) - On Order is not subtracted.</div>`
+    : '';
+  document.getElementById('createProdBody').innerHTML = warning + `
+    <div class="table-wrap"><table>
+      <thead><tr><th></th><th>Item No.</th><th>Variant</th><th>Description</th><th>Order</th><th>To Ship</th><th>Serials in stock</th><th>On Order</th><th>Build Qty</th></tr></thead>
+      <tbody>${createProdRows.map((r, i) => `
+        <tr>
+          <td><input type="checkbox" class="create-prod-check" data-i="${i}" ${r.short > 0 ? 'checked' : ''} /></td>
+          <td>${escapeHtml(r.itemCode)}</td><td>${escapeHtml(r.variantName)}</td><td>${escapeHtml(r.description)}</td>
+          <td>${r.part === 'stand' ? 'Stand' : 'Aquarium'}</td>
+          <td>${r.need}</td>
+          <td>${r.serials == null ? '<span class="error-text" title="Could not count serials">?</span>' : r.serials}</td>
+          <td>${r.onOrder || ''}</td>
+          <td><input type="number" class="create-prod-qty" data-i="${i}" min="0" step="1" value="${r.short}" style="width:90px;" /></td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>
+    ${createProdRows.some((r) => r.short > 0) ? '' : '<p class="muted">Nothing is short - every unit to ship already has a serial in stock or is on order. You can still tick a line and enter a quantity.</p>'}`;
+  document.getElementById('createProdError').classList.add('hidden');
+  document.getElementById('createProdResult').innerHTML = '';
+  document.getElementById('createProdConfirmBtn').disabled = false;
+  document.getElementById('createProdModal').classList.remove('hidden');
+}
+
+async function confirmCreateProd() {
+  const errorEl = document.getElementById('createProdError');
+  errorEl.classList.add('hidden');
+  const fail = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+
+  const picked = createProdRows.map((r, i) => {
+    const checked = document.querySelector(`.create-prod-check[data-i="${i}"]`)?.checked;
+    const qty = Math.floor(Number(document.querySelector(`.create-prod-qty[data-i="${i}"]`)?.value) || 0);
+    return checked && qty > 0 ? { ...r, qty } : null;
+  }).filter(Boolean);
+  if (!picked.length) { fail('Tick at least one line with a Build Qty above 0.'); return; }
+
+  const toLine = (r) => ({
+    line_no: null,
+    item_code: r.itemCode,
+    variant_id: r.variantId || null,
+    description: [r.description, r.variantName].filter(Boolean).join(' - '),
+    quantity: r.qty
+  });
+  const parts = [
+    { label: 'Aquarium', lines: picked.filter((r) => r.part === 'tank').map(toLine) },
+    { label: 'Stand', lines: picked.filter((r) => r.part === 'stand').map(toLine) }
+  ].filter((p) => p.lines.length);
+
+  const btn = document.getElementById('createProdConfirmBtn');
+  btn.disabled = true;
+  const created = [];
+  for (const part of parts) {
+    const { data, error } = await supabaseClient.rpc('staff_save_production_order', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_no: null,
+      p_description: `For Transfer Order ${currentManageDocNo}${parts.length > 1 ? ` (${part.label})` : ''}`,
+      p_warehouse_id: currentManageHeader['From Warehouse ID'],
+      p_due_date: null,
+      p_notes: `Built for Transfer Order ${currentManageDocNo} (${currentManageHeader['From Warehouse'] || ''} -> ${currentManageHeader['To Warehouse'] || ''}) - not enough serials in stock to ship.`,
+      p_tank_maker: null,
+      p_stand_maker: null,
+      p_lines: part.lines
+    });
+    if (error) {
+      fail(`${part.label} order: ${describeSupabaseError(error, 'unknown error')}${created.length ? ` (${created.map((c) => `${c.label} ${c.no}`).join(', ')} was already created)` : ''}`);
+      break;
+    }
+    created.push({ label: part.label, no: data });
+  }
+
+  if (created.length) {
+    document.getElementById('createProdResult').innerHTML = '<p><strong>Created (Open - assign makers and Release):</strong></p><ul>' + created.map((c) =>
+      `<li>${escapeHtml(c.label)}: <a href="production-orders.html?no=${encodeURIComponent(c.no)}" target="_blank">${escapeHtml(c.no)}</a></li>`).join('') + '</ul>';
+    // Done - stop it being created twice by an accidental second click.
+    document.querySelectorAll('.create-prod-check').forEach((c) => { c.checked = false; c.disabled = true; });
+  } else {
+    btn.disabled = false;
   }
 }
 
@@ -2510,6 +2682,9 @@ async function saveNewTransfer() {
   document.getElementById('createPoFromTransferBtn').addEventListener('click', () => openCreatePoModal(currentManageDocNo));
   document.getElementById('createPoConfirmBtn').addEventListener('click', confirmCreatePo);
   document.getElementById('createPoCloseBtn').addEventListener('click', () => document.getElementById('createPoModal').classList.add('hidden'));
+  document.getElementById('createProdFromTransferBtn').addEventListener('click', () => openCreateProdModal(currentManageDocNo));
+  document.getElementById('createProdConfirmBtn').addEventListener('click', confirmCreateProd);
+  document.getElementById('createProdCloseBtn').addEventListener('click', () => document.getElementById('createProdModal').classList.add('hidden'));
   document.getElementById('receiveTransferBtn').addEventListener('click', () => receiveTransferOrder(currentManageDocNo));
   document.getElementById('cancelTransferBtn').addEventListener('click', () => cancelTransferOrder(currentManageDocNo));
   document.getElementById('deleteTransferBtn').addEventListener('click', () => deleteTransferOrder(currentManageDocNo));

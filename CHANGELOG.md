@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-30
 
+- Transfer Orders: new **Create Production Order** button (Super User / Production Manager) - for serial-tracked lines (tank / stand / sump) still to ship, builds the shortfall (to ship - IN_STOCK serials at the From Warehouse - already on an Open/Released production order there) as Open production orders at the From Warehouse, one for Aquarium and one for Stand ([transferOrders.js](docs/js/transferOrders.js), [transfer-orders.html](docs/transfer-orders.html)).
+
 - Production Shelf Map: **Auto Order** now skips racks set to Count from: Item Ledger - only serial-counted racks are restocked through production orders ([productionShelfMap.js](docs/js/productionShelfMap.js)).
 
 - Fix: STANDARD-category aquariums were split onto the **Stand** production order because the Stand Maker rule matched "stand" inside "STANDARD". Rule is now `stand(?!ard)|top cover` in the DB functions and all 3 portal JS copies; open/released lines already tagged wrong are re-tagged to Tank ([supabase_production_line_part_standard_fix.sql](sql/supabase_production_line_part_standard_fix.sql)).

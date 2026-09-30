@@ -155,6 +155,7 @@
         <button class="bc-cmd bc-cmd-accent" id="shipTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-ship"/></svg>Ship</button>
         <button class="bc-cmd bc-cmd-accent" id="receiveTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-receive"/></svg>Receive</button>
         <button class="bc-cmd hidden" id="createPoFromTransferBtn" type="button" title="Create Purchase Orders (one per supplier) for the items the From Warehouse doesn't have enough of"><svg class="bc-ico"><use href="#ico-cart"/></svg>Create PO</button>
+        <button class="bc-cmd hidden" id="createProdFromTransferBtn" type="button" title="Create Production Orders (Aquarium / Stand) for the serial-tracked units the From Warehouse doesn't have serials for yet"><svg class="bc-ico"><use href="#ico-plus"/></svg>Create Production Order</button>
         <span class="bc-cmd-sep"></span>
         <button class="bc-cmd" id="printProductionBtn" type="button"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Production Order</button>
         <button class="bc-cmd" id="printTransferBtn" type="button"><svg class="bc-ico"><use href="#ico-print"/></svg>Print</button>
@@ -259,6 +260,28 @@
       <div class="bc-doc-foot">
         <button class="bc-btn bc-btn-primary" id="createPoConfirmBtn" type="button">Create Purchase Order(s)</button>
         <button class="bc-btn" id="createPoCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Production Order(s) for serial-tracked units with no serial yet (js/transferOrders.js) - stacks above the Manage modal -->
+  <div id="createProdModal" class="modal-backdrop hidden" style="z-index:110;">
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:900px;" role="dialog" aria-modal="true" aria-labelledby="createProdTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">TRANSFER ORDER</div>
+          <h2 id="createProdTitle">Create Production Order(s) for missing serials</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" id="createProdIntro"></p>
+        <div id="createProdBody"></div>
+        <div id="createProdError" class="error-text hidden"></div>
+        <div id="createProdResult"></div>
+      </div>
+      <div class="bc-doc-foot">
+        <button class="bc-btn bc-btn-primary" id="createProdConfirmBtn" type="button">Create Production Order(s)</button>
+        <button class="bc-btn" id="createProdCloseBtn" type="button">Close</button>
       </div>
     </div>
   </div>
@@ -375,7 +398,7 @@
   <script src="js/nav.js?v=paymethods1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/transferOrders.js?v=bc1"></script>
+  <script src="js/transferOrders.js?v=bc2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
