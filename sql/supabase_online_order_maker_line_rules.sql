@@ -27,7 +27,7 @@ as $$
   select case
     when not (coalesce(p_description, '') ilike '%custom%' or coalesce(p_item_code, '') ilike '%custom%'
               or coalesce(p_product_display_id, '') ilike '%custom%') then null
-    when (coalesce(p_description, '') || ' ' || coalesce(p_item_code, '')) ~* '(stand|top[[:space:]_-]*cover)' then 'stand'
+    when (coalesce(p_description, '') || ' ' || coalesce(p_item_code, '')) ~* '(stand(?!ard)|top[[:space:]_-]*cover)' then 'stand'
     else 'tank'
   end;
 $$;

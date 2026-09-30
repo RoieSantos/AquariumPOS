@@ -46,7 +46,7 @@ function formatQty(value) {
 // Same "Stand / Top Cover goes to the Stand Maker" split the server applies (_production_line_part) -
 // shown live while a line is typed; the server's value is what's saved.
 function linePart(description, itemCode) {
-  return /(stand|top[\s_-]*cover)/i.test(`${description || ''} ${itemCode || ''}`) ? 'stand' : 'tank';
+  return /(stand(?!ard)|top[\s_-]*cover)/i.test(`${description || ''} ${itemCode || ''}`) ? 'stand' : 'tank';
 }
 
 function readStoredFlag(key, fallback) {

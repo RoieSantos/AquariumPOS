@@ -149,7 +149,7 @@ language sql
 immutable
 as $$
   select case
-    when (coalesce(p_description, '') || ' ' || coalesce(p_item_code, '')) ~* '(stand|top[[:space:]_-]*cover)' then 'stand'
+    when (coalesce(p_description, '') || ' ' || coalesce(p_item_code, '')) ~* '(stand(?!ard)|top[[:space:]_-]*cover)' then 'stand'
     else 'tank'
   end;
 $$;

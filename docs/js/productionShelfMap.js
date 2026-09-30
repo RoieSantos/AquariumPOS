@@ -551,11 +551,13 @@ async function openAutoOrderModal() {
   if (openError) openWarning = `Couldn't read open production orders (${openError.message}) - run supabase_production_shelf_auto_order.sql. Quantities below don't subtract what's already on order.`;
   else openLines = openData || [];
 
-  // One row per linked aquarium (racks linked to the same one share its stock).
+  // One row per linked aquarium (racks linked to the same one share its stock). Racks counted from the
+  // Item Ledger are left out - per "items that is maintained by the item ledger entry should not be
+  // included on the auto production order".
   const groups = new Map();
   shelves.filter((sh) => sh.warehouse_id === currentLocation).forEach((sh) => {
     (sh.spots || []).forEach((sp) => {
-      if (!sp.item_code) return;
+      if (!sp.item_code || sp.count_source === 'ledger') return;
       const key = `${sp.item_code}|${sp.variant_id || ''}`;
       const g = groups.get(key) || { spot: sp, tags: new Set(), racks: [], capacity: 0, noCapacity: 0 };
       if (spotTagText(sp)) g.tags.add(spotTagText(sp));
@@ -650,7 +652,7 @@ async function autoOrderRowsForGroup(g, openLines) {
 function renderAutoOrder(warning) {
   const body = document.getElementById('autoOrderBody');
   if (!autoOrderRows.length) {
-    body.innerHTML = '<p class="muted">No racks at this location are linked to an aquarium. Link them in Edit Layout first.</p>';
+    body.innerHTML = '<p class="muted">No racks at this location are linked to an aquarium and counted from Serials (racks counted from the Item Ledger are not auto-ordered). Link them in Edit Layout first.</p>';
     return;
   }
   const noCap = autoOrderRows.filter((r) => !r.hasCapacity);
@@ -747,7 +749,7 @@ async function createAutoOrder() {
 
 // Same "Stand / Top Cover goes to the Stand Maker" split the server applies (_production_line_part).
 function autoOrderLinePart(line) {
-  return /(stand|top[\s_-]*cover)/i.test(`${line.description || ''} ${line.item_code || ''}`) ? 'stand' : 'tank';
+  return /(stand(?!ard)|top[\s_-]*cover)/i.test(`${line.description || ''} ${line.item_code || ''}`) ? 'stand' : 'tank';
 }
 
 // ---------------------------------------------------------------- Layout editing

@@ -755,7 +755,7 @@ async function openStockBuildDialog(o) {
   const s = stockStatusFor(o);
   if (!s) return;
   const missing = (s.lines || []).filter((l) => l.available < l.needed)
-    .map((l) => ({ ...l, qty: l.needed - l.available, part: /(stand|top[\s_-]*cover)/i.test(`${l.description || ''} ${l.item_code || ''}`) ? 'stand' : 'tank' }));
+    .map((l) => ({ ...l, qty: l.needed - l.available, part: /(stand(?!ard)|top[\s_-]*cover)/i.test(`${l.description || ''} ${l.item_code || ''}`) ? 'stand' : 'tank' }));
   if (!missing.length) return;
   await loadProductionMembers();
   const parts = [...new Set(missing.map((m) => m.part))];
