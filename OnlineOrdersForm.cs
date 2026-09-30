@@ -1588,6 +1588,11 @@ WHERE OrderID = @OrderID
             if (!IsRowInCurrentLocation(rowIndex, out failureMessage))
                 return false;
 
+            // Custom builds (custom aquarium / stand / sump) are run on the Web Portal end to end - Assign,
+            // Production Done, Ready to Ship, Mark Shipped - so the POS never changes their status.
+            if (IsCustomOrderRow(rowIndex, out failureMessage))
+                return false;
+
             try
             {
                 if (!_showNonCurrentLocationsOnly)
@@ -1801,6 +1806,12 @@ WHERE OrderID = @OrderID", conn);
                 if (!IsPrintedStatusForRow(idx))
                 {
                     try { MessageBox.Show("Update not allowed status is not \"printed\"", "Invalid Status", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                    return;
+                }
+
+                if (IsCustomOrderRow(idx, out var customMessage))
+                {
+                    try { MessageBox.Show(customMessage, "Custom Order - Use the Portal", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
                     return;
                 }
 
@@ -3479,8 +3490,19 @@ WHERE Code = @Code
 
         private const string CustomOrderPortalOnlyMessage =
             "Order {0} has custom item(s) (custom aquarium / stand / sump).\n\n" +
-            "Custom orders are handled on the Web Portal: Online Orders -> Assign the Tank / Stand Maker there. " +
-            "It can't be printed or marked Printed from the POS.";
+            "Custom orders are handled on the Web Portal: Online Orders -> Assign the Tank / Stand Maker, " +
+            "Production Done, Ready to Ship and Mark Shipped are all done there. " +
+            "The POS can't print it or change its status.";
+
+        // True (with the message to show) when the row's order is a custom build - see OrderHasCustomBuildLines.
+        private bool IsCustomOrderRow(int rowIndex, out string message)
+        {
+            message = string.Empty;
+            string orderId = GetOrderIdForRow(rowIndex);
+            if (string.IsNullOrWhiteSpace(orderId) || !OrderHasCustomBuildLines(orderId)) return false;
+            message = string.Format(CustomOrderPortalOnlyMessage, orderId);
+            return true;
+        }
 
         private bool IsPrintedStatusForRow(int rowIndex)
         {
@@ -3935,6 +3957,12 @@ WHERE Code = @Code
         private async Task<bool> MarkRowAsPendingTransferAsync(int rowIndex, bool sendCustomerUpdate = true)
         {
             if (rowIndex < 0 || rowIndex >= dgv.Rows.Count) return false;
+
+            if (IsCustomOrderRow(rowIndex, out var customMessage))
+            {
+                try { MessageBox.Show(customMessage, "Custom Order - Use the Portal", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                return false;
+            }
 
             try
             {
@@ -6045,6 +6073,12 @@ END", conn);
 
                     if (string.Equals(currentStatus, "new", StringComparison.OrdinalIgnoreCase))
                         continue;
+
+                    if (IsCustomOrderRow(rowIndex, out var customMessage))
+                    {
+                        MessageBox.Show(customMessage, "Custom Order - Use the Portal", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        continue;
+                    }
 
                     if (!await EnsureOrderSerialTrackingAsync(orderId, "For Delivery").ConfigureAwait(false))
                         continue;

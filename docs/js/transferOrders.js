@@ -763,6 +763,7 @@ async function openManageModal(docNo) {
 
   renderManageLines(lines, status);
   updateManageActionButtons(status, lines);
+  loadTransferProductionOrders(docNo);
   await loadAvailableStockForLines(docNo);
   await loadTransferBom(docNo);
   await autoFillQtyToShip(docNo, lines);
@@ -1218,6 +1219,28 @@ function transferLinePart(description, itemCode) {
   return /(stand(?!ard)|top[\s_-]*cover)/i.test(`${description || ''} ${itemCode || ''}`) ? 'stand' : 'tank';
 }
 
+// General tab's "Production Orders" field - the orders linked to this transfer (ProductionOrders.
+// SourceTransferNo, supabase_production_order_transfer_link.sql), each opening on Production Orders.
+async function loadTransferProductionOrders(docNo) {
+  const el = document.getElementById('viewProductionOrders');
+  el.textContent = '';
+  const { data, error } = await supabaseClient.rpc('staff_list_transfer_production_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_transfer_no: docNo
+  });
+  if (docNo !== currentManageDocNo) return; // another order was opened meanwhile
+  if (error) {
+    // Best-effort (e.g. the SQL hasn't been run yet) - the order still works without it.
+    console.error('staff_list_transfer_production_orders failed:', error);
+    el.innerHTML = '<span class="muted">-</span>';
+    return;
+  }
+  el.innerHTML = (data || []).length
+    ? data.map((p) => `<a href="production-orders.html?no=${encodeURIComponent(p.no)}" title="${escapeHtml(p.description || '')} - ${Number(p.qty_output)} of ${Number(p.qty)} built">${escapeHtml(p.no)}</a> <span class="muted">(${escapeHtml(p.status)})</span>`).join('<br>')
+    : '<span class="muted">-</span>';
+}
+
 async function openCreateProdModal(docNo) {
   const errorEl = document.getElementById('viewLinesError');
   errorEl.classList.add('hidden');
@@ -1354,12 +1377,25 @@ async function confirmCreateProd() {
       fail(`${part.label} order: ${describeSupabaseError(error, 'unknown error')}${created.length ? ` (${created.map((c) => `${c.label} ${c.no}`).join(', ')} was already created)` : ''}`);
       break;
     }
-    created.push({ label: part.label, no: data });
+    // Tag it to this transfer (Production Orders field on the General tab).
+    const link = await supabaseClient.rpc('staff_link_production_order_to_transfer', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_no: data,
+      p_transfer_no: currentManageDocNo
+    });
+    created.push({ label: part.label, no: data, linkError: link.error });
   }
+
+  const linkErrors = created.filter((c) => c.linkError);
+  if (linkErrors.length) {
+    fail(`Created ${linkErrors.map((c) => c.no).join(', ')}, but could not tag it to this Transfer Order: ${describeSupabaseError(linkErrors[0].linkError, 'unknown error')} (has supabase_production_order_transfer_link.sql been run?)`);
+  }
+  loadTransferProductionOrders(currentManageDocNo);
 
   if (created.length) {
     document.getElementById('createProdResult').innerHTML = '<p><strong>Created (Open - assign makers and Release):</strong></p><ul>' + created.map((c) =>
-      `<li>${escapeHtml(c.label)}: <a href="production-orders.html?no=${encodeURIComponent(c.no)}" target="_blank">${escapeHtml(c.no)}</a></li>`).join('') + '</ul>';
+      `<li>${escapeHtml(c.label)}: <a href="production-orders.html?no=${encodeURIComponent(c.no)}">${escapeHtml(c.no)}</a></li>`).join('') + '</ul>';
     // Done - stop it being created twice by an accidental second click.
     document.querySelectorAll('.create-prod-check').forEach((c) => { c.checked = false; c.disabled = true; });
   } else {

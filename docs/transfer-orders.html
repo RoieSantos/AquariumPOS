@@ -212,6 +212,12 @@
                 <label>Receive Date</label>
                 <div id="viewReceiveDate" class="bc-doc-value"></div>
               </div>
+              <!-- Production orders created for this transfer (ProductionOrders.SourceTransferNo,
+                   sql/supabase_production_order_transfer_link.sql) - js/transferOrders.js loadTransferProductionOrders -->
+              <div class="bc-doc-field">
+                <label>Production Orders</label>
+                <div id="viewProductionOrders" class="bc-doc-value"></div>
+              </div>
             </div>
           </div>
         </details>
@@ -398,7 +404,7 @@
   <script src="js/nav.js?v=paymethods1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/transferOrders.js?v=bc2"></script>
+  <script src="js/transferOrders.js?v=bc4"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -4,6 +4,14 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-30
 
+- Alice stock for Aquarium/Stand/Sump now comes from serials: `public_search_items` / `public_list_order_items` count IN_STOCK `ItemSerialTracking` units per branch for those categories (others stay on the Item Ledger) - `sql/supabase_chatbot_stock_from_serials.sql`. Bot tool descriptions + prompt in `chatbot-engine.ts` updated to explain it (0 = none ready, not discontinued). Order Now / landing / GMA Conversations stock labels follow the same change.
+
+- POS Online Orders: custom orders (custom aquarium / stand / sump lines) can no longer have their status changed from the POS - To Ship, Production Done, Pending Transfer, For Delivery (In-Transit), Received, Shipped and the right-click statuses now show "Custom Order - Use the Portal" (Print / Printed were already blocked). Custom orders run on the portal end to end ([OnlineOrdersForm.cs](OnlineOrdersForm.cs)).
+
+- Fix: clicking a production order link on a Transfer Order opened a new tab, which has no portal login (it's per-tab), so it looked logged out. Links now open in the same tab ([transferOrders.js](docs/js/transferOrders.js)).
+
+- Transfer Orders: production orders made with Create Production Order are now tagged to the transfer (new `ProductionOrders.SourceTransferNo`), and the Transfer Order's General tab shows a **Production Orders** field listing them with status and a link. Earlier orders are tagged from their "For Transfer Order ..." description ([supabase_production_order_transfer_link.sql](sql/supabase_production_order_transfer_link.sql), [transferOrders.js](docs/js/transferOrders.js), [transfer-orders.html](docs/transfer-orders.html)).
+
 - Transfer Orders: new **Create Production Order** button (Super User / Production Manager) - for serial-tracked lines (tank / stand / sump) still to ship, builds the shortfall (to ship - IN_STOCK serials at the From Warehouse - already on an Open/Released production order there) as Open production orders at the From Warehouse, one for Aquarium and one for Stand ([transferOrders.js](docs/js/transferOrders.js), [transfer-orders.html](docs/transfer-orders.html)).
 
 - Production Shelf Map: **Auto Order** now skips racks set to Count from: Item Ledger - only serial-counted racks are restocked through production orders ([productionShelfMap.js](docs/js/productionShelfMap.js)).
