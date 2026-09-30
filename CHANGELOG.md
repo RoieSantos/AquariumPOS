@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-09-30
 
+- Alice variant stock readable: `stock_by_variant` elements are now {option, sku, Amaya, GMA} with option = SKU suffix as words ("Black Sealant", "White Paint") - `sql/supabase_chatbot_stock_variant_option.sql`. Prompt now makes Alice ALWAYS break stock down per branch + color option (sealant for aquariums/sumps, paint for stands) on any stock question, not just "how many".
+
+- Alice stock per variant/SKU: `public_search_items` / `public_list_order_items` now also return `stock_by_variant` ([{variant, sku, Amaya, GMA}], serials for Aquarium/Stand/Sump, ledger for the rest) via new helper `_chatbot_item_stock_by_variant` - `sql/supabase_chatbot_stock_by_variant.sql`. Prompt tells Alice to break "how many" answers down per branch and per variant/SKU.
+
 - Browser Back/Forward now works with modals across the portal: each opened `.modal-backdrop` (Transfer Order, Production Order, PO, ...) gets its own history entry, so Back closes the open document instead of leaving the page, and closing with X removes that entry ([nav.js](docs/js/nav.js)). Transfer Orders (`?doc=`) and Production Orders (`?no=`) also put the open document in the URL, so coming Back from another page reopens it ([transferOrders.js](docs/js/transferOrders.js), [productionOrders.js](docs/js/productionOrders.js)); nav.js cache version bumped on all pages.
 - Item Ledger: stocked items expensed on the POS now come out of portal stock. A trigger on the synced `ExpenseEntryLines` posts a **Negative Adjmt.** (Document Type "POS Expense", No. = the expense receipt) at the header's warehouse; it reconciles, so re-syncs never double-post, and `INC_EXP` lines are skipped. Uses the same cutover as sales, and failures are logged to `ItemLedgerExpenseSync` so the POS sync never breaks ([supabase_item_ledger_pos_expense.sql](sql/supabase_item_ledger_pos_expense.sql)). Show Document on Item Ledger Entries opens the expense ([itemLedgerEntries.js](docs/js/itemLedgerEntries.js)).
 
