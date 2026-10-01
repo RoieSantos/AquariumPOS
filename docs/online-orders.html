@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=glass1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp16" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fp18" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -371,6 +371,9 @@
 
         <div class="bc-doc-part">
           <div class="bc-doc-part-head">Lines</div>
+          <!-- Walk-ins: the cashier's POS order description (Pancake order note, js/onlineOrders.js
+               renderPosDescription, sql/supabase_walkin_order_pos_description.sql). -->
+          <div class="oc-pos-desc hidden" id="ocPosDescription"></div>
           <div class="line-items-wrap">
             <table class="bc-grid bc-doc-lines">
               <thead>
@@ -612,7 +615,7 @@
   <script src="js/glassCutList.js?v=po2"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=bc51"></script>
+  <script src="js/onlineOrders.js?v=bc53"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

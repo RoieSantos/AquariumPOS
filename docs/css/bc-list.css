@@ -2604,6 +2604,17 @@ a.bc-cue:hover {
 .oc-ms-row { display: flex; gap: 8px; font-size: 15px; padding: 2px 0; }
 .oc-ms-row > span { flex: 0 0 84px; color: var(--bc-muted, #5f6b7a); }
 .oc-maker-summary .oo-mc-note, .oc-maker-summary .oo-mc-rework { margin-top: 8px; }
+/* Walk-in list: POS description in the Print Note slot, one line (full text on hover) */
+.oo-pos-note { display: inline-block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* Walk-in POS description above the card's lines (js/onlineOrders.js renderPosDescription) */
+.oc-pos-desc { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: #fff8e1; font-size: 14px; }
+.oc-pos-desc.hidden { display: none; }
+.oc-pos-desc-head { font-weight: 600; margin-bottom: 4px; }
+.oc-pos-desc-row { display: flex; gap: 8px; padding: 2px 0; }
+.oc-pos-desc-row > span { flex: 0 0 90px; color: var(--bc-muted, #5f6b7a); }
+.oc-pos-desc-row > div { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .oc-pos-desc { background: #3a3218; } }
+:root[data-theme="dark"] .oc-pos-desc { background: #3a3218; }
 .oc-line-card { padding: 12px 14px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 10px; background: var(--bc-surface, #fff); }
 .oc-lc-head { display: flex; align-items: flex-start; gap: 12px; }
 .oc-lc-desc { flex: 1; font-size: 16px; font-weight: 600; line-height: 1.35; }

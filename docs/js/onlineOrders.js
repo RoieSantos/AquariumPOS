@@ -499,6 +499,7 @@ function renderMyAssignmentCards(rows) {
         <div class="oo-mc-parts">${partChips}</div>
         ${reworkNoteText(o) ? `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(reworkNoteText(o))}</div>` : ''}
         ${o.note_print ? `<div class="oo-mc-note">${escapeHtml(o.note_print)}</div>` : ''}
+        ${posNoteSummary(o) ? `<div class="oo-mc-note"><b>POS:</b> ${escapeHtml(posNoteSummary(o))}</div>` : ''}
         ${pdBtn ? `<div class="oo-mc-actions">${pdBtn}</div>` : ''}
       </article>`;
   }).join('');
@@ -1306,7 +1307,7 @@ function orderRowsHtml(orders) {
         <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}${productionDoneTickHtml(o, 'stand')}</td>
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
-        <td>${escapeHtml(o.note_print)}</td>
+        <td>${o.received_at_shop && posNoteSummary(o) ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${escapeHtml(posNoteSummary(o))}</span>` : escapeHtml(o.note_print)}</td>
         ${hidePriceColumns ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
@@ -2980,6 +2981,7 @@ async function loadOrderCardLines(orderId) {
   document.getElementById('orderCardPhotosPart').classList.add('hidden');
   cardGlassTanks = [];
   document.getElementById('orderCardGlassTab').classList.add('hidden');
+  renderPosDescription(null);
 
   const [linesRes] = await Promise.all([
     supabaseClient.rpc('admin_get_online_order_detail_live', {
@@ -3001,8 +3003,48 @@ async function loadOrderCardLines(orderId) {
   }
 
   cardLines = (linesRes.data || []).filter((l) => l.line_id || l.item_code || l.description);
+  renderPosDescription(findFlatOrder(orderId), linesRes.data?.[0]?.order_note || findFlatOrder(orderId)?.pos_note);
   renderOrderCardLines();
   loadOrderCardGlassTanks();
+}
+
+// Walk-in POS description - per "in the walk-in orders can you sync over the descriptions from local
+// pos to the portal". The POS sends the receipt's description as the Pancake order note
+// (CreateInstoreOnlineOrder, OnlinefunctionsEvents.cs):
+//   "<ReceiptNo> - Customer: X | Order: <description> | Details: a || b | Cashier: Y | POS Discount: n"
+// Split into labelled rows; money parts are dropped for accounts that don't see prices.
+const POS_DESC_MONEY_KEYS = ['pos discount', 'cardfee', 'discount type'];
+function parsePosDescription(note) {
+  const rows = [];
+  String(note || '').split(/\s\|\s/).forEach((part, i) => {
+    let text = part.trim();
+    if (!text) return;
+    if (i === 0) {
+      const receipt = text.match(/^(\S+)\s+-\s+(.*)$/);
+      if (receipt) { rows.push({ label: 'Receipt', value: receipt[1] }); text = receipt[2].trim(); }
+    }
+    const kv = text.match(/^([A-Za-z][A-Za-z ]{0,20}):\s*(.*)$/);
+    if (!kv) { rows.push({ label: '', value: text }); return; }
+    const key = kv[1].trim();
+    if (hidePriceColumns && POS_DESC_MONEY_KEYS.includes(key.toLowerCase())) return;
+    if (!kv[2].trim()) return;
+    rows.push({ label: key === 'Order' ? 'Description' : key, value: kv[2].trim() });
+  });
+  return rows;
+}
+
+function renderPosDescription(o, note) {
+  const box = document.getElementById('ocPosDescription');
+  const rows = o?.received_at_shop ? parsePosDescription(note) : [];
+  box.classList.toggle('hidden', !rows.length);
+  if (!rows.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="oc-pos-desc-head">POS Description</div>` + rows.map((r) => {
+    // Details lists the sold items, separated by "||" - one per line.
+    const value = r.label === 'Details'
+      ? r.value.split(/\s*\|\|\s*/).filter(Boolean).map((d) => `<div>${escapeHtml(d)}</div>`).join('')
+      : escapeHtml(r.value);
+    return `<div class="oc-pos-desc-row"><span>${escapeHtml(r.label)}</span><div>${value}</div></div>`;
+  }).join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -3419,6 +3461,32 @@ async function attachDispatchers(rows) {
   });
 }
 
+// Walk-in POS description (OnlineOrders."Note", saved by the /orders cron sync -
+// sql/supabase_walkin_order_pos_note.sql) for just the walk-in rows on screen.
+async function attachPosNotes(rows) {
+  const ids = rows.filter((o) => o.received_at_shop).map((o) => String(o.order_id));
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_notes', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.error('staff_get_online_order_notes failed:', error);
+    return;
+  }
+  const byOrder = new Map((data || []).map((n) => [String(n.order_id), n.note]));
+  rows.forEach((o) => { if (o.received_at_shop) o.pos_note = byOrder.get(String(o.order_id)) || null; });
+}
+
+// One-line POS description for the list / phone cards: the cashier's Order text, else the items.
+function posNoteSummary(o) {
+  if (!o?.pos_note) return '';
+  const rows = parsePosDescription(o.pos_note);
+  const pick = rows.find((r) => r.label === 'Description') || rows.find((r) => r.label === 'Details');
+  return pick ? pick.value.replace(/\s*\|\|\s*/g, ' · ') : '';
+}
+
 async function loadOrders(search, status) {
   const myGeneration = ++loadGeneration;
   const grouped = !!currentSession.isOnlineOrderStaff;
@@ -3464,6 +3532,7 @@ async function loadOrders(search, status) {
 
   await attachDispatchers(rows);
   await attachProductionDone(rows);
+  await attachPosNotes(rows);
   if (myGeneration !== loadGeneration) return;
 
   // Online Order Staff get the tabbed card view (renderGroupedOrders) instead of the flat table +
@@ -3747,6 +3816,9 @@ if (new URLSearchParams(window.location.search).get('scope') === 'walkin') {
   walkinGrid.dataset.resizeKey = 'online-orders-walkin-v2';
   const tagsHeader = walkinGrid.tHead.rows[0].cells[11];
   if (tagsHeader) tagsHeader.textContent = 'Tags';
+  // Walk-ins have no print note - that slot shows the POS description instead (posNoteSummary).
+  const noteHeader = walkinGrid.tHead.rows[0].cells[12];
+  if (noteHeader) noteHeader.textContent = 'POS Description';
 }
 
 // ---------------------------------------------------------------- Advance Orders tab

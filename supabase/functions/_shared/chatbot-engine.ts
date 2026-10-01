@@ -1875,8 +1875,11 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         // customer actually asks for a receipt/proof of order, not on every status check.
         const receiptUrl = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(String(onlineData[0].order_id))}`;
         // Per-part build progress (tank / stand maker done or not) - no staff names, see
-        // supabase_chatbot_order_production_progress.sql. Best-effort: a failure here never hides the status.
-        const { data: productionData } = await supabase.rpc('public_get_online_order_production', { p_order_id: orderNo });
+        // supabase_chatbot_order_production_progress.sql. Internal Portal Chat only also gets the
+        // maker's name (supabase_chatbot_order_production_maker_names.sql, service_role only) -
+        // never Messenger/website/sandbox. Best-effort: a failure here never hides the status.
+        const productionRpc = psid.startsWith('portal-chat:') ? 'staff_get_online_order_production' : 'public_get_online_order_production';
+        const { data: productionData } = await supabase.rpc(productionRpc, { p_order_id: orderNo });
         return JSON.stringify({
           orderType: 'Online Order',
           ...onlineData[0],

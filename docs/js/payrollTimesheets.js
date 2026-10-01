@@ -79,10 +79,17 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
   const headerCells = dates
     .map((d, i) => `<th class="num">${WEEKDAY_LABELS[i]} <span class="muted" style="font-weight:normal;">${d.getMonth() + 1}/${d.getDate()}</span></th>`)
     .join('');
-  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th class="num">Total</th><th class="num">Cash Advance</th><th>Method</th></tr>`;
+  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th class="num">Total</th><th class="num" title="Weekly-cycle employees only: gross pay for this week assuming perfect attendance (standard hours every day, no overtime, plus paid rest day), before the cash advance is deducted">Weekly Pay</th><th class="num">Cash Advance</th><th>Method</th></tr>`;
+
+  document.getElementById('bulkEntryTableFoot').innerHTML = employeeOptions.length === 0 ? '' : `
+    <tr style="font-weight:600;">
+      <td colspan="${dates.length + 3}" class="num">Total Cash Advance for the week</td>
+      <td id="caTotalCell" class="num">0.00</td>
+      <td id="caTotalByMethodCell" class="muted" style="font-weight:normal; white-space:nowrap;"></td>
+    </tr>`;
 
   if (employeeOptions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="${dates.length + 4}" class="cell-msg">No active employees found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${dates.length + 5}" class="cell-msg">No active employees found.</td></tr>`;
     return;
   }
 
@@ -101,14 +108,18 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
       const caValue = advance ? advance.amount : '';
       const caMethod = advance ? advance.method : 'Cash';
       const caLocked = !!advance;
+      const caApplied = advance?.status === 'Applied' ? 'data-applied="1" title="Already deducted in a payroll run"' : '';
       return `
         <tr data-username="${e.username}">
           <td>${e.display_name || e.username}</td>
           ${cells}
           <td class="row-total num" style="font-weight:600;">0.00</td>
-          <td class="qty-cell-wrap num"><input type="number" class="bulk-ca bc-qty-cell" min="0" step="0.01" value="${caValue}" style="width:90px;" placeholder="0.00" ${caLocked ? 'disabled' : ''} /></td>
+          <td class="row-weekly-pay num">${e.pay_cycle === 'Weekly'
+            ? perfectAttendanceWeeklyPay(e, dates).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : '<span class="muted">-</span>'}</td>
+          <td class="qty-cell-wrap num"><input type="number" class="bulk-ca bc-qty-cell" min="0" step="0.01" value="${caValue}" style="width:90px;" placeholder="0.00" ${caLocked ? 'disabled' : ''} ${caApplied} /></td>
           <td class="qty-cell-wrap">
-            <select class="bulk-ca-method bc-cell-select" ${caLocked ? 'disabled' : ''}>
+            <select class="bulk-ca-method bc-cell-select" ${caLocked ? 'disabled' : ''} ${caApplied}>
               <option value="Cash" ${caMethod === 'Cash' ? 'selected' : ''}>Cash</option>
               <option value="Digital" ${caMethod === 'Digital' ? 'selected' : ''}>Digital (GCash)</option>
             </select>
@@ -119,6 +130,26 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
     .join('');
 
   updateRowTotals();
+  updateCashAdvanceTotal();
+}
+
+// Footer: total Cash Advance for the week (saved + typed-but-unsaved cells), split by method so the
+// officer knows how much cash and GCash to have on hand.
+function updateCashAdvanceTotal() {
+  const totalCell = document.getElementById('caTotalCell');
+  if (!totalCell) return;
+
+  let cash = 0;
+  let digital = 0;
+  document.querySelectorAll('#bulkEntryTableBody tr[data-username]').forEach((row) => {
+    const amount = Number(row.querySelector('.bulk-ca')?.value) || 0;
+    if (row.querySelector('.bulk-ca-method')?.value === 'Digital') digital += amount;
+    else cash += amount;
+  });
+
+  const fmt = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  totalCell.textContent = fmt(cash + digital);
+  document.getElementById('caTotalByMethodCell').textContent = `Cash ${fmt(cash)} / GCash ${fmt(digital)}`;
 }
 
 function updateRowTotals() {
@@ -130,6 +161,55 @@ function updateRowTotals() {
     const totalCell = row.querySelector('.row-total');
     if (totalCell) totalCell.textContent = total.toFixed(2);
   });
+}
+
+// Weekly-cycle employee's gross pay for the week shown, assuming perfect attendance (standard
+// hours every day, no overtime) - before Cash Advance and any other deductions. A client-side copy
+// of admin_create_payroll_run's Weekly branches (supabase_payroll_semimonthly_absent_deduction.sql),
+// so keep the two in sync:
+//   Hourly: min(hours, std) x DailyRate/std per day, + overtime past std at x OT multiplier.
+//   Salary: each calendar day is priced at MonthlySalary / days in THAT month, scaled by
+//           min(hours, std)/std, + overtime the same way; blended across a month boundary.
+//   Paid Rest Day adds one more day (DailyRate for Hourly, the effective day rate for Salary).
+function perfectAttendanceWeeklyPay(employee, dates) {
+  const stdHours = Number(cutoffSettings?.standard_hours_per_day) || 8;
+  const hoursByDate = {};
+  dates.forEach((d) => { hoursByDate[toDateInputValue(d)] = stdHours; });
+  return estimateWeeklyPay(employee, hoursByDate);
+}
+
+function estimateWeeklyPay(employee, hoursByDate) {
+  const dates = Object.keys(hoursByDate);
+  const stdHours = Number(cutoffSettings?.standard_hours_per_day) || 8;
+  const otMultiplier = Number(cutoffSettings?.overtime_multiplier) || 1.25;
+  let base = 0;
+  let overtime = 0;
+  let dayRate = 0;
+
+  if (employee.pay_type === 'Hourly') {
+    const hourlyRate = (Number(employee.daily_rate) || 0) / stdHours;
+    dates.forEach((d) => {
+      const hours = hoursByDate[d];
+      base += Math.min(hours, stdHours) * hourlyRate;
+      overtime += Math.max(hours - stdHours, 0) * hourlyRate * otMultiplier;
+    });
+    dayRate = Number(employee.daily_rate) || 0;
+  } else {
+    const monthly = Number(employee.monthly_salary) || 0;
+    let daysWorked = 0;
+    dates.forEach((d) => {
+      const date = new Date(d + 'T00:00:00');
+      const dailyRate = monthly / new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+      const hours = hoursByDate[d];
+      base += Math.min(hours, stdHours) / stdHours * dailyRate;
+      overtime += Math.max(hours - stdHours, 0) * (dailyRate / stdHours) * otMultiplier;
+      daysWorked += Math.min(hours, stdHours) / stdHours;
+    });
+    dayRate = daysWorked > 0 ? Math.round(base / daysWorked * 100) / 100 : 0;
+  }
+
+  const paidRestDay = employee.has_paid_rest_day && dayRate > 0 ? dayRate : 0;
+  return Math.round(base * 100) / 100 + Math.round(overtime * 100) / 100 + paidRestDay;
 }
 
 function renderWeekRangeLabel(dates) {
@@ -160,7 +240,7 @@ async function loadWeekGrid() {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_username: null,
-      p_status: 'Outstanding',
+      p_status: null, // Outstanding AND Applied - a run being created must not blank the column
       p_date_start: toDateInputValue(dates[0]),
       p_date_end: toDateInputValue(dates[6]),
       p_page: 1,
@@ -183,7 +263,14 @@ async function loadWeekGrid() {
   (data || []).forEach((t) => { existingByKey[`${t.username}|${t.work_date}`] = t; });
 
   const advanceByUsername = {};
-  (advanceData || []).forEach((a) => { advanceByUsername[a.username] = { amount: a.amount, method: a.method }; });
+  // Applied advances (already deducted in a payroll run) still show, but stay locked even after
+  // Unlock Editing - admin_upsert_cash_advances_bulk only updates Outstanding ones, so re-saving an
+  // Applied amount would create a duplicate advance. An Outstanding one wins if a week has both.
+  (advanceData || []).forEach((a) => {
+    if (a.status !== 'Outstanding' && a.status !== 'Applied') return;
+    if (advanceByUsername[a.username]?.status === 'Outstanding') return;
+    advanceByUsername[a.username] = { amount: a.amount, method: a.method, status: a.status };
+  });
 
   renderWeekGrid(dates, existingByKey, advanceByUsername);
   refreshWeeklyProjectedFunding();
@@ -193,7 +280,7 @@ async function loadWeekGrid() {
 // a mistake can be corrected and re-saved without going through the All Entries list / Payroll
 // Setup's Cash Advances journal. Nothing is changed in the database until Save All is clicked again.
 function unlockEditing() {
-  document.querySelectorAll('#bulkEntryTableBody .bulk-hours:disabled, #bulkEntryTableBody .bulk-ca:disabled, #bulkEntryTableBody .bulk-ca-method:disabled').forEach((input) => {
+  document.querySelectorAll('#bulkEntryTableBody .bulk-hours:disabled, #bulkEntryTableBody .bulk-ca:disabled:not([data-applied]), #bulkEntryTableBody .bulk-ca-method:disabled:not([data-applied])').forEach((input) => {
     input.disabled = false;
     input.style.background = '';
     input.style.color = '';
@@ -760,6 +847,10 @@ async function saveNewRun() {
   document.getElementById('newRunPayDate').addEventListener('change', refreshProjectedFunding);
   document.getElementById('bulkEntryTableBody').addEventListener('input', (e) => {
     if (e.target.classList.contains('bulk-hours')) updateRowTotals();
+    if (e.target.classList.contains('bulk-ca')) updateCashAdvanceTotal();
+  });
+  document.getElementById('bulkEntryTableBody').addEventListener('change', (e) => {
+    if (e.target.classList.contains('bulk-ca-method')) updateCashAdvanceTotal();
   });
   document.getElementById('saveBulkEntryBtn').addEventListener('click', saveBulkEntry);
   document.getElementById('unlockEditingBtn').addEventListener('click', unlockEditing);

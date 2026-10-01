@@ -1,3 +1,6 @@
+-- WARNING: do not re-run this file - its admin_list_cash_advances has no "method" column, so the
+-- Timesheets grid shows every saved advance as Cash (supabase_payroll_cash_advance_list_method_fix.sql).
+--
 -- Cash Advance tracking: employees get a Cash Advance released on a recurring basis (e.g. every
 -- Thursday), separate from and ahead of any actual payroll run for that period. Each advance is
 -- logged the moment it's released; the next payroll run created for that employee automatically

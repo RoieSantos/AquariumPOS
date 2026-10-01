@@ -170,6 +170,10 @@ Deno.serve(async (req) => {
     {
       type: 'text' as const,
       text: `INTERNAL PORTAL TEAM CHAT: you are talking with RS Pet Stop's own staff inside their internal Portal Chat, not a customer.${isGroup ? ' Multiple staff members may be in this conversation - each user message is prefixed with "Name: " so you know who is asking.' : ''} Keep answers short and direct like a quick chat reply, not a full customer-facing script. This is for internal reference/testing only, so no order, escalation, or CRM save you take here is real - it is simulated.`
+    },
+    {
+      type: 'text' as const,
+      text: 'MAKER NAMES (internal Portal Chat only): here, get_order_status production rows include maker_name (and maker_username) for each part - you MAY tell staff who the tank maker / stand maker / dispatcher is on an order (e.g. "Tank: Juan - done ✅, Stand: Pedro - still building"). This overrides the "never name the staff member" rule for this chat only. If maker_name is empty the part is not assigned yet.'
     }
   ];
 
