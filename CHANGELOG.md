@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-01
 
+- Local POS: the build version (`v1.0.179 (commit) - built date/time`) now shows at the top of the main screen header and in the window title, so you can tell whether a POS is updated. Version is `AppVersion` + the git commit count, so the last number goes up automatically with every commit; commit and build time are stamped at build time too - [AquariumPOS.csproj](AquariumPOS.csproj), [MainForm.cs](MainForm.cs).
 - Login: a Store Manager who is also a Dispatcher now lands on Online Orders (My Assignments) instead of the Dashboard - [auth.js](docs/js/auth.js).
 - Maker view (online order card): Production Done now always shows for the maker's own part, greyed out with the reason (e.g. "order is Shipped") instead of disappearing - [onlineOrders.js](docs/js/onlineOrders.js).
 - Stand Maker: once an order needs a Tank Maker (custom tank or 10mm / 12mm glass), any stand / top cover line on it now needs a Stand Maker too, not just custom stands; list flags and Assigned counts use the same shared rule - [supabase_walkin_order_portal_status.sql](sql/supabase_walkin_order_portal_status.sql), [onlineOrders.js](docs/js/onlineOrders.js).

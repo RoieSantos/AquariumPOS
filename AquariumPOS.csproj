@@ -14,7 +14,38 @@
        when building additional tool projects under the solution. Assembly info can be
        provided manually if needed. -->
   <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  <!-- POS version shown on the main screen header, as <AppVersion>.<git commit count> (e.g. 1.0.179).
+       The last number goes up automatically with every commit; only bump this for a major/minor change.
+       The git commit + build time are stamped automatically too (see GenerateBuildInfo below). -->
+  <AppVersion>1.0</AppVersion>
   </PropertyGroup>
+
+  <!-- Stamp version / git commit / build time into BuildInfo.g.cs so the running POS can show which build it is. -->
+  <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile">
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true" ContinueOnError="true" WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommit" />
+    </Exec>
+    <Exec Command="git status --porcelain --untracked-files=no" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true" ContinueOnError="true" WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitStatus" />
+    </Exec>
+    <Exec Command="git rev-list --count HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true" ContinueOnError="true" WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitCount" />
+    </Exec>
+    <PropertyGroup>
+      <GitCommit Condition="'$(GitCommit)' == '' Or $(GitCommit.Contains(' '))">unknown</GitCommit>
+      <GitCommitCount Condition="'$(GitCommitCount)' == '' Or $(GitCommitCount.Contains(' '))">0</GitCommitCount>
+      <FullAppVersion>$(AppVersion).$(GitCommitCount)</FullAppVersion>
+      <GitDirty>false</GitDirty>
+      <GitDirty Condition="'$(GitStatus)' != '' And '$(GitCommit)' != 'unknown'">true</GitDirty>
+      <BuildTimeStamp>$([System.DateTime]::Now.ToString("yyyy-MM-dd HH:mm"))</BuildTimeStamp>
+      <BuildInfoFile>$(IntermediateOutputPath)BuildInfo.g.cs</BuildInfoFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(BuildInfoFile)" Overwrite="true" Lines="// &lt;auto-generated /&gt;;namespace AquariumPOS%3B;internal static class BuildInfo;{;    public const string Version = &quot;$(FullAppVersion)&quot;%3B;    public const string Commit = &quot;$(GitCommit)&quot;%3B;    public const bool Dirty = $(GitDirty)%3B;    public const string BuildTime = &quot;$(BuildTimeStamp)&quot;%3B;}" />
+    <ItemGroup>
+      <Compile Include="$(BuildInfoFile)" />
+      <FileWrites Include="$(BuildInfoFile)" />
+    </ItemGroup>
+  </Target>
   <!-- Exclude tools subfolders from the main project's default compile includes. These
        are separate tool projects and their source files should not be compiled into
        the main AquariumPOS assembly. -->

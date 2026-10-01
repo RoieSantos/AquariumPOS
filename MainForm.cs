@@ -1007,10 +1007,14 @@ INSERT INTO CardProcessingFeeLog (
             }
         }
 
+        // e.g. "v1.0.179 (02eed6d) - built 2026-10-01 11:30"; a trailing "*" means built from uncommitted code.
+        private static string AppVersionText =>
+            $"v{BuildInfo.Version} ({BuildInfo.Commit}{(BuildInfo.Dirty ? "*" : "")}) - built {BuildInfo.BuildTime}";
+
         private void InitializeComponent()
         {
             // Form properties
-            this.Text = "Aquarium POS System";
+            this.Text = $"Aquarium POS System - {AppVersionText}";
             this.Size = new Size(1200, 800);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = Color.LightBlue;
@@ -1386,6 +1390,19 @@ INSERT INTO CardProcessingFeeLog (
                 Size = new Size(400, 18)
             };
 
+            // Build version (stamped at compile time, see GenerateBuildInfo in AquariumPOS.csproj)
+            // so we can tell at a glance whether this POS is running the latest build.
+            var versionLabel = new Label
+            {
+                Text = AppVersionText,
+                ForeColor = BuildInfo.Dirty ? Color.DarkOrange : Color.DimGray,
+                Font = new Font("Arial", 8, FontStyle.Regular),
+                Location = new Point(120, 12),
+                AutoSize = true
+            };
+            new ToolTip().SetToolTip(versionLabel,
+                $"Version: {BuildInfo.Version}\nCommit: {BuildInfo.Commit}{(BuildInfo.Dirty ? " (uncommitted changes)" : "")}\nBuilt: {BuildInfo.BuildTime}");
+
             var baseActions = new[] {
                 "Qty\nChange",
                 "Change\nPrice",
@@ -1730,7 +1747,7 @@ INSERT INTO CardProcessingFeeLog (
 
             // Add controls: left logo/title and right-side grouped management buttons
             headerPanel.Controls.AddRange(new Control[] {
-                logoPictureBox, titleLabel, subtitleLabel, rightButtonsPanel, headerSyncButton, headerCustomerSyncButton, headerDeliveryTrackingButton, headerCustomersButton
+                logoPictureBox, titleLabel, subtitleLabel, versionLabel, rightButtonsPanel, headerSyncButton, headerCustomerSyncButton, headerDeliveryTrackingButton, headerCustomersButton
                 // Note: User Setup, Glass Pricing, and Tender Types have been moved into Settings dialog
             });
             PositionHeaderHeaderButtons();
