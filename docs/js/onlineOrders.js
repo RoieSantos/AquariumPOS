@@ -1307,7 +1307,7 @@ function orderRowsHtml(orders) {
         <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}${productionDoneTickHtml(o, 'stand')}</td>
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
-        <td>${o.received_at_shop && posNoteSummary(o) ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${escapeHtml(posNoteSummary(o))}</span>` : escapeHtml(o.note_print)}</td>
+        <td>${o.received_at_shop && posNoteSummary(o) ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${escapeHtml(posNoteSummary(o))}</span>` : escapeHtml(o.note_print)}${!o.received_at_shop && posNoteSummary(o) ? `${o.note_print ? ' ' : ''}<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}"><b>POS:</b> ${escapeHtml(posNoteSummary(o))}</span>` : ''}</td>
         ${hidePriceColumns ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
@@ -3014,6 +3014,13 @@ async function loadOrderCardLines(orderId) {
 //   "<ReceiptNo> - Customer: X | Order: <description> | Details: a || b | Cashier: Y | POS Discount: n"
 // Split into labelled rows; money parts are dropped for accounts that don't see prices.
 const POS_DESC_MONEY_KEYS = ['pos discount', 'cardfee', 'discount type'];
+// Online (non walk-in) orders can come from the local POS too - per "in the online orders can we show
+// the POS Description too". Those are recognised by the POS note shape (receipt no. + "Customer:" /
+// "Cashier:" parts), so a hand-typed Pancake note on a regular online order isn't shown as one.
+function isPosNote(note) {
+  const text = String(note || '').trim();
+  return /^\S+\s+-\s+Customer:/i.test(text) || /\|\s*Cashier:/i.test(text);
+}
 function parsePosDescription(note) {
   const rows = [];
   String(note || '').split(/\s\|\s/).forEach((part, i) => {
@@ -3035,7 +3042,7 @@ function parsePosDescription(note) {
 
 function renderPosDescription(o, note) {
   const box = document.getElementById('ocPosDescription');
-  const rows = o?.received_at_shop ? parsePosDescription(note) : [];
+  const rows = o && (o.received_at_shop || isPosNote(note)) ? parsePosDescription(note) : [];
   box.classList.toggle('hidden', !rows.length);
   if (!rows.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="oc-pos-desc-head">POS Description</div>` + rows.map((r) => {
@@ -3462,9 +3469,10 @@ async function attachDispatchers(rows) {
 }
 
 // Walk-in POS description (OnlineOrders."Note", saved by the /orders cron sync -
-// sql/supabase_walkin_order_pos_note.sql) for just the walk-in rows on screen.
+// sql/supabase_walkin_order_pos_note.sql) for the rows on screen - walk-ins, plus online orders
+// whose note is a POS receipt note (isPosNote).
 async function attachPosNotes(rows) {
-  const ids = rows.filter((o) => o.received_at_shop).map((o) => String(o.order_id));
+  const ids = rows.map((o) => String(o.order_id));
   if (!ids.length) return;
   const { data, error } = await supabaseClient.rpc('staff_get_online_order_notes', {
     p_admin_username: currentSession.username,
@@ -3476,7 +3484,10 @@ async function attachPosNotes(rows) {
     return;
   }
   const byOrder = new Map((data || []).map((n) => [String(n.order_id), n.note]));
-  rows.forEach((o) => { if (o.received_at_shop) o.pos_note = byOrder.get(String(o.order_id)) || null; });
+  rows.forEach((o) => {
+    const note = byOrder.get(String(o.order_id)) || null;
+    o.pos_note = o.received_at_shop || isPosNote(note) ? note : null;
+  });
 }
 
 // One-line POS description for the list / phone cards: the cashier's Order text, else the items.

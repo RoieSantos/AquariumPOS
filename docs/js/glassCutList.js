@@ -422,6 +422,38 @@
     };
   }
 
+  // Rough sealant estimate for an open-top 5-panel tank, from its outside dimensions. The seams are
+  // the bottom's perimeter (front, back and both sides sit on it) plus the four vertical corners,
+  // per tank. Each seam gets a bond line between the glass plus an inside triangular fillet whose leg
+  // is the glass thickness (never under 6mm - a thinner bead can't be run neatly by hand). 20% is
+  // added for squeeze-out, cleanup and the nozzle. An estimate for planning stock only, not a recipe.
+  var SEALANT_MIN_FILLET_MM = 6;
+  var SEALANT_BOND_LINE_MM = 0.5;
+  var SEALANT_WASTE_FACTOR = 1.2;
+  var DEFAULT_SEALANT_TUBE_ML = 300;
+
+  function estimateSealant(options) {
+    var opts = options || {};
+    var length = toNumber(opts.length);
+    var width = toNumber(opts.width);
+    var height = toNumber(opts.height);
+    var tanks = Math.max(1, Math.round(toNumber(opts.quantity) || 1));
+    if (length <= 0 || width <= 0 || height <= 0) return { seamInches: 0, ml: 0 };
+
+    var tMm = glassThicknessInches(opts.glass) * MM_PER_INCH;
+    var leg = Math.max(tMm, SEALANT_MIN_FILLET_MM);
+    var sectionMm2 = (leg * leg) / 2 + tMm * SEALANT_BOND_LINE_MM;
+    var seamInches = ((2 * (length + width)) + (4 * height)) * tanks;
+    var ml = (seamInches * MM_PER_INCH * sectionMm2 / 1000) * SEALANT_WASTE_FACTOR;
+    return { seamInches: seamInches, ml: ml };
+  }
+
+  // "60L X 22W X 22H inches . 12MM BLACK SEALANT" -> 'Black'. null when the line doesn't say.
+  function parseSealantColor(text) {
+    var m = String(text || '').match(/\b(black|clear|white|grey|gray)\s*(?:sealant|silicone)\b/i);
+    return m ? m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase() : null;
+  }
+
   // One-line Purchase Order note for the glass supplier - every cut size with its count, per tank,
   // so the printed PO carries the actual sizes to cut, not just a sq ft total. Single line with
   // " | " separators because the New PO's Notes field is a plain text input. `tanks` is a list of
@@ -531,6 +563,9 @@
     horizontalCutSegments: horizontalCutSegments,
     buildCutList: buildCutList,
     buildPoNotes: buildPoNotes,
+    estimateSealant: estimateSealant,
+    parseSealantColor: parseSealantColor,
+    DEFAULT_SEALANT_TUBE_ML: DEFAULT_SEALANT_TUBE_ML,
     renderSheetSvg: renderSheetSvg,
     formatInches: formatInches,
     glassThicknessInches: glassThicknessInches,

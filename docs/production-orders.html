@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Production Orders - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=grouped2" />
+  <link rel="stylesheet" href="css/styles.css?v=aq1" />
   <link rel="stylesheet" href="css/bc-list.css?v=prod1" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
@@ -258,8 +258,13 @@
                 <input type="number" id="prodGlassSheetW" value="72" step="0.25" min="0" /> x
                 <input type="number" id="prodGlassSheetH" value="84" step="0.25" min="0" /> in
               </label>
+              <label>Sealant tube
+                <input type="number" id="prodSealantTubeMl" value="300" step="10" min="0" /> ml
+              </label>
               <button type="button" class="btn btn-primary btn-sm hidden" id="prodGlassPoBtn">Create Purchase Order</button>
             </div>
+            <!-- Estimated glass sheets / panels and sealant for the whole order (renderCardGlassCut). -->
+            <div class="oc-glass-estimate" id="prodGlassEstimate"></div>
             <div id="prodGlassTanks"></div>
           </div>
         </details>
@@ -326,7 +331,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=prod2"></script>
-  <script src="js/nav.js?v=sij2"></script>
+  <script src="js/nav.js?v=aq1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>

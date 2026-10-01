@@ -612,6 +612,7 @@ function renderMakerView(lines) {
 // same parse as glass-cut-list.html; the cut is for the line's full Quantity.
 const PROD_GLASS_OPTIONS = ['3mm', '5mm', '6mm', '8mm', '10mm', '12mm', '15mm', '19mm'];
 const PROD_GLASS_SHEET_KEY = 'onlineOrders.glassSheetSize'; // shared with the Online Order card - same supplier sheet
+const PROD_SEALANT_TUBE_KEY = 'productionOrders.sealantTubeMl';
 let cardGlassTanks = [];
 
 function lineGlassSpec(l) {
@@ -641,6 +642,10 @@ function prodGlassSheetSize() {
   };
 }
 
+function prodSealantTubeMl() {
+  return Number(document.getElementById('prodSealantTubeMl').value) || GlassCutList.DEFAULT_SEALANT_TUBE_ML;
+}
+
 function prodGlassTankOptions(tank) {
   return {
     length: tank.spec.length,
@@ -663,10 +668,16 @@ function renderCardGlassCut() {
 
   let totalSheets = 0;
   let blocked = false;
+  // Estimated consumption for the whole order: stock sheets / panels per glass thickness, sealant per color.
+  const byGlass = new Map();
+  const sealantByColor = new Map();
+  let unreadable = 0;
+  let oversizedAny = false;
   document.getElementById('prodGlassTanks').innerHTML = cardGlassTanks.map((tank, i) => {
     const title = escapeHtml(printDescription(tank.line) || `Line ${i + 1}`);
     if (!tank.spec) {
       blocked = true;
+      unreadable += 1;
       return `<div class="oc-glass-tank"><div class="oc-glass-tank-head"><strong>${title}</strong></div>
         <p class="muted" style="margin:0;">Couldn't read the tank size from this line's item name or description (e.g. "24x12x12in").</p></div>`;
     }
@@ -675,6 +686,16 @@ function renderCardGlassCut() {
     const opts = prodGlassTankOptions(tank);
     const result = GlassCutList.buildCutList(opts);
     totalSheets += result.sheets.length;
+    const g = byGlass.get(opts.glass) || { sheets: 0, sheetSqFt: 0, panels: 0, panelSqFt: 0 };
+    g.sheets += result.sheets.length;
+    g.sheetSqFt += result.sheets.length * opts.sheetWidth * opts.sheetHeight / 144;
+    result.panels.forEach((p) => { g.panels += p.qty; g.panelSqFt += p.width * p.height * p.qty / 144; });
+    byGlass.set(opts.glass, g);
+    if (result.oversized.length > 0) oversizedAny = true;
+    const sealant = GlassCutList.estimateSealant(opts);
+    const color = GlassCutList.parseSealantColor(`${tank.line.item_name || ''} ${tank.line.description || ''} ${tank.line.variant_name || ''}`) || 'Unspecified';
+    sealantByColor.set(color, (sealantByColor.get(color) || 0) + sealant.ml);
+    const sealantNote = `<p class="muted" style="margin:0 0 8px;">Sealant (${escapeHtml(color.toLowerCase())}): ~${Math.round(sealant.ml)} ml for ${(sealant.seamInches / 12).toFixed(1)} ft of seams</p>`;
     const qtyNote = opts.quantity > 1 ? ` &middot; ${opts.quantity} tanks` : '';
     const head = `<div class="oc-glass-tank-head">
         <strong>${title}</strong>
@@ -685,7 +706,7 @@ function renderCardGlassCut() {
       </div>`;
     const panels = `<table class="oc-glass-panels"><thead><tr><th>Panel</th><th>Cut size</th><th>Qty</th></tr></thead><tbody>
         ${result.panels.map((p) => `<tr><td>${escapeHtml(p.name)}</td><td><strong>${f(p.width)}" x ${f(p.height)}"</strong></td><td>${p.qty}</td></tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table>${sealantNote}`;
 
     if (result.oversized.length > 0) {
       blocked = true;
@@ -701,8 +722,25 @@ function renderCardGlassCut() {
   const poBtn = document.getElementById('prodGlassPoBtn');
   poBtn.disabled = blocked;
   poBtn.title = blocked ? 'Fix the tank(s) above first - one has no readable size or doesn\'t fit the stock sheet.' : 'Open a New Purchase Order with every cut size above in its Notes';
+  const tubeMl = prodSealantTubeMl();
+  const tubeCount = (ml) => Math.ceil(ml / tubeMl);
+  const totalTubes = [...sealantByColor.values()].reduce((sum, ml) => sum + tubeCount(ml), 0);
+  const notes = [
+    'Sealant is an estimate: bottom perimeter + 4 corners per tank, an inside bead as wide as the glass (min 6mm), +20% for cleanup.',
+    unreadable ? `Leaves out ${unreadable} line(s) with no readable size.` : '',
+    oversizedAny ? "Sheet count leaves out panels that don't fit the stock sheet." : ''
+  ].filter(Boolean).join(' ');
+  document.getElementById('prodGlassEstimate').innerHTML = byGlass.size === 0 ? '' : `
+    <h4>Estimated consumption</h4>
+    <table class="oc-glass-panels"><thead><tr><th>Glass</th><th>Stock sheets</th><th>Panels</th><th>Panel area</th><th>Sheet area</th></tr></thead><tbody>
+      ${[...byGlass.entries()].map(([glass, g]) => `<tr><td>${escapeHtml(glass)}</td><td><strong>${g.sheets}</strong></td><td>${g.panels}</td><td>${g.panelSqFt.toFixed(2)} sq ft</td><td>${g.sheetSqFt.toFixed(2)} sq ft</td></tr>`).join('')}
+    </tbody></table>
+    <table class="oc-glass-panels"><thead><tr><th>Sealant</th><th>Est. ml</th><th>Tubes (${tubeMl} ml)</th></tr></thead><tbody>
+      ${[...sealantByColor.entries()].map(([color, ml]) => `<tr><td>${escapeHtml(color)}</td><td>${Math.round(ml)}</td><td><strong>${tubeCount(ml)}</strong></td></tr>`).join('')}
+    </tbody></table>
+    <p class="muted">${escapeHtml(notes)}</p>`;
   document.getElementById('prodCardGlassSummary').textContent =
-    `${cardGlassTanks.length} tank line(s) · ${totalSheets} stock sheet(s)`;
+    `${cardGlassTanks.length} tank line(s) · ${totalSheets} stock sheet(s)${totalTubes > 0 ? ` · ~${totalTubes} sealant tube(s)` : ''}`;
 }
 
 // Same sessionStorage handoff as the Online Order card - purchase-orders.html opens the New PO with
@@ -726,6 +764,14 @@ function wireCardGlassCut() {
       document.getElementById('prodGlassSheetH').value = saved.h;
     }
   } catch (e) { /* storage unavailable - keep the defaults */ }
+  try {
+    const savedMl = Number(localStorage.getItem(PROD_SEALANT_TUBE_KEY));
+    if (savedMl > 0) document.getElementById('prodSealantTubeMl').value = savedMl;
+  } catch (e) { /* storage unavailable - keep the default */ }
+  document.getElementById('prodSealantTubeMl').addEventListener('input', () => {
+    try { localStorage.setItem(PROD_SEALANT_TUBE_KEY, String(prodSealantTubeMl())); } catch (e) { /* ignore */ }
+    renderCardGlassCut();
+  });
 
   ['prodGlassSheetW', 'prodGlassSheetH'].forEach((id) => document.getElementById(id).addEventListener('input', () => {
     const { sheetWidth, sheetHeight } = prodGlassSheetSize();

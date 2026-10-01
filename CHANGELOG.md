@@ -4,6 +4,11 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-01
 
+- Portal: subtle animated aquarium background (light rays, rising bubbles, swimming fish, swaying plants) on every portal page except Dashboard and the print-only pages - pure CSS so it loops like a GIF without the file weight; follows the dark theme, hidden when printing, stops for "reduce motion" users. Added by [nav.js](docs/js/nav.js), styles in [styles.css](docs/css/styles.css); styles.css / nav.js cache versions bumped on all pages.
+
+- Online Orders: orders that came from the local POS now show the POS Description too (order card box, "POS:" in the Print Note column, makers' phone cards) - detected by the POS note shape (receipt no. + Customer/Cashier) so hand-typed Pancake notes aren't affected; no SQL change, the cron already saves every order's note - [onlineOrders.js](docs/js/onlineOrders.js).
+- Production Orders: Glass Cut section now shows an "Estimated consumption" summary - stock sheets / panels / sq ft per glass thickness, and sealant ml + tubes per color (color read from the line, tube size editable, default 300 ml); each tank also shows its own sealant estimate - [productionOrders.js](docs/js/productionOrders.js), [glassCutList.js](docs/js/glassCutList.js) (new `estimateSealant` / `parseSealantColor`), [production-orders.html](docs/production-orders.html), [styles.css](docs/css/styles.css).
+
 - POS: Tender Declaration no longer requires today's Stock Counts first at production warehouses - removed the auto-open Stock Counts / "cannot proceed" gate; Stock Counts is still on its own button - [MainForm.cs](MainForm.cs).
 
 - Alice can now read walk-in orders: get_order_status finds them by POS receipt no. (e.g. RS-0000010861, the first word of the POS note) or order ID. Status = the portal walk-in stage (To Assign / Assigned / Production Done / Completed), plus target ready date and per-part production progress (maker names in Portal Chat only); no receipt link for walk-ins - [supabase_chatbot_walkin_order_status.sql](sql/supabase_chatbot_walkin_order_status.sql), [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts).
