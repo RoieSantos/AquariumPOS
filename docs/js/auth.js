@@ -395,6 +395,10 @@ async function refreshPortalSession(session) {
 function getDefaultLandingPage(session) {
   if (!session) return 'dashboard.html';
   if (isOrderMakerOnly(session)) return 'online-orders.html';
+  // Per "some store manager can dispatch too.. we can open straight my assignments" - a Store
+  // Manager who is also a Dispatcher lands on Online Orders, which opens on My Assignments for them
+  // (js/onlineOrders.js init). The Dashboard stays one click away in the nav.
+  if (session.isStoreManager && !session.isSuperUser && (session.staffRoles || []).includes('Dispatcher')) return 'online-orders.html';
   return hasNoPortalPermission(session) ? 'my-payslips.html' : 'dashboard.html';
 }
 

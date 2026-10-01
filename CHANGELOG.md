@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-01
 
+- Login: a Store Manager who is also a Dispatcher now lands on Online Orders (My Assignments) instead of the Dashboard - [auth.js](docs/js/auth.js).
 - Maker view (online order card): Production Done now always shows for the maker's own part, greyed out with the reason (e.g. "order is Shipped") instead of disappearing - [onlineOrders.js](docs/js/onlineOrders.js).
 - Stand Maker: once an order needs a Tank Maker (custom tank or 10mm / 12mm glass), any stand / top cover line on it now needs a Stand Maker too, not just custom stands; list flags and Assigned counts use the same shared rule - [supabase_walkin_order_portal_status.sql](sql/supabase_walkin_order_portal_status.sql), [onlineOrders.js](docs/js/onlineOrders.js).
 - Walk-in Orders: portal-only production stages (To Assign / Assigned / Production Done / Completed) for walk-ins that need a maker - the POS creates walk-ins as Shipped, so assigning used to do nothing. Pancake untouched. Also walk-in customer name / contact no., a portal-only due date set on assign, Mark Picked Up, and Production Done / Send Back now allowed for walk-ins - [supabase_walkin_order_portal_status.sql](sql/supabase_walkin_order_portal_status.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css).
