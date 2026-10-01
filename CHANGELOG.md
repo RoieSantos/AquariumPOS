@@ -2,7 +2,53 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-01
+
+- Walk-in Orders: portal-only production stages (To Assign / Assigned / Production Done / Completed) for walk-ins that need a maker - the POS creates walk-ins as Shipped, so assigning used to do nothing. Pancake untouched. Also walk-in customer name / contact no., a portal-only due date set on assign, Mark Picked Up, and Production Done / Send Back now allowed for walk-ins - [supabase_walkin_order_portal_status.sql](sql/supabase_walkin_order_portal_status.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css).
+- Online order card Glass Cut: now also shows for 10mm / 12mm tank lines that aren't custom (e.g. STANDARD-150G 12mm); the size reader accepts "×" (60×24×24in) - [onlineOrders.js](docs/js/onlineOrders.js), [glassCutList.js](docs/js/glassCutList.js).
+- "In production" customer message: 10mm / 12mm glass orders now get a note that thick glass is pre-ordered and needs longer silicone curing - [supabase_online_order_assigned_message_thick_glass.sql](sql/supabase_online_order_assigned_message_thick_glass.sql). Alice's system prompt got the same rule - [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts). "Has started building your items" replaced (thick glass: "preparing the materials for your build"; others: "in our production queue").
+- Online / Walk-in Orders: 10mm / 12mm glass orders now need a Tank Maker even with no custom line (Assign popup, Assigned status/counts, Production Done, My Assignments) - [supabase_online_order_thick_glass_tank_maker.sql](sql/supabase_online_order_thick_glass_tank_maker.sql), [onlineOrders.js](docs/js/onlineOrders.js).
+- Production Orders: added a Created (date + time) column to the list and a Created field ("date by user") on the order card, from the existing CreatedAtUtc - [productionOrders.js](docs/js/productionOrders.js), [production-orders.html](docs/production-orders.html).
+- Serial Inventory Journal > Print: count sheet lines now show only Variant (item name when it has none), SKU and a blank Qty. (Phys. Inventory) - [serialInventoryJournal.js](docs/js/serialInventoryJournal.js), [serial-inventory-journal.html](docs/serial-inventory-journal.html).
+
+- Serial Inventory Journal: removed the Qty. (Ledger) column from the grid (ledger balance still in the line's FactBox; Ledger Adj. column unchanged); resize key renamed so old saved widths don't misalign - [serial-inventory-journal.html](docs/serial-inventory-journal.html), [serialInventoryJournal.js](docs/js/serialInventoryJournal.js).
+
+- Serial Inventory Journal: columns are now resizable (drag a header edge, double-click to reset; widths remembered per browser) using the shared `bcColumnResize.js` - [serial-inventory-journal.html](docs/serial-inventory-journal.html).
+
+- Serial Inventory Journal moved from the Inventory menu to the **Production** menu (same access: Super User + Store Manager; a Store Manager now gets a Production menu with just this page); `nav.js` cache version bumped again - [nav.js](docs/js/nav.js).
+
+- New **Serial Inventory Journal** (Inventory menu, Super User + Store Manager): a Physical Inventory Journal for serial-tracked items. Calculate lists serials in stock per item / variant / SKU at a location (with the ledger balance alongside); count; on Serial Nos. tick Missing serials or add Found ones; Post writes off Missing (new status `MISSING`), brings Found into stock, creates new serials for unlabelled units (labels print) and adjusts the ledger to the count, so serials and ledger end up equal. Reversing a SPHYS ledger transaction also undoes its serial changes - [supabase_serial_inventory_journal.sql](sql/supabase_serial_inventory_journal.sql), [serial-inventory-journal.html](docs/serial-inventory-journal.html), [serialInventoryJournal.js](docs/js/serialInventoryJournal.js); nav link + Store Manager page allowlist ([nav.js](docs/js/nav.js), [auth.js](docs/js/auth.js)), `nav.js` cache version bumped on all pages; Serial Tracker shows/filters the Missing status ([serialTracker.js](docs/js/serialTracker.js), [serial-tracker.html](docs/serial-tracker.html)).
+
 ## 2026-09-30
+
+- New **Purchases & Expenses** report (Reports menu, super users): total spending for a period, purchases vs expenses split, and each cause's % of the total (purchases by item category or vendor, expenses by expense category); click a cause to see its items / descriptions. Payroll not included. New RPC `admin_get_spending_report` ([supabase_spending_report.sql](sql/supabase_spending_report.sql)), page [spending-report.html](docs/spending-report.html) + [spendingReport.js](docs/js/spendingReport.js), nav link ([nav.js](docs/js/nav.js)).
+
+- Transfer Orders: a Qty To Ship auto-filled to 0 (no stock) was never saved on a new order (blank was treated as already 0), so Print fell back to the full quantity and printed those lines - the 0 is now saved when the order is opened, so Print drops them - `docs/js/transferOrders.js`, `docs/transfer-orders.html`.
+
+- Transfer Orders > Print: the printout now lists only lines whose Qty To Ship is not 0 (lines with nothing going out on this shipment are dropped); Posted (fully-received) orders still print every line - `docs/js/transferOrderPrint.js`.
+- Transfer Orders > Print (follow-up): already fully-shipped lines were still printing because their saved Qty To Ship keeps the last shipped amount - Qty To Ship is now capped at what is still unshipped, so those lines drop too (an order with nothing left to ship prints in full). Added a `?v=` cache-buster so the browser loads the new script - `docs/js/transferOrderPrint.js`, `docs/transfer-order-print.html`.
+
+- Payroll: read-only check showing, for the latest Semi-Monthly run, whether the Undertime/Absence rule is installed and each employee's days worked / expected / short / deduction - `sql/supabase_payroll_semimonthly_absent_check.sql`.
+
+- Item Ledger: read-only diagnostic for "a POS expense synced but didn't deduct stock" - walks each condition the expense hook needs (hook installed, posting switched on, cutover date, warehouse name, last error, per-line item/variant) and shows which one fails; defaults to the latest expense with a real item - `sql/supabase_diagnose_item_ledger_pos_expense.sql`.
+
+- Payroll: Semi-Monthly Salary employees (fixed MonthlySalary / 2 Base Pay, Overtime unchanged) now also get an auto **Undertime/Absence** deduction when days worked (8 hrs = 1 day) fall short of Standard Work Days / Month ÷ 2 (13), at MonthlySalary / Standard Work Days per day short, capped at Base Pay - `sql/supabase_payroll_semimonthly_absent_deduction.sql`. Shows in the existing "Absent" summary/payslip row; Timesheets subtitle updated - `docs/payroll-timesheets.html`.
+
+- Shelf Map: one-off script creating the "Filter Medias" shelf for Amaya with 5 placeholder spots ("Spot 1".."Spot 5", one row, unlinked); safe to run whether or not the empty-shelf version already ran - `sql/supabase_shelf_map_filter_medias_amaya.sql`.
+
+- Online Orders list: Warehouse column moved from 14th to right after Customer so it's visible without scrolling (Online + Walk-in tabs); saved column widths reset (new resize keys) since the order changed - `docs/online-orders.html`, `docs/js/onlineOrders.js`, `docs/css/bc-list.css`.
+
+- Walk-in orders in the maker flow: My Assignments now lists walk-ins assigned to a maker (was online-only, so assigned walk-ins were invisible to makers); status summary takes `p_walkin_only` so the Walk-in tab gets its own status counts; no "in production" Messenger message for walk-ins - `sql/supabase_walkin_order_production.sql`. Walk-in tab shows status pills + Tank/Stand Maker columns again (hides Dispatcher/For Delivery/Est. Delivery only) - `docs/js/onlineOrders.js`, `docs/css/bc-list.css`.
+
+- Walk-in Orders tags: walk-ins now get the 10mm/12mm glass tag, derived from their synced OnlineOrderLines by trigger + backfill (the Pancake glass check skips walk-ins) - `sql/supabase_walkin_order_glass_thickness.sql`. Walk-in list hides Tank/Stand Maker, Dispatcher, For Delivery, Est. Delivery columns so Tags (Custom/glass) and Warehouse are in view; own saved column widths - `docs/js/onlineOrders.js`, `docs/css/bc-list.css`.
+
+- Advance Orders tab: list now fills the page width (was squeezed into the 250px filter-pane column - added `no-filterpane`) - `docs/online-orders.html`. Sort fixed to newest Date first (NULL dates last) then numeric TransactionNo instead of text order - `sql/supabase_advance_orders_list_sort.sql` (includes a read-only sync health check).
+
+- Online Orders: third **Advance Orders** tab (super users only, `?scope=advance`) listing the POS deposit/downpayment orders via existing `admin_list_advance_orders` - search + paging + Refresh, online-order actions hidden. Dashboard Advance Orders card and the lines page's Back link now point here; `advance-orders.html` still works - `docs/online-orders.html`, `docs/js/onlineOrders.js`, `docs/dashboard.html`, `docs/advance-order-lines.html`.
+
+- Online Orders: new **Online Orders / Walk-in Orders** tabs above the action bar - Walk-in lists Pancake orders received at the shop (existing `?scope=walkin` / `p_walkin_only`, no SQL change), retitles the page, and Clear filters keeps you on the walk-in list. Hidden for Online Order Staff and maker-only accounts - `docs/online-orders.html`, `docs/js/onlineOrders.js`, `docs/css/bc-list.css`.
+
+- Alice order production progress: new `public_get_online_order_production` returns per-part (tank/stand/dispatcher) assigned/done for an online order's custom maker flow plus any linked Production Orders (status, qty built) - no staff names - `sql/supabase_chatbot_order_production_progress.sql`. `get_order_status` adds it as `production`; prompt tells Alice to report "tank done, stand still being built" style progress.
 
 - Alice variant stock readable: `stock_by_variant` elements are now {option, sku, Amaya, GMA} with option = SKU suffix as words ("Black Sealant", "White Paint") - `sql/supabase_chatbot_stock_variant_option.sql`. Prompt now makes Alice ALWAYS break stock down per branch + color option (sealant for aquariums/sumps, paint for stands) on any stock question, not just "how many".
 

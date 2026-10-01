@@ -307,6 +307,24 @@
   cursor: pointer;
 }
 
+.bc-ile a.bc-tab {
+  text-decoration: none;
+}
+
+/* Walk-in Orders list: hide Dispatcher (11) and For Delivery, Est. Delivery Date (15-16) -
+   walk-ins are picked up at the shop - so the Tags column sits closer to view. Tank / Stand
+   Maker (9-10) stay: walk-ins can be assigned to makers. Column numbers match online-orders.html's
+   17-column header (Warehouse is column 5; the walk-in tab is never shown to accounts that hide
+   the Delivery Fee column). */
+.bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(11), :nth-child(15), :nth-child(16)) {
+  display: none;
+}
+
+/* Online Orders' Online / Walk-in list switch sits above the action bar */
+.bc-ile .order-scope-tabs {
+  margin: 0 0 8px;
+}
+
 .bc-ile .bc-tab:hover {
   color: var(--text-main);
 }
@@ -2681,3 +2699,7 @@ a.bc-cue:hover {
 }
 /* Makers on the phone don't print labels. */
 #orderCardModal.maker-focus #cardPrintSerialsBtn { display: none; }
+
+/* Online order card - walk-in customer name / contact no. (js/onlineOrders.js, supabase_walkin_order_portal_status.sql). */
+.oc-walkin-customer { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.oc-walkin-customer input { flex: 1 1 140px; min-width: 0; }

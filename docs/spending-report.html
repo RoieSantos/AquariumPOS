@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Purchases &amp; Expenses Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=catsales1" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Purchases &amp; Expenses</h1>
+    <p class="muted">Everything the shop spent - posted purchase orders plus expenses (POS and Expense Journal) - and what share of the total each cause takes. Click a row to see what is inside it. Payroll is not included.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" data-period="today" type="button">Today</button>
+        <button class="btn btn-primary btn-sm" data-period="month" type="button">This Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="prevmonth" type="button">Last Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="90d" type="button">Last 90 Days</button>
+        <button class="btn btn-secondary btn-sm" data-period="year" type="button">This Year</button>
+        <button class="btn btn-secondary btn-sm" data-period="custom" type="button">Custom</button>
+      </div>
+      <div class="pm-filter-group hidden" id="customRange">
+        <input type="date" id="dateFrom" aria-label="From date" />
+        <span class="muted">to</span>
+        <input type="date" id="dateTo" aria-label="To date" />
+        <button class="btn btn-primary btn-sm" id="applyRangeBtn" type="button">Apply</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="sourceSelect" aria-label="Type">
+          <option value="all">Purchases + Expenses</option>
+          <option value="Purchase">Purchases only</option>
+          <option value="Expense">Expenses only</option>
+        </select>
+        <select id="warehouseSelect" aria-label="Warehouse">
+          <option value="">All warehouses</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="spLoading" class="muted">Loading...</div>
+    <div id="spError" class="error-text hidden"></div>
+
+    <div id="spResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💸</span> Total Spending</div>
+          <div class="stat-value" id="statTotal">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🛒</span> Purchases</div>
+          <div class="stat-value" id="statPurchase">-</div>
+          <div class="muted" id="statPurchaseSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🧾</span> Expenses</div>
+          <div class="stat-value" id="statExpense">-</div>
+          <div class="muted" id="statExpenseSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🔥</span> <span id="statTopLabel">Biggest Cause</span></div>
+          <div class="stat-value" id="statTop" style="font-size:18px;">-</div>
+        </div>
+      </div>
+
+      <div class="card ss-split-card">
+        <div class="ss-split-bar" id="splitBar" role="img" aria-label="Purchases versus expenses"></div>
+        <div class="ss-split-legend" id="splitLegend"></div>
+      </div>
+
+      <p class="error-text hidden" id="uncostedNote" style="font-size:13px;"></p>
+
+      <div class="toolbar">
+        <div class="pm-filter-group">
+          <button class="btn btn-secondary btn-sm hidden" id="backBtn" type="button">&larr; All causes</button>
+          <h2 id="tableTitle" style="margin:0;">What is causing the spending</h2>
+        </div>
+        <div class="pm-filter-group" id="groupByWrap">
+          <span class="muted">Group purchases by</span>
+          <select id="purchaseGroupSelect" aria-label="Group purchases by">
+            <option value="cause">Item category</option>
+            <option value="vendor_name">Vendor</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead id="spTableHead"></thead>
+          <tbody id="spTableBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Purchases are posted purchase orders by order date, costed at unit cost x quantity received. Expenses are POS expenses and Expense Journal entries by their date. % of Total is the share of the total shown above for the chosen filters.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/nav.js?v=sij2"></script>
+  <script src="js/spendingReport.js"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

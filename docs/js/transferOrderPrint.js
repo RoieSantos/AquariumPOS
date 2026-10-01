@@ -17,14 +17,39 @@ function formatDate(value) {
 function qtyToShip(line) {
   const saved = line['Qty To Ship'];
   if (saved !== null && saved !== undefined && saved !== '') return saved;
+  return lineRemainingToShip(line);
+}
+
+function lineRemainingToShip(line) {
   return Math.max(0, (Number(line['Qty To Transfer']) || 0) - (Number(line['Qty Shipped']) || 0));
 }
 
-function renderLines(lines) {
+// What the Manage modal's Qty To Ship box shows for the line: never more than is still unshipped.
+// The saved Qty To Ship is left holding the last shipped amount once Ship is clicked, so an
+// already fully-shipped line (blank box in the modal) would otherwise still read as "to ship".
+function pendingQtyToShip(line) {
+  return Math.min(lineRemainingToShip(line), Math.max(0, Number(qtyToShip(line)) || 0));
+}
+
+// onlyToShip: drop lines with nothing going out on the next shipment (Qty To Ship 0, or already
+// fully shipped), so the printout lists just what is on this shipment. Live orders only - a Posted
+// (fully-received) order is printed as the complete record, and so is a live order with nothing
+// left to ship on any line.
+function renderLines(lines, onlyToShip) {
   const body = document.getElementById('linesBody');
   if (!lines || lines.length === 0) {
     body.innerHTML = '<tr><td colspan="7" class="muted">No line items.</td></tr>';
     return;
+  }
+
+  const hasUnshipped = lines.some((l) => lineRemainingToShip(l) > 0);
+  const pendingOnly = onlyToShip && hasUnshipped;
+  if (pendingOnly) {
+    lines = lines.filter((l) => pendingQtyToShip(l) > 0);
+    if (lines.length === 0) {
+      body.innerHTML = '<tr><td colspan="7" class="muted">No lines with a Qty To Ship on this order.</td></tr>';
+      return;
+    }
   }
 
   body.innerHTML = lines
@@ -34,7 +59,7 @@ function renderLines(lines) {
         <td>${l['Variant Name'] || ''}</td>
         <td>${l['Description'] || ''}</td>
         <td>${l['Qty To Transfer'] ?? ''}</td>
-        <td>${qtyToShip(l)}</td>
+        <td>${pendingOnly ? pendingQtyToShip(l) : qtyToShip(l)}</td>
         <td>${l['Qty Shipped'] ?? ''}</td>
         <td>${l['Qty Received'] ?? ''}</td>
       </tr>
@@ -97,7 +122,7 @@ async function loadOrder(docNo) {
   if (lineError) {
     document.getElementById('linesBody').innerHTML = `<tr><td class="error-text">${lineError.message}</td></tr>`;
   } else {
-    renderLines(lineRows || []);
+    renderLines(lineRows || [], lineTable === 'Transfer_Line');
   }
 
   document.getElementById('orderContent').classList.remove('hidden');

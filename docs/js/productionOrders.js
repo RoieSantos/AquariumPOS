@@ -39,6 +39,13 @@ function formatDate(value) {
   return new Date(y, m - 1, d).toLocaleDateString();
 }
 
+// A timestamp (created_at) as local date + time.
+function formatCreatedAt(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  return isNaN(d) ? String(value) : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 function formatQty(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
@@ -87,7 +94,7 @@ let lastRows = [];
 
 async function loadProductionOrders() {
   const tbody = document.getElementById('prodTableBody');
-  tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('staff_list_production_orders', {
     p_admin_username: currentSession.username,
@@ -100,13 +107,13 @@ async function loadProductionOrders() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   lastRows = data || [];
   tbody.innerHTML = lastRows.length === 0
-    ? `<tr><td colspan="10" class="cell-msg">${isManager ? 'No production orders yet - create one with New.' : 'No production orders are assigned to you right now.'}</td></tr>`
+    ? `<tr><td colspan="11" class="cell-msg">${isManager ? 'No production orders yet - create one with New.' : 'No production orders are assigned to you right now.'}</td></tr>`
     : lastRows.map((o) => `
       <tr class="clickable-row" data-order-no="${escapeHtml(o.order_no)}">
         <td><span class="bc-doc-no">${escapeHtml(o.order_no)}</span></td>
@@ -119,6 +126,7 @@ async function loadProductionOrders() {
         <td>${makerCellHtml(o.needs_tank, o.tank_maker_name, o.tank_done_at)}</td>
         <td>${makerCellHtml(o.needs_stand, o.stand_maker_name, o.stand_done_at)}</td>
         <td>${escapeHtml(o.created_by || '')}</td>
+        <td>${escapeHtml(formatCreatedAt(o.created_at))}</td>
       </tr>`).join('');
 
   renderPaginationBar(
@@ -245,6 +253,9 @@ function renderCardHeader() {
   badge.classList.toggle('hidden', !o);
   document.getElementById('prodNo').textContent = o ? o.order_no : '(assigned on Save)';
   document.getElementById('prodStatus').textContent = status;
+  document.getElementById('prodCreated').textContent = o?.created_at
+    ? `${formatCreatedAt(o.created_at)}${o.created_by ? ' by ' + o.created_by : ''}`
+    : '(set on Save)';
 
   const editable = cardEditable();
   ['prodDescription', 'prodWarehouse', 'prodDueDate', 'prodNotes', 'prodTankMaker', 'prodStandMaker']

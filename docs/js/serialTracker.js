@@ -148,6 +148,7 @@ function statusBadgeClass(status) {
     case 'RESERVED': return 'badge-warning';
     case 'RETURNED': return 'badge-danger';
     case 'IN_TRANSIT': return 'badge-primary';
+    case 'MISSING': return 'badge-danger';
     default: return 'badge-neutral';
   }
 }
@@ -159,6 +160,7 @@ function statusLabel(status) {
     case 'RESERVED': return 'Reserved';
     case 'RETURNED': return 'Returned';
     case 'IN_TRANSIT': return 'In Transit';
+    case 'MISSING': return 'Missing';
     default: return status || '';
   }
 }

@@ -195,6 +195,11 @@ function renderTopNav(activeLabel) {
     // Where each built unit is stored, by serial (supabase_production_shelf_map.sql).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
   }
+  // Counting serial-tracked units - same access as the Physical Inventory Journal (its RPCs use
+  // is_phys_journal_authorized: Super User or Store Manager).
+  if (isSuperUser || isStoreManager) {
+    production.push({ href: 'serial-inventory-journal.html', label: 'Serial Inventory Journal' });
+  }
 
   const reports = [];
   if (!isSalesOnlyUser && !isStoreManager) {
@@ -211,6 +216,8 @@ function renderTopNav(activeLabel) {
     reports.push({ href: 'message-timing.html', label: 'Message Timing' });
     reports.push({ href: 'expense-entries.html', label: 'Expenses' });
     reports.push({ href: 'expense-journal.html', label: 'Expense Journal' });
+    // Purchases + expenses and each cause's share of the total (supabase_spending_report.sql).
+    reports.push({ href: 'spending-report.html', label: 'Purchases & Expenses' });
     // Financials - super users only, matching the Expenses page it draws from. Both RPCs behind
     // these re-check with is_admin_authorized, so this gate is convenience, not the control.
     reports.push({ href: 'gl-entries.html', label: 'General Ledger' });

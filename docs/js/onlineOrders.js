@@ -85,6 +85,9 @@ const GROUP_TAB_STATUSES = ['Confirmed', 'Printed', 'Assigned', 'To Ship'];
 // admin_list_online_orders' own p_status = 'Assigned' case make server-side (supabase_orders_
 // sync_tables.sql).
 function orderDisplayStatus(o) {
+  // Walk-in in production: its portal-only stage (To Assign / Assigned / Production Done / Completed -
+  // supabase_walkin_order_portal_status.sql). Pancake keeps saying Shipped.
+  if (o.walkin_stage) return o.walkin_stage;
   const status = (o.status || '').trim();
   if (status.toLowerCase() === 'printed' && (o.has_aquarium_line || o.has_stand_line)) {
     const tankOk = !o.has_aquarium_line || !!o.assigned_tank_maker;
@@ -167,6 +170,9 @@ const STATUS_SUMMARY_ELEMENT_IDS = {
   'Assigned': 'statusCountAssigned',
   // Every part marked done, waiting for the POS Production Done (supabase_online_order_production_done_tab.sql).
   'Production Done': 'statusCountProductionDone',
+  // Walk-in tab only (supabase_walkin_order_portal_status.sql).
+  'To Assign': 'statusCountToAssign',
+  'Completed': 'statusCountCompleted',
   'To Ship': 'statusCountToShip',
   'Shipped': 'statusCountShipped',
   'Cancelled': 'statusCountCancelled'
@@ -181,7 +187,8 @@ async function loadStatusSummary() {
   const { data, error } = await supabaseClient.rpc('admin_get_online_order_status_summary', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
-    p_warehouse_name: currentSession.warehouseName || null
+    p_warehouse_name: currentSession.warehouseName || null,
+    p_walkin_only: currentScope === 'walkin'
   });
 
   if (error || !data) {
@@ -250,7 +257,9 @@ const MAKER_ROLES = {
 // _online_order_production_roles: tank / stand for custom aquarium / stand lines, dispatcher for a
 // custom order with neither, nothing for a normal order.
 function neededProductionRoles(o) {
-  if (!o?.has_custom_line) return [];
+  // No has_custom_line gate: a 10mm / 12mm glass order needs a Tank Maker without a custom line
+  // (supabase_online_order_thick_glass_tank_maker.sql) - has_aquarium_line already covers both.
+  if (!o) return [];
   const roles = [];
   if (o.has_aquarium_line) roles.push('tank');
   if (o.has_stand_line) roles.push('stand');
@@ -270,12 +279,15 @@ function isProductionDone(o) {
 }
 
 function canChangeProduction(o) {
+  // Walk-ins are Shipped in Pancake from the start - open while their portal stage is.
+  if (o?.walkin_stage) return ['To Assign', 'Assigned', 'Production Done'].includes(o.walkin_stage);
   return ['confirmed', 'submitted', 'printed', 'assigned'].includes((o?.status || '').trim().toLowerCase());
 }
 
 // Status shown in the list / card: 'Production Done' once every part is done (display only - the
 // real status stays Assigned until the Production Manager / POS moves it on).
 function listDisplayStatus(o) {
+  if (o?.walkin_stage) return o.walkin_stage;
   return isProductionDone(o) && canChangeProduction(o) ? 'Production Done' : orderDisplayStatus(o);
 }
 
@@ -472,6 +484,7 @@ function renderMyAssignmentCards(rows) {
           <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
         </header>
         <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
+        ${o.received_at_shop ? `<div class="oo-mc-line"><span>Walk-in</span>${escapeHtml(o.walkin_customer_phone || 'No contact no.')}</div>` : ''}
         <div class="oo-mc-line oo-mc-eta"><span>Est. Delivery</span>${etaHtml(o.estimated_delivery_date)}</div>
         <div class="oo-mc-line"><span>Handover</span>${o.for_delivery ? 'Delivery' : 'Pickup'}</div>
         <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse_name || o.location_id || '-')} ${glassBadgeHtml(o)}</div>
@@ -834,8 +847,34 @@ async function openStockBuildDialog(o) {
   });
 }
 
+// Walk-in in production (portal-only stage, supabase_walkin_order_portal_status.sql):
+//   To Assign        -> Assign (Production Manager)
+//   Assigned         -> In Production 1/2 (progress only)
+//   Production Done  -> Mark Picked Up (any staff except maker-only accounts - whoever hands it over)
+//   Completed        -> Undo Picked Up (in case it was tapped by mistake)
+// Nothing goes to Pancake - the sale stays Shipped there.
+function nextStepForWalkin(o) {
+  const canHandOver = !myAssignmentsLocked;
+  const needed = neededProductionRoles(o);
+  switch (o.walkin_stage) {
+    case 'To Assign':
+      return canAssignOrders() ? { action: 'assign', label: 'Assign', icon: 'ico-assign', title: 'Assign the Tank Maker / Stand Maker' } : null;
+    case 'Assigned': {
+      const done = needed.filter((role) => o.production_done?.[role]).length;
+      return { action: 'none', label: `In Production ${done}/${needed.length}`, icon: 'ico-done', disabled: true, title: 'Waiting for the makers to mark their parts done' };
+    }
+    case 'Production Done':
+      return canHandOver ? { action: 'pickup', label: 'Mark Picked Up', icon: 'ico-ship', title: 'The customer has collected it - moves to Completed (portal only)' } : null;
+    case 'Completed':
+      return canHandOver ? { action: 'unpickup', label: 'Undo Picked Up', icon: 'ico-done', title: 'Move it back to Production Done' } : null;
+    default:
+      return null;
+  }
+}
+
 function nextStepFor(o) {
   if (!o) return null;
+  if (o.walkin_stage) return nextStepForWalkin(o);
   if (canMarkShipped(o)) {
     return { action: 'shipped', label: 'Mark Shipped', icon: 'ico-ship', title: 'Set this order to Shipped in the portal and Pancake' };
   }
@@ -959,7 +998,68 @@ async function handleNextStepClick(orderId, btn) {
     if (s?.production_order_no) window.open(`production-orders.html?no=${encodeURIComponent(s.production_order_no)}`, '_blank');
   } else if (btn.dataset.action === 'shipped') {
     await markOrderShipped(String(o.order_id), btn);
+  } else if (btn.dataset.action === 'pickup' || btn.dataset.action === 'unpickup') {
+    await markWalkinPickedUp(String(o.order_id), btn, btn.dataset.action === 'pickup');
   }
+}
+
+// Walk-in Mark Picked Up / Undo (admin_mark_walkin_order_picked_up) - portal only, nothing to Pancake.
+async function markWalkinPickedUp(orderId, btn, pickedUp) {
+  const o = findFlatOrder(orderId);
+  if (!o) return;
+  const ok = await confirmAction(pickedUp
+    ? {
+      caption: 'MARK PICKED UP',
+      title: orderLabel(o),
+      message: 'Has the customer collected this order?\n\nIt moves to Completed.',
+      confirmLabel: 'Yes, Picked Up',
+      tone: 'is-ship'
+    }
+    : {
+      caption: 'UNDO PICKED UP',
+      title: orderLabel(o),
+      message: 'Move this order back to Production Done?',
+      confirmLabel: 'Yes, Undo',
+      tone: 'is-undo'
+    });
+  if (!ok) return;
+  btn.disabled = true;
+  const { error } = await supabaseClient.rpc('admin_mark_walkin_order_picked_up', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId,
+    p_picked_up: pickedUp
+  });
+  btn.disabled = false;
+  if (error) {
+    alert(error.message);
+    return;
+  }
+  await refreshCurrentOrders();
+  if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+}
+
+// Walk-in customer name / contact no. on the order card (admin_set_walkin_order_customer) - portal only.
+async function saveWalkinCustomer() {
+  const orderId = openCardOrderId;
+  if (!orderId) return;
+  const btn = document.getElementById('ocWalkinSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const { error } = await supabaseClient.rpc('admin_set_walkin_order_customer', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId,
+    p_name: document.getElementById('ocWalkinName').value.trim() || null,
+    p_phone: document.getElementById('ocWalkinPhone').value.trim() || null
+  });
+  btn.disabled = false;
+  btn.textContent = 'Save';
+  if (error) {
+    alert(error.message);
+    return;
+  }
+  await refreshCurrentOrders();
 }
 
 // Shared by the next-step button (list / card) and the Dispatcher's phone card.
@@ -992,7 +1092,8 @@ async function markOrderShipped(orderId, btn) {
 }
 
 function wireNextStepButtons() {
-  if (!canAssignOrders() && !currentSession?.isOrderMaker) return;
+  // Wired for everyone: walk-in Mark Picked Up is for any staff, not just Production Managers / makers
+  // (the button stays hidden whenever nextStepFor has nothing for this user).
   document.getElementById('listNextStepBtn').addEventListener('click', (e) => selectedOrderId && handleNextStepClick(selectedOrderId, e.currentTarget));
   document.getElementById('cardNextStepBtn').addEventListener('click', (e) => openCardOrderId && handleNextStepClick(openCardOrderId, e.currentTarget));
 }
@@ -1190,6 +1291,7 @@ function orderRowsHtml(orders) {
         <td>${o.order_date || ''}</td>
         <td>${o.order_time || ''}</td>
         <td>${escapeHtml(o.customer_name)}</td>
+        <td>${escapeHtml(o.warehouse_name || o.location_id)}</td>
         <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}</td>
         <td>${escapeHtml(o.confirmed_by)}</td>
         <td>${escapeHtml(o.created_by)}</td>
@@ -1199,7 +1301,6 @@ function orderRowsHtml(orders) {
         <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${escapeHtml(o.note_print)}</td>
         ${hidePriceColumns ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
-        <td>${escapeHtml(o.warehouse_name || o.location_id)}</td>
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
         <td>${o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : ''}</td>
@@ -2382,7 +2483,10 @@ async function openAssignDialog(orderId) {
   document.getElementById('assignDialogTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
   // has_aquarium_line = any custom line that isn't a stand/top cover (Tank Maker); has_stand_line =
   // custom stand or top cover (Stand Maker) - _online_order_line_part, supabase_online_order_maker_line_rules.sql.
-  const needs = [o.has_aquarium_line ? 'custom tank work' : null, o.has_stand_line ? 'a custom stand / top cover' : null].filter(Boolean);
+  // A 10mm / 12mm glass order needs a Tank Maker even with no custom line
+  // (supabase_online_order_thick_glass_tank_maker.sql).
+  const thickGlass = /^(10|12)mm$/i.test(String(o.glass_thickness || '').replace(/\s+/g, ''));
+  const needs = [o.has_aquarium_line ? (thickGlass && !o.has_custom_line ? `${o.glass_thickness} glass tank work` : 'custom tank work') : null,o.has_stand_line ? 'a custom stand / top cover' : null].filter(Boolean);
   // Only custom orders go Confirmed > Assigned > To Ship here; normal orders still go through the
   // local POS (see _online_order_assignment_complete in supabase_online_order_assigned_status.sql).
   // Per "no need to asign a dispatcher since the dispatcher will be logged after shipping the order" -
@@ -2663,13 +2767,25 @@ function fillOrderCardHeader(o) {
   document.getElementById('orderCardTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
   const badge = document.getElementById('orderCardStatusBadge');
   badge.textContent = displayStatus || '';
-  badge.className = 'badge ' + (displayStatus === 'Assigned' || displayStatus === 'Shipped' ? 'badge-success' : displayStatus === 'Cancelled' ? 'badge-danger' : 'badge-neutral');
+  badge.className = 'badge ' + (['Assigned', 'Shipped', 'Completed'].includes(displayStatus) ? 'badge-success' : displayStatus === 'Cancelled' ? 'badge-danger' : 'badge-neutral');
   document.getElementById('orderCardBadges').innerHTML = `${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}`;
 
   setCardText('ocOrderId', o.order_id);
-  setCardText('ocCustomer', o.customer_name);
+  setCardText('ocCustomer', [o.customer_name, o.walkin_customer_phone].filter(Boolean).join(' · '));
   setCardText('ocOrderDate', [o.order_date, o.order_time].filter(Boolean).join(' '));
-  setCardText('ocStatus', displayStatus);
+  // Walk-in picked up: when and by whom (portal only).
+  setCardText('ocStatus', o.walkin_stage === 'Completed' && o.picked_up_at
+    ? `${displayStatus} · picked up ${new Date(o.picked_up_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${o.picked_up_by_name ? ' by ' + o.picked_up_by_name : ''}`
+    : displayStatus);
+
+  // Walk-in customer name / contact no. - editable by staff (not maker-only accounts), any walk-in.
+  const walkinRow = document.getElementById('ocWalkinCustomerRow');
+  walkinRow.classList.toggle('hidden', !o.received_at_shop || myAssignmentsLocked);
+  if (o.received_at_shop && !myAssignmentsLocked && walkinRow.dataset.orderId !== String(o.order_id)) {
+    walkinRow.dataset.orderId = String(o.order_id);
+    document.getElementById('ocWalkinName').value = o.walkin_customer_name || '';
+    document.getElementById('ocWalkinPhone').value = o.walkin_customer_phone || '';
+  }
   setCardText('ocWarehouse', o.warehouse_name || o.location_id);
   setCardText('ocConfirmedBy', o.confirmed_by);
   setCardText('ocCreatedBy', o.created_by);
@@ -2901,10 +3017,27 @@ function isCustomAquariumLine(l) {
   return /custom/i.test(text) && /aquarium/i.test(`${l.description || ''} ${l.item_code || ''}`);
 }
 
+function lineGlassSpec(l) {
+  return GlassCutList.parseAquariumLineSpec(l.note || '') ||
+    GlassCutList.parseAquariumLineSpec(`${l.description || ''} ${l.item_code || ''}`);
+}
+
+// Per "can you show this too in the 12mm and 10mm glass": a 10mm / 12mm tank line (e.g.
+// "STANDARD-150G (60×24×24in, 12MM GLASS)") gets a cut list without being custom - when the line
+// says 10mm/12mm (or the order has the 10mm/12mm badge), it reads as a tank size, and it isn't a
+// stand / top cover.
+function isThickGlassTankLine(l, order) {
+  const text = `${l.description || ''} ${l.note || ''} ${l.item_code || ''} ${l.product_display_id || ''}`;
+  if (/(stand(?!ard)|top[\s_-]*cover)/i.test(`${l.description || ''} ${l.item_code || ''}`)) return false;
+  const thick = /(10|12)mm/i.test(text.replace(/\s+/g, ''))
+    || /^(10|12)mm$/i.test(String(order?.glass_thickness || '').replace(/\s+/g, ''));
+  return thick && !!lineGlassSpec(l);
+}
+
 function loadOrderCardGlassTanks() {
-  cardGlassTanks = cardLines.filter(isCustomAquariumLine).map((line) => {
-    const spec = GlassCutList.parseAquariumLineSpec(line.note || '') ||
-      GlassCutList.parseAquariumLineSpec(`${line.description || ''} ${line.item_code || ''}`);
+  const order = findFlatOrder(openCardOrderId);
+  cardGlassTanks = cardLines.filter((l) => isCustomAquariumLine(l) || isThickGlassTankLine(l, order)).map((line) => {
+    const spec = lineGlassSpec(line);
     // Falls back to the order's flagged thickness (the 10mm/12mm badge) when the note doesn't say.
     const glass = (spec && spec.glass) || findFlatOrder(openCardOrderId)?.glass_thickness || '10mm';
     return { line, spec, glass: String(glass).toLowerCase().replace(/\s+/g, '') };
@@ -3229,6 +3362,7 @@ function closeOrderCard() {
   openCardOrderId = null;
   orderCardLoadGeneration++;
   document.getElementById('orderCardModal').classList.add('hidden');
+  delete document.getElementById('ocWalkinCustomerRow').dataset.orderId; // refill the walk-in fields next open
 }
 
 function wireOrderCard() {
@@ -3246,6 +3380,7 @@ function wireOrderCard() {
   document.getElementById('cardToShipBtn').addEventListener('click', (e) => openCardOrderId && handleToShipClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardProductionDoneBtn').addEventListener('click', (e) => openCardOrderId && handleProductionDoneClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardPrintSerialsBtn').addEventListener('click', (e) => openCardOrderId && printOrderSerialLabels(openCardOrderId, e.currentTarget));
+  document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
@@ -3592,6 +3727,116 @@ function wireOrderFilters() {
   window.addEventListener('resize', fitGridToViewport);
 }
 
+// WALKIN_LIST_LAYOUT - per "in the walk-in orders can we also put a tag if that order is custom and
+// needs 10mm 12mm glass also show the warehouse/location": the Walk-in tab drops the Dispatcher /
+// delivery columns (css/bc-list.css .oo-walkin) so the Tags (Custom / 10mm / 12mm glass) and
+// Warehouse columns sit closer to view, and keeps its own saved column widths. Tank / Stand Maker
+// stay - walk-ins can be assigned to makers (supabase_walkin_order_production.sql). Runs at load,
+// not in init(), because js/bcColumnResize.js applies saved widths on DOMContentLoaded - before
+// init()'s awaits finish. init() takes it back off for accounts that can't see the scope tabs.
+if (new URLSearchParams(window.location.search).get('scope') === 'walkin') {
+  const walkinGrid = document.querySelector('.oo-grid');
+  walkinGrid.classList.add('oo-walkin');
+  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v2';
+  const tagsHeader = walkinGrid.tHead.rows[0].cells[11];
+  if (tagsHeader) tagsHeader.textContent = 'Tags';
+}
+
+// ---------------------------------------------------------------- Advance Orders tab
+// Per "how about the advance orders can we squeeze it in there" - the POS's deposit/downpayment
+// orders as a third list tab (?scope=advance, super users only), same read-only data and RPC as
+// advance-orders.html (admin_list_advance_orders). None of the online-order actions apply, so the
+// page's online wiring is skipped entirely in this mode (see init()).
+let advancePage = 1;
+let advancePageSize = 50;
+let advanceLoadGeneration = 0;
+
+function formatAdvanceMoney(value) {
+  return value === null || value === undefined ? '' : Number(value).toFixed(2);
+}
+
+async function loadAdvanceOrders() {
+  const tbody = document.getElementById('advanceTableBody');
+  tbody.innerHTML = '<tr><td colspan="15" class="cell-msg">Loading...</td></tr>';
+  const thisGeneration = ++advanceLoadGeneration;
+
+  const { data, error } = await supabaseClient.rpc('admin_list_advance_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_search: document.getElementById('orderSearchInput').value.trim() || null,
+    p_page: advancePage,
+    p_page_size: advancePageSize
+  });
+  if (thisGeneration !== advanceLoadGeneration) return; // superseded by a newer search/page
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="15" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = !data || data.length === 0
+    ? '<tr><td colspan="15" class="cell-msg">No advance orders found.</td></tr>'
+    : data.map((o) => `
+      <tr>
+        <td>${escapeHtml(o.transaction_no || '')}</td>
+        <td>${escapeHtml(o.receipt_no || '')}</td>
+        <td>${escapeHtml(o.user_id || '')}</td>
+        <td>${escapeHtml(o.customer_name || '')}</td>
+        <td>${escapeHtml(o.order_description || '')}</td>
+        <td>${escapeHtml(o.order_date || '')}</td>
+        <td>${escapeHtml(o.order_time || '')}</td>
+        <td class="num">${formatAdvanceMoney(o.net_amount)}</td>
+        <td class="num">${formatAdvanceMoney(o.downpayment)}</td>
+        <td class="num">${formatAdvanceMoney(o.balance)}</td>
+        <td>${escapeHtml(o.online_order_id || '')}</td>
+        <td><span class="badge ${o.fully_paid ? 'badge-success' : 'badge-neutral'}">${o.fully_paid ? 'Yes' : 'No'}</span></td>
+        <td>${o.date_paid ? escapeHtml(new Date(o.date_paid).toLocaleString()) : ''}</td>
+        <td>${escapeHtml(o.warehouse || '')}</td>
+        <td><a href="advance-order-lines.html?transaction=${encodeURIComponent(o.transaction_no)}">View</a></td>
+      </tr>`).join('');
+
+  renderPaginationBar(
+    document.getElementById('advancePaginationBar'),
+    { page: advancePage, pageSize: advancePageSize, totalCount: data?.[0]?.total_count || 0 },
+    {
+      onPageChange: (newPage) => { advancePage = newPage; loadAdvanceOrders(); },
+      onPageSizeChange: (newSize) => { advancePageSize = newSize; advancePage = 1; loadAdvanceOrders(); }
+    }
+  );
+}
+
+function fitAdvanceGridToViewport() {
+  const el = document.getElementById('advanceGridWrap');
+  if (!el || el.offsetParent === null) return;
+  el.style.maxHeight = Math.max(240, window.innerHeight - el.getBoundingClientRect().top - 64) + 'px';
+}
+
+async function initAdvanceOrdersView() {
+  document.getElementById('orderScopeTabs').classList.remove('hidden');
+  document.getElementById('scopeTabAdvance').classList.add('active');
+  document.querySelector('.bc-title').textContent = 'Advance Orders';
+  document.getElementById('ordersSubtitle').textContent = 'Customer deposit/downpayment orders from the POS (read-only).';
+  document.title = document.title.replace('Online Orders', 'Advance Orders');
+  document.getElementById('orderSearchInput').placeholder = 'Search transaction, receipt, or customer';
+
+  // Only Refresh applies here - hide every other action, the status tabs, and the online list.
+  document.querySelectorAll('#orderCmdbar > :not(#refreshOrdersBtn)').forEach((el) => el.classList.add('hidden'));
+  ['statusSummaryBar', 'flatOrdersView', 'filterPaneBtn'].forEach((id) => document.getElementById(id).classList.add('hidden'));
+  document.getElementById('advanceOrdersView').classList.remove('hidden');
+
+  let searchDebounce = null;
+  document.getElementById('orderSearchInput').addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => { advancePage = 1; loadAdvanceOrders(); }, 300);
+  });
+  document.getElementById('refreshOrdersBtn').addEventListener('click', loadAdvanceOrders);
+  if (window.initPullToRefresh) initPullToRefresh(loadAdvanceOrders);
+  window.addEventListener('resize', fitAdvanceGridToViewport);
+
+  await loadAdvanceOrders();
+  fitAdvanceGridToViewport();
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -3608,6 +3853,11 @@ function wireOrderFilters() {
   }
 
   document.getElementById('setupContent').classList.remove('hidden');
+  document.getElementById('scopeTabAdvance').classList.toggle('hidden', !session.isSuperUser);
+  if (session.isSuperUser && new URLSearchParams(window.location.search).get('scope') === 'advance') {
+    await initAdvanceOrdersView();
+    return;
+  }
   document.getElementById('exportExcelBtn').classList.toggle('hidden', !session.isSuperUser);
   // Delegated on #setupContent (not #orderTableBody directly) so the same "To Ship" handling
   // works whether the click lands in the flat table or one of the three grouped-view tables
@@ -3730,19 +3980,43 @@ function wireOrderFilters() {
   }
   if (outstandingOnly) noteParts.push('with an outstanding balance');
 
+  // Online / Walk-in list switch (online-orders.html #orderScopeTabs) - a separate Walk-in Orders
+  // list alongside the online one. Not for Online Order Staff / maker-only accounts, whose lists
+  // are locked to their own scope. Walk-ins never go through the maker flow, so a maker who can
+  // see the switch gets the whole walk-in list rather than their (online-only) assignments.
+  const showScopeTabs = !session.isOnlineOrderStaff && !myAssignmentsLocked;
+  if (!showScopeTabs) document.querySelector('.oo-grid').classList.remove('oo-walkin'); // see WALKIN_LIST_LAYOUT
+  document.getElementById('orderScopeTabs').classList.toggle('hidden', !showScopeTabs);
+  document.getElementById('scopeTabOnline').classList.toggle('active', currentScope !== 'walkin');
+  document.getElementById('scopeTabWalkin').classList.toggle('active', currentScope === 'walkin');
+  if (currentScope === 'walkin' && showScopeTabs) {
+    myAssignmentsOnly = false;
+    document.querySelector('.bc-title').textContent = 'Walk-in Orders';
+    document.getElementById('ordersSubtitle').textContent = 'Pancake orders received and paid for in-store.';
+    // Walk-in tabs are portal-only stages (supabase_walkin_order_portal_status.sql) - no Confirmed /
+    // Printed / To Ship: the POS creates every walk-in as Shipped in Pancake.
+    document.querySelectorAll('#statusSummaryBar .online-pill').forEach((pill) => pill.classList.add('hidden'));
+    document.querySelectorAll('#statusSummaryBar .walkin-pill').forEach((pill) => pill.classList.remove('hidden'));
+    document.title = document.title.replace('Online Orders', 'Walk-in Orders');
+  }
+
+  // The scope tabs already say which list this is, so the note only shows for the Dashboard's
+  // other deep-link filters - and Clear filters keeps you on the same (online / walk-in) list.
   const activeFilterNote = document.getElementById('activeFilterNote');
-  if (currentPeriod || currentScope || outstandingOnly || currentConfirmedBy) {
-    activeFilterNote.innerHTML = `Showing ${noteParts.join(' ')}. <a href="online-orders.html">Clear filters</a>`;
+  if (currentPeriod || outstandingOnly || currentConfirmedBy || (currentScope && !showScopeTabs)) {
+    const clearHref = currentScope === 'walkin' && showScopeTabs ? 'online-orders.html?scope=walkin' : 'online-orders.html';
+    activeFilterNote.innerHTML = `Showing ${noteParts.join(' ')}. <a href="${clearHref}">Clear filters</a>`;
     activeFilterNote.classList.remove('hidden');
   }
 
-  // The status summary bar/pills only ever count non-walk-in orders (see
-  // admin_get_online_order_status_summary) - hide it entirely rather than show misleading
-  // counts when viewing a walk-in-scoped deep link. Stays hidden for Online Order Staff
-  // regardless (already hidden above) - a summary across every status isn't useful when this
-  // account can only ever see Printed orders anyway.
-  const showStatusSummary = currentScope !== 'walkin' && !session.isOnlineOrderStaff;
+  // The status summary bar/pills count the list's own scope - online orders, or walk-ins on the
+  // Walk-in tab (admin_get_online_order_status_summary's p_walkin_only, supabase_walkin_order_
+  // production.sql). My Assignments already spans both (walk-in and online), so it stays on the
+  // Online tab only. Stays hidden for Online Order Staff regardless (already hidden above) - a
+  // summary across every status isn't useful when this account can only ever see Printed orders anyway.
+  const showStatusSummary = !session.isOnlineOrderStaff && (currentScope !== 'walkin' || showScopeTabs);
   document.getElementById('statusSummaryBar').classList.toggle('hidden', !showStatusSummary);
+  if (currentScope === 'walkin' && showScopeTabs) document.getElementById('myAssignmentsTab').classList.add('hidden');
 
   const loaders = [loadOrders('', myAssignmentsOnly ? '' : statusParam)];
   if (showStatusSummary && !myAssignmentsLocked) loaders.push(loadStatusSummary());

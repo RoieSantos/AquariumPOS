@@ -60,8 +60,9 @@
   function parseAquariumLineSpec(text) {
     var source = String(text || '');
 
-    var suffixMatch = source.match(/([\d.]+)\s*L\s*[Xx]\s*([\d.]+)\s*W\s*[Xx]\s*([\d.]+)\s*H\b\s*(inches?|in\.?|cm|ft|mm)?/i);
-    var plainMatch = !suffixMatch && source.match(/([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches?|in|cm|ft|mm)\b/i);
+    // "×" (multiplication sign) too - catalog names like "STANDARD-150G (60×24×24in, 12MM GLASS)".
+    var suffixMatch = source.match(/([\d.]+)\s*L\s*[Xx×]\s*([\d.]+)\s*W\s*[Xx×]\s*([\d.]+)\s*H\b\s*(inches?|in\.?|cm|ft|mm)?/i);
+    var plainMatch = !suffixMatch && source.match(/([\d.]+)\s*[x×]\s*([\d.]+)\s*[x×]\s*([\d.]+)\s*(inches?|in|cm|ft|mm)\b/i);
     var dimsMatch = suffixMatch || plainMatch;
     if (!dimsMatch) return null;
 

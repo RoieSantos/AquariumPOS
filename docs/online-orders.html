@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=glass1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp11" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fp16" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -67,6 +67,18 @@
 
     <!-- Main content, shown by default now that no password re-entry is required -->
     <div id="setupContent" class="hidden">
+      <!-- Online / Walk-in list switch - per "can we add the list of walkin orders too separate on what
+           we have right now". Walk-in = Pancake orders received at the shop (ReceivedAtShop), listed
+           via admin_list_online_orders' p_walkin_only (?scope=walkin). Hidden for Online Order Staff and
+           maker-only accounts (their lists are locked) - see js/onlineOrders.js init(). -->
+      <nav class="bc-tabs order-scope-tabs hidden" id="orderScopeTabs" aria-label="Order list">
+        <a class="bc-tab" id="scopeTabOnline" href="online-orders.html">Online Orders</a>
+        <a class="bc-tab" id="scopeTabWalkin" href="online-orders.html?scope=walkin">Walk-in Orders</a>
+        <!-- Super users only - the POS's deposit/downpayment orders (admin_list_advance_orders,
+             same data as advance-orders.html), rendered in #advanceOrdersView below. -->
+        <a class="bc-tab hidden" id="scopeTabAdvance" href="online-orders.html?scope=advance">Advance Orders</a>
+      </nav>
+
       <!-- BC action bar: every order action lives here and works on the selected row (click a row
            to select it) - the list itself has no buttons. Open (or double-click / the Order ID)
            opens the Online Order document with its lines. -->
@@ -107,11 +119,15 @@
         <!-- Tank Maker / Stand Maker / Dispatcher only: the open orders assigned to the logged-in user
              (js/onlineOrders.js myAssignmentsOnly, supabase_online_order_my_assignments.sql). -->
         <button type="button" class="bc-tab status-summary-pill hidden" id="myAssignmentsTab" data-mine="1">My Assignments <span class="status-summary-count" id="myAssignmentsCount"></span></button>
-        <button type="button" class="bc-tab status-summary-pill" data-status="Confirmed">Confirmed <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
-        <button type="button" class="bc-tab status-summary-pill" data-status="Printed">Printed <span class="status-summary-count" id="statusCountPrinted">-</span></button>
+        <!-- online-pill / walkin-pill: the Walk-in tab swaps Confirmed / Printed / To Ship for its portal-only
+             stages To Assign / Completed (js/onlineOrders.js, sql/supabase_walkin_order_portal_status.sql). -->
+        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Confirmed">Confirmed <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Printed">Printed <span class="status-summary-count" id="statusCountPrinted">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill walkin-pill hidden" data-status="To Assign" title="Walk-ins that need a Tank / Stand Maker">To Assign <span class="status-summary-count" id="statusCountToAssign">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Assigned">Assigned <span class="status-summary-count" id="statusCountAssigned">-</span></button>
-        <button type="button" class="bc-tab status-summary-pill" data-status="Production Done" title="Every part marked done by the makers - finish it with Production Done in the POS">Production Done <span class="status-summary-count" id="statusCountProductionDone">-</span></button>
-        <button type="button" class="bc-tab status-summary-pill" data-status="To Ship">To Ship <span class="status-summary-count" id="statusCountToShip">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-status="Production Done" title="Every part marked done by the makers">Production Done <span class="status-summary-count" id="statusCountProductionDone">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill walkin-pill hidden" data-status="Completed" title="Walk-ins built and picked up by the customer">Completed <span class="status-summary-count" id="statusCountCompleted">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="To Ship">To Ship <span class="status-summary-count" id="statusCountToShip">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Shipped">Shipped <span class="status-summary-count" id="statusCountShipped">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Cancelled">Cancelled <span class="status-summary-count" id="statusCountCancelled">-</span></button>
       </div>
@@ -130,13 +146,14 @@
 
         <section class="bc-main">
           <div class="bc-grid-wrap" id="orderGridWrap">
-            <table class="bc-grid oo-grid" data-resize-key="online-orders-v2">
+            <table class="bc-grid oo-grid" data-resize-key="online-orders-v3">
               <thead>
                 <tr>
                   <th>Order ID</th>
                   <th>Date</th>
                   <th>Time</th>
                   <th>Customer</th>
+                  <th>Warehouse</th>
                   <th>Status</th>
                   <th>Confirmed By</th>
                   <th>Created By</th>
@@ -146,7 +163,6 @@
                   <th>Glass</th>
                   <th>Print Note</th>
                   <th id="deliveryFeeHeader" class="num">Delivery Fee</th>
-                  <th>Warehouse</th>
                   <th>For Delivery</th>
                   <th>Est. Delivery Date</th>
                   <th>Last Updated</th>
@@ -158,6 +174,40 @@
             </table>
           </div>
           <div id="orderPaginationBar"></div>
+        </section>
+      </div>
+
+      <!-- Advance Orders tab (?scope=advance, super users only - js/onlineOrders.js initAdvanceOrdersView).
+           Read-only; the top search box filters it by transaction no, receipt no, or customer. -->
+      <div class="bc-body no-filterpane no-factbox hidden" id="advanceOrdersView">
+        <section class="bc-main">
+          <div class="bc-grid-wrap" id="advanceGridWrap">
+            <table class="bc-grid">
+              <thead>
+                <tr>
+                  <th>Transaction No</th>
+                  <th>Receipt No</th>
+                  <th>User</th>
+                  <th>Customer</th>
+                  <th>Description</th>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th class="num">Net Amount</th>
+                  <th class="num">Downpayment</th>
+                  <th class="num">Balance</th>
+                  <th>Online Order ID</th>
+                  <th>Fully Paid</th>
+                  <th>Date Paid</th>
+                  <th>Warehouse</th>
+                  <th>Lines</th>
+                </tr>
+              </thead>
+              <tbody id="advanceTableBody">
+                <tr><td colspan="15" class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="advancePaginationBar"></div>
         </section>
       </div>
 
@@ -239,6 +289,15 @@
             <div>
               <div class="bc-doc-field"><label>Order ID</label><div class="bc-doc-value" id="ocOrderId"></div></div>
               <div class="bc-doc-field"><label>Customer</label><div class="bc-doc-value" id="ocCustomer"></div></div>
+              <!-- Walk-ins only: the real customer, portal only (POS walk-ins all come in as "POS WALKIN ORDERS"). -->
+              <div class="bc-doc-field hidden" id="ocWalkinCustomerRow">
+                <label for="ocWalkinName">Walk-in Customer</label>
+                <div class="oc-walkin-customer">
+                  <input type="text" id="ocWalkinName" placeholder="Customer name" maxlength="200" />
+                  <input type="tel" id="ocWalkinPhone" placeholder="Contact no." maxlength="50" />
+                  <button type="button" class="bc-cmd" id="ocWalkinSaveBtn">Save</button>
+                </div>
+              </div>
               <div class="bc-doc-field"><label>Order Date</label><div class="bc-doc-value" id="ocOrderDate"></div></div>
               <div class="bc-doc-field"><label>Status</label><div class="bc-doc-value" id="ocStatus"></div></div>
             </div>
@@ -546,14 +605,14 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=modalhist1"></script>
+  <script src="js/nav.js?v=sij2"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/glassCutList.js?v=po1"></script>
+  <script src="js/glassCutList.js?v=po2"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=bc41"></script>
+  <script src="js/onlineOrders.js?v=bc49"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

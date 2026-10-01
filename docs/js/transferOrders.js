@@ -905,7 +905,11 @@ async function autoFillQtyToShip(docNo, lines) {
       updateSerialTagCount(picker);
     }
 
-    if (canShipHere && line['Qty To Ship Manual'] !== true && Number(line['Qty To Ship']) !== fill) {
+    // A never-saved (null) Qty To Ship must be saved even when the fill is 0 - Number(null) is 0, so
+    // comparing numbers alone would skip it and the printout would fall back to the full quantity.
+    const saved = line['Qty To Ship'];
+    const neverSaved = saved === null || saved === undefined || saved === '';
+    if (canShipHere && line['Qty To Ship Manual'] !== true && (neverSaved || Number(saved) !== fill)) {
       await saveQtyToShip(lineNo, fill, undefined);
     }
   }
