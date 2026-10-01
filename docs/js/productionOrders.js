@@ -516,6 +516,7 @@ async function loadCardLines() {
   });
   if (error) { showCardError(describeSupabaseError(error, 'Could not load lines.')); return; }
   renderLines(data || []);
+  loadCardGlass(data || []);
   await loadCardRework();
   if (!isManager) renderMakerView(data || []);
 }
@@ -602,6 +603,142 @@ function renderMakerView(lines) {
     ${o.notes ? `<div class="pm-note">${escapeHtml(o.notes)}</div>` : ''}
     ${sections || '<p class="muted">You are not a maker on this order.</p>'}
     ${actions ? `<div class="pm-actions">${actions}</div>` : ''}`;
+}
+
+// ---- Glass Cut
+// Per "in the production orders can you also add the glass cut there": the Online Order card's Glass
+// Cut section (renderOrderCardGlassCut in js/onlineOrders.js) for a production order's Tank lines.
+// The tank size comes from the item name / description / variant ("BETTA-CUBE (4x4x4in, 3MM GLASS)"),
+// same parse as glass-cut-list.html; the cut is for the line's full Quantity.
+const PROD_GLASS_OPTIONS = ['3mm', '5mm', '6mm', '8mm', '10mm', '12mm', '15mm', '19mm'];
+const PROD_GLASS_SHEET_KEY = 'onlineOrders.glassSheetSize'; // shared with the Online Order card - same supplier sheet
+let cardGlassTanks = [];
+
+function lineGlassSpec(l) {
+  for (const text of [l.item_name, l.description, `${l.variant_name || ''} ${l.item_code || ''}`]) {
+    const spec = GlassCutList.parseAquariumLineSpec(text || '');
+    if (spec) return spec;
+  }
+  return null;
+}
+
+function loadCardGlass(lines) {
+  const o = openOrder;
+  const canSee = o && (isManager || o.tank_maker === currentSession.username);
+  cardGlassTanks = !canSee ? [] : lines
+    .filter((l) => (l.part || linePart(l.description, l.item_code)) === 'tank' && Number(l.quantity) > 0)
+    .map((line) => {
+      const spec = lineGlassSpec(line);
+      return { line, spec, glass: String((spec && spec.glass) || '10mm').toLowerCase().replace(/\s+/g, '') };
+    });
+  renderCardGlassCut();
+}
+
+function prodGlassSheetSize() {
+  return {
+    sheetWidth: Number(document.getElementById('prodGlassSheetW').value) || 0,
+    sheetHeight: Number(document.getElementById('prodGlassSheetH').value) || 0
+  };
+}
+
+function prodGlassTankOptions(tank) {
+  return {
+    length: tank.spec.length,
+    width: tank.spec.width,
+    height: tank.spec.height,
+    glass: tank.glass,
+    quantity: Number(tank.line.quantity) || 1,
+    ...prodGlassSheetSize()
+  };
+}
+
+function renderCardGlassCut() {
+  const tab = document.getElementById('prodCardGlassTab');
+  tab.classList.toggle('hidden', cardGlassTanks.length === 0);
+  if (cardGlassTanks.length === 0) return;
+
+  const f = GlassCutList.formatInches;
+  const canPo = isManager && (typeof canOpenPortalPage !== 'function' || canOpenPortalPage(currentSession, 'purchase-orders.html'));
+  document.getElementById('prodGlassPoBtn').classList.toggle('hidden', !canPo);
+
+  let totalSheets = 0;
+  let blocked = false;
+  document.getElementById('prodGlassTanks').innerHTML = cardGlassTanks.map((tank, i) => {
+    const title = escapeHtml(printDescription(tank.line) || `Line ${i + 1}`);
+    if (!tank.spec) {
+      blocked = true;
+      return `<div class="oc-glass-tank"><div class="oc-glass-tank-head"><strong>${title}</strong></div>
+        <p class="muted" style="margin:0;">Couldn't read the tank size from this line's item name or description (e.g. "24x12x12in").</p></div>`;
+    }
+
+    const glassOptions = PROD_GLASS_OPTIONS.includes(tank.glass) ? PROD_GLASS_OPTIONS : [tank.glass, ...PROD_GLASS_OPTIONS];
+    const opts = prodGlassTankOptions(tank);
+    const result = GlassCutList.buildCutList(opts);
+    totalSheets += result.sheets.length;
+    const qtyNote = opts.quantity > 1 ? ` &middot; ${opts.quantity} tanks` : '';
+    const head = `<div class="oc-glass-tank-head">
+        <strong>${title}</strong>
+        <span class="muted">Tank ${f(opts.length)}" x ${f(opts.width)}" x ${f(opts.height)}"${qtyNote}</span>
+        <select class="oc-glass-thickness" data-tank-index="${i}" title="Glass thickness">
+          ${glassOptions.map((g) => `<option value="${escapeHtml(g)}"${g === tank.glass ? ' selected' : ''}>${escapeHtml(g)}</option>`).join('')}
+        </select>
+      </div>`;
+    const panels = `<table class="oc-glass-panels"><thead><tr><th>Panel</th><th>Cut size</th><th>Qty</th></tr></thead><tbody>
+        ${result.panels.map((p) => `<tr><td>${escapeHtml(p.name)}</td><td><strong>${f(p.width)}" x ${f(p.height)}"</strong></td><td>${p.qty}</td></tr>`).join('')}
+      </tbody></table>`;
+
+    if (result.oversized.length > 0) {
+      blocked = true;
+      return `<div class="oc-glass-tank">${head}${panels}<p class="error-text" style="margin:0;">These panels don't fit a ${f(opts.sheetWidth)}" x ${f(opts.sheetHeight)}" sheet even rotated: ${escapeHtml(result.oversized.map((p) => p.label).join(', '))}. Use a bigger stock sheet size above.</p></div>`;
+    }
+
+    const sheets = result.sheets.map((sheet, s) =>
+      GlassCutList.renderSheetSvg(sheet, { caption: `Sheet ${s + 1} of ${result.sheets.length} - ${opts.glass}` })
+    ).join('');
+    return `<div class="oc-glass-tank">${head}${panels}<div class="oc-glass-sheets">${sheets}</div></div>`;
+  }).join('');
+
+  const poBtn = document.getElementById('prodGlassPoBtn');
+  poBtn.disabled = blocked;
+  poBtn.title = blocked ? 'Fix the tank(s) above first - one has no readable size or doesn\'t fit the stock sheet.' : 'Open a New Purchase Order with every cut size above in its Notes';
+  document.getElementById('prodCardGlassSummary').textContent =
+    `${cardGlassTanks.length} tank line(s) · ${totalSheets} stock sheet(s)`;
+}
+
+// Same sessionStorage handoff as the Online Order card - purchase-orders.html opens the New PO with
+// the cut sizes in Notes.
+function handleCardGlassPo() {
+  const tanks = cardGlassTanks.filter((t) => t.spec).map((tank) => {
+    const options = prodGlassTankOptions(tank);
+    return { options, result: GlassCutList.buildCutList(options) };
+  });
+  if (tanks.length === 0 || !openOrder) return;
+  if (cardDirty && !confirm('This order has unsaved changes - the cut list is from the last saved lines. Continue?')) return;
+  sessionStorage.setItem('pendingGlassPoNotes', GlassCutList.buildPoNotes(openOrder.order_no, tanks, 'Production Order'));
+  window.location.href = 'purchase-orders.html';
+}
+
+function wireCardGlassCut() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PROD_GLASS_SHEET_KEY) || 'null');
+    if (saved && saved.w > 0 && saved.h > 0) {
+      document.getElementById('prodGlassSheetW').value = saved.w;
+      document.getElementById('prodGlassSheetH').value = saved.h;
+    }
+  } catch (e) { /* storage unavailable - keep the defaults */ }
+
+  ['prodGlassSheetW', 'prodGlassSheetH'].forEach((id) => document.getElementById(id).addEventListener('input', () => {
+    const { sheetWidth, sheetHeight } = prodGlassSheetSize();
+    try { localStorage.setItem(PROD_GLASS_SHEET_KEY, JSON.stringify({ w: sheetWidth, h: sheetHeight })); } catch (e) { /* ignore */ }
+    renderCardGlassCut();
+  }));
+  document.getElementById('prodGlassTanks').addEventListener('change', (event) => {
+    const select = event.target.closest('.oc-glass-thickness');
+    if (!select) return;
+    cardGlassTanks[Number(select.dataset.tankIndex)].glass = select.value;
+    renderCardGlassCut();
+  });
+  document.getElementById('prodGlassPoBtn').addEventListener('click', handleCardGlassPo);
 }
 
 async function loadCardSerials() {
@@ -818,6 +955,7 @@ async function openCard(orderRow) {
   document.getElementById('prodSerialsPart').classList.add('hidden');
   document.getElementById('prodReworkPart').classList.add('hidden');
   document.getElementById('prodMaterialsPart').classList.add('hidden');
+  document.getElementById('prodCardGlassTab').classList.add('hidden');
   document.getElementById('prodLinesBody').innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
   const makerView = !isManager && !!orderRow;
   document.getElementById('prodCardModal').classList.toggle('maker-view', makerView);
@@ -1284,6 +1422,7 @@ function wireLinesGrid() {
   });
   wireLinesGrid();
   wireMaterialsGrid();
+  wireCardGlassCut();
 
   await Promise.all([loadWarehouses(), isManager ? loadMakers() : Promise.resolve(), loadProductionOrders()]);
 

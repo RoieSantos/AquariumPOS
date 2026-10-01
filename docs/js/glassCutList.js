@@ -426,8 +426,9 @@
   // so the printed PO carries the actual sizes to cut, not just a sq ft total. Single line with
   // " | " separators because the New PO's Notes field is a plain text input. `tanks` is a list of
   // { options, result } pairs from buildCutList - one per custom aquarium line.
-  function buildPoNotes(orderId, tanks) {
-    var parts = [orderId ? 'Glass for Online Order ' + orderId : 'Glass cut list'];
+  // sourceLabel names the document the glass is for ("Production Order") - defaults to Online Order.
+  function buildPoNotes(orderId, tanks, sourceLabel) {
+    var parts = [orderId ? 'Glass for ' + (sourceLabel || 'Online Order') + ' ' + orderId : 'Glass cut list'];
     var totalSqFt = 0;
 
     (tanks || []).forEach(function (t) {

@@ -24098,69 +24098,8 @@ ORDER BY [Name]", conn);
                 return;
             }
 
-            if (IsCurrentWarehouseProductionForLabels())
-            {
-                // Ensure stock counts have been performed today before allowing Tender Declaration in production warehouses.
-                bool hasCountsToday = false;
-                try
-                {
-                    using (var conn = new SqlConnection(connectionString))
-                    {
-                        conn.Open();
-                        using (var cmd = new SqlCommand("SELECT COUNT(1) FROM dbo.InventoryStockCounts WHERE CAST(EnteredAtUtc AS date) = CAST(SYSUTCDATETIME() AS date)", conn))
-                        {
-                            var o = cmd.ExecuteScalar();
-                            if (o != null && o != DBNull.Value)
-                            {
-                                try { hasCountsToday = Convert.ToInt32(o) > 0; } catch { hasCountsToday = false; }
-                            }
-                        }
-                    }
-                }
-                catch { hasCountsToday = false; }
-
-                if (!hasCountsToday)
-                {
-                    // Automatically open Stock Counts if none recorded today. User must complete or cancel; then re-check.
-                    try
-                    {
-                        using (var sc = new StockCountsForm())
-                        {
-                            sc.ShowDialog(this);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Failed to open Stock Counts: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        return;
-                    }
-
-                    // Re-check after the StockCounts form closes
-                    try
-                    {
-                        using (var conn = new SqlConnection(connectionString))
-                        {
-                            conn.Open();
-                            using (var cmd = new SqlCommand("SELECT COUNT(1) FROM dbo.InventoryStockCounts WHERE CAST(EnteredAtUtc AS date) = CAST(SYSUTCDATETIME() AS date)", conn))
-                            {
-                                var o = cmd.ExecuteScalar();
-                                if (o != null && o != DBNull.Value)
-                                {
-                                    try { hasCountsToday = Convert.ToInt32(o) > 0; } catch { hasCountsToday = false; }
-                                }
-                            }
-                        }
-                    }
-                    catch { hasCountsToday = false; }
-
-                    if (!hasCountsToday)
-                    {
-                        MessageBox.Show("Stock counts not recorded. Tender Declaration cannot proceed.", "Aborted", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        return;
-                    }
-                }
-            }
-
+            // No stock-count gate any more: Tender Declaration opens directly in every warehouse, production included.
+            // Stock Counts stays available from its own button.
             currentReceiptNo = GenerateCentralizedReceiptNumber();
             var tenderForm = new TenderDeclarationForm(currentReceiptNo);
             tenderForm.ShowDialog(this);

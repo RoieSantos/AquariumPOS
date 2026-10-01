@@ -246,6 +246,24 @@
           </div>
         </div>
 
+        <!-- Glass cut list for every Tank line (aquariums / sumps) whose size can be read from the item
+             name / description, drawn by js/glassCutList.js - same section as the Online Order card.
+             Shown to managers and the order's Tank Maker; hidden when there's no tank line. See
+             renderCardGlassCut in js/productionOrders.js. -->
+        <details class="doc-fasttab hidden" id="prodCardGlassTab" open>
+          <summary>Glass Cut <span class="doc-fasttab-summary" id="prodCardGlassSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="oc-glass-bar">
+              <label>Stock sheet
+                <input type="number" id="prodGlassSheetW" value="72" step="0.25" min="0" /> x
+                <input type="number" id="prodGlassSheetH" value="84" step="0.25" min="0" /> in
+              </label>
+              <button type="button" class="btn btn-primary btn-sm hidden" id="prodGlassPoBtn">Create Purchase Order</button>
+            </div>
+            <div id="prodGlassTanks"></div>
+          </div>
+        </details>
+
         <!-- Materials Used (js/productionOrders.js loadCardMaterials, sql/supabase_production_order_consumption.sql)
              - sealant / rubber matting / glass ... in pcs, posted as Consumption out of the order's
              warehouse. Managers only, once the order is Released. -->
@@ -312,7 +330,8 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/productionOrders.js?v=17"></script>
+  <script src="js/glassCutList.js?v=po3"></script>
+  <script src="js/productionOrders.js?v=18"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
