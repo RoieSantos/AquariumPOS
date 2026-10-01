@@ -413,11 +413,16 @@ function updateProductionDoneButton(btnId, o) {
   const btn = document.getElementById(btnId);
   if (!currentSession?.isOrderMaker) { btn.classList.add('hidden'); return; }
   const mine = o ? myProductionRoles(o) : [];
-  // Maker focus: no point showing a disabled Production Done (no part of theirs, or the order has
-  // moved on - e.g. a dispatcher's To Ship order shows Mark Shipped instead).
-  btn.classList.toggle('hidden', isMakerFocus() && (!mine.length || !canChangeProduction(o)));
+  // Maker focus: hidden only when the maker has no part on this order (e.g. a dispatcher's To Ship
+  // order shows Mark Shipped instead). With a part, it always shows - disabled with the reason in its
+  // label when production can't change - per "in the maker view.. i want them to be able to click
+  // production done as well.. right now i cannot see production done button".
+  btn.classList.toggle('hidden', isMakerFocus() && !mine.length);
   const allMineDone = mine.length > 0 && mine.every((role) => o.production_done?.[role]);
-  btn.querySelector('.pd-label').textContent = allMineDone ? 'Undo Production Done' : 'Production Done';
+  const locked = !!o && mine.length > 0 && !canChangeProduction(o);
+  // Phones have no tooltips - the maker view says why on the button itself.
+  btn.querySelector('.pd-label').textContent = (allMineDone ? 'Undo Production Done' : 'Production Done')
+    + (locked && isMakerFocus() ? ` (order is ${listDisplayStatus(o) || o.status})` : '');
   btn.classList.toggle('is-undo', allMineDone);
   btn.disabled = !mine.length || !canChangeProduction(o);
   btn.title = !o ? 'Select an order'
@@ -475,7 +480,9 @@ function renderMyAssignmentCards(rows) {
     const pdBtn = canMarkShipped(o)
       ? `<button type="button" class="oo-mc-btn primary" data-shipped-order="${escapeHtml(o.order_id)}">&#128666; Mark Shipped</button>`
       : mine.length && canChange ? `<button type="button" class="oo-mc-btn ${allMineDone ? 'undo' : 'primary'}" data-pd-order="${escapeHtml(o.order_id)}">
-        ${allMineDone ? 'Undo Production Done' : '&#10003; Production Done'}</button>` : '';
+        ${allMineDone ? 'Undo Production Done' : '&#10003; Production Done'}</button>`
+      // Their part, but production is closed - shown greyed out with the reason rather than hidden.
+      : mine.length ? `<button type="button" class="oo-mc-btn" disabled>Production Done (order is ${escapeHtml(status)})</button>` : '';
     return `
       <article class="oo-mc is-clickable" data-order-id="${escapeHtml(o.order_id)}" data-open-order="${escapeHtml(o.order_id)}" role="button" tabindex="0" aria-label="Open order ${escapeHtml(o.order_id)}">
         <header class="oo-mc-head">
@@ -2486,7 +2493,7 @@ async function openAssignDialog(orderId) {
   // A 10mm / 12mm glass order needs a Tank Maker even with no custom line
   // (supabase_online_order_thick_glass_tank_maker.sql).
   const thickGlass = /^(10|12)mm$/i.test(String(o.glass_thickness || '').replace(/\s+/g, ''));
-  const needs = [o.has_aquarium_line ? (thickGlass && !o.has_custom_line ? `${o.glass_thickness} glass tank work` : 'custom tank work') : null,o.has_stand_line ? 'a custom stand / top cover' : null].filter(Boolean);
+  const needs = [o.has_aquarium_line ? (thickGlass && !o.has_custom_line ? `${o.glass_thickness} glass tank work` : 'custom tank work') : null, o.has_stand_line ? 'a stand / top cover' : null].filter(Boolean);
   // Only custom orders go Confirmed > Assigned > To Ship here; normal orders still go through the
   // local POS (see _online_order_assignment_complete in supabase_online_order_assigned_status.sql).
   // Per "no need to asign a dispatcher since the dispatcher will be logged after shipping the order" -

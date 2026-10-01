@@ -29,6 +29,9 @@
 --     EstimatedDeliveryDate because the Pancake sync overwrites that one.
 --   - Production Done / Send Back now work for walk-ins in the flow (they refused anything Shipped).
 --   - Walk-in tab counts: To Assign / Assigned / Production Done / Completed / Shipped / Cancelled.
+--   - Online AND walk-in: once an order needs a Tank Maker, any stand / top cover line on it (custom
+--     or not) also needs a Stand Maker (_online_order_production_roles, below). The list's
+--     has_aquarium_line / has_stand_line and the Assigned counts now all use that one rule.
 --
 -- Run AFTER supabase_online_order_thick_glass_tank_maker.sql (re-creates admin_list_online_orders /
 -- admin_get_online_order_status_summary from it). Adds nullable columns to OnlineOrders (a brief lock -
@@ -43,6 +46,60 @@ alter table public."OnlineOrders" add column if not exists "PickedUpAtUtc" times
 alter table public."OnlineOrders" add column if not exists "PickedUpBy" varchar(100);
 
 reset lock_timeout;
+
+-- ---------------------------------------------------------------------------
+-- Stand Maker for any stand on a maker order - per "can you check the stand maker too i notice the
+-- order has stand needed a stand maker". Before, only a CUSTOM stand / top cover needed a Stand Maker,
+-- so a 10mm / 12mm order (Tank Maker because of the glass) with a regular stand line had nobody on the
+-- stand - and maker orders skip the stock check, so it was never picked from stock either. Now: once an
+-- order needs a Tank Maker (custom tank line or 10mm / 12mm glass), ANY stand / top cover line on it
+-- also needs a Stand Maker. Orders with no maker work are unchanged (stock flow / POS).
+-- Same stand rule as _online_order_line_part ("standard" isn't a stand).
+create or replace function public._online_order_is_stand_line(p_description text, p_item_code text)
+returns boolean
+language sql
+immutable
+as $$
+  select (coalesce(p_description, '') || ' ' || coalesce(p_item_code, '')) ~* '(stand(?!ard)|top[[:space:]_-]*cover)';
+$$;
+
+revoke execute on function public._online_order_is_stand_line(text, text) from public, anon, authenticated;
+
+-- Replaces supabase_online_order_thick_glass_tank_maker.sql's version (adds the any-stand rule). Drives
+-- Production Done, My Assignments, assignment complete (-> Assigned), walk-in stages, and (below) the
+-- list's has_aquarium_line / has_stand_line and the status counts.
+create or replace function public._online_order_production_roles(p_order_id text)
+returns text[]
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with f as (
+    select
+      exists (
+        select 1 from public."OnlineOrderLines" ol
+        where ol."OrderID" = p_order_id and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'tank'
+      ) or exists (
+        -- 10mm / 12mm orders always need a Tank Maker.
+        select 1 from public."OnlineOrders" o
+        where o."OrderID" = p_order_id and public._online_order_thick_glass(o."GlassThickness")
+      ) as tank,
+      exists (
+        select 1 from public."OnlineOrderLines" ol
+        where ol."OrderID" = p_order_id and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'stand'
+      ) as custom_stand,
+      exists (
+        select 1 from public."OnlineOrderLines" ol
+        where ol."OrderID" = p_order_id and public._online_order_is_stand_line(ol."Description", ol."ItemCode")
+      ) as any_stand
+  )
+  select (case when f.tank then array['tank'] else array[]::text[] end)
+      || (case when f.custom_stand or (f.tank and f.any_stand) then array['stand'] else array[]::text[] end)
+  from f;
+$$;
+
+revoke execute on function public._online_order_production_roles(text) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Go-live date: walk-ins before this only enter the flow when a maker was assigned.
@@ -503,19 +560,10 @@ begin
                and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
            ),
            o."AssignedProductionMember"::text, spm."DisplayName"::text,
-           -- THICK GLASS: 10mm / 12mm orders need a Tank Maker even with no custom line.
-           public._online_order_thick_glass(o."GlassThickness") or exists (
-             select 1 from public."OnlineOrderLines" ol
-             where ol."OrderID" = o."OrderID"
-               and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
-               and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'tank'
-           ),
-           exists (
-             select 1 from public."OnlineOrderLines" ol
-             where ol."OrderID" = o."OrderID"
-               and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
-               and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'stand'
-           ),
+           -- has_aquarium_line / has_stand_line = needs a Tank / Stand Maker - the one shared rule
+           -- (custom lines, 10mm / 12mm glass, any stand on a maker order).
+           'tank' = any(public._online_order_production_roles(o."OrderID")),
+           'stand' = any(public._online_order_production_roles(o."OrderID")),
            o."AssignedTankMaker"::text, tank."DisplayName"::text,
            o."AssignedStandMaker"::text, stand."DisplayName"::text,
            -- GMA-conversation-originated flag: joined by matching this AutomatedOrders row's own
@@ -627,32 +675,9 @@ begin
               when p_status is not null and lower(trim(p_status)) = 'assigned' then
                 case when (
                   lower(trim(coalesce(o."Status", ''))) = 'assigned'
-                  or (o."Status" ilike '%printed%'
-                and (public._online_order_thick_glass(o."GlassThickness") or exists (
-                  select 1 from public."OnlineOrderLines" ol
-                  where ol."OrderID" = o."OrderID"
-                    and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
-                    and (public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'tank'
-                      or public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'stand')
-                ))
-                and (
-                  (not public._online_order_thick_glass(o."GlassThickness") and not exists (
-                    select 1 from public."OnlineOrderLines" ol
-                    where ol."OrderID" = o."OrderID"
-                      and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
-                      and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'tank'
-                  ))
-                  or (o."AssignedTankMaker" is not null and trim(o."AssignedTankMaker") <> '')
-                )
-                and (
-                  not exists (
-                    select 1 from public."OnlineOrderLines" ol
-                    where ol."OrderID" = o."OrderID"
-                      and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
-                      and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'stand'
-                  )
-                  or (o."AssignedStandMaker" is not null and trim(o."AssignedStandMaker") <> '')
-                )))
+                  -- Printed + every needed maker set (same roles rule as everywhere else).
+                  -- CASE so the roles check only runs for Printed orders (see the timeout note above).
+                  or (case when o."Status" ilike '%printed%' then public._online_order_assignment_complete(o."OrderID") else false end))
                   then not public._online_order_production_all_done(o."OrderID")
                   else false end
               else
@@ -720,18 +745,9 @@ begin
     order_flags as (
       select
         o.*,
-        public._online_order_thick_glass(o."GlassThickness") or exists (
-          select 1 from public."OnlineOrderLines" ol
-          where ol."OrderID" = o."OrderID"
-            and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
-            and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'tank'
-        ) as needs_tank,
-        exists (
-          select 1 from public."OnlineOrderLines" ol
-          where ol."OrderID" = o."OrderID"
-            and (ol."Description" ilike '%custom%' or ol."ItemCode" ilike '%custom%' or ol."product_display_id" ilike '%custom%')
-            and public._online_order_line_part(ol."Description", ol."ItemCode", ol."product_display_id") = 'stand'
-        ) as needs_stand
+        -- Needed makers - only worked out for Printed orders, the one bucket that uses them.
+        case when lower(trim(coalesce(o."Status", ''))) = 'printed'
+          then public._online_order_assignment_complete(o."OrderID") else false end as all_assigned
       from public."OnlineOrders" o
       left join public."Warehouses" w on w."ID" = o."LocationID"
       where o."ReceivedAtShop" is not true
@@ -746,13 +762,7 @@ begin
           when lower(trim(coalesce(o."Status", ''))) in ('confirmed', 'submitted') then 'Confirmed'
           when lower(trim(coalesce(o."Status", ''))) = 'assigned' then 'Assigned'
           when lower(trim(coalesce(o."Status", ''))) = 'printed' then
-            case
-              when (o.needs_tank or o.needs_stand)
-                and (not o.needs_tank or (o."AssignedTankMaker" is not null and trim(o."AssignedTankMaker") <> ''))
-                and (not o.needs_stand or (o."AssignedStandMaker" is not null and trim(o."AssignedStandMaker") <> ''))
-                then 'Assigned'
-              else 'Printed'
-            end
+            case when o.all_assigned then 'Assigned' else 'Printed' end
           when lower(trim(coalesce(o."Status", ''))) in ('to ship', 'packing', 'packed') then 'To Ship'
           when lower(trim(coalesce(o."Status", ''))) in ('shipped', 'delivered', '2') then 'Shipped'
           when lower(trim(coalesce(o."Status", ''))) in ('canceled', 'cancelled') then 'Cancelled'
