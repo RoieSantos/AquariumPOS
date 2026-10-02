@@ -401,9 +401,10 @@
     <div id="buildView">
     <nav class="step-nav" aria-label="Calculator steps">
       <a href="#stepSize"><span class="dot">1</span>Size &amp; glass</a>
-      <a href="#stepOptions"><span class="dot">2</span>Options</a>
-      <a href="#sumpExtrasCard"><span class="dot">3</span>Sump &amp; extras</a>
-      <a href="#stepStickers"><span class="dot">4</span>Stickers &amp; notes</a>
+      <a href="#stepStand"><span class="dot">2</span>Stand</a>
+      <a href="#stepOptions"><span class="dot">3</span>Options</a>
+      <a href="#sumpExtrasCard"><span class="dot">4</span>Sump &amp; extras</a>
+      <a href="#stepStickers"><span class="dot">5</span>Stickers &amp; notes</a>
       <a href="#drawingCard"><span class="dot">&#9633;</span>Drawing</a>
     </nav>
 
@@ -458,7 +459,6 @@
                 <option>Aquarium only</option>
                 <option>Undersump</option>
                 <option>Overheadsump</option>
-                <option>Complete setup</option>
               </select>
             </div>
 
@@ -484,41 +484,20 @@
           </div>
         </section>
 
-        <section id="stepOptions" class="card">
+        <section id="stepStand" class="card">
           <div class="step-head">
             <span class="step-num">2</span>
             <div>
-              <h2>Options</h2>
-              <p class="step-hint">Tick everything the build needs. Stand settings appear once Stand is ticked.</p>
+              <h2>Stand</h2>
+              <p class="step-hint">Optional metal stand - uses the aquarium's length and width as its footprint.</p>
             </div>
           </div>
 
           <div class="checkbox-stack">
-            <label class="checkbox-row"><input id="aio" type="checkbox">AIO</label>
-            <label class="checkbox-row"><input id="lowIron" type="checkbox">Low Iron</label>
-            <label class="checkbox-row"><input id="tempered" type="checkbox">Tempered Glass</label>
-            <label class="checkbox-row"><input id="rimless" type="checkbox">Rimless</label>
-            <label class="checkbox-row"><input id="highStrip" type="checkbox">High Strip</label>
-            <label class="checkbox-row"><input id="sumpEnabled" type="checkbox">Filtration sump</label>
-            <label class="checkbox-row"><input id="aquascape" type="checkbox">Aquascape service</label>
-            <label class="checkbox-row"><input id="enclosure" type="checkbox">Enclosure</label>
-            <label class="checkbox-row"><input id="standEnabled" type="checkbox">Stand</label>
-          </div>
-
-          <div class="field-grid" style="margin-top: 14px;">
-            <div class="field">
-              <label for="holeCount">Holes in aquarium (qty)</label>
-              <input id="holeCount" type="number" value="0" min="0" step="1">
-            </div>
-
-            <div class="field">
-              <label for="dividerCount">Dividers (qty)</label>
-              <input id="dividerCount" type="number" value="0" min="0" step="1">
-            </div>
+            <label class="checkbox-row"><input id="standEnabled" type="checkbox">Include a stand</label>
           </div>
 
           <div id="standCalcWrap" class="reveal-block hidden">
-            <div class="sub-head" style="margin-top: 0; padding-top: 0; border-top: 0;">Stand settings</div>
             <div class="field-grid">
               <div class="field">
                 <label for="standLayers">Stand layers</label>
@@ -544,6 +523,12 @@
                 <label for="standFooting">Footing (in)</label>
                 <input id="standFooting" type="number" value="3" min="0" step="0.5">
               </div>
+
+              <div class="field">
+                <label for="standQuantity">Stand quantity</label>
+                <input id="standQuantity" type="number" value="1" min="1" step="1">
+                <div class="field-help">Total stands in the quote - stays 1 unless you change it.</div>
+              </div>
             </div>
 
             <div class="checkbox-stack" style="margin-top: 12px;">
@@ -561,12 +546,45 @@
           </div>
         </section>
 
-        <section id="sumpExtrasCard" class="card">
+        <section id="stepOptions" class="card">
           <div class="step-head">
             <span class="step-num">3</span>
             <div>
+              <h2>Options</h2>
+              <p class="step-hint">Tick everything the build needs.</p>
+            </div>
+          </div>
+
+          <div class="checkbox-stack">
+            <label class="checkbox-row"><input id="aio" type="checkbox">AIO</label>
+            <label class="checkbox-row"><input id="lowIron" type="checkbox">Low Iron</label>
+            <label class="checkbox-row"><input id="tempered" type="checkbox">Tempered Glass</label>
+            <label class="checkbox-row"><input id="rimless" type="checkbox">Rimless</label>
+            <label class="checkbox-row"><input id="highStrip" type="checkbox">High Strip</label>
+            <label class="checkbox-row"><input id="sumpEnabled" type="checkbox">Filtration sump</label>
+            <label class="checkbox-row"><input id="aquascape" type="checkbox">Aquascape service</label>
+            <label class="checkbox-row"><input id="enclosure" type="checkbox">Enclosure</label>
+          </div>
+
+          <div class="field-grid" style="margin-top: 14px;">
+            <div class="field">
+              <label for="holeCount">Holes in aquarium (qty)</label>
+              <input id="holeCount" type="number" value="0" min="0" step="1">
+            </div>
+
+            <div class="field">
+              <label for="dividerCount">Dividers (qty)</label>
+              <input id="dividerCount" type="number" value="0" min="0" step="1">
+            </div>
+          </div>
+        </section>
+
+        <section id="sumpExtrasCard" class="card">
+          <div class="step-head">
+            <span class="step-num">4</span>
+            <div>
               <h2>Sump &amp; extras</h2>
-              <p class="step-hint">Used when the build has a filtration sump (tick it in step 2, or pick a sump build type).</p>
+              <p class="step-hint">Used when the build has a filtration sump (tick it in step 3, or pick a sump build type).</p>
             </div>
           </div>
 
@@ -657,7 +675,7 @@
 
         <section id="stepStickers" class="card">
           <div class="step-head">
-            <span class="step-num">4</span>
+            <span class="step-num">5</span>
             <div>
               <h2>Stickers &amp; notes</h2>
               <p class="step-hint">Optional background/bottom stickers and any special instructions.</p>
@@ -750,7 +768,7 @@
           <div id="priceLine" class="price-line"><span class="price-empty">Waiting for calculation</span></div>
           <div class="quote-stats">
             <div id="volumeLine"><strong>Volume:</strong> loading...</div>
-            <div id="dimensionsLine">Dimensions (in): -</div>
+            <div id="dimensionsLine">Dimensions: -</div>
           </div>
           <div class="quote-actions">
             <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
@@ -865,9 +883,18 @@
       return Math.max(1, Math.round(Number(byId('quantity').value) || 1));
     }
 
-    // How many sump units are in the quote (e.g. two identical sumps servicing one large tank).
-    // Only meaningful while Filtration sump is enabled - see computeQuotedTotal below for how it
-    // combines with the aquarium Quantity above.
+    // TOTAL number of sump units in the whole quote (not per aquarium) - e.g. 4 aquariums with one
+    // sump each = Sump Quantity 4. Only meaningful while Filtration sump is enabled - see
+    // computeQuotedTotal below. Follows the aquarium Quantity automatically until staff edit it
+    // themselves (see wireSumpQuantityFollowsQuantity), so "4 tanks" still quotes 4 sumps by default.
+    // TOTAL number of stands in the quote, independent of the aquarium Quantity (e.g. 4 tanks on
+    // 2 double-tier stands = Stand Quantity 2). Only meaningful while Stand is ticked. Defaults to
+    // 1 and only changes when staff edit it - unlike Sump Quantity it does NOT follow the aquarium
+    // Quantity (per direct request).
+    function getStandQuantity() {
+      return Math.max(1, Math.round(Number(byId('standQuantity').value) || 1));
+    }
+
     function getSumpQuantity() {
       return Math.max(1, Math.round(Number(byId('sumpQuantity').value) || 1));
     }
@@ -912,11 +939,11 @@
       return { sumpUnitPrice: result.totalPrice - noSumpResult.totalPrice, baseTotalPrice: noSumpResult.totalPrice };
     }
 
-    // Combines the aquarium Quantity (#quantity) and Sump Quantity (#sumpQuantity) multipliers
-    // into the final quoted total: the per-aquarium price already includes exactly one sump (as
-    // priced by calculateCustomAquarium), so each additional sump adds sumpUnitPrice, and the
-    // whole per-aquarium assembly (aquarium + all its sumps + stand) is then multiplied by how
-    // many aquariums are in the quote.
+    // Combines the aquarium Quantity (#quantity) and Sump Quantity (#sumpQuantity) into the final
+    // quoted total: (aquarium + stand, without sump) x aquarium Quantity, PLUS one sump's price x
+    // Sump Quantity. The two quantities are independent totals - previously Sump Quantity was
+    // treated as "per aquarium" and the whole bundle multiplied again by the aquarium Quantity, so
+    // 4 aquariums + 4 sumps billed 16 sumps.
     function computeQuotedTotal(result) {
       var aquariumQty = getAquariumQuantity();
       // Sump Quantity only has an effect while a sump is actually part of this build - otherwise
@@ -926,29 +953,46 @@
       var sumpQty = sumpEnabled ? getSumpQuantity() : 1;
       var sumpUnitPrice = result.sumpUnitPrice || 0;
       var baseTotal = typeof result.sumpBaseTotalPrice === 'number' ? result.sumpBaseTotalPrice : result.totalPrice;
-      var perAquariumTotal = baseTotal + sumpUnitPrice * sumpQty;
+      // Complete setup bundles its sump into the base price (sumpUnitPrice is 0 there), so this
+      // degrades to just baseTotal x aquariumQty in that case.
+      var sumpsTotal = sumpEnabled ? sumpUnitPrice * sumpQty : 0;
+      // The stand is added to the price AFTER everything else in calculateCustomAquarium (a clean
+      // separate amount, components.stand), so it can be pulled out of the base and multiplied by
+      // its own Stand Quantity instead of riding along with the aquarium Quantity.
+      var standEnabled = Boolean(result.normalized && result.normalized.stand);
+      var standUnitPrice = standEnabled ? (Number(result.components && result.components.stand) || 0) : 0;
+      var standQty = standEnabled ? getStandQuantity() : 1;
+      var aquariumUnitPrice = baseTotal - standUnitPrice;
 
       return {
         aquariumQty: aquariumQty,
         sumpQty: sumpQty,
         sumpEnabled: sumpEnabled,
         sumpUnitPrice: sumpUnitPrice,
-        perAquariumTotal: perAquariumTotal,
-        grandTotal: perAquariumTotal * aquariumQty
+        standQty: standQty,
+        standEnabled: standEnabled,
+        standUnitPrice: standUnitPrice,
+        perAquariumTotal: aquariumUnitPrice,
+        grandTotal: aquariumUnitPrice * aquariumQty + standUnitPrice * standQty + sumpsTotal
       };
     }
 
-    // Short suffix for the price line/alerts, e.g. " (2400.00 x 4 aquariums, 300.00 x 2 sumps
-    // each)" - omitted entirely when both quantities are 1 so the common case stays unchanged.
+    // Short suffix for the price line/alerts, e.g. " (2400.00 x 4 aquariums, 3500.00 x 2 stands,
+    // 300.00 x 4 sumps)" - omitted entirely when every quantity is 1 so the common case stays
+    // unchanged.
     function formatQuoteBreakdown(q) {
-      var parts = [];
-      if (q.aquariumQty > 1) {
-        parts.push(q.perAquariumTotal.toFixed(2) + ' x ' + q.aquariumQty + ' aquariums');
+      var hasStand = q.standEnabled && q.standUnitPrice > 0;
+      var hasSump = q.sumpEnabled && q.sumpUnitPrice > 0;
+      var anyMultiple = q.aquariumQty > 1 || (hasStand && q.standQty > 1) || (hasSump && q.sumpQty > 1);
+      if (!anyMultiple) return '';
+
+      function part(price, qty, one, many) {
+        return price.toFixed(2) + ' x ' + qty + ' ' + (qty === 1 ? one : many);
       }
-      if (q.sumpEnabled && q.sumpQty > 1) {
-        parts.push(q.sumpUnitPrice.toFixed(2) + ' x ' + q.sumpQty + ' sumps' + (q.aquariumQty > 1 ? ' each' : ''));
-      }
-      return parts.length > 0 ? ' (' + parts.join(', ') + ')' : '';
+      var parts = [part(q.perAquariumTotal, q.aquariumQty, 'aquarium', 'aquariums')];
+      if (hasStand) parts.push(part(q.standUnitPrice, q.standQty, 'stand', 'stands'));
+      if (hasSump) parts.push(part(q.sumpUnitPrice, q.sumpQty, 'sump', 'sumps'));
+      return ' (' + parts.join(', ') + ')';
     }
 
     function stickerTypeValue(id) {
@@ -957,6 +1001,19 @@
 
     function round1(value) {
       return Math.round((Number(value) || 0) * 10) / 10;
+    }
+
+    // Every measurement is shown in inches AND centimeters, e.g. 36" (91.4 cm) - pricing still
+    // works in inches internally; this is display only.
+    function formatInCm(inches) {
+      var n = Number(inches) || 0;
+      return round1(n) + '" (' + round1(n * 2.54) + ' cm)';
+    }
+
+    function formatDimsInCm(l, w, h) {
+      var parts = [l, w, h].map(function (v) { return Number(v) || 0; });
+      return 'L: ' + round1(parts[0]) + '" x W: ' + round1(parts[1]) + '" x H: ' + round1(parts[2]) + '"' +
+        ' (' + parts.map(function (v) { return round1(v * 2.54); }).join(' x ') + ' cm)';
     }
 
     function parsePositiveNumber(id) {
@@ -1470,9 +1527,9 @@
       drawDimensionLine(heightLineX, frontTop, heightLineX, frontTop + frontHeight);
       drawDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
 
-      drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
-      drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(heightIn) + '"');
-      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+      drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + formatInCm(lengthIn));
+      drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + formatInCm(heightIn));
+      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + formatInCm(widthIn));
     }
 
     function setVisibilityState() {
@@ -1630,7 +1687,7 @@
       if (!result || !result.ok) {
         volumeLine.innerHTML = '<strong>Volume:</strong> invalid';
         priceLine.innerHTML = '<span class="price-empty">Check inputs</span>';
-        dimensionsLine.textContent = result && result.error ? result.error : 'Dimensions (in): -';
+        dimensionsLine.textContent = result && result.error ? result.error : 'Dimensions: -';
         renderSafetyBanner(result);
         return;
       }
@@ -1641,11 +1698,11 @@
       var breakdownText = formatQuoteBreakdown(q).trim();
       priceLine.innerHTML = '<span class="price-value">' + q.grandTotal.toFixed(2) + '</span>' +
         (breakdownText ? '<span class="price-sub">' + breakdownText + '</span>' : '');
-      dimensionsLine.textContent = 'Dimensions (in): L: ' + result.normalized.lengthInches.toFixed(1) + ' x W: ' + result.normalized.widthInches.toFixed(1) + ' x H: ' + result.normalized.heightInches.toFixed(1);
+      dimensionsLine.textContent = 'Dimensions: ' + formatDimsInCm(result.normalized.lengthInches, result.normalized.widthInches, result.normalized.heightInches);
       if (result.normalized.stand && result.normalized.stand.enabled) {
-        byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in | Footing: ' + result.normalized.stand.footingInches.toFixed(1) + ' in';
+        byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + formatInCm(result.normalized.stand.heightInches) + ' | Footing: ' + formatInCm(result.normalized.stand.footingInches);
         var heightIsOverride = Number(byId('standHeightOverride').value) > 0;
-        byId('standHeightInfo').textContent = 'Total height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in' + (heightIsOverride ? ' (override)' : ' (auto, from layers/tubular)');
+        byId('standHeightInfo').textContent = 'Total height: ' + formatInCm(result.normalized.stand.heightInches) + (heightIsOverride ? ' (override)' : ' (auto, from layers/tubular)');
       } else {
         byId('standInfo').textContent = 'Stand uses the aquarium length and width as its footprint.';
         byId('standHeightInfo').textContent = 'Total height: -';
@@ -1660,6 +1717,50 @@
     // full spec at a glance to share with a customer, instead of re-checking the form fields above.
     // Same row-list pattern as stand.html's renderSummaryDetails. Called from calculateAquarium()
     // after every run, so it stays live as the form changes.
+    // Itemizes one sump's price into its parts (sump glass, filter medias, pump, light, overflow
+    // box, piping, top cover) for the Summary. Mirrors how calculateCustomAquarium (custom-
+    // aquarium-calculator.js) builds it: glass/media/overflow/light/pump are added BEFORE the
+    // build-type (Undersump/Overheadsump x1.9) and Low Iron (x1.7) multipliers, piping and the
+    // top cover AFTER - so the first group is shown with that multiplier applied. Whatever is left
+    // (the engine's round-to-nearest-10) becomes a final "Rounding" line, so the parts always add
+    // up exactly to the Sump Price shown. Labels start with "↳ " so the Summary tab files them
+    // under Price breakdown.
+    function buildSumpPriceBreakdownRows(result, sumpUnitPrice) {
+      var c = result.components || {};
+      var n = result.normalized || {};
+      var option = String(n.option || '').toLowerCase();
+      var markup = 1;
+      if (option === 'undersump' || option === 'overheadsump' || option === 'overhead sump') markup *= 1.9;
+      if (byId('lowIron').checked) markup *= 1.7;
+      var markupNote = markup > 1 ? ' (x' + round1(markup) + ' markup)' : '';
+
+      function itemName(selectId) {
+        var select = byId(selectId);
+        var opt = select && select.selectedOptions && select.selectedOptions[0];
+        var text = opt ? String(opt.textContent || '').trim() : '';
+        return text && !/^(loading|select|--)/i.test(text) ? ' - ' + text : '';
+      }
+
+      var parts = [];
+      if (c.sumpGlass > 0) parts.push(['Sump glass (' + n.glassThickness + ')' + markupNote, c.sumpGlass * markup]);
+      if (c.filterMedia > 0) parts.push(['Filter medias' + (n.sump && n.sump.filterMediaKg ? ' (approx. ' + n.sump.filterMediaKg + ' kg, more or less)' : '') + markupNote, c.filterMedia * markup]);
+      if (c.pump > 0) parts.push(['Submersible pump' + itemName('pumpItemSelect') + (getPumpQuantity() > 1 ? ' x' + getPumpQuantity() : '') + markupNote, c.pump * markup]);
+      if (c.light > 0) parts.push(['Submersible light' + itemName('lightItemSelect') + (getLightQuantity() > 1 ? ' x' + getLightQuantity() : '') + markupNote, c.light * markup]);
+      if (c.overflowBox > 0) parts.push(['Overflow box' + markupNote, c.overflowBox * markup]);
+      if (c.piping > 0) parts.push(['Set of piping', c.piping]);
+      if (c.allumTopCover > 0) parts.push(['Allum top cover', c.allumTopCover]);
+
+      var partsTotal = parts.reduce(function (sum, p) { return sum + p[1]; }, 0);
+      var remainder = Math.round((sumpUnitPrice - partsTotal) * 100) / 100;
+      if (Math.abs(remainder) >= 0.01) {
+        parts.push(['Rounding', remainder]);
+      }
+
+      return parts.map(function (p) {
+        return ['↳ ' + p[0], p[1].toFixed(2)];
+      });
+    }
+
     function renderDetailsSummary(result) {
       var host = byId('detailsSummary');
 
@@ -1681,7 +1782,7 @@
 
       var rows = [
         ['Build type', n.option],
-        ['Dimensions (in)', 'L: ' + n.lengthInches.toFixed(1) + ' x W: ' + n.widthInches.toFixed(1) + ' x H: ' + n.heightInches.toFixed(1)],
+        ['Dimensions', formatDimsInCm(n.lengthInches, n.widthInches, n.heightInches)],
         ['Volume', result.gallons.toFixed(1) + ' gallons'],
         ['Glass', glassBits.join(', ')]
       ];
@@ -1705,12 +1806,12 @@
 
       if (n.sump) {
         rows.push(['Filtration Sump', n.sump.type]);
-        rows.push(['Sump Dimensions (in)', n.sump.lengthInches.toFixed(1) + ' x ' + n.sump.widthInches.toFixed(1) + ' x ' + n.sump.heightInches.toFixed(1)]);
+        rows.push(['Sump Dimensions', formatDimsInCm(n.sump.lengthInches, n.sump.widthInches, n.sump.heightInches)]);
 
         var sumpExtras = [];
         if (byId('piping').checked) sumpExtras.push('Set of piping');
         if (byId('overflowBox').checked) sumpExtras.push('Overflow box');
-        if (byId('filterMedias').checked) sumpExtras.push('Filter medias' + (n.sump.filterMediaKg ? ' (' + n.sump.filterMediaKg + ' kg)' : ''));
+        if (byId('filterMedias').checked) sumpExtras.push('Filter medias' + (n.sump.filterMediaKg ? ' (approx. ' + n.sump.filterMediaKg + ' kg, more or less)' : ''));
         if (byId('submersibleLight').checked) sumpExtras.push('Submersible light' + (getLightQuantity() > 1 ? ' x' + getLightQuantity() : ''));
         if (byId('submersiblePump').checked) sumpExtras.push('Submersible pump' + (getPumpQuantity() > 1 ? ' x' + getPumpQuantity() : ''));
         if (byId('allumTopCover').checked) sumpExtras.push('Allum top cover');
@@ -1718,19 +1819,17 @@
           rows.push(['Sump Includes', sumpExtras.join(', ')]);
         }
 
-        if (q.sumpQty > 1) {
-          rows.push(['Sump Quantity', String(q.sumpQty)]);
-          rows.push(['Sump Price (per sump)', q.sumpUnitPrice.toFixed(2)]);
-        }
+        rows.push(['Sump Quantity', String(q.sumpQty)]);
       }
 
       if (n.stand) {
-        rows.push(['Stand', 'Layers: ' + n.stand.layers + ' | Tubular: ' + (DETAILS_TUBULAR_LABELS[n.stand.tubular] || n.stand.tubular) + ' | Height: ' + n.stand.heightInches.toFixed(1) + '" | Footing: ' + n.stand.footingInches.toFixed(1) + '"']);
+        rows.push(['Stand', 'Layers: ' + n.stand.layers + ' | Tubular: ' + (DETAILS_TUBULAR_LABELS[n.stand.tubular] || n.stand.tubular) + ' | Height: ' + formatInCm(n.stand.heightInches) + ' | Footing: ' + formatInCm(n.stand.footingInches)]);
 
         var standExtras = [];
         if (n.stand.stainless) standExtras.push('Stainless');
         if (n.stand.cabinet) standExtras.push('Cabinet');
-        if (n.stand.sumpHolder) standExtras.push('Sump holder (' + n.stand.sumpWidth.toFixed(1) + '" width)');
+        if (n.stand.sumpHolder) standExtras.push('Sump holder (' + formatInCm(n.stand.sumpWidth) + ' width)');
+        rows.push(['Stand Quantity', String(q.standQty)]);
         if (standExtras.length > 0) {
           rows.push(['Stand Options', standExtras.join(', ')]);
         }
@@ -1752,7 +1851,12 @@
       // fused in before it's captured) - pulled back out here so they can show as their own
       // priced lines instead of being silently absorbed into "Aquarium Price", the same
       // treatment Stand already gets below.
-      var aquariumBasePrice = result.aquariumOnlyPrice - (c.holes || 0) - (c.divider || 0);
+      // When the sump is priced as its own line below, it comes back out of "Aquarium Price" too -
+      // aquariumOnlyPrice includes exactly one sump, which used to make this row look inflated
+      // next to a separate "Sump Price" row. (Complete setup bundles its sump: sumpUnitPrice is 0
+      // there, so nothing is pulled out and no separate sump line shows.)
+      var sumpPricedSeparately = Boolean(n.sump) && q.sumpUnitPrice > 0;
+      var aquariumBasePrice = result.aquariumOnlyPrice - (c.holes || 0) - (c.divider || 0) - (sumpPricedSeparately ? q.sumpUnitPrice : 0);
       rows.push(['Aquarium Price', aquariumBasePrice.toFixed(2)]);
       if (c.holes > 0) {
         rows.push(['Hole for Aquarium (' + byId('holeCount').value + ')', c.holes.toFixed(2)]);
@@ -1761,7 +1865,11 @@
         rows.push(['Divider (' + byId('dividerCount').value + ')', c.divider.toFixed(2)]);
       }
       if (n.stand) {
-        rows.push(['Stand Price', c.stand.toFixed(2)]);
+        rows.push(['Stand Price (per stand)', c.stand.toFixed(2)]);
+      }
+      if (sumpPricedSeparately) {
+        rows.push(['Sump Price (per sump)', q.sumpUnitPrice.toFixed(2)]);
+        buildSumpPriceBreakdownRows(result, q.sumpUnitPrice).forEach(function (r) { rows.push(r); });
       }
       rows.push(['Total Price', q.grandTotal.toFixed(2) + formatQuoteBreakdown(q)]);
       lastDetailRows = rows;
@@ -1999,7 +2107,7 @@
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
         'holeCount', 'dividerCount',
-        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
+        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
         'sumpUnit', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
@@ -2072,6 +2180,22 @@
       }
 
       autoCalculateFromLink = true;
+    })();
+
+    // Sump Quantity is a total for the whole quote, so it mirrors the aquarium Quantity (one sump
+    // per tank) until staff type their own value - after that it's left alone. Stand Quantity
+    // deliberately does NOT follow (stays 1 until edited). Registered BEFORE
+    // attachAutoStateHandlers so the sump count is already updated when the recalculation runs.
+    (function wireSumpQuantityFollowsQuantity() {
+      var sumpQtyEditedByHand = false;
+      byId('sumpQuantity').addEventListener('input', function () {
+        sumpQtyEditedByHand = true;
+      });
+      byId('quantity').addEventListener('input', function () {
+        if (!sumpQtyEditedByHand) {
+          byId('sumpQuantity').value = getAquariumQuantity();
+        }
+      });
     })();
 
     attachAutoStateHandlers();
@@ -2353,7 +2477,7 @@
             standContext.font = 'bold 13px Segoe UI';
             standContext.textAlign = 'left';
             standContext.textBaseline = 'middle';
-            standContext.fillText('Gap: ' + round1(gapIn) + '"', gapX + 9, (yLower + yUpper) / 2);
+            standContext.fillText('Gap: ' + formatInCm(gapIn), gapX + 9, (yLower + yUpper) / 2);
             standContext.textBaseline = 'alphabetic';
           }
         }
@@ -2425,7 +2549,7 @@
           standContext.font = 'bold 14px Segoe UI';
           standContext.textAlign = 'left';
           standContext.textBaseline = 'middle';
-          standContext.fillText(round1(footingIn) + '" footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
+          standContext.fillText(formatInCm(footingIn) + ' footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
           standContext.textBaseline = 'alphabetic';
         }
 
@@ -2476,9 +2600,9 @@
         drawDimensionLine(heightLineX, frontTop, heightLineX, baseY);
         drawDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
 
-        drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
-        drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
-        drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+        drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + formatInCm(lengthIn));
+        drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + formatInCm(totalHeightIn));
+        drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + formatInCm(widthIn));
 
         var postPx = tubularThicknessIn * scale;
         var builtLengthLineY = lengthLineY + 26;
@@ -2510,7 +2634,7 @@
           standContext.stroke();
         });
 
-        drawDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + round1(builtLengthIn) + '"');
+        drawDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + formatInCm(builtLengthIn));
       }
 
       drawPlaceholder('Enable a stand to see its drawing.');
@@ -2756,7 +2880,7 @@
       }
 
       function isPriceRow(label) {
-        return /Price/.test(label) || /^Hole for Aquarium/.test(label) || /^Divider \(/.test(label);
+        return /Price/.test(label) || /^Hole for Aquarium/.test(label) || /^Divider \(/.test(label) || /^↳ /.test(label);
       }
 
       // Same rows as the sidebar Summary card, just grouped so the sheet reads like a spec.
@@ -2851,7 +2975,7 @@
         if (document.getElementById('lowIron').checked) glassBits.push('Low Iron');
 
         var kpis = [
-          ['Size (in)', n.lengthInches.toFixed(1) + ' x ' + n.widthInches.toFixed(1) + ' x ' + n.heightInches.toFixed(1)],
+          ['Size', formatDimsInCm(n.lengthInches, n.widthInches, n.heightInches).replace(/^L: |W: |H: /g, '')],
           ['Volume', result.gallons.toFixed(1) + ' gal'],
           ['Glass', glassBits.join(', ')],
           ['Build', n.option],

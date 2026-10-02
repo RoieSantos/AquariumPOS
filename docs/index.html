@@ -8,20 +8,34 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/landing.css" />
+  <link rel="stylesheet" href="css/landing.css?v=2" />
   <link rel="icon" href="icons/icon-192.png" />
   <meta name="theme-color" content="#060a14" />
 </head>
 <body>
-  <header class="land-topbar land-wrap">
-    <div class="land-brand">
-      <img id="landingLogoNav" src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
-      <span data-company-name>RS Pet Stop</span>
+  <!-- Sticky top bar - section jump links + the main Order Now action, collapsing into a menu
+       button on phones (see wireLandingNav in js/landing.js). -->
+  <header class="land-topbar" id="top">
+    <div class="land-topbar-inner land-wrap">
+      <a class="land-brand" href="#top">
+        <img id="landingLogoNav" src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
+        <span data-company-name>RS Pet Stop</span>
+      </a>
+
+      <button class="land-menu-btn" id="landingMenuBtn" type="button" aria-expanded="false" aria-controls="landingNav" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+
+      <nav class="land-nav" id="landingNav" aria-label="Main">
+        <a class="land-nav-link" href="#offer">What we offer</a>
+        <a class="land-nav-link" href="#shop" id="landingShopNavLink" hidden>Shop</a>
+        <a class="land-nav-link" href="#builds">Custom builds</a>
+        <a class="land-nav-link" href="#visit">Visit us</a>
+        <a class="land-nav-link" href="order-now.html?start=delivery">Delivery fee</a>
+        <a class="land-staff-link" href="staff-login.html">Staff Login</a>
+        <a class="land-btn land-btn-primary land-btn-sm" href="order-now.html">Order Now</a>
+      </nav>
     </div>
-    <nav class="land-nav-actions">
-      <a class="land-staff-link" href="staff-login.html">Staff Login</a>
-      <a class="land-btn land-btn-primary land-btn-sm" href="order-now.html">Order Now</a>
-    </nav>
   </header>
 
   <section class="land-hero">
@@ -34,8 +48,8 @@
           order online for pickup or delivery, or drop by either of our stores.
         </p>
         <div class="land-cta-row">
-          <a class="land-btn land-btn-primary" href="order-now.html">Order Now</a>
-          <a class="land-btn land-btn-secondary" href="order-now.html">Build a Custom Aquarium</a>
+          <a class="land-btn land-btn-primary" href="order-now.html?start=standard">Shop Ready-Made</a>
+          <a class="land-btn land-btn-secondary" href="order-now.html?start=custom">Build a Custom Aquarium</a>
         </div>
         <div class="land-stats-row">
           <span><strong>2</strong> Branches in Cavite</span>
@@ -44,7 +58,7 @@
           <span class="land-stats-dot">&bull;</span>
           <span><strong>Pickup</strong> &amp; Delivery</span>
         </div>
-        <a class="land-inline-link" href="order-now.html">Just need a delivery quote? Estimate the fee &rarr;</a>
+        <a class="land-inline-link" href="order-now.html?start=delivery">Just need a delivery quote? Estimate the fee &rarr;</a>
       </div>
       <div class="land-hero-visual">
         <div class="land-hero-glow"></div>
@@ -55,46 +69,56 @@
     </div>
   </section>
 
-  <section class="land-section">
+  <section class="land-section" id="offer">
     <div class="land-wrap">
       <h2 class="land-section-title">What we offer</h2>
-      <p class="land-section-sub">From a quick fish pickup to a full custom setup, we've got you covered.</p>
+      <p class="land-section-sub">From a quick fish pickup to a full custom setup - tap a card to get started.</p>
       <div class="land-feature-grid">
-        <div class="land-feature-card">
+        <a class="land-feature-card" href="#visit">
           <div class="land-feature-icon land-accent-teal">🐠</div>
           <h3 class="land-accent-teal">Fish &amp; Aquatic Life</h3>
           <p>A wide selection of freshwater fish and aquatic plants, always in stock.</p>
-        </div>
-        <div class="land-feature-card">
+          <span class="land-card-cta">Visit a store &rarr;</span>
+        </a>
+        <a class="land-feature-card" href="order-now.html?start=custom">
           <div class="land-feature-icon land-accent-purple">🛠️</div>
           <h3 class="land-accent-purple">Custom Aquariums &amp; Stands</h3>
           <p>Tell us your size and style - we build and price your custom tank, stand, and filtration.</p>
-        </div>
-        <div class="land-feature-card">
+          <span class="land-card-cta">Start building &rarr;</span>
+        </a>
+        <a class="land-feature-card" href="#visit">
           <div class="land-feature-icon land-accent-pink">🦴</div>
           <h3 class="land-accent-pink">Pet Supplies</h3>
           <p>Food, accessories, and everyday essentials for your fish and other pets.</p>
-        </div>
-        <div class="land-feature-card">
+          <span class="land-card-cta">Visit a store &rarr;</span>
+        </a>
+        <a class="land-feature-card" href="order-now.html?start=delivery">
           <div class="land-feature-icon land-accent-teal">🚚</div>
           <h3 class="land-accent-teal">Delivery</h3>
           <p>Get an instant delivery fee estimate to your address, or pick up in-store.</p>
-        </div>
+          <span class="land-card-cta">Estimate the fee &rarr;</span>
+        </a>
       </div>
 
       <div class="land-pill-row" id="landingCategoryPills"></div>
+      <div class="land-pill-more-row">
+        <button class="land-pill-more" id="landingPillsMoreBtn" type="button" hidden>Show all categories</button>
+      </div>
     </div>
   </section>
 
   <section class="land-section land-visit" id="landingProductsSection" hidden>
-    <div class="land-wrap">
+    <div class="land-wrap" id="shop">
       <h2 class="land-section-title">From Our Shelves</h2>
       <p class="land-section-sub">A few of what's currently in stock - tap any item to order.</p>
       <div class="land-product-grid" id="landingProductGrid"></div>
+      <div class="land-section-cta">
+        <a class="land-btn land-btn-secondary" href="order-now.html?start=standard">Browse all products &rarr;</a>
+      </div>
     </div>
   </section>
 
-  <section class="land-section">
+  <section class="land-section" id="builds">
     <div class="land-wrap">
       <h2 class="land-section-title">Custom Builds</h2>
       <p class="land-section-sub">A look at some of our past custom aquarium, stand, and filtration work.</p>
@@ -116,10 +140,13 @@
           <div class="land-build-caption">Rimless or With-Rim - your choice</div>
         </div>
       </div>
+      <div class="land-section-cta">
+        <a class="land-btn land-btn-primary" href="order-now.html?start=custom">Get a price for your own build &rarr;</a>
+      </div>
     </div>
   </section>
 
-  <section class="land-section land-visit">
+  <section class="land-section land-visit" id="visit">
     <div class="land-wrap">
       <h2 class="land-section-title">Visit Us</h2>
       <p class="land-section-sub">Two branches serving Cavite.</p>
@@ -129,8 +156,11 @@
           <div class="land-branch-body">
             <h3>📍 Amaya Branch</h3>
             <p>Amaya Dos, Antero Soriano Highway, Tanza, Cavite</p>
-            <p>(Search "RSPetStop Amaya" on Google/Waze Maps)</p>
             <p>☎ +63 945 518 4066</p>
+            <div class="land-branch-actions">
+              <a class="land-btn land-btn-primary land-btn-sm" href="https://www.google.com/maps/search/?api=1&amp;query=RSPetStop+Amaya" target="_blank" rel="noopener">Get directions</a>
+              <a class="land-btn land-btn-secondary land-btn-sm" href="tel:+639455184066">Call</a>
+            </div>
           </div>
         </div>
         <div class="land-branch-card">
@@ -138,8 +168,11 @@
           <div class="land-branch-body">
             <h3>📍 GMA Branch</h3>
             <p>Blk 2 Lot 53, Brgy. Granados, Gen. Mariano Alvarez, Cavite</p>
-            <p>(Search "RSPetStop GMA" on Google/Waze Maps)</p>
             <p>☎ +63 997 189 1662</p>
+            <div class="land-branch-actions">
+              <a class="land-btn land-btn-primary land-btn-sm" href="https://www.google.com/maps/search/?api=1&amp;query=RSPetStop+GMA" target="_blank" rel="noopener">Get directions</a>
+              <a class="land-btn land-btn-secondary land-btn-sm" href="tel:+639971891662">Call</a>
+            </div>
           </div>
         </div>
       </div>
@@ -150,6 +183,12 @@
   </section>
 
   <footer class="land-footer land-wrap">
+    <nav class="land-footer-links" aria-label="Quick links">
+      <a href="order-now.html?start=standard">Shop</a>
+      <a href="order-now.html?start=custom">Custom aquarium</a>
+      <a href="order-now.html?start=delivery">Delivery fee</a>
+      <a href="#visit">Store locations</a>
+    </nav>
     <div class="land-social-row">
       <a id="landingFacebookLink" href="#" target="_blank" rel="noopener" hidden>Facebook</a>
     </div>
@@ -161,7 +200,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
-  <script src="js/landing.js"></script>
+  <script src="js/landing.js?v=2"></script>
   <script>
     document.getElementById('landingYear').textContent = new Date().getFullYear();
   </script>

@@ -114,17 +114,50 @@ async function loadCategoryPills() {
   const { data, error } = await supabaseClient.rpc('public_list_order_categories');
   if (error || !data || data.length === 0) return;
 
-  // De-dupe categories that only differ by code casing (e.g. "Aquarium" vs "AQUARIUM") into one
-  // pill - same reasoning as order-now.html's own loadCategories.
-  const seen = new Map();
+  // De-dupe categories that only differ by code OR label casing (e.g. "Aquarium" vs "AQUARIUM",
+  // "Sticker" vs "STICKER") into one pill - same reasoning as order-now.html's own loadCategories.
+  // Internal bookkeeping categories (production/customized line items, blank "NULL" rows) mean
+  // nothing to a customer, so they're left out entirely.
+  const INTERNAL_LABEL = /^(null|production item|customi[sz]ed item|customer sticker)$/i;
+  const seenCodes = new Set();
+  const seenLabels = new Set();
+  const pills = [];
   data.forEach((cat) => {
-    const key = String(cat.code || '').toUpperCase();
-    if (key && !seen.has(key)) seen.set(key, cat.description);
+    const code = String(cat.code || '').toUpperCase();
+    const label = String(cat.description || '').trim();
+    const labelKey = label.toLowerCase();
+    if (!code || !label || INTERNAL_LABEL.test(label) || seenCodes.has(code) || seenLabels.has(labelKey)) return;
+    seenCodes.add(code);
+    seenLabels.add(labelKey);
+    pills.push({ code, label });
   });
+  const labels = pills.map((p) => p.label);
 
-  wrap.innerHTML = Array.from(seen.values())
-    .map((label) => `<a class="land-pill" href="order-now.html">${label}</a>`)
+  // Only categories a customer can actually order online become links, each to the path that
+  // sells it: "Custom ..." -> the Customize flow, FEATURED_CATEGORY_CODES (order-now.html's
+  // Standard flow list) -> Standard. Everything else (fish, food, medicines...) is in-store only,
+  // so it shows as a plain tag rather than a link to a page that doesn't list it.
+  wrap.innerHTML = pills
+    .map(({ code, label }) => {
+      if (/^custom/i.test(label)) return `<a class="land-pill" href="order-now.html?start=custom">${label}</a>`;
+      if (FEATURED_CATEGORY_CODES.includes(code)) return `<a class="land-pill" href="order-now.html?start=standard">${label}</a>`;
+      return `<span class="land-pill land-pill-static" title="Available in-store">${label}</span>`;
+    })
     .join('');
+
+  // Long lists collapse to the first few with a "Show all" toggle, so the pills read as a quick
+  // overview instead of a wall of tags pushing the rest of the page down.
+  const VISIBLE_PILLS = 12;
+  const moreBtn = document.getElementById('landingPillsMoreBtn');
+  if (moreBtn && labels.length > VISIBLE_PILLS) {
+    wrap.classList.add('land-pill-row-collapsed');
+    moreBtn.textContent = `Show all ${labels.length} categories`;
+    moreBtn.hidden = false;
+    moreBtn.addEventListener('click', () => {
+      const collapsed = wrap.classList.toggle('land-pill-row-collapsed');
+      moreBtn.textContent = collapsed ? `Show all ${labels.length} categories` : 'Show fewer';
+    });
+  }
 }
 
 // A handful of real product photos pulled straight from the catalog, so "what products do we
@@ -146,7 +179,8 @@ async function loadFeaturedProducts() {
   const items = [];
   results.forEach((result) => {
     (result.data || []).forEach((item) => {
-      if (firstImageUrl(item.images)) items.push(item);
+      // A 0-priced item (price not set yet) reads as "free" to a customer - skip it here.
+      if (firstImageUrl(item.images) && Number(item.price) > 0) items.push(item);
     });
   });
 
@@ -154,11 +188,13 @@ async function loadFeaturedProducts() {
     return;
   }
   section.hidden = false;
+  const shopNavLink = document.getElementById('landingShopNavLink');
+  if (shopNavLink) shopNavLink.hidden = false;
 
   grid.innerHTML = items
     .slice(0, MAX_FEATURED_PRODUCTS)
     .map((item) => `
-      <a class="land-product-card" href="order-now.html">
+      <a class="land-product-card" href="order-now.html?start=standard">
         <img src="${firstImageUrl(item.images)}" alt="${item.name}" loading="lazy" />
         <div class="land-product-info">
           <div class="land-product-name">${item.name}</div>
@@ -171,3 +207,37 @@ async function loadFeaturedProducts() {
 
 loadCategoryPills();
 loadFeaturedProducts();
+
+// ---- Top bar: phone menu + "you are here" highlighting ----
+function wireLandingNav() {
+  const menuBtn = document.getElementById('landingMenuBtn');
+  const nav = document.getElementById('landingNav');
+  if (!menuBtn || !nav) return;
+
+  const setOpen = (open) => {
+    nav.classList.toggle('open', open);
+    menuBtn.setAttribute('aria-expanded', String(open));
+    menuBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  };
+  menuBtn.addEventListener('click', () => setOpen(!nav.classList.contains('open')));
+  // Picking a link (or tapping outside) closes the phone menu again.
+  nav.addEventListener('click', (event) => { if (event.target.closest('a')) setOpen(false); });
+  document.addEventListener('click', (event) => {
+    if (!nav.contains(event.target) && !menuBtn.contains(event.target)) setOpen(false);
+  });
+
+  // Highlights the in-page section link (#offer/#shop/#builds/#visit) currently on screen.
+  const sectionLinks = Array.from(nav.querySelectorAll('a.land-nav-link[href^="#"]'));
+  const updateActive = () => {
+    let active = null;
+    sectionLinks.forEach((link) => {
+      const target = document.getElementById(link.getAttribute('href').slice(1));
+      if (target && !link.hidden && target.getBoundingClientRect().top <= 140) active = link;
+    });
+    sectionLinks.forEach((link) => link.classList.toggle('active', link === active));
+  };
+  window.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+}
+
+wireLandingNav();

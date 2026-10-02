@@ -164,6 +164,33 @@ Deno.serve(async (req) => {
     supabase.from('ChatbotFollowUpSettings').select('*').eq('Id', 1).maybeSingle()
   ]);
 
+  // How the staff-only portal tools work (Calculators > Aquarium Calculator, Delivery > Delivery
+  // Quote) - internal Portal Chat only, never sent to customer channels (Vic/website Alice).
+  // You can't see the screens or run the staff calculator yourself - this is so you can explain
+  // them. Prices still come from your tools (compute_aquarium_quote etc.), never from here.
+  const STAFF_TOOLS_GUIDE = [
+    'STAFF PORTAL TOOLS GUIDE (internal Portal Chat only - for answering staff questions about how these pages work; you cannot see or operate them):',
+    '',
+    'AQUARIUM CALCULATOR (Calculators > Aquarium Calculator):',
+    '- Two tabs at the top: Calculator and Summary. The price panel on the right (Estimated price, volume, dimensions, Calculate / Add to sale / Glass Cut Sheet / Reset / View full summary) stays on screen while scrolling; the step bar at the top jumps between steps.',
+    '- Steps: 1 Size & glass (L x W x H, unit, Quantity, Build type, glass thickness, sealant) - 2 Stand ("Include a stand" toggle, then layers, tubular, height override, footing, Stand quantity, Stainless/Cabinet/Sump Holder) - 3 Options (AIO, Low Iron, Tempered, Rimless, High Strip, Filtration sump, Aquascape, Enclosure, holes, dividers) - 4 Sump & extras (sump type/size/unit/quantity, piping, overflow box, filter medias, submersible light/pump items, Allum top cover) - 5 Stickers & notes.',
+    '- Build type is now only Aquarium only / Undersump / Overheadsump - "Complete setup" was removed; a full set is built from the parts (tick Filtration sump + Include a stand + extras). Picking Undersump/Overheadsump pre-fills the tank width/height with the standard sump size.',
+    '- QUANTITIES are independent totals for the whole quote: total = aquarium price x Quantity + stand price x Stand quantity + one sump\'s price x Sump quantity. Stand quantity defaults to 1 and only changes when staff edit it (e.g. 4 tanks on 2 stands = 2). Sump quantity copies Quantity (4 tanks -> 4 sumps) until staff type their own number. (Before this fix, sump quantity was multiplied by the aquarium Quantity again - 4 tanks + 4 sumps billed 16 sumps - so older multi-tank sump quotes may be overpriced.)',
+    '- SUMMARY card / Summary tab: lists the full spec and an itemized price - Aquarium Price (tank only), Stand Price (per stand), Sump Price (per sump) broken into: sump glass, filter medias, submersible pump/light (item and qty), overflow box (1,900), set of piping (450 overhead / 2,200 undersump), Allum top cover, plus a small Rounding line so the parts add up exactly. Glass/media/overflow/pump/light carry a x1.9 markup on an Undersump/Overheadsump build type and x1.7 with Low Iron (shown on the line); piping and top cover are never marked up. Every sump part (including piping and top cover) is per sump, so it follows Sump quantity.',
+    '- Filter medias are priced at 300 per kg; the kg is an ESTIMATE from the sump volume (18% fill for overhead, 4% for undersump) and is shown as "approx. N kg, more or less" - tell staff/customers the actual weight can differ slightly.',
+    '- The Summary tab is a printable quote sheet: total, key specs, safety notes, pictures of the aquarium and stand drawings, grouped specification, price breakdown, stand cost breakdown and (optional, "Include glass cut sheet" toggle) the glass cut sheet. "Print / Save as PDF" prints just that sheet - untick the cut sheet before sending it to a customer.',
+    '- All sizes on the calculators, drawings and summary show inches AND cm, e.g. 36" (91.4 cm). The glass cut sheet stays in inches with fractions (production measures in inches).',
+    '- Glass auto-upgrades in the calculator: height 48"+ -> 19mm; 3mm longer than 24" -> 6mm; 3mm over 15 gal with W or H over 12" -> 12mm; any side over 60"/20"/20" with 3mm, or 6mm over 50 gal -> 12mm (these two say "10mm or 12mm" but the calculator picks 12mm); 10mm over 180 gal or beyond 72 x 30 x 30" -> 12mm; rimless 30-100 gal -> min 10mm; rimless 10-15 gal -> min 6mm; Low Iron (forces Tempered) -> min 10mm; width or height 36"+ -> Tempered.',
+    '- The separate Stand and Sticker calculators (Calculators menu) use the same layout: steps on the left, live price panel on the right.',
+    '',
+    'DELIVERY QUOTE (Delivery > Delivery Quote):',
+    '- Left side: 1 Delivery method (In-House = our own driver, supports multiple drop-offs / Lalamove = sandbox test pricing, single drop-off only), 2 Route (green pin = pick-up branch or "Other address", red numbered pins = drop-off locations matching the map markers, "+ Add drop-off location"), 3 Contact details (Lalamove only: sender/recipient name and phone). Below that the blue price card: delivery price, distance, drive time, toll, and the fee breakdown (base fee + rate/km, multi-stop markup, toll). Right side: full-height map.',
+    '- The price updates automatically whenever a field changes; Get Quote re-runs it. Book Delivery (Lalamove) is super users only and dispatches a real booking.',
+    '',
+    'CUSTOMER WEBSITE (rspetstop.com):',
+    '- Homepage now has a sticky menu (What we offer, Shop, Custom builds, Visit us, Delivery fee, Order Now), clickable offer cards, Get directions / Call buttons per branch, and only links categories that are actually orderable online. Order Now deep links: order-now.html?start=standard / ?start=custom / ?start=delivery open that section directly.'
+  ].join('\n');
+
   const systemBlocks = [
     { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
     { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
@@ -174,6 +201,12 @@ Deno.serve(async (req) => {
     {
       type: 'text' as const,
       text: 'MAKER NAMES (internal Portal Chat only): here, get_order_status production rows include maker_name (and maker_username) for each part - you MAY tell staff who the tank maker / stand maker / dispatcher is on an order (e.g. "Tank: Juan - done ✅, Stand: Pedro - still building"). This overrides the "never name the staff member" rule for this chat only. If maker_name is empty the part is not assigned yet.'
+    },
+    {
+      // Reference for staff "how do I / why is it" questions about the portal tools. Keep in sync
+      // when these pages change (see CHANGELOG.md) - Alice can't see the screens herself.
+      type: 'text' as const,
+      text: STAFF_TOOLS_GUIDE
     }
   ];
 

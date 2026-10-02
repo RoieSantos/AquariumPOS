@@ -81,12 +81,25 @@ img {
 
 
 /* ---- Top bar ---- */
+/* Sticky, full-width strip (the inner .land-wrap keeps content aligned with the page) - stays in
+   reach while scrolling so customers can always jump to a section or Order Now. */
 .land-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(6, 10, 20, 0.86);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--land-border);
+}
+
+.land-topbar-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 24px;
-  border-bottom: 1px solid var(--land-border);
+  gap: 16px;
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
 .land-brand {
@@ -96,6 +109,8 @@ img {
   font-weight: 700;
   font-size: 1.15rem;
   letter-spacing: 0.2px;
+  text-decoration: none;
+  flex: 0 0 auto;
 }
 
 .land-brand img {
@@ -106,18 +121,39 @@ img {
   background: var(--land-surface);
 }
 
-.land-nav-actions {
+.land-nav {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
+}
+
+.land-nav-link {
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--land-ink-muted);
+  text-decoration: none;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.land-nav-link:hover,
+.land-nav-link.active {
+  color: var(--land-ink);
+  background: var(--land-surface-2);
+}
+
+.land-nav-link.active {
+  box-shadow: inset 0 -2px 0 var(--land-teal);
 }
 
 .land-staff-link {
-  font-size: 0.85rem;
+  margin-left: 8px;
+  font-size: 0.8rem;
   color: var(--land-ink-muted);
   text-decoration: none;
   border: 1px solid var(--land-border);
-  padding: 8px 14px;
+  padding: 7px 12px;
   border-radius: 999px;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
@@ -125,6 +161,89 @@ img {
 .land-staff-link:hover {
   border-color: var(--land-teal);
   color: var(--land-ink);
+}
+
+.land-nav .land-btn-sm {
+  margin-left: 4px;
+}
+
+/* Phone menu button (hidden on wide screens) */
+.land-menu-btn {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 44px;
+  height: 44px;
+  padding: 0 11px;
+  border: 1px solid var(--land-border);
+  border-radius: 12px;
+  background: var(--land-surface);
+  cursor: pointer;
+}
+
+.land-menu-btn span {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--land-ink);
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.land-menu-btn[aria-expanded="true"] span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+
+.land-menu-btn[aria-expanded="true"] span:nth-child(2) {
+  opacity: 0;
+}
+
+.land-menu-btn[aria-expanded="true"] span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+@media (max-width: 900px) {
+  .land-menu-btn {
+    display: flex;
+  }
+
+  .land-nav {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    padding: 12px 16px 18px;
+    background: rgba(6, 10, 20, 0.97);
+    border-bottom: 1px solid var(--land-border);
+    box-shadow: var(--land-shadow);
+  }
+
+  .land-nav.open {
+    display: flex;
+  }
+
+  .land-nav-link {
+    padding: 12px 14px;
+    font-size: 1rem;
+    border-radius: 12px;
+  }
+
+  .land-nav-link.active {
+    box-shadow: inset 3px 0 0 var(--land-teal);
+  }
+
+  .land-staff-link,
+  .land-nav .land-btn-sm {
+    margin: 8px 0 0;
+    justify-content: center;
+    text-align: center;
+    padding: 12px;
+    font-size: 0.95rem;
+  }
 }
 
 /* ---- Buttons ---- */
@@ -619,4 +738,98 @@ img {
   .land-hero-copy p.lead {
     max-width: none;
   }
+}
+
+/* ---- Navigation helpers (clickable offer cards, section CTAs, branch actions) ---- */
+a.land-feature-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.land-feature-card p {
+  flex: 1 1 auto;
+}
+
+.land-card-cta {
+  margin-top: 14px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--land-teal);
+}
+
+a.land-feature-card:hover .land-card-cta {
+  text-decoration: underline;
+}
+
+.land-pill-row-collapsed .land-pill:nth-child(n + 13) {
+  display: none;
+}
+
+.land-pill-more-row {
+  display: flex;
+  justify-content: center;
+}
+
+.land-pill-more {
+  margin-top: 14px;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--land-teal);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.land-pill-more:hover {
+  text-decoration: underline;
+}
+
+.land-section-cta {
+  display: flex;
+  justify-content: center;
+  margin-top: 28px;
+}
+
+.land-branch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.land-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 22px;
+  margin-bottom: 18px;
+  font-size: 0.92rem;
+}
+
+/* In-page jumps land below the sticky top bar instead of under it. */
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 84px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* In-store-only categories - shown for "what we sell", but not links (see loadCategoryPills). */
+.land-pill-static {
+  cursor: default;
+  border-style: dashed;
+}
+
+.land-pill-static:hover {
+  border-color: var(--land-border);
+  color: var(--land-ink-muted);
 }

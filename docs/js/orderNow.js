@@ -795,6 +795,13 @@ function round1(value) {
   return Math.round((Number(value) || 0) * 10) / 10;
 }
 
+// Drawing labels show inches AND centimeters, e.g. 36" (91.4 cm) - display only, pricing stays
+// in inches. Same format as the staff calculators (WebAquariumCalculator/index.html formatInCm).
+function formatInCm(inches) {
+  const n = Number(inches) || 0;
+  return round1(n) + '" (' + round1(n * 2.54) + ' cm)';
+}
+
 const STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
 
 // Shared with the Stand canvas sketch's "Gap" arrows/captions so the Order Summary shows the same
@@ -1198,9 +1205,9 @@ function drawCustomAquariumOnActiveCanvas(result) {
   drawCustomDimensionLine(heightLineX, frontTop, heightLineX, frontTop + frontHeight);
   drawCustomDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
 
-  drawCustomDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
-  drawCustomDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(heightIn) + '"');
-  drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+  drawCustomDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + formatInCm(lengthIn));
+  drawCustomDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + formatInCm(heightIn));
+  drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + formatInCm(widthIn));
 
   ctx.restore();
   currentDrawMirrored = false;
@@ -1387,7 +1394,7 @@ function drawCustomStandOnActiveCanvas(result) {
       ctx.font = 'bold 13px Segoe UI';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText('Gap: ' + round1(gapIn) + '"', gapX + 9, (yLower + yUpper) / 2);
+      ctx.fillText('Gap: ' + formatInCm(gapIn), gapX + 9, (yLower + yUpper) / 2);
       ctx.textBaseline = 'alphabetic';
     }
   }
@@ -1468,7 +1475,7 @@ function drawCustomStandOnActiveCanvas(result) {
     ctx.font = 'bold 14px Segoe UI';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(round1(footingIn) + '" footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
+    ctx.fillText(formatInCm(footingIn) + ' footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
     ctx.textBaseline = 'alphabetic';
   }
 
@@ -1528,9 +1535,9 @@ function drawCustomStandOnActiveCanvas(result) {
 
   // Height label shows the full floor-to-top measurement (frame span + footing) since that's what
   // the H dimension line above actually spans (frontTop to the true floor at baseY).
-  drawCustomDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
-  drawCustomDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
-  drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+  drawCustomDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + formatInCm(lengthIn));
+  drawCustomDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + formatInCm(totalHeightIn));
+  drawCustomDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + formatInCm(widthIn));
 
   // Second dimension line below the plain Length line, marking the TRUE built length once the two
   // end tubular posts are accounted for (dual stand = one post at each end of the Length run) - see
@@ -1567,7 +1574,7 @@ function drawCustomStandOnActiveCanvas(result) {
     ctx.stroke();
   });
 
-  drawCustomDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + round1(builtLengthIn) + '"');
+  drawCustomDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + formatInCm(builtLengthIn));
 }
 
 // Live summary of every Aquarium field picked so far - "declutter" pattern, only listing options
@@ -4336,4 +4343,14 @@ async function runDeliveryEstimate() {
     });
     closeItemDetail();
   });
+
+  // Deep links from the customer landing page (index.html) - order-now.html?start=standard|
+  // custom|delivery opens that path straight away instead of stopping at the "How would you like
+  // to order?" picker. Runs last so every handler it triggers is already wired; just clicks the
+  // same mode card the customer would have.
+  const START_MODE_BUTTONS = { standard: 'modeStandardBtn', custom: 'modeCustomizeBtn', delivery: 'modeDeliveryBtn' };
+  const startMode = new URLSearchParams(window.location.search).get('start');
+  if (START_MODE_BUTTONS[startMode]) {
+    document.getElementById(START_MODE_BUTTONS[startMode]).click();
+  }
 })();

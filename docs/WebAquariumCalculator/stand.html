@@ -225,6 +225,19 @@
       return Math.round((Number(value) || 0) * 10) / 10;
     }
 
+    // Every measurement is shown in inches AND centimeters, e.g. 36" (91.4 cm) - pricing still
+    // works in inches internally; this is display only.
+    function formatInCm(inches) {
+      var n = Number(inches) || 0;
+      return round1(n) + '" (' + round1(n * 2.54) + ' cm)';
+    }
+
+    function formatDimsInCm(l, w, h) {
+      var parts = [l, w, h].map(function (v) { return Number(v) || 0; });
+      return 'L: ' + round1(parts[0]) + '" x W: ' + round1(parts[1]) + '" x H: ' + round1(parts[2]) + '"' +
+        ' (' + parts.map(function (v) { return round1(v * 2.54); }).join(' x ') + ' cm)';
+    }
+
     var STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
 
     // Mirrors computeStandGapInches in docs/js/orderNow.js - kept in sync there since both show
@@ -499,7 +512,7 @@
           context.font = 'bold 13px Segoe UI';
           context.textAlign = 'left';
           context.textBaseline = 'middle';
-          context.fillText('Gap: ' + round1(gapIn) + '"', gapX + 9, (yLower + yUpper) / 2);
+          context.fillText('Gap: ' + formatInCm(gapIn), gapX + 9, (yLower + yUpper) / 2);
           context.textBaseline = 'alphabetic';
         }
       }
@@ -571,7 +584,7 @@
         context.font = 'bold 14px Segoe UI';
         context.textAlign = 'left';
         context.textBaseline = 'middle';
-        context.fillText(round1(footingIn) + '" footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
+        context.fillText(formatInCm(footingIn) + ' footing', frontLeft + frontWidth + 9, baseY - footingPx / 2);
         context.textBaseline = 'alphabetic';
       }
 
@@ -622,9 +635,9 @@
       drawDimensionLine(heightLineX, frontTop, heightLineX, baseY);
       drawDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
 
-      drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + round1(lengthIn) + '"');
-      drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + round1(totalHeightIn) + '"');
-      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + round1(widthIn) + '"');
+      drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + formatInCm(lengthIn));
+      drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + formatInCm(totalHeightIn));
+      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + formatInCm(widthIn));
 
       // Second dimension line below the plain Length line, marking the TRUE built length once the
       // two end tubular posts are accounted for (dual stand = one post at each end of the Length
@@ -660,7 +673,7 @@
         context.stroke();
       });
 
-      drawDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + round1(builtLengthIn) + '"');
+      drawDimensionChip((builtLeftX + builtRightX) / 2, builtLengthLineY, 'Built L (incl. end posts): ' + formatInCm(builtLengthIn));
     }
 
     var tubularPricingSetupRows = [];
@@ -745,12 +758,12 @@
       var builtLengthIn = window.CustomAquariumCalculator.computeStandBuiltLengthInches(n.lengthInches, n.tubular);
 
       var rows = [
-        ['Dimensions (in)', 'L: ' + n.lengthInches.toFixed(1) + ' x W: ' + n.widthInches.toFixed(1) + ' x H: ' + n.heightInches.toFixed(1)],
-        ['Built Length (incl. end posts)', builtLengthIn.toFixed(1) + '"'],
+        ['Dimensions', formatDimsInCm(n.lengthInches, n.widthInches, n.heightInches)],
+        ['Built Length (incl. end posts)', formatInCm(builtLengthIn)],
         ['Unit of Measure', byId('unit').value],
-        ['Footing', round1(n.footingInches) + '"'],
+        ['Footing', formatInCm(n.footingInches)],
         ['Layers', String(layers)],
-        ['Gap per layer', gapIn === null ? '-' : round1(gapIn) + '"'],
+        ['Gap per layer', gapIn === null ? '-' : formatInCm(gapIn)],
         ['Tubular', TUBULAR_LABEL_MAP[n.tubular] || n.tubular],
         ['Quantity', String(qty)]
       ];

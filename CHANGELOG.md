@@ -4,6 +4,27 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-02
 
+- Bots (Vic/Alice) taught today's changes. Shared prompt ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)): Order Now deep links (`?start=standard|custom|delivery`), what's orderable online vs in-store only, Google Maps directions links, and giving sizes in inches + cm. Portal Chat Alice only ([portal-chat-alice-reply/index.ts](supabase/functions/portal-chat-alice-reply/index.ts)): new STAFF_TOOLS_GUIDE block - Aquarium Calculator steps/Summary tab/quantity math/sump breakdown/approx. filter media kg/Complete setup removal/glass upgrade behavior, redesigned Delivery Quote, and the new homepage. Needs redeploy of the 5 functions that import the shared engine.
+
+- Aquarium calculator: removed "Complete setup" from the Build type dropdown in Size & glass ([index.html](docs/WebAquariumCalculator/index.html)) - choices are now Aquarium only / Undersump / Overheadsump. Its handling code is left in place (now unreachable); the bot never used it.
+
+- Aquarium calculator: Stand quantity no longer follows the aquarium Quantity - defaults to 1 and only changes when edited ([index.html](docs/WebAquariumCalculator/index.html)). Sump quantity still follows.
+
+- Aquarium calculator Summary: filter medias weight now reads "approx. N kg, more or less" (Sump Includes + price breakdown, [index.html](docs/WebAquariumCalculator/index.html)) - the kg is an estimate from sump volume.
+
+- Aquarium calculator: Stand is now its own step 2 ([index.html](docs/WebAquariumCalculator/index.html)) - "Include a stand" toggle + all stand settings moved out of Options into a dedicated card after Size & glass; steps renumbered (Options 3, Sump & extras 4, Stickers & notes 5) and the step nav updated. Layout only - same IDs, same pricing.
+
+- Aquarium calculator: Stand is now independent of the aquarium Quantity ([index.html](docs/WebAquariumCalculator/index.html)) - new "Stand quantity" field in Stand settings (follows Quantity until edited by hand, like Sump Quantity); `total = aquarium x Quantity + stand x Stand quantity + sump x Sump quantity`; Summary shows Stand Quantity and "Stand Price (per stand)".
+
+- Aquarium calculator Summary: sump price is now itemized ([index.html](docs/WebAquariumCalculator/index.html)) - "Sump Price (per sump)" followed by sump glass, filter medias (kg), submersible pump/light (item + qty), overflow box, set of piping, Allum top cover, and a rounding line so the parts add up exactly (build-type/Low Iron markup shown where applied). "Aquarium Price" no longer silently includes one sump, and Sump Quantity always shows when a sump is on. Display only - no pricing change.
+
+- Aquarium calculator: fix sump quantity multiplying twice ([index.html](docs/WebAquariumCalculator/index.html)) - Sump Quantity was treated as "per aquarium" and the whole bundle multiplied again by the aquarium Quantity (4 tanks + 4 sumps billed 16 sumps). Now `total = (aquarium + stand) x Quantity + sump price x Sump Quantity`, and Sump Quantity follows the aquarium Quantity until edited by hand.
+
+- Calculators/estimator: measurements now show inches AND centimeters, e.g. `36" (91.4 cm)` - dimension lines, summaries, Summary tab, and all drawing labels (L/W/H, gap, footing, built length) in [index.html](docs/WebAquariumCalculator/index.html), [stand.html](docs/WebAquariumCalculator/stand.html) and the customer Order Now drawings ([orderNow.js](docs/js/orderNow.js)). Display only - pricing still runs in inches. Glass cut sheet stays in inches (production measures in inches).
+
+- Customer landing page: easier navigation ([index.html](docs/index.html), [landing.js](docs/js/landing.js), [landing.css](docs/css/landing.css)) - sticky top bar with section links + current-section highlight and a phone menu; offer cards are now clickable; category pills de-duped, internal ones (NULL/PRODUCTION ITEM/...) hidden, only orderable ones linked, collapsed to 12 with "Show all"; ₱0 products hidden; "Browse all products" / "Get a price for your own build" CTAs; Get directions + Call buttons per branch; footer quick links.
+- Order Now: deep links `order-now.html?start=standard|custom|delivery` ([orderNow.js](docs/js/orderNow.js)) open that path directly instead of the "How would you like to order?" picker - used by the landing page buttons.
+
 - Delivery Quote: redesigned Lalamove-style ([delivery-quote.html](docs/delivery-quote.html), [deliveryQuote.js](docs/js/deliveryQuote.js)) - route + price panel on the left, full-height sticky map on the right; In-House/Lalamove choice buttons, route timeline with green pick-up / red numbered drop-off pins matching the map markers, Lalamove contact details in their own card, and a blue price card with distance/drive time/toll. All element IDs and quoting logic unchanged; works in dark mode.
 - Shared styles: `input[type="tel"]` added to the base + dark-mode input rules in [styles.css](docs/css/styles.css) - phone fields (Delivery Quote, Online Orders) were rendering as unstyled white boxes.
 
