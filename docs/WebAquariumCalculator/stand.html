@@ -3,141 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RSPETSTOP Custom Stand Calculator WEB version</title>
+  <title>Custom Stand Calculator - RS Pet Stop</title>
+  <link rel="stylesheet" href="./calculator-ui.css?v=2">
   <style>
-    :root {
-      --page-bg: #f4f7fb;
-      --panel-bg: #ffffff;
-      --panel-border: #d7e0ef;
-      --text-main: #1b355e;
-      --text-muted: #61738f;
-      --input-border: #c7d3e6;
-      --primary: #1d4f91;
-      --primary-strong: #173f74;
-      --success: #1e9a59;
-      --neutral: #7b8596;
-      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
-      color: var(--text-main);
-    }
-
-    .page {
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-
-    .title {
-      margin: 0 0 16px;
-      font-size: 18px;
-      font-weight: 700;
-      color: var(--primary);
-    }
-
-    .card-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 18px;
-    }
-
-    .card {
-      background: var(--panel-bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 6px;
-      box-shadow: var(--shadow);
-      padding: 12px;
-    }
-
-    .card h2 {
-      margin: 0 0 12px;
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--primary);
-    }
-
-    .field,
-    .checkbox-row {
-      margin-bottom: 10px;
-    }
-
-    .field label,
-    .group-label {
-      display: block;
-      margin-bottom: 4px;
-      font-size: 12px;
-      font-weight: 600;
-      color: #253f66;
-    }
-
-    input,
-    select {
-      width: 100%;
-      border: 1px solid var(--input-border);
-      border-radius: 4px;
-      padding: 7px 10px;
-      font-size: 12px;
-      background: #fff;
-      color: #19345d;
-    }
-
-    input:focus,
-    select:focus {
-      outline: 2px solid rgba(29, 79, 145, 0.14);
-      border-color: #87a8d8;
-    }
-
-    .checkbox-stack {
-      display: grid;
-      gap: 6px;
-    }
-
-    .checkbox-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      font-weight: 600;
-      color: #213a61;
-    }
-
-    .checkbox-row input[type="checkbox"] {
-      width: 14px;
-      height: 14px;
-      margin: 0;
-    }
-
     .tubular-toggle {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
+      gap: 8px;
     }
 
     .tubular-option {
       border: 1px solid var(--input-border);
-      border-radius: 4px;
-      padding: 7px 4px;
-      font-size: 11px;
+      border-radius: 8px;
+      padding: 12px 6px;
+      font-size: 13px;
       font-weight: 700;
       text-align: center;
       color: #253f66;
       background: #fff;
       cursor: pointer;
       user-select: none;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+
+    .tubular-option:hover {
+      border-color: #a9bedd;
     }
 
     .tubular-option.selected {
       border-color: var(--primary);
-      background: #eaf2fd;
+      background: var(--primary-soft);
       color: var(--primary);
+      box-shadow: inset 0 0 0 1px var(--primary);
     }
 
     .tubular-option.option-disabled {
@@ -145,278 +42,148 @@
       cursor: not-allowed;
       pointer-events: none;
     }
-
-    .actions-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      margin: 16px 0 14px;
-    }
-
-    .btn {
-      border: 0;
-      border-radius: 4px;
-      padding: 8px 14px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #fff;
-      cursor: pointer;
-      transition: transform 120ms ease, background 120ms ease;
-    }
-
-    .btn:hover {
-      transform: translateY(-1px);
-    }
-
-    .btn-primary {
-      background: var(--primary);
-    }
-
-    .btn-primary:hover {
-      background: var(--primary-strong);
-    }
-
-    .btn-neutral {
-      background: var(--neutral);
-    }
-
-    .summary {
-      min-width: 280px;
-    }
-
-    .summary-line {
-      font-size: 13px;
-      line-height: 1.4;
-      color: #20395f;
-    }
-
-    .summary-line strong {
-      color: #132d52;
-    }
-
-    .summary-small {
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-
-    .price-value {
-      font-size: 22px;
-      font-weight: 800;
-      color: #d1332b;
-    }
-
-    .summary-details {
-      font-size: 12px;
-      line-height: 1.7;
-      color: #20395f;
-    }
-
-    .summary-details div {
-      margin-bottom: 2px;
-    }
-
-    .summary-details strong {
-      color: #132d52;
-    }
-
-    .status-banner {
-      margin: 0 0 14px;
-      padding: 10px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--panel-border);
-      background: #eef5ff;
-      color: #1f3f6a;
-      font-size: 12px;
-      line-height: 1.4;
-      box-shadow: var(--shadow);
-    }
-
-    .status-banner.hidden {
-      display: none;
-    }
-
-    .status-banner.warning {
-      background: #fff7e8;
-      border-color: #e9cb89;
-      color: #785212;
-    }
-
-    .status-banner.error {
-      background: #fff0f0;
-      border-color: #e0a8a8;
-      color: #8a2626;
-    }
-
-    .drawing-card,
-    details {
-      background: var(--panel-bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 6px;
-      box-shadow: var(--shadow);
-    }
-
-    .drawing-card {
-      padding: 10px 12px 14px;
-    }
-
-    .canvas-wrap {
-      border: 1px solid var(--panel-border);
-      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-      min-height: 260px;
-      overflow: hidden;
-    }
-
-    canvas {
-      display: block;
-      width: 100%;
-      height: 260px;
-    }
-
-    details {
-      margin-top: 14px;
-      padding: 10px 12px;
-    }
-
-    details summary {
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--primary);
-    }
-
-    pre {
-      margin: 10px 0 0;
-      font-size: 11px;
-      line-height: 1.45;
-      white-space: pre-wrap;
-      word-break: break-word;
-      color: #29486f;
-    }
-
-    .hidden {
-      display: none;
-    }
-
-    @media (max-width: 900px) {
-      .card-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-    }
-
-    @media (max-width: 640px) {
-      .page {
-        padding: 14px;
-      }
-
-      .card-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .actions-row {
-        align-items: flex-start;
-        flex-direction: column;
-      }
-    }
   </style>
 </head>
 <body>
   <div class="page">
-    <h1 class="title">RSPETSTOP Custom Stand Calculator WEB version</h1>
+    <header class="calc-header">
+      <h1 class="title">Custom Stand Calculator</h1>
+      <p class="subtitle">RS Pet Stop - work through the steps below; the price on the right updates as you go.</p>
+    </header>
 
-    <div class="card-grid">
-      <section class="card">
-        <h2>Dimensions</h2>
+    <nav class="step-nav" aria-label="Calculator steps">
+      <a href="#stepDimensions"><span class="dot">1</span>Dimensions</a>
+      <a href="#stepFrame"><span class="dot">2</span>Frame &amp; options</a>
+      <a href="#drawingCard"><span class="dot">&#9633;</span>Drawing</a>
+    </nav>
 
-        <div class="field">
-          <label for="length">Length</label>
-          <input id="length" type="number" value="24" step="0.01">
+    <div class="calc-layout">
+      <main class="calc-main">
+        <section id="stepDimensions" class="card">
+          <div class="step-head">
+            <span class="step-num">1</span>
+            <div>
+              <h2>Dimensions</h2>
+              <p class="step-hint">Footprint of the aquarium it will hold, plus the stand's total height.</p>
+            </div>
+          </div>
+
+          <div class="field-grid">
+            <div class="field span-2">
+              <span class="group-label">Footprint</span>
+              <div class="dims-row" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+                <div class="dim">
+                  <input id="length" type="number" value="24" step="0.01" aria-label="Length">
+                  <span>Length</span>
+                </div>
+                <div class="dim">
+                  <input id="width" type="number" value="12" step="0.01" aria-label="Width">
+                  <span>Width</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="unit">Unit of measure</label>
+              <select id="unit">
+                <option>Inches</option>
+                <option>CM</option>
+                <option>Ft</option>
+                <option>MM</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="height">Height (total, floor to top)</label>
+              <input id="height" type="number" value="0" step="0.01">
+            </div>
+
+            <div class="field">
+              <label for="footing">Footing (inches)</label>
+              <input id="footing" type="number" value="3" step="0.5" min="0">
+            </div>
+
+            <div class="field">
+              <label for="layers">Layers</label>
+              <input id="layers" type="number" value="2" min="2" step="1">
+            </div>
+
+            <div class="field">
+              <label for="qty">Quantity</label>
+              <input id="qty" type="number" value="1" min="1" step="1">
+            </div>
+          </div>
+        </section>
+
+        <section id="stepFrame" class="card">
+          <div class="step-head">
+            <span class="step-num">2</span>
+            <div>
+              <h2>Frame &amp; options</h2>
+              <p class="step-hint">Pick a tubular size - sizes too thin for the footprint are greyed out.</p>
+            </div>
+          </div>
+
+          <span class="group-label">Tubular</span>
+          <div class="tubular-toggle">
+            <div class="tubular-option selected" data-value="1x1" id="tubular1x1">1 x 1</div>
+            <div class="tubular-option" data-value="1.5x1.5" id="tubular1_5x1_5">1 1/2 x 1 1/2</div>
+            <div class="tubular-option" data-value="2x2" id="tubular2x2">2 x 2</div>
+          </div>
+
+          <div class="sub-head">Options</div>
+          <div class="checkbox-stack">
+            <label class="checkbox-row"><input id="stainless" type="checkbox">Stainless</label>
+            <label class="checkbox-row"><input id="cabinet" type="checkbox">Cabinet</label>
+            <label class="checkbox-row"><input id="sumpHolder" type="checkbox">Sump Holder</label>
+          </div>
+
+          <div id="sumpWidthWrap" class="reveal-block hidden">
+            <div class="field" style="margin-bottom: 0; max-width: 240px;">
+              <label for="sumpWidth">Sump holder width</label>
+              <input id="sumpWidth" type="number" value="0" min="0" step="0.01">
+            </div>
+          </div>
+        </section>
+
+        <section id="drawingCard" class="drawing-card">
+          <h2>Stand drawing</h2>
+          <div class="canvas-wrap">
+            <canvas id="standCanvas" width="720" height="260"></canvas>
+          </div>
+          <details>
+            <summary>Price breakdown</summary>
+            <pre id="breakdownPre">Run a calculation to see the breakdown.</pre>
+          </details>
+        </section>
+      </main>
+
+      <aside id="quotePanel" class="calc-aside" aria-label="Quote">
+        <div class="quote-card">
+          <div class="quote-label">Estimated price</div>
+          <div id="priceLine" class="price-line"><span id="priceValue" class="price-value">-</span></div>
+          <div class="quote-actions">
+            <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
+            <button id="closeButton" class="btn btn-neutral full" type="button">Reset</button>
+          </div>
         </div>
 
-        <div class="field">
-          <label for="width">Width</label>
-          <input id="width" type="number" value="12" step="0.01">
-        </div>
+        <div id="safetyBanner" class="status-banner hidden"></div>
 
-        <div class="field">
-          <label for="height">Height (total, floor to top)</label>
-          <input id="height" type="number" value="0" step="0.01">
-        </div>
-
-        <div class="field">
-          <label for="footing">Footing (inches)</label>
-          <input id="footing" type="number" value="3" step="0.5" min="0">
-        </div>
-
-        <div class="field">
-          <label for="unit">Unit of Measure</label>
-          <select id="unit">
-            <option>Inches</option>
-            <option>CM</option>
-            <option>Ft</option>
-            <option>MM</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="layers">Layers</label>
-          <input id="layers" type="number" value="2" min="2" step="1">
-        </div>
-
-        <div class="field">
-          <label for="qty">Quantity</label>
-          <input id="qty" type="number" value="1" min="1" step="1">
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Tubular</h2>
-        <div class="tubular-toggle">
-          <div class="tubular-option selected" data-value="1x1" id="tubular1x1">1 x 1</div>
-          <div class="tubular-option" data-value="1.5x1.5" id="tubular1_5x1_5">1 1/2 x 1 1/2</div>
-          <div class="tubular-option" data-value="2x2" id="tubular2x2">2 x 2</div>
-        </div>
-
-        <div class="checkbox-stack" style="margin-top: 14px;">
-          <label class="checkbox-row"><input id="stainless" type="checkbox">Stainless</label>
-          <label class="checkbox-row"><input id="cabinet" type="checkbox">Cabinet</label>
-          <label class="checkbox-row"><input id="sumpHolder" type="checkbox">Sump Holder</label>
-        </div>
-
-        <div id="sumpWidthWrap" class="field hidden">
-          <label for="sumpWidth">Sump Holder Width</label>
-          <input id="sumpWidth" type="number" value="0" min="0" step="0.01">
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Summary</h2>
-        <div id="summaryDetails" class="summary-details">Enter stand details to see a summary.</div>
-      </section>
+        <section class="card summary-card">
+          <h2>Summary</h2>
+          <div id="summaryDetails" class="summary-details">Enter stand details to see a summary.</div>
+        </section>
+      </aside>
     </div>
+  </div>
 
-    <div class="actions-row">
-      <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
-      <button id="closeButton" class="btn btn-neutral" type="button">Reset</button>
-
-      <div class="summary">
-        <div id="priceLine" class="summary-line"><strong>Price:</strong> <span id="priceValue" class="price-value">waiting for calculation</span></div>
-      </div>
+  <div class="quote-bar">
+    <div class="quote-bar-text">
+      <div class="quote-bar-label">Estimated price</div>
+      <div id="quoteBarPrice" class="quote-bar-price">-</div>
     </div>
-
-    <div id="safetyBanner" class="status-banner hidden"></div>
-
-    <section class="drawing-card">
-      <h2>Stand Drawing</h2>
-      <div class="canvas-wrap">
-        <canvas id="standCanvas" width="720" height="260"></canvas>
-      </div>
-      <details>
-        <summary>Price breakdown</summary>
-        <pre id="breakdownPre">Run a calculation to see the breakdown.</pre>
-      </details>
-    </section>
-
+    <a href="#quotePanel">View quote</a>
   </div>
 
   <!-- Loaded so tubular pricing can be pulled from Supabase's TubularPricingSetup table (see
@@ -1085,5 +852,6 @@
       calculateStand(true);
     })();
   </script>
+  <script src="./calculator-ui.js?v=1"></script>
 </body>
 </html>

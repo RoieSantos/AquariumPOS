@@ -3,304 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RSPETSTOP Custom Aquarium Calculator WEB version</title>
+  <title>Custom Aquarium Calculator - RS Pet Stop</title>
+  <link rel="stylesheet" href="./calculator-ui.css?v=2">
   <style>
-    :root {
-      --page-bg: #f4f7fb;
-      --panel-bg: #ffffff;
-      --panel-border: #d7e0ef;
-      --text-main: #1b355e;
-      --text-muted: #61738f;
-      --input-border: #c7d3e6;
-      --primary: #1d4f91;
-      --primary-strong: #173f74;
-      --success: #1e9a59;
-      --neutral: #7b8596;
-      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background: linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
-      color: var(--text-main);
-    }
-
-    .page {
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-
-    .title {
-      margin: 0 0 16px;
-      font-size: 18px;
-      font-weight: 700;
-      color: var(--primary);
-    }
-
-    .card-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 18px;
-    }
-
-    .card {
-      background: var(--panel-bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 6px;
-      box-shadow: var(--shadow);
-      padding: 12px;
-      min-height: 387px;
-    }
-
-    #sumpExtrasCard {
-      grid-column: span 2;
-    }
-
-    #detailsSummaryCard {
-      grid-column: span 3;
-    }
-
-    .summary-details {
-      font-size: 12px;
-      line-height: 1.7;
-      color: #20395f;
-    }
-
-    .summary-details div {
-      margin-bottom: 2px;
-    }
-
-    .summary-details strong {
-      color: #132d52;
-    }
-
-    .card h2,
-    .drawing-card h2 {
-      margin: 0 0 12px;
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--primary);
-    }
-
-    .field,
-    .checkbox-row,
-    .triple-field,
-    .inline-field {
-      margin-bottom: 10px;
-    }
-
-    .field label,
-    .group-label {
-      display: block;
-      margin-bottom: 4px;
-      font-size: 12px;
-      font-weight: 600;
-      color: #253f66;
-    }
-
-    input,
-    select,
-    textarea {
-      width: 100%;
-      border: 1px solid var(--input-border);
-      border-radius: 4px;
-      padding: 7px 10px;
-      font-size: 12px;
-      background: #fff;
-      color: #19345d;
-    }
-
-    input:focus,
-    select:focus,
-    textarea:focus {
-      outline: 2px solid rgba(29, 79, 145, 0.14);
-      border-color: #87a8d8;
-    }
-
-    textarea {
-      min-height: 82px;
-      resize: vertical;
-    }
-
-    .checkbox-stack {
-      display: grid;
-      gap: 6px;
-    }
-
-    .checkbox-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      font-weight: 600;
-      color: #213a61;
-    }
-
-    .checkbox-row input[type="checkbox"] {
-      width: 14px;
-      height: 14px;
-      margin: 0;
-    }
-
-    .triple-field {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
-    }
-
-    .inline-field {
-      display: grid;
-      grid-template-columns: 1fr 100px;
-      gap: 8px;
-      align-items: end;
-    }
-
-    .inline-field .field {
-      margin-bottom: 0;
-    }
-
-    .actions-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      margin: 16px 0 14px;
-    }
-
-    .btn {
-      border: 0;
-      border-radius: 4px;
-      padding: 8px 14px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #fff;
-      cursor: pointer;
-      transition: transform 120ms ease, background 120ms ease;
-    }
-
-    .btn:hover {
-      transform: translateY(-1px);
-    }
-
-    .btn-primary {
-      background: var(--primary);
-    }
-
-    .btn-primary:hover {
-      background: var(--primary-strong);
-    }
-
-    .btn-success {
-      background: var(--success);
-    }
-
-    .btn-neutral {
-      background: var(--neutral);
-    }
-
-    .summary {
-      min-width: 280px;
-    }
-
-    .summary-line {
-      font-size: 13px;
-      line-height: 1.4;
-      color: #20395f;
-    }
-
-    .summary-line strong {
-      color: #132d52;
-    }
-
-    .summary-small {
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-
-    .status-banner {
-      margin: 0 0 14px;
-      padding: 10px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--panel-border);
-      background: #eef5ff;
-      color: #1f3f6a;
-      font-size: 12px;
-      line-height: 1.4;
-      box-shadow: var(--shadow);
-    }
-
-    .status-banner.hidden {
-      display: none;
-    }
-
-    .status-banner.warning {
-      background: #fff7e8;
-      border-color: #e9cb89;
-      color: #785212;
-    }
-
-    .status-banner.error {
-      background: #fff0f0;
-      border-color: #e0a8a8;
-      color: #8a2626;
-    }
-
-    .drawing-card,
-    details {
-      background: var(--panel-bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 6px;
-      box-shadow: var(--shadow);
-    }
-
-    .drawing-card {
-      padding: 10px 12px 14px;
-    }
-
-    .canvas-wrap {
-      border: 1px solid var(--panel-border);
-      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-      min-height: 260px;
-      overflow: hidden;
-    }
-
-    canvas {
-      display: block;
-      width: 100%;
-      height: 260px;
-    }
-
-    details {
-      margin-top: 14px;
-      padding: 10px 12px;
-    }
-
-    details summary {
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--primary);
-    }
-
-    pre {
-      margin: 10px 0 0;
-      font-size: 11px;
-      line-height: 1.45;
-      white-space: pre-wrap;
-      word-break: break-word;
-      color: #29486f;
-    }
-
-    .hidden {
-      display: none;
-    }
-
     /* Stock sheet inputs on the Glass Cut Sheet card - narrow, since both are shop constants
        that rarely change, unlike the tank dimensions above. */
     .cut-sheet-fields {
@@ -313,10 +18,11 @@
       margin-bottom: 0;
     }
 
-    /* Deliberately NOT .canvas-wrap - that clamps to a 260px-tall canvas and clips overflow,
-       which would crop a full-height cut sheet. This scrolls sideways on narrow screens instead. */
+    /* Deliberately NOT .canvas-wrap - a cut sheet can be much taller than the tank drawing, so
+       this scrolls sideways on narrow screens instead of clipping. */
     .cut-sheet-host {
       border: 1px solid var(--panel-border);
+      border-radius: 8px;
       background: #ffffff;
       overflow-x: auto;
       padding: 8px;
@@ -333,356 +39,763 @@
       margin-bottom: 0;
     }
 
-    @media (max-width: 1060px) {
-      .card-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* ---------- Calculator / Summary tabs ---------- */
+    .view-tabs {
+      display: inline-flex;
+      gap: 4px;
+      margin-top: 12px;
+      padding: 4px;
+      border-radius: 10px;
+      background: #e3eaf5;
+    }
+
+    .view-tab {
+      border: 0;
+      border-radius: 7px;
+      padding: 8px 18px;
+      background: transparent;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .view-tab:hover {
+      color: var(--primary-strong);
+    }
+
+    .view-tab.active {
+      background: #fff;
+      color: var(--primary-strong);
+      box-shadow: 0 1px 3px rgba(21, 52, 94, 0.15);
+    }
+
+    body.summary-mode .quote-bar {
+      display: none;
+    }
+
+    /* ---------- Summary sheet ---------- */
+    .sv-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin: 16px 0;
+    }
+
+    .sv-toolbar .sv-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .sv-toolbar .sv-toggle input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary);
+    }
+
+    .sv-sheet {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px 32px;
+    }
+
+    .sv-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      padding-bottom: 18px;
+      border-bottom: 2px solid var(--primary);
+    }
+
+    .sv-brand {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--primary);
+    }
+
+    .sv-head h2 {
+      margin: 2px 0 4px;
+      font-size: 24px;
+      color: var(--primary-strong);
+    }
+
+    .sv-muted {
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+
+    .sv-total {
+      text-align: right;
+      padding: 12px 18px;
+      border-radius: 10px;
+      background: linear-gradient(160deg, #1d4f91 0%, #163e73 100%);
+      color: #fff;
+    }
+
+    .sv-total-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.75;
+    }
+
+    .sv-total-value {
+      font-size: 30px;
+      font-weight: 800;
+    }
+
+    .sv-total-sub {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+
+    .sv-kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .sv-kpi {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f4f7fc;
+      border: 1px solid var(--panel-border);
+    }
+
+    .sv-kpi span {
+      display: block;
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    .sv-kpi strong {
+      display: block;
+      margin-top: 2px;
+      font-size: 14px;
+      color: var(--primary-strong);
+    }
+
+    .sv-safety {
+      margin-bottom: 18px;
+    }
+
+    .sv-section {
+      margin-top: 22px;
+    }
+
+    .sv-section h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--primary);
+    }
+
+    .sv-section h4 {
+      margin: 14px 0 6px;
+      font-size: 13px;
+      color: var(--primary-strong);
+    }
+
+    .sv-section h4:first-of-type {
+      margin-top: 0;
+    }
+
+    .sv-pics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      align-items: start;
+      gap: 14px;
+    }
+
+    .sv-figure {
+      margin: 0;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .sv-figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .sv-figure figcaption {
+      padding: 7px 12px;
+      border-top: 1px solid var(--panel-border);
+      background: #f8fbff;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+
+    .sv-cols {
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      gap: 28px;
+    }
+
+    .sv-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .sv-table th,
+    .sv-table td {
+      padding: 7px 10px;
+      border-bottom: 1px solid #edf1f7;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .sv-table th {
+      width: 42%;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .sv-table td {
+      color: var(--text-main);
+      white-space: pre-wrap;
+    }
+
+    .sv-price-table td {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .sv-price-table tr:last-child th,
+    .sv-price-table tr:last-child td {
+      border-bottom: 0;
+      border-top: 2px solid var(--primary);
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--primary-strong);
+    }
+
+    .sv-details {
+      margin-top: 14px;
+    }
+
+    .sv-cutsheets svg {
+      display: block;
+      width: 100%;
+      max-width: 520px;
+      height: auto;
+      margin: 14px auto 0;
+    }
+
+    .sv-empty {
+      padding: 40px 12px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .sv-empty h3 {
+      margin: 0 0 6px;
+      color: var(--primary-strong);
+    }
+
+    @media (max-width: 900px) {
+      .sv-cols {
+        grid-template-columns: 1fr;
+        gap: 0;
+      }
+
+      .sv-sheet {
+        padding: 18px 16px;
+      }
+
+      .sv-pics {
+        grid-template-columns: 1fr;
+      }
+
+      .sv-toolbar .sv-toggle {
+        margin-left: 0;
       }
     }
 
-    @media (max-width: 640px) {
+    @media print {
+      @page {
+        margin: 12mm;
+      }
+
+      body {
+        background: #fff;
+      }
+
       .page {
-        padding: 14px;
+        padding: 0;
       }
 
-      .card-grid {
-        grid-template-columns: 1fr;
+      .calc-header,
+      #buildView,
+      .sv-toolbar,
+      .quote-bar {
+        display: none !important;
       }
 
-      #sumpExtrasCard,
-      #detailsSummaryCard {
-        grid-column: span 1;
+      .sv-sheet {
+        border: 0;
+        box-shadow: none;
+        padding: 0;
       }
 
-      .actions-row {
-        align-items: flex-start;
-        flex-direction: column;
+      .sv-total,
+      .sv-kpi,
+      .sv-figure figcaption {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
       }
 
-      .inline-field {
-        grid-template-columns: 1fr;
+      .sv-figure,
+      .sv-table tr,
+      .sv-cutsheets svg {
+        break-inside: avoid;
       }
+
+      .sv-break {
+        break-before: page;
+      }
+    }
+
+    /* Sump fields are dimmed (not hidden) by setVisibilityState when no sump is selected. */
+    #sumpFieldsWrap {
+      transition: opacity 150ms ease;
     }
   </style>
 </head>
 <body>
   <div class="page">
-    <h1 class="title">RSPETSTOP Custom Aquarium Calculator WEB version</h1>
+    <header class="calc-header">
+      <h1 class="title">Custom Aquarium Calculator</h1>
+      <p class="subtitle">RS Pet Stop - work through the steps below; the price on the right updates as you go.</p>
+      <div class="view-tabs" role="tablist" aria-label="Calculator views">
+        <button id="tabBuild" class="view-tab active" type="button" role="tab" aria-selected="true" data-view="build">Calculator</button>
+        <button id="tabSummary" class="view-tab" type="button" role="tab" aria-selected="false" data-view="summary">Summary</button>
+      </div>
+    </header>
 
-    <div class="card-grid">
-      <section class="card">
-        <h2>Main dimensions</h2>
+    <div id="buildView">
+    <nav class="step-nav" aria-label="Calculator steps">
+      <a href="#stepSize"><span class="dot">1</span>Size &amp; glass</a>
+      <a href="#stepOptions"><span class="dot">2</span>Options</a>
+      <a href="#sumpExtrasCard"><span class="dot">3</span>Sump &amp; extras</a>
+      <a href="#stepStickers"><span class="dot">4</span>Stickers &amp; notes</a>
+      <a href="#drawingCard"><span class="dot">&#9633;</span>Drawing</a>
+    </nav>
 
-        <div class="field">
-          <label for="length">Length</label>
-          <input id="length" type="number" value="24" step="0.01">
-        </div>
-
-        <div class="field">
-          <label for="width">Width</label>
-          <input id="width" type="number" value="12" step="0.01">
-        </div>
-
-        <div class="field">
-          <label for="height">Height</label>
-          <input id="height" type="number" value="12" step="0.01">
-        </div>
-
-        <div class="field">
-          <label for="unit">Unit of Measure</label>
-          <select id="unit">
-            <option>Inches</option>
-            <option>CM</option>
-            <option>Ft</option>
-            <option>MM</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="option">Option</label>
-          <select id="option">
-            <option>Aquarium only</option>
-            <option>Undersump</option>
-            <option>Overheadsump</option>
-            <option>Complete setup</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="glass">Glass Thickness</label>
-          <select id="glass">
-            <option>3mm</option>
-            <option selected>6mm</option>
-            <option>10mm</option>
-            <option>12mm</option>
-            <option value="19mm">19mm (3/4")</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="sealant">Sealant</label>
-          <select id="sealant">
-            <option value="">-- select --</option>
-            <option>Clear</option>
-            <option>Black</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="quantity">Quantity</label>
-          <input id="quantity" type="number" value="1" min="1" step="1">
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Options</h2>
-        <div class="checkbox-stack">
-          <label class="checkbox-row"><input id="aio" type="checkbox">AIO</label>
-          <label class="checkbox-row"><input id="lowIron" type="checkbox">Low Iron</label>
-          <label class="checkbox-row"><input id="tempered" type="checkbox">Tempered Glass</label>
-          <label class="checkbox-row"><input id="rimless" type="checkbox">Rimless</label>
-          <label class="checkbox-row"><input id="highStrip" type="checkbox">High Strip</label>
-          <label class="checkbox-row"><input id="sumpEnabled" type="checkbox">Filtration sump</label>
-          <label class="checkbox-row"><input id="aquascape" type="checkbox">Aquascape service</label>
-          <label class="checkbox-row"><input id="enclosure" type="checkbox">Enclosure</label>
-          <label class="checkbox-row"><input id="standEnabled" type="checkbox">Stand</label>
-        </div>
-
-        <div class="field" style="margin-top: 10px;">
-          <label for="holeCount">Hole for Aquarium (qty)</label>
-          <input id="holeCount" type="number" value="0" min="0" step="1">
-        </div>
-
-        <div class="field">
-          <label for="dividerCount">Divider (qty)</label>
-          <input id="dividerCount" type="number" value="0" min="0" step="1">
-        </div>
-
-        <div id="standCalcWrap" class="hidden" style="margin-top: 12px;">
-          <div class="field">
-            <label for="standLayers">Stand Layers</label>
-            <input id="standLayers" type="number" value="2" min="2" step="1">
+    <div class="calc-layout">
+      <main class="calc-main">
+        <section id="stepSize" class="card">
+          <div class="step-head">
+            <span class="step-num">1</span>
+            <div>
+              <h2>Size &amp; glass</h2>
+              <p class="step-hint">Tank dimensions, build type and glass thickness.</p>
+            </div>
           </div>
 
-          <div class="field">
-            <label for="standTubular">Stand Tubular</label>
-            <select id="standTubular">
-              <option value="1x1">1 x 1</option>
-              <option value="1.5x1.5">1 1/2 x 1 1/2</option>
-              <option value="2x2">2 x 2</option>
-            </select>
-          </div>
+          <div class="field-grid">
+            <div class="field span-2">
+              <span class="group-label">Tank dimensions</span>
+              <div class="dims-row">
+                <div class="dim">
+                  <input id="length" type="number" value="24" step="0.01" aria-label="Length">
+                  <span>Length</span>
+                </div>
+                <div class="dim">
+                  <input id="width" type="number" value="12" step="0.01" aria-label="Width">
+                  <span>Width</span>
+                </div>
+                <div class="dim">
+                  <input id="height" type="number" value="12" step="0.01" aria-label="Height">
+                  <span>Height</span>
+                </div>
+              </div>
+            </div>
 
-          <div class="field">
-            <label for="standHeightOverride">Height Override (in, 0 = Auto)</label>
-            <input id="standHeightOverride" type="number" value="0" min="0" step="0.01">
-            <div id="standHeightInfo" class="summary-small" style="margin-top: 4px;">Total height: -</div>
-          </div>
+            <div class="field">
+              <label for="unit">Unit of measure</label>
+              <select id="unit">
+                <option>Inches</option>
+                <option>CM</option>
+                <option>Ft</option>
+                <option>MM</option>
+              </select>
+            </div>
 
-          <div class="field">
-            <label for="standFooting">Footing (in)</label>
-            <input id="standFooting" type="number" value="3" min="0" step="0.5">
+            <div class="field">
+              <label for="quantity">Quantity</label>
+              <input id="quantity" type="number" value="1" min="1" step="1">
+            </div>
+
+            <div class="field">
+              <label for="option">Build type</label>
+              <select id="option">
+                <option>Aquarium only</option>
+                <option>Undersump</option>
+                <option>Overheadsump</option>
+                <option>Complete setup</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="glass">Glass thickness</label>
+              <select id="glass">
+                <option>3mm</option>
+                <option selected>6mm</option>
+                <option>10mm</option>
+                <option>12mm</option>
+                <option value="19mm">19mm (3/4")</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="sealant">Sealant</label>
+              <select id="sealant">
+                <option value="">-- select --</option>
+                <option>Clear</option>
+                <option>Black</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section id="stepOptions" class="card">
+          <div class="step-head">
+            <span class="step-num">2</span>
+            <div>
+              <h2>Options</h2>
+              <p class="step-hint">Tick everything the build needs. Stand settings appear once Stand is ticked.</p>
+            </div>
           </div>
 
           <div class="checkbox-stack">
-            <label class="checkbox-row"><input id="standStainless" type="checkbox">Stainless</label>
-            <label class="checkbox-row"><input id="standCabinet" type="checkbox">Cabinet</label>
-            <label class="checkbox-row"><input id="standSumpHolder" type="checkbox">Sump Holder</label>
+            <label class="checkbox-row"><input id="aio" type="checkbox">AIO</label>
+            <label class="checkbox-row"><input id="lowIron" type="checkbox">Low Iron</label>
+            <label class="checkbox-row"><input id="tempered" type="checkbox">Tempered Glass</label>
+            <label class="checkbox-row"><input id="rimless" type="checkbox">Rimless</label>
+            <label class="checkbox-row"><input id="highStrip" type="checkbox">High Strip</label>
+            <label class="checkbox-row"><input id="sumpEnabled" type="checkbox">Filtration sump</label>
+            <label class="checkbox-row"><input id="aquascape" type="checkbox">Aquascape service</label>
+            <label class="checkbox-row"><input id="enclosure" type="checkbox">Enclosure</label>
+            <label class="checkbox-row"><input id="standEnabled" type="checkbox">Stand</label>
           </div>
 
-          <div id="standSumpWidthWrap" class="field hidden">
-            <label for="standSumpWidth">Sump Holder Width</label>
-            <input id="standSumpWidth" type="number" value="0" min="0" step="0.01">
-          </div>
+          <div class="field-grid" style="margin-top: 14px;">
+            <div class="field">
+              <label for="holeCount">Holes in aquarium (qty)</label>
+              <input id="holeCount" type="number" value="0" min="0" step="1">
+            </div>
 
-          <div id="standInfo" class="summary-small">Stand uses the aquarium length and width as its footprint.</div>
-        </div>
-      </section>
-
-      <section id="sumpExtrasCard" class="card">
-        <h2>Sump &amp; extras</h2>
-
-        <div id="sumpFieldsWrap">
-          <div class="field">
-            <label for="sumpType">Sump Type</label>
-            <select id="sumpType">
-              <option>Undersump</option>
-              <option>Overhead Sump</option>
-            </select>
-          </div>
-
-          <div class="field">
-            <span class="group-label">Sump Dimensions</span>
-            <div class="triple-field">
-              <input id="sumpLength" type="number" value="12" step="0.01" placeholder="L">
-              <input id="sumpWidth" type="number" value="12" step="0.01" placeholder="W">
-              <input id="sumpHeight" type="number" value="12" step="0.01" placeholder="H">
+            <div class="field">
+              <label for="dividerCount">Dividers (qty)</label>
+              <input id="dividerCount" type="number" value="0" min="0" step="1">
             </div>
           </div>
 
-          <div class="field">
-            <label for="sumpUnit">Sump UOM</label>
-            <select id="sumpUnit">
-              <option>Inches</option>
-              <option>CM</option>
-              <option>Ft</option>
-              <option>MM</option>
-            </select>
+          <div id="standCalcWrap" class="reveal-block hidden">
+            <div class="sub-head" style="margin-top: 0; padding-top: 0; border-top: 0;">Stand settings</div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="standLayers">Stand layers</label>
+                <input id="standLayers" type="number" value="2" min="2" step="1">
+              </div>
+
+              <div class="field">
+                <label for="standTubular">Stand tubular</label>
+                <select id="standTubular">
+                  <option value="1x1">1 x 1</option>
+                  <option value="1.5x1.5">1 1/2 x 1 1/2</option>
+                  <option value="2x2">2 x 2</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="standHeightOverride">Height override (in, 0 = auto)</label>
+                <input id="standHeightOverride" type="number" value="0" min="0" step="0.01">
+                <div id="standHeightInfo" class="field-help">Total height: -</div>
+              </div>
+
+              <div class="field">
+                <label for="standFooting">Footing (in)</label>
+                <input id="standFooting" type="number" value="3" min="0" step="0.5">
+              </div>
+            </div>
+
+            <div class="checkbox-stack" style="margin-top: 12px;">
+              <label class="checkbox-row"><input id="standStainless" type="checkbox">Stainless</label>
+              <label class="checkbox-row"><input id="standCabinet" type="checkbox">Cabinet</label>
+              <label class="checkbox-row"><input id="standSumpHolder" type="checkbox">Sump Holder</label>
+            </div>
+
+            <div id="standSumpWidthWrap" class="field hidden" style="margin-top: 12px;">
+              <label for="standSumpWidth">Sump holder width</label>
+              <input id="standSumpWidth" type="number" value="0" min="0" step="0.01">
+            </div>
+
+            <div id="standInfo" class="field-help" style="margin-top: 10px;">Stand uses the aquarium length and width as its footprint.</div>
+          </div>
+        </section>
+
+        <section id="sumpExtrasCard" class="card">
+          <div class="step-head">
+            <span class="step-num">3</span>
+            <div>
+              <h2>Sump &amp; extras</h2>
+              <p class="step-hint">Used when the build has a filtration sump (tick it in step 2, or pick a sump build type).</p>
+            </div>
           </div>
 
-          <div class="field">
-            <label for="sumpQuantity">Sump Quantity</label>
-            <input id="sumpQuantity" type="number" value="1" min="1" step="1">
+          <div id="sumpFieldsWrap">
+            <div class="field-grid">
+              <div class="field">
+                <label for="sumpType">Sump type</label>
+                <select id="sumpType">
+                  <option>Undersump</option>
+                  <option>Overhead Sump</option>
+                </select>
+              </div>
+
+              <div class="field span-2">
+                <span class="group-label">Sump dimensions</span>
+                <div class="dims-row">
+                  <div class="dim">
+                    <input id="sumpLength" type="number" value="12" step="0.01" placeholder="L" aria-label="Sump length">
+                    <span>Length</span>
+                  </div>
+                  <div class="dim">
+                    <input id="sumpWidth" type="number" value="12" step="0.01" placeholder="W" aria-label="Sump width">
+                    <span>Width</span>
+                  </div>
+                  <div class="dim">
+                    <input id="sumpHeight" type="number" value="12" step="0.01" placeholder="H" aria-label="Sump height">
+                    <span>Height</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="sumpUnit">Sump unit</label>
+                <select id="sumpUnit">
+                  <option>Inches</option>
+                  <option>CM</option>
+                  <option>Ft</option>
+                  <option>MM</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="sumpQuantity">Sump quantity</label>
+                <input id="sumpQuantity" type="number" value="1" min="1" step="1">
+              </div>
+            </div>
+
+            <div class="sub-head">Extras</div>
+            <div class="checkbox-stack">
+              <label class="checkbox-row"><input id="piping" type="checkbox">Set of Piping</label>
+              <label class="checkbox-row"><input id="overflowBox" type="checkbox">Overflow Box</label>
+              <label class="checkbox-row"><input id="filterMedias" type="checkbox">Filter medias</label>
+              <label class="checkbox-row"><input id="submersibleLight" type="checkbox">Submersible Light</label>
+              <label class="checkbox-row"><input id="submersiblePump" type="checkbox">Submersible Pump</label>
+              <label class="checkbox-row"><input id="allumTopCover" type="checkbox">Allum Top Cover</label>
+            </div>
+          </div>
+
+          <div id="sumpPriceInputs" class="reveal-block hidden">
+            <div class="inline-field">
+              <div class="field">
+                <label for="lightItemSelect">Light item</label>
+                <select id="lightItemSelect">
+                  <option value="0">Loading items...</option>
+                </select>
+                <input id="lightPrice" type="hidden" value="0">
+              </div>
+              <div class="field">
+                <label for="lightQuantity">Qty</label>
+                <input id="lightQuantity" type="number" value="1" min="1" step="1">
+              </div>
+            </div>
+            <div class="inline-field" style="margin-bottom: 0;">
+              <div class="field">
+                <label for="pumpItemSelect">Pump item</label>
+                <select id="pumpItemSelect">
+                  <option value="0">Loading items...</option>
+                </select>
+                <input id="pumpPrice" type="hidden" value="0">
+              </div>
+              <div class="field">
+                <label for="pumpQuantity">Qty</label>
+                <input id="pumpQuantity" type="number" value="1" min="1" step="1">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="stepStickers" class="card">
+          <div class="step-head">
+            <span class="step-num">4</span>
+            <div>
+              <h2>Stickers &amp; notes</h2>
+              <p class="step-hint">Optional background/bottom stickers and any special instructions.</p>
+            </div>
           </div>
 
           <div class="checkbox-stack">
-            <label class="checkbox-row"><input id="piping" type="checkbox">Set of Piping</label>
-            <label class="checkbox-row"><input id="overflowBox" type="checkbox">Overflow Box</label>
-            <label class="checkbox-row"><input id="filterMedias" type="checkbox">Filter medias</label>
-            <label class="checkbox-row"><input id="submersibleLight" type="checkbox">Submersible Light</label>
-            <label class="checkbox-row"><input id="submersiblePump" type="checkbox">Submersible Pump</label>
-            <label class="checkbox-row"><input id="allumTopCover" type="checkbox">Allum Top Cover</label>
+            <label class="checkbox-row"><input id="stickerBackground" type="checkbox">Sticker Background</label>
+            <label id="allSidesRow" class="checkbox-row hidden"><input id="allSides" type="checkbox">All Sides</label>
+            <label class="checkbox-row"><input id="stickerBottom" type="checkbox">Sticker Bottom</label>
           </div>
-        </div>
 
-        <div id="sumpPriceInputs" class="hidden" style="margin-top: 12px;">
-          <div class="inline-field">
-            <div class="field">
-              <label for="lightItemSelect">Light Item</label>
-              <select id="lightItemSelect">
-                <option value="0">Loading items...</option>
+          <div class="field-grid" style="margin-top: 12px;">
+            <div id="backgroundTypeWrap" class="field hidden">
+              <label for="stickerBackgroundType">Background sticker type</label>
+              <select id="stickerBackgroundType">
+                <option>Plain Sticker</option>
+                <option>Sticker Tiles</option>
               </select>
-              <input id="lightPrice" type="hidden" value="0">
             </div>
-            <div class="field">
-              <label for="lightQuantity">Qty</label>
-              <input id="lightQuantity" type="number" value="1" min="1" step="1">
-            </div>
-          </div>
-          <div class="inline-field">
-            <div class="field">
-              <label for="pumpItemSelect">Pump Item</label>
-              <select id="pumpItemSelect">
-                <option value="0">Loading items...</option>
+
+            <div id="bottomTypeWrap" class="field hidden">
+              <label for="stickerBottomType">Bottom sticker type</label>
+              <select id="stickerBottomType">
+                <option>Plain Sticker</option>
+                <option>Sticker Tiles</option>
               </select>
-              <input id="pumpPrice" type="hidden" value="0">
             </div>
-            <div class="field">
-              <label for="pumpQuantity">Qty</label>
-              <input id="pumpQuantity" type="number" value="1" min="1" step="1">
+
+            <div class="field span-all">
+              <label for="specialNote">Special note</label>
+              <textarea id="specialNote" placeholder="Anything production should know..."></textarea>
             </div>
           </div>
+        </section>
+
+        <section id="drawingCard" class="drawing-card">
+          <h2>Aquarium drawing</h2>
+          <div class="canvas-wrap">
+            <canvas id="aquariumCanvas" width="1060" height="260"></canvas>
+          </div>
+        </section>
+
+        <!-- Stand Drawing - a fully dimensioned preview (Gap per layer, tubular thickness pointer,
+             Built Length incl. end posts) of the stand attached to this aquarium, same detail level as
+             the dedicated Stand calculator (WebAquariumCalculator/stand.html) - shown only once a
+             calculation includes a stand, see window.refreshStandDrawing below. -->
+        <section id="standDrawingCard" class="drawing-card hidden">
+          <h2>Stand drawing</h2>
+          <div class="canvas-wrap">
+            <canvas id="standCanvas" width="720" height="260"></canvas>
+          </div>
+          <details>
+            <summary>Stand price breakdown</summary>
+            <pre id="standBreakdownPre">Run a calculation to see the breakdown.</pre>
+          </details>
+        </section>
+
+        <!-- Glass cut sheet - the layout the production team otherwise draws by hand for every
+             10mm/12mm order. Hidden until "Glass Cut Sheet" is pressed so it does not get in the way
+             of ordinary pricing work. Stock sheet size lives here rather than in the main form
+             because it is a shop/material setting, not a property of the customer's tank. -->
+        <section id="cutSheetCard" class="drawing-card hidden">
+          <h2>Glass cut sheet</h2>
+
+          <div class="cut-sheet-fields" style="margin-bottom: 12px;">
+            <div class="field">
+              <label for="stockSheetWidth">Stock sheet width (in)</label>
+              <input id="stockSheetWidth" type="number" value="72" step="0.25" min="1">
+            </div>
+            <div class="field">
+              <label for="stockSheetHeight">Stock sheet height (in)</label>
+              <input id="stockSheetHeight" type="number" value="84" step="0.25" min="1">
+            </div>
+          </div>
+
+          <div id="cutSheetSummary" class="summary-small" style="margin-bottom: 10px;"></div>
+          <div id="cutSheetHost" class="cut-sheet-host"></div>
+
+          <div class="actions-row" style="margin-top: 12px;">
+            <button id="cutSheetDownload" class="btn btn-primary" type="button">Download PNG</button>
+            <button id="cutSheetPrint" class="btn btn-neutral" type="button">Print</button>
+          </div>
+        </section>
+      </main>
+
+      <aside id="quotePanel" class="calc-aside" aria-label="Quote">
+        <div class="quote-card">
+          <div class="quote-label">Estimated price</div>
+          <div id="priceLine" class="price-line"><span class="price-empty">Waiting for calculation</span></div>
+          <div class="quote-stats">
+            <div id="volumeLine"><strong>Volume:</strong> loading...</div>
+            <div id="dimensionsLine">Dimensions (in): -</div>
+          </div>
+          <div class="quote-actions">
+            <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
+            <button id="addToSale" class="btn btn-success full" type="button">Add to sale</button>
+            <button id="cutSheetButton" class="btn btn-neutral" type="button">Glass Cut Sheet</button>
+            <button id="closeButton" class="btn btn-neutral" type="button">Reset</button>
+            <button id="openSummaryButton" class="btn btn-neutral full" type="button">View full summary</button>
+          </div>
         </div>
-      </section>
 
-      <section class="card">
-        <h2>Stickers &amp; notes</h2>
+        <div id="safetyBanner" class="status-banner hidden"></div>
 
-        <div class="checkbox-stack">
-          <label class="checkbox-row"><input id="stickerBackground" type="checkbox">Sticker Background</label>
-          <label id="allSidesRow" class="checkbox-row hidden"><input id="allSides" type="checkbox">All Sides</label>
-        </div>
-
-        <div id="backgroundTypeWrap" class="field hidden">
-          <label for="stickerBackgroundType">Sticker Background Type</label>
-          <select id="stickerBackgroundType">
-            <option>Plain Sticker</option>
-            <option>Sticker Tiles</option>
-          </select>
-        </div>
-
-        <div class="checkbox-stack">
-          <label class="checkbox-row"><input id="stickerBottom" type="checkbox">Sticker Bottom</label>
-        </div>
-
-        <div id="bottomTypeWrap" class="field hidden">
-          <label for="stickerBottomType">Sticker Bottom Type</label>
-          <select id="stickerBottomType">
-            <option>Plain Sticker</option>
-            <option>Sticker Tiles</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="specialNote">Special note</label>
-          <textarea id="specialNote"></textarea>
-        </div>
-      </section>
-
-      <!-- Persistent "see all details of the customized product" summary - every input that
-           affects price/drawing gets its own line here so staff can read (or screenshot) the full
-           spec at a glance to share with a customer, instead of re-checking the form fields above.
-           Always visible and kept in sync from calculateAquarium(), same pattern as stand.html's
-           #summaryDetails. -->
-      <section id="detailsSummaryCard" class="card">
-        <h2>Summary</h2>
-        <div id="detailsSummary" class="summary-details">Enter aquarium details to see a summary.</div>
-      </section>
+        <!-- Persistent "see all details of the customized product" summary - every input that
+             affects price/drawing gets its own line here so staff can read (or screenshot) the full
+             spec at a glance to share with a customer, instead of re-checking the form fields.
+             Always visible and kept in sync from calculateAquarium(), same pattern as stand.html's
+             #summaryDetails. -->
+        <section id="detailsSummaryCard" class="card summary-card">
+          <h2>Summary</h2>
+          <div id="detailsSummary" class="summary-details">Enter aquarium details to see a summary.</div>
+        </section>
+      </aside>
+    </div>
     </div>
 
-    <div class="actions-row">
-      <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
-      <button id="addToSale" class="btn btn-success" type="button">Add to sale</button>
-      <button id="cutSheetButton" class="btn btn-neutral" type="button">Glass Cut Sheet</button>
-      <button id="closeButton" class="btn btn-neutral" type="button">Close</button>
-
-      <div class="summary">
-        <div id="volumeLine" class="summary-line"><strong>Volume:</strong> loading...</div>
-        <div id="priceLine" class="summary-line"><strong>Price:</strong> waiting for calculation</div>
-        <div id="dimensionsLine" class="summary-small">Dimensions (in): -</div>
+    <!-- Summary tab - a printable quote sheet of everything the last calculation produced: total,
+         drawings (snapshotted from the live canvases), full spec, price breakdown, stand cost
+         breakdown, safety notes and the glass cut sheet. Rebuilt by window.refreshSummaryView
+         (script block near the bottom) whenever the tab is opened or a calculation runs. -->
+    <section id="summaryView" class="summary-view hidden" role="tabpanel" aria-labelledby="tabSummary">
+      <div class="sv-toolbar">
+        <button id="summaryBack" class="btn btn-neutral" type="button">&larr; Back to calculator</button>
+        <label class="sv-toggle"><input id="summaryIncludeCutSheet" type="checkbox" checked>Include glass cut sheet</label>
+        <button id="summaryPrint" class="btn btn-primary" type="button">Print / Save as PDF</button>
       </div>
+      <div id="summarySheet" class="sv-sheet"></div>
+    </section>
+  </div>
+
+  <div class="quote-bar">
+    <div class="quote-bar-text">
+      <div class="quote-bar-label">Estimated price</div>
+      <div id="quoteBarPrice" class="quote-bar-price">-</div>
     </div>
-
-    <div id="safetyBanner" class="status-banner hidden"></div>
-
-    <section class="drawing-card">
-      <h2>Aquarium Drawing</h2>
-      <div class="canvas-wrap">
-        <canvas id="aquariumCanvas" width="1060" height="260"></canvas>
-      </div>
-    </section>
-
-    <!-- Stand Drawing - a fully dimensioned preview (Gap per layer, tubular thickness pointer,
-         Built Length incl. end posts) of the stand attached to this aquarium, same detail level as
-         the dedicated Stand calculator (WebAquariumCalculator/stand.html) - shown only once a
-         calculation includes a stand, see window.refreshStandDrawing below. -->
-    <section id="standDrawingCard" class="drawing-card hidden">
-      <h2>Stand Drawing</h2>
-      <div class="canvas-wrap">
-        <canvas id="standCanvas" width="720" height="260"></canvas>
-      </div>
-      <details>
-        <summary>Stand price breakdown</summary>
-        <pre id="standBreakdownPre">Run a calculation to see the breakdown.</pre>
-      </details>
-    </section>
-
-    <!-- Glass cut sheet - the layout the production team otherwise draws by hand for every
-         10mm/12mm order. Hidden until "Glass Cut Sheet" is pressed so it does not get in the way
-         of ordinary pricing work. Stock sheet size lives here rather than in the main form
-         because it is a shop/material setting, not a property of the customer's tank. -->
-    <section id="cutSheetCard" class="drawing-card hidden">
-      <h2>Glass Cut Sheet</h2>
-
-      <div class="cut-sheet-fields" style="margin-bottom: 12px;">
-        <div class="field">
-          <label for="stockSheetWidth">Stock sheet width (in)</label>
-          <input id="stockSheetWidth" type="number" value="72" step="0.25" min="1">
-        </div>
-        <div class="field">
-          <label for="stockSheetHeight">Stock sheet height (in)</label>
-          <input id="stockSheetHeight" type="number" value="84" step="0.25" min="1">
-        </div>
-      </div>
-
-      <div id="cutSheetSummary" class="summary-small" style="margin-bottom: 10px;"></div>
-      <div id="cutSheetHost" class="cut-sheet-host"></div>
-
-      <div class="actions-row" style="margin-top: 12px;">
-        <button id="cutSheetDownload" class="btn btn-primary" type="button">Download PNG</button>
-        <button id="cutSheetPrint" class="btn btn-neutral" type="button">Print</button>
-      </div>
-    </section>
-
+    <a href="#quotePanel">View quote</a>
   </div>
 
   <!-- Loaded so the Light/Pump Item dropdowns below can query the real Items catalog from
@@ -721,6 +834,8 @@
     var stickerPricingSetupRows = [];
     var extraPricingSetupRows = [];
     var lastResult = null;
+    // [label, value] rows from the last renderDetailsSummary - reused by the Summary tab.
+    var lastDetailRows = [];
     var suppressUiSync = false;
     var ruleNoticeState = {
       temperedMandatory: false,
@@ -1514,7 +1629,7 @@
     function renderSummary(result) {
       if (!result || !result.ok) {
         volumeLine.innerHTML = '<strong>Volume:</strong> invalid';
-        priceLine.innerHTML = '<strong>Price:</strong> check inputs';
+        priceLine.innerHTML = '<span class="price-empty">Check inputs</span>';
         dimensionsLine.textContent = result && result.error ? result.error : 'Dimensions (in): -';
         renderSafetyBanner(result);
         return;
@@ -1523,7 +1638,9 @@
       var q = computeQuotedTotal(result);
 
       volumeLine.innerHTML = '<strong>Volume:</strong> ' + result.gallons.toFixed(1) + ' gallons';
-      priceLine.innerHTML = '<strong>Price:</strong> ' + q.grandTotal.toFixed(2) + formatQuoteBreakdown(q);
+      var breakdownText = formatQuoteBreakdown(q).trim();
+      priceLine.innerHTML = '<span class="price-value">' + q.grandTotal.toFixed(2) + '</span>' +
+        (breakdownText ? '<span class="price-sub">' + breakdownText + '</span>' : '');
       dimensionsLine.textContent = 'Dimensions (in): L: ' + result.normalized.lengthInches.toFixed(1) + ' x W: ' + result.normalized.widthInches.toFixed(1) + ' x H: ' + result.normalized.heightInches.toFixed(1);
       if (result.normalized.stand && result.normalized.stand.enabled) {
         byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + result.normalized.stand.heightInches.toFixed(1) + ' in | Footing: ' + result.normalized.stand.footingInches.toFixed(1) + ' in';
@@ -1547,6 +1664,7 @@
       var host = byId('detailsSummary');
 
       if (!result || !result.ok) {
+        lastDetailRows = [];
         host.innerHTML = 'Enter aquarium details to see a summary.';
         return;
       }
@@ -1646,6 +1764,7 @@
         rows.push(['Stand Price', c.stand.toFixed(2)]);
       }
       rows.push(['Total Price', q.grandTotal.toFixed(2) + formatQuoteBreakdown(q)]);
+      lastDetailRows = rows;
 
       host.innerHTML = rows.map(function (r) {
         return '<div><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
@@ -1865,6 +1984,9 @@
         renderSummary({ ok: false, error: error.message });
         renderDetailsSummary(null);
         drawPlaceholder('Unable to load pricing data.');
+      }
+      if (typeof window.refreshSummaryView === 'function') {
+        window.refreshSummaryView();
       }
     }
 
@@ -2616,5 +2738,190 @@
     })();
   </script>
 
+  <!-- Summary tab wiring. Read-only over the pricing script's globals (lastResult,
+       lastDetailRows, computeQuotedTotal, formatQuoteBreakdown) and the live canvases - it never
+       recalculates anything itself, so the sheet always matches what the Calculator tab shows. -->
+  <script>
+    (function () {
+      var buildView = document.getElementById('buildView');
+      var summaryView = document.getElementById('summaryView');
+      var summarySheet = document.getElementById('summarySheet');
+      var tabBuild = document.getElementById('tabBuild');
+      var tabSummary = document.getElementById('tabSummary');
+      var includeCutSheet = document.getElementById('summaryIncludeCutSheet');
+
+      function esc(value) {
+        return String(value == null ? '' : value)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      function isPriceRow(label) {
+        return /Price/.test(label) || /^Hole for Aquarium/.test(label) || /^Divider \(/.test(label);
+      }
+
+      // Same rows as the sidebar Summary card, just grouped so the sheet reads like a spec.
+      function groupOf(label) {
+        if (/^Stand/.test(label)) return 'Stand';
+        if (/^(Filtration Sump|Sump )/.test(label)) return 'Filtration sump';
+        if (/^(Sticker|Special Note)/.test(label)) return 'Stickers & notes';
+        return 'Aquarium';
+      }
+
+      function rowsTable(rows, extraClass) {
+        return '<table class="sv-table' + (extraClass ? ' ' + extraClass : '') + '"><tbody>' +
+          rows.map(function (r) {
+            return '<tr><th>' + esc(r[0]) + '</th><td>' + esc(r[1]) + '</td></tr>';
+          }).join('') + '</tbody></table>';
+      }
+
+      function canvasFigure(canvasId, caption) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return '';
+        var src;
+        try {
+          src = canvas.toDataURL('image/png');
+        } catch (e) {
+          return '';
+        }
+        return '<figure class="sv-figure"><img src="' + src + '" alt="' + esc(caption) + '"><figcaption>' + esc(caption) + '</figcaption></figure>';
+      }
+
+      function cutSheetSection() {
+        if (!includeCutSheet.checked || !window.GlassCutList) return '';
+        var unit = document.getElementById('unit').value;
+        var convert = window.CustomAquariumCalculator.toInches;
+        var opts = {
+          length: convert(document.getElementById('length').value, unit),
+          width: convert(document.getElementById('width').value, unit),
+          height: convert(document.getElementById('height').value, unit),
+          glass: document.getElementById('glass').value,
+          sheetWidth: Number(document.getElementById('stockSheetWidth').value),
+          sheetHeight: Number(document.getElementById('stockSheetHeight').value)
+        };
+        if (!(opts.length > 0 && opts.width > 0 && opts.height > 0 && opts.sheetWidth > 0 && opts.sheetHeight > 0)) return '';
+
+        var f = window.GlassCutList.formatInches;
+        var body;
+        try {
+          var cut = window.GlassCutList.buildCutList(opts);
+          if (cut.oversized.length > 0) {
+            body = '<p class="sv-muted">Some panels do not fit a ' + f(opts.sheetWidth) + '" x ' + f(opts.sheetHeight) +
+              '" stock sheet: ' + esc(cut.oversized.map(function (p) { return p.label; }).join(', ')) + '.</p>';
+          } else {
+            body = rowsTable(cut.panels.map(function (p) {
+              return [p.name, f(p.width) + '" x ' + f(p.height) + '"'];
+            })) +
+              '<div class="sv-cutsheets">' + cut.sheets.map(function (sheet, i) {
+                return window.GlassCutList.renderSheetSvg(sheet, {
+                  caption: 'Sheet ' + (i + 1) + ' of ' + cut.sheets.length + ' - ' + opts.glass +
+                    ' - tank ' + f(opts.length) + ' x ' + f(opts.width) + ' x ' + f(opts.height)
+                });
+              }).join('') + '</div>';
+          }
+        } catch (e) {
+          return '';
+        }
+        return '<section class="sv-section sv-break"><h3>Glass cut sheet</h3>' + body + '</section>';
+      }
+
+      function render() {
+        var result = typeof lastResult !== 'undefined' ? lastResult : null;
+        if (!result || !result.ok || !lastDetailRows.length) {
+          summarySheet.innerHTML =
+            '<div class="sv-empty"><h3>Nothing calculated yet</h3>' +
+            '<p>Fill in the aquarium details on the Calculator tab and press Calculate - the full summary with drawings will appear here.</p></div>';
+          return;
+        }
+
+        var n = result.normalized;
+        var q = computeQuotedTotal(result);
+        var breakdown = formatQuoteBreakdown(q).trim();
+        var specRows = lastDetailRows.filter(function (r) { return !isPriceRow(r[0]); });
+        var priceRows = lastDetailRows.filter(function (r) { return isPriceRow(r[0]) && r[0] !== 'Total Price'; });
+
+        var groups = {};
+        var groupOrder = ['Aquarium', 'Filtration sump', 'Stand', 'Stickers & notes'];
+        specRows.forEach(function (r) {
+          var g = groupOf(r[0]);
+          (groups[g] = groups[g] || []).push(r);
+        });
+
+        var glassBits = [n.glassThickness];
+        if (n.temperedGlass) glassBits.push('Tempered');
+        if (document.getElementById('lowIron').checked) glassBits.push('Low Iron');
+
+        var kpis = [
+          ['Size (in)', n.lengthInches.toFixed(1) + ' x ' + n.widthInches.toFixed(1) + ' x ' + n.heightInches.toFixed(1)],
+          ['Volume', result.gallons.toFixed(1) + ' gal'],
+          ['Glass', glassBits.join(', ')],
+          ['Build', n.option],
+          ['Quantity', String(q.aquariumQty)]
+        ];
+
+        var pictures = canvasFigure('aquariumCanvas', 'Aquarium');
+        if (n.stand && !document.getElementById('standDrawingCard').classList.contains('hidden')) {
+          pictures += canvasFigure('standCanvas', 'Stand');
+        }
+
+        var banner = document.getElementById('safetyBanner');
+        var safetyText = banner && !banner.classList.contains('hidden') ? banner.textContent.trim() : '';
+
+        var today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+
+        summarySheet.innerHTML =
+          '<header class="sv-head">' +
+            '<div><div class="sv-brand">RS Pet Stop</div><h2>Custom Aquarium Quote</h2><div class="sv-muted">' + esc(today) + '</div></div>' +
+            '<div class="sv-total"><div class="sv-total-label">Total</div><div class="sv-total-value">' + q.grandTotal.toFixed(2) + '</div>' +
+              (breakdown ? '<div class="sv-total-sub">' + esc(breakdown) + '</div>' : '') + '</div>' +
+          '</header>' +
+          '<div class="sv-kpis">' + kpis.map(function (k) {
+            return '<div class="sv-kpi"><span>' + esc(k[0]) + '</span><strong>' + esc(k[1]) + '</strong></div>';
+          }).join('') + '</div>' +
+          (safetyText ? '<div class="status-banner warning sv-safety">' + esc(safetyText) + '</div>' : '') +
+          '<section class="sv-section"><h3>Drawings</h3><div class="sv-pics">' + pictures + '</div></section>' +
+          '<div class="sv-cols">' +
+            '<section class="sv-section"><h3>Specification</h3>' +
+              groupOrder.filter(function (g) { return groups[g]; }).map(function (g) {
+                return '<h4>' + esc(g) + '</h4>' + rowsTable(groups[g]);
+              }).join('') +
+            '</section>' +
+            '<section class="sv-section"><h3>Price breakdown</h3>' +
+              rowsTable(priceRows.concat([['Total', q.grandTotal.toFixed(2) + (breakdown ? ' ' + breakdown : '')]]), 'sv-price-table') +
+              (n.stand && n.stand.breakdown
+                ? '<details class="sv-details" open><summary>Stand cost breakdown</summary><pre>' + esc(n.stand.breakdown) + '</pre></details>'
+                : '') +
+            '</section>' +
+          '</div>' +
+          cutSheetSection();
+      }
+
+      function showView(view) {
+        var isSummary = view === 'summary';
+        buildView.classList.toggle('hidden', isSummary);
+        summaryView.classList.toggle('hidden', !isSummary);
+        document.body.classList.toggle('summary-mode', isSummary);
+        tabBuild.classList.toggle('active', !isSummary);
+        tabSummary.classList.toggle('active', isSummary);
+        tabBuild.setAttribute('aria-selected', String(!isSummary));
+        tabSummary.setAttribute('aria-selected', String(isSummary));
+        if (isSummary) render();
+        window.scrollTo(0, 0);
+      }
+
+      // Called by calculateAquarium after every run - keeps an open Summary tab current.
+      window.refreshSummaryView = function () {
+        if (!summaryView.classList.contains('hidden')) render();
+      };
+
+      tabBuild.addEventListener('click', function () { showView('build'); });
+      tabSummary.addEventListener('click', function () { showView('summary'); });
+      document.getElementById('openSummaryButton').addEventListener('click', function () { showView('summary'); });
+      document.getElementById('summaryBack').addEventListener('click', function () { showView('build'); });
+      document.getElementById('summaryPrint').addEventListener('click', function () { window.print(); });
+      includeCutSheet.addEventListener('change', render);
+    })();
+  </script>
+
+  <script src="./calculator-ui.js?v=1"></script>
 </body>
 </html>

@@ -497,7 +497,8 @@ function mountChatWidget(session) {
 (function () {
   const page = (location.pathname.split('/').pop() || '').toLowerCase();
   // gma-conversations.html is a full-width three-panel inbox - fish between the panels was too busy.
-  const SKIP = ['dashboard.html', 'gma-conversations.html', 'invoice.html', 'gma-order-invoice.html', 'delivery-receipt.html'];
+  // The calculator pages are a full-screen iframe, so the background would never be visible anyway.
+  const SKIP = ['dashboard.html', 'gma-conversations.html', 'aquarium-calculator.html', 'stand-calculator.html', 'sticker-calculator.html', 'invoice.html', 'gma-order-invoice.html', 'delivery-receipt.html'];
   if (SKIP.includes(page) || page.includes('print')) return;
   const script = document.createElement('script');
   script.src = 'js/aquariumBg.js?v=2';

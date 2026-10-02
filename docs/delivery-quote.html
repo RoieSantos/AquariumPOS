@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Delivery Quote - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=aq2" />
+  <link rel="stylesheet" href="css/styles.css?v=aq3" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -12,13 +12,437 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    /* Delivery Quote - Lalamove-style layout: route + price panel on the left, a full-height map
+       on the right. Only theme variables from css/styles.css are used for surfaces/text, so the
+       portal's dark mode keeps working; the price card is primary navy in both themes. */
+    .dq-page {
+      max-width: none;
+      padding: 18px 24px 28px;
+    }
+
+    .dq-header h1 {
+      margin: 0;
+    }
+
+    .dq-header p {
+      margin: 4px 0 16px;
+    }
+
+    .dq-layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .dq-side {
+      display: grid;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .dq-card {
+      padding: 16px 18px;
+      border-radius: 12px;
+    }
+
+    .dq-step-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .dq-step-num {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--primary);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .dq-step-head h2 {
+      margin: 0;
+      font-size: 15px;
+      color: var(--text-main);
+    }
+
+    .dq-hidden-select {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Delivery method - two big choice buttons driving the (hidden) #deliveryMethodSelect. */
+    .dq-method-toggle {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .dq-method {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      padding: 11px 12px;
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      background: var(--panel-bg);
+      color: var(--text-main);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease;
+    }
+
+    .dq-method:hover {
+      border-color: var(--primary);
+    }
+
+    .dq-method strong {
+      font-size: 14px;
+    }
+
+    .dq-method span {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .dq-method.active {
+      border-color: var(--primary);
+      background: rgba(29, 79, 145, 0.09);
+      box-shadow: inset 0 0 0 1px var(--primary);
+    }
+
+    :root[data-theme="dark"] .dq-method.active {
+      background: rgba(80, 140, 230, 0.16);
+    }
+
+    .dq-note {
+      margin: 12px 0 0;
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      line-height: 1.45;
+      background: rgba(29, 79, 145, 0.07);
+      color: var(--text-muted);
+    }
+
+    .dq-note-warn {
+      background: rgba(237, 161, 0, 0.13);
+      color: inherit;
+    }
+
+    .dq-field-top {
+      margin-top: 12px;
+      margin-bottom: 0;
+    }
+
+    /* Route timeline - green pick-up pin, then red numbered drop-off pins (same as the map's
+       markers), joined by a dashed line. Stop numbers come from a CSS counter, so they renumber
+       themselves when js/deliveryQuote.js adds/removes .delivery-quote-stop-row elements. */
+    .dq-route-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 26px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: start;
+      padding-bottom: 14px;
+    }
+
+    .dq-route-row::before {
+      content: '';
+      position: absolute;
+      left: 12px;
+      /* From just under this row's pin (22px label offset + 26px pin) down to the next row's pin. */
+      top: 52px;
+      bottom: -18px;
+      border-left: 2px dashed var(--panel-border);
+    }
+
+    #toStopsList .dq-route-row:last-child::before {
+      display: none;
+    }
+
+    #toStopsList {
+      counter-reset: dq-stop;
+    }
+
+    #toStopsList .dq-route-row {
+      counter-increment: dq-stop;
+    }
+
+    .dq-pin {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      margin-top: 22px;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 0 0 3px var(--panel-bg), 0 2px 6px rgba(0, 0, 0, 0.18);
+    }
+
+    .dq-pin-from {
+      background: #1e9a59;
+    }
+
+    .dq-pin-to {
+      background: #d6453b;
+    }
+
+    .dq-pin-to::before {
+      content: counter(dq-stop);
+    }
+
+    .dq-route-label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+    }
+
+    .dq-route-body input,
+    .dq-route-body select {
+      width: 100%;
+    }
+
+    .dq-remove-btn {
+      margin-top: 24px;
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .dq-remove-btn:hover {
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    .dq-add-stop {
+      width: 100%;
+      padding: 10px;
+      border: 1px dashed var(--input-border);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--primary);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    :root[data-theme="dark"] .dq-add-stop {
+      color: #8fb8f0;
+    }
+
+    .dq-add-stop:hover {
+      border-color: var(--primary);
+      background: rgba(29, 79, 145, 0.06);
+    }
+
+    .dq-contact-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 12px;
+    }
+
+    .dq-contact-grid .form-row {
+      margin-bottom: 10px;
+    }
+
+    /* Price card */
+    .dq-quote-card {
+      padding: 18px;
+      border-radius: 12px;
+      background: linear-gradient(160deg, #1d4f91 0%, #163e73 100%);
+      color: #fff;
+      box-shadow: 0 10px 28px rgba(22, 62, 115, 0.28);
+    }
+
+    .dq-quote-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.72);
+    }
+
+    .dq-price {
+      margin-top: 2px;
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+
+    .dq-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .dq-stat {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .dq-stat span {
+      display: block;
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .dq-stat strong {
+      display: block;
+      margin-top: 2px;
+      font-size: 14px;
+      word-break: break-word;
+    }
+
+    .dq-breakdown {
+      margin: 12px 0 0;
+      font-size: 12px;
+      line-height: 1.5;
+      color: rgba(255, 255, 255, 0.82);
+    }
+
+    .dq-empty {
+      margin-top: 6px;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    #quoteResult:not(.hidden) ~ .dq-empty {
+      display: none;
+    }
+
+    .dq-quote-card .dq-quote-btn {
+      width: 100%;
+      margin-top: 14px;
+      padding: 11px;
+      background: #fff;
+      color: #163e73;
+      font-weight: 700;
+    }
+
+    .dq-quote-card .dq-quote-btn:hover {
+      background: #eaf2fd;
+    }
+
+    .dq-quote-card .btn-success {
+      width: 100%;
+      padding: 11px;
+    }
+
+    .dq-quote-card .muted {
+      color: rgba(255, 255, 255, 0.75);
+    }
+
+    .dq-quote-card .error-text {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #fff1f1;
+      color: #8a2626;
+    }
+
+    .dq-error {
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid rgba(192, 57, 43, 0.35);
+      border-radius: 10px;
+      background: rgba(192, 57, 43, 0.08);
+    }
+
+    /* Map column - sticky and as tall as the viewport allows. */
+    .dq-map-col {
+      position: sticky;
+      top: 16px;
+      height: calc(100vh - 120px);
+      min-height: 460px;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid var(--panel-border);
+      background: var(--panel-bg);
+      box-shadow: var(--shadow);
+    }
+
+    .dq-map-col #quoteMap {
+      height: 100%;
+      margin-top: 0;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .dq-map-placeholder {
+      display: grid;
+      place-items: center;
+      height: 100%;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    #quoteMap:not(.hidden) ~ .dq-map-placeholder {
+      display: none;
+    }
+
+    @media (max-width: 960px) {
+      .dq-page {
+        padding: 14px 16px 24px;
+      }
+
+      .dq-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .dq-map-col {
+        position: static;
+        height: 360px;
+        min-height: 0;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .dq-contact-grid,
+      .dq-stats {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>Delivery Quote</h1>
-    <p class="muted">Pick a From and To location to estimate driving distance and delivery price, Lalamove-style.</p>
+  <div class="page dq-page">
+    <header class="dq-header">
+      <h1>Delivery Quote</h1>
+      <p class="muted">Pick where it's coming from and where it's going - the price updates automatically.</p>
+    </header>
 
     <!-- Not authorized (unused - Delivery Quote is open to all staff; kept for markup parity with other pages) -->
     <div id="notAuthorizedBox" class="hidden">
@@ -35,113 +459,143 @@
         <p class="error-text">Delivery pricing isn't configured yet. Ask a super user to set <strong>DELIVERY_BASE_FEE</strong> and <strong>DELIVERY_RATE_PER_KM</strong> in General Setup (marked "Visible to all staff").</p>
       </div>
 
-      <div class="card">
-        <div class="form-grid">
-          <div class="form-row">
-            <label for="deliveryMethodSelect">Delivery Method</label>
-            <select id="deliveryMethodSelect">
+      <div class="dq-layout">
+        <div class="dq-side">
+          <section class="card dq-card">
+            <div class="dq-step-head">
+              <span class="dq-step-num">1</span>
+              <h2>Delivery method</h2>
+            </div>
+            <div class="dq-method-toggle" role="radiogroup" aria-label="Delivery method">
+              <button class="dq-method active" type="button" role="radio" aria-checked="true" data-method="inhouse">
+                <strong>In-House</strong><span>Our own driver, multi-stop</span>
+              </button>
+              <button class="dq-method" type="button" role="radio" aria-checked="false" data-method="lalamove">
+                <strong>Lalamove</strong><span>Sandbox, single drop-off</span>
+              </button>
+            </div>
+            <!-- The real control js/deliveryQuote.js listens to - driven by the buttons above. -->
+            <select id="deliveryMethodSelect" class="dq-hidden-select" tabindex="-1" aria-hidden="true">
               <option value="inhouse">In-House Delivery</option>
               <option value="lalamove">Lalamove (Sandbox)</option>
             </select>
-          </div>
-          <div class="form-row hidden" id="lalamoveVehicleTypeRow">
-            <label for="lalamoveVehicleTypeSelect">Vehicle Type</label>
-            <select id="lalamoveVehicleTypeSelect">
-              <option value="">Loading vehicle types...</option>
-            </select>
-          </div>
-          <div class="form-row hidden" id="lalamoveSenderNameRow">
-            <label for="lalamoveSenderNameInput">Sender Name</label>
-            <input type="text" id="lalamoveSenderNameInput" placeholder="e.g. RS Pet Stop - Amaya" />
-          </div>
-          <div class="form-row hidden" id="lalamoveSenderPhoneRow">
-            <label for="lalamoveSenderPhoneInput">Sender Phone</label>
-            <input type="tel" id="lalamoveSenderPhoneInput" placeholder="e.g. 09171234567" />
-          </div>
-          <div class="form-row hidden" id="lalamoveRecipientNameRow">
-            <label for="lalamoveRecipientNameInput">Recipient Name</label>
-            <input type="text" id="lalamoveRecipientNameInput" placeholder="Customer name" />
-          </div>
-          <div class="form-row hidden" id="lalamoveRecipientPhoneRow">
-            <label for="lalamoveRecipientPhoneInput">Recipient Phone</label>
-            <input type="tel" id="lalamoveRecipientPhoneInput" placeholder="e.g. 09171234567" />
-          </div>
-          <div class="form-row">
-            <label for="fromWarehouseSelect">From</label>
-            <select id="fromWarehouseSelect">
-              <option value="">Loading warehouses...</option>
-              <option value="__other__">Other address...</option>
-            </select>
-          </div>
-          <div class="form-row hidden" id="fromOtherRow">
-            <label for="fromOtherInput">From Address</label>
-            <input type="text" id="fromOtherInput" placeholder="e.g. 123 Main St, Quezon City" />
-          </div>
-          <div class="form-row" style="grid-column: 1 / -1;">
-            <label>To (Delivery Address) - add a stop for each location on the route</label>
-            <div id="toStopsList"></div>
-            <button class="btn btn-secondary btn-sm" id="addStopBtn" type="button" style="margin-top:4px;">+ Add Location</button>
-            <p class="muted hidden" id="lalamoveMultiStopNote" style="margin-top:6px;">Lalamove quotes only support a single delivery address - switch to In-House Delivery for multiple stops.</p>
-          </div>
-        </div>
-
-        <p class="muted hidden" id="lalamoveSandboxNote">Sandbox mode - this calls Lalamove's test environment, not real pricing. Not usable for real customer quotes yet.</p>
-
-        <div id="quoteError" class="error-text hidden"></div>
-
-        <div style="margin-top:16px;">
-          <button class="btn btn-primary" id="getQuoteBtn" type="button">Get Quote</button>
-        </div>
-
-        <div id="quoteMap" class="hidden"></div>
-      </div>
-
-      <div id="quoteResult" class="hidden">
-        <div class="stat-card-grid">
-          <div class="stat-card">
-            <div class="stat-label">Distance</div>
-            <div class="stat-value" id="resultDistance">-</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Drive Time</div>
-            <div class="stat-value" id="resultDuration">-</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Toll Road</div>
-            <div class="stat-value" id="resultTollUsed">-</div>
-          </div>
-          <div class="stat-card stat-confirmed">
-            <div class="stat-label">Delivery Price</div>
-            <div class="stat-value" id="resultPrice">-</div>
-          </div>
-        </div>
-        <p class="muted" id="resultBreakdown"></p>
-
-        <div id="bookDeliverySection" class="hidden" style="margin-top:16px;">
-          <button class="btn btn-success" id="bookDeliveryBtn" type="button">Book Delivery</button>
-          <div id="bookDeliveryError" class="error-text hidden" style="margin-top:8px;"></div>
-        </div>
-        <p class="muted hidden" id="bookDeliveryRestrictedNote" style="margin-top:16px;">Booking a delivery is restricted to super users - ask one to book this quote.</p>
-
-        <div id="bookDeliveryResult" class="card hidden" style="margin-top:16px;">
-          <h3 style="margin-top:0;">Booking Confirmed</h3>
-          <div class="stat-card-grid">
-            <div class="stat-card">
-              <div class="stat-label">Order ID</div>
-              <div class="stat-value" id="bookedOrderId" style="font-size:18px;">-</div>
+            <p class="dq-note dq-note-warn hidden" id="lalamoveSandboxNote">Sandbox mode - this calls Lalamove's test environment, not real pricing. Not usable for real customer quotes yet.</p>
+            <div class="form-row dq-field-top hidden" id="lalamoveVehicleTypeRow">
+              <label for="lalamoveVehicleTypeSelect">Vehicle type</label>
+              <select id="lalamoveVehicleTypeSelect">
+                <option value="">Loading vehicle types...</option>
+              </select>
             </div>
-            <div class="stat-card">
-              <div class="stat-label">Status</div>
-              <div class="stat-value" id="bookedStatus" style="font-size:18px;">-</div>
+          </section>
+
+          <section class="card dq-card">
+            <div class="dq-step-head">
+              <span class="dq-step-num">2</span>
+              <h2>Route</h2>
             </div>
-            <div class="stat-card stat-confirmed">
-              <div class="stat-label">Total</div>
-              <div class="stat-value" id="bookedTotal">-</div>
+
+            <div class="dq-route">
+              <div class="dq-route-row">
+                <span class="dq-pin dq-pin-from" aria-hidden="true"></span>
+                <div class="dq-route-body">
+                  <label class="dq-route-label" for="fromWarehouseSelect">Pick-up</label>
+                  <select id="fromWarehouseSelect">
+                    <option value="">Loading warehouses...</option>
+                    <option value="__other__">Other address...</option>
+                  </select>
+                  <div class="hidden" id="fromOtherRow" style="margin-top: 8px;">
+                    <label class="dq-hidden-select" for="fromOtherInput">From Address</label>
+                    <input type="text" id="fromOtherInput" placeholder="Pick-up address, e.g. 123 Main St, Quezon City" />
+                  </div>
+                </div>
+                <span></span>
+              </div>
+              <div id="toStopsList"></div>
             </div>
+
+            <button class="dq-add-stop" id="addStopBtn" type="button">+ Add drop-off location</button>
+            <p class="dq-note hidden" id="lalamoveMultiStopNote">Lalamove quotes only support a single delivery address - switch to In-House for multiple stops.</p>
+          </section>
+
+          <section class="card dq-card hidden" id="lalamoveContactCard">
+            <div class="dq-step-head">
+              <span class="dq-step-num">3</span>
+              <h2>Contact details</h2>
+            </div>
+            <div class="dq-contact-grid">
+              <div class="form-row hidden" id="lalamoveSenderNameRow">
+                <label for="lalamoveSenderNameInput">Sender name</label>
+                <input type="text" id="lalamoveSenderNameInput" placeholder="e.g. RS Pet Stop - Amaya" />
+              </div>
+              <div class="form-row hidden" id="lalamoveSenderPhoneRow">
+                <label for="lalamoveSenderPhoneInput">Sender phone</label>
+                <input type="tel" id="lalamoveSenderPhoneInput" placeholder="e.g. 09171234567" />
+              </div>
+              <div class="form-row hidden" id="lalamoveRecipientNameRow">
+                <label for="lalamoveRecipientNameInput">Recipient name</label>
+                <input type="text" id="lalamoveRecipientNameInput" placeholder="Customer name" />
+              </div>
+              <div class="form-row hidden" id="lalamoveRecipientPhoneRow">
+                <label for="lalamoveRecipientPhoneInput">Recipient phone</label>
+                <input type="tel" id="lalamoveRecipientPhoneInput" placeholder="e.g. 09171234567" />
+              </div>
+            </div>
+          </section>
+
+          <div id="quoteError" class="error-text dq-error hidden"></div>
+
+          <section class="dq-quote-card" aria-live="polite">
+            <div class="dq-quote-label">Delivery price</div>
+
+            <div id="quoteResult" class="hidden">
+              <div class="dq-price" id="resultPrice">-</div>
+              <div class="dq-stats">
+                <div class="dq-stat"><span>Distance</span><strong id="resultDistance">-</strong></div>
+                <div class="dq-stat"><span>Drive time</span><strong id="resultDuration">-</strong></div>
+                <div class="dq-stat"><span>Toll road</span><strong id="resultTollUsed">-</strong></div>
+              </div>
+              <p class="dq-breakdown" id="resultBreakdown"></p>
+
+              <div id="bookDeliverySection" class="hidden" style="margin-top: 14px;">
+                <button class="btn btn-success" id="bookDeliveryBtn" type="button">Book Delivery</button>
+                <div id="bookDeliveryError" class="error-text hidden" style="margin-top: 8px;"></div>
+              </div>
+              <p class="muted hidden" id="bookDeliveryRestrictedNote" style="margin: 14px 0 0;">Booking a delivery is restricted to super users - ask one to book this quote.</p>
+            </div>
+
+            <div class="dq-empty">Choose a pick-up and at least one drop-off location - the price appears here automatically.</div>
+
+            <button class="btn dq-quote-btn" id="getQuoteBtn" type="button">Get Quote</button>
+          </section>
+
+          <div id="bookDeliveryResult" class="card dq-card hidden">
+            <div class="dq-step-head">
+              <span class="dq-step-num" style="background: var(--success);">&#10003;</span>
+              <h2>Booking confirmed</h2>
+            </div>
+            <div class="stat-card-grid">
+              <div class="stat-card">
+                <div class="stat-label">Order ID</div>
+                <div class="stat-value" id="bookedOrderId" style="font-size:18px;">-</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Status</div>
+                <div class="stat-value" id="bookedStatus" style="font-size:18px;">-</div>
+              </div>
+              <div class="stat-card stat-confirmed">
+                <div class="stat-label">Total</div>
+                <div class="stat-value" id="bookedTotal">-</div>
+              </div>
+            </div>
+            <p><a id="bookedShareLink" href="#" target="_blank" rel="noopener" class="hidden">Track this order on Lalamove &rarr;</a></p>
+            <button class="btn btn-danger btn-sm" id="cancelOrderBtn" type="button">Cancel Order</button>
+            <div id="cancelOrderError" class="error-text hidden" style="margin-top:8px;"></div>
           </div>
-          <p><a id="bookedShareLink" href="#" target="_blank" rel="noopener" class="hidden">Track this order on Lalamove &rarr;</a></p>
-          <button class="btn btn-danger btn-sm" id="cancelOrderBtn" type="button">Cancel Order</button>
-          <div id="cancelOrderError" class="error-text hidden" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="dq-map-col">
+          <div id="quoteMap" class="hidden"></div>
+          <div class="dq-map-placeholder">Loading map...</div>
         </div>
       </div>
     </div>
@@ -153,7 +607,7 @@
   <script src="js/auth.js"></script>
   <script src="js/nav.js?v=aq4"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/deliveryQuote.js"></script>
+  <script src="js/deliveryQuote.js?v=2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

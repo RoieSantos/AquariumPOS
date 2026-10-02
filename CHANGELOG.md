@@ -4,6 +4,19 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-02
 
+- Delivery Quote: redesigned Lalamove-style ([delivery-quote.html](docs/delivery-quote.html), [deliveryQuote.js](docs/js/deliveryQuote.js)) - route + price panel on the left, full-height sticky map on the right; In-House/Lalamove choice buttons, route timeline with green pick-up / red numbered drop-off pins matching the map markers, Lalamove contact details in their own card, and a blue price card with distance/drive time/toll. All element IDs and quoting logic unchanged; works in dark mode.
+- Shared styles: `input[type="tel"]` added to the base + dark-mode input rules in [styles.css](docs/css/styles.css) - phone fields (Delivery Quote, Online Orders) were rendering as unstyled white boxes.
+
+- Aquarium calculator: new Summary tab ([index.html](docs/WebAquariumCalculator/index.html)) - a printable quote sheet with total, key specs, safety notes, snapshots of the aquarium + stand drawings, grouped specification, price breakdown, stand cost breakdown and (toggleable) glass cut sheet; opened from the Calculator/Summary tabs or "View full summary" in the price panel, with Print / Save as PDF.
+
+- Calculators: fix blank page after the full-screen change - the iframe was painting under the fixed fish background canvas; it now has `position: relative; z-index: 1`, and [nav.js](docs/js/nav.js) skips the aquarium background on the 3 calculator pages (fully covered by the iframe anyway).
+
+- Calculators: now fill the whole screen - [aquarium-calculator.html](docs/aquarium-calculator.html), [stand-calculator.html](docs/stand-calculator.html), [sticker-calculator.html](docs/sticker-calculator.html) drop the heading/note/frame header and size the iframe to everything under the nav (was `100vh - 260px` inside a 1200px page); the calculator's own 1280px width cap is removed too.
+
+- Calculators (Aquarium / Stand / Sticker): redesigned for easier navigation - numbered step cards, a sticky step nav with scroll highlighting, a sticky live-price panel with the action buttons, toggle-tile checkboxes, and a fixed price bar on phones. New shared [calculator-ui.css](docs/WebAquariumCalculator/calculator-ui.css) + [calculator-ui.js](docs/WebAquariumCalculator/calculator-ui.js) replace the 3 duplicated inline stylesheets; all element IDs and pricing logic are unchanged ([index.html](docs/WebAquariumCalculator/index.html), [stand.html](docs/WebAquariumCalculator/stand.html), [sticker.html](docs/WebAquariumCalculator/sticker.html)).
+
+- Online Orders: plywood lines (e.g. CI-003 "PLYWOOD-CUSTOM") no longer need a Tank Maker - [supabase_online_order_plywood_no_maker.sql](sql/supabase_online_order_plywood_no_maker.sql) makes `_online_order_line_part` return no maker for plywood, which every maker check uses.
+
 - Serial Inventory Journal: the Serial Nos. dialog now has an SKU column (e.g. `AQ-002-ClearSealant`) so Black / Clear sealant units can be told apart - new [supabase_serial_journal_serials_sku.sql](sql/supabase_serial_journal_serials_sku.sql) adds `variant_sku` to `admin_get_serial_journal_line_serials`; [serialInventoryJournal.js](docs/js/serialInventoryJournal.js), [serial-inventory-journal.html](docs/serial-inventory-journal.html).
 
 - Products: one-off [supabase_resync_items_from_pancake.sql](sql/supabase_resync_items_from_pancake.sql) - checks the 5-min `sync-items-from-pancake` cron history, forces a full Pancake -> Items/Variants resync, and lists items/variants whose names still don't match (per "mismatch in the product name").

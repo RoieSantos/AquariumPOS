@@ -561,12 +561,16 @@ function updateStopRemoveButtons() {
 function addStopRow(prefillAddress) {
   const list = document.getElementById('toStopsList');
   const row = document.createElement('div');
-  row.className = 'delivery-quote-stop-row';
-  row.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:8px;';
+  // Laid out as a route-timeline row (numbered red pin, label, input, remove) - styling lives in
+  // delivery-quote.html's .dq-route-row/.dq-pin rules; the pin's number is a CSS counter.
+  row.className = 'delivery-quote-stop-row dq-route-row';
   row.innerHTML = `
-    <span class="muted delivery-quote-stop-label" style="min-width:82px;">Location</span>
-    <input type="text" class="to-stop-input" placeholder="e.g. 456 Sample Ave, Makati City" style="flex:1;" />
-    <button class="btn btn-danger btn-sm to-stop-remove-btn hidden" type="button" title="Remove this location">Remove</button>
+    <span class="dq-pin dq-pin-to" aria-hidden="true"></span>
+    <div class="dq-route-body">
+      <span class="dq-route-label delivery-quote-stop-label">Location</span>
+      <input type="text" class="to-stop-input" placeholder="Drop-off address, e.g. 456 Sample Ave, Makati City" />
+    </div>
+    <button class="dq-remove-btn to-stop-remove-btn hidden" type="button" title="Remove this location" aria-label="Remove this location">&#10005;</button>
   `;
   list.appendChild(row);
 
@@ -985,9 +989,25 @@ function wireForm() {
   const deliveryMethodSelect = document.getElementById('deliveryMethodSelect');
 
   const lalamoveOnlyRowIds = [
-    'lalamoveVehicleTypeRow', 'lalamoveSenderNameRow', 'lalamoveSenderPhoneRow',
+    'lalamoveVehicleTypeRow', 'lalamoveContactCard', 'lalamoveSenderNameRow', 'lalamoveSenderPhoneRow',
     'lalamoveRecipientNameRow', 'lalamoveRecipientPhoneRow'
   ];
+
+  // The In-House/Lalamove choice buttons are just a face for the hidden #deliveryMethodSelect -
+  // clicking one sets its value and fires the same 'change' event the handler below listens to.
+  const methodButtons = Array.from(document.querySelectorAll('.dq-method'));
+  methodButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (deliveryMethodSelect.value === btn.dataset.method) return;
+      deliveryMethodSelect.value = btn.dataset.method;
+      methodButtons.forEach((b) => {
+        const active = b === btn;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-checked', String(active));
+      });
+      deliveryMethodSelect.dispatchEvent(new Event('change'));
+    });
+  });
 
   // Per "make sure that we change every field the price will be auto populated" - switching
   // between in-house/Lalamove pricing is itself a request for a new price, same as picking a
