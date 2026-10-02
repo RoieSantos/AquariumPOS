@@ -2531,6 +2531,12 @@ a.bc-cue:hover {
   #setupContent.mine-mode #listProductionDoneBtn { display: none !important; }
   #setupContent.mine-mode .oo-mine-cards { display: grid; gap: 12px; margin-top: 12px; }
 }
+/* Maker focus (js/onlineOrders.js isMakerFocus) - incl. a Store Manager who dispatches: the same
+   cards on every width, no wide grid with amounts. */
+#setupContent.assign-focus #flatOrdersView,
+#setupContent.assign-focus #openOrderBtn,
+#setupContent.assign-focus #listProductionDoneBtn { display: none !important; }
+#setupContent.assign-focus .oo-mine-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-top: 12px; }
 .oo-mc { background: var(--bc-surface, #fff); border: 1px solid var(--bc-line, #d9dee5); border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(16, 36, 64, .06); }
 .oo-mc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .oo-mc-id { font-size: 20px; font-weight: 700; color: var(--bc-link, #1560a8); text-decoration: none; }
@@ -2604,6 +2610,10 @@ a.bc-cue:hover {
 #orderCardModal.maker-focus #orderCardPhotosPart,
 #orderCardModal.maker-focus #orderCardMaximizeBtn,
 #orderCardModal.maker-focus #cardSendBackBtn,
+#orderCardModal.maker-focus #cardSendPhotoBtn,
+#orderCardModal.maker-focus #cardSendMessageBtn,
+#orderCardModal.maker-focus #cardToShipBtn,
+#orderCardModal.maker-focus #cardAssignBtn,
 #orderCardModal.maker-focus .line-items-wrap,
 #orderCardModal.maker-focus .attachment-remove-btn { display: none !important; }
 #orderCardModal.maker-focus .oc-line-cards, #prodCardModal .oc-line-cards { display: grid; gap: 10px; }

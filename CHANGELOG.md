@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-02
 
+- My Assignments: the stripped maker view (no amounts, no payment/general tabs, no Send Photo/To-Ship/Assign) now applies to anyone working from My Assignments who isn't a Super User / Production Manager - e.g. a Store Manager who is also a Dispatcher, who used to get the full order card with amounts. In that view the list is the compact cards on every screen width (no wide grid with Delivery Fee / Confirmed By etc.). `onlineOrders.js` (`isMakerFocus`, new `hidePrices`), `bc-list.css`.
+
 - My Assignments (maker view): restock Production Order cards now open on tap - a full-screen sheet with each of the maker's lines as Item / Description / SKU / Qty left, plus Production Done (before, only the small order-no link went to production-orders.html). Online order line cards are labelled the same way (Item / Description / SKU / Qty). `onlineOrders.js`, `online-orders.html`, `bc-list.css`.
 - New `sql/supabase_production_order_lines_sku.sql`: `staff_list_production_order_lines` returns a `sku` column (variant SKU → item SKU → Item Code); the page falls back to Item Code until it's run.
 

@@ -1377,7 +1377,7 @@ function orderRowsHtml(orders) {
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${o.received_at_shop && posNoteSummary(o) ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${escapeHtml(posNoteSummary(o))}</span>` : escapeHtml(o.note_print)}${!o.received_at_shop && posNoteSummary(o) ? `${o.note_print ? ' ' : ''}<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}"><b>POS:</b> ${escapeHtml(posNoteSummary(o))}</span>` : ''}</td>
-        ${hidePriceColumns ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
+        ${hidePrices() ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
         <td>${o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : ''}</td>
@@ -2871,11 +2871,11 @@ function fillOrderCardHeader(o) {
   setCardText('ocEstDelivery', o.estimated_delivery_date);
   setCardText('ocDeliveryFee', o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '');
   setCardText('ocPrintNote', o.note_print);
-  document.getElementById('ocDeliveryFeeRow').classList.toggle('hidden', hidePriceColumns);
+  document.getElementById('ocDeliveryFeeRow').classList.toggle('hidden', hidePrices());
 
   // Payment FastTab - same Pancake-synced amounts as the Excel export's Money To Collect /
   // Amount Paid / Discount / Balance columns.
-  document.getElementById('orderCardPaymentTab').classList.toggle('hidden', hidePriceColumns);
+  document.getElementById('orderCardPaymentTab').classList.toggle('hidden', hidePrices());
   setCardText('ocMoneyToCollect', money(o.money_to_collect));
   setCardText('ocDiscount', money(o.discount));
   setCardText('ocAmountPaid', money(o.amount_paid));
@@ -2974,8 +2974,18 @@ function cardAttachmentCellHtml(lineId) {
 // (item, quantity, spec note, attachments) and the glass cut. Everything else on the document
 // (General, Assignment, Delivery, Payment, Photos Sent, Rework History, most actions) is hidden by
 // #orderCardModal.maker-focus in css/bc-list.css.
+// Per "check on the dispatcher side.. dont show the amount, i want the same view for the maker too..
+// dont give too much info": anyone working from My Assignments who isn't a Super User / Production
+// Manager (e.g. a Store Manager who is also a Dispatcher) gets the same stripped view, not just
+// maker-only accounts.
 function isMakerFocus() {
-  return myAssignmentsLocked;
+  return myAssignmentsLocked || (myAssignmentsOnly && !!currentSession?.isOrderMaker
+    && !currentSession.isSuperUser && !currentSession.isProductionManager);
+}
+
+// No amounts for price-hidden roles, nor for anyone in the maker focus view.
+function hidePrices() {
+  return hidePriceColumns || isMakerFocus();
 }
 
 function renderOrderCardLineCards() {
@@ -3031,7 +3041,7 @@ function renderOrderCardLines() {
     return;
   }
 
-  const priceCell = (v) => (hidePriceColumns ? '' : `<td class="num">${money(v)}</td>`);
+  const priceCell = (v) => (hidePrices() ? '' : `<td class="num">${money(v)}</td>`);
   tbody.innerHTML = cardLines.map((l) => `
     <tr>
       <td>${escapeHtml(l.item_code || l.product_display_id)}</td>
@@ -3050,7 +3060,7 @@ function renderOrderCardLines() {
   const totalNet = cardLines.reduce((sum, l) => sum + (lineAmount(l) || 0), 0);
   tfoot.innerHTML = `<tr>
     <td>Total</td><td></td><td class="num">${totalQty}</td>
-    ${hidePriceColumns ? '' : `<td></td><td></td><td class="num">${money(totalNet)}</td>`}
+    ${hidePrices() ? '' : `<td></td><td></td><td class="num">${money(totalNet)}</td>`}
     <td></td><td></td></tr>`;
 }
 
@@ -3116,7 +3126,7 @@ function parsePosDescription(note) {
     const kv = text.match(/^([A-Za-z][A-Za-z ]{0,20}):\s*(.*)$/);
     if (!kv) { rows.push({ label: '', value: text }); return; }
     const key = kv[1].trim();
-    if (hidePriceColumns && POS_DESC_MONEY_KEYS.includes(key.toLowerCase())) return;
+    if (hidePrices() && POS_DESC_MONEY_KEYS.includes(key.toLowerCase())) return;
     if (!kv[2].trim()) return;
     rows.push({ label: key === 'Order' ? 'Description' : key, value: kv[2].trim() });
   });
@@ -3464,11 +3474,11 @@ function openOrderCard(orderId) {
     input.readOnly = isMakerFocus();
     input.title = isMakerFocus() ? 'Stock sheet size is set by the Production Manager' : '';
   });
-  document.querySelectorAll('#orderCardModal .oc-price').forEach((th) => th.classList.toggle('hidden', hidePriceColumns));
+  document.querySelectorAll('#orderCardModal .oc-price').forEach((th) => th.classList.toggle('hidden', hidePrices()));
   fillOrderCardHeader(o);
   document.getElementById('orderCardModal').classList.remove('hidden');
   loadOrderCardLines(openCardOrderId);
-  if (!hidePriceColumns) loadOrderCardPaymentMethods(openCardOrderId);
+  if (!hidePrices()) loadOrderCardPaymentMethods(openCardOrderId);
   loadOrderCardReworkHistory(openCardOrderId);
 }
 
@@ -3645,6 +3655,9 @@ async function loadOrders(search, status) {
   refreshOpenOrderCardHeader();
 
   document.getElementById('setupContent').classList.toggle('mine-mode', myAssignmentsOnly);
+  // Maker focus: the cards on every width instead of the wide grid (css/bc-list.css .assign-focus).
+  document.getElementById('setupContent').classList.toggle('assign-focus', isMakerFocus());
+  document.getElementById('deliveryFeeHeader').classList.toggle('hidden', hidePrices());
   if (myAssignmentsOnly) renderMyAssignmentCards(rows);
   loadMyProductionOrderCards();
 
