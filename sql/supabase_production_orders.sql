@@ -281,7 +281,9 @@ begin
     left join public."Warehouses" w on w."ID" = o."WarehouseId"
     left join public."StaffUsers" tm on tm."Username" = o."TankMaker"
     left join public."StaffUsers" sm on sm."Username" = o."StandMaker"
-    where (v_status is null or o."Status" = v_status)
+    where (v_status is null
+        or o."Status" = v_status
+        or (v_status = 'Active' and o."Status" in ('Open', 'Released'))) -- supabase_production_finished_orders_view.sql
       and (not v_mine or (o."Status" = 'Released' and (
             (o."TankMaker" = p_admin_username and coalesce(a.needs_tank, false))
          or (o."StandMaker" = p_admin_username and coalesce(a.needs_stand, false)))))
@@ -292,6 +294,7 @@ begin
                    where l."ProdOrderNo" = o."No"
                      and (l."ItemCode" ilike '%' || v_search || '%' or coalesce(l."Description", '') ilike '%' || v_search || '%')))
     order by case o."Status" when 'Released' then 0 when 'Open' then 1 else 2 end,
+             o."FinishedAtUtc" desc nulls last,
              o."DueDate" nulls last, o."CreatedAtUtc" desc
     limit v_size offset v_offset;
 end;

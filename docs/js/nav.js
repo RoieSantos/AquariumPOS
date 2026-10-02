@@ -4,7 +4,8 @@
 function compactProductionLinks(session, activeLabel) {
   if (!(session?.isProductionManager || session?.isOrderMaker)) return '';
   return `
-          <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>
+          <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>${session.isProductionManager ? `
+          <a class="topnav-link${activeLabel === 'Finished Production Orders' ? ' active' : ''}" href="production-orders.html?view=finished">Finished</a>` : ''}
           <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>`;
 }
 
@@ -192,6 +193,10 @@ function renderTopNav(activeLabel) {
   const production = [];
   if (isSuperUser || session?.isProductionManager || session?.isOrderMaker) {
     production.push({ href: 'production-orders.html', label: 'Production Orders' });
+    // Finished ones, in their own list (supabase_production_finished_orders_view.sql) - managers only.
+    if (isSuperUser || session?.isProductionManager) {
+      production.push({ href: 'production-orders.html?view=finished', label: 'Finished Production Orders' });
+    }
     // Where each built unit is stored, by serial (supabase_production_shelf_map.sql).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
   }

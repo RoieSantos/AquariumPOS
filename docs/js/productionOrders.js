@@ -4,10 +4,15 @@
 // are finished - into the Item Ledger at the order's warehouse, with new IN_STOCK serials for
 // serial-tracked items. A maker opening this page only sees their own Released orders, read-only,
 // with a Production Done button for their part.
+//
+// production-orders.html?view=finished is the Finished Production Orders list (managers only) - the
+// same card, but the list is Finished orders only. The main list defaults to Active (Open + Released),
+// so Finished orders drop off it (supabase_production_finished_orders_view.sql).
+const FINISHED_VIEW = new URLSearchParams(window.location.search).get('view') === 'finished';
 let currentSession = null;
 let isManager = false;
 let currentSearch = '';
-let currentStatus = '';
+let currentStatus = FINISHED_VIEW ? 'Finished' : 'Active';
 let currentPage = 1;
 let currentPageSize = 50;
 let searchDebounceHandle = null;
@@ -100,7 +105,8 @@ async function loadProductionOrders() {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_search: currentSearch || null,
-    p_status: currentStatus || null,
+    // Makers only ever get their Released orders (server-side), so no status filter for them.
+    p_status: isManager ? (currentStatus || null) : null,
     p_assigned_to_me: !isManager,
     p_page: currentPage,
     p_page_size: currentPageSize
@@ -113,7 +119,10 @@ async function loadProductionOrders() {
 
   lastRows = data || [];
   tbody.innerHTML = lastRows.length === 0
-    ? `<tr><td colspan="11" class="cell-msg">${isManager ? 'No production orders yet - create one with New.' : 'No production orders are assigned to you right now.'}</td></tr>`
+    ? `<tr><td colspan="11" class="cell-msg">${!isManager ? 'No production orders are assigned to you right now.'
+      : FINISHED_VIEW ? 'No finished production orders yet.'
+      : currentStatus === 'Active' && !currentSearch ? 'No open or released production orders - create one with New. Finished ones are under Finished Production Orders.'
+      : 'No production orders match.'}</td></tr>`
     : lastRows.map((o) => `
       <tr class="clickable-row" data-order-no="${escapeHtml(o.order_no)}">
         <td><span class="bc-doc-no">${escapeHtml(o.order_no)}</span></td>
@@ -1395,9 +1404,23 @@ function wireLinesGrid() {
   if (!session) return;
   currentSession = session;
   LabelPrinter.init(session);
-  renderTopNav('Production Orders');
+  renderTopNav(FINISHED_VIEW ? 'Finished Production Orders' : 'Production Orders');
 
   isManager = !!(session.isSuperUser || session.isProductionManager);
+  if (FINISHED_VIEW) {
+    document.title = 'Finished Production Orders - RS Pet Stop Portal';
+    document.querySelector('.bc-title').textContent = 'Finished Production Orders';
+    document.getElementById('prodSubtitle').textContent = 'Production orders where everything has been output into stock. Open one to see its lines, output serials, materials used and rework history.';
+    document.getElementById('newProdBtn').classList.add('hidden');
+    document.getElementById('prodStatusFilter').closest('label').classList.add('hidden');
+  }
+  if (FINISHED_VIEW && !isManager) {
+    document.getElementById('prodPageError').textContent = 'Finished Production Orders are for Production Managers only.';
+    document.getElementById('prodPageError').classList.remove('hidden');
+    document.querySelector('.bc-cmdbar').classList.add('hidden');
+    document.getElementById('prodGridWrap').classList.add('hidden');
+    return;
+  }
   if (!isManager && !session.isOrderMaker) {
     document.getElementById('prodPageError').textContent = 'Production Orders are for Production Managers and makers (Tank / Stand Maker) only.';
     document.getElementById('prodPageError').classList.remove('hidden');

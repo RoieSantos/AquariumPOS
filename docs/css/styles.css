@@ -965,6 +965,11 @@ a.badge:hover { text-decoration: underline; }
   margin: 0 0 6px;
 }
 
+/* Back-to-back grids (the Monthly section's three grouped rows) get the same gap as within a row. */
+.finance-card-grid + .finance-card-grid {
+  margin-top: 18px;
+}
+
 .finance-card {
   display: block;
   position: relative;
@@ -999,6 +1004,14 @@ a.badge:hover { text-decoration: underline; }
 
 .finance-card.finance-sales {
   background: linear-gradient(135deg, #22b6a3 0%, #1d4f91 100%);
+}
+
+.finance-card.finance-paid {
+  background: linear-gradient(135deg, #43a047 0%, #1b5e20 100%);
+}
+
+.finance-card.finance-total-sales {
+  background: linear-gradient(135deg, #1d976c 0%, #1d4f91 100%);
 }
 
 .finance-card.finance-walkin {

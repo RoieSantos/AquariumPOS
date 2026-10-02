@@ -98,14 +98,28 @@ async function loadFinancialSummary(session) {
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return;
 
-  // "Total Sales" for the profit card is exactly the "Total Sales This Month" card's own figure
-  // (online orders only, row.month_sales) - per explicit correction, NOT combined with Walk-In.
-  monthlyTotals.sales = Number(row.month_sales) || 0;
+  // "Total Sales" for the profit card is the combined "Total Sales This Month" card's figure
+  // (Online + Walk-In) - per "Projected Profit this month formula should be take from Total Sales
+  // This month not the online sales this month". The two halves are disjoint (ReceivedAtShop
+  // true vs not true in the RPC), so summing them never double-counts an order.
+  const totalSales = (Number(row.month_sales) || 0) + (Number(row.walkin_sales_month) || 0);
+  monthlyTotals.sales = totalSales;
 
-  document.getElementById('statAmountToReceive').textContent = formatCurrency(row.amount_to_receive);
   document.getElementById('statMonthSales').textContent = formatCurrency(row.month_sales);
 
   const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  // "Amount Paid This Month" / "Amount to Receive This Month" - this month's online orders split
+  // into what's been paid and what's still owed (replaces the old all-time Amount to Receive card).
+  const paidCount = row.month_paid_order_count || 0;
+  setStatValue('statMonthAmountPaid', formatCurrency(row.month_amount_paid));
+  const paidSubEl = document.getElementById('statMonthAmountPaidSub');
+  if (paidSubEl) paidSubEl.textContent = `${monthLabel} · ${paidCount} ${paidCount === 1 ? 'order' : 'orders'} with payment`;
+
+  const toReceiveCount = row.month_to_receive_order_count || 0;
+  setStatValue('statAmountToReceive', formatCurrency(row.month_amount_to_receive));
+  const toReceiveSubEl = document.getElementById('statAmountToReceiveSub');
+  if (toReceiveSubEl) toReceiveSubEl.textContent = `${monthLabel} · ${toReceiveCount} unpaid ${toReceiveCount === 1 ? 'order' : 'orders'}`;
   const orderCount = row.month_order_count || 0;
   const orderWord = orderCount === 1 ? 'order' : 'orders';
   document.getElementById('statMonthSalesSub').textContent = `${monthLabel} · ${orderCount} ${orderWord} so far`;
@@ -114,6 +128,15 @@ async function loadFinancialSummary(session) {
   const walkinCount = row.walkin_order_count || 0;
   const walkinWord = walkinCount === 1 ? 'order' : 'orders';
   document.getElementById('statWalkInSalesSub').textContent = `${monthLabel} · ${walkinCount} ${walkinWord} so far`;
+
+  // "Total Sales This Month" = Online + Walk-In, summed from the two figures above (same RPC row,
+  // so it always matches the two cards beside it). Also feeds the Profit card via monthlyTotals.sales.
+  setStatValue('statMonthTotalSales', formatCurrency(totalSales));
+  const totalSalesSubEl = document.getElementById('statMonthTotalSalesSub');
+  if (totalSalesSubEl) {
+    totalSalesSubEl.textContent =
+      `${monthLabel} · Online ${formatCurrency(row.month_sales)} + Walk-In ${formatCurrency(row.walkin_sales_month)}`;
+  }
 
   // Mirrors the super-user "Walk-In Sales This Month" card above, for the standalone card shown
   // to regular (non-sales, non-super) staff - see walkInOnlyCard gating below.
@@ -358,7 +381,7 @@ async function loadDailyByWarehouse(session) {
 // loadExpenseSummary/loadFinancialSummary above, so all three sections agree on "this month".
 //
 // Counts POSTED purchase orders only, costed against Qty Received, and dated by the PO's
-// OrderDate - see the RPC for why each of those was chosen.
+// posting date (PostedAtUtc, Manila time) - see the RPC for why each of those was chosen.
 async function loadPurchaseSummary(session) {
   if (!session.password) return;
 
@@ -428,9 +451,8 @@ async function loadPayrollSummary(session) {
 }
 
 // "Projected Profit This Month" card - "Projected Profit = Total sales - (Expense + total
-// purchase + payroll)", where Total Sales is exactly the "Total Sales This Month" card's own
-// figure (online orders only) - explicitly NOT combined with Walk-In Sales, confirmed after an
-// initial version that did combine them produced a materially wrong number. Purely a client-side
+// purchase + payroll)", where Total Sales is the combined "Total Sales This Month" card's figure
+// (Online + Walk-In). Purely a client-side
 // combination of the four numbers already loaded above - call this only after all four
 // load*Summary calls have resolved, so monthlyTotals is fully populated (a call before then would
 // just show ₱0.00 minus whatever happened to load first).

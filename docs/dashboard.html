@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=aq2" />
+  <link rel="stylesheet" href="css/styles.css?v=aq5" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -65,17 +65,53 @@
 
     <div class="hidden" id="financeCardGrid">
       <h3 class="finance-section-heading">Monthly</h3>
+      <!-- Monthly cards grouped into three rows per "can you group this": 1) Paid / To Receive /
+           Profit, 2) Total / Online / Walk-In Sales, 3) Purchase / Expense / Payroll. -->
       <div class="finance-card-grid">
-        <a class="finance-card finance-receive" href="online-orders.html?filter=outstanding">
+        <!-- Per "instead of amount to receive.. compute the amount paid for this month and amount
+             about to receive for this month" - both scoped to this month's online orders
+             (admin_get_online_order_financial_summary month_amount_paid / month_amount_to_receive). -->
+        <a class="finance-card finance-paid" href="online-orders.html?period=month">
           <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">💰</span> Amount to Receive</div>
+            <div class="finance-label"><span class="finance-icon">✅</span> Amount Paid This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthAmountPaid">-</div>
+          <div class="finance-sub" id="statMonthAmountPaidSub">Paid on this month's online orders</div>
+        </a>
+        <a class="finance-card finance-receive" href="online-orders.html?filter=outstanding&period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">💰</span> Amount to Receive This Month</div>
           </div>
           <div class="finance-value" id="statAmountToReceive">-</div>
-          <div class="finance-sub">Outstanding balance across all unpaid online orders</div>
+          <div class="finance-sub" id="statAmountToReceiveSub">Unpaid balance on this month's online orders</div>
         </a>
+        <!-- "Projected Profit = Total sales - (Expense + total purchase + payroll)" - computed
+             client-side in js/dashboard.js from those same four cards' numbers once all are
+             loaded, no new RPC needed. "Total Sales" here is exactly the "Total Sales This Month"
+             card's figure (Online + Walk-In combined). Not a
+             link - it's a derived figure, not a report page. -->
+        <div class="finance-card finance-profit" id="profitCard">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">📊</span> Projected Profit This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthProfit">-</div>
+          <div class="finance-sub" id="statMonthProfitSub">Sales - Expense - Purchase - Payroll</div>
+        </div>
+      </div>
+      <div class="finance-card-grid">
+        <!-- Online + Walk-In combined - per "add one more Total Sales This Month this consist of
+             Total Online Sales and Total Walkin sales this month". Not a link: online-orders.html
+             has no combined online+walk-in list to deep-link into (same as the Profit card). -->
+        <div class="finance-card finance-total-sales">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">💵</span> Total Sales This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthTotalSales">-</div>
+          <div class="finance-sub" id="statMonthTotalSalesSub">Online + Walk-In, current month to date</div>
+        </div>
         <a class="finance-card finance-sales" href="online-orders.html?period=month">
           <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">📈</span> Total Sales This Month</div>
+            <div class="finance-label"><span class="finance-icon">📈</span> Online Sales This Month</div>
           </div>
           <div class="finance-value" id="statMonthSales">-</div>
           <div class="finance-sub" id="statMonthSalesSub">Online orders, current month to date</div>
@@ -87,19 +123,21 @@
           <div class="finance-value" id="statWalkInSales">-</div>
           <div class="finance-sub" id="statWalkInSalesSub">In-store orders, current month to date</div>
         </a>
-        <a class="finance-card finance-expense" href="expense-entries.html?period=month">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">🧾</span> Expense This Month</div>
-          </div>
-          <div class="finance-value" id="statMonthExpense">-</div>
-          <div class="finance-sub" id="statMonthExpenseSub">Posted expenses, current month to date</div>
-        </a>
+      </div>
+      <div class="finance-card-grid">
         <a class="finance-card finance-purchase" href="posted-purchase-orders.html">
           <div class="finance-top">
             <div class="finance-label"><span class="finance-icon">🛒</span> Total Purchase</div>
           </div>
           <div class="finance-value" id="statTotalPurchase">-</div>
           <div class="finance-sub" id="statTotalPurchaseSub">Posted purchase orders, current month to date</div>
+        </a>
+        <a class="finance-card finance-expense" href="expense-entries.html?period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🧾</span> Expense This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthExpense">-</div>
+          <div class="finance-sub" id="statMonthExpenseSub">Posted expenses, current month to date</div>
         </a>
         <!-- Per "after the finalize payroll run i want to show it here .. so I can track how much
              is the salary spent for this month" - sum of Net Pay across every run finalized with a
@@ -112,18 +150,6 @@
           <div class="finance-value" id="statMonthPayroll">-</div>
           <div class="finance-sub" id="statMonthPayrollSub">Net pay, finalized runs paid this month</div>
         </a>
-        <!-- "Projected Profit = Total sales - (Expense + total purchase + payroll)" - computed
-             client-side in js/dashboard.js from those same four cards' numbers once all are
-             loaded, no new RPC needed. "Total Sales" here is exactly the "Total Sales This Month"
-             card's own figure (online orders only) - NOT combined with Walk-In Sales. Not a
-             link - it's a derived figure, not a report page. -->
-        <div class="finance-card finance-profit" id="profitCard">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">📊</span> Projected Profit This Month</div>
-          </div>
-          <div class="finance-value" id="statMonthProfit">-</div>
-          <div class="finance-sub" id="statMonthProfitSub">Sales - Expense - Purchase - Payroll</div>
-        </div>
       </div>
 
       <h3 class="finance-section-heading">Daily</h3>
@@ -363,7 +389,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=aq4"></script>
+  <script src="js/nav.js?v=aq6"></script>
   <script src="js/companyBranding.js"></script>
   <script src="js/pushNotifications.js?v=2"></script>
   <script src="js/dashboard.js"></script>

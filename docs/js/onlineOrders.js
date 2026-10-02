@@ -235,6 +235,27 @@ function gmaBadgeHtml(order) {
   return `<a class="badge badge-purple" href="automated-orders.html?order=${encodeURIComponent(order.gma_order_no || '')}" title="Created from a GMA conversation - click to see the originating request.">GMA Page</a>`;
 }
 
+// Production Order(s) built for this order (ProductionOrders.SourceOnlineOrderId - attachProductionOrders,
+// sql/supabase_online_order_production_order_tag.sql) - per "in the online order.. can we tag the
+// production order no. created?". Links to that production order in the SAME tab: the portal login is
+// in sessionStorage (auth.js), which a target="_blank" link (noopener) doesn't carry over, so a new tab
+// landed on the login page.
+function prodOrderBadgeHtml(order) {
+  return (order.production_orders || []).map((p) => `<a class="badge ${p.status === 'Finished' ? 'badge-success' : 'badge-neutral'}" href="production-orders.html?no=${encodeURIComponent(p.production_order_no)}" title="Production Order ${escapeHtml(p.production_order_no)} (${escapeHtml(p.status || '')}) was created for this order - click to open it.">${escapeHtml(p.production_order_no)}</a>`).join(' ');
+}
+
+// Dispatcher partial release (attachReleaseSummary, sql/supabase_online_order_partial_release.sql) -
+// "Released 2/5" while some units are still pending. Nothing once fully shipped.
+function releaseBadgeHtml(order) {
+  const r = order.release;
+  if (!r || Number(r.released_qty) >= Number(r.ordered_qty)) return '';
+  return `<span class="oo-released" title="Partially released in ${r.batches} batch${r.batches === 1 ? '' : 'es'} - the rest is still pending">Released ${Number(r.released_qty)}/${Number(r.ordered_qty)}</span>`;
+}
+
+function orderBadgesHtml(order) {
+  return `${glassBadgeHtml(order)} ${customBadgeHtml(order)} ${gmaBadgeHtml(order)} ${prodOrderBadgeHtml(order)} ${releaseBadgeHtml(order)}`;
+}
+
 // "Assigned To" dropdown(s) - per "maybe each order can be assign a tank maker and a stand maker.
 // if an order has Aquarium order assign tank maker, if stand then we can assign stand maker": one
 // order can need a Tank Maker (has_aquarium_line), a Stand Maker (has_stand_line), both, or
@@ -478,7 +499,7 @@ function renderMyAssignmentCards(rows) {
     // The assigned Dispatcher marks a To Ship order Shipped once it's delivered; otherwise the
     // maker's Production Done (hidden once the order has moved on).
     const pdBtn = canMarkShipped(o)
-      ? `<button type="button" class="oo-mc-btn primary" data-shipped-order="${escapeHtml(o.order_id)}">&#128666; Mark Shipped</button>`
+      ? `<button type="button" class="oo-mc-btn primary" data-shipped-order="${escapeHtml(o.order_id)}">&#128666; ${o.release ? 'Release Remaining' : 'Release / Ship'}</button>`
       : mine.length && canChange ? `<button type="button" class="oo-mc-btn ${allMineDone ? 'undo' : 'primary'}" data-pd-order="${escapeHtml(o.order_id)}">
         ${allMineDone ? 'Undo Production Done' : '&#10003; Production Done'}</button>`
       // Their part, but production is closed - shown greyed out with the reason rather than hidden.
@@ -487,7 +508,7 @@ function renderMyAssignmentCards(rows) {
       <article class="oo-mc is-clickable" data-order-id="${escapeHtml(o.order_id)}" data-open-order="${escapeHtml(o.order_id)}" role="button" tabindex="0" aria-label="Open order ${escapeHtml(o.order_id)}">
         <header class="oo-mc-head">
           <span class="oo-mc-id">#${escapeHtml(o.order_id)}</span>
-          <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)}
+          <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)} ${prodOrderBadgeHtml(o)} ${releaseBadgeHtml(o)}
           <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
         </header>
         <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
@@ -797,9 +818,11 @@ function stockStatusFor(o) {
   return s && s !== 'loading' ? s : null;
 }
 
+// 'assigned' too: a stock build moves the order to Assigned (supabase_online_order_stock_build_assigned.sql)
+// and it still needs this check for In Production / Ready to Ship.
 function isStockCheckCandidate(o) {
   if (!o || !canAssignOrders() || neededProductionRoles(o).length) return false;
-  return ['confirmed', 'submitted', 'printed'].includes((o.status || '').trim().toLowerCase());
+  return ['confirmed', 'submitted', 'printed', 'assigned'].includes((o.status || '').trim().toLowerCase());
 }
 
 async function ensureStockStatus(o) {
@@ -832,6 +855,12 @@ function nextStepForStock(o) {
   if (!s || !s.needs_serial || s.has_custom_line) return null;
   if (s.all_available) {
     return { action: 'ship-stock', label: 'Ready to Ship', icon: 'ico-ship', title: `In stock at ${s.warehouse_name || 'this branch'} - pick the serial(s) and move it to To Ship.\n${stockLinesSummary(s)}` };
+  }
+  // Being built but not Assigned yet - the status update to Pancake failed, or it was linked before
+  // stock builds moved the order to Assigned. Retries just that (and the customer message).
+  if (s.production_order_no && ['Open', 'Released'].includes(s.production_order_status)
+      && (o.status || '').trim().toLowerCase() !== 'assigned') {
+    return { action: 'stock-assigned', label: 'Set Assigned', icon: 'ico-assign', title: `Being built on ${s.production_order_no}, but the order isn't Assigned yet. Moves it to Assigned in the portal and Pancake and sends the customer the "in production" message.` };
   }
   if (s.production_order_no && ['Open', 'Released'].includes(s.production_order_status)) {
     return { action: 'open-prod', label: `In Production ${s.production_order_no}`, icon: 'ico-done', title: `Being built on ${s.production_order_no} (${s.production_order_status}). It can ship once its output is posted.\n${stockLinesSummary(s)}` };
@@ -915,13 +944,56 @@ async function openStockBuildDialog(o) {
     const link = await supabaseClient.rpc('staff_link_production_order_to_online_order', { ...creds, p_no: prodNo, p_order_id: String(o.order_id) });
     if (link.error) { fail(`Created ${prodNo}, but could not link it to this order: ${link.error.message}`); return; }
     const rel = await supabaseClient.rpc('staff_set_production_order_released', { ...creds, p_no: prodNo, p_released: true });
+    // The link copied the makers onto the order; now it goes Assigned (portal + Pancake) and the
+    // customer gets the "in production" message, same as a custom order.
+    btn.textContent = 'Updating status...';
+    const assigned = await syncAssignedStatus(o, btn);
     close();
+    o.production_orders = [{ order_id: String(o.order_id), production_order_no: prodNo, status: rel.error ? 'Open' : 'Released' }, ...(o.production_orders || [])];
+    refreshOpenOrderCardHeader();
+    await refreshCurrentOrders();
+    if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
     stockStatusCache.delete(String(o.order_id));
-    await ensureStockStatus(o);
-    alert(rel.error
-      ? `Created ${prodNo} for order ${o.order_id}, but it couldn't be Released (${rel.error.message}) - release it on Production Orders so the makers see it.`
-      : `Created and released ${prodNo} for order ${o.order_id}. The makers can see it now; once its output is posted, this order can go Ready to Ship.`);
+    await ensureStockStatus(findFlatOrder(o.order_id) || o);
+    alert([
+      rel.error
+        ? `Created ${prodNo} for order ${o.order_id}, but it couldn't be Released (${rel.error.message}) - release it on Production Orders so the makers see it.`
+        : `Created and released ${prodNo} for order ${o.order_id}. The makers can see it now; once its output is posted, this order can go Ready to Ship.`,
+      assignedStatusNote(o, assigned)
+    ].filter(Boolean).join('\n\n'));
   });
+}
+
+// Moves the order to 'Assigned' in the portal + Pancake once every needed maker is set (or a stock build
+// is linked), or back if one was cleared - admin_sync_online_order_assigned_status. First time Assigned,
+// the customer gets the "in production" message (supabase_online_order_assigned_message.sql); for a GMA
+// Page order the SQL can't reach the GMA Page's Send API, so it hands back the psid + text and it's sent
+// here (supabase_online_order_assigned_message_gma.sql). Returns { error } or { sync }.
+async function syncAssignedStatus(o, btn) {
+  const { data, error } = await supabaseClient.rpc('admin_sync_online_order_assigned_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: o.order_id
+  });
+  if (error) return { error };
+  const sync = Array.isArray(data) ? data[0] : data;
+  if (sync?.gma_psid && sync.gma_message) {
+    if (btn) btn.textContent = 'Messaging customer...';
+    const gma = await sendGmaAssignedMessage(o.order_id, sync.gma_psid, sync.gma_message);
+    sync.message_sent = gma.sent;
+    sync.message_error = gma.error;
+  }
+  return { sync };
+}
+
+// What to tell the user after syncAssignedStatus - '' when there's nothing to say.
+function assignedStatusNote(o, { error, sync } = {}) {
+  if (error) return `The order wasn't moved to Assigned: ${error.message}`;
+  if (!sync?.changed || sync.new_status !== 'Assigned') return '';
+  const eta = sync.estimated_delivery_date ? `Estimated delivery date: ${sync.estimated_delivery_date}.` : 'No estimated delivery date was set (check the glass turnaround days).';
+  if (sync.message_sent) return `Order ${o.order_id} is now Assigned. The customer was sent the "in production" message.\n${eta}`;
+  if (sync.message_error) return `Order ${o.order_id} is now Assigned, but the customer message failed: ${sync.message_error}\n${eta}`;
+  return `Order ${o.order_id} is now Assigned.`;
 }
 
 // Walk-in in production (portal-only stage, supabase_walkin_order_portal_status.sql):
@@ -953,7 +1025,9 @@ function nextStepFor(o) {
   if (!o) return null;
   if (o.walkin_stage) return nextStepForWalkin(o);
   if (canMarkShipped(o)) {
-    return { action: 'shipped', label: 'Mark Shipped', icon: 'ico-ship', title: 'Set this order to Shipped in the portal and Pancake' };
+    return o.release
+      ? { action: 'shipped', label: 'Release Remaining', icon: 'ico-ship', title: 'Partly released - release the rest (or another batch). The last batch marks it Shipped in the portal and Pancake' }
+      : { action: 'shipped', label: 'Release / Ship', icon: 'ico-ship', title: 'Release all or some items. Releasing everything marks it Shipped in the portal and Pancake' };
   }
   if (!canAssignOrders()) return null;
   const status = (o.status || '').trim().toLowerCase();
@@ -1070,9 +1144,30 @@ async function handleNextStepClick(orderId, btn) {
     stockStatusCache.delete(String(o.order_id));
   } else if (btn.dataset.action === 'build') {
     await openStockBuildDialog(o);
-  } else if (btn.dataset.action === 'open-prod') {
+  } else if (btn.dataset.action === 'stock-assigned') {
     const s = stockStatusFor(o);
-    if (s?.production_order_no) window.open(`production-orders.html?no=${encodeURIComponent(s.production_order_no)}`, '_blank');
+    const ok = await confirmAction({
+      caption: 'SET ASSIGNED',
+      title: orderLabel(o),
+      message: `${s?.production_order_no || 'A Production Order'} is building this order.\n\nMove it to Assigned in the portal and Pancake? The customer gets the "in production" message (once per order).`,
+      confirmLabel: 'Yes, Set Assigned'
+    });
+    if (!ok) return;
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Updating status...';
+    const result = await syncAssignedStatus(o, btn);
+    btn.disabled = false;
+    btn.textContent = label;
+    await refreshCurrentOrders();
+    if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+    stockStatusCache.delete(String(o.order_id));
+    await ensureStockStatus(findFlatOrder(o.order_id) || o);
+    alert(assignedStatusNote(o, result) || `Order ${o.order_id} wasn't changed - refresh and check its status.`);
+  } else if (btn.dataset.action === 'open-prod') {
+    // Same tab - a new tab has no portal login (per-tab sessionStorage).
+    const s = stockStatusFor(o);
+    if (s?.production_order_no) window.location.href = `production-orders.html?no=${encodeURIComponent(s.production_order_no)}`;
   } else if (btn.dataset.action === 'shipped') {
     await markOrderShipped(String(o.order_id), btn);
   } else if (btn.dataset.action === 'pickup' || btn.dataset.action === 'unpickup') {
@@ -1139,10 +1234,29 @@ async function saveWalkinCustomer() {
   await refreshCurrentOrders();
 }
 
-// Shared by the next-step button (list / card) and the Dispatcher's phone card.
+// Shared by the next-step button (list / card) and the Dispatcher's phone card. Per "in the dispatcher..
+// can they do partial release only": opens the Release dialog (openReleaseDialog) - all or some lines.
+// Orders with no lines on file fall back to the plain whole-order Mark Shipped below.
 async function markOrderShipped(orderId, btn) {
   const o = findFlatOrder(orderId);
   if (!o || !canMarkShipped(o)) return;
+  btn.disabled = true;
+  const { data: lines, error } = await supabaseClient.rpc('staff_get_online_order_release_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(o.order_id)
+  });
+  btn.disabled = false;
+  // Quietly the old whole-order flow until supabase_online_order_partial_release.sql is run.
+  if (error) console.warn('staff_get_online_order_release_lines:', error.message);
+  if (!error && lines?.length) {
+    openReleaseDialog(o, lines);
+    return;
+  }
+  await markOrderShippedWhole(o, btn);
+}
+
+async function markOrderShippedWhole(o, btn) {
   const ok = await confirmAction({
     caption: 'MARK SHIPPED',
     title: orderLabel(o),
@@ -1166,6 +1280,168 @@ async function markOrderShipped(orderId, btn) {
   if (openCardOrderId === String(o.order_id) && myAssignmentsLocked) closeOrderCard();
   await refreshCurrentOrders();
   if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+}
+
+// ---------------------------------------------------------------- Release (partial / full shipping)
+// Each line: tick + how many leave now (defaults to everything left). Untouched lines stay pending.
+// admin_release_online_order_lines re-checks the remaining quantities server-side; the batch that
+// releases the last unit marks the order Shipped in the portal and Pancake.
+let releaseOrderId = null;
+
+function openReleaseDialog(o, lines) {
+  releaseOrderId = String(o.order_id);
+  document.getElementById('releaseTitle').textContent = orderLabel(o);
+  document.getElementById('releaseLines').innerHTML = lines.map((l) => {
+    const left = Number(l.remaining_qty) || 0;
+    const released = Number(l.released_qty) || 0;
+    const sub = `Ordered ${Number(l.ordered_qty)}${released ? ` · ${released} already released` : ''}${left ? ` · ${left} left` : ''}`;
+    return `<div class="oo-rl-line${left ? '' : ' is-done'}" data-line-id="${escapeHtml(l.line_id)}" data-left="${left}">
+      <input type="checkbox" ${left ? 'checked' : 'disabled'} aria-label="Release ${escapeHtml(l.description || l.item_code || '')}" />
+      <span class="oo-rl-info"><b>${escapeHtml(l.description || l.item_code || l.line_id)}</b><small>${left ? escapeHtml(sub) : '&#10003; All released'}</small></span>
+      ${left ? `<input type="number" class="oo-rl-qty" min="1" max="${left}" step="1" value="${left}" inputmode="numeric" aria-label="Quantity to release" />` : ''}
+    </div>`;
+  }).join('');
+  document.getElementById('releaseNote').value = '';
+  document.getElementById('releaseError').classList.add('hidden');
+  updateReleaseDialogState();
+  document.getElementById('releaseDialog').classList.remove('hidden');
+}
+
+function closeReleaseDialog() {
+  releaseOrderId = null;
+  document.getElementById('releaseDialog').classList.add('hidden');
+}
+
+function releaseSelection() {
+  return [...document.querySelectorAll('#releaseLines .oo-rl-line')].map((row) => {
+    const left = Number(row.dataset.left) || 0;
+    const qtyInput = row.querySelector('.oo-rl-qty');
+    const picked = !!row.querySelector('input[type="checkbox"]')?.checked && left > 0;
+    return { line_id: row.dataset.lineId, left, quantity: picked ? Number(qtyInput?.value) || 0 : 0 };
+  });
+}
+
+// Keeps "Release everything left" and the button label in step with the picks: the label says whether
+// this batch ships the order or leaves part of it pending.
+function updateReleaseDialogState() {
+  const sel = releaseSelection().filter((s) => s.left > 0);
+  const all = sel.length > 0 && sel.every((s) => s.quantity >= s.left);
+  const any = sel.some((s) => s.quantity > 0);
+  document.getElementById('releaseAll').checked = all;
+  const btn = document.getElementById('saveReleaseBtn');
+  btn.textContent = all ? 'Release All - Mark Shipped' : 'Release Selected (Partial)';
+  btn.disabled = !any;
+}
+
+async function saveRelease() {
+  const o = findFlatOrder(releaseOrderId);
+  const errorEl = document.getElementById('releaseError');
+  const fail = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+  const sel = releaseSelection().filter((s) => s.quantity > 0);
+  if (!o) return closeReleaseDialog();
+  if (!sel.length) return fail('Tick at least one item to release.');
+  const bad = sel.find((s) => !Number.isInteger(s.quantity) || s.quantity < 1 || s.quantity > s.left);
+  if (bad) return fail(`Quantity must be a whole number from 1 to ${bad.left}.`);
+  const full = releaseSelection().every((s) => s.quantity >= s.left);
+
+  const ok = await confirmAction(full
+    ? {
+      caption: 'RELEASE ALL - MARK SHIPPED',
+      title: orderLabel(o),
+      message: `Release everything that is left?\n\nThe order changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+      confirmLabel: 'Yes, Mark Shipped',
+      tone: 'is-ship'
+    }
+    : {
+      caption: 'PARTIAL RELEASE',
+      title: orderLabel(o),
+      message: `Release ${sel.reduce((n, s) => n + s.quantity, 0)} item(s) now?\n\nThe rest stays pending - the order stays in To Ship until everything is released. Nothing changes in Pancake yet.`,
+      confirmLabel: 'Yes, Release',
+      tone: 'is-ship'
+    });
+  if (!ok) return;
+
+  const btn = document.getElementById('saveReleaseBtn');
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_release_online_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: releaseOrderId,
+    p_lines: sel.map((s) => ({ line_id: s.line_id, quantity: s.quantity })),
+    p_note: document.getElementById('releaseNote').value.trim() || null
+  });
+  btn.disabled = false;
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) return fail(error?.message || result?.message || 'Could not release.');
+
+  const orderId = releaseOrderId;
+  closeReleaseDialog();
+  if (result.fully_shipped && openCardOrderId === orderId && myAssignmentsLocked) closeOrderCard();
+  await refreshCurrentOrders();
+  if (openCardOrderId === orderId) loadOrderCardReleaseHistory(orderId);
+  if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+  if (!result.fully_shipped) alert(result.message);
+}
+
+function wireReleaseDialog() {
+  const box = document.getElementById('releaseLines');
+  box.addEventListener('change', (e) => {
+    const row = e.target.closest('.oo-rl-line');
+    // Typing a quantity ticks the line; clearing it to 0 unticks it.
+    if (row && e.target.classList.contains('oo-rl-qty')) {
+      row.querySelector('input[type="checkbox"]').checked = Number(e.target.value) > 0;
+    }
+    updateReleaseDialogState();
+  });
+  box.addEventListener('input', updateReleaseDialogState);
+  document.getElementById('releaseAll').addEventListener('change', (e) => {
+    document.querySelectorAll('#releaseLines .oo-rl-line').forEach((row) => {
+      const left = Number(row.dataset.left) || 0;
+      if (!left) return;
+      row.querySelector('input[type="checkbox"]').checked = e.target.checked;
+      if (e.target.checked) row.querySelector('.oo-rl-qty').value = left;
+    });
+    updateReleaseDialogState();
+  });
+  document.getElementById('saveReleaseBtn').addEventListener('click', saveRelease);
+  document.getElementById('cancelReleaseBtn').addEventListener('click', closeReleaseDialog);
+  document.getElementById('closeReleaseBtn').addEventListener('click', closeReleaseDialog);
+  document.addEventListener('keydown', (e) => {
+    // The confirm dialog on top handles its own Escape (capture phase) first.
+    if (e.key === 'Escape' && !document.getElementById('releaseDialog').classList.contains('hidden')
+      && document.getElementById('confirmActionDialog').classList.contains('hidden')) closeReleaseDialog();
+  });
+}
+
+// Order card: every release batch, newest first. Hidden until something has been released.
+async function loadOrderCardReleaseHistory(orderId) {
+  const tab = document.getElementById('orderCardReleaseTab');
+  const r = findFlatOrder(orderId)?.release;
+  tab.classList.toggle('hidden', !r);
+  if (!r) return;
+  document.getElementById('orderCardReleaseSummary').textContent =
+    `${Number(r.released_qty)} of ${Number(r.ordered_qty)} released in ${r.batches} batch${r.batches === 1 ? '' : 'es'}`;
+  const body = document.getElementById('ocReleaseBody');
+  body.innerHTML = '<tr><td colspan="5" class="cell-msg">Loading...</td></tr>';
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_release_history', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  if (openCardOrderId !== String(orderId)) return;
+  if (error) {
+    body.innerHTML = `<tr><td colspan="5" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    return;
+  }
+  const fmt = (t) => (t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+  body.innerHTML = (data || []).map((h) => `
+    <tr>
+      <td>#${h.batch_no}</td>
+      <td>${escapeHtml(fmt(h.released_at))}<small class="oo-rh-sub">by ${escapeHtml(h.released_by_name || '')}</small></td>
+      <td>${escapeHtml(h.description || '')}</td>
+      <td class="num">${Number(h.quantity)}</td>
+      <td>${escapeHtml(h.note || '')}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="cell-msg">Nothing released yet.</td></tr>';
 }
 
 function wireNextStepButtons() {
@@ -1376,6 +1652,7 @@ function orderRowsHtml(orders) {
         <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}${productionDoneTickHtml(o, 'stand')}</td>
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
+        <td>${prodOrderBadgeHtml(o)}</td>
         <td>${o.received_at_shop && posNoteSummary(o) ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${escapeHtml(posNoteSummary(o))}</span>` : escapeHtml(o.note_print)}${!o.received_at_shop && posNoteSummary(o) ? `${o.note_print ? ' ' : ''}<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}"><b>POS:</b> ${escapeHtml(posNoteSummary(o))}</span>` : ''}</td>
         ${hidePrices() ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
@@ -1401,7 +1678,7 @@ function orderCardHtml(o) {
     <div class="order-card" data-order-id="${o.order_id}">
       <div class="order-card-top">
         <span class="order-card-id">#${o.order_id || ''}</span>
-        ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}
+        ${orderBadgesHtml(o)}
       </div>
       <div class="order-card-customer">${o.customer_name || 'No name on order'}</div>
       <div class="order-card-grid">
@@ -2640,30 +2917,13 @@ async function saveAssignDialog() {
   // filled, or back to 'Printed' if one was cleared - see admin_sync_online_order_assigned_status.
   if (!failures.length) {
     btn.textContent = 'Updating status...';
-    const { data: syncData, error } = await supabaseClient.rpc('admin_sync_online_order_assigned_status', {
-      p_admin_username: currentSession.username,
-      p_admin_password: currentSession.password,
-      p_order_id: o.order_id
-    });
-    if (error) {
-      failures.push(`Saved, but the status wasn't updated: ${error.message}`);
-    } else {
-      // First time Assigned: the customer gets the "in production" message
-      // (supabase_online_order_assigned_message.sql) - say how it went.
-      const sync = Array.isArray(syncData) ? syncData[0] : syncData;
-      // GMA Page order: the SQL can't reach the GMA Page's Send API, so it hands back the psid + text
-      // and it's sent here (supabase_online_order_assigned_message_gma.sql).
-      if (sync?.gma_psid && sync.gma_message) {
-        btn.textContent = 'Messaging customer...';
-        const gma = await sendGmaAssignedMessage(o.order_id, sync.gma_psid, sync.gma_message);
-        sync.message_sent = gma.sent;
-        sync.message_error = gma.error;
-      }
-      if (sync?.changed && sync.new_status === 'Assigned') {
-        const eta = sync.estimated_delivery_date ? `Estimated delivery date: ${sync.estimated_delivery_date}.` : 'No estimated delivery date was set (check the glass turnaround days).';
-        if (sync.message_sent) alert(`Order ${o.order_id} is now Assigned. The customer was sent the "in production" message.\n${eta}`);
-        else if (sync.message_error) alert(`Order ${o.order_id} is now Assigned, but the customer message failed: ${sync.message_error}\n${eta}`);
-      }
+    const result = await syncAssignedStatus(o, btn);
+    if (result.error) {
+      failures.push(`Saved, but the status wasn't updated: ${result.error.message}`);
+    } else if (result.sync?.message_sent || result.sync?.message_error) {
+      // First time Assigned: say how the "in production" customer message went.
+      const note = assignedStatusNote(o, result);
+      if (note) alert(note);
     }
   }
   btn.disabled = false;
@@ -2845,7 +3105,7 @@ function fillOrderCardHeader(o) {
   const badge = document.getElementById('orderCardStatusBadge');
   badge.textContent = displayStatus || '';
   badge.className = 'badge ' + (['Assigned', 'Shipped', 'Completed'].includes(displayStatus) ? 'badge-success' : displayStatus === 'Cancelled' ? 'badge-danger' : 'badge-neutral');
-  document.getElementById('orderCardBadges').innerHTML = `${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}`;
+  document.getElementById('orderCardBadges').innerHTML = orderBadgesHtml(o);
 
   setCardText('ocOrderId', o.order_id);
   setCardText('ocCustomer', [o.customer_name, o.walkin_customer_phone].filter(Boolean).join(' · '));
@@ -3480,6 +3740,7 @@ function openOrderCard(orderId) {
   loadOrderCardLines(openCardOrderId);
   if (!hidePrices()) loadOrderCardPaymentMethods(openCardOrderId);
   loadOrderCardReworkHistory(openCardOrderId);
+  loadOrderCardReleaseHistory(openCardOrderId);
 }
 
 // Payment FastTab's "Paid Via": which method(s) the Amount Paid came in through (Cash, GCASH, BDO...),
@@ -3583,6 +3844,49 @@ async function attachPosNotes(rows) {
   });
 }
 
+// Production Orders linked to the rows on screen (prodOrderBadgeHtml). Quietly none until
+// sql/supabase_online_order_production_order_tag.sql has been run.
+async function attachProductionOrders(rows) {
+  const ids = rows.map((o) => String(o.order_id));
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_list_online_order_production_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.warn('staff_list_online_order_production_orders:', error.message);
+    return;
+  }
+  const byOrder = new Map();
+  (data || []).forEach((p) => {
+    const key = String(p.order_id);
+    if (!byOrder.has(key)) byOrder.set(key, []);
+    byOrder.get(key).push(p);
+  });
+  rows.forEach((o) => { o.production_orders = byOrder.get(String(o.order_id)) || []; });
+}
+
+// Dispatcher release progress for the rows on screen (releaseBadgeHtml / Release History) - o.release
+// is set only on orders with at least one release. Quietly none until
+// sql/supabase_online_order_partial_release.sql has been run.
+async function attachReleaseSummary(rows) {
+  rows.forEach((o) => { o.release = null; });
+  const ids = rows.map((o) => String(o.order_id));
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_list_online_order_release_summary', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.warn('staff_list_online_order_release_summary:', error.message);
+    return;
+  }
+  const byOrder = new Map((data || []).map((r) => [String(r.order_id), r]));
+  rows.forEach((o) => { o.release = byOrder.get(String(o.order_id)) || null; });
+}
+
 // One-line POS description for the list / phone cards: the cashier's Order text, else the items.
 function posNoteSummary(o) {
   if (!o?.pos_note) return '';
@@ -3617,7 +3921,7 @@ async function loadOrders(search, status) {
     if (grouped) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
-      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="17" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="18" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     }
     return;
   }
@@ -3637,6 +3941,8 @@ async function loadOrders(search, status) {
   await attachDispatchers(rows);
   await attachProductionDone(rows);
   await attachPosNotes(rows);
+  await attachProductionOrders(rows);
+  await attachReleaseSummary(rows);
   if (myGeneration !== loadGeneration) return;
 
   // Online Order Staff get the tabbed card view (renderGroupedOrders) instead of the flat table +
@@ -3663,7 +3969,7 @@ async function loadOrders(search, status) {
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
-    ? `<tr><td colspan="17" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
+    ? `<tr><td colspan="18" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
 
   renderPaginationBar(
@@ -4068,6 +4374,7 @@ async function initAdvanceOrdersView() {
   wireMyAssignmentCards();
   wireProdOrderCard();
   wireSendBackDialog();
+  wireReleaseDialog();
   wireNextStepButtons();
   wireOrderCardAttachments();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same

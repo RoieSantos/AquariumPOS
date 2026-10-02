@@ -576,10 +576,9 @@ grant execute on function public.staff_post_purchase_order(text, text, text) to 
 --   COSTED AGAINST QtyReceived, not Quantity - a short-shipped line did not cost the full ordered
 --   amount. Same basis staff_list_posted_purchase_order_lines already uses for its line_cost.
 --
---   DATED BY OrderDate, not PostedAtUtc. This is the one place it departs from a literal reading
---   of "posted": OrderDate is the PO's business date, the direct equivalent of an expense's own
---   "Date". Keying off the posting timestamp instead would drop a January order into March's
---   purchases just because nobody got round to posting it.
+--   DATED BY PostedAtUtc (Asia/Manila date), not OrderDate - per "track the total purchase base
+--   on the posted date not the actual date created" (supabase_purchase_summary_by_posted_date.sql).
+--   A PO ordered last month but posted this month counts toward this month.
 --
 -- month_uncosted_po_count exists so the dashboard can say WHY a total looks low: any line that
 -- was received but never costed contributes zero, and without this the card would silently
@@ -612,8 +611,8 @@ begin
              coalesce(l."QtyReceived", 0) as qty_received
       from public."PostedPurchaseOrderLines" l
       join public."PostedPurchaseOrders" h on h."PONo" = l."PONo"
-      where h."OrderDate" >= v_month_start
-        and h."OrderDate" < v_month_end
+      where (h."PostedAtUtc" at time zone 'Asia/Manila')::date >= v_month_start
+        and (h."PostedAtUtc" at time zone 'Asia/Manila')::date < v_month_end
         -- Scoped on the LINE's warehouse, not the header - a PO can span warehouses, and a
         -- warehouse-scoped user should see only the part that landed in theirs.
         and (p_warehouse_name is null or trim(p_warehouse_name) = '' or l."WarehouseName" = p_warehouse_name)

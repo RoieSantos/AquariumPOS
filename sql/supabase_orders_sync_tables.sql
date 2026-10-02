@@ -618,6 +618,12 @@ $$;
 -- previous month (Walk-in)" - same walk-in split/exclusion rules as walkin_sales_month above,
 -- scoped to the full calendar month immediately before the current one (same Asia/Manila
 -- boundary convention as admin_get_sales_by_confirmed_by's previous_month_sales).
+--
+-- month_amount_paid / month_amount_to_receive (+ counts): per "instead of amount to receive..
+-- compute the amount paid for this month and amount about to receive for this month". Same
+-- online-only, non-cancelled, this-month-by-"Date" scope as month_sales, split into what has been
+-- paid ("AmountPaid") and what is still owed ("Balance" > 0). amount_to_receive (all-time) is still
+-- returned for any other caller, but the dashboard card now shows these month-scoped figures.
 drop function if exists public.admin_get_online_order_financial_summary(text, text, text);
 
 create or replace function public.admin_get_online_order_financial_summary(p_admin_username text, p_admin_password text, p_warehouse_name text default null)
@@ -626,7 +632,9 @@ returns table(
   walkin_sales_month numeric, walkin_order_count int,
   today_online_sales numeric, today_online_order_count int,
   today_walkin_sales numeric, today_walkin_order_count int,
-  previous_month_walkin_sales numeric, previous_month_walkin_order_count int
+  previous_month_walkin_sales numeric, previous_month_walkin_order_count int,
+  month_amount_paid numeric, month_paid_order_count int,
+  month_amount_to_receive numeric, month_to_receive_order_count int
 )
 language plpgsql
 security definer
@@ -706,7 +714,30 @@ begin
         where o."Date" >= v_prev_month_start and o."Date" < v_month_start
           and o."ReceivedAtShop" is true
           and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
-      )::int as previous_month_walkin_order_count
+      )::int as previous_month_walkin_order_count,
+      coalesce(sum(o."AmountPaid") filter (
+        where o."Date" >= v_month_start and o."Date" < v_month_end
+          and o."ReceivedAtShop" is not true
+          and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
+      ), 0)::numeric as month_amount_paid,
+      count(*) filter (
+        where o."Date" >= v_month_start and o."Date" < v_month_end
+          and coalesce(o."AmountPaid", 0) > 0
+          and o."ReceivedAtShop" is not true
+          and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
+      )::int as month_paid_order_count,
+      coalesce(sum(o."Balance") filter (
+        where o."Date" >= v_month_start and o."Date" < v_month_end
+          and o."Balance" > 0
+          and o."ReceivedAtShop" is not true
+          and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
+      ), 0)::numeric as month_amount_to_receive,
+      count(*) filter (
+        where o."Date" >= v_month_start and o."Date" < v_month_end
+          and o."Balance" > 0
+          and o."ReceivedAtShop" is not true
+          and lower(trim(coalesce(o."Status", ''))) not in ('canceled', 'cancelled')
+      )::int as month_to_receive_order_count
     from public."OnlineOrders" o
     left join public."Warehouses" w on w."ID" = o."LocationID"
     where p_warehouse_name is null or trim(p_warehouse_name) = '' or w."Name" = p_warehouse_name;

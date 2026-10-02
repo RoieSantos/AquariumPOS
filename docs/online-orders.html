@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=aq2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=aq2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=aq3" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -146,7 +146,7 @@
 
         <section class="bc-main">
           <div class="bc-grid-wrap" id="orderGridWrap">
-            <table class="bc-grid oo-grid" data-resize-key="online-orders-v3">
+            <table class="bc-grid oo-grid" data-resize-key="online-orders-v4">
               <thead>
                 <tr>
                   <th>Order ID</th>
@@ -161,6 +161,7 @@
                   <th>Stand Maker</th>
                   <th>Dispatcher</th>
                   <th>Glass</th>
+                  <th>Production Order</th>
                   <th>Print Note</th>
                   <th id="deliveryFeeHeader" class="num">Delivery Fee</th>
                   <th>For Delivery</th>
@@ -169,7 +170,7 @@
                 </tr>
               </thead>
               <tbody id="orderTableBody">
-                <tr><td colspan="17" class="cell-msg">Loading...</td></tr>
+                <tr><td colspan="18" class="cell-msg">Loading...</td></tr>
               </tbody>
             </table>
           </div>
@@ -337,6 +338,20 @@
           </div>
         </details>
 
+        <!-- Every Dispatcher release batch on this order (js/onlineOrders.js loadOrderCardReleaseHistory,
+             supabase_online_order_partial_release.sql). Hidden until something has been released. -->
+        <details class="doc-fasttab hidden" id="orderCardReleaseTab" open>
+          <summary>Release History <span class="doc-fasttab-summary" id="orderCardReleaseSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="bc-grid-wrap">
+              <table class="bc-grid oo-rh-grid">
+                <thead><tr><th>Batch</th><th>Released</th><th>Item</th><th class="num">Qty</th><th>Note</th></tr></thead>
+                <tbody id="ocReleaseBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+
         <details class="doc-fasttab" id="orderCardDeliveryTab" open>
           <summary>Delivery <span class="doc-fasttab-summary" id="orderCardDeliverySummary"></span></summary>
           <div class="doc-fasttab-body bc-doc-cols">
@@ -460,6 +475,36 @@
       <div class="bc-doc-body">
         <div class="oc-maker-summary" id="prodCardSummary"></div>
         <div class="oc-line-cards" id="prodCardLines"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dispatcher release / Mark Shipped (js/onlineOrders.js openReleaseDialog,
+       sql/supabase_online_order_partial_release.sql): pick which lines and how many leave now. A partial
+       batch keeps the order To Ship; releasing the last remaining units marks it Shipped (portal + Pancake). -->
+  <div id="releaseDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog oo-release-dialog" role="dialog" aria-modal="true" aria-labelledby="releaseTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">RELEASE ITEMS</div>
+          <h2 id="releaseTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeReleaseBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">Tick what is leaving now. Items not ticked stay pending and the order stays in To Ship until everything is released.</p>
+        <label class="oo-rl-all"><input type="checkbox" id="releaseAll" /> <span>Release everything left</span></label>
+        <div id="releaseLines" class="oo-rl-lines"></div>
+        <div class="bc-field oo-sb-reason">
+          <label for="releaseNote">Note (optional)</label>
+          <textarea id="releaseNote" rows="2" placeholder="e.g. Stand delivered first, tank follows Friday"></textarea>
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="releaseError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveReleaseBtn" type="button">Release</button>
+        <button class="bc-btn" id="cancelReleaseBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -634,7 +679,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=aq4"></script>
+  <script src="js/nav.js?v=aq6"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
@@ -642,7 +687,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=2"></script>
-  <script src="js/onlineOrders.js?v=bc54"></script>
+  <script src="js/onlineOrders.js?v=bc57"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -90,10 +90,11 @@
       <span class="bc-cmd-sep"></span>
       <label class="bc-cmd" for="prodStatusFilter" style="gap:6px;">Status
         <select id="prodStatusFilter">
-          <option value="">All</option>
+          <!-- Active = Open + Released; Finished orders have their own list (?view=finished). -->
+          <option value="Active" selected>Active</option>
           <option value="Open">Open</option>
           <option value="Released">Released</option>
-          <option value="Finished">Finished</option>
+          <option value="">All (incl. Finished)</option>
         </select>
       </label>
     </div>
@@ -331,13 +332,13 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=prod2"></script>
-  <script src="js/nav.js?v=aq4"></script>
+  <script src="js/nav.js?v=aq6"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/glassCutList.js?v=po3"></script>
   <script src="js/pushNotifications.js?v=2"></script>
-  <script src="js/productionOrders.js?v=19"></script>
+  <script src="js/productionOrders.js?v=20"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

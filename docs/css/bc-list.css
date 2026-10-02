@@ -311,12 +311,12 @@
   text-decoration: none;
 }
 
-/* Walk-in Orders list: hide Dispatcher (11) and For Delivery, Est. Delivery Date (15-16) -
+/* Walk-in Orders list: hide Dispatcher (11) and For Delivery, Est. Delivery Date (16-17) -
    walk-ins are picked up at the shop - so the Tags column sits closer to view. Tank / Stand
    Maker (9-10) stay: walk-ins can be assigned to makers. Column numbers match online-orders.html's
-   17-column header (Warehouse is column 5; the walk-in tab is never shown to accounts that hide
+   18-column header (Warehouse is column 5; the walk-in tab is never shown to accounts that hide
    the Delivery Fee column). */
-.bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(11), :nth-child(15), :nth-child(16)) {
+.bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(11), :nth-child(16), :nth-child(17)) {
   display: none;
 }
 
@@ -2591,6 +2591,20 @@ a.bc-cue:hover {
 :root[data-theme="dark"] .oo-rework, :root[data-theme="dark"] .oo-mc-rework { background: #3d1f1f; color: #f2a7a7; }
 .oo-sb-part, .oo-sb-part span { font-size: 15px; font-weight: 400; color: var(--bc-text, inherit); text-transform: none; letter-spacing: normal; margin: 0; }
 .oo-sb-part b { font-weight: 700; }
+
+/* ---- Dispatcher partial release (Online Orders) ---- */
+.oo-rl-all { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--bc-text, inherit); cursor: pointer; }
+.oo-rl-all input, .oo-rl-line input[type="checkbox"] { width: 18px; height: 18px; flex: none; }
+.oo-rl-lines { display: grid; gap: 8px; margin-bottom: 14px; }
+.oo-rl-line { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 8px; }
+.oo-rl-line.is-done { opacity: .55; }
+.oo-rl-info { flex: 1; min-width: 0; font-size: 15px; color: var(--bc-text, inherit); }
+.oo-rl-info b { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.oo-rl-info small { display: block; color: var(--bc-muted, #5f6b7a); font-size: 12.5px; }
+.oo-rl-qty { width: 64px; flex: none; font: inherit; font-size: 15px; padding: 6px 8px; text-align: right; border: 1px solid var(--bc-line, #c9d0d9); border-radius: 6px; background: var(--bc-surface, #fff); color: inherit; }
+.oo-released { display: inline-block; padding: 0 6px; border-radius: 9px; background: #fff1d6; color: #7a4b00; font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: middle; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .oo-released { background: #3d2f12; color: #f3c56b; } }
+:root[data-theme="dark"] .oo-released { background: #3d2f12; color: #f3c56b; }
 
 /* ---- Rework count badge + history (Online Orders) ---- */
 .oo-rework-count { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 9px; background: #fde7e4; color: #9a2d2d; font-size: 11.5px; font-weight: 700; white-space: nowrap; vertical-align: middle; }
