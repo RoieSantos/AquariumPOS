@@ -351,10 +351,10 @@ async function openSerialsDialog(lineId) {
 
 async function loadSerials() {
   const body = document.getElementById('serialsTableBody');
-  body.innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
   const { data, error } = await supabaseClient.rpc('admin_get_serial_journal_line_serials', rpcArgs({ p_line_id: serialsLineId }));
   if (error) {
-    body.innerHTML = `<tr><td colspan="6" class="error-text">${escapeHtml(error.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
   serialsRows = data || [];
@@ -364,7 +364,7 @@ async function loadSerials() {
 function renderSerials() {
   const body = document.getElementById('serialsTableBody');
   if (serialsRows.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" class="muted">No serials in stock here for this item.</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="muted">No serials in stock here for this item.</td></tr>';
   } else {
     body.innerHTML = serialsRows.map((s) => {
       const found = s.mark === 'FOUND';
@@ -374,6 +374,7 @@ function renderSerials() {
           <td>${found ? '<span class="badge badge-success">Found</span>'
             : `<input type="checkbox" data-missing-serial="${s.running_serial_no}" ${missing ? 'checked' : ''} ${s.in_stock_here || missing ? '' : 'disabled'} />`}</td>
           <td><strong>${escapeHtml(s.serial_no)}</strong></td>
+          <td>${escapeHtml(s.variant_sku || '')}</td>
           <td>${escapeHtml(s.status || '')}</td>
           <td>${escapeHtml(s.location || '')}</td>
           <td>${escapeHtml(s.source_document_no || '')}</td>

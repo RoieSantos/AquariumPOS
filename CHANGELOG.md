@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-02
 
+- Serial Inventory Journal: the Serial Nos. dialog now has an SKU column (e.g. `AQ-002-ClearSealant`) so Black / Clear sealant units can be told apart - new [supabase_serial_journal_serials_sku.sql](sql/supabase_serial_journal_serials_sku.sql) adds `variant_sku` to `admin_get_serial_journal_line_serials`; [serialInventoryJournal.js](docs/js/serialInventoryJournal.js), [serial-inventory-journal.html](docs/serial-inventory-journal.html).
+
 - Products: one-off [supabase_resync_items_from_pancake.sql](sql/supabase_resync_items_from_pancake.sql) - checks the 5-min `sync-items-from-pancake` cron history, forces a full Pancake -> Items/Variants resync, and lists items/variants whose names still don't match (per "mismatch in the product name").
 
 - GMA Conversations: cleaner inbox - no aquarium background here (fish between the three panels was too busy), and in dark mode the page now keeps its light design (top nav stays dark); before, it mixed white panels with near-white names/headers and black input boxes - [gma-conversations.html](docs/gma-conversations.html), [nav.js](docs/js/nav.js).
