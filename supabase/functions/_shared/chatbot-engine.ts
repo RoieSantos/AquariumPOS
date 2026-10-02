@@ -1327,6 +1327,16 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
       aquariumParams.set('standLayers', String(stand.layers));
       aquariumParams.set('standTubular', String(stand.tubular));
       if (stand.stainless) aquariumParams.set('standStainless', '1');
+      // Cabinet/Canopy too, so the customer's preview shows the same cabinet (doors) and canopy.
+      if (stand.cabinet) {
+        aquariumParams.set('standCabinet', '1');
+        aquariumParams.set('standCabinetDoors', String(stand.cabinetDoors));
+      }
+      if (stand.canopy) {
+        aquariumParams.set('standCanopy', '1');
+        aquariumParams.set('standCanopyHeight', String(stand.canopyHeightInches));
+      }
+      if (stand.cabinet || stand.canopy) aquariumParams.set('standCabinetType', String(stand.cabinetType));
     }
     result.aquariumDrawingUrl = `https://rspetstop.com/WebAquariumCalculator/index.html?${aquariumParams.toString()}`;
   }

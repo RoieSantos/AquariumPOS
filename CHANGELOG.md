@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-02
 
+- Alice: staff Portal Chat guide (portal-chat-alice-reply) updated with today's calculator changes - new glass size rules, glass/light/pump/sump-length auto-selection, sump glass, cabinet/canopy (types, doors, outer sizes, drawing), Total Price, no cost breakdown, calculator open to all staff. Customer Alice's drawing link now carries cabinet/canopy/type so the preview shows them (index.html reads the new params). Redeployed chatbot-web-reply, portal-chat-alice-reply, chatbot-sandbox-reply, telegram-alice-webhook and facebook-messenger-webhook (JWT settings unchanged).
+
+- Online Orders: a location (warehouse) / address / phone change made in Pancake now reaches the portal even when Pancake doesn't bump the order's updated time. The open-order refresh rotation now saves those fields on every pass, not just Status. [supabase_online_order_refresh_location.sql](sql/supabase_online_order_refresh_location.sql) (includes an optional one-order resync step).
+
 - Aquarium Calculator is now open to every staff login (new ALL_STAFF_PAGES in js/auth.js) - including Tank/Stand Maker/Dispatcher, Delivery Team, Online Order Staff and no-permission accounts, which also get an "Aquarium Calculator" link in their compact nav. Safe now that the cost breakdown is removed. Bumped auth.js/nav.js to ?v=all1 on every page.
 
 - Removed the price/cost breakdown everywhere (it exposed tubular footage, sheet costs and markup rates): the "Stand price breakdown" section on the aquarium calculator, "Price breakdown" on the stand calculator, the "Stand cost breakdown" on the printable summary sheet, the "(x1.9 markup)" notes on sump part lines, and the POS stand calculator's result box (now just Stand frame / Cabinet / Canopy prices). Alice's quote tool no longer receives the stand breakdown text either. Item prices and totals unchanged.

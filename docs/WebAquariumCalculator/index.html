@@ -2443,6 +2443,12 @@
         if (params.has('standLayers')) byId('standLayers').value = params.get('standLayers');
         if (params.has('standTubular')) byId('standTubular').value = params.get('standTubular');
         if (params.get('standStainless') === '1') byId('standStainless').checked = true;
+        if (params.get('standCabinet') === '1') byId('standCabinet').checked = true;
+        if (params.has('standCabinetDoors')) byId('standCabinetDoors').value = params.get('standCabinetDoors');
+        if (params.get('standCanopy') === '1') byId('standCanopy').checked = true;
+        // Canopy height comes in inches - only meaningful when the link's unit is Inches (Alice's always is).
+        if (params.has('standCanopyHeight')) byId('standCanopyHeight').value = params.get('standCanopyHeight');
+        if (params.has('standCabinetType')) byId('standCabinetType').value = params.get('standCabinetType');
       }
 
       autoCalculateFromLink = true;
