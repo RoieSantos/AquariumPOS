@@ -1405,6 +1405,8 @@ function wireLinesGrid() {
     document.getElementById('prodGridWrap').classList.add('hidden');
     return;
   }
+  // Makers: ask to turn on "production order released to you" notifications.
+  maybeShowPushLoginPrompt(session);
   if (!isManager) {
     document.getElementById('newProdBtn').classList.add('hidden');
     document.getElementById('prodStatusFilter').closest('label').classList.add('hidden');

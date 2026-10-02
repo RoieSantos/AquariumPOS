@@ -2,7 +2,8 @@
 // (storage), supabase_web_push_order_confirmed_trigger.sql (what triggers a send), and
 // supabase/functions/send-web-push (what actually sends it). Included on dashboard.html via the
 // "Enable Order Notifications" button - wirePushNotificationButton() is the entry point, called
-// from that page's own init() once a session exists.
+// from that page's own init() once a session exists. Online Orders / Production Orders also call
+// maybeShowPushLoginPrompt so makers (who can't open the Dashboard) get asked too.
 
 // Paired with VAPID_PRIVATE_KEY (Edge Function secret only, never here) - this half is public by
 // design, same as any VAPID public key.
@@ -126,14 +127,63 @@ async function wirePushNotificationButton(session) {
 // walking the user through their browser's own site-settings screen.
 const PUSH_PROMPT_SESSION_KEY = 'pushPromptShownThisSession';
 
+// Who gets pushes (supabase_web_push_targeted.sql): Sales Users get "New confirmed order", Tank /
+// Stand Makers get their own job assignments. Anyone else gets nothing, so isn't prompted.
+function pushNotificationAudience(session) {
+  const roles = session?.staffRoles || [];
+  const isMaker = roles.includes('TankMaker') || roles.includes('StandMaker');
+  if (session?.isSalesUser && isMaker) {
+    return { title: '🔔 Get order notifications?', text: 'Turn on notifications to get an alert on this device when an online order is confirmed or a job is assigned to you.' };
+  }
+  if (session?.isSalesUser) {
+    return { title: '🔔 Get notified of confirmed orders?', text: 'Turn on notifications to get an alert on this device the moment an online order is confirmed - straight from the Portal, no separate app needed.' };
+  }
+  if (isMaker) {
+    return { title: '🔔 Get notified of new jobs?', text: 'Turn on notifications to get an alert on this device when an online order or production order is assigned to you.' };
+  }
+  return null;
+}
+
+// Pages without their own prompt markup (Online Orders / Production Orders, for makers) get the
+// same modal dashboard.html has, built on the fly.
+function ensurePushPromptModal() {
+  let modal = document.getElementById('pushNotifyPromptModal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'pushNotifyPromptModal';
+  modal.className = 'modal-backdrop hidden';
+  modal.innerHTML = `
+    <div class="modal-panel">
+      <div class="toolbar"><h2 style="margin:0;"></h2></div>
+      <p class="muted"></p>
+      <div id="pushNotifyPromptError" class="error-text hidden"></div>
+      <div class="push-prompt-actions" style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+        <button class="btn btn-secondary" id="pushNotifyPromptDismissBtn" type="button">Not Now</button>
+        <button class="btn btn-primary" id="pushNotifyPromptEnableBtn" type="button">Enable Notifications</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+
 async function maybeShowPushLoginPrompt(session) {
-  const modal = document.getElementById('pushNotifyPromptModal');
-  if (!modal || !pushNotificationsSupported()) return;
+  if (!pushNotificationsSupported()) return;
+  const audience = pushNotificationAudience(session);
+  if (!audience) return;
   if (Notification.permission === 'denied') return;
-  if (sessionStorage.getItem(PUSH_PROMPT_SESSION_KEY)) return;
 
   const subscription = await getExistingPushSubscription();
-  if (subscription && Notification.permission === 'granted') return;
+  if (subscription && Notification.permission === 'granted') {
+    // Already on - re-save so this device is tied to whoever is logged in now (pushes are
+    // targeted by username; a shared phone should follow the current user).
+    enablePushNotifications(session).catch(() => {});
+    return;
+  }
+  if (sessionStorage.getItem(PUSH_PROMPT_SESSION_KEY)) return;
+
+  const modal = ensurePushPromptModal();
+  modal.querySelector('h2').textContent = audience.title;
+  modal.querySelector('p.muted').textContent = audience.text;
 
   sessionStorage.setItem(PUSH_PROMPT_SESSION_KEY, '1');
   modal.classList.remove('hidden');

@@ -326,7 +326,7 @@ async function resolveAndOpenSourceDoc(docNo) {
 // always finds a matching row regardless of table size.
 async function loadSerials() {
   const tbody = document.getElementById('serialTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
 
   const search = document.getElementById('searchInput').value.trim();
   const status = document.getElementById('statusFilter').value;
@@ -349,7 +349,7 @@ async function loadSerials() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
@@ -358,6 +358,8 @@ async function loadSerials() {
     ItemCode: r.item_code,
     ItemDescription: r.item_description,
     VariantCode: r.variant_code,
+    VariantSku: r.variant_sku,
+    Colour: r.colour,
     Location: r.location,
     Status: r.status,
     SourceDocumentNo: r.source_document_no,
@@ -397,6 +399,24 @@ function fitGridToViewport() {
   el.style.maxHeight = Math.max(240, available) + 'px';
 }
 
+// Black / Clear sealant - the RPC's colour (from the variant SKU, same rule as the Production Order
+// card; supabase_serial_variant_sku_colour.sql), else whatever the SKU / description text says.
+function serialColour(r) {
+  if (r.Colour) return r.Colour;
+  for (const t of [r.VariantSku, r.ItemDescription]) {
+    if (/black|\bblk\b/i.test(t || '')) return 'Black';
+    if (/clear|\bclr\b/i.test(t || '')) return 'Clear';
+  }
+  return null;
+}
+
+// Same pill as the Production Order lines (productionOrders.js colourTagHtml).
+function colourTagHtml(colour) {
+  if (!colour) return '';
+  const dot = colour === 'Black' ? 'background:#1b1b1b' : 'background:#fff;border:1.5px solid #7aa7d9;box-sizing:border-box';
+  return ` <span class="prod-colour-tag" title="${escapeHtml(colour)}" style="display:inline-flex;align-items:center;gap:4px;padding:0 7px;border:1px solid #c9d3e0;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;"><i style="width:9px;height:9px;border-radius:50%;display:inline-block;${dot}"></i>${escapeHtml(colour)}</span>`;
+}
+
 function renderSerials() {
   const tbody = document.getElementById('serialTableBody');
   const search = document.getElementById('searchInput').value.trim().toLowerCase();
@@ -423,12 +443,12 @@ function renderSerials() {
   }
   if (search) {
     rows = rows.filter((r) =>
-      [r.SerialNo, r.ItemCode, r.ItemDescription].some((v) => (v || '').toString().toLowerCase().includes(search))
+      [r.SerialNo, r.ItemCode, r.ItemDescription, r.VariantSku].some((v) => (v || '').toString().toLowerCase().includes(search))
     );
   }
 
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No serial records found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">No serial records found.</td></tr>';
     document.getElementById('serialCount').textContent = '0 serials';
     return;
   }
@@ -468,6 +488,7 @@ function renderSerials() {
       <tr>
         <td><span class="bc-doc-no" style="white-space:nowrap;">${escapeHtml(r.SerialNo)}</span></td>
         <td style="white-space:nowrap;">${escapeHtml(r.ItemCode)}</td>
+        <td style="white-space:nowrap;">${escapeHtml(r.VariantSku) || '<span class="muted">-</span>'}${colourTagHtml(serialColour(r))}</td>
         <td class="cell-text" title="${escapeHtml(r.ItemDescription)}">${escapeHtml(r.ItemDescription)}</td>
         <td style="white-space:nowrap;">${escapeHtml(r.Location) || '<span class="muted">Unassigned</span>'}${isSerialAdmin ? `<button class="bc-row-action edit-location-btn" data-serial="${encodeURIComponent(r.SerialNo)}" data-location="${encodeURIComponent(r.Location || '')}" type="button">Edit</button>` : ''}</td>
         <td style="white-space:nowrap;"><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span>${markInStockBtn}${markSoldBtn}</td>

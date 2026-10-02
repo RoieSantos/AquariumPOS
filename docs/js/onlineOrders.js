@@ -3943,6 +3943,9 @@ async function initAdvanceOrdersView() {
   }
 
   document.getElementById('setupContent').classList.remove('hidden');
+  // Makers land here instead of the Dashboard - ask them to turn on job notifications
+  // (no-op for anyone who isn't a Sales User / Tank / Stand Maker).
+  maybeShowPushLoginPrompt(session);
   document.getElementById('scopeTabAdvance').classList.toggle('hidden', !session.isSuperUser);
   if (session.isSuperUser && new URLSearchParams(window.location.search).get('scope') === 'advance') {
     await initAdvanceOrdersView();

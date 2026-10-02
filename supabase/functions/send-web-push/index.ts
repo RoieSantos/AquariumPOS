@@ -1,5 +1,6 @@
 // Sends a real Web Push notification to every subscribed device in public.PushSubscriptions
-// (see supabase_web_push_subscriptions.sql). Called from Postgres via
+// (see supabase_web_push_subscriptions.sql), or only to the `usernames` in the payload when given
+// (supabase_web_push_targeted.sql - sales users / makers). Called from Postgres via
 // public._trigger_web_push() (supabase_web_push_order_confirmed_trigger.sql) whenever an online
 // order transitions into Confirmed/Submitted status - lets the notification come from the Portal
 // PWA itself instead of a third-party app like Telegram.
@@ -60,19 +61,33 @@ Deno.serve(async (req) => {
   let title: string;
   let body: string;
   let url: string;
+  // Optional recipient list (supabase_web_push_targeted.sql) - only devices whose CreatedBy is in
+  // it get the push. Omitted = every subscribed device (e.g. the General Setup test send).
+  let usernames: string[] | null = null;
   try {
     const payload = await req.json();
     title = payload.title || 'RS Pet Stop Portal';
     body = payload.body || '';
     url = payload.url || 'dashboard.html';
+    if (Array.isArray(payload.usernames)) {
+      usernames = payload.usernames.filter((u: unknown) => typeof u === 'string' && u.trim() !== '');
+    }
   } catch {
-    return jsonResponse({ error: 'Body must be JSON: { title, body, url? }.' }, 400);
+    return jsonResponse({ error: 'Body must be JSON: { title, body, url?, usernames? }.' }, 400);
+  }
+
+  if (usernames && usernames.length === 0) {
+    return jsonResponse({ sent: 0, failed: 0, removedStale: 0, totalSubscriptions: 0 });
   }
 
   webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const { data: subs, error } = await supabase.from('PushSubscriptions').select('Endpoint, P256dh, Auth');
+  let query = supabase.from('PushSubscriptions').select('Endpoint, P256dh, Auth');
+  if (usernames) {
+    query = query.in('CreatedBy', usernames);
+  }
+  const { data: subs, error } = await query;
   if (error) {
     return jsonResponse({ error: error.message }, 500);
   }

@@ -121,8 +121,10 @@ function unitFitsSpot(unit, spot) {
 // on that shelf". Black / Clear when the variant (or failing that the description) says so,
 // otherwise the variant's own name. The variant's SKU ("AQ-031-ClearSealant") is checked too - its
 // name is often just "AQ-031 - STANDARD-2.5G (...)" (supabase_production_shelf_serial_sku_colour.sql).
+// unit.colour is the server's own tag - same rule as the Production Order card, including the
+// variant's own item name (supabase_serial_variant_sku_colour.sql).
 function unitColour(unit) {
-  return textColour(unit.variant_name, unit.variant_sku) || textColour(unit.item_description, unit.item_code) || unit.variant_name || 'Other';
+  return unit.colour || textColour(unit.variant_name, unit.variant_sku) || textColour(unit.item_description, unit.item_code) || unit.variant_name || 'Other';
 }
 
 // 'Black' / 'Clear' from the first text that says black|BLK or clear|CLR (same rule as
@@ -148,6 +150,13 @@ function colourChipsHtml(units) {
   return colourBreakdown(units).map(({ colour, count }) =>
     `<span class="colour-chip colour-${colour === 'Black' ? 'black' : colour === 'Clear' ? 'clear' : 'other'}" title="${escapeHtml(colour)}: ${count}"><i></i>${escapeHtml(colour)} <b>${count}</b></span>`
   ).join('');
+}
+
+// A rack linked to ONE variant only counts that colour - say so on its face, since both variants of
+// an aquarium usually share the same name (supabase_production_shelf_rack_variant_sku.sql).
+function spotOnlyColour(spot) {
+  if (!spot.variant_id) return null;
+  return spot.variant_colour || textColour(spot.variant_name);
 }
 
 function spotTagText(spot) {
@@ -245,7 +254,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
   ].filter(Boolean).join(' ');
   const tooltip = [
     spotName(spot, fallbackName) + (tag ? ` - ${tag}` : ''),
-    spot.item_code ? `${spot.item_code}${spot.variant_name ? ' · ' + spot.variant_name : ''}` : 'No aquarium linked',
+    spot.item_code ? `${spot.item_code}${spot.variant_name ? ' · ' + spot.variant_name : ''}${spotOnlyColour(spot) ? ` (${spotOnlyColour(spot)} only)` : ''}` : 'No aquarium linked',
     count !== null ? `${count} ${spotCountLabel(spot)}${spot.capacity ? ` (fits ${spot.capacity})` : ''}` : '',
     count ? colourBreakdown(serials).map((c) => `${c.colour}: ${c.count}`).join(' · ') : '',
     shared.length ? `Same aquarium as ${shared.join(', ')} - count is shared` : '',
@@ -262,7 +271,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
     </div>
     ${shortTag ? `<span class="pspot-tag">${escapeHtml(shortTag)}</span>` : ''}
     ${count ? `<span class="pspot-colours">${colourChipsHtml(serials)}</span>` : ''}
-    ${!compact && spot.item_code ? `<span class="pspot-sub pspot-clamp">${escapeHtml(spot.item_code)}${spot.variant_name ? ' · ' + escapeHtml(spot.variant_name) : ''}</span>` : ''}
+    ${!compact && spot.item_code ? `<span class="pspot-sub pspot-clamp">${escapeHtml(spot.item_code)}${spot.variant_name ? ' · ' + escapeHtml(spot.variant_name) : ''}${spotOnlyColour(spot) ? ` · <b>${escapeHtml(spotOnlyColour(spot))} only</b>` : ''}</span>` : ''}
     ${!compact && shared.length ? `<span class="pspot-sub">shared with ${escapeHtml(shared.join(', '))}</span>` : ''}
     ${!compact && !editing && !spot.item_code ? '<span class="pspot-sub">No aquarium linked</span>' : ''}
     ${!compact && spot.notes ? `<span class="pspot-sub">${escapeHtml(spot.notes)}</span>` : ''}
@@ -869,7 +878,7 @@ async function loadCellVariants() {
     const option = document.createElement('option');
     option.value = v.variation_id;
     option.textContent = [v.sku, v.variant_name].filter(Boolean).join(' - ') || v.variation_id;
-    option.dataset.name = v.variant_name || v.sku || v.variation_id;
+    option.dataset.name = v.sku || v.variant_name || v.variation_id;
     select.appendChild(option);
   });
   select.value = cellItem.variant_id || '';
@@ -934,6 +943,7 @@ function applyCellModal() {
   spot.variant_id = !cellItem ? null : variantsLoaded ? (variantSelect.value || null) : (cellItem.variant_id || null);
   spot.variant_name = !spot.variant_id ? null
     : variantsLoaded ? (variantSelect.selectedOptions[0]?.dataset.name || '') : (cellItem.variant_name || '');
+  if (spot.variant_id !== cellItem?.variant_id) spot.variant_colour = null; // re-read from the SKU name
   closeCellModal();
   renderShelf();
 }
