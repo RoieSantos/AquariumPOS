@@ -343,6 +343,9 @@ function switchCustomizeTab(tab) {
 
 function goToStep(step) {
   currentStep = step;
+  // The Customize builder gets a wide two-column layout (form left, sticky price/drawing right -
+  // see layoutCustomizePanels); every other step keeps the narrow single-card wizard.
+  document.body.classList.toggle('order-now-wide', step === 'customize-tabs');
   document.querySelectorAll('.wizard-step').forEach((el) => {
     if (el.classList.contains('customize-tab-panel')) return;
     el.classList.toggle('active', el.dataset.step === String(step));
@@ -800,6 +803,76 @@ function round1(value) {
 function formatInCm(inches) {
   const n = Number(inches) || 0;
   return round1(n) + '" (' + round1(n * 2.54) + ' cm)';
+}
+
+// "36 x 16 x 18 in (91.4 x 40.6 x 45.7 cm)" for the builder summary cards - the customer's own
+// numbers/unit first, then the other unit in brackets (cm for anything that isn't already cm,
+// inches when they typed cm). Falls back to the plain numbers when no unit is picked yet.
+function formatDimsWithAlt(length, width, height, unit) {
+  const dims = [length, width, height].filter((v) => v !== undefined && v !== null);
+  const plain = dims.join(' x ');
+  const calc = window.CustomAquariumCalculator;
+  if (!calc || !unit || unit === 'Not specified' || !dims.every((v) => Number(v) > 0)) return plain;
+  const inches = dims.map((v) => calc.toInches(v, unit));
+  const shortUnit = { Inches: 'in', CM: 'cm', MM: 'mm', Ft: 'ft' }[unit] || unit;
+  const alt = unit === 'CM'
+    ? inches.map((v) => round1(v)).join(' x ') + ' in'
+    : inches.map((v) => round1(v * 2.54)).join(' x ') + ' cm';
+  return plain + ' ' + shortUnit + ' (' + alt + ')';
+}
+
+// ---- Customize builder layout ----
+// Each Customize tab panel (Aquarium/Stand/Filtration/Accessories) is authored in order-now.html
+// as one long column. This sorts its existing elements into a two-column layout at page load: the
+// form on the left, and the price/drawing/summary/notices/Add to Cart+Checkout in a sticky column
+// on the right, so the live price and buttons stay in view while the customer edits. Elements are
+// MOVED, not copied, so every id and event listener stays exactly as before. On phones the CSS
+// flattens it back to one column in the original drawing -> price -> form -> buttons order.
+const CZ_SAFETY_NOTICE_IDS = ['customDimsGlassNotice', 'customGlassNotice', 'customStandNotice'];
+
+function czAsideRank(el) {
+  if (el.matches('.custom-price-card')) return 1;
+  if (el.matches('.aquarium-canvas-wrap, .sticker-type-reference-img')) return 2;
+  if (el.matches('.dims-summary-card')) return 3;
+  if (el.matches('.custom-price-disclaimer')) return 4;
+  if (CZ_SAFETY_NOTICE_IDS.includes(el.id)) return 5;
+  if (el.matches('.error-text, .success-text')) return 6;
+  if (el.matches('.wizard-nav-buttons')) return 7;
+  return 0;
+}
+
+function layoutCustomizePanels() {
+  document.querySelectorAll('.customize-tab-panel').forEach((panel) => {
+    if (panel.querySelector(':scope > .cz-layout')) return;
+    const children = Array.from(panel.children);
+    const layout = document.createElement('div');
+    layout.className = 'cz-layout';
+    const form = document.createElement('div');
+    form.className = 'cz-form';
+    const aside = document.createElement('div');
+    aside.className = 'cz-aside';
+    const asideItems = [];
+
+    children.forEach((el, i) => {
+      const isTitle = el.matches('h2.wizard-step-title');
+      const isIntro = el.matches('p.muted:not(.custom-price-disclaimer)') && i > 0 && children[i - 1].matches('h2.wizard-step-title');
+      if (isTitle || isIntro) return; // stays above the two columns
+      const rank = czAsideRank(el);
+      if (rank) {
+        el.classList.add('cz-r' + rank);
+        asideItems.push({ el, rank, i });
+      } else {
+        form.appendChild(el);
+      }
+    });
+
+    asideItems
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .forEach(({ el }) => aside.appendChild(el));
+    layout.appendChild(form);
+    layout.appendChild(aside);
+    panel.appendChild(layout);
+  });
 }
 
 const STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
@@ -1617,7 +1690,7 @@ function renderCustomAquariumSummary() {
   ].join('');
 
   summaryEl.innerHTML = `
-    <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
+    <div><strong>Dimension:</strong> ${formatDimsWithAlt(length, width, height, unit)}</div>
     <div><strong>Unit of Measure:</strong> ${unit}</div>
     <div><strong>Glass Thickness:</strong> <span class="dims-summary-glass-badge">${glass}</span></div>
     <div><strong>Sealant Color:</strong> ${sealant}</div>
@@ -1897,7 +1970,7 @@ function renderCustomStandSummary() {
   const gapIn = window.CustomAquariumCalculator
     ? computeStandGapInches(heightInchesForGap, Number(footing) || 0, layersNum, selectedStandTubular)
     : null;
-  const gapHtml = gapIn !== null ? `<div><strong>Gap per layer:</strong> ${round1(gapIn)}in</div>` : '';
+  const gapHtml = gapIn !== null ? `<div><strong>Gap per layer:</strong> ${formatInCm(gapIn)}</div>` : '';
 
   // Dual stand = one tubular post at each end of the Length run, so the frame actually built is
   // longer than the footprint Length by 2x the tubular's own thickness - shown here for the
@@ -1911,13 +1984,13 @@ function renderCustomStandSummary() {
   }
 
   document.getElementById('customStandSummary').innerHTML = `
-    <div><strong>Dimension:</strong> ${length} x ${width} x ${height}</div>
+    <div><strong>Dimension:</strong> ${formatDimsWithAlt(length, width, height, unit)}</div>
     ${builtLengthHtml}
     <div><strong>Unit of Measure:</strong> ${unit}</div>
     <div><strong>Quantity:</strong> ${qty}</div>
     <div><strong>Layers:</strong> ${layers}</div>
     ${gapHtml}
-    <div><strong>Footing:</strong> ${footing}in</div>
+    <div><strong>Footing:</strong> ${formatInCm(footing)}</div>
     <div><strong>Tubular:</strong> ${selectedStandTubular}</div>
     ${optionsHtml ? `<div class="dims-summary-options-grid">${optionsHtml}</div>` : ''}
   `;
@@ -3763,6 +3836,7 @@ async function runDeliveryEstimate() {
 }
 
 (function init() {
+  layoutCustomizePanels();
   captureMessengerPsid();
   prefillCustomerDetailsFromPsid();
   loadCompanyLogo();
