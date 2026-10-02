@@ -220,12 +220,12 @@ revoke execute on procedure public.cron_refresh_open_online_orders(int) from pub
 
 -- ---------------------------------------------------------------------------
 -- OPTIONAL - fix one order right now instead of waiting for the rotation (works for closed orders too).
--- Put your order number in place of 'ORDER_ID_HERE', then select from "do $$" to the end and run it.
+-- Set to order 106916 (location changed in Pancake, not updated in the portal). Runs with the whole file.
 -- Compare location_name with the warehouse now set in Pancake.
 do $$
 begin
   perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '20000');
-  perform public._refresh_open_online_order('ORDER_ID_HERE', true);
+  perform public._refresh_open_online_order('106916', true);
 end;
 $$;
 
@@ -233,4 +233,4 @@ select o."OrderID", o."Status", o."LocationID", w."Name" as location_name, o."Sh
        o."SyncedAtUtc" at time zone 'Asia/Manila' as synced_manila
 from public."OnlineOrders" o
 left join public."Warehouses" w on w."ID"::text = o."LocationID"
-where o."OrderID" = 'ORDER_ID_HERE';
+where o."OrderID" = '106916';

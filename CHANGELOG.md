@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-03
+
+- Aquarium preview link shared with customers by Alice / Vic (WebAquariumCalculator/index.html opened with quote params) no longer shows the staff-only "Add to sale" and "Glass Cut Sheet" buttons, the cut sheet card, or the cut sheet in the Summary tab. Staff calculator (no params) unchanged; also applies to links already sent.
+
 ## 2026-10-02
 
 - Alice: staff Portal Chat guide (portal-chat-alice-reply) updated with today's calculator changes - new glass size rules, glass/light/pump/sump-length auto-selection, sump glass, cabinet/canopy (types, doors, outer sizes, drawing), Total Price, no cost breakdown, calculator open to all staff. Customer Alice's drawing link now carries cabinet/canopy/type so the preview shows them (index.html reads the new params). Redeployed chatbot-web-reply, portal-chat-alice-reply, chatbot-sandbox-reply, telegram-alice-webhook and facebook-messenger-webhook (JWT settings unchanged).

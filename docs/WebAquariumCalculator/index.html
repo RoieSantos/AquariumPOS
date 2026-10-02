@@ -2452,6 +2452,15 @@
       }
 
       autoCalculateFromLink = true;
+
+      // Customer view: this link is what Alice / Vic share with customers (staff open the calculator
+      // with no query params), so hide the staff-only Add to sale and Glass Cut Sheet - incl. the cut
+      // sheet in the Summary - per "remove the Glass Cut Sheet and Add to sale feature".
+      ['addToSale', 'cutSheetButton', 'cutSheetCard'].forEach(function (id) {
+        byId(id).classList.add('hidden');
+      });
+      byId('summaryIncludeCutSheet').checked = false;
+      byId('summaryIncludeCutSheet').parentNode.classList.add('hidden');
     })();
 
     // Sump Quantity is a total for the whole quote, so it mirrors the aquarium Quantity (one sump
