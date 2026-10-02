@@ -176,10 +176,6 @@
           <div class="canvas-wrap">
             <canvas id="standCanvas" width="720" height="260"></canvas>
           </div>
-          <details>
-            <summary>Price breakdown</summary>
-            <pre id="breakdownPre">Run a calculation to see the breakdown.</pre>
-          </details>
         </section>
       </main>
 
@@ -227,7 +223,6 @@
     var priceValue = document.getElementById('priceValue');
     var summaryDetails = document.getElementById('summaryDetails');
     var safetyBanner = document.getElementById('safetyBanner');
-    var breakdownPre = document.getElementById('breakdownPre');
     var canvas = document.getElementById('standCanvas');
     var context = canvas.getContext('2d');
     var CANVAS_W = canvas.width;
@@ -847,7 +842,6 @@
 
       if (!result.ok) {
         priceValue.textContent = result.error || 'check inputs';
-        breakdownPre.textContent = 'Run a calculation to see the breakdown.';
         return;
       }
 
@@ -859,9 +853,6 @@
       var total = result.totalPrice * qty;
       priceValue.textContent = total.toFixed(2) + (qty > 1 ? ' (' + result.totalPrice.toFixed(2) + ' x ' + qty + ')' : '');
 
-      // result.breakdown is already a newline-joined string (built by
-      // computeStandRetailPrice/computeStandRetailPrice's own breakdown.join('\n')), not an array.
-      breakdownPre.textContent = result.breakdown || 'No breakdown available.';
     }
 
     function attachHandlers() {

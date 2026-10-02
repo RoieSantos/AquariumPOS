@@ -734,6 +734,8 @@ namespace AquariumPOS
 
                 // Compute using the main formula (includes sump cost if sumpWidthFt > 0)
                 var (price, breakdown, totalFeetConsumed) = ComputeStandRetailPrice(Lft, Wft, Hft, layers, tubular, stainless, sumpWidthFt);
+                var framePrice = price;
+                decimal cabinetPrice = 0m, canopyPrice = 0m;
 
                 // Cabinet = front (doors) + back + 2 sides over the frame height (minus footing);
                 // Canopy = front + back + 2 sides at canopy height + top. Sump section never enclosed.
@@ -748,14 +750,14 @@ namespace AquariumPOS
                     var cabH = Math.Max(0m, Hin - StandFootingInches);
                     var cab = ComputePlywoodPanels("Cabinet", new[] { ($"Front ({doors} doors)", Lin, cabH), ("Back", Lin, cabH), ("Left side", Win, cabH), ("Right side", Win, cabH) }, doors, IsAluminumCabinet);
                     price += cab.price;
-                    breakdown += Environment.NewLine + Environment.NewLine + cab.breakdown;
+                    cabinetPrice = cab.price;
                 }
                 decimal canopyH = nudCanopyHeight != null ? nudCanopyHeight.Value : DefaultCanopyHeightInches;
                 if (canopy)
                 {
                     var can = ComputePlywoodPanels("Canopy", new[] { ("Front", Lin, canopyH), ("Back", Lin, canopyH), ("Left side", Win, canopyH), ("Right side", Win, canopyH), ("Top", Lin, Win) }, 0, IsAluminumCabinet);
                     price += can.price;
-                    breakdown += Environment.NewLine + Environment.NewLine + can.breakdown;
+                    canopyPrice = can.price;
                 }
 
                 // Update UI
@@ -768,7 +770,11 @@ namespace AquariumPOS
                     + (cabinet || canopy ? $" ({(IsAluminumCabinet ? "Aluminum" : "Laminated Plywood")})" : string.Empty);
                 lblVolume!.Text = $"Dim: {length} x {width} x {height} {unit}  - Tubular: {tubular}  - Layers: {layers} total{sumpText}{cabinetText}";
                 lblEstimatedPrice!.Text = $"Estimated Price: ₱{price:0.00}";
-                lblResult!.Text = breakdown + Environment.NewLine + $"Cabinet: {(cabinet ? $"Yes ({doors} doors)" : "No")} | Canopy: {(canopy ? $"Yes ({canopyH:0.##} in)" : "No")}";
+                // Price breakdown (tubular footage, sheet cost / markup rates) is no longer shown - per
+                // "remove the price breakdown for all .. this is not necessary". Just the item prices.
+                lblResult!.Text = $"Stand frame: ₱{framePrice:0.00}"
+                    + (cabinet ? $"{Environment.NewLine}Cabinet ({doors} doors): ₱{cabinetPrice:0.00}" : string.Empty)
+                    + (canopy ? $"{Environment.NewLine}Canopy ({canopyH:0.##} in): ₱{canopyPrice:0.00}" : string.Empty);
                 SelectedPrice = price;
                 SelectedDescription = $"Stand {length}x{width}x{height} ({unit})";
                 SelectedBreakdown = lblResult!.Text;

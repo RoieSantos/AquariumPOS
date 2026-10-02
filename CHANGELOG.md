@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-02
 
+- Aquarium Calculator is now open to every staff login (new ALL_STAFF_PAGES in js/auth.js) - including Tank/Stand Maker/Dispatcher, Delivery Team, Online Order Staff and no-permission accounts, which also get an "Aquarium Calculator" link in their compact nav. Safe now that the cost breakdown is removed. Bumped auth.js/nav.js to ?v=all1 on every page.
+
+- Removed the price/cost breakdown everywhere (it exposed tubular footage, sheet costs and markup rates): the "Stand price breakdown" section on the aquarium calculator, "Price breakdown" on the stand calculator, the "Stand cost breakdown" on the printable summary sheet, the "(x1.9 markup)" notes on sump part lines, and the POS stand calculator's result box (now just Stand frame / Cabinet / Canopy prices). Alice's quote tool no longer receives the stand breakdown text either. Item prices and totals unchanged.
+
 - Web aquarium calculator: new "Sump glass" thickness (3/6/10/12mm, default 6mm) for the filtration sump, priced at that thickness's own glass rate instead of the tank's - matches the POS's existing Sump Glass dropdown. Shown in the Summary and sump price breakdown. Order Now (no sump glass field) still uses the tank glass.
 
 - Calculator Summary: the Total Price row is now bigger and bold in a highlighted box (aquarium + stand calculators); the stand calculator's Summary also gets a Total Price row (x quantity). `calculator-ui.css?v=3`.

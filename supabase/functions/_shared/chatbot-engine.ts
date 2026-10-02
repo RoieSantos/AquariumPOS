@@ -1331,6 +1331,10 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     result.aquariumDrawingUrl = `https://rspetstop.com/WebAquariumCalculator/index.html?${aquariumParams.toString()}`;
   }
 
+  // Never hand Alice the stand's cost breakdown (tubular footage, sheet cost / markup rates) - she
+  // could repeat it to a customer. Per "remove the price breakdown for all"; item prices stay.
+  if (stand) delete stand.breakdown;
+
   return result;
 }
 

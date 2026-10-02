@@ -175,6 +175,12 @@ function canOpenProductionPage(session, page) {
   return PRODUCTION_PAGES.includes(page) && !!(session?.isSuperUser || session?.isProductionManager || session?.isOrderMaker);
 }
 
+// Per "can share too all users staff now" - pages ANY logged-in staff account can open, whatever
+// role lockdown below would otherwise confine them to (makers, Delivery Team, Online Order Staff,
+// plain no-permission accounts). The Aquarium Calculator only shows selling prices now (its cost
+// breakdown was removed), so it's safe for everyone.
+const ALL_STAFF_PAGES = ['aquarium-calculator.html'];
+
 function isOrderMakerOnly(session) {
   return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });
 }
@@ -185,6 +191,7 @@ const NO_PERMISSION_ALLOWED_PAGES = ['my-payslips.html', 'my-payslip-print.html'
 // itself instead of bouncing a locked-down role straight back to its landing page.
 function canOpenPortalPage(session, page) {
   if (!session) return false;
+  if (ALL_STAFF_PAGES.includes(page)) return true;
   if (canOpenProductionPage(session, page)) return true;
   if (session.isDeliveryTeam) return DELIVERY_TEAM_ALLOWED_PAGES.includes(page);
   if (isOrderMakerOnly(session)) return ORDER_MAKER_ALLOWED_PAGES.includes(page);
@@ -220,7 +227,7 @@ async function requireAuth() {
   // Same "enforced on every page load, not just at login" reasoning as the password-change gate
   // above - catches an admin flipping the flag on mid-session, and can't be bypassed by
   // bookmarking/typing a different URL directly.
-  const productionPageOk = canOpenProductionPage(refreshed, currentPageFileName());
+  const productionPageOk = canOpenProductionPage(refreshed, currentPageFileName()) || ALL_STAFF_PAGES.includes(currentPageFileName());
 
   if (!productionPageOk && refreshed.isDeliveryTeam && !DELIVERY_TEAM_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'delivery.html';

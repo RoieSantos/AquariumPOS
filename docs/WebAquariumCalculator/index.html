@@ -759,10 +759,6 @@
           <div class="canvas-wrap">
             <canvas id="standCanvas" width="720" height="260"></canvas>
           </div>
-          <details>
-            <summary>Stand price breakdown</summary>
-            <pre id="standBreakdownPre">Run a calculation to see the breakdown.</pre>
-          </details>
         </section>
 
         <!-- Glass cut sheet - the layout the production team otherwise draws by hand for every
@@ -1941,7 +1937,7 @@
       var markup = 1;
       if (option === 'undersump' || option === 'overheadsump' || option === 'overhead sump') markup *= 1.9;
       if (byId('lowIron').checked) markup *= 1.7;
-      var markupNote = markup > 1 ? ' (x' + round1(markup) + ' markup)' : '';
+      var markupNote = '';
 
       function itemName(selectId) {
         var select = byId(selectId);
@@ -2961,7 +2957,6 @@
       // stand-specific fields).
       window.refreshStandDrawing = function (result) {
         var standCard = document.getElementById('standDrawingCard');
-        var breakdownPre = document.getElementById('standBreakdownPre');
         var n = result && result.normalized;
         var stand = n && n.stand;
 
@@ -2978,10 +2973,8 @@
           sumpHolder: stand.sumpHolder,
           sumpWidth: stand.sumpWidth
         });
-
-        // stand.breakdown is already a newline-joined string (see computeStandRetailPrice in
-        // custom-aquarium-calculator.js), not an array.
-        breakdownPre.textContent = stand.breakdown || 'No breakdown available.';
+        // The stand's cost breakdown (tubular footage, sheet cost/markup rates) is no longer shown
+        // anywhere - per "remove the price breakdown for all .. this is not necessary".
       };
     })();
   </script>
@@ -3327,9 +3320,6 @@
             '</section>' +
             '<section class="sv-section"><h3>Price breakdown</h3>' +
               rowsTable(priceRows.concat([['Total', q.grandTotal.toFixed(2) + (breakdown ? ' ' + breakdown : '')]]), 'sv-price-table') +
-              (n.stand && n.stand.breakdown
-                ? '<details class="sv-details" open><summary>Stand cost breakdown</summary><pre>' + esc(n.stand.breakdown) + '</pre></details>'
-                : '') +
             '</section>' +
           '</div>' +
           cutSheetSection();
