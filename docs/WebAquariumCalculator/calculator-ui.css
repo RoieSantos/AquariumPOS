@@ -539,6 +539,23 @@ textarea {
   font-weight: 600;
 }
 
+/* Total Price row - bigger and bold so it stands out from the itemized lines above it. */
+.summary-details div.summary-total {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #eaf2ff;
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f2a52;
+}
+
+.summary-details div.summary-total strong {
+  color: #0f2a52;
+  font-weight: 800;
+}
+
 .summary-small {
   font-size: 11.5px;
   color: var(--text-muted);

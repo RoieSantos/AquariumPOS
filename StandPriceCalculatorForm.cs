@@ -25,6 +25,37 @@ namespace AquariumPOS
         private CheckBox? chkStainless;
         private CheckBox? chkSumpHolder;
         private CheckBox? chkCabinet;
+        private Label? lblCabinetDoors;
+        private NumericUpDown? nudCabinetDoors;
+        private CheckBox? chkCanopy;
+        private Label? lblCanopyHeight;
+        private NumericUpDown? nudCanopyHeight;
+        private Label? lblCabinetType;
+        private ComboBox? cmbCabinetType;
+
+        // Cabinet / Canopy: 18mm laminated plywood, priced per WHOLE 4x8ft sheet x markup - mirrors
+        // calculateStandPlywood in docs/WebAquariumCalculator/custom-aquarium-calculator.js (the web
+        // reads these two from the portal's Pricing Setup; the POS uses the same defaults).
+        private const decimal PlywoodSheetPrice = 3900m;
+        private const decimal PlywoodWastePct = 15m;
+        private const decimal PlywoodMarkup = 1.6m;
+        private const decimal CanopyMarkup = 1.3m; // canopy is simpler than a cabinet - its own lower multiplier
+        private const decimal PlywoodMinimum = 2200m;
+        private const decimal DoorHardwarePerSqFt = 60m; // hinges + handles, per sq ft of door (front) area
+        private const decimal PlywoodSheetSqFt = 32m;
+        private const decimal StandFootingInches = 3m;
+        private const decimal DefaultCanopyHeightInches = 6m;
+
+        // Cabinet Type "Aluminum": 4mm ACP (aluminum composite panel) 4x8ft sheets, same formula with its
+        // own values (mirrors CABINET_MATERIALS in custom-aquarium-calculator.js). Applies to the canopy too.
+        private const decimal AluminumSheetPrice = 7000m;
+        private const decimal AluminumWastePct = 10m;
+        private const decimal AluminumMarkup = 1.8m;
+        private const decimal AluminumCanopyMarkup = 1.5m;
+        private const decimal AluminumMinimum = 3000m;
+        private const decimal AluminumDoorHardwarePerSqFt = 60m;
+
+        private bool IsAluminumCabinet => string.Equals(cmbCabinetType?.SelectedItem?.ToString(), "Aluminum", StringComparison.OrdinalIgnoreCase);
         private Label? lblSumpWidth;
         private NumericUpDown? nudSumpWidth;
         private GroupBox? gbTubular;
@@ -223,6 +254,30 @@ namespace AquariumPOS
             // Cabinet checkbox
             chkCabinet = new CheckBox { Text = "Cabinet", Location = new Point(720, 62), Size = new Size(140, 26), Font = new Font("Arial", 12, FontStyle.Bold), ForeColor = Color.DarkSlateBlue };
             this.Controls.Add(chkCabinet);
+
+            // Cabinet doors (0 = auto: 2 per 3ft) and Canopy (box cover on top of the tank) - middle column
+            lblCabinetDoors = new Label { Text = "Cabinet doors (0=auto):", Location = new Point(340, 140), Size = new Size(200, 24), Font = new Font("Arial", 10, FontStyle.Bold), Visible = false };
+            nudCabinetDoors = new NumericUpDown { Location = new Point(560, 136), Size = new Size(100, 30), Font = new Font("Arial", 14, FontStyle.Bold), Minimum = 0, Maximum = 20, Value = 0, Visible = false };
+            chkCanopy = new CheckBox { Text = "Canopy", Location = new Point(340, 186), Size = new Size(140, 26), Font = new Font("Arial", 12, FontStyle.Bold), ForeColor = Color.DarkSlateBlue };
+            lblCanopyHeight = new Label { Text = "Canopy height (in):", Location = new Point(340, 236), Size = new Size(200, 24), Font = new Font("Arial", 10, FontStyle.Bold), Visible = false };
+            nudCanopyHeight = new NumericUpDown { Location = new Point(560, 232), Size = new Size(100, 30), Font = new Font("Arial", 14, FontStyle.Bold), Minimum = 1, Maximum = 200, DecimalPlaces = 2, Value = DefaultCanopyHeightInches, Visible = false };
+            this.Controls.Add(lblCabinetDoors);
+            this.Controls.Add(nudCabinetDoors);
+            this.Controls.Add(chkCanopy);
+            this.Controls.Add(lblCanopyHeight);
+            this.Controls.Add(nudCanopyHeight);
+            lblCabinetType = new Label { Text = "Cabinet/canopy type:", Location = new Point(340, 284), Size = new Size(200, 24), Font = new Font("Arial", 10, FontStyle.Bold), Visible = false };
+            cmbCabinetType = new ComboBox { Location = new Point(560, 280), Size = new Size(150, 28), Font = new Font("Arial", 11, FontStyle.Bold), DropDownStyle = ComboBoxStyle.DropDownList, Visible = false };
+            cmbCabinetType.Items.AddRange(new object[] { "Laminated Plywood", "Aluminum" });
+            cmbCabinetType.SelectedIndex = 0;
+            this.Controls.Add(lblCabinetType);
+            this.Controls.Add(cmbCabinetType);
+            void UpdateCabinetTypeVisibility() { lblCabinetType.Visible = cmbCabinetType.Visible = chkCabinet.Checked || chkCanopy.Checked; }
+            chkCabinet.CheckedChanged += (s, e) => { lblCabinetDoors.Visible = nudCabinetDoors.Visible = chkCabinet.Checked; UpdateCabinetTypeVisibility(); };
+            chkCanopy.CheckedChanged += (s, e) => { lblCanopyHeight.Visible = nudCanopyHeight.Visible = chkCanopy.Checked; UpdateCabinetTypeVisibility(); PerformCalculate(); };
+            cmbCabinetType.SelectedIndexChanged += (s, e) => PerformCalculate();
+            nudCabinetDoors.ValueChanged += (s, e) => PerformCalculate();
+            nudCanopyHeight.ValueChanged += (s, e) => PerformCalculate();
 
             // Sump width label and input (hidden by default)
             lblSumpWidth = new Label { Text = "Sump width:", Location = new Point(540, 96), Size = new Size(120, 24), Font = new Font("Arial", 12, FontStyle.Bold), Visible = false };
@@ -680,16 +735,40 @@ namespace AquariumPOS
                 // Compute using the main formula (includes sump cost if sumpWidthFt > 0)
                 var (price, breakdown, totalFeetConsumed) = ComputeStandRetailPrice(Lft, Wft, Hft, layers, tubular, stainless, sumpWidthFt);
 
+                // Cabinet = front (doors) + back + 2 sides over the frame height (minus footing);
+                // Canopy = front + back + 2 sides at canopy height + top. Sump section never enclosed.
+                decimal Lin = Lft * 12m, Win = Wft * 12m, Hin = Hft * 12m;
+                var canopy = chkCanopy != null && chkCanopy.Checked;
+                int doors = 0;
+                if (cabinet)
+                {
+                    doors = nudCabinetDoors != null && nudCabinetDoors.Value > 0
+                        ? (int)nudCabinetDoors.Value
+                        : 2 * Math.Max(1, (int)Math.Round(Lin / 36m, MidpointRounding.AwayFromZero));
+                    var cabH = Math.Max(0m, Hin - StandFootingInches);
+                    var cab = ComputePlywoodPanels("Cabinet", new[] { ($"Front ({doors} doors)", Lin, cabH), ("Back", Lin, cabH), ("Left side", Win, cabH), ("Right side", Win, cabH) }, doors, IsAluminumCabinet);
+                    price += cab.price;
+                    breakdown += Environment.NewLine + Environment.NewLine + cab.breakdown;
+                }
+                decimal canopyH = nudCanopyHeight != null ? nudCanopyHeight.Value : DefaultCanopyHeightInches;
+                if (canopy)
+                {
+                    var can = ComputePlywoodPanels("Canopy", new[] { ("Front", Lin, canopyH), ("Back", Lin, canopyH), ("Left side", Win, canopyH), ("Right side", Win, canopyH), ("Top", Lin, Win) }, 0, IsAluminumCabinet);
+                    price += can.price;
+                    breakdown += Environment.NewLine + Environment.NewLine + can.breakdown;
+                }
+
                 // Update UI
                 var sumpText = string.Empty;
                 if (chkSumpHolder != null && chkSumpHolder.Checked && nudSumpWidth != null)
                 {
                     sumpText = $" -Sumpholder:(width: {nudSumpWidth.Value} {unit})";
                 }
-                var cabinetText = cabinet ? " - Cabinet: Yes" : string.Empty;
+                var cabinetText = (cabinet ? $" - Cabinet: {doors} doors" : string.Empty) + (canopy ? $" - Canopy: {canopyH:0.##} in" : string.Empty)
+                    + (cabinet || canopy ? $" ({(IsAluminumCabinet ? "Aluminum" : "Laminated Plywood")})" : string.Empty);
                 lblVolume!.Text = $"Dim: {length} x {width} x {height} {unit}  - Tubular: {tubular}  - Layers: {layers} total{sumpText}{cabinetText}";
                 lblEstimatedPrice!.Text = $"Estimated Price: ₱{price:0.00}";
-                lblResult!.Text = breakdown + Environment.NewLine + $"Cabinet: {(cabinet ? "Yes" : "No")}";
+                lblResult!.Text = breakdown + Environment.NewLine + $"Cabinet: {(cabinet ? $"Yes ({doors} doors)" : "No")} | Canopy: {(canopy ? $"Yes ({canopyH:0.##} in)" : "No")}";
                 SelectedPrice = price;
                 SelectedDescription = $"Stand {length}x{width}x{height} ({unit})";
                 SelectedBreakdown = lblResult!.Text;
@@ -715,6 +794,38 @@ namespace AquariumPOS
                 SelectedTubular = string.Empty;
                 SelectedUnit = string.Empty;
             }
+        }
+
+        /// <summary>
+        /// Prices plywood panels (label, width in, height in) per sq ft: area x (sheet / 32) x (1 + waste %)
+        /// x markup, never below PlywoodMinimum, plus per-door hardware (cabinet only).
+        /// </summary>
+        private static (decimal price, string breakdown) ComputePlywoodPanels(string title, (string Label, decimal W, decimal H)[] panels, int doors, bool aluminum)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"{title} ({(aluminum ? "4mm aluminum ACP" : "18mm laminated plywood")}):");
+            decimal sheetPrice = aluminum ? AluminumSheetPrice : PlywoodSheetPrice;
+            decimal wastePct = aluminum ? AluminumWastePct : PlywoodWastePct;
+            decimal markup = title == "Canopy" ? (aluminum ? AluminumCanopyMarkup : CanopyMarkup) : (aluminum ? AluminumMarkup : PlywoodMarkup);
+            decimal minimum = aluminum ? AluminumMinimum : PlywoodMinimum;
+            decimal hardwarePerSqFt = aluminum ? AluminumDoorHardwarePerSqFt : DoorHardwarePerSqFt;
+            decimal area = 0m;
+            foreach (var p in panels)
+            {
+                var sqft = p.W * p.H / 144m;
+                area += sqft;
+                sb.AppendLine($"{p.Label}: {p.W:0.##}\" x {p.H:0.##}\" = {sqft:0.00} sq ft");
+            }
+            var rate = sheetPrice / PlywoodSheetSqFt * (1m + wastePct / 100m) * markup;
+            var areaPrice = area * rate;
+            // Doors are the front panel (panels[0]) - hardware scales with its area, not the door count.
+            var doorArea = doors > 0 ? panels[0].W * panels[0].H / 144m : 0m;
+            var hardware = doorArea * hardwarePerSqFt;
+            var price = Math.Round(Math.Max(minimum, areaPrice) + hardware, 2);
+            sb.AppendLine($"Total area: {area:0.00} sq ft at {rate:0.00} per sq ft = {areaPrice:0.00}{(areaPrice < minimum ? $" -> minimum {minimum:0.00}" : string.Empty)}");
+            if (hardware > 0) sb.AppendLine($"Door hardware ({doors} doors): {doorArea:0.00} sq ft x {hardwarePerSqFt:0.##} = {hardware:0.00}");
+            sb.Append($"{title} price = {price:0.00}");
+            return (price, sb.ToString());
         }
 
         private void BtnAddToSale_Click(object? sender, EventArgs e)
@@ -757,7 +868,17 @@ namespace AquariumPOS
 
                 if (hasCabinet)
                 {
-                    desc += " Cabinet = true";
+                    desc += nudCabinetDoors != null && nudCabinetDoors.Value > 0 ? $" Cabinet = true ({nudCabinetDoors.Value} doors)" : " Cabinet = true";
+                }
+
+                if (chkCanopy != null && chkCanopy.Checked)
+                {
+                    desc += $" Canopy = true ({(nudCanopyHeight != null ? nudCanopyHeight.Value : DefaultCanopyHeightInches):0.##} in)";
+                }
+
+                if (hasCabinet || (chkCanopy != null && chkCanopy.Checked))
+                {
+                    desc += IsAluminumCabinet ? " Type = Aluminum" : " Type = Laminated Plywood";
                 }
 
                 if (chkSumpHolder != null && chkSumpHolder.Checked)

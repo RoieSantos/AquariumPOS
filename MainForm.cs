@@ -10425,6 +10425,10 @@ END", connection);
                 Font = new Font("Arial", 11),
                 Visible = false
             };
+            // Sump Length follows the aquarium Length until staff type their own (see ApplySumpLengthDefault).
+            // KeyPress only fires on a real keystroke, not when the text is set from code.
+            bool sumpLengthTypedByHand = false;
+            sumpLengthBox.KeyPress += (s, e) => sumpLengthTypedByHand = true;
 
             var sumpWidthLabel = new Label
             {
@@ -10837,10 +10841,8 @@ END", connection);
                             overflowBoxCheckBox.Checked = false;
                     }
 
-                    if (!isUnder && completeSetCheckBox.Checked)
-                    {
-                        sumpLengthBox.Text = lengthTextBox.Text;
-                    }
+                    // Undersump and Overhead Sump both default to the aquarium's Length (see ApplySumpLengthDefault).
+                    ApplySumpLengthDefault(true);
 
                     ApplySumpFiltrationDefaults();
                 }
@@ -10915,6 +10917,25 @@ END", connection);
                         widthTextBox.Text = defaultVal;
                         heightTextBox.Text = defaultVal;
                     }
+                }
+                catch { }
+            }
+
+            // Sump Length follows the aquarium Length (Undersump and Overhead Sump alike) until typed by hand.
+            void ApplySumpLengthDefault(bool force)
+            {
+                try
+                {
+                    if ((sumpLengthTypedByHand && !force) || !completeSetCheckBox.Checked)
+                        return;
+                    if (force)
+                        sumpLengthTypedByHand = false; // re-defaulted - follow the tank length again
+
+                    var aquariumLengthInches = GetDimensionInInches(lengthTextBox);
+                    if (!aquariumLengthInches.HasValue)
+                        return;
+
+                    sumpLengthBox.Text = ConvertInchesToSelectedUnit(aquariumLengthInches.Value, sumpUnitCombo.SelectedItem?.ToString() ?? unitComboBox.SelectedItem?.ToString() ?? "Inches");
                 }
                 catch { }
             }
@@ -11011,6 +11032,76 @@ END", connection);
                     {
                         submersibleLightItemCombo.SelectedIndex = -1;
                     }
+                }
+                catch { }
+            }
+
+            // Pump by tank length (2026-10-02): A3000 under 4ft, A4000 from 4ft up - mirrors the web
+            // calculator. Leaves the current pick alone when the length is blank or no item matches
+            // (setting -1 would untick Submersible Pump via its SelectedIndexChanged handler).
+            void ApplyDefaultPumpSelection()
+            {
+                try
+                {
+                    double? lengthInFeet = GetMainAquariumLengthInFeet();
+                    if (!lengthInFeet.HasValue || submersiblePumpItemCombo.Items.Count == 0)
+                        return;
+
+                    string token = lengthInFeet.Value >= 4.0 ? "A4000" : "A3000";
+                    for (int i = 0; i < submersiblePumpItemCombo.Items.Count; i++)
+                    {
+                        string normalized = (submersiblePumpItemCombo.Items[i]?.ToString() ?? string.Empty)
+                            .ToUpperInvariant().Replace(" ", string.Empty).Replace("-", string.Empty);
+                        if (normalized.Contains(token))
+                        {
+                            submersiblePumpItemCombo.SelectedIndex = i;
+                            return;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            double? GetDimensionInInches(TextBox box)
+            {
+                if (!double.TryParse(box.Text, out double value) || value <= 0)
+                    return null;
+
+                return (unitComboBox.SelectedItem?.ToString() ?? "Inches") switch
+                {
+                    "CM" => value / 2.54,
+                    "MM" => value / 25.4,
+                    "Ft" => value * 12.0,
+                    _ => value
+                };
+            }
+
+            // Glass Thickness follows the tank size: on every Length/Width/Height/Unit/Rimless change it's
+            // set to the THINNEST safe glass (FunctionEvents.MinimumGlassForSize - also steps back down when
+            // the tank shrinks) until staff pick a thickness themselves (SelectionChangeCommitted only fires
+            // on a user pick, not on the safety auto-upgrade). Safety rules still upgrade it afterwards.
+            bool glassPickedByHand = false;
+            glassComboBox.SelectionChangeCommitted += (s, e) => glassPickedByHand = true;
+
+            void ApplyMinimumGlassSelection()
+            {
+                try
+                {
+                    if (glassPickedByHand)
+                        return;
+
+                    var l = GetDimensionInInches(lengthTextBox);
+                    var w = GetDimensionInInches(widthTextBox);
+                    var h = GetDimensionInInches(heightTextBox);
+                    if (!l.HasValue || !w.HasValue || !h.HasValue)
+                        return;
+
+                    var minimum = FunctionEvents.MinimumGlassForSize(l.Value, w.Value, h.Value, rimlessCheckBox.Checked).Glass;
+                    // Option floors (same as the AIO / Low Iron Tempered rules) so they don't re-prompt on every keystroke.
+                    if (aioCheckBox.Checked && minimum == "3mm") minimum = "6mm";
+                    if (lowIronCheckBox.Checked && temperedCheckBox.Checked && (minimum == "3mm" || minimum == "6mm")) minimum = "10mm";
+                    if (glassComboBox.Items.Contains(minimum) && !string.Equals(glassComboBox.SelectedItem?.ToString(), minimum, StringComparison.OrdinalIgnoreCase))
+                        glassComboBox.SelectedItem = minimum;
                 }
                 catch { }
             }
@@ -11881,11 +11972,11 @@ END", connection);
                             var sumpTypeText = sumpTypeComboBox.SelectedItem?.ToString() ?? "";
                             if (string.Equals(sumpTypeText, "Overhead Sump", StringComparison.OrdinalIgnoreCase))
                             {
-                                pipingComponentPrice = 450.00m; // Overhead sump piping special price (deferred)
+                                pipingComponentPrice = 540.00m; // Overhead sump piping special price (deferred)
                             }
                             else
                             {
-                                pipingComponentPrice = 2200.00m; // Set of Piping (undersump/default) (deferred)
+                                pipingComponentPrice = 2500.00m; // Set of Piping (undersump/default) (deferred)
                             }
                         }
                         if (overflowBoxCheckBox.Visible && overflowBoxCheckBox.Checked)
@@ -12272,10 +12363,22 @@ END", connection);
             // AIO and Enclosure are mutually exclusive.
             bool isMutualExclusionUpdate = false;
 
+            lengthTextBox.TextChanged += (s, e) => ApplyMinimumGlassSelection();
+            widthTextBox.TextChanged += (s, e) => ApplyMinimumGlassSelection();
+            heightTextBox.TextChanged += (s, e) => ApplyMinimumGlassSelection();
+            rimlessCheckBox.CheckedChanged += (s, e) => ApplyMinimumGlassSelection();
             lengthTextBox.TextChanged += textChanged;
             lengthTextBox.TextChanged += (s, e) =>
             {
                 try { ApplyDefaultLightSelection(); } catch { }
+                try { ApplyDefaultPumpSelection(); } catch { }
+                try { ApplySumpLengthDefault(false); } catch { }
+            };
+            // Filtration sump just switched on - default its Length to the aquarium's.
+            completeSetCheckBox.CheckedChanged += (s, e) =>
+            {
+                if (completeSetCheckBox.Checked)
+                    ApplySumpLengthDefault(true);
             };
             widthTextBox.TextChanged += textChanged;
             heightTextBox.TextChanged += textChanged;
@@ -12290,6 +12393,8 @@ END", connection);
                     ApplyMainFiltrationDefaults();
                     ApplySumpFiltrationDefaults();
                     ApplyDefaultLightSelection();
+                    ApplyDefaultPumpSelection();
+                    ApplyMinimumGlassSelection();
                 }
                 catch { }
             };
@@ -12536,6 +12641,8 @@ END", connection);
                     submersiblePumpItemCombo.Enabled = submersiblePumpCheckBox.Checked && submersiblePumpItemCombo.Visible && submersiblePumpItemCombo.Items.Count > 0;
                     if (submersiblePumpCheckBox.Checked)
                     {
+                        ApplyDefaultPumpSelection();
+
                         if (submersiblePumpItemCombo.Items.Count > 0 && submersiblePumpItemCombo.SelectedIndex < 0)
                         {
                             MessageBox.Show("Please fill in the pump selection.", "Pump Required", MessageBoxButtons.OK, MessageBoxIcon.Information);

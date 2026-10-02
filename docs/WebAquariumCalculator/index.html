@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Custom Aquarium Calculator - RS Pet Stop</title>
-  <link rel="stylesheet" href="./calculator-ui.css?v=2">
+  <link rel="stylesheet" href="./calculator-ui.css?v=3">
   <style>
     /* Stock sheet inputs on the Glass Cut Sheet card - narrow, since both are shop constants
        that rarely change, unlike the tank dimensions above. */
@@ -534,7 +534,28 @@
             <div class="checkbox-stack" style="margin-top: 12px;">
               <label class="checkbox-row"><input id="standStainless" type="checkbox">Stainless</label>
               <label class="checkbox-row"><input id="standCabinet" type="checkbox">Cabinet</label>
+              <label class="checkbox-row"><input id="standCanopy" type="checkbox">Canopy</label>
               <label class="checkbox-row"><input id="standSumpHolder" type="checkbox">Sump Holder</label>
+            </div>
+
+            <div id="standCabinetTypeWrap" class="field hidden" style="margin-top: 12px;">
+              <label for="standCabinetType">Cabinet / canopy type</label>
+              <select id="standCabinetType">
+                <option value="Laminated Plywood" selected>Laminated Plywood (18mm)</option>
+                <option value="Aluminum">Aluminum (4mm ACP)</option>
+              </select>
+            </div>
+
+            <div id="standCabinetDoorsWrap" class="field hidden" style="margin-top: 12px;">
+              <label for="standCabinetDoors">Cabinet doors</label>
+              <input id="standCabinetDoors" type="number" min="1" step="1" placeholder="Auto (2 per 3ft)">
+              <div class="field-help">Priced per sq ft (front, sides and closed back).</div>
+            </div>
+
+            <div id="standCanopyHeightWrap" class="field hidden" style="margin-top: 12px;">
+              <label for="standCanopyHeight">Canopy height</label>
+              <input id="standCanopyHeight" type="number" min="0" step="0.01" placeholder="Default 6 in">
+              <div class="field-help">Box cover on top of the tank (front, back, sides and top).</div>
             </div>
 
             <div id="standSumpWidthWrap" class="field hidden" style="margin-top: 12px;">
@@ -623,6 +644,16 @@
                   <option>CM</option>
                   <option>Ft</option>
                   <option>MM</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="sumpGlass">Sump glass</label>
+                <select id="sumpGlass">
+                  <option>3mm</option>
+                  <option selected>6mm</option>
+                  <option>10mm</option>
+                  <option>12mm</option>
                 </select>
               </div>
 
@@ -824,7 +855,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js"></script>
+  <script src="./custom-aquarium-calculator.js?v=sump1"></script>
   <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -867,6 +898,22 @@
     // fill (see enforceOptionRules below) only fires right when Filtration sump gets checked or
     // its Type is switched - not on every unrelated field edit, which used to fight the user's own
     // typing in Sump Length/Width/Height and make those fields effectively read-only.
+    // Sump Length follows the aquarium Length (Undersump and Overhead Sump alike) until staff type
+    // their own sump length. Sump has its own independent Unit of Measure (#sumpUnit) - convert
+    // through inches rather than copying the raw value, since a straight copy would misread the
+    // aquarium's length in the sump's unit whenever the two differ (e.g. Inches tank, CM sump).
+    var sumpLengthEditedByHand = false;
+
+    function syncSumpLengthToAquarium(force) {
+      if (sumpLengthEditedByHand && !force) return;
+      if (force) sumpLengthEditedByHand = false; // re-defaulted (sump just enabled / type changed) - follow again
+      if (!byId('sumpEnabled').checked) return;
+      var aquariumLength = parsePositiveNumber('length');
+      if (!aquariumLength) return;
+      var aquariumLengthInches = window.CustomAquariumCalculator.toInches(aquariumLength, byId('unit').value);
+      byId('sumpLength').value = convertInchesToSelectedUnit(aquariumLengthInches, byId('sumpUnit').value);
+    }
+
     var sumpAutoFillState = {
       sumpEnabled: false,
       sumpType: null
@@ -1202,14 +1249,9 @@
             var sumpDefault = convertInchesToSelectedUnit(sumpType === 'Undersump' ? 18 : 6, byId('sumpUnit').value);
             trySetFieldValue('sumpWidth', sumpDefault);
             trySetFieldValue('sumpHeight', sumpDefault);
-            if (sumpType === 'Overhead Sump') {
-              // Sump has its own independent Unit of Measure (#sumpUnit) - convert through inches
-              // rather than copying the raw value, since a straight copy would silently
-              // misinterpret the aquarium's length as being in the sump's unit whenever the two
-              // differ (e.g. an aquarium in Inches with a sump set to CM).
-              var aquariumLengthInches = window.CustomAquariumCalculator.toInches(byId('length').value, byId('unit').value);
-              byId('sumpLength').value = convertInchesToSelectedUnit(aquariumLengthInches, byId('sumpUnit').value);
-            }
+            // Both Undersump and Overhead Sump default to the aquarium's own Length (it keeps
+            // following the tank length afterwards - see syncSumpLengthToAquarium).
+            syncSumpLengthToAquarium(true);
           }
 
           sumpAutoFillState.sumpEnabled = true;
@@ -1304,6 +1346,128 @@
       context.stroke();
     }
 
+    // Cabinet/Canopy finish per Cabinet Type - illustration only, not the actual laminate color.
+    var CABINET_PALETTES = {
+      wood: { front0: '#b07a4a', front1: '#8a5a32', grain: 'rgba(70, 40, 15, 0.12)', side: '#6e4626', top: '#c4915f', edge: '#4a2e17', door: 'rgba(55, 32, 14, 0.75)' },
+      aluminum: { front0: '#e6eaee', front1: '#b7bfc8', grain: 'rgba(255, 255, 255, 0.45)', side: '#9aa4ae', top: '#f0f3f6', edge: '#5b6772', door: 'rgba(60, 72, 84, 0.75)' }
+    };
+    var cabinetPalette = CABINET_PALETTES.wood;
+
+    // Cabinet/Canopy mockup. Box = front face + right side face (+ top face when it's visible, i.e. the
+    // canopy), same oblique projection as the tank (side offset = depth across, depth * 0.48 up).
+    function drawPlywoodBox(left, top, width, height, depth, withTop) {
+      var rise = depth * 0.48;
+      var frontGrad = context.createLinearGradient(0, top, 0, top + height);
+      frontGrad.addColorStop(0, cabinetPalette.front0);
+      frontGrad.addColorStop(1, cabinetPalette.front1);
+      context.fillStyle = frontGrad;
+      context.fillRect(left, top, width, height);
+
+      // Faint horizontal grain (wood) / brushed lines (aluminum).
+      context.save();
+      context.beginPath();
+      context.rect(left, top, width, height);
+      context.clip();
+      context.strokeStyle = cabinetPalette.grain;
+      context.lineWidth = 1;
+      for (var gy = top + 4; gy < top + height; gy += 5) {
+        context.beginPath();
+        context.moveTo(left, gy);
+        context.bezierCurveTo(left + width * 0.3, gy + 1.5, left + width * 0.6, gy - 1.5, left + width, gy + 0.5);
+        context.stroke();
+      }
+      context.restore();
+
+      context.beginPath();
+      context.moveTo(left + width, top);
+      context.lineTo(left + width + depth, top - rise);
+      context.lineTo(left + width + depth, top - rise + height);
+      context.lineTo(left + width, top + height);
+      context.closePath();
+      context.fillStyle = cabinetPalette.side;
+      context.fill();
+
+      if (withTop) {
+        context.beginPath();
+        context.moveTo(left, top);
+        context.lineTo(left + depth, top - rise);
+        context.lineTo(left + depth + width, top - rise);
+        context.lineTo(left + width, top);
+        context.closePath();
+        context.fillStyle = cabinetPalette.top;
+        context.fill();
+      }
+
+      context.strokeStyle = cabinetPalette.edge;
+      context.lineWidth = 1.4;
+      context.strokeRect(left, top, width, height);
+      context.beginPath();
+      if (withTop) {
+        context.moveTo(left, top);
+        context.lineTo(left + depth, top - rise);
+        context.lineTo(left + depth + width, top - rise);
+      } else {
+        context.moveTo(left + width + depth, top - rise);
+      }
+      context.lineTo(left + width + depth, top - rise + height);
+      context.lineTo(left + width, top + height);
+      context.moveTo(left + width, top);
+      context.lineTo(left + width + depth, top - rise);
+      context.stroke();
+    }
+
+    // Left-aligned "approx. size" note with a short leader line back to the piece it describes.
+    function drawSizeNote(fromX, fromY, x, centerY, text) {
+      context.strokeStyle = 'rgba(110, 70, 38, 0.6)';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(fromX, fromY);
+      context.lineTo(x, centerY);
+      context.stroke();
+
+      context.font = '11px Segoe UI';
+      var textWidth = context.measureText(text).width;
+      var chipWidth = textWidth + 14;
+      var chipHeight = 17;
+      var y = centerY - chipHeight / 2;
+      context.fillStyle = 'rgba(255, 250, 243, 0.96)';
+      context.strokeStyle = '#c49a6c';
+      context.beginPath();
+      context.rect(x, y, chipWidth, chipHeight);
+      context.fill();
+      context.stroke();
+      context.fillStyle = '#5a3418';
+      context.textBaseline = 'middle';
+      context.fillText(text, x + 7, centerY + 0.5);
+      context.textBaseline = 'alphabetic';
+    }
+
+    function formatOuterSize(outer) {
+      return round1(outer.lengthInches) + '" x ' + round1(outer.widthInches) + '" x ' + round1(outer.heightInches) + '"';
+    }
+
+    // Splits the cabinet front into its doors, each with a handle near the meeting edge of its pair.
+    function drawCabinetDoors(left, top, width, height, doors) {
+      var doorWidth = width / doors;
+      var inset = 3;
+      for (var d = 0; d < doors; d++) {
+        var doorLeft = left + d * doorWidth;
+        context.strokeStyle = cabinetPalette.door;
+        context.lineWidth = 1.2;
+        context.strokeRect(doorLeft + inset, top + inset, doorWidth - inset * 2, height - inset * 2);
+
+        var handleOnRight = d % 2 === 0 && d < doors - 1;
+        var handleX = handleOnRight ? doorLeft + doorWidth - inset - 6 : doorLeft + inset + 4;
+        if (doors === 1) handleX = doorLeft + doorWidth - inset - 6;
+        var handleH = Math.max(6, Math.min(16, height * 0.3));
+        context.fillStyle = '#d9d4cc';
+        context.strokeStyle = '#6b665e';
+        context.lineWidth = 0.8;
+        context.fillRect(handleX, top + height / 2 - handleH / 2, 2.5, handleH);
+        context.strokeRect(handleX, top + height / 2 - handleH / 2, 2.5, handleH);
+      }
+    }
+
     function drawAquarium(result) {
       context.clearRect(0, 0, CANVAS_W, CANVAS_H);
       var bg = context.createLinearGradient(0, 0, 0, CANVAS_H);
@@ -1328,12 +1492,25 @@
       var showHighStrip = byId('highStrip').checked;
       var showRimless = byId('rimless').checked;
       var showCabinet = showStand && byId('standCabinet').checked;
+      var showCanopy = showStand && byId('standCanopy').checked;
+      var cabLeft = 0;
+      var cabWidth = 0;
+      var standInfo = dims.stand || {};
+      var cabinetDoors = Math.max(1, Number(standInfo.cabinetDoors) || 2);
+      cabinetPalette = standInfo.cabinetType === 'Aluminum' ? CABINET_PALETTES.aluminum : CABINET_PALETTES.wood;
+      var canopyIn = Math.max(1, Number(standInfo.canopyHeightInches) || 6);
       var showStainless = showStand && byId('standStainless').checked;
       var standLayers = showStand ? Math.max(2, Number(byId('standLayers').value) || 2) : 2;
 
       var baseX = 86;
       var baseY = 176;
       var scale = Math.min(5.4, Math.max(2.1, 240 / Math.max(lengthIn, widthIn, heightIn)));
+      // A canopy sits on top of the tank - shrink the drawing until tank + canopy + top face fit.
+      for (var fit = 0; showCanopy && fit < 30; fit++) {
+        var fitDepth = Math.max(28, widthIn * scale * 0.38);
+        if ((heightIn + canopyIn) * scale + fitDepth * 0.48 <= baseY - 10) break;
+        scale *= 0.92;
+      }
       var frontWidth = lengthIn * scale;
       var frontHeight = heightIn * scale;
       var depth = Math.max(28, widthIn * scale * 0.38);
@@ -1444,16 +1621,12 @@
         }
 
         if (showCabinet) {
-          // Solid cabinet panel between the legs, with a faint center seam for a two-door look.
-          context.fillStyle = standGrad;
-          context.fillRect(standLeft, standTop, standWidth, standHeight);
-          context.strokeStyle = 'rgba(0, 0, 0, 0.18)';
-          context.lineWidth = 1;
-          context.strokeRect(standLeft, standTop, standWidth, standHeight);
-          context.beginPath();
-          context.moveTo(standLeft + standWidth / 2, standTop + 4);
-          context.lineTo(standLeft + standWidth / 2, standTop + standHeight - 4);
-          context.stroke();
+          // Drawn at its approx. OUTER length (frame end posts + 18mm boards), so it overhangs the tank a bit.
+          var cabOverhang = standInfo.cabinetOuter ? Math.max(0, (standInfo.cabinetOuter.lengthInches - lengthIn) / 2) * scale : 0;
+          cabLeft = frontLeft - cabOverhang;
+          cabWidth = frontWidth + cabOverhang * 2;
+          drawPlywoodBox(cabLeft, baseY + 2, cabWidth, standTop + standHeight - (baseY + 2), depth, false);
+          drawCabinetDoors(cabLeft, baseY + 2, cabWidth, standTop + standHeight - (baseY + 2), cabinetDoors);
         } else {
           // Open tubular frame: outer rectangle plus a shelf line per extra layer.
           context.strokeStyle = showStainless ? '#8b96a3' : '#2f3742';
@@ -1476,6 +1649,17 @@
             context.stroke();
           }
         }
+      }
+
+      var canopyPx = showCanopy ? Math.max(10, canopyIn * scale) : 0;
+      var canLeft = frontLeft;
+      var canWidth = frontWidth;
+      if (showCanopy) {
+        // Canopy: plywood box sitting on the rim, drawn at its approx. OUTER length.
+        var canOverhang = standInfo.canopyOuter ? Math.max(0, (standInfo.canopyOuter.lengthInches - lengthIn) / 2) * scale : 0;
+        canLeft = frontLeft - canOverhang;
+        canWidth = frontWidth + canOverhang * 2;
+        drawPlywoodBox(canLeft, frontTop - canopyPx, canWidth, canopyPx, depth, true);
       }
 
       if (showSump) {
@@ -1519,17 +1703,32 @@
       }
 
       // Dimension lines (drawn last so their chips float above the whole scene).
-      var lengthLineY = baseY + 24;
+      // With a cabinet the L line goes under it (over the doors it would hide the handles); with a
+      // canopy the W line moves up to the canopy's top edge.
+      var lengthLineY = showCabinet ? standTop + standHeight + 14 : baseY + 24;
       var heightLineX = frontLeft - 26;
       var widthLineX2 = frontLeft + frontWidth + depth + 4;
+      var widthLineY = backTop - canopyPx;
 
       drawDimensionLine(frontLeft, lengthLineY, frontLeft + frontWidth, lengthLineY);
       drawDimensionLine(heightLineX, frontTop, heightLineX, frontTop + frontHeight);
-      drawDimensionLine(frontLeft + frontWidth + 4, backTop, widthLineX2, backTop + 2);
+      drawDimensionLine(frontLeft + frontWidth + 4, widthLineY, widthLineX2, widthLineY + 2);
+
+      // Approx. outer sizes of the plywood pieces, to the right of the drawing.
+      var noteX = Math.max(cabLeft + cabWidth, canLeft + canWidth, frontLeft + frontWidth) + depth + 70;
+      if (showCanopy && standInfo.canopyOuter) {
+        drawSizeNote(canLeft + canWidth + depth * 0.6, frontTop - canopyPx / 2 - depth * 0.24, noteX, frontTop - canopyPx / 2,
+          'Canopy approx. ' + formatOuterSize(standInfo.canopyOuter) + ' (outer)');
+      }
+      if (showCabinet && standInfo.cabinetOuter) {
+        var cabMidY = (baseY + 2 + standTop + standHeight) / 2;
+        drawSizeNote(cabLeft + cabWidth + depth * 0.6, cabMidY - depth * 0.24, noteX, cabMidY,
+          'Cabinet approx. ' + formatOuterSize(standInfo.cabinetOuter) + ' (outer)');
+      }
 
       drawDimensionChip(frontLeft + frontWidth / 2, lengthLineY, 'L: ' + formatInCm(lengthIn));
       drawDimensionChip(heightLineX, frontTop + frontHeight / 2, 'H: ' + formatInCm(heightIn));
-      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2, backTop - 2, 'W: ' + formatInCm(widthIn));
+      drawDimensionChip((frontLeft + frontWidth + widthLineX2) / 2 + 30, widthLineY - 2, 'W: ' + formatInCm(widthIn));
     }
 
     function setVisibilityState() {
@@ -1557,6 +1756,9 @@
       byId('bottomTypeWrap').classList.toggle('hidden', !bottomEnabled);
       byId('standCalcWrap').classList.toggle('hidden', !standEnabled);
       byId('standSumpWidthWrap').classList.toggle('hidden', !standEnabled || !byId('standSumpHolder').checked);
+      byId('standCabinetDoorsWrap').classList.toggle('hidden', !standEnabled || !byId('standCabinet').checked);
+      byId('standCabinetTypeWrap').classList.toggle('hidden', !standEnabled || (!byId('standCabinet').checked && !byId('standCanopy').checked));
+      byId('standCanopyHeightWrap').classList.toggle('hidden', !standEnabled || !byId('standCanopy').checked);
     }
 
     function buildPayload() {
@@ -1583,6 +1785,7 @@
           width: byId('sumpWidth').value,
           height: byId('sumpHeight').value,
           unit: byId('sumpUnit').value,
+          glassThickness: byId('sumpGlass').value,
           filterMedias: byId('filterMedias').checked,
           piping: byId('piping').checked,
           overflowBox: byId('overflowBox').checked,
@@ -1598,6 +1801,10 @@
           footingInches: byId('standFooting').value,
           stainless: byId('standStainless').checked,
           cabinet: byId('standCabinet').checked,
+          cabinetDoors: byId('standCabinetDoors').value,
+          cabinetType: byId('standCabinetType').value,
+          canopy: byId('standCanopy').checked,
+          canopyHeight: byId('standCanopyHeight').value,
           sumpHolder: byId('standSumpHolder').checked,
           sumpWidth: byId('standSumpHolder').checked ? byId('standSumpWidth').value : 0,
           unit: byId('unit').value
@@ -1700,7 +1907,9 @@
         (breakdownText ? '<span class="price-sub">' + breakdownText + '</span>' : '');
       dimensionsLine.textContent = 'Dimensions: ' + formatDimsInCm(result.normalized.lengthInches, result.normalized.widthInches, result.normalized.heightInches);
       if (result.normalized.stand && result.normalized.stand.enabled) {
-        byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + formatInCm(result.normalized.stand.heightInches) + ' | Footing: ' + formatInCm(result.normalized.stand.footingInches);
+        byId('standInfo').textContent = 'Stand: ' + result.components.stand.toFixed(2) + ' | Tubular: ' + result.normalized.stand.tubular + ' | Layers: ' + result.normalized.stand.layers + ' | Height: ' + formatInCm(result.normalized.stand.heightInches) + ' | Footing: ' + formatInCm(result.normalized.stand.footingInches)
+          + (result.normalized.stand.cabinet ? ' | Cabinet: ' + result.normalized.stand.cabinetPrice.toFixed(2) : '')
+          + (result.normalized.stand.canopy ? ' | Canopy: ' + result.normalized.stand.canopyPrice.toFixed(2) : '');
         var heightIsOverride = Number(byId('standHeightOverride').value) > 0;
         byId('standHeightInfo').textContent = 'Total height: ' + formatInCm(result.normalized.stand.heightInches) + (heightIsOverride ? ' (override)' : ' (auto, from layers/tubular)');
       } else {
@@ -1742,7 +1951,7 @@
       }
 
       var parts = [];
-      if (c.sumpGlass > 0) parts.push(['Sump glass (' + n.glassThickness + ')' + markupNote, c.sumpGlass * markup]);
+      if (c.sumpGlass > 0) parts.push(['Sump glass (' + ((n.sump && n.sump.glassThickness) || n.glassThickness) + ')' + markupNote, c.sumpGlass * markup]);
       if (c.filterMedia > 0) parts.push(['Filter medias' + (n.sump && n.sump.filterMediaKg ? ' (approx. ' + n.sump.filterMediaKg + ' kg, more or less)' : '') + markupNote, c.filterMedia * markup]);
       if (c.pump > 0) parts.push(['Submersible pump' + itemName('pumpItemSelect') + (getPumpQuantity() > 1 ? ' x' + getPumpQuantity() : '') + markupNote, c.pump * markup]);
       if (c.light > 0) parts.push(['Submersible light' + itemName('lightItemSelect') + (getLightQuantity() > 1 ? ' x' + getLightQuantity() : '') + markupNote, c.light * markup]);
@@ -1807,6 +2016,7 @@
       if (n.sump) {
         rows.push(['Filtration Sump', n.sump.type]);
         rows.push(['Sump Dimensions', formatDimsInCm(n.sump.lengthInches, n.sump.widthInches, n.sump.heightInches)]);
+        rows.push(['Sump Glass', n.sump.glassThickness || n.glassThickness]);
 
         var sumpExtras = [];
         if (byId('piping').checked) sumpExtras.push('Set of piping');
@@ -1827,7 +2037,9 @@
 
         var standExtras = [];
         if (n.stand.stainless) standExtras.push('Stainless');
-        if (n.stand.cabinet) standExtras.push('Cabinet');
+        if (n.stand.cabinet || n.stand.canopy) standExtras.push('Type: ' + n.stand.cabinetType);
+        if (n.stand.cabinet) standExtras.push('Cabinet (' + n.stand.cabinetDoors + ' doors' + (n.stand.cabinetOuter ? ', approx. ' + formatOuterSize(n.stand.cabinetOuter) + ' outer' : '') + ')');
+        if (n.stand.canopy) standExtras.push('Canopy (' + (n.stand.canopyOuter ? 'approx. ' + formatOuterSize(n.stand.canopyOuter) + ' outer' : formatInCm(n.stand.canopyHeightInches) + ' high') + ')');
         if (n.stand.sumpHolder) standExtras.push('Sump holder (' + formatInCm(n.stand.sumpWidth) + ' width)');
         rows.push(['Stand Quantity', String(q.standQty)]);
         if (standExtras.length > 0) {
@@ -1866,6 +2078,16 @@
       }
       if (n.stand) {
         rows.push(['Stand Price (per stand)', c.stand.toFixed(2)]);
+        // Split out Cabinet/Canopy (plywood) from the steel frame so they're visible in the Summary.
+        if (n.stand.cabinet || n.stand.canopy) {
+          rows.push(['↳ Stand Frame', n.stand.framePrice.toFixed(2)]);
+          if (n.stand.cabinet) {
+            rows.push(['↳ Cabinet (' + n.stand.cabinetDoors + ' doors, ' + n.stand.cabinetSqFt + ' sq ft)', n.stand.cabinetPrice.toFixed(2)]);
+          }
+          if (n.stand.canopy) {
+            rows.push(['↳ Canopy (' + n.stand.canopySqFt + ' sq ft)', n.stand.canopyPrice.toFixed(2)]);
+          }
+        }
       }
       if (sumpPricedSeparately) {
         rows.push(['Sump Price (per sump)', q.sumpUnitPrice.toFixed(2)]);
@@ -1875,7 +2097,8 @@
       lastDetailRows = rows;
 
       host.innerHTML = rows.map(function (r) {
-        return '<div><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
+        var rowClass = r[0] === 'Total Price' ? ' class="summary-total"' : '';
+        return '<div' + rowClass + '><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
       }).join('');
     }
 
@@ -2048,7 +2271,9 @@
           var pumpResult = results[1];
 
           populateAquariumItemSelect(byId('lightItemSelect'), lightResult.error ? [] : lightResult.data, {
-            emptyText: lightResult.error ? 'Failed to load lights' : 'No light items found'
+            emptyText: lightResult.error ? 'Failed to load lights' : 'No light items found',
+            includeBlankOption: true,
+            blankText: 'Select a light...'
           });
           populateAquariumItemSelect(byId('pumpItemSelect'), pumpResult.error ? [] : pumpResult.data, {
             emptyText: pumpResult.error ? 'Failed to load pumps' : 'No pump items found',
@@ -2060,11 +2285,54 @@
           populateAquariumItemSelect(byId('pumpItemSelect'), [], { emptyText: 'Failed to load pumps' });
         }
 
-        applyLightSelection();
-        applyPumpSelection();
+        applyDefaultAccessorySelections();
       })();
 
       return aquariumItemsLoadPromise;
+    }
+
+    // Picks the light and pump that match the tank's LENGTH, same as the local POS calculator:
+    // light = the first LIGHTS item whose name has the size (3FT/4FT/5FT/6FT, by length band - see
+    // MainForm.ApplyDefaultLightSelection); pump = A3000 under 4ft, A4000 from 4ft up. No match
+    // leaves it blank so staff must choose. Each stops following once staff pick one by hand.
+    var lightEditedByHand = false;
+    var pumpEditedByHand = false;
+
+    function getAquariumLengthFeet() {
+      var length = parsePositiveNumber('length');
+      return length ? window.CustomAquariumCalculator.toInches(length, byId('unit').value) / 12 : null;
+    }
+
+    function selectOptionByNameToken(selectEl, token) {
+      for (var i = 0; i < selectEl.options.length; i += 1) {
+        var name = String(selectEl.options[i].textContent || '').toUpperCase().replace(/[\s-]/g, '');
+        if (token && selectEl.options[i].value && name.indexOf(token) >= 0) {
+          selectEl.selectedIndex = i;
+          return;
+        }
+      }
+      selectEl.value = '';
+    }
+
+    function applyDefaultAccessorySelections() {
+      var feet = getAquariumLengthFeet();
+
+      if (!lightEditedByHand) {
+        var lightFeet = feet >= 6 ? 6 : feet >= 5 ? 5 : feet >= 4 ? 4 : feet >= 3 ? 3 : null;
+        var lightSelect = byId('lightItemSelect');
+        var lightToken = lightFeet ? lightFeet + 'FT' : null;
+        // Also accept "6FEET"/"6FOOT" spellings, like the POS.
+        selectOptionByNameToken(lightSelect, lightToken);
+        if (lightFeet && !lightSelect.value) selectOptionByNameToken(lightSelect, lightFeet + 'FEET');
+        if (lightFeet && !lightSelect.value) selectOptionByNameToken(lightSelect, lightFeet + 'FOOT');
+      }
+
+      if (!pumpEditedByHand) {
+        selectOptionByNameToken(byId('pumpItemSelect'), feet ? (feet >= 4 ? 'A4000' : 'A3000') : null);
+      }
+
+      applyLightSelection();
+      applyPumpSelection();
     }
 
     async function calculateAquarium(showAlerts) {
@@ -2099,7 +2367,7 @@
     }
 
     function attachAutoStateHandlers() {
-      ['sumpEnabled', 'stickerBackground', 'stickerBottom', 'standEnabled', 'standSumpHolder', 'submersibleLight', 'submersiblePump']
+      ['sumpEnabled', 'stickerBackground', 'stickerBottom', 'standEnabled', 'standSumpHolder', 'standCabinet', 'standCanopy', 'submersibleLight', 'submersiblePump']
         .forEach(function (id) {
           byId(id).addEventListener('change', setVisibilityState);
         });
@@ -2107,8 +2375,8 @@
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
         'holeCount', 'dividerCount',
-        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standCabinet', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
-        'sumpUnit', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
+        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
+        'sumpUnit', 'sumpGlass', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
         var eventName = byId(id).tagName === 'INPUT' && (byId(id).type === 'number' || byId(id).type === 'text' || byId(id).tagName === 'TEXTAREA')
@@ -2122,11 +2390,13 @@
       });
 
       byId('lightItemSelect').addEventListener('change', function () {
+        lightEditedByHand = true;
         applyLightSelection();
         calculateAquarium(true);
       });
 
       byId('pumpItemSelect').addEventListener('change', function () {
+        pumpEditedByHand = true;
         applyPumpSelection();
         calculateAquarium(true);
       });
@@ -2195,6 +2465,52 @@
         if (!sumpQtyEditedByHand) {
           byId('sumpQuantity').value = getAquariumQuantity();
         }
+      });
+    })();
+
+    // Glass Thickness follows the tank size: whenever Length/Width/Height/Unit/Rimless change, it's
+    // set to the THINNEST safe glass (getMinimumGlassForSize) - stepping back down too when the tank
+    // gets smaller - until staff pick a thickness by hand; after that it's left alone (the safety
+    // check still upgrades it if it becomes unsafe). Light/Pump re-match the new length the same way.
+    // Registered BEFORE attachAutoStateHandlers so the recalculation already sees the new values.
+    (function wireGlassAndAccessoriesFollowDimensions() {
+      var glassEditedByHand = new URLSearchParams(window.location.search).has('glass');
+      byId('glass').addEventListener('change', function () {
+        glassEditedByHand = true;
+      });
+
+      function applyMinimumGlass() {
+        if (glassEditedByHand) return;
+        var unit = byId('unit').value;
+        var length = parsePositiveNumber('length');
+        var width = parsePositiveNumber('width');
+        var height = parsePositiveNumber('height');
+        if (!length || !width || !height) return;
+        var calc = window.CustomAquariumCalculator;
+        var minimum = calc.getMinimumGlassForSize(calc.toInches(length, unit), calc.toInches(width, unit), calc.toInches(height, unit), byId('rimless').checked);
+        var glass = minimum.glass;
+        // Option floors, same as calculateCustomAquarium's AIO / Low Iron Tempered rules.
+        var mm = parseInt(glass, 10);
+        if (byId('aio').checked && mm < 6) glass = '6mm';
+        if (byId('lowIron').checked && byId('tempered').checked && mm < 10) glass = '10mm';
+        byId('glass').value = glass;
+      }
+
+      ['length', 'width', 'height'].forEach(function (id) {
+        byId(id).addEventListener('input', applyMinimumGlass);
+      });
+      ['unit', 'rimless'].forEach(function (id) {
+        byId(id).addEventListener('change', applyMinimumGlass);
+      });
+      byId('length').addEventListener('input', applyDefaultAccessorySelections);
+      byId('unit').addEventListener('change', applyDefaultAccessorySelections);
+
+      byId('sumpLength').addEventListener('input', function () {
+        sumpLengthEditedByHand = true;
+      });
+      byId('length').addEventListener('input', function () { syncSumpLengthToAquarium(false); });
+      ['unit', 'sumpUnit'].forEach(function (id) {
+        byId(id).addEventListener('change', function () { syncSumpLengthToAquarium(false); });
       });
     })();
 

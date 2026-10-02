@@ -4,6 +4,40 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-02
 
+- Web aquarium calculator: new "Sump glass" thickness (3/6/10/12mm, default 6mm) for the filtration sump, priced at that thickness's own glass rate instead of the tank's - matches the POS's existing Sump Glass dropdown. Shown in the Summary and sump price breakdown. Order Now (no sump glass field) still uses the tank glass.
+
+- Calculator Summary: the Total Price row is now bigger and bold in a highlighted box (aquarium + stand calculators); the stand calculator's Summary also gets a Total Price row (x quantity). `calculator-ui.css?v=3`.
+
+- New Cabinet/Canopy Type: Laminated Plywood (18mm, default) or Aluminum (4mm ACP, P7,000 per 4x8ft sheet; 10% waste, 1.8 cabinet / 1.5 canopy markup, P3,000 minimum, P60/sq ft door hardware). Type applies to both cabinet and canopy; outer sizes use the 4mm panel; preview draws aluminum in a brushed-silver finish. Added to the aquarium + stand calculators, POS stand calculator, Alice (`cabinet_type` tool input) and [supabase_cabinet_plywood_pricing.sql](sql/supabase_cabinet_plywood_pricing.sql) (new Aluminum keys, editable in Pricing Setup).
+
+- Cabinet/Canopy approx. OUTER sizes (18mm boards): cabinet = stand built length (L + 2 end posts) + 2 boards x (W + 2 boards) x (stand height - footing); canopy matches the cabinet's outer L/W (or tank + 3mm clearance + 2 boards with no cabinet). Shown as notes on the aquarium preview (cabinet/canopy now drawn at that outer length) and in the aquarium + stand calculator summaries. Display only - pricing unchanged.
+
+- Set of Piping price changed: Undersump P2,200 -> P2,500, Overhead sump P450 -> P540 (web calculator incl. standalone sump, POS, staff-portal Alice help text). Bumped the calculator script version on every page that loads it.
+
+- Aquarium calculator preview now draws a Cabinet/Canopy mockup: wood-tone 3D cabinet under the tank split into the actual door count (with handles), and a canopy box on top at its real height (drawing scales down to fit). L/W dimension labels moved clear of them. Replaces the old flat gray cabinet panel.
+
+- Canopy default height changed 12" -> 6" (calculator, stand/aquarium page placeholders, Alice, POS).
+
+- Canopy now has its own lower 'Canopy Markup' (1.3, ~P182/sq ft) instead of the cabinet's 1.6; back stays closed. Calculator, Alice, POS and [supabase_cabinet_plywood_pricing.sql](sql/supabase_cabinet_plywood_pricing.sql).
+
+- Filtration sump Length now defaults to the aquarium's Length for Undersump too (was a fixed 12"/18" - only Overhead copied it), and keeps following the tank length until staff type their own sump length. Web calculator, POS (`ApplySumpLengthDefault`) and Order Now (`orderNow.js?v=7`).
+
+- Aquarium calculators (web + POS): Glass Thickness now auto-sets to the thinnest safe glass whenever Length/Width/Height/Unit/Rimless change (also steps back down when the tank shrinks; respects AIO 6mm / Low Iron Tempered 10mm), until staff pick a thickness by hand. Pump auto-picks by tank length - A3000 under 4ft, A4000 from 4ft up (POS `ApplyDefaultPumpSelection`); the web calculator now also auto-picks the light by length (3/4/5/6FT, like the POS) instead of the first light in the list, and both stop following once picked by hand. `FunctionEvents.MinimumGlassForSize` made public for this.
+
+- Cabinet door hardware changed from flat P250/door to P60 per sq ft of door (front) area, so bigger/taller doors cost more (new 'Door Hardware per sq ft' key replaces 'Cabinet Door Hardware' in [supabase_cabinet_plywood_pricing.sql](sql/supabase_cabinet_plywood_pricing.sql)); calculator, Alice and POS updated.
+
+- Cabinet door hardware set to P250 per door (flat) in the calculator, Alice and POS defaults, plus [supabase_cabinet_plywood_pricing.sql](sql/supabase_cabinet_plywood_pricing.sql).
+
+- 18mm laminated plywood sheet price changed P3,600 -> P3,900 (4x8ft) for Cabinet/Canopy (~P224/sq ft now): defaults in the calculator, Alice and POS, plus [supabase_cabinet_plywood_pricing.sql](sql/supabase_cabinet_plywood_pricing.sql).
+
+- Cabinet/Canopy switched from whole-sheet to per-sq-ft pricing (a small canopy no longer costs a full sheet): area x (P3,600 / 32) x 1.15 waste x 1.6 markup (~P207/sq ft), minimum P2,200 each, + optional per-door hardware (P0 for now). All five values editable in Pricing Setup > Aquarium Extras via the updated [supabase_cabinet_plywood_pricing.sql](sql/supabase_cabinet_plywood_pricing.sql); same formula in the web calculators, Alice and the POS (hardcoded there). Summaries show sq ft instead of sheets.
+
+- Aquarium + Stand calculator Summaries now show the Cabinet and Canopy price (with door/sheet count) as their own lines next to the stand frame price, instead of only inside the stand total.
+
+- Stand Cabinet is now priced (was a label only) and a new Canopy option added: 18mm laminated plywood, charged per whole 4x8ft sheet (₱3,600) x 1.22. Cabinet = front (doors) + 2 sides + closed back over the stand height minus footing; doors default to 2 per 3ft, editable. Canopy = front/back/sides at canopy height (default 12") + top. Sheet price/markup are editable in Pricing Setup > Aquarium Extras after running [supabase_cabinet_plywood_pricing.sql](sql/supabase_cabinet_plywood_pricing.sql). Added to the aquarium + stand calculators (index.html/stand.html), POS StandPriceCalculatorForm, and Alice (`stand_cabinet`/`canopy` tool inputs). Order Now's Cabinet checkbox stays hidden.
+
+- Aquarium glass safety rule rewritten to the shop standard (height/length based instead of the flat "6mm over 50 gallons" cutoff that pushed 72x18x18 and 64x16x14 to 12mm). Braced 6mm: up to 20" H / 20" W, 72" L at <=18" H, 60" L at 18-20" H. 10mm: up to 24" H / 24" W / 72" L / 180 gal. Over that (incl. any length >72") = 12mm; >=48" H = 19mm. Rimless 6mm only up to 15" H / 48" L / <30 gal, else 10mm (closes the old >100 gal rimless gap). Auto-upgrade now goes to the thinnest safe glass (no more skipping 10mm). New `getMinimumGlassForSize` in custom-aquarium-calculator.js, mirrored in chatbot-engine.ts (Alice + prompt text), FunctionEvents.safetyrules (POS) and Order Now's rimless prompt (`orderNow.js?v=5`).
+
 - Online Orders: stock orders built through "Assign - build missing units" now get the Production Order's Tank/Stand Maker tagged on the online order (kept in sync if the maker changes; cleared if the PRD is deleted) and move to **Assigned** in the portal + Pancake with the customer's "in production" message, like custom orders. Makers get one push ("Production order released to you") and see the job once (its PRD card, not also as an online order in My Assignments). New "Set Assigned" next-step for builds linked before this or whose Pancake update failed; "In Production PRD-..." now opens in the same tab (new tab lost the login). Needs [supabase_online_order_stock_build_assigned.sql](sql/supabase_online_order_stock_build_assigned.sql); `onlineOrders.js?v=bc57` (`syncAssignedStatus` shared by the Assign popup and the build dialog).
 
 - Dashboard Monthly section regrouped into three rows: Amount Paid / Amount to Receive / Projected Profit; Total / Online / Walk-In Sales; Total Purchase / Expense / Payroll.

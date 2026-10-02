@@ -20,8 +20,48 @@
   // buildExtraPriceLookup(). Live values come from public.AquariumExtraPricingSetup (see
   // supabase_aquarium_extra_pricing.sql), editable from the portal's Pricing Setup page.
   var DEFAULT_EXTRA_PRICES = {
-    Hole: 150
+    Hole: 150,
+    // Cabinet/Canopy (18mm laminated plywood), priced per sq ft - see computePlywoodPanels.
+    // 'Plywood Sheet 18mm' = one 4x8ft sheet (pesos); 'Plywood Waste %' = cutting loss;
+    // 'Plywood Markup' = multiplier (1.6 ~ P224/sq ft at a P3,900 sheet);
+    // 'Plywood Minimum' = least charged per cabinet/canopy (~half a sheet);
+    // 'Door Hardware per sq ft' = hinges + handles, per sq ft of door (front) area, so bigger doors cost more.
+    'Plywood Sheet 18mm': 3900,
+    'Plywood Waste %': 15,
+    'Plywood Markup': 1.6,
+    'Canopy Markup': 1.3, // canopy is simpler than a cabinet (no doors/load) - its own lower multiplier
+    'Plywood Minimum': 2200,
+    'Door Hardware per sq ft': 60,
+    // Aluminum Cabinet Type (2026-10-02): 4mm ACP (aluminum composite panel) 4x8ft sheets on the
+    // steel stand, aluminum-framed doors. Same formula as plywood, its own keys.
+    'Aluminum ACP Sheet 4mm': 7000,
+    'Aluminum Waste %': 10,
+    'Aluminum Markup': 1.8,
+    'Aluminum Canopy Markup': 1.5,
+    'Aluminum Minimum': 3000,
+    'Aluminum Door Hardware per sq ft': 60
   };
+
+  // Cabinet Type -> its Pricing Setup keys and panel thickness (for the approx. outer size).
+  // Applies to the canopy too, so the set matches.
+  var CABINET_MATERIALS = {
+    'Laminated Plywood': {
+      label: '18mm laminated plywood', sheet: 'Plywood Sheet 18mm', waste: 'Plywood Waste %', markup: 'Plywood Markup',
+      canopyMarkup: 'Canopy Markup', minimum: 'Plywood Minimum', hardware: 'Door Hardware per sq ft', thicknessInches: 18 / 25.4
+    },
+    Aluminum: {
+      label: '4mm aluminum ACP', sheet: 'Aluminum ACP Sheet 4mm', waste: 'Aluminum Waste %', markup: 'Aluminum Markup',
+      canopyMarkup: 'Aluminum Canopy Markup', minimum: 'Aluminum Minimum', hardware: 'Aluminum Door Hardware per sq ft', thicknessInches: 4 / 25.4
+    }
+  };
+
+  function getCabinetType(type) {
+    return CABINET_MATERIALS[type] ? type : 'Laminated Plywood';
+  }
+
+  var PLYWOOD_SHEET_SQFT = 32; // 4ft x 8ft
+  var CANOPY_CLEARANCE_INCHES = 3 / 25.4; // per side, so a canopy slips over the tank
+  var DEFAULT_CANOPY_HEIGHT_INCHES = 6;
 
   // Last-resort fallback only, same reasoning as DEFAULT_GLASS_PRICES above - see
   // buildTubularPriceLookup().
@@ -265,7 +305,113 @@
     };
   }
 
-  function calculateStand(lengthInches, widthInches, glassThickness, standOptions, defaultUnit, tubularPricingSetupRows) {
+  // Default door count: 2 doors per 3ft of length (3ft = 2 doors, 6ft = 4 doors), never fewer than 2.
+  function getDefaultCabinetDoors(lengthInches) {
+    return 2 * Math.max(1, Math.round((Number(lengthInches) || 0) / 36));
+  }
+
+  // Prices a set of plywood panels ([label, widthInches, heightInches]) per sq ft (2026-10-02,
+  // replacing whole-sheet pricing, which charged a tiny canopy the same as a full sheet):
+  // area x (sheet price / 32) x (1 + waste %) x markup, never below 'Plywood Minimum', plus any
+  // per-door hardware (cabinet only).
+  function computePlywoodPanels(title, panels, extraPrices, doorCount, material) {
+    var sheetPrice = Number(extraPrices[material.sheet]);
+    var wastePct = Number(extraPrices[material.waste]);
+    var markup = Number(extraPrices[title === 'Canopy' ? material.canopyMarkup : material.markup]);
+    var minimum = Number(extraPrices[material.minimum]);
+    var hardwarePerSqFt = Number(extraPrices[material.hardware]) || 0;
+    // Doors are the front panel (panels[0]) - hardware scales with its area, not the door count.
+    var doorAreaSqFt = doorCount > 0 ? (panels[0][1] * panels[0][2]) / 144 : 0;
+    var ratePerSqFt = (sheetPrice / PLYWOOD_SHEET_SQFT) * (1 + wastePct / 100) * markup;
+    var areaSqFt = 0;
+    var breakdown = [title + ' (' + material.label + '):'];
+
+    for (var i = 0; i < panels.length; i += 1) {
+      var panelSqFt = (panels[i][1] * panels[i][2]) / 144;
+      areaSqFt += panelSqFt;
+      breakdown.push(panels[i][0] + ': ' + round2(panels[i][1]) + '" x ' + round2(panels[i][2]) + '" = ' + panelSqFt.toFixed(2) + ' sq ft');
+    }
+
+    var areaPrice = areaSqFt * ratePerSqFt;
+    var plywoodPrice = Math.max(minimum, areaPrice);
+    var hardware = doorAreaSqFt * hardwarePerSqFt;
+    var price = round2(plywoodPrice + hardware);
+    breakdown.push('Total area: ' + areaSqFt.toFixed(2) + ' sq ft');
+    breakdown.push('Rate: ' + sheetPrice + ' / 32 sq ft x ' + (1 + wastePct / 100).toFixed(2) + ' waste x ' + markup + ' = ' + ratePerSqFt.toFixed(2) + ' per sq ft');
+    breakdown.push('Panels: ' + areaSqFt.toFixed(2) + ' x ' + ratePerSqFt.toFixed(2) + ' = ' + areaPrice.toFixed(2) + (areaPrice < minimum ? ' -> minimum ' + minimum.toFixed(2) : ''));
+    if (hardware > 0) {
+      breakdown.push('Door hardware (' + doorCount + ' doors): ' + doorAreaSqFt.toFixed(2) + ' sq ft x ' + hardwarePerSqFt + ' = ' + hardware.toFixed(2));
+    }
+    breakdown.push(title + ' price = ' + price.toFixed(2));
+
+    return { areaSqFt: round2(areaSqFt), price: price, breakdown: breakdown.join('\n') };
+  }
+
+  // Cabinet (closed panels around the stand frame) and Canopy (box cover on top of the tank) for
+  // a stand of the given footprint. Cabinet = front (split into doors) + 2 sides + closed back,
+  // over the stand's frame height (floor-to-top minus footing). Canopy = front + back + 2 sides at
+  // the canopy height + top. A sump-holder section is never enclosed.
+  function calculateStandPlywood(lengthInches, widthInches, standHeightInches, footingInches, options, unit, extraPricingSetupRows, tubular) {
+    var opts = options || {};
+    var extraPrices = buildExtraPriceLookup(extraPricingSetupRows);
+    var cabinetType = getCabinetType(opts.cabinetType);
+    var material = CABINET_MATERIALS[cabinetType];
+    var result = { cabinetType: cabinetType, cabinetPrice: 0, canopyPrice: 0, cabinetDoors: 0, cabinetSqFt: 0, canopySqFt: 0, canopyHeightInches: 0, cabinetOuter: null, canopyOuter: null, breakdown: [] };
+    var board2 = 2 * material.thicknessInches;
+
+    if (opts.cabinet) {
+      var cabinetHeight = Math.max(0, standHeightInches - footingInches);
+      var doors = Math.round(Number(opts.cabinetDoors)) > 0 ? Math.round(Number(opts.cabinetDoors)) : getDefaultCabinetDoors(lengthInches);
+      var cabinet = computePlywoodPanels('Cabinet', [
+        ['Front (' + doors + ' doors)', lengthInches, cabinetHeight],
+        ['Back', lengthInches, cabinetHeight],
+        ['Left side', widthInches, cabinetHeight],
+        ['Right side', widthInches, cabinetHeight]
+      ], extraPrices, doors, material);
+      result.cabinetPrice = cabinet.price;
+      result.cabinetSqFt = cabinet.areaSqFt;
+      result.cabinetDoors = doors;
+      result.breakdown.push(cabinet.breakdown);
+    }
+
+    if (opts.canopy) {
+      var canopyHeight = Number(opts.canopyHeight) > 0 ? toInches(opts.canopyHeight, unit) : DEFAULT_CANOPY_HEIGHT_INCHES;
+      var canopy = computePlywoodPanels('Canopy', [
+        ['Front', lengthInches, canopyHeight],
+        ['Back', lengthInches, canopyHeight],
+        ['Left side', widthInches, canopyHeight],
+        ['Right side', widthInches, canopyHeight],
+        ['Top', lengthInches, widthInches]
+      ], extraPrices, 0, material);
+      result.canopyPrice = canopy.price;
+      result.canopySqFt = canopy.areaSqFt;
+      result.canopyHeightInches = round2(canopyHeight);
+      result.breakdown.push(canopy.breakdown);
+    }
+
+    // Approx. OUTER size for the workshop/drawing (pricing above still runs off the footprint).
+    // Cabinet wraps the steel frame: built length (L + 2 end posts) + 2 boards; W + 2 boards.
+    // Canopy matches the cabinet's outer L/W so the set lines up; without a cabinet it fits over
+    // the tank (footprint + clearance + 2 boards).
+    if (opts.cabinet) {
+      result.cabinetOuter = {
+        lengthInches: round2(computeStandBuiltLengthInches(lengthInches, tubular) + board2),
+        widthInches: round2(widthInches + board2),
+        heightInches: round2(Math.max(0, standHeightInches - footingInches))
+      };
+    }
+    if (opts.canopy) {
+      result.canopyOuter = {
+        lengthInches: result.cabinetOuter ? result.cabinetOuter.lengthInches : round2(lengthInches + 2 * CANOPY_CLEARANCE_INCHES + board2),
+        widthInches: result.cabinetOuter ? result.cabinetOuter.widthInches : round2(widthInches + 2 * CANOPY_CLEARANCE_INCHES + board2),
+        heightInches: result.canopyHeightInches
+      };
+    }
+
+    return result;
+  }
+
+  function calculateStand(lengthInches, widthInches, glassThickness, standOptions, defaultUnit, tubularPricingSetupRows, extraPricingSetupRows) {
     var stand = standOptions || {};
     if (!stand.enabled) {
       return null;
@@ -313,16 +459,28 @@
       inchesToFeet(sumpWidthInches),
       buildTubularPriceLookup(tubularPricingSetupRows)
     );
+    var plywood = calculateStandPlywood(lengthInches, widthInches, standHeightInches, footingInches, stand, standUnit, extraPricingSetupRows, tubular);
 
     return {
       enabled: true,
-      price: computed.price,
-      breakdown: computed.breakdown,
+      price: round2(computed.price + plywood.cabinetPrice + plywood.canopyPrice),
+      framePrice: computed.price,
+      breakdown: [computed.breakdown].concat(plywood.breakdown).join('\n\n'),
       totalFeetConsumed: computed.totalFeetConsumed,
       layers: layers,
       tubular: tubular,
       stainless: stainless,
       cabinet: cabinet,
+      cabinetDoors: plywood.cabinetDoors,
+      cabinetPrice: plywood.cabinetPrice,
+      cabinetType: plywood.cabinetType,
+      cabinetSqFt: plywood.cabinetSqFt,
+      cabinetOuter: plywood.cabinetOuter,
+      canopy: Boolean(stand.canopy),
+      canopyHeightInches: plywood.canopyHeightInches,
+      canopyPrice: plywood.canopyPrice,
+      canopySqFt: plywood.canopySqFt,
+      canopyOuter: plywood.canopyOuter,
       sumpHolder: sumpHolder,
       sumpWidth: round2(sumpWidthInches),
       unit: standUnit,
@@ -388,11 +546,15 @@
       inchesToFeet(sumpWidthInches),
       buildTubularPriceLookup(options.tubularPricingSetupRows)
     );
+    var plywood = calculateStandPlywood(lengthInches, widthInches, heightInches, footingInches, options, unit, options.extraPricingSetupRows, tubular);
 
     return {
       ok: true,
-      totalPrice: computed.price,
-      breakdown: computed.breakdown,
+      totalPrice: round2(computed.price + plywood.cabinetPrice + plywood.canopyPrice),
+      framePrice: computed.price,
+      cabinetPrice: plywood.cabinetPrice,
+      canopyPrice: plywood.canopyPrice,
+      breakdown: [computed.breakdown].concat(plywood.breakdown).join('\n\n'),
       normalized: {
         unit: unit,
         lengthInches: round2(lengthInches),
@@ -403,6 +565,14 @@
         tubular: tubular,
         stainless: stainless,
         cabinet: cabinet,
+        cabinetDoors: plywood.cabinetDoors,
+        cabinetType: plywood.cabinetType,
+        cabinetSqFt: plywood.cabinetSqFt,
+        cabinetOuter: plywood.cabinetOuter,
+        canopy: Boolean(options.canopy),
+        canopySqFt: plywood.canopySqFt,
+        canopyOuter: plywood.canopyOuter,
+        canopyHeightInches: plywood.canopyHeightInches,
         sumpHolder: sumpHolder,
         sumpWidthInches: round2(sumpWidthInches)
       },
@@ -460,7 +630,7 @@
     }
 
     if (options.piping) {
-      components.piping = String(sumpType).toLowerCase() === 'overhead sump' ? 450 : 2200;
+      components.piping = String(sumpType).toLowerCase() === 'overhead sump' ? 540 : 2500;
     }
 
     if (options.allumTopCover) {
@@ -694,26 +864,50 @@
     return lookup;
   }
 
-  function validateGlassSafety(lengthInches, widthInches, heightInches, glassThickness, isTempered, isRimless) {
-    var glass = normalizeGlass(glassThickness);
+  // Thinnest glass that's safe for a tank's size - shop standard (2026-10-02). Height drives the
+  // water pressure and length drives how far the long panel bows, so the limits are height/length
+  // based instead of the old flat "6mm over 50 gallons" cutoff (which wrongly pushed standard
+  // braced builds like 72x18x18 to 12mm). Non-rimless = braced (top frame/brace); rimless is
+  // stricter. Each reason only names the target thickness, so getRequiredGlassFromMessage can't
+  // misread it. Mirrored in chatbot-engine.ts (Alice) and FunctionEvents.safetyrules (POS).
+  function getMinimumGlassForSize(lengthInches, widthInches, heightInches, isRimless) {
     var gallons = cubicInchesToGallons(lengthInches * widthInches * heightInches);
-    var glassMm = extractGlassMm(glass);
 
-    // Safety rule: an aquarium 4 feet (48 inches) tall or more must use 19mm (3/4") glass. Checked
-    // first, so a tall tank goes straight to 19mm instead of stepping through 6mm/10mm/12mm.
-    if (heightInches >= 48 && glassMm < 19) {
-      return {
-        isSafe: false,
-        message: 'Height is 4 feet (48 inches) or more. 19mm (3/4") glass is required. Auto-upgrading glass to 19mm.',
-        autoChangeTo: '19mm'
-      };
+    if (heightInches >= 48) {
+      return { glass: '19mm', reason: 'Height is 4 feet (48 inches) or more. 19mm (3/4") glass is required.' };
     }
+    // 10mm max: 24" tall, 24" wide, 72" long, 180 gallons. Anything over 72" long is 12mm minimum.
+    if (heightInches > 24 || widthInches > 24 || lengthInches > 72 || gallons > 180) {
+      return { glass: '12mm', reason: 'Tank is over 24" tall, over 24" wide, over 72" long or over 180 gallons, so 12mm glass is required.' };
+    }
+    if (isRimless) {
+      // Rimless 6mm max: 15" tall, 20" wide, 48" long, under 30 gallons.
+      if (heightInches > 15 || widthInches > 20 || lengthInches > 48 || gallons >= 30) {
+        return { glass: '10mm', reason: 'Rimless tanks over 15" tall, over 20" wide, over 48" long or 30 gallons and up need 10mm glass.' };
+      }
+    } else if (heightInches > 20 || widthInches > 20 || (heightInches > 18 && lengthInches > 60)) {
+      // Braced 6mm max: 20" tall and 20" wide; up to 72" long at 18" tall or less, 60" long above 18".
+      return { glass: '10mm', reason: 'Tank is over 20" tall or wide, or over 18" tall and longer than 60", so 10mm glass is required.' };
+    }
+    // 3mm max: 24" long, and 15 gallons once any side is over 12".
+    if (lengthInches > 24 || (gallons > 15 && (widthInches > 12 || heightInches > 12))) {
+      return { glass: '6mm', reason: 'Tank is over 24" long or over 15 gallons, so 6mm glass is required.' };
+    }
+    if (isRimless && gallons >= 10) {
+      return { glass: '6mm', reason: 'Rimless tanks of 10 gallons and up need 6mm glass.' };
+    }
+    return { glass: '3mm', reason: '' };
+  }
 
-    if (glass === '3mm' && lengthInches > 24) {
+  function validateGlassSafety(lengthInches, widthInches, heightInches, glassThickness, isTempered, isRimless) {
+    var glassMm = extractGlassMm(normalizeGlass(glassThickness));
+    var minimum = getMinimumGlassForSize(lengthInches, widthInches, heightInches, isRimless);
+
+    if (glassMm < extractGlassMm(minimum.glass)) {
       return {
         isSafe: false,
-        message: 'Length exceeds 24 inches for 3mm glass. Auto-upgrading glass to 6mm.',
-        autoChangeTo: '6mm'
+        message: minimum.reason + ' Auto-upgrading glass to ' + minimum.glass + '.',
+        autoChangeTo: minimum.glass
       };
     }
 
@@ -723,54 +917,6 @@
         message: 'Width or height is 36 inches or more. Tempered glass is mandatory for this custom aquarium.',
         autoChangeTo: null
       };
-    }
-
-    if (glass === '3mm') {
-      if (gallons > 15 && (lengthInches > 24 || widthInches > 12 || heightInches > 12)) {
-        return {
-          isSafe: false,
-          message: 'Tank exceeds safe limits for 3mm glass. Please select 10mm or 12mm glass.',
-          autoChangeTo: null
-        };
-      }
-    }
-
-    if (lengthInches > 60 || widthInches > 20 || heightInches > 20) {
-      if (glass === '3mm' || (glass === '6mm' && gallons > 50)) {
-        return {
-          isSafe: false,
-          message: 'Tank dimensions exceed safe limits for selected glass. Please choose 10mm or 12mm glass.',
-          autoChangeTo: null
-        };
-      }
-    }
-
-    if (glass === '10mm') {
-      if (gallons > 180 || lengthInches > 72 || widthInches > 30 || heightInches > 30) {
-        return {
-          isSafe: false,
-          message: 'Tank volume or dimensions require 12mm glass. Please select 12mm glass to calculate.',
-          autoChangeTo: null
-        };
-      }
-    }
-
-    if (isRimless) {
-      if (gallons >= 10 && gallons <= 15 && glassMm < 6) {
-        return {
-          isSafe: false,
-          message: 'Rimless 10-15G tanks require minimum 6mm glass.',
-          autoChangeTo: null
-        };
-      }
-
-      if (gallons >= 30 && gallons <= 100 && glassMm < 10) {
-        return {
-          isSafe: false,
-          message: 'Rimless 30-100G tanks require minimum 10mm glass.',
-          autoChangeTo: null
-        };
-      }
     }
 
     return {
@@ -910,7 +1056,7 @@
       return {
         ok: false,
         error: safety.message,
-        autoChangeTo: getRequiredGlassFromMessage(safety.message) || safety.autoChangeTo || null,
+        autoChangeTo: safety.autoChangeTo || getRequiredGlassFromMessage(safety.message) || null,
         requested: {
           glassThickness: requestedGlass,
           temperedGlass: requestedTempered
@@ -934,7 +1080,7 @@
     var extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
     var holePricePerHole = Number(extraPrices.Hole) || DEFAULT_EXTRA_PRICES.Hole;
     var glassAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
-    var standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows);
+    var standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows, options.extraPricingSetupRows);
     if (standCalculation && standCalculation.error) {
       return {
         ok: false,
@@ -991,9 +1137,14 @@
       var sumpWidthInches = toInches(sump.width, sumpUnit);
       var sumpHeightInches = toInches(sump.height, sumpUnit);
 
+      // Sump glass thickness is its own choice (sumps are often built thinner than the display
+      // tank) - same as the POS's sumpGlassComboBox. Falls back to the tank's glass when not given.
+      var sumpGlass = sump.glassThickness ? normalizeGlass(sump.glassThickness) : glass;
+
       normalizedSump = {
         type: sumpType,
         unit: sumpUnit,
+        glassThickness: sumpGlass,
         lengthInches: sumpLengthInches,
         widthInches: sumpWidthInches,
         heightInches: sumpHeightInches
@@ -1013,7 +1164,7 @@
 
       {
         var sumpAreaSqFt = getGlassAreaSqFt(sumpLengthInches, sumpWidthInches, sumpHeightInches);
-        var sumpPricePerSqFt = basePricePerSqFt;
+        var sumpPricePerSqFt = Number(glassPrices[sumpGlass]) || basePricePerSqFt;
         if (isTempered) {
           sumpPricePerSqFt *= 2;
         }
@@ -1049,7 +1200,7 @@
         }
 
         if (sump.piping) {
-          components.piping = String(sumpType).toLowerCase() === 'overhead sump' ? 450 : 2200;
+          components.piping = String(sumpType).toLowerCase() === 'overhead sump' ? 540 : 2500;
         }
 
         if (sump.allumTopCover) {
@@ -1178,6 +1329,8 @@
     buildExtraPriceLookup: buildExtraPriceLookup,
     calculateCustomAquarium: calculateCustomAquarium,
     validateGlassSafety: validateGlassSafety,
+    getMinimumGlassForSize: getMinimumGlassForSize,
+    getDefaultCabinetDoors: getDefaultCabinetDoors,
     toInches: toInches,
     calculateStandaloneStand: calculateStandaloneStand,
     calculateStandaloneFiltration: calculateStandaloneFiltration,

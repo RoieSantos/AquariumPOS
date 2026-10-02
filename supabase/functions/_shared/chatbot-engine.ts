@@ -242,6 +242,10 @@ interface StandOptions {
   tubular?: string;
   stainless?: boolean;
   cabinet?: boolean;
+  cabinetDoors?: number;
+  cabinetType?: string;
+  canopy?: boolean;
+  canopyHeight?: number;
   sumpHolder?: boolean;
   sumpWidth?: number;
   unit?: string;
@@ -256,11 +260,114 @@ interface StandCalculation {
   tubular: string;
   stainless: boolean;
   cabinet: boolean;
+  cabinetDoors: number;
+  cabinetPrice: number;
+  cabinetType: string;
+  canopy: boolean;
+  canopyHeightInches: number;
+  canopyPrice: number;
+  framePrice: number;
   sumpHolder: boolean;
   sumpWidth: number;
   unit: string;
   heightInches: number;
   notice: TubularSafetyResult['notice'];
+}
+
+// Hand-ported copy of the Cabinet/Canopy pricing in docs/WebAquariumCalculator/custom-aquarium-calculator.js
+// (getDefaultCabinetDoors/computePlywoodPanels/calculateStandPlywood) - keep both in sync. 18mm laminated
+// plywood, priced per sq ft: area x (sheet / 32) x (1 + waste %) x markup, min 'Plywood Minimum', + door hardware.
+const PLYWOOD_SHEET_SQFT = 32;
+const STAND_FOOTING_INCHES = 3;
+const DEFAULT_CANOPY_HEIGHT_INCHES = 6;
+
+function getDefaultCabinetDoors(lengthInches: number): number {
+  return 2 * Math.max(1, Math.round((Number(lengthInches) || 0) / 36));
+}
+
+// Cabinet Type -> its Pricing Setup keys (copy of CABINET_MATERIALS in custom-aquarium-calculator.js).
+// Applies to the canopy too.
+interface CabinetMaterial { label: string; sheet: string; waste: string; markup: string; canopyMarkup: string; minimum: string; hardware: string }
+const CABINET_MATERIALS: Record<string, CabinetMaterial> = {
+  'Laminated Plywood': {
+    label: '18mm laminated plywood', sheet: 'Plywood Sheet 18mm', waste: 'Plywood Waste %', markup: 'Plywood Markup',
+    canopyMarkup: 'Canopy Markup', minimum: 'Plywood Minimum', hardware: 'Door Hardware per sq ft'
+  },
+  Aluminum: {
+    label: '4mm aluminum ACP', sheet: 'Aluminum ACP Sheet 4mm', waste: 'Aluminum Waste %', markup: 'Aluminum Markup',
+    canopyMarkup: 'Aluminum Canopy Markup', minimum: 'Aluminum Minimum', hardware: 'Aluminum Door Hardware per sq ft'
+  }
+};
+
+function computePlywoodPanels(title: string, panels: Array<[string, number, number]>, extraPrices: Record<string, number>, doorCount: number, material: CabinetMaterial) {
+  const sheetPrice = Number(extraPrices[material.sheet]);
+  const wastePct = Number(extraPrices[material.waste]);
+  const markup = Number(extraPrices[title === 'Canopy' ? material.canopyMarkup : material.markup]);
+  const minimum = Number(extraPrices[material.minimum]);
+  const hardwarePerSqFt = Number(extraPrices[material.hardware]) || 0;
+  // Doors are the front panel (panels[0]) - hardware scales with its area, not the door count.
+  const doorAreaSqFt = doorCount > 0 ? (panels[0][1] * panels[0][2]) / 144 : 0;
+  const ratePerSqFt = (sheetPrice / PLYWOOD_SHEET_SQFT) * (1 + wastePct / 100) * markup;
+  let areaSqFt = 0;
+  const breakdown = [title + ' (' + material.label + '):'];
+  for (const [label, w, h] of panels) {
+    const panelSqFt = (w * h) / 144;
+    areaSqFt += panelSqFt;
+    breakdown.push(`${label}: ${round2(w)}" x ${round2(h)}" = ${panelSqFt.toFixed(2)} sq ft`);
+  }
+  const areaPrice = areaSqFt * ratePerSqFt;
+  const hardware = doorAreaSqFt * hardwarePerSqFt;
+  const price = round2(Math.max(minimum, areaPrice) + hardware);
+  breakdown.push(`Total area: ${areaSqFt.toFixed(2)} sq ft at ${ratePerSqFt.toFixed(2)} per sq ft = ${areaPrice.toFixed(2)}${areaPrice < minimum ? ` -> minimum ${minimum.toFixed(2)}` : ''}`);
+  if (hardware > 0) breakdown.push(`Door hardware (${doorCount} doors): ${doorAreaSqFt.toFixed(2)} sq ft x ${hardwarePerSqFt} = ${hardware.toFixed(2)}`);
+  breakdown.push(`${title} price = ${price.toFixed(2)}`);
+  return { areaSqFt: round2(areaSqFt), price, breakdown: breakdown.join('\n') };
+}
+
+// Cabinet = front (doors) + back + 2 sides over the stand frame height (minus footing);
+// Canopy = front + back + 2 sides at canopy height + top. A sump-holder section is never enclosed.
+function calculateStandPlywood(
+  lengthInches: number,
+  widthInches: number,
+  standHeightInches: number,
+  stand: StandOptions,
+  unit: string,
+  extraPricingSetupRows: Array<Record<string, unknown>> | undefined
+) {
+  const extraPrices = buildExtraPriceLookup(extraPricingSetupRows);
+  const cabinetType = CABINET_MATERIALS[stand.cabinetType || ''] ? (stand.cabinetType as string) : 'Laminated Plywood';
+  const material = CABINET_MATERIALS[cabinetType];
+  const result = { cabinetType, cabinetPrice: 0, canopyPrice: 0, cabinetDoors: 0, canopyHeightInches: 0, breakdown: [] as string[] };
+
+  if (stand.cabinet) {
+    const cabinetHeight = Math.max(0, standHeightInches - STAND_FOOTING_INCHES);
+    const doors = Math.round(Number(stand.cabinetDoors)) > 0 ? Math.round(Number(stand.cabinetDoors)) : getDefaultCabinetDoors(lengthInches);
+    const cabinet = computePlywoodPanels('Cabinet', [
+      [`Front (${doors} doors)`, lengthInches, cabinetHeight],
+      ['Back', lengthInches, cabinetHeight],
+      ['Left side', widthInches, cabinetHeight],
+      ['Right side', widthInches, cabinetHeight]
+    ], extraPrices, doors, material);
+    result.cabinetPrice = cabinet.price;
+    result.cabinetDoors = doors;
+    result.breakdown.push(cabinet.breakdown);
+  }
+
+  if (stand.canopy) {
+    const canopyHeight = Number(stand.canopyHeight) > 0 ? toInches(Number(stand.canopyHeight), unit) : DEFAULT_CANOPY_HEIGHT_INCHES;
+    const canopy = computePlywoodPanels('Canopy', [
+      ['Front', lengthInches, canopyHeight],
+      ['Back', lengthInches, canopyHeight],
+      ['Left side', widthInches, canopyHeight],
+      ['Right side', widthInches, canopyHeight],
+      ['Top', lengthInches, widthInches]
+    ], extraPrices, 0, material);
+    result.canopyPrice = canopy.price;
+    result.canopyHeightInches = round2(canopyHeight);
+    result.breakdown.push(canopy.breakdown);
+  }
+
+  return result;
 }
 
 function calculateStand(
@@ -269,7 +376,8 @@ function calculateStand(
   glassThickness: string,
   standOptions: StandOptions | undefined,
   defaultUnit: string,
-  tubularPricingSetupRows: Array<Record<string, unknown>> | undefined
+  tubularPricingSetupRows: Array<Record<string, unknown>> | undefined,
+  extraPricingSetupRows?: Array<Record<string, unknown>>
 ): StandCalculation | null {
   const stand = standOptions || {};
   if (!stand.enabled) {
@@ -295,16 +403,24 @@ function calculateStand(
     inchesToFeet(sumpWidthInches),
     buildTubularPriceLookup(tubularPricingSetupRows)
   );
+  const plywood = calculateStandPlywood(lengthInches, widthInches, standHeightInches, stand, standUnit, extraPricingSetupRows);
 
   return {
     enabled: true,
-    price: computed.price,
-    breakdown: computed.breakdown,
+    price: round2(computed.price + plywood.cabinetPrice + plywood.canopyPrice),
+    framePrice: computed.price,
+    breakdown: [computed.breakdown].concat(plywood.breakdown).join('\n\n'),
     totalFeetConsumed: computed.totalFeetConsumed,
     layers,
     tubular,
     stainless,
     cabinet,
+    cabinetDoors: plywood.cabinetDoors,
+    cabinetType: plywood.cabinetType,
+    cabinetPrice: plywood.cabinetPrice,
+    canopy: Boolean(stand.canopy),
+    canopyHeightInches: plywood.canopyHeightInches,
+    canopyPrice: plywood.canopyPrice,
     sumpHolder,
     sumpWidth: round2(sumpWidthInches),
     unit: standUnit,
@@ -336,6 +452,42 @@ interface GlassSafetyResult {
   autoChangeTo: string | null;
 }
 
+// Hand-ported copy of getMinimumGlassForSize in docs/WebAquariumCalculator/custom-aquarium-calculator.js
+// (shop standard, 2026-10-02) - keep both in sync. Height/length based; non-rimless = braced.
+function getMinimumGlassForSize(
+  lengthInches: number,
+  widthInches: number,
+  heightInches: number,
+  isRimless: boolean
+): { glass: string; reason: string } {
+  const gallons = cubicInchesToGallons(lengthInches * widthInches * heightInches);
+
+  if (heightInches >= 48) {
+    return { glass: '19mm', reason: 'Height is 4 feet (48 inches) or more. 19mm (3/4") glass is required.' };
+  }
+  // 10mm max: 24" tall, 24" wide, 72" long, 180 gallons. Anything over 72" long is 12mm minimum.
+  if (heightInches > 24 || widthInches > 24 || lengthInches > 72 || gallons > 180) {
+    return { glass: '12mm', reason: 'Tank is over 24" tall, over 24" wide, over 72" long or over 180 gallons, so 12mm glass is required.' };
+  }
+  if (isRimless) {
+    // Rimless 6mm max: 15" tall, 20" wide, 48" long, under 30 gallons.
+    if (heightInches > 15 || widthInches > 20 || lengthInches > 48 || gallons >= 30) {
+      return { glass: '10mm', reason: 'Rimless tanks over 15" tall, over 20" wide, over 48" long or 30 gallons and up need 10mm glass.' };
+    }
+  } else if (heightInches > 20 || widthInches > 20 || (heightInches > 18 && lengthInches > 60)) {
+    // Braced 6mm max: 20" tall and 20" wide; up to 72" long at 18" tall or less, 60" long above 18".
+    return { glass: '10mm', reason: 'Tank is over 20" tall or wide, or over 18" tall and longer than 60", so 10mm glass is required.' };
+  }
+  // 3mm max: 24" long, and 15 gallons once any side is over 12".
+  if (lengthInches > 24 || (gallons > 15 && (widthInches > 12 || heightInches > 12))) {
+    return { glass: '6mm', reason: 'Tank is over 24" long or over 15 gallons, so 6mm glass is required.' };
+  }
+  if (isRimless && gallons >= 10) {
+    return { glass: '6mm', reason: 'Rimless tanks of 10 gallons and up need 6mm glass.' };
+  }
+  return { glass: '3mm', reason: '' };
+}
+
 function validateGlassSafety(
   lengthInches: number,
   widthInches: number,
@@ -344,53 +496,15 @@ function validateGlassSafety(
   isTempered: boolean,
   isRimless: boolean
 ): GlassSafetyResult {
-  const glass = normalizeGlass(glassThickness);
-  const gallons = cubicInchesToGallons(lengthInches * widthInches * heightInches);
-  const glassMm = extractGlassMm(glass);
+  const glassMm = extractGlassMm(normalizeGlass(glassThickness));
+  const minimum = getMinimumGlassForSize(lengthInches, widthInches, heightInches, isRimless);
 
-  // Safety rule: an aquarium 4 feet (48 inches) tall or more must use 19mm (3/4") glass. Checked
-  // first, so a tall tank goes straight to 19mm instead of stepping through 6mm/10mm/12mm.
-  if (heightInches >= 48 && glassMm < 19) {
-    return {
-      isSafe: false,
-      message: 'Height is 4 feet (48 inches) or more. 19mm (3/4") glass is required. Auto-upgrading glass to 19mm.',
-      autoChangeTo: '19mm'
-    };
-  }
-
-  if (glass === '3mm' && lengthInches > 24) {
-    return { isSafe: false, message: 'Length exceeds 24 inches for 3mm glass. Auto-upgrading glass to 6mm.', autoChangeTo: '6mm' };
+  if (glassMm < extractGlassMm(minimum.glass)) {
+    return { isSafe: false, message: `${minimum.reason} Auto-upgrading glass to ${minimum.glass}.`, autoChangeTo: minimum.glass };
   }
 
   if ((widthInches >= 36 || heightInches >= 36) && !isTempered) {
     return { isSafe: false, message: 'Width or height is 36 inches or more. Tempered glass is mandatory for this custom aquarium.', autoChangeTo: null };
-  }
-
-  if (glass === '3mm') {
-    if (gallons > 15 && (lengthInches > 24 || widthInches > 12 || heightInches > 12)) {
-      return { isSafe: false, message: 'Tank exceeds safe limits for 3mm glass. Please select 10mm or 12mm glass.', autoChangeTo: null };
-    }
-  }
-
-  if (lengthInches > 60 || widthInches > 20 || heightInches > 20) {
-    if (glass === '3mm' || (glass === '6mm' && gallons > 50)) {
-      return { isSafe: false, message: 'Tank dimensions exceed safe limits for selected glass. Please choose 10mm or 12mm glass.', autoChangeTo: null };
-    }
-  }
-
-  if (glass === '10mm') {
-    if (gallons > 180 || lengthInches > 72 || widthInches > 30 || heightInches > 30) {
-      return { isSafe: false, message: 'Tank volume or dimensions require 12mm glass. Please select 12mm glass to calculate.', autoChangeTo: null };
-    }
-  }
-
-  if (isRimless) {
-    if (gallons >= 10 && gallons <= 15 && glassMm < 6) {
-      return { isSafe: false, message: 'Rimless 10-15G tanks require minimum 6mm glass.', autoChangeTo: null };
-    }
-    if (gallons >= 30 && gallons <= 100 && glassMm < 10) {
-      return { isSafe: false, message: 'Rimless 30-100G tanks require minimum 10mm glass.', autoChangeTo: null };
-    }
   }
 
   return { isSafe: true, message: 'OK', autoChangeTo: null };
@@ -433,7 +547,21 @@ interface AquariumQuoteInput {
 // Mirrors docs/WebAquariumCalculator/custom-aquarium-calculator.js's DEFAULT_EXTRA_PRICES/
 // buildExtraPriceLookup - last-resort fallback only, live values come from
 // public.AquariumExtraPricingSetup (supabase_aquarium_extra_pricing.sql).
-const DEFAULT_EXTRA_PRICES: Record<string, number> = { Hole: 150 };
+const DEFAULT_EXTRA_PRICES: Record<string, number> = {
+  Hole: 150,
+  'Plywood Sheet 18mm': 3900,
+  'Plywood Waste %': 15,
+  'Plywood Markup': 1.6,
+  'Canopy Markup': 1.3,
+  'Plywood Minimum': 2200,
+  'Door Hardware per sq ft': 60,
+  'Aluminum ACP Sheet 4mm': 7000,
+  'Aluminum Waste %': 10,
+  'Aluminum Markup': 1.8,
+  'Aluminum Canopy Markup': 1.5,
+  'Aluminum Minimum': 3000,
+  'Aluminum Door Hardware per sq ft': 60
+};
 
 function buildExtraPriceLookup(rows: Array<Record<string, unknown>> | undefined): Record<string, number> {
   const lookup: Record<string, number> = { ...DEFAULT_EXTRA_PRICES };
@@ -519,7 +647,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     return {
       ok: false,
       error: safety.message,
-      autoChangeTo: getRequiredGlassFromMessage(safety.message) || safety.autoChangeTo || null,
+      autoChangeTo: safety.autoChangeTo || getRequiredGlassFromMessage(safety.message) || null,
       requested: { glassThickness: requestedGlass, temperedGlass: requestedTempered },
       normalized: { glassThickness: glass, temperedGlass: isTempered },
       safetyNotice
@@ -531,7 +659,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   const basePricePerSqFt = Number(glassPrices[glass]) || 100;
   let finalPricePerSqFt = basePricePerSqFt;
   const glassAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
-  const standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows);
+  const standCalculation = calculateStand(lengthInches, widthInches, glass, options.stand, unit, options.tubularPricingSetupRows, options.extraPricingSetupRows);
   const extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
   const holePricePerHole = Number(extraPrices.Hole) || DEFAULT_EXTRA_PRICES.Hole;
   const components: Record<string, number> = {
@@ -723,14 +851,19 @@ export const TOOLS: Anthropic.Tool[] = [
         glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm', '19mm'], description: 'Defaults to 6mm if not specified. Any tank 4 feet (48 inches) tall or more is automatically upgraded to 19mm (3/4 inch) glass for safety, whatever is passed here.' },
         tempered_glass: { type: 'boolean' },
         low_iron: { type: 'boolean' },
-        rimless: { type: 'boolean', description: 'Rimless tank (no top frame bracing) - requires thicker glass for 10-15 and 30-100 gallon sizes. Set true if the customer asks for rimless OR says they will use a hang-on-back (HOB) filter, since a hang-on-back setup calls for a rimless tank.' },
+        rimless: { type: 'boolean', description: 'Rimless tank (no top frame bracing) - requires thicker glass than a braced tank of the same size (6mm from 10 gallons; 10mm from 30 gallons or over 15 inches tall / 48 inches long). Set true if the customer asks for rimless OR says they will use a hang-on-back (HOB) filter, since a hang-on-back setup calls for a rimless tank.' },
         high_strip: { type: 'boolean', description: 'An extra glass strip along the top rim.' },
         hole_count: { type: 'integer', description: 'Number of drilled holes for the aquarium, if any. Flat rate per hole - ask the customer how many they need before including this.' },
         divider_count: { type: 'integer', description: 'Number of internal glass dividers/partitions, if any. Priced from the tank\'s own glass rate for a Width x Height panel, plus 20%, per divider.' },
         add_stand: { type: 'boolean', description: 'Set true only if the customer wants a matching stand included.' },
         stand_layers: { type: 'integer', description: 'Number of stand shelves/layers, minimum 2. Only used when add_stand is true.' },
         stand_tubular: { type: 'string', enum: ['1x1', '1.5x1.5', '2x2'], description: 'Stand frame tubular size. Only used when add_stand is true.' },
-        stand_stainless: { type: 'boolean', description: 'Stainless steel stand frame instead of regular. Only used when add_stand is true.' }
+        stand_stainless: { type: 'boolean', description: 'Stainless steel stand frame instead of regular. Only used when add_stand is true.' },
+        stand_cabinet: { type: 'boolean', description: 'Enclose the stand as a cabinet (18mm laminated plywood front doors, sides and closed back). Only used when add_stand is true.' },
+        cabinet_type: { type: 'string', enum: ['Laminated Plywood', 'Aluminum'], description: 'Material for the cabinet AND canopy: "Laminated Plywood" (18mm, default) or "Aluminum" (4mm ACP aluminum composite panels, pricier). Only used when stand_cabinet or canopy is true.' },
+        stand_cabinet_doors: { type: 'integer', description: 'Number of cabinet doors. Leave out to use the default (2 doors per 3ft of length, e.g. 3ft = 2 doors, 6ft = 4 doors). Only used when stand_cabinet is true.' },
+        canopy: { type: 'boolean', description: 'Add a canopy (18mm laminated plywood box cover on top of the tank). Only used when add_stand is true.' },
+        canopy_height: { type: 'number', description: 'Canopy height, in the same unit as the tank. Leave out to use the default 6 inches. Only used when canopy is true.' }
       },
       required: ['length', 'width', 'height']
     }
@@ -976,7 +1109,7 @@ export function buildSystemPrompt(
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Printed/Assigned/To Ship/Shipped/Cancelled - "Assigned" means our production team has been assigned and is now building/preparing it), and which branch/warehouse it was ordered from. If the Online Order result has a non-empty production array, also tell them how the build is going PER PART - part "tank" = the aquarium/sump (built by our tank maker), "stand" = the stand/top cover (built by our stand maker), "dispatcher" = order preparation. For each part: done=true -> that part is finished; assigned=true and done=false -> being built now; assigned=false -> queued, waiting to be assigned to a maker. Rows with source "production_order" also have build_status (Open = queued, not yet handed to the makers; Released = being built; Finished = all built) and qty/qty_built (e.g. 1 of 2 built) - use those the same way. Example: "Your tank is already done ✅, the stand is still being built by our stand maker - once both are ready we\'ll move it to shipping/delivery." Never name the staff member - say "our tank maker"/"our stand maker" only (the data has no names anyway). Never promise a finish date (none is stored); if they press for one, offer to have staff confirm (schedule_follow_up or escalate_to_staff). Once the order status is To Ship/Shipped, production is over - just give that status. WALK-IN ORDERS (orderType "Walk-in Order" - bought and paid at the counter of one of our stores, found by the POS receipt number like RS-0000010861): status_label is the in-store build stage, not a shipping status - "To Assign" = received, waiting for our production team to be assigned; "Assigned" = our makers are building it now; "Production Done" = built and ready for pickup at the branch in warehouse_name; "Completed" = already picked up / handed over (also what an ordinary in-store purchase with nothing to build shows - just confirm the purchase and items). Never call a walk-in "Shipped" or talk about shipping/delivery tracking for it. Use the same per-part production rundown as above. If target_ready_date is set, you may share it as our target ready date (e.g. "we\'re aiming to have it ready by Oct 8") - say it\'s a target, not a guarantee; with no target_ready_date, don\'t promise a date. There is no receiptUrl for walk-ins - they already have the printed POS receipt. If the customer says they bought something in store but has no number, ask for the receipt number printed on their receipt. For an Automated Order result, share its Pancake sync status plainly (e.g. still being processed vs. confirmed). There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
-    '- Custom aquarium and/or stand price quotes: if the customer only gives a GALLON size (e.g. "50 gallon", "75g") rather than asking for something custom (specific length/width/height, rimless, tempered, low iron, etc.), FIRST use search_items (try both "<N>g" and "<N> gallon", e.g. search_items("50g")) to check whether a ready-made standard aquarium of that size is already in the catalog - if one is, offer that real product first (its actual name and price, and offer to send a photo) instead of jumping to a custom quote. If they only asked the price, quote it and do NOT mention stock, even when it\'s 0 (see the stock rule above); only give the per-branch stock if they ask about availability. Only fall back to compute_aquarium_quote if no matching standard item exists, the customer explicitly wants custom dimensions/spec, or they say they don\'t want the standard one you offered. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote - also ask if they need any drilled holes (hole_count, flat rate per hole) or internal dividers/partitions (divider_count, priced from the tank\'s own glass rate for a Width x Height panel plus 20%), and include whichever they want. Before calling the tool, restate back what you understood - dimensions, unit, holes/dividers if any, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, holes/divider charges if any, the stand price and its spec (layers/tubular/stainless) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
+    '- Custom aquarium and/or stand price quotes: if the customer only gives a GALLON size (e.g. "50 gallon", "75g") rather than asking for something custom (specific length/width/height, rimless, tempered, low iron, etc.), FIRST use search_items (try both "<N>g" and "<N> gallon", e.g. search_items("50g")) to check whether a ready-made standard aquarium of that size is already in the catalog - if one is, offer that real product first (its actual name and price, and offer to send a photo) instead of jumping to a custom quote. If they only asked the price, quote it and do NOT mention stock, even when it\'s 0 (see the stock rule above); only give the per-branch stock if they ask about availability. Only fall back to compute_aquarium_quote if no matching standard item exists, the customer explicitly wants custom dimensions/spec, or they say they don\'t want the standard one you offered. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote - also ask if they need any drilled holes (hole_count, flat rate per hole) or internal dividers/partitions (divider_count, priced from the tank\'s own glass rate for a Width x Height panel plus 20%), and include whichever they want. Before calling the tool, restate back what you understood - dimensions, unit, holes/dividers if any, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, holes/divider charges if any, the stand price and its spec (layers/tubular/stainless, plus cabinet/canopy and their prices if included) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
     '- Delivery fees: first find out whether the customer wants the store\'s OWN TRUCK to deliver, or wants to arrange their own Lalamove courier - if it\'s not already clear which, ask. For the store\'s own truck: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. This is the store\'s own official distance-based formula - the same one staff use - so state it with confidence as the actual fee, not as a rough estimate pending staff confirmation. For Lalamove: ask which branch and the full delivery address, work out and tell the customer what size vehicle you recommend booking based on what they\'re having delivered (see compute_lalamove_quote\'s own description for how to pick one), then call compute_lalamove_quote with that vehicle type - this is a live quote straight from Lalamove\'s own system, so state the price with full confidence. Lalamove quoting is QUOTE ONLY - it cannot book the ride, so if the customer wants to proceed, tell them staff will arrange the actual Lalamove booking.',
     '- Scheduling a delivery date for an existing Online Order: first ask (if not already clear) whether they want the store\'s OWN TRUCK to deliver it, as opposed to a courier they\'re arranging themselves (e.g. Lalamove) or picking it up - only continue if they say the store\'s own truck. Get their order number, then call get_delivery_scheduling_options. If it comes back not eligible, explain the reason in plain words (e.g. already scheduled, order not ready yet). If eligible, tell the customer the deliveryFee it returned with confidence as the actual fee (whether deliveryFeeIsEstimate is true - the same official formula as compute_delivery_quote - or false - the order\'s already-recorded fee, makes no difference to how confidently you state it) AND the candidateDates, and get them to explicitly confirm both the fee and one specific date before calling schedule_delivery_date. Never book a date they haven\'t confirmed, and never invent a date that wasn\'t in candidateDates. Once booked, let them know it\'s confirmed and staff will also see it on the schedule.',
     '- Delivery whereabouts ("where is my delivery", "where is my order", "where is the driver with my stuff"): ALWAYS confirm first (if not already clear from the conversation) whether this is the STORE\'S OWN TRUCK delivering it, or a courier the customer arranged themselves (e.g. Lalamove) - never assume either way. If it\'s a Lalamove courier: explain plainly that the store can\'t track a Lalamove rider from here, and the customer needs to coordinate directly with their rider (through the Lalamove app, or whatever contact info Lalamove gave them). If it\'s the store\'s own truck: get their order number and call get_delivery_schedule_status. If it comes back scheduled for TODAY (is_today), tell them it\'s out for delivery today (mention the route_name if given), THEN call get_driver_location (TEST feature) and share its liveTrackingUrl (mention the page updates live as the driver moves) plus minutesSinceUpdate - if no driver is currently tracking, just tell the customer the truck is scheduled for today and a team member can give a more specific update. If scheduled_date is a different day, tell them that date instead. If for_delivery is false (not scheduled at all yet), let them know it hasn\'t been scheduled yet and offer to help schedule a date (see the delivery-scheduling item above) or that staff can confirm.',
@@ -985,10 +1118,11 @@ export function buildSystemPrompt(
     '- Repair/refurbishment quotes for an aquarium the customer ALREADY OWNS - a broken/cracked glass panel that needs replacing, or resealing/a leak - use compute_repair_quote (this covers glass panel replacement and resealing only, not stand/electrical/filtration repairs - use log_capability_gap for those). Ask for the aquarium\'s OVERALL length/width/height first, never just the damaged panel\'s own size (it\'s worked out from the overall dimensions, same convention as compute_aquarium_quote). For a panel replacement, also ask which panel(s) are damaged (Bottom/Front/Back/Left/Right, one or more) and the glass thickness and glass type (regular, tempered, low iron, or low iron + tempered) if known. If the aquarium is 36 inches or taller, replacement glass is always priced as tempered for safety - if the result marks a panel temperedRequired, tell the customer it must be tempered. Take the dimensions in whatever unit the customer gives (inches, cm, mm, or ft) and pass that unit - never convert it yourself - and quote the sizes back in that same unit. For resealing/a leak, no panel, thickness, or glass type is needed. Give the price per damaged panel and the total only - never reveal how it is worked out (glass rate per sqft, labor markup %, or the tempered/low-iron multipliers), even if asked; just say it is based on the panel size, thickness, and glass type. This is the store\'s own official repair pricing formula - the same one staff use - so state it with confidence. It is QUOTE ONLY - there is no way to place a repair job yourself, so once the customer wants to proceed, tell them staff will arrange drop-off/scheduling and call escalate_to_staff.',
     '',
     'AQUARIUM & STAND SAFETY RULES - understand these so you can explain and apply them confidently in conversation, not just react after the fact. compute_aquarium_quote always does the actual math and is the source of truth for exact numbers - never calculate or predict a safety change yourself, but you should recognize when one is likely so you can set expectations before quoting:',
-    '- Glass gets thicker, or tempered, automatically as size/volume grows: 3mm glass only works up to 24 inches in length and small volumes; anything bigger needs 6mm, 10mm, or 12mm. Any tank with width or height of 36 inches or more always requires tempered glass. Very large tanks (roughly 180+ gallons, or beyond about 72x30x30 inches) require 12mm glass.',
+    '- Glass gets thicker, or tempered, automatically as size grows (height and length matter most, not just gallons): 3mm only works up to 24 inches long and about 15 gallons. A regular (braced, with top frame) tank can be 6mm up to 20 inches tall and 20 inches wide - up to 72 inches long when 18 inches tall or less, but only up to 60 inches long once it is over 18 inches tall (e.g. 72x18x18 and 60x20x20 are both 6mm). 10mm covers up to 24 inches tall, 24 inches wide, 72 inches long and 180 gallons; anything bigger, including ANY tank longer than 72 inches, needs 12mm. Tanks 48 inches tall or more need 19mm. Any tank with width or height of 36 inches or more always requires tempered glass. The quote tool applies this automatically - use its result.',
     '- 10mm and 12mm glass tanks take longer to finish than regular orders: the thick glass is pre-ordered and cut to size for the tank, and the thicker silicone joints need extra curing time to fully set (that is what makes the tank strong and leak-free). Mention this when quoting or discussing a 10mm/12mm tank so the customer expects a longer wait - but never promise a specific completion date.',
-    '- Rimless tanks (no top/bottom frame bracing) need extra glass thickness to stay structurally safe without that frame: minimum 6mm for a 10-15 gallon tank, minimum 10mm for a 30-100 gallon tank.',
+    '- Rimless tanks (no top frame bracing) need extra glass thickness to stay structurally safe without that frame: minimum 6mm from 10 gallons up, and 10mm once the tank is 30 gallons or more, over 15 inches tall, over 20 inches wide or over 48 inches long (12mm beyond the normal 10mm limits).',
     '- HANG-ON-BACK (HOB) FILTRATION: a hang-on-back filter hangs over the tank\'s rim, so a tank meant for one is supposed to be RIMLESS (no top frame in the way) - and that means the rimless glass rule above applies to it. Whenever you are advising a tank size or building a custom aquarium quote, and it isn\'t already clear from the conversation, ask what filtration they plan to use (hang-on-back, canister, sump, internal/sponge, etc.). If it\'s hang-on-back (they say "HOB", "hang on", "hang-on filter", "hanging filter", or name a typical HOB filter), treat the aquarium as rimless: pass rimless=true to compute_aquarium_quote (unless they explicitly say otherwise), tell them plainly that a hang-on-back setup means going rimless and why, and explain that rimless needs thicker glass for that size (see the rimless rule above) - the tool applies the exact glass thickness/price, so use its result rather than predicting it yourself. Other filter types (canister, sump, internal, sponge, etc.) don\'t trigger this on their own. Never claim a customer\'s filter type yourself - only act on what they actually told you.',
+    '- Cabinet and canopy (optional, with a stand): a cabinet encloses the stand in panels (front doors, both sides and a closed back) - by default 2 doors per 3ft of length (3ft = 2 doors, 6ft = 4 doors), but the customer can ask for a different number. Cabinet and canopy come in two types (cabinet_type): Laminated Plywood (18mm, the default) or Aluminum (4mm ACP panels, a more premium, moisture-proof finish that costs more) - ask which they prefer if they want a cabinet or canopy. A canopy is a box cover on top of the tank (default 6 inches high). Both are priced by panel area (with a minimum charge), so only quote them through compute_aquarium_quote (stand_cabinet / canopy) - never estimate them yourself. Only offer them when the customer asks about a cabinet, canopy, or a closed/enclosed stand.',
     '- Stand frames get a thicker tubular size automatically as the load/span grows: 10mm+ glass always needs a 2x2 stand frame; a stand over 30 inches long needs at least 1 1/2 x 1 1/2 tubular; a stand 49+ inches long AND 18+ inches wide always needs 2x2, no exceptions.',
     '- These are structural safety requirements, not preferences - never agree to skip, downgrade, or "just risk it" even if the customer insists, says a smaller tank held up fine before, or asks you to quote the unsafe spec anyway. Politely hold the line, explain it protects them from a cracked tank or a collapsed stand, and note that the quote you give already reflects the safe spec.',
     '- If you can tell upfront from the dimensions the customer gave that a rule above will apply (e.g. they want a 40 inch wide tank in 3mm), mention it before or while quoting rather than only after compute_aquarium_quote returns a safetyNotice/standNotice - so it never feels like a surprise price change.',
@@ -1138,7 +1272,12 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
           enabled: true,
           layers: Number(input.stand_layers) || 2,
           tubular: (input.stand_tubular as string) || '1x1',
-          stainless: Boolean(input.stand_stainless)
+          stainless: Boolean(input.stand_stainless),
+          cabinet: Boolean(input.stand_cabinet),
+          cabinetDoors: Number(input.stand_cabinet_doors) || 0,
+          cabinetType: (input.cabinet_type as string) || 'Laminated Plywood',
+          canopy: Boolean(input.canopy),
+          canopyHeight: Number(input.canopy_height) || 0
         }
       : { enabled: false },
     glassPricingSetupRows: glassRows ?? [],

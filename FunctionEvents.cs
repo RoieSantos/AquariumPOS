@@ -1997,67 +1997,74 @@ WHERE (ile.DocumentNo = @doc) AND (ISNULL(i.CategoryCode,'') LIKE '%AQUARIUM%')"
 
         // Add more global functions here as needed
         /// <summary>
-        /// Validate aquarium dimensions against glass thickness and safety rules.
-        /// Returns (isSafe, message). If isSafe==false, message contains the user-facing explanation.
+        /// Thinnest glass that's safe for a tank's size - shop standard (2026-10-02), mirrors
+        /// getMinimumGlassForSize in docs/WebAquariumCalculator/custom-aquarium-calculator.js. Height and
+        /// length based (not the old flat "6mm over 50 gallons" cutoff); non-rimless = braced (top frame),
+        /// rimless is stricter. Tops out at 12mm since the POS glass list has no 19mm.
+        /// </summary>
+        public static (string Glass, string Reason) MinimumGlassForSize(double lengthInInches, double widthInInches, double heightInInches, bool rimless)
+        {
+            double gallons = (lengthInInches * widthInInches * heightInInches) / 231.0;
+
+            // 10mm max: 24" tall, 24" wide, 72" long, 180 gallons. Anything over 72" long is 12mm minimum.
+            if (heightInInches > 24.0 || widthInInches > 24.0 || lengthInInches > 72.0 || gallons > 180.0)
+                return ("12mm", "Tank is over 24\" tall, over 24\" wide, over 72\" long or over 180 gallons, so 12mm glass is required.");
+
+            if (rimless)
+            {
+                // Rimless 6mm max: 15" tall, 20" wide, 48" long, under 30 gallons.
+                if (heightInInches > 15.0 || widthInInches > 20.0 || lengthInInches > 48.0 || gallons >= 30.0)
+                    return ("10mm", "Rimless tanks over 15\" tall, over 20\" wide, over 48\" long or 30 gallons and up need 10mm glass.");
+            }
+            else if (heightInInches > 20.0 || widthInInches > 20.0 || (heightInInches > 18.0 && lengthInInches > 60.0))
+            {
+                // Braced 6mm max: 20" tall and 20" wide; up to 72" long at 18" tall or less, 60" long above 18".
+                return ("10mm", "Tank is over 20\" tall or wide, or over 18\" tall and longer than 60\", so 10mm glass is required.");
+            }
+
+            // 3mm max: 24" long, and 15 gallons once any side is over 12".
+            if (lengthInInches > 24.0 || (gallons > 15.0 && (widthInInches > 12.0 || heightInInches > 12.0)))
+                return ("6mm", "Tank is over 24\" long or over 15 gallons, so 6mm glass is required.");
+
+            if (rimless && gallons >= 10.0)
+                return ("6mm", "Rimless tanks of 10 gallons and up need 6mm glass.");
+
+            return ("3mm", string.Empty);
+        }
+
+        private static int GlassMm(string? glass)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(glass ?? string.Empty, @"\d+");
+            return match.Success ? int.Parse(match.Value) : 0;
+        }
+
+        /// <summary>
+        /// Validate aquarium dimensions against glass thickness and safety rules (braced tank).
+        /// Returns (isSafe, message, autoChangeTo). AutoChangeTo is the thinnest safe glass when the selected one is too thin.
         /// </summary>
         public static (bool IsSafe, string Message, string? AutoChangeTo) safetyrules(double lengthInInches, double widthInInches, double heightInInches, string glassThicknessMm, bool isTempered)
         {
+            return safetyrules(lengthInInches, widthInInches, heightInInches, glassThicknessMm, isTempered, false);
+        }
+        /// <summary>
+        /// Overload that considers rimless tanks - rimless uses stricter limits (see MinimumGlassForSize).
+        /// </summary>
+        public static (bool IsSafe, string Message, string? AutoChangeTo) safetyrules(double lengthInInches, double widthInInches, double heightInInches, string glassThicknessMm, bool isTempered, bool rimless)
+        {
             try
             {
-                // Normalize thickness string (e.g., "6mm" -> "6mm")
-                string t = (glassThicknessMm ?? string.Empty).Trim().ToLowerInvariant();
-                // Compute approx gallons for contextual rules
-                double gallons = (lengthInInches * widthInInches * heightInInches) / 231.0;
-
-                // Auto-upgrade rule: if user selected 3mm but length alone exceeds 24", suggest/auto-change to 6mm
-                if (t == "3mm" && lengthInInches > 24.0)
+                var minimum = MinimumGlassForSize(lengthInInches, widthInInches, heightInInches, rimless);
+                if (GlassMm(glassThicknessMm) < GlassMm(minimum.Glass))
                 {
-                    // Return a special auto-change hint. Caller should update UI and recalculate.
-                    return (false, "Length exceeds 24\" for 3mm glass. Auto-upgrading glass to 6mm.", "6mm");
+                    // Caller updates the glass dropdown to AutoChangeTo and recalculates.
+                    return (false, $"{minimum.Reason} Auto-upgrading glass to {minimum.Glass}.", minimum.Glass);
                 }
 
                 // Enforce: if width or height reaches 36 inches, tempered glass is mandatory.
-                try
+                if ((widthInInches >= 36.0 || heightInInches >= 36.0) && !isTempered)
                 {
-                    if (widthInInches >= 36.0 || heightInInches >= 36.0)
-                    {
-                        if (!isTempered)
-                        {
-                            return (false, "Width or height is 36 inches or more. Tempered glass is mandatory for this custom aquarium.", null);
-                        }
-                    }
+                    return (false, "Width or height is 36 inches or more. Tempered glass is mandatory for this custom aquarium.", null);
                 }
-                catch { }
-
-                // Rule 1: 3mm glass is only for very small tanks. If >15 gallons and any major dimension is over small limits, require thicker glass
-                if (t == "3mm")
-                {
-                    if (gallons > 15.0 && (lengthInInches > 24.0 || widthInInches > 12.0 || heightInInches > 12.0))
-                    {
-                        return (false, "Tank exceeds safe limits for 3mm glass. Please select 10mm or 12mm glass.", null);
-                    }
-                }
-
-                // General rule: if any dimension is very large then 3mm/6mm are unsafe. For 6mm require >50 gal threshold
-                if ((lengthInInches > 60.0 || widthInInches > 20.0 || heightInInches > 20.0))
-                {
-                    if (t == "3mm" || (t == "6mm" && gallons > 50.0))
-                    {
-                        return (false, "Tank dimensions exceed safe limits for selected glass. Please choose 10mm or 12mm glass.", null);
-                    }
-                }
-
-                // 10mm rule: for very large tanks require 12mm
-                if (t == "10mm")
-                {
-                    if (gallons > 180.0 || lengthInInches > 72.0 || widthInInches > 30.0 || heightInInches > 30.0)
-                    {
-                        return (false, "Tank volume/dimensions require 12mm glass. Please select 12mm glass to calculate.", null);
-                    }
-                }
-
-                // If tempered glass is selected, some marginal cases may be allowed, but we keep rules conservative
-                // (no additional allow-listing; tempered reduces risk but design decisions still prefer thicker glass)
 
                 return (true, string.Empty, null);
             }
@@ -2065,55 +2072,6 @@ WHERE (ile.DocumentNo = @doc) AND (ISNULL(i.CategoryCode,'') LIKE '%AQUARIUM%')"
             {
                 // On unexpected error, return not safe with diagnostic message
                 return (false, "Safety validation failed: " + ex.Message, null);
-            }
-        }
-        /// <summary>
-        /// Overload that considers rimless tanks. If rimless==true, applies stricter rimless guidelines
-        /// (10-15G rimless -> min 6mm, 30-100G rimless -> min 10mm, etc.).
-        /// </summary>
-        public static (bool IsSafe, string Message, string? AutoChangeTo) safetyrules(double lengthInInches, double widthInInches, double heightInInches, string glassThicknessMm, bool isTempered, bool rimless)
-        {
-            // First apply the base checks
-            var baseResult = safetyrules(lengthInInches, widthInInches, heightInInches, glassThicknessMm, isTempered);
-            if (!rimless || !baseResult.IsSafe)
-            {
-                // If not rimless, or base already failed, just return base result
-                return baseResult;
-            }
-
-            try
-            {
-                double gallons = (lengthInInches * widthInInches * heightInInches) / 231.0;
-                // Normalize thickness like "6mm" -> 6
-                int glassMm = 0;
-                if (!string.IsNullOrWhiteSpace(glassThicknessMm))
-                {
-                    var s = glassThicknessMm.Trim().ToLowerInvariant().Replace("mm", "").Replace(" ", "");
-                    int.TryParse(s, out glassMm);
-                }
-
-                // Rimless-specific requirements
-                if (gallons >= 10.0 && gallons <= 15.0)
-                {
-            if (glassMm < 6)
-                return (false, "Rimless 10–15G tanks require minimum 6mm glass.", null);
-                }
-
-                if (gallons >= 30.0 && gallons <= 100.0)
-                {
-                    if (glassMm < 10)
-                        return (false, "Rimless 30–100G tanks require minimum 10mm glass.", null);
-                }
-
-                // 2.5–5G rimless: 3mm allowed (no restriction)
-                // 20–25G rimless: 6mm allowed (no extra restriction beyond base)
-
-                // For tanks >100G, base rules will handle conservatively; recommend team check if needed
-                return baseResult;
-            }
-            catch (Exception ex)
-            {
-                return (false, "Rimless safety validation failed: " + ex.Message, null);
             }
         }
         /// <summary>

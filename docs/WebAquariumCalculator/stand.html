@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Custom Stand Calculator - RS Pet Stop</title>
-  <link rel="stylesheet" href="./calculator-ui.css?v=2">
+  <link rel="stylesheet" href="./calculator-ui.css?v=3">
   <style>
     .tubular-toggle {
       display: grid;
@@ -135,7 +135,32 @@
           <div class="checkbox-stack">
             <label class="checkbox-row"><input id="stainless" type="checkbox">Stainless</label>
             <label class="checkbox-row"><input id="cabinet" type="checkbox">Cabinet</label>
+            <label class="checkbox-row"><input id="canopy" type="checkbox">Canopy</label>
             <label class="checkbox-row"><input id="sumpHolder" type="checkbox">Sump Holder</label>
+          </div>
+
+          <div id="cabinetTypeWrap" class="reveal-block hidden">
+            <div class="field" style="margin-bottom: 0; max-width: 240px;">
+              <label for="cabinetType">Cabinet / canopy type</label>
+              <select id="cabinetType">
+                <option value="Laminated Plywood" selected>Laminated Plywood (18mm)</option>
+                <option value="Aluminum">Aluminum (4mm ACP)</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="cabinetDoorsWrap" class="reveal-block hidden">
+            <div class="field" style="margin-bottom: 0; max-width: 240px;">
+              <label for="cabinetDoors">Cabinet doors</label>
+              <input id="cabinetDoors" type="number" min="1" step="1" placeholder="Auto (2 per 3ft)">
+            </div>
+          </div>
+
+          <div id="canopyHeightWrap" class="reveal-block hidden">
+            <div class="field" style="margin-bottom: 0; max-width: 240px;">
+              <label for="canopyHeight">Canopy height</label>
+              <input id="canopyHeight" type="number" min="0" step="0.01" placeholder="Default 6 in">
+            </div>
           </div>
 
           <div id="sumpWidthWrap" class="reveal-block hidden">
@@ -194,7 +219,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js"></script>
+  <script src="./custom-aquarium-calculator.js?v=sump1"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
     var closeButton = document.getElementById('closeButton');
@@ -293,6 +318,9 @@
 
     function setVisibilityState() {
       byId('sumpWidthWrap').classList.toggle('hidden', !byId('sumpHolder').checked);
+      byId('cabinetDoorsWrap').classList.toggle('hidden', !byId('cabinet').checked);
+      byId('cabinetTypeWrap').classList.toggle('hidden', !byId('cabinet').checked && !byId('canopy').checked);
+      byId('canopyHeightWrap').classList.toggle('hidden', !byId('canopy').checked);
     }
 
     function drawPlaceholder(message) {
@@ -677,13 +705,20 @@
     }
 
     var tubularPricingSetupRows = [];
+    // Cabinet/Canopy plywood sheet price + markup live in AquariumExtraPricingSetup.
+    var extraPricingSetupRows = [];
     var tubularPricingLoadPromise = null;
 
     function ensureTubularPricingLoaded() {
       if (tubularPricingLoadPromise) return tubularPricingLoadPromise;
-      tubularPricingLoadPromise = supabaseClient.rpc('public_get_tubular_pricing')
-        .then(function (result) { tubularPricingSetupRows = Array.isArray(result.data) ? result.data : []; })
-        .catch(function () { tubularPricingSetupRows = []; });
+      tubularPricingLoadPromise = Promise.all([
+        supabaseClient.rpc('public_get_tubular_pricing')
+          .then(function (result) { tubularPricingSetupRows = Array.isArray(result.data) ? result.data : []; })
+          .catch(function () { tubularPricingSetupRows = []; }),
+        supabaseClient.rpc('public_get_aquarium_extra_pricing')
+          .then(function (result) { extraPricingSetupRows = Array.isArray(result.data) ? result.data : []; })
+          .catch(function () { extraPricingSetupRows = []; })
+      ]);
       return tubularPricingLoadPromise;
     }
 
@@ -698,10 +733,15 @@
         tubular: selectedTubular,
         stainless: byId('stainless').checked,
         cabinet: byId('cabinet').checked,
+        cabinetDoors: byId('cabinetDoors').value,
+        cabinetType: byId('cabinetType').value,
+        canopy: byId('canopy').checked,
+        canopyHeight: byId('canopyHeight').value,
         sumpHolder: sumpChecked,
         sumpWidth: sumpChecked ? byId('sumpWidth').value : 0,
         footingInches: byId('footing').value,
-        tubularPricingSetupRows: tubularPricingSetupRows
+        tubularPricingSetupRows: tubularPricingSetupRows,
+        extraPricingSetupRows: extraPricingSetupRows
       };
     }
 
@@ -768,11 +808,23 @@
         ['Quantity', String(qty)]
       ];
       rows.push(['Stainless', byId('stainless').checked ? 'Yes' : 'No']);
-      rows.push(['Cabinet', byId('cabinet').checked ? 'Yes' : 'No']);
+      // Approx. OUTER size (frame end posts + 18mm boards) - see calculateStandPlywood.
+      function outerSize(o) { return round1(o.lengthInches) + '" x ' + round1(o.widthInches) + '" x ' + round1(o.heightInches) + '"'; }
+      if (n.cabinet || n.canopy) rows.push(['Cabinet / Canopy Type', n.cabinetType]);
+      rows.push(['Cabinet', n.cabinet ? ('Yes, ' + n.cabinetDoors + ' doors' + (n.cabinetOuter ? ' - approx. ' + outerSize(n.cabinetOuter) + ' outer' : '')) : 'No']);
+      rows.push(['Canopy', n.canopy ? ('Yes, ' + (n.canopyOuter ? 'approx. ' + outerSize(n.canopyOuter) + ' outer' : formatInCm(n.canopyHeightInches) + ' high')) : 'No']);
+      if (n.cabinet || n.canopy) {
+        rows.push(['Frame Price (per stand)', result.framePrice.toFixed(2)]);
+        if (n.cabinet) rows.push(['Cabinet Price (' + n.cabinetDoors + ' doors, ' + n.cabinetSqFt + ' sq ft)', result.cabinetPrice.toFixed(2)]);
+        if (n.canopy) rows.push(['Canopy Price (' + n.canopySqFt + ' sq ft)', result.canopyPrice.toFixed(2)]);
+      }
       rows.push(['Sump Holder', byId('sumpHolder').checked ? ('Yes, ' + round1(Number(byId('sumpWidth').value) || 0) + '" width') : 'No']);
 
+      rows.push(['Total Price', (result.totalPrice * qty).toFixed(2) + (qty > 1 ? ' (' + result.totalPrice.toFixed(2) + ' x ' + qty + ')' : '')]);
+
       summaryDetails.innerHTML = rows.map(function (r) {
-        return '<div><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
+        var rowClass = r[0] === 'Total Price' ? ' class="summary-total"' : '';
+        return '<div' + rowClass + '><strong>' + r[0] + ':</strong> ' + r[1] + '</div>';
       }).join('');
     }
 
@@ -820,7 +872,7 @@
         });
       });
 
-      ['length', 'width', 'height', 'footing', 'unit', 'layers', 'qty', 'stainless', 'cabinet', 'sumpHolder', 'sumpWidth']
+      ['length', 'width', 'height', 'footing', 'unit', 'layers', 'qty', 'stainless', 'cabinet', 'cabinetType', 'cabinetDoors', 'canopy', 'canopyHeight', 'sumpHolder', 'sumpWidth']
         .forEach(function (id) {
           var el = byId(id);
           var eventName = el.tagName === 'INPUT' && el.type === 'number' ? 'input' : 'change';

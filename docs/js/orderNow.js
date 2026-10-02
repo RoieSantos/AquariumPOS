@@ -750,9 +750,8 @@ function convertFromInches(valueInInches, unit) {
   return num;
 }
 
-// Mirrors WebAquariumCalculator/index.html's own Sump Type default-fill: Undersump defaults to an
-// 18in cube, Overhead Sump defaults to a 6in-tall sump running the same length as the aquarium
-// (since it sits on top, along the back). Runs when Sump Type changes and once when the customer
+// Mirrors WebAquariumCalculator/index.html's own Sump Type default-fill: Undersump defaults to
+// 18in wide/tall, Overhead Sump to 6in, and both run the same LENGTH as the aquarium. Runs when Sump Type changes and once when the customer
 // first reaches the Filtration step, so it's never left at a 0-size sump they never touched.
 function applySumpTypeDefaults() {
   const sumpType = document.getElementById('sumpType').value;
@@ -760,11 +759,7 @@ function applySumpTypeDefaults() {
   const side = round1(convertFromInches(sumpType === 'Undersump' ? 18 : 6, unit));
   document.getElementById('sumpWidth').value = side;
   document.getElementById('sumpHeight').value = side;
-  if (sumpType === 'Overhead Sump') {
-    document.getElementById('sumpLength').value = document.getElementById('customLength').value;
-  } else {
-    document.getElementById('sumpLength').value = side;
-  }
+  document.getElementById('sumpLength').value = document.getElementById('customLength').value || side;
 }
 
 // Aquarium sketch on the Options step - a trimmed-down port of the isometric canvas drawing in
@@ -1893,7 +1888,9 @@ function buildCustomStandPayload() {
     sumpWidth: sumpHolder ? document.getElementById('standSumpWidth').value : 0,
     footingInches: document.getElementById('standFooting').value,
     linkedAquariumGlass: standLinkedAquariumGlass,
-    tubularPricingSetupRows: tubularPricingSetupRows
+    tubularPricingSetupRows: tubularPricingSetupRows,
+    // Cabinet plywood sheet price/markup (Cabinet is hidden on Order Now for now, but priced if shown).
+    extraPricingSetupRows: extraPricingSetupRows
   };
 }
 
@@ -2871,37 +2868,26 @@ async function enforceGlassThicknessRules() {
     }
   }
 
-  // Rimless safety is gallon-based, not a fixed minimum like AIO/Low Iron above - mirrors
-  // validateGlassSafety() in WebAquariumCalculator/custom-aquarium-calculator.js.
+  // Rimless needs thicker glass than a braced tank of the same size (height/length/gallon based,
+  // not a fixed minimum like AIO/Low Iron above) - uses the calculator's own size chart,
+  // getMinimumGlassForSize() in WebAquariumCalculator/custom-aquarium-calculator.js.
   if (rimless.checked) {
-    const gallons = (lengthIn * widthIn * heightIn) / 231;
     const glassMm = Number((glass.value.match(/(\d+)/) || [0, 0])[1]);
+    const minimum = window.CustomAquariumCalculator.getMinimumGlassForSize(lengthIn, widthIn, heightIn, true);
+    const minimumMm = Number((minimum.glass.match(/(\d+)/) || [0, 0])[1]);
 
-    if (gallons >= 10 && gallons <= 15 && glassMm < 6) {
+    if (glassMm < minimumMm) {
       const upgrade = await showConfirmModal(
-        'Rimless 10-15 gallon tanks need a minimum of 6mm glass. Would you like to convert your aquarium into thicker glass? (Price change may vary)',
+        `Rimless tanks this size need a minimum of ${minimum.glass} glass. Would you like to convert your aquarium into thicker glass? (Price change may vary)`,
         'Yes, Upgrade Glass',
         'No, Keep Current'
       );
       if (upgrade) {
-        glass.value = '6mm';
-        messages.push('Glass thickness was increased to 6mm for your Rimless tank.');
+        glass.value = minimum.glass;
+        messages.push(`Glass thickness was increased to ${minimum.glass} for your Rimless tank.`);
       } else {
         rimless.checked = false;
-        messages.push('Rimless was unchecked since 6mm glass was declined.');
-      }
-    } else if (gallons >= 30 && gallons <= 100 && glassMm < 10) {
-      const upgrade = await showConfirmModal(
-        'Rimless 30-100 gallon tanks need a minimum of 10mm glass. Would you like to convert your aquarium into thicker glass? (Price change may vary)',
-        'Yes, Upgrade Glass',
-        'No, Keep Current'
-      );
-      if (upgrade) {
-        glass.value = '10mm';
-        messages.push('Glass thickness was increased to 10mm for your Rimless tank.');
-      } else {
-        rimless.checked = false;
-        messages.push('Rimless was unchecked since 10mm glass was declined.');
+        messages.push(`Rimless was unchecked since ${minimum.glass} glass was declined.`);
       }
     }
   }
