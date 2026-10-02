@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=aq2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=aq1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=aq2" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -438,6 +438,32 @@
   <!-- Send back for rework (js/onlineOrders.js openSendBackDialog, supabase_online_order_production_rework.sql) -->
   <!-- Confirmation for Production Done / Mark Shipped (confirmAction in onlineOrders.js) - a real dialog
        instead of the browser's small confirm(), so these aren't tapped through by accident. -->
+  <!-- Restock Production Order opened from a My Assignments card (js/onlineOrders.js openProdOrderCard):
+       the maker's own lines - Item / Description / SKU / Qty left to build - and Production Done. -->
+  <div id="prodCardModal" class="modal-backdrop hidden">
+    <div class="modal-panel to-manage-panel bc-doc" role="dialog" aria-modal="true" aria-labelledby="prodCardTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">PRODUCTION ORDER</div>
+          <div class="bc-doc-titleline">
+            <h2 id="prodCardTitle">Production Order</h2>
+            <span id="prodCardPart" class="badge badge-neutral"></span>
+          </div>
+        </div>
+        <div class="bc-doc-window">
+          <button class="bc-iconbtn bc-doc-close" id="closeProdCardBtn" type="button" aria-label="Close" title="Close">&times;</button>
+        </div>
+      </div>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd" id="prodCardDoneBtn" type="button"><svg class="bc-ico"><use href="#ico-done"/></svg>Production Done</button>
+      </div>
+      <div class="bc-doc-body">
+        <div class="oc-maker-summary" id="prodCardSummary"></div>
+        <div class="oc-line-cards" id="prodCardLines"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="confirmActionDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog oo-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmActionTitle" aria-describedby="confirmActionMessage">
       <div class="bc-dialog-head">

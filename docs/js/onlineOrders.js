@@ -559,6 +559,7 @@ async function loadMyProductionOrderCards() {
   }));
   if (!myAssignmentsOnly) { box.classList.add('hidden'); return; }
 
+  prodCardData.clear();
   box.innerHTML = `<h3 class="oo-prod-cards-title">Production Orders (restock)</h3>` + open.map((o) => {
     const parts = myOpenParts(o);
     const lines = linesByOrder.get(o.order_no);
@@ -566,11 +567,13 @@ async function loadMyProductionOrderCards() {
     const total = mine.reduce((n, l) => n + Number(l.quantity) - Number(l.qty_output || 0), 0);
     const partLabel = parts.map((p) => (p === 'tank' ? 'Tank Maker' : 'Stand Maker')).join(' + ');
     const rework = (reworkByOrder.get(o.order_no) || []).filter((r) => parts.includes(r.part));
+    prodCardData.set(o.order_no, { o, lines: lines === null ? null : mine, partLabel, rework });
     return `
-      <article class="oo-mc oo-prod-mc" data-prod-no="${escapeHtml(o.order_no)}" data-prod-parts="${escapeHtml(parts.join(','))}">
+      <article class="oo-mc oo-prod-mc is-clickable" data-prod-no="${escapeHtml(o.order_no)}" data-prod-parts="${escapeHtml(parts.join(','))}" role="button" tabindex="0" aria-label="Open production order ${escapeHtml(o.order_no)}">
         <header class="oo-mc-head">
-          <a class="oo-mc-id" href="production-orders.html?no=${encodeURIComponent(o.order_no)}" title="Open the full order">${escapeHtml(o.order_no)}</a>
+          <span class="oo-mc-id">${escapeHtml(o.order_no)}</span>
           <span class="oo-mc-status">${escapeHtml(partLabel)}</span>${rework.length ? '<span class="oo-rework">&#8634; Rework</span>' : ''}
+          <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
         </header>
         ${rework.map((r) => `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(r.reason || '')}</div>`).join('')}
         ${o.description ? `<div class="oo-mc-customer">${escapeHtml(o.description)}</div>` : ''}
@@ -602,9 +605,74 @@ async function loadMyProductionOrderCards() {
     box.dataset.wired = '1';
     box.addEventListener('click', (event) => {
       const btn = event.target.closest('[data-prod-done]');
-      if (btn) handleProdOrderDoneClick(btn);
+      if (btn) { handleProdOrderDoneClick(btn); return; }
+      // Per "Production order cannot open the card" - the whole card opens its lines, same as the
+      // online order cards above.
+      const card = event.target.closest('.oo-prod-mc[data-prod-no]');
+      if (card) openProdOrderCard(card.dataset.prodNo);
+    });
+    box.addEventListener('keydown', (event) => {
+      const card = event.target.closest('.oo-prod-mc[data-prod-no]');
+      if (!card || event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      openProdOrderCard(card.dataset.prodNo);
     });
   }
+}
+
+// Production Order card for a maker (#prodOrderCardModal): Item / Description / SKU / Qty left to
+// build for each of their lines, plus Production Done. Built from what loadMyProductionOrderCards
+// already fetched - no extra calls.
+const prodCardData = new Map();
+let openProdCardNo = null;
+
+function openProdOrderCard(orderNo) {
+  const entry = prodCardData.get(orderNo);
+  if (!entry) return;
+  const { o, lines, partLabel, rework } = entry;
+  openProdCardNo = orderNo;
+  document.getElementById('prodCardTitle').textContent = orderNo;
+  document.getElementById('prodCardPart').textContent = partLabel;
+  document.getElementById('prodCardSummary').innerHTML = `
+    ${o.description ? `<div class="oc-ms-row"><span>Order</span>${escapeHtml(o.description)}</div>` : ''}
+    <div class="oc-ms-row"><span>Due</span>${etaHtml(o.due_date)}</div>
+    <div class="oc-ms-row"><span>Branch</span>${escapeHtml(o.warehouse_name || '-')}</div>
+    <div class="oc-ms-row"><span>Your part</span>${escapeHtml(partLabel)}</div>
+    ${o.notes ? `<div class="oo-mc-note">${escapeHtml(o.notes)}</div>` : ''}
+    ${rework.map((r) => `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(r.reason || '')}</div>`).join('')}`;
+  document.getElementById('prodCardLines').innerHTML = lines === null
+    ? '<div class="oo-mc-empty">Could not load the lines - close and refresh the page.</div>'
+    : lines.map((l) => {
+      const colour = prodLineColour(l);
+      return makerLineCardHtml({
+        item: prodLineName(l),
+        description: l.description,
+        sku: l.sku || l.item_code,
+        qty: formatProdQty(Number(l.quantity) - Number(l.qty_output || 0)),
+        tag: colour ? `<span class="oo-prod-colour ${colour.toLowerCase()}"><i></i>${escapeHtml(colour)}</span>` : ''
+      });
+    }).join('') || '<div class="oo-mc-empty">Nothing left to build.</div>';
+  document.getElementById('prodCardModal').classList.remove('hidden');
+}
+
+function closeProdOrderCard() {
+  openProdCardNo = null;
+  document.getElementById('prodCardModal').classList.add('hidden');
+}
+
+function wireProdOrderCard() {
+  document.getElementById('closeProdCardBtn').addEventListener('click', closeProdOrderCard);
+  document.getElementById('prodCardDoneBtn').addEventListener('click', async (e) => {
+    if (!openProdCardNo) return;
+    const card = document.querySelector(`#myProductionOrderCards [data-prod-no="${CSS.escape(openProdCardNo)}"] [data-prod-done]`);
+    if (!card) return;
+    if (await handleProdOrderDoneClick(card)) closeProdOrderCard();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || document.getElementById('prodCardModal').classList.contains('hidden')) return;
+    if (!document.getElementById('confirmActionDialog').classList.contains('hidden')) return;
+    closeProdOrderCard();
+  });
 }
 
 // Same colour rule as the Production Orders page (supabase_production_variant_colour.sql's colour,
@@ -642,7 +710,7 @@ async function handleProdOrderDoneClick(btn) {
     confirmLabel: 'Yes, Production Done',
     tone: 'is-done'
   });
-  if (!ok) return;
+  if (!ok) return false;
 
   btn.disabled = true;
   for (const part of parts) {
@@ -656,10 +724,11 @@ async function handleProdOrderDoneClick(btn) {
     if (error) {
       btn.disabled = false;
       window.alert(`Could not mark ${orderNo} Production Done: ${error.message}`);
-      return;
+      return false;
     }
   }
   loadMyProductionOrderCards();
+  return true;
 }
 
 function wireMyAssignmentCards() {
@@ -2913,16 +2982,30 @@ function renderOrderCardLineCards() {
   const box = document.getElementById('orderCardLineCards');
   if (!box) return;
   if (!isMakerFocus()) { box.innerHTML = ''; return; }
-  box.innerHTML = cardLines.map((l) => `
+  // Per "I want the maker to see the item / description / SKU / quantity": the Pancake line name is
+  // the Item, its spec note the Description.
+  box.innerHTML = cardLines.map((l) => makerLineCardHtml({
+    item: l.description || l.item_code,
+    description: l.note,
+    sku: l.item_code || l.product_display_id,
+    qty: l.quantity ?? '',
+    extra: `<div class="oc-lc-attach">${cardAttachmentCellHtml(l.line_id)}</div>`
+  })).join('') || '<div class="oo-mc-empty">No line items found for this order.</div>';
+}
+
+// One line for a maker: Item + big Qty, then labelled Description / SKU (shared by the online order
+// card and the Production Order card).
+function makerLineCardHtml({ item, description, sku, qty, tag = '', extra = '' }) {
+  return `
     <article class="oc-line-card">
       <div class="oc-lc-head">
-        <div class="oc-lc-desc">${escapeHtml(l.description || l.item_code || '')}</div>
-        <div class="oc-lc-qty">x${escapeHtml(String(l.quantity ?? ''))}</div>
+        <div class="oc-lc-desc"><span class="oc-lc-label">Item</span>${escapeHtml(item || '-')} ${tag}</div>
+        <div class="oc-lc-qty" title="Quantity">x${escapeHtml(String(qty))}</div>
       </div>
-      ${l.item_code || l.product_display_id ? `<div class="oc-lc-code">${escapeHtml(l.item_code || l.product_display_id)}</div>` : ''}
-      ${l.note ? `<div class="oc-lc-note">${escapeHtml(l.note)}</div>` : ''}
-      <div class="oc-lc-attach">${cardAttachmentCellHtml(l.line_id)}</div>
-    </article>`).join('') || '<div class="oo-mc-empty">No line items found for this order.</div>';
+      <div class="oc-lc-row"><span class="oc-lc-label">Description</span>${description ? `<div class="oc-lc-note">${escapeHtml(description)}</div>` : '<div class="oc-lc-none">-</div>'}</div>
+      <div class="oc-lc-row"><span class="oc-lc-label">SKU</span><div class="oc-lc-code">${escapeHtml(sku || '-')}</div></div>
+      ${extra}
+    </article>`;
 }
 
 function fillMakerFocusSummary(o) {
@@ -3970,6 +4053,7 @@ async function initAdvanceOrdersView() {
   wireOrderCard();
   wireAssignDialog();
   wireMyAssignmentCards();
+  wireProdOrderCard();
   wireSendBackDialog();
   wireNextStepButtons();
   wireOrderCardAttachments();

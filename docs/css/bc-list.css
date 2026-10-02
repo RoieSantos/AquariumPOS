@@ -323,6 +323,13 @@
 /* Online Orders' Online / Walk-in list switch sits above the action bar */
 .bc-ile .order-scope-tabs {
   margin: 0 0 8px;
+  gap: 28px;
+}
+
+/* Bigger captions so the list switch is easy to read */
+.bc-ile .order-scope-tabs .bc-tab {
+  font-size: 18px;
+  padding: 10px 4px 9px;
 }
 
 .bc-ile .bc-tab:hover {
@@ -2599,7 +2606,7 @@ a.bc-cue:hover {
 #orderCardModal.maker-focus #cardSendBackBtn,
 #orderCardModal.maker-focus .line-items-wrap,
 #orderCardModal.maker-focus .attachment-remove-btn { display: none !important; }
-#orderCardModal.maker-focus .oc-line-cards { display: grid; gap: 10px; }
+#orderCardModal.maker-focus .oc-line-cards, #prodCardModal .oc-line-cards { display: grid; gap: 10px; }
 .oc-maker-summary { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 10px; background: var(--bc-surface, #fff); }
 .oc-ms-row { display: flex; gap: 8px; font-size: 15px; padding: 2px 0; }
 .oc-ms-row > span { flex: 0 0 84px; color: var(--bc-muted, #5f6b7a); }
@@ -2622,6 +2629,14 @@ a.bc-cue:hover {
 .oc-lc-code { margin-top: 2px; color: var(--bc-muted, #5f6b7a); font-size: 12.5px; }
 .oc-lc-note { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #fff8e1; font-size: 14.5px; white-space: pre-wrap; }
 .oc-lc-attach { margin-top: 8px; }
+/* Labelled Item / Description / SKU rows (js/onlineOrders.js makerLineCardHtml). */
+.oc-lc-label { display: block; font-size: 11.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--bc-muted, #5f6b7a); }
+.oc-lc-row { margin-top: 8px; }
+.oc-lc-row .oc-lc-note { margin-top: 2px; }
+.oc-lc-row .oc-lc-code { margin-top: 0; font-size: 14.5px; color: inherit; font-family: ui-monospace, Consolas, monospace; }
+.oc-lc-none { color: var(--bc-muted, #5f6b7a); }
+.oc-lc-desc .oo-prod-colour { margin-left: 4px; vertical-align: middle; }
+.oo-prod-mc.is-clickable { cursor: pointer; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .oc-lc-qty { background: #1e3350; color: #9cc3f5; }
   :root:not([data-theme="light"]) .oc-lc-note { background: #3a3218; }
@@ -2630,18 +2645,18 @@ a.bc-cue:hover {
 :root[data-theme="dark"] .oc-lc-note { background: #3a3218; }
 /* Maker focus on a phone: the order fills the screen instead of floating as a small box. */
 @media (max-width: 760px) {
-  #orderCardModal.maker-focus { padding: 0; align-items: stretch; }
-  #orderCardModal.maker-focus .modal-panel.bc-doc { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border-radius: 0; overflow-y: auto; }
+  #orderCardModal.maker-focus, #prodCardModal { padding: 0; align-items: stretch; }
+  #orderCardModal.maker-focus .modal-panel.bc-doc, #prodCardModal .modal-panel.bc-doc { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border-radius: 0; overflow-y: auto; }
 }
 /* Maker focus: big Production Done button across the card's action bar. */
-#orderCardModal.maker-focus #cardProductionDoneBtn {
+#orderCardModal.maker-focus #cardProductionDoneBtn, #prodCardDoneBtn {
   flex: 1 1 100%; width: 100%; min-height: 52px; justify-content: center; gap: 8px;
   border-radius: 10px; background: #1e7d3a; border: 1px solid #1e7d3a; color: #fff;
   font-size: 17px; font-weight: 700;
 }
-#orderCardModal.maker-focus #cardProductionDoneBtn .bc-ico { width: 20px; height: 20px; stroke: currentColor; }
+#orderCardModal.maker-focus #cardProductionDoneBtn .bc-ico, #prodCardDoneBtn .bc-ico { width: 20px; height: 20px; stroke: currentColor; }
 #orderCardModal.maker-focus #cardProductionDoneBtn.is-undo { background: var(--bc-surface, #fff); color: #9a2d2d; border-color: #d9a3a3; }
-#orderCardModal.maker-focus #cardProductionDoneBtn:disabled { opacity: .5; }
+#orderCardModal.maker-focus #cardProductionDoneBtn:disabled, #prodCardDoneBtn:disabled { opacity: .5; }
 /* Dispatcher's Mark Shipped on the order (maker focus) - same big button, blue. */
 #orderCardModal.maker-focus #cardNextStepBtn {
   flex: 1 1 100%; width: 100%; min-height: 52px; justify-content: center; gap: 8px;

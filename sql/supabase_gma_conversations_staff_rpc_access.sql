@@ -692,7 +692,7 @@ $$;
 grant execute on function public.admin_cancel_gma_order_in_pancake(text, text, text) to anon;
 
 -- ---------------------------------------------------------------------------
--- 9. admin_add_automated_order_payment (live def: supabase_gma_conversation_payment_pancake_sync.sql)
+-- 9. admin_add_automated_order_payment (live def: supabase_gma_payment_pancake_retry.sql - re-run it after this file)
 
 drop function if exists public.admin_add_automated_order_payment(text, text, text, numeric, text, text);
 
