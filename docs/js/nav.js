@@ -491,30 +491,16 @@ function mountChatWidget(session) {
   else document.addEventListener('DOMContentLoaded', start);
 })();
 
-// Animated aquarium background (css/styles.css .app-aqua-bg) on every portal page that loads this
-// file, except Dashboard (has its own company photo background) and the print-only pages.
+// "Inside the aquarium" animated background (js/aquariumBg.js draws it on a canvas) on every
+// portal page that loads this file, except Dashboard (has its own company photo background) and
+// the print-only pages.
 (function () {
   const page = (location.pathname.split('/').pop() || '').toLowerCase();
-  const SKIP = ['dashboard.html', 'invoice.html', 'gma-order-invoice.html', 'delivery-receipt.html'];
+  // gma-conversations.html is a full-width three-panel inbox - fish between the panels was too busy.
+  const SKIP = ['dashboard.html', 'gma-conversations.html', 'invoice.html', 'gma-order-invoice.html', 'delivery-receipt.html'];
   if (SKIP.includes(page) || page.includes('print')) return;
-
-  function addAquariumBackground() {
-    if (document.querySelector('.app-aqua-bg')) return;
-    const fish = (cls) => `<div class="app-aqua-fish ${cls}"><svg><use href="#app-aqua-fish"/></svg></div>`;
-    const layer = document.createElement('div');
-    layer.className = 'app-aqua-bg';
-    layer.setAttribute('aria-hidden', 'true');
-    layer.innerHTML =
-      '<svg width="0" height="0" style="position:absolute"><symbol id="app-aqua-fish" viewBox="0 0 64 32">' +
-      '<path d="M4 16c8-12 26-14 40-6l12-8-4 14 4 14-12-8C30 30 12 28 4 16z"/>' +
-      '<circle cx="14" cy="13" r="2" fill="#fff" fill-opacity=".6"/></symbol></svg>' +
-      '<span class="app-aqua-ray"></span>'.repeat(4) +
-      ['f1', 'f2', 'f3', 'f4'].map(fish).join('') +
-      '<i class="app-aqua-bubble"></i>'.repeat(12) +
-      `<div class="app-aqua-plants">${'<span></span>'.repeat(18)}</div>`;
-    document.body.prepend(layer);
-  }
-
-  if (document.body) addAquariumBackground();
-  else document.addEventListener('DOMContentLoaded', addAquariumBackground);
+  const script = document.createElement('script');
+  script.src = 'js/aquariumBg.js?v=2';
+  script.defer = true;
+  (document.head || document.documentElement).appendChild(script);
 })();

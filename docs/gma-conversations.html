@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GMA Conversations - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=aq1" />
+  <link rel="stylesheet" href="css/styles.css?v=aq2" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -1930,6 +1930,37 @@
         max-height: none;
       }
     }
+
+    /* This inbox is designed light-only (Messenger-style, many hard-coded light surfaces above), so
+       in dark mode it used to mix white panels with near-white text and black inputs. Keep the page
+       body light in dark mode too - the top nav and floating chat widget stay dark. */
+    :root[data-theme="dark"] body {
+      background: linear-gradient(180deg, #f8fbff 0%, #f4f7fb 100%);
+    }
+    :root[data-theme="dark"] .page {
+      --page-bg: #f4f7fb;
+      --page-bg-top: #f8fbff;
+      --panel-bg: #ffffff;
+      --panel-border: #d7e0ef;
+      --text-main: #1b355e;
+      --text-muted: #61738f;
+      --input-border: #c7d3e6;
+      --success: #1e9a59;
+      --danger: #c0392b;
+      --neutral: #7b8596;
+      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+      color: var(--text-main);
+    }
+    :root[data-theme="dark"] .page input,
+    :root[data-theme="dark"] .page select,
+    :root[data-theme="dark"] .page textarea,
+    :root[data-theme="dark"] .page table {
+      background: #fff;
+      color: var(--text-main);
+    }
+    :root[data-theme="dark"] .page th {
+      background: #f3f6fb;
+    }
   </style>
 </head>
 <body>
@@ -2433,7 +2464,7 @@ Message: ..."></textarea>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js"></script>
-  <script src="js/nav.js?v=aq1"></script>
+  <script src="js/nav.js?v=aq4"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js"></script>
   <script src="js/gmaConversations.js"></script>
   <script src="js/pwa.js"></script>

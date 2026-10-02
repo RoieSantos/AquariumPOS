@@ -2,7 +2,15 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-02
+
+- Products: one-off [supabase_resync_items_from_pancake.sql](sql/supabase_resync_items_from_pancake.sql) - checks the 5-min `sync-items-from-pancake` cron history, forces a full Pancake -> Items/Variants resync, and lists items/variants whose names still don't match (per "mismatch in the product name").
+
+- GMA Conversations: cleaner inbox - no aquarium background here (fish between the three panels was too busy), and in dark mode the page now keeps its light design (top nav stays dark); before, it mixed white panels with near-white names/headers and black input boxes - [gma-conversations.html](docs/gma-conversations.html), [nav.js](docs/js/nav.js).
+
 ## 2026-10-01
+
+- Portal: animated "inside the aquarium" background on every portal page except Dashboard and the print-only pages - a canvas scene with 9 realistic koi (one each of Kohaku, Taisho Sanke, Showa, Tancho, Yamabuki Ogon, Platinum Ogon, Chagoi, Asagi, Kujaku - soft-edged patches, scale net, metallic sheen, barbels, swaying fins) swimming at different depths (far ones smaller and hazier, 3D-style turns), light rays, driftwood, plants, sand, bubbles and drifting particles; light/dark theme aware, ~30 fps, pauses in hidden tabs, still frame for "reduce motion", hidden when printing. New [aquariumBg.js](docs/js/aquariumBg.js), loaded by [nav.js](docs/js/nav.js); canvas styles in [styles.css](docs/css/styles.css); styles.css / nav.js cache versions bumped on all pages.
 
 - Portal: subtle animated aquarium background (light rays, rising bubbles, swimming fish, swaying plants) on every portal page except Dashboard and the print-only pages - pure CSS so it loops like a GIF without the file weight; follows the dark theme, hidden when printing, stops for "reduce motion" users. Added by [nav.js](docs/js/nav.js), styles in [styles.css](docs/css/styles.css); styles.css / nav.js cache versions bumped on all pages.
 

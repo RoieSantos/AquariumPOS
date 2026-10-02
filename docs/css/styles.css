@@ -5858,146 +5858,21 @@ body:has(.wizard-page) {
 .cs-row-link:hover, .cs-row-link:focus { background: var(--pm-track); outline: none; }
 .cs-link { font-weight: 600; text-decoration: none; }
 
-/* Animated aquarium background on every portal page except Dashboard and the print-only pages -
-   js/nav.js adds the .app-aqua-bg layer. A fixed layer behind .page (z-index 1) and #topnav, pure CSS
-   so it loops like a GIF without the file size / blur. Cards and lists keep their solid surfaces, so
-   it only shows in the gutters. Hidden when printing; motion stops for "reduce motion" users. */
+/* "Inside the aquarium" animated background on every portal page except Dashboard and the
+   print-only pages - js/nav.js loads js/aquariumBg.js, which adds this canvas. Fixed behind .page
+   (z-index 1) and #topnav; cards and lists keep their solid surfaces, so it shows in the gutters. */
 .app-aqua-bg {
-  --aq-top: #e4f3fb;
-  --aq-bottom: #c4e2f2;
-  --aq-ray: rgba(255, 255, 255, 0.55);
-  --aq-bubble: rgba(255, 255, 255, 0.75);
-  --aq-bubble-edge: rgba(29, 79, 145, 0.25);
-  --aq-fish: rgba(29, 79, 145, 0.18);
-  --aq-plant: rgba(30, 154, 89, 0.16);
   position: fixed;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
   z-index: 0;
-  overflow: hidden;
   pointer-events: none;
-  background: linear-gradient(180deg, var(--aq-top) 0%, var(--aq-bottom) 100%);
+  background: linear-gradient(180deg, #e4f3fa 0%, #79afc8 100%);
 }
 :root[data-theme="dark"] .app-aqua-bg {
-  --aq-top: #0b1a2e;
-  --aq-bottom: #061020;
-  --aq-ray: rgba(108, 176, 245, 0.10);
-  --aq-bubble: rgba(156, 195, 245, 0.25);
-  --aq-bubble-edge: rgba(156, 195, 245, 0.35);
-  --aq-fish: rgba(108, 176, 245, 0.16);
-  --aq-plant: rgba(46, 204, 130, 0.10);
-}
-
-/* Light rays from the surface, slowly swaying */
-.app-aqua-ray {
-  position: absolute;
-  top: -10%;
-  width: 14vw;
-  height: 120%;
-  background: linear-gradient(180deg, var(--aq-ray) 0%, transparent 75%);
-  transform-origin: top center;
-  filter: blur(6px);
-  animation: appAquaRay 14s ease-in-out infinite alternate;
-}
-.app-aqua-ray:nth-of-type(1) { left: 8%;  transform: rotate(14deg); }
-.app-aqua-ray:nth-of-type(2) { left: 34%; transform: rotate(8deg);  width: 9vw;  animation-duration: 18s; animation-delay: -6s; }
-.app-aqua-ray:nth-of-type(3) { left: 62%; transform: rotate(12deg); width: 16vw; animation-duration: 16s; animation-delay: -3s; }
-.app-aqua-ray:nth-of-type(4) { left: 86%; transform: rotate(6deg);  width: 8vw;  animation-duration: 20s; animation-delay: -9s; }
-@keyframes appAquaRay {
-  from { opacity: 0.35; translate: -2vw 0; }
-  to   { opacity: 0.9;  translate: 2vw 0; }
-}
-
-/* Rising bubbles */
-.app-aqua-bubble {
-  position: absolute;
-  bottom: -40px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 32% 30%, #fff 0 18%, var(--aq-bubble) 40%, transparent 72%);
-  box-shadow: inset 0 0 0 1px var(--aq-bubble-edge);
-  animation: appAquaBubble 14s linear infinite;
-}
-.app-aqua-bubble:nth-of-type(1)  { left: 4%;  width: 8px;  height: 8px;  animation-duration: 11s; animation-delay: -2s; }
-.app-aqua-bubble:nth-of-type(2)  { left: 11%; width: 14px; height: 14px; animation-duration: 16s; animation-delay: -9s; }
-.app-aqua-bubble:nth-of-type(3)  { left: 19%; width: 6px;  height: 6px;  animation-duration: 9s;  animation-delay: -4s; }
-.app-aqua-bubble:nth-of-type(4)  { left: 28%; width: 10px; height: 10px; animation-duration: 13s; animation-delay: -11s; }
-.app-aqua-bubble:nth-of-type(5)  { left: 37%; width: 18px; height: 18px; animation-duration: 19s; animation-delay: -1s; }
-.app-aqua-bubble:nth-of-type(6)  { left: 46%; width: 7px;  height: 7px;  animation-duration: 10s; animation-delay: -7s; }
-.app-aqua-bubble:nth-of-type(7)  { left: 55%; width: 12px; height: 12px; animation-duration: 15s; animation-delay: -13s; }
-.app-aqua-bubble:nth-of-type(8)  { left: 63%; width: 9px;  height: 9px;  animation-duration: 12s; animation-delay: -5s; }
-.app-aqua-bubble:nth-of-type(9)  { left: 71%; width: 16px; height: 16px; animation-duration: 17s; animation-delay: -10s; }
-.app-aqua-bubble:nth-of-type(10) { left: 79%; width: 6px;  height: 6px;  animation-duration: 9s;  animation-delay: -3s; }
-.app-aqua-bubble:nth-of-type(11) { left: 87%; width: 11px; height: 11px; animation-duration: 14s; animation-delay: -8s; }
-.app-aqua-bubble:nth-of-type(12) { left: 95%; width: 8px;  height: 8px;  animation-duration: 12s; animation-delay: -6s; }
-@keyframes appAquaBubble {
-  0%   { transform: translate(0, 0); opacity: 0; }
-  10%  { opacity: 1; }
-  25%  { transform: translate(10px, -27vh); }
-  50%  { transform: translate(-8px, -55vh); }
-  75%  { transform: translate(9px, -82vh); }
-  95%  { opacity: 1; }
-  100% { transform: translate(0, -112vh); opacity: 0; }
-}
-
-/* Fish silhouettes swimming across (the SVG faces left, so left-to-right swimmers are flipped) */
-.app-aqua-fish {
-  position: absolute;
-  left: 0;
-  width: 70px;
-  height: 36px;
-  color: var(--aq-fish);
-  animation: appAquaSwim 48s linear infinite;
-}
-.app-aqua-fish svg { width: 100%; height: 100%; fill: currentColor; animation: appAquaBob 3s ease-in-out infinite; }
-.app-aqua-fish.f1 { top: 22%; animation-delay: -6s; }
-.app-aqua-fish.f2 { top: 48%; width: 46px; height: 24px; animation-duration: 36s; animation-delay: -22s; animation-name: appAquaSwimRtl; }
-.app-aqua-fish.f3 { top: 70%; width: 92px; height: 46px; animation-duration: 62s; animation-delay: -40s; }
-.app-aqua-fish.f4 { top: 34%; width: 38px; height: 20px; animation-duration: 30s; animation-delay: -12s; animation-name: appAquaSwimRtl; }
-@keyframes appAquaSwim {
-  from { transform: translateX(-140px) scaleX(-1); }
-  to   { transform: translateX(calc(100vw + 140px)) scaleX(-1); }
-}
-@keyframes appAquaSwimRtl {
-  from { transform: translateX(calc(100vw + 140px)); }
-  to   { transform: translateX(-140px); }
-}
-@keyframes appAquaBob {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-5px); }
-}
-
-/* Swaying plants along the bottom */
-.app-aqua-plants {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 140px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  padding: 0 2vw;
-}
-.app-aqua-plants span {
-  width: 14px;
-  height: 100%;
-  background: var(--aq-plant);
-  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
-  transform-origin: bottom center;
-  animation: appAquaSway 6s ease-in-out infinite alternate;
-}
-.app-aqua-plants span:nth-child(odd)  { height: 70%; animation-duration: 7.5s; }
-.app-aqua-plants span:nth-child(3n)   { height: 45%; animation-delay: -2s; }
-.app-aqua-plants span:nth-child(4n)   { width: 20px; animation-delay: -4s; }
-@keyframes appAquaSway {
-  from { transform: rotate(-6deg); }
-  to   { transform: rotate(6deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .app-aqua-bg *, .app-aqua-bg *::before { animation: none !important; }
-  .app-aqua-bubble, .app-aqua-fish { display: none; }
+  background: linear-gradient(180deg, #0f3049 0%, #030c17 100%);
 }
 
 @media print {

@@ -105,7 +105,7 @@ function floorToRows(spots) {
 
 function serialMatches(s, term) {
   const t = term.toLowerCase();
-  return [s.serial_no, s.item_code, s.item_description, s.variant_name].some((v) => (v || '').toLowerCase().includes(t));
+  return [s.serial_no, s.item_code, s.item_description, s.variant_name, s.variant_sku].some((v) => (v || '').toLowerCase().includes(t));
 }
 
 // Whether a serial is the aquarium a spot is linked to: the variant when the link names one,
@@ -119,9 +119,10 @@ function unitFitsSpot(unit, spot) {
 
 // Which version a serial is - per "i want to see if there is black variant and clear variant of 75g
 // on that shelf". Black / Clear when the variant (or failing that the description) says so,
-// otherwise the variant's own name.
+// otherwise the variant's own name. The variant's SKU ("AQ-031-ClearSealant") is checked too - its
+// name is often just "AQ-031 - STANDARD-2.5G (...)" (supabase_production_shelf_serial_sku_colour.sql).
 function unitColour(unit) {
-  return textColour(unit.variant_name) || textColour(unit.item_description, unit.item_code) || unit.variant_name || 'Other';
+  return textColour(unit.variant_name, unit.variant_sku) || textColour(unit.item_description, unit.item_code) || unit.variant_name || 'Other';
 }
 
 // 'Black' / 'Clear' from the first text that says black|BLK or clear|CLR (same rule as
@@ -461,7 +462,7 @@ function openSpotModal(spotId) {
           <div class="spot-serial-row">
             <div class="grow">
               <b>${escapeHtml(s.serial_no)}</b>
-              <div class="muted" style="font-size:12px;">${escapeHtml(s.item_code)}${s.variant_name ? ' · ' + escapeHtml(s.variant_name) : ''} - ${escapeHtml(s.item_description || '')}</div>
+              <div class="muted" style="font-size:12px;">${escapeHtml(s.item_code)}${s.variant_sku && s.variant_sku !== s.item_code ? ' · SKU: ' + escapeHtml(s.variant_sku) : ''}${s.variant_name ? ' · ' + escapeHtml(s.variant_name) : ''} - ${escapeHtml(s.item_description || '')}</div>
               <div class="muted" style="font-size:11px;">${s.source_document_no ? escapeHtml(s.source_document_no) + ' · ' : ''}${s.created_at ? 'created ' + escapeHtml(new Date(s.created_at).toLocaleDateString()) : ''}</div>
             </div>
           </div>`).join('')}`).join('')
