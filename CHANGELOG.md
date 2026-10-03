@@ -5,6 +5,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 ## 2026-10-03
 
 - Aquarium preview link shared with customers by Alice / Vic (WebAquariumCalculator/index.html opened with quote params) no longer shows the staff-only "Add to sale" and "Glass Cut Sheet" buttons, the cut sheet card, or the cut sheet in the Summary tab. Staff calculator (no params) unchanged; also applies to links already sent.
+- Online Orders Ready to Ship asked for 2+2 serials on order 105852 (1 line x2). Real cause: OnlineOrderLines had a second, stale line (old LineID from before the order was edited in Pancake). The Pancake syncs remove it, but the desktop POS never removes it locally and re-POSTs it to Supabase every tick. [supabase_online_order_lines_block_pos_resurrect.sql](sql/supabase_online_order_lines_block_pos_resurrect.sql) remembers removed lines and skips the POS's re-insert of them (Pancake syncs still can), and queues 105852 for a re-read. No POS rebuild.
+- "Ready to Ship - from stock" popup now lists each line as `Description - SKU **xxx**: 6/2 in stock` with the SKU in bold (was the variant name); the order card's SKU column is bold too. Needs [supabase_online_order_stock_status_sku.sql](sql/supabase_online_order_stock_status_sku.sql) (adds `sku` to `staff_get_online_order_stock_status` lines; Item Code until run). `confirmAction` takes optional `messageHtml`. `onlineOrders.js?v=bc59`.
+- Online order card: new **SKU** column in Lines (and the maker phone line cards) - variant SKU, else item SKU, else Item Code - via a new `sku` on `admin_get_online_order_detail_live` ([supabase_online_order_lines_sku.sql](sql/supabase_online_order_lines_sku.sql)); shows the Item Code until that's run.
+- Online Orders "Ready to Ship - from stock" now re-checks stock before its confirmation - it used the page's cached check, which on 105852 still listed the removed duplicate line (2 + 2 needed). `onlineOrders.js?v=bc58`.
+- Read-only [supabase_check_order_105852_lines.sql](sql/supabase_check_order_105852_lines.sql): shows whether 105852 was re-read from Pancake and its stale line removed.
+- (Same issue, first attempt) [supabase_online_order_serial_lines_dedupe.sql](sql/supabase_online_order_serial_lines_dedupe.sql): serial picker / stock check take one Items row per line - harmless, but not the cause here (Items had one AQ-030 row).
 
 ## 2026-10-02
 

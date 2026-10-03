@@ -846,6 +846,12 @@ async function ensureStockStatus(o) {
   if (String(openCardOrderId) === key) updateNextStepButton('cardNextStepBtn', o);
 }
 
+// Same as stockLinesSummary, as HTML with the SKU in bold so the picker notices it (sku from
+// supabase_online_order_stock_status_sku.sql; Item Code until that's run).
+function stockLinesHtml(s) {
+  return (s?.lines || []).map((l) => `${escapeHtml(l.description || l.item_code)} - SKU <b>${escapeHtml(l.sku || l.item_code || '-')}</b>: ${l.available}/${l.needed} in stock`).join('\n');
+}
+
 function stockLinesSummary(s) {
   return (s?.lines || []).map((l) => `${l.description || l.item_code}${l.variant_name ? ` (${l.variant_name})` : ''}: ${l.available}/${l.needed} in stock`).join('\n');
 }
@@ -1072,14 +1078,16 @@ function updateNextStepButton(btnId, o) {
 // rather than the browser's small confirm(): names the order and customer, Cancel has focus, and the
 // confirm button only becomes tappable after a moment so a double-tap on the original button can't
 // land on it. Resolves true only on the confirm button; Cancel, Escape or tapping outside -> false.
-function confirmAction({ caption = 'PLEASE CONFIRM', title, message, confirmLabel, tone = '' }) {
+// messageHtml (already escaped) instead of message when part of it needs formatting, e.g. bold SKUs.
+function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml, confirmLabel, tone = '' }) {
   const dialog = document.getElementById('confirmActionDialog');
   const panel = dialog.querySelector('.oo-confirm-dialog');
   const okBtn = document.getElementById('confirmActionOkBtn');
   const cancelBtn = document.getElementById('confirmActionCancelBtn');
   document.getElementById('confirmActionCaption').textContent = caption;
   document.getElementById('confirmActionTitle').textContent = title;
-  document.getElementById('confirmActionMessage').textContent = message;
+  if (messageHtml != null) document.getElementById('confirmActionMessage').innerHTML = messageHtml;
+  else document.getElementById('confirmActionMessage').textContent = message;
   okBtn.textContent = confirmLabel;
   panel.classList.remove('is-done', 'is-ship', 'is-undo');
   if (tone) panel.classList.add(tone);
@@ -1131,11 +1139,19 @@ async function handleNextStepClick(orderId, btn) {
     if (!ok) return;
     await handleToShipClick(String(o.order_id), btn, { readyToShip: true });
   } else if (btn.dataset.action === 'ship-stock') {
+    // Re-check now - the cached check can be from before the order's lines changed (order 105852
+    // still showed a removed duplicate line, 2 + 2 needed, until the page was reloaded).
+    stockStatusCache.delete(String(o.order_id));
+    await ensureStockStatus(o);
     const s = stockStatusFor(o);
+    if (!s?.all_available) {
+      alert(s ? `Not everything is in stock at ${s.warehouse_name || 'this branch'} any more:\n${stockLinesSummary(s)}` : 'Could not check the stock for this order - try again.');
+      return;
+    }
     const ok = await confirmAction({
       caption: 'READY TO SHIP - FROM STOCK',
       title: orderLabel(o),
-      message: `Everything is in stock at ${s?.warehouse_name || 'this branch'}:\n${stockLinesSummary(s)}\n\nPick the serial(s) and move this order to To Ship in the portal and Pancake?`,
+      messageHtml: `Everything is in stock at ${escapeHtml(s?.warehouse_name || 'this branch')}:\n${stockLinesHtml(s)}\n\nPick the serial(s) and move this order to To Ship in the portal and Pancake?`,
       confirmLabel: 'Yes, Ready to Ship',
       tone: 'is-ship'
     });
@@ -3257,7 +3273,7 @@ function renderOrderCardLineCards() {
   box.innerHTML = cardLines.map((l) => makerLineCardHtml({
     item: l.description || l.item_code,
     description: l.note,
-    sku: l.item_code || l.product_display_id,
+    sku: lineSku(l),
     qty: l.quantity ?? '',
     extra: `<div class="oc-lc-attach">${cardAttachmentCellHtml(l.line_id)}</div>`
   })).join('') || '<div class="oo-mc-empty">No line items found for this order.</div>';
@@ -3292,11 +3308,17 @@ function fillMakerFocusSummary(o) {
     ${reworkNoteText(o) ? `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(reworkNoteText(o))}</div>` : ''}`;
 }
 
+// Variant SKU -> item SKU -> Item Code (admin_get_online_order_detail_live's sku,
+// supabase_online_order_lines_sku.sql); Item Code until that's run.
+function lineSku(l) {
+  return l.sku || l.item_code || l.product_display_id || '';
+}
+
 function renderOrderCardLines() {
   const tbody = document.getElementById('orderCardLinesBody');
   const tfoot = document.getElementById('orderCardLinesFoot');
   if (!cardLines.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">No line items found for this order.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No line items found for this order.</td></tr>';
     tfoot.innerHTML = '';
     return;
   }
@@ -3305,6 +3327,7 @@ function renderOrderCardLines() {
   tbody.innerHTML = cardLines.map((l) => `
     <tr>
       <td>${escapeHtml(l.item_code || l.product_display_id)}</td>
+      <td><b>${escapeHtml(lineSku(l))}</b></td>
       <td style="white-space:normal;">${escapeHtml(l.description)}</td>
       <td class="num">${l.quantity ?? ''}</td>
       ${priceCell(l.price)}
@@ -3319,7 +3342,7 @@ function renderOrderCardLines() {
   const totalQty = cardLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
   const totalNet = cardLines.reduce((sum, l) => sum + (lineAmount(l) || 0), 0);
   tfoot.innerHTML = `<tr>
-    <td>Total</td><td></td><td class="num">${totalQty}</td>
+    <td>Total</td><td></td><td></td><td class="num">${totalQty}</td>
     ${hidePrices() ? '' : `<td></td><td></td><td class="num">${money(totalNet)}</td>`}
     <td></td><td></td></tr>`;
 }
@@ -3329,7 +3352,7 @@ async function loadOrderCardLines(orderId) {
   const tbody = document.getElementById('orderCardLinesBody');
   cardLines = [];
   cardAttachmentsByLineId = {};
-  tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">Loading lines from Pancake...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines from Pancake...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
   document.getElementById('orderCardPhotosPart').classList.add('hidden');
   cardGlassTanks = [];
@@ -3349,7 +3372,7 @@ async function loadOrderCardLines(orderId) {
 
   if (linesRes.error) {
     // Usually Pancake's live API being slow for a moment, not a session problem - offer a retry.
-    tbody.innerHTML = `<tr><td colspan="8" class="cell-msg error-text">Could not load lines: ${escapeHtml(linesRes.error.message)}
+    tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">Could not load lines: ${escapeHtml(linesRes.error.message)}
       <button type="button" class="bc-link" id="retryOrderCardLinesBtn" style="margin-left:8px;">Retry</button></td></tr>`;
     document.getElementById('retryOrderCardLinesBtn').addEventListener('click', () => loadOrderCardLines(orderId));
     return;
