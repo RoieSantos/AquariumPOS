@@ -959,6 +959,8 @@
     var hasHighStrip = Boolean(options.highStrip);
     var hasAquascapeService = Boolean(options.aquascapeService);
     var hasEnclosure = Boolean(options.enclosure);
+    // Turtle tank (water + basking platform): priced the same as Enclosure for now (x2.1 below).
+    var hasTurtleTank = Boolean(options.turtleTank);
     var hasStand = Boolean(options.stand && options.stand.enabled);
     var hasFiltrationSump = Boolean(
       (options.filtrationSump && options.filtrationSump.enabled) ||
@@ -1012,6 +1014,14 @@
       return {
         ok: false,
         error: 'Enclosure cannot be selected when filtration sump is enabled.',
+        autoChangeTo: null
+      };
+    }
+
+    if (hasTurtleTank && hasEnclosure) {
+      return {
+        ok: false,
+        error: 'Turtle tank and enclosure cannot both be selected.',
         autoChangeTo: null
       };
     }
@@ -1281,7 +1291,7 @@
       calculatedPrice += components.aquascapeService;
     }
 
-    if (hasEnclosure) {
+    if (hasEnclosure || hasTurtleTank) {
       calculatedPrice = round2(calculatedPrice * 2.1);
       if (calculatedPrice >= 1000) {
         calculatedPrice = roundNearest10(calculatedPrice);

@@ -1689,6 +1689,31 @@ function assigneeCellHtml(o, needed, username, name) {
   return username ? escapeHtml(name || username) : '<span class="muted">-</span>';
 }
 
+// Makers assigned on the order's linked Production Order(s) for one part ('tank' / 'stand'), grouped
+// by maker, each tagged with its PRD no(s) and a tick once that part is done on every one of them.
+// skipUsername = the maker already shown from the order itself. Empty until
+// sql/supabase_online_order_production_order_makers.sql has been run.
+function prodMakersHtml(o, part, skipUsername) {
+  const byMaker = new Map();
+  (o.production_orders || []).forEach((p) => {
+    const user = p[`${part}_maker`];
+    if (!user || user === skipUsername) return;
+    if (!byMaker.has(user)) byMaker.set(user, { name: p[`${part}_maker_name`] || user, nos: [], done: true });
+    const m = byMaker.get(user);
+    m.nos.push(p.production_order_no);
+    if (!p[`${part}_done_at_utc`]) m.done = false;
+  });
+  return [...byMaker.values()].map((m) => `<span class="oo-prod-maker" title="${part === 'tank' ? 'Tank' : 'Stand'} Maker on ${escapeHtml(m.nos.join(', '))}">${escapeHtml(m.name)} <span class="muted">· ${escapeHtml(m.nos.join(', '))}</span>${m.done ? ' <span class="oo-done">&#10003; Done</span>' : ''}</span>`).join('<br>');
+}
+
+// List cell: the order's own assignee (+ done tick), plus any maker building it on a Production Order.
+function makerCellHtml(o, part, needed, username, name) {
+  const own = needed && username ? assigneeCellHtml(o, needed, username, name) + productionDoneTickHtml(o, part) : '';
+  const prod = prodMakersHtml(o, part, own ? username : null);
+  if (own || prod) return [own, prod].filter(Boolean).join('<br>');
+  return needed ? assigneeCellHtml(o, needed, username, name) + productionDoneTickHtml(o, part) : '';
+}
+
 // BC list rows: data only, no buttons. Every action (Open / Send Photo / To-Ship Message / To Ship)
 // lives on the action bar and works on the selected row (see wireOrderListActions), and the
 // Order ID drills into the Online Order document (openOrderCard) the way a BC "No." field does.
@@ -1705,8 +1730,8 @@ function orderRowsHtml(orders) {
         <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}</td>
         <td>${escapeHtml(o.confirmed_by)}</td>
         <td>${escapeHtml(o.created_by)}</td>
-        <td>${assigneeCellHtml(o, o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}${productionDoneTickHtml(o, 'tank')}</td>
-        <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}${productionDoneTickHtml(o, 'stand')}</td>
+        <td>${makerCellHtml(o, 'tank', o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}</td>
+        <td>${makerCellHtml(o, 'stand', o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}</td>
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${otherBranchBadgeHtml(o)} ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${prodOrderBadgeHtml(o)}</td>
@@ -3267,18 +3292,25 @@ function fillOrderCardHeader(o) {
 function renderOrderCardAssignments() {
   const o = findFlatOrder(openCardOrderId);
   if (!o) return;
-  document.getElementById('ocTankMakerRow').classList.toggle('hidden', !o.has_aquarium_line);
-  document.getElementById('ocStandMakerRow').classList.toggle('hidden', !o.has_stand_line);
-  document.getElementById('ocTankMaker').innerHTML = o.has_aquarium_line ? makerSelectHtml(o, 'tank', o.assigned_tank_maker) + productionDoneTickHtml(o, 'tank') : '';
-  document.getElementById('ocStandMaker').innerHTML = o.has_stand_line ? makerSelectHtml(o, 'stand', o.assigned_stand_maker) + productionDoneTickHtml(o, 'stand') : '';
+  // A Production Order maker also shows the row, read-only, when the order itself doesn't need one
+  // (e.g. a stock order whose missing units are being built).
+  const prodTank = prodMakersHtml(o, 'tank', o.has_aquarium_line ? o.assigned_tank_maker : null);
+  const prodStand = prodMakersHtml(o, 'stand', o.has_stand_line ? o.assigned_stand_maker : null);
+  document.getElementById('ocTankMakerRow').classList.toggle('hidden', !o.has_aquarium_line && !prodTank);
+  document.getElementById('ocStandMakerRow').classList.toggle('hidden', !o.has_stand_line && !prodStand);
+  document.getElementById('ocTankMaker').innerHTML = [o.has_aquarium_line ? makerSelectHtml(o, 'tank', o.assigned_tank_maker) + productionDoneTickHtml(o, 'tank') : '', prodTank].filter(Boolean).join('<br>');
+  document.getElementById('ocStandMaker').innerHTML = [o.has_stand_line ? makerSelectHtml(o, 'stand', o.assigned_stand_maker) + productionDoneTickHtml(o, 'stand') : '', prodStand].filter(Boolean).join('<br>');
   // Not assigned any more - recorded when the order is marked Shipped.
   document.getElementById('ocDispatcher').innerHTML = o.assigned_dispatcher
     ? escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher)
     : '<span class="muted">Recorded when shipped</span>';
 
   const parts = [];
-  if (o.has_aquarium_line) parts.push(`Tank: ${o.assigned_tank_maker_name || o.assigned_tank_maker || '-'}`);
-  if (o.has_stand_line) parts.push(`Stand: ${o.assigned_stand_maker_name || o.assigned_stand_maker || '-'}`);
+  const prodNames = (part) => [...new Set((o.production_orders || []).map((p) => p[`${part}_maker_name`] || p[`${part}_maker`]).filter(Boolean))];
+  const tankNames = [o.assigned_tank_maker_name || o.assigned_tank_maker, ...prodNames('tank')].filter((n, i, a) => n && a.indexOf(n) === i);
+  const standNames = [o.assigned_stand_maker_name || o.assigned_stand_maker, ...prodNames('stand')].filter((n, i, a) => n && a.indexOf(n) === i);
+  if (o.has_aquarium_line || tankNames.length) parts.push(`Tank: ${tankNames.join(', ') || '-'}`);
+  if (o.has_stand_line || standNames.length) parts.push(`Stand: ${standNames.join(', ') || '-'}`);
   parts.push(`Dispatcher: ${o.assigned_dispatcher_name || o.assigned_dispatcher || '-'}`);
   if (reworkNoteText(o)) parts.push(`Rework - ${reworkNoteText(o)}`);
   document.getElementById('orderCardAssignSummary').textContent = parts.join(' · ');

@@ -7,6 +7,7 @@ let allSerials = [];
 let currentSession = null;
 let isProductionWarehouseUser = true; // unrestricted unless resolveIsProductionWarehouse says otherwise
 let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit control below
+let canReprintLabels = false; // Super User / Production Manager - per-row Reprint (js/labelPrinter.js)
 let warehouseOptions = []; // [{ id, name }] loaded once, used by the edit-location dropdown
 let editLocationSerialNo = null;
 let urlLocationFilter = null; // ?location= from an Inventory Summary deep link - see openEditLocationModal's sibling, applyUrlFilters
@@ -368,7 +369,8 @@ async function loadSerials() {
     CreatedAtUtc: r.created_at_utc,
     UpdatedAtUtc: r.updated_at_utc,
     UpdatedBy: r.updated_by,
-    Maker: null
+    Maker: null,
+    Reprints: null
   }));
   // Latest change first (UpdatedAtUtc, else CreatedAtUtc) - same order the search RPC uses once
   // supabase_serial_tracker_sort_latest_update.sql is run.
@@ -376,6 +378,31 @@ async function loadSerials() {
   allSerials.sort((a, b) => lastChange(b) - lastChange(a) || String(b.SerialNo).localeCompare(String(a.SerialNo)));
   renderSerials();
   attachSerialMakers();
+  attachSerialReprints();
+}
+
+// Reprint count - per "can you show number of times they reprint it": how many times each serial's
+// label was reprinted from this page (supabase_serial_label_reprints.sql). Loaded after the list like
+// the Maker column; quietly hidden until that file is run.
+async function attachSerialReprints() {
+  const serialNos = allSerials.map((r) => r.SerialNo).filter(Boolean);
+  if (!serialNos.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_get_serial_label_reprints', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_nos: serialNos
+  });
+  if (error) { console.warn('staff_get_serial_label_reprints:', error.message); return; }
+  const bySerial = new Map((data || []).map((p) => [p.serial_no, p]));
+  allSerials.forEach((r) => { r.Reprints = bySerial.get(r.SerialNo) || null; });
+  renderSerials();
+}
+
+function reprintCountHtml(r) {
+  const p = r.Reprints;
+  if (!p || !p.reprint_count) return '';
+  const title = `Last reprinted ${formatDateTime(p.last_reprinted_at)}${p.last_reprinted_by ? ` by ${p.last_reprinted_by}` : ''}`;
+  return `<div class="muted" style="font-size:11px; line-height:1.3;" title="${escapeHtml(title)}">Reprinted ${p.reprint_count}&times;</div>`;
 }
 
 // Maker column - per "in the Serial tracker can you show who is the maker?": the Tank / Stand Maker
@@ -490,7 +517,7 @@ function renderSerials() {
           : '<span class="muted">-</span>';
       return `
       <tr>
-        <td><span class="bc-doc-no" style="white-space:nowrap;">${escapeHtml(r.SerialNo)}</span></td>
+        <td style="white-space:nowrap;"><span class="bc-doc-no">${escapeHtml(r.SerialNo)}</span>${canReprintLabels ? `<button class="bc-row-action reprint-label-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button" title="Reprint this serial's barcode label">Reprint</button>` : ''}${reprintCountHtml(r)}</td>
         <td style="white-space:nowrap;">${escapeHtml(r.ItemCode)}</td>
         <td style="white-space:nowrap;">${escapeHtml(r.VariantSku) || '<span class="muted">-</span>'}${colourTagHtml(serialColour(r))}</td>
         <td class="cell-text" title="${escapeHtml(r.ItemDescription)}">${escapeHtml(r.ItemDescription)}</td>
@@ -526,6 +553,46 @@ function renderSerials() {
   tbody.querySelectorAll('.mark-sold-btn').forEach((btn) => {
     btn.addEventListener('click', () => markSold(decodeURIComponent(btn.dataset.serial)));
   });
+
+  tbody.querySelectorAll('.reprint-label-btn').forEach((btn) => {
+    btn.addEventListener('click', () => reprintSerialLabel(decodeURIComponent(btn.dataset.serial), btn));
+  });
+}
+
+// Per "can you allow super user and production manager to reprint serials in Serial tracker": the
+// same 100x30mm label Online Orders / Production Orders print (js/labelPrinter.js - QZ Tray to General
+// Setup's Barcode Printer, else the print dialog), for any serial, tied to an order or not.
+async function reprintSerialLabel(serialNo, btn) {
+  const row = allSerials.find((r) => r.SerialNo === serialNo);
+  if (!row || !canReprintLabels) return;
+  btn.disabled = true;
+  try {
+    const result = await LabelPrinter.printSerialLabels([{
+      serialNo: row.SerialNo, itemCode: row.ItemCode, description: row.ItemDescription, sku: row.VariantSku || undefined
+    }]);
+    if (result.via !== 'qz') console.info('Serial label:', result.message);
+    if (result.via !== 'none') await logSerialReprint(row);
+  } catch (err) {
+    alert(`Could not print the label: ${err?.message || err}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Counts the reprint (supabase_serial_label_reprints.sql) - a failure never blocks the print itself.
+async function logSerialReprint(row) {
+  const { data, error } = await supabaseClient.rpc('staff_log_serial_label_reprint', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_no: row.SerialNo
+  });
+  if (error) { console.warn('staff_log_serial_label_reprint:', error.message); return; }
+  row.Reprints = {
+    reprint_count: Number(data) || 0,
+    last_reprinted_at: new Date().toISOString(),
+    last_reprinted_by: currentSession.username
+  };
+  renderSerials();
 }
 
 // Per "in the serial tracker once its sold dont let it mark in stock unless if your a super user": a
@@ -614,6 +681,8 @@ async function markSold(serialNo) {
 
   isProductionWarehouseUser = await resolveIsProductionWarehouse(session);
   isSerialAdmin = !!session.isSerialAdmin;
+  canReprintLabels = !!(session.isSuperUser || session.isProductionManager) && !!window.LabelPrinter;
+  if (canReprintLabels) LabelPrinter.init(session);
 
   // Serial Admins always see every warehouse (see renderSerials), so the "restricted to your own
   // warehouse" note would be inaccurate for them even though they're non-production.

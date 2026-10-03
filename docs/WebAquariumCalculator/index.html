@@ -585,6 +585,7 @@
             <label class="checkbox-row"><input id="sumpEnabled" type="checkbox">Filtration sump</label>
             <label class="checkbox-row"><input id="aquascape" type="checkbox">Aquascape service</label>
             <label class="checkbox-row"><input id="enclosure" type="checkbox">Enclosure</label>
+            <label class="checkbox-row"><input id="turtleTank" type="checkbox">Turtle tank (basking area)</label>
           </div>
 
           <div class="field-grid" style="margin-top: 14px;">
@@ -851,7 +852,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js?v=sump1"></script>
+  <script src="./custom-aquarium-calculator.js?v=turtle1"></script>
   <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -1199,6 +1200,20 @@
           }
         }
 
+        // Turtle tank is aquatic (water + basking area), Enclosure is a dry terrarium - not both.
+        // Keep whichever box was just ticked.
+        var turtleTank = byId('turtleTank');
+        if (turtleTank.checked && enclosure.checked) {
+          if (document.activeElement === enclosure) {
+            turtleTank.checked = false;
+          } else {
+            enclosure.checked = false;
+          }
+          if (showAlerts) {
+            window.alert('Turtle tank and Enclosure cannot both be selected.');
+          }
+        }
+
         if (lowIron.checked) {
           tempered.checked = true;
           tempered.disabled = true;
@@ -1464,6 +1479,222 @@
       }
     }
 
+    // Enclosure interior (called with the front panel clipped): substrate bed, a branch and a few
+    // plants - reads as a dry terrarium rather than a water-filled tank.
+    function drawEnclosureInterior(left, top, width, height) {
+      var subH = Math.max(6, height * 0.16);
+      var subTop = top + height - subH;
+      var subGrad = context.createLinearGradient(0, subTop, 0, top + height);
+      subGrad.addColorStop(0, '#b8895a');
+      subGrad.addColorStop(1, '#7f5a38');
+      context.fillStyle = subGrad;
+      context.beginPath();
+      context.moveTo(left, subTop + subH * 0.25);
+      context.quadraticCurveTo(left + width * 0.3, subTop - subH * 0.2, left + width * 0.55, subTop + subH * 0.1);
+      context.quadraticCurveTo(left + width * 0.8, subTop + subH * 0.35, left + width, subTop);
+      context.lineTo(left + width, top + height);
+      context.lineTo(left, top + height);
+      context.closePath();
+      context.fill();
+
+      // Branch rising from the substrate toward the upper right.
+      context.strokeStyle = '#6b4a2e';
+      context.lineCap = 'round';
+      context.lineWidth = Math.max(3, height * 0.05);
+      context.beginPath();
+      context.moveTo(left + width * 0.18, subTop + subH * 0.3);
+      context.quadraticCurveTo(left + width * 0.42, top + height * 0.45, left + width * 0.72, top + height * 0.32);
+      context.stroke();
+      context.lineWidth = Math.max(2, height * 0.03);
+      context.beginPath();
+      context.moveTo(left + width * 0.48, top + height * 0.46);
+      context.lineTo(left + width * 0.56, top + height * 0.6);
+      context.stroke();
+      context.lineCap = 'butt';
+
+      // A few leafy plants on the substrate.
+      var plants = [0.08, 0.34, 0.86];
+      for (var p = 0; p < plants.length; p++) {
+        var px = left + width * plants[p];
+        var py = subTop + subH * 0.2;
+        var leafH = Math.max(8, height * 0.22);
+        context.fillStyle = p % 2 ? '#4f9a52' : '#3d8443';
+        for (var leaf = -2; leaf <= 2; leaf++) {
+          context.beginPath();
+          context.ellipse(px + leaf * leafH * 0.18, py - leafH * 0.45, leafH * 0.12, leafH * 0.5, leaf * 0.32, 0, Math.PI * 2);
+          context.fill();
+        }
+      }
+    }
+
+    // Turtle tank interior (called with the front panel clipped): water up to waterRatio of the
+    // height, gravel bed, and a basking platform at the right end with a ramp down into the water
+    // and a turtle sunning on it.
+    function drawTurtleInterior(left, top, width, height, waterRatio) {
+      var waterTop = top + height * (1 - waterRatio);
+      var waterGrad = context.createLinearGradient(0, waterTop, 0, top + height);
+      waterGrad.addColorStop(0, '#cdeaf9');
+      waterGrad.addColorStop(1, '#7cc4dd');
+      context.fillStyle = waterGrad;
+      context.fillRect(left, waterTop, width, top + height - waterTop);
+      context.strokeStyle = 'rgba(44, 110, 150, 0.55)';
+      context.lineWidth = 1.2;
+      context.beginPath();
+      context.moveTo(left, waterTop);
+      context.lineTo(left + width, waterTop);
+      context.stroke();
+
+      // Gravel bed.
+      var gravelH = Math.max(4, height * 0.07);
+      context.fillStyle = '#a99b86';
+      context.fillRect(left, top + height - gravelH, width, gravelH);
+      context.fillStyle = 'rgba(90, 78, 62, 0.45)';
+      for (var gx = left + 3; gx < left + width; gx += 6) {
+        context.beginPath();
+        context.arc(gx, top + height - gravelH * (gx % 4 < 2 ? 0.35 : 0.65), 1.2, 0, Math.PI * 2);
+        context.fill();
+      }
+
+      // Basking platform: a ledge across the right end, sitting above the water line.
+      var platLeft = left + width * 0.66;
+      var platRight = left + width;
+      var platTop = waterTop - Math.max(8, height * 0.12);
+      var platThick = Math.max(4, height * 0.05);
+      var rockGrad = context.createLinearGradient(0, platTop, 0, platTop + platThick);
+      rockGrad.addColorStop(0, '#b7a58a');
+      rockGrad.addColorStop(1, '#7d6c55');
+      context.fillStyle = rockGrad;
+      context.fillRect(platLeft, platTop, platRight - platLeft, platThick);
+      context.strokeStyle = '#5e5040';
+      context.lineWidth = 1;
+      context.strokeRect(platLeft, platTop, platRight - platLeft, platThick);
+      // Support bracket under the ledge, down to the gravel.
+      context.fillStyle = 'rgba(125, 108, 85, 0.55)';
+      context.fillRect(platRight - Math.max(6, width * 0.03), platTop + platThick, Math.max(6, width * 0.03), top + height - gravelH - platTop - platThick);
+
+      // Ramp from the platform edge down into the water.
+      var rampEndX = left + width * 0.46;
+      var rampEndY = Math.min(top + height - gravelH - 2, waterTop + height * 0.28);
+      context.strokeStyle = '#8d7a60';
+      context.lineCap = 'round';
+      context.lineWidth = Math.max(3, platThick * 0.8);
+      context.beginPath();
+      context.moveTo(platLeft + 2, platTop + platThick / 2);
+      context.lineTo(rampEndX, rampEndY);
+      context.stroke();
+      context.lineCap = 'butt';
+
+      // Turtle basking on the platform.
+      var shellRx = Math.min((platRight - platLeft) * 0.26, height * 0.16);
+      var shellRy = shellRx * 0.6;
+      var tx = (platLeft + platRight) / 2;
+      var ty = platTop;
+      context.fillStyle = '#4c7d3a';
+      // Legs and head first, so the shell overlaps them.
+      context.beginPath();
+      context.ellipse(tx - shellRx * 0.65, ty - 1, shellRx * 0.22, shellRx * 0.14, 0, 0, Math.PI * 2);
+      context.ellipse(tx + shellRx * 0.65, ty - 1, shellRx * 0.22, shellRx * 0.14, 0, 0, Math.PI * 2);
+      context.fill();
+      context.beginPath();
+      context.ellipse(tx - shellRx * 1.1, ty - shellRy * 0.35, shellRx * 0.28, shellRx * 0.2, -0.2, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = '#2f5a24';
+      context.beginPath();
+      context.ellipse(tx, ty - 1, shellRx, shellRy, 0, Math.PI, Math.PI * 2);
+      context.closePath();
+      context.fill();
+      context.strokeStyle = 'rgba(200, 220, 150, 0.6)';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(tx - shellRx * 0.35, ty - 1);
+      context.lineTo(tx - shellRx * 0.2, ty - shellRy * 0.8);
+      context.moveTo(tx + shellRx * 0.35, ty - 1);
+      context.lineTo(tx + shellRx * 0.2, ty - shellRy * 0.8);
+      context.stroke();
+      context.fillStyle = '#1d2a1a';
+      context.beginPath();
+      context.arc(tx - shellRx * 1.2, ty - shellRy * 0.42, Math.max(1, shellRx * 0.05), 0, Math.PI * 2);
+      context.fill();
+    }
+
+    // Enclosure screen top: dark frame with a fine mesh grid clipped to the top face.
+    function drawMeshTop(left, top, width, depth, backTop) {
+      context.save();
+      context.beginPath();
+      context.moveTo(left, top);
+      context.lineTo(left + depth, backTop);
+      context.lineTo(left + depth + width, backTop);
+      context.lineTo(left + width, top);
+      context.closePath();
+      context.clip();
+      context.strokeStyle = 'rgba(210, 220, 230, 0.35)';
+      context.lineWidth = 0.7;
+      var rise = top - backTop;
+      for (var r = 1; r < 8; r++) {
+        var t = r / 8;
+        context.beginPath();
+        context.moveTo(left + depth * t, top - rise * t);
+        context.lineTo(left + width + depth * t, top - rise * t);
+        context.stroke();
+      }
+      for (var x = left; x < left + width + depth; x += 6) {
+        context.beginPath();
+        context.moveTo(x, top);
+        context.lineTo(x + depth, backTop);
+        context.stroke();
+      }
+      context.restore();
+    }
+
+    // Enclosure front: substrate lip at the bottom, top vent frame, and two overlapping sliding glass
+    // doors with handles and a centre lock.
+    function drawEnclosureDoors(left, top, width, height) {
+      var frameColor = '#3a4350';
+      var lipH = Math.max(5, height * 0.12);
+      var topFrameH = Math.max(3, height * 0.04);
+      var doorTop = top + topFrameH;
+      var doorBottom = top + height - lipH;
+      var doorH = doorBottom - doorTop;
+      var overlap = Math.max(6, width * 0.04);
+      var mid = left + width / 2;
+
+      context.fillStyle = frameColor;
+      context.fillRect(left, top + height - lipH, width, lipH);
+      context.fillRect(left, top, width, topFrameH);
+      // Vent slots on the lip.
+      context.fillStyle = 'rgba(255, 255, 255, 0.28)';
+      for (var vx = left + 8; vx < left + width - 10; vx += 7) {
+        context.fillRect(vx, top + height - lipH * 0.68, 3, lipH * 0.36);
+      }
+
+      var doors = [
+        { x: left + 1, w: width / 2 + overlap / 2 - 1, handleX: mid - overlap / 2 - 8 },
+        { x: mid - overlap / 2, w: width / 2 + overlap / 2 - 1, handleX: mid + overlap / 2 + 4 }
+      ];
+      for (var d = 0; d < doors.length; d++) {
+        var door = doors[d];
+        context.fillStyle = d === 0 ? 'rgba(255, 255, 255, 0.10)' : 'rgba(170, 200, 215, 0.12)';
+        context.fillRect(door.x, doorTop, door.w, doorH);
+        context.strokeStyle = frameColor;
+        context.lineWidth = 1.4;
+        context.strokeRect(door.x, doorTop, door.w, doorH);
+        // Handle: small vertical bar near the overlapping edge.
+        context.fillStyle = '#c9d1da';
+        context.strokeStyle = frameColor;
+        context.lineWidth = 1;
+        context.fillRect(door.handleX, doorTop + doorH * 0.42, 4, doorH * 0.16);
+        context.strokeRect(door.handleX, doorTop + doorH * 0.42, 4, doorH * 0.16);
+      }
+
+      // Lock at the overlap.
+      context.fillStyle = '#d4a63c';
+      context.strokeStyle = frameColor;
+      context.beginPath();
+      context.arc(mid, doorBottom - Math.max(5, doorH * 0.08), Math.max(2.5, doorH * 0.025), 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+    }
+
     function drawAquarium(result) {
       context.clearRect(0, 0, CANVAS_W, CANVAS_H);
       var bg = context.createLinearGradient(0, 0, 0, CANVAS_H);
@@ -1487,6 +1718,12 @@
       var showStand = byId('standEnabled').checked;
       var showHighStrip = byId('highStrip').checked;
       var showRimless = byId('rimless').checked;
+      // Enclosure = dry terrarium-style build (can't be combined with AIO/sump): drawn as clear glass
+      // with a mesh screen top, sliding front doors and substrate instead of water.
+      var showEnclosure = byId('enclosure').checked;
+      // Turtle tank: water only part-way up, with a basking platform + ramp above the water line.
+      var showTurtle = !showEnclosure && byId('turtleTank').checked;
+      var turtleWaterRatio = 0.55;
       var showCabinet = showStand && byId('standCabinet').checked;
       var showCanopy = showStand && byId('standCanopy').checked;
       var cabLeft = 0;
@@ -1532,9 +1769,14 @@
       // Front panel: water/glass gradient (paler at the surface, deeper teal toward the
       // substrate) plus a soft diagonal highlight streak to read as glass, not a flat color chip.
       var frontGrad = context.createLinearGradient(0, frontTop, 0, frontTop + frontHeight);
-      frontGrad.addColorStop(0, '#eaf7ff');
-      frontGrad.addColorStop(0.12, '#cdeaf9');
-      frontGrad.addColorStop(1, '#7cc4dd');
+      if (showEnclosure || showTurtle) {
+        frontGrad.addColorStop(0, '#fbfdfe');
+        frontGrad.addColorStop(1, '#e3eef3');
+      } else {
+        frontGrad.addColorStop(0, '#eaf7ff');
+        frontGrad.addColorStop(0.12, '#cdeaf9');
+        frontGrad.addColorStop(1, '#7cc4dd');
+      }
       context.fillStyle = frontGrad;
       context.fillRect(frontLeft, frontTop, frontWidth, frontHeight);
 
@@ -1542,6 +1784,8 @@
       context.beginPath();
       context.rect(frontLeft, frontTop, frontWidth, frontHeight);
       context.clip();
+      if (showEnclosure) drawEnclosureInterior(frontLeft, frontTop, frontWidth, frontHeight);
+      if (showTurtle) drawTurtleInterior(frontLeft, frontTop, frontWidth, frontHeight, turtleWaterRatio);
       context.fillStyle = 'rgba(255, 255, 255, 0.22)';
       context.beginPath();
       context.moveTo(frontLeft + frontWidth * 0.08, frontTop + frontHeight);
@@ -1560,10 +1804,16 @@
       context.lineTo(frontLeft + frontWidth, frontTop);
       context.closePath();
       var topGrad = context.createLinearGradient(frontLeft, backTop, frontLeft, frontTop);
-      topGrad.addColorStop(0, '#e4eef8');
-      topGrad.addColorStop(1, '#b9cfe4');
+      if (showEnclosure) {
+        topGrad.addColorStop(0, '#7d8794');
+        topGrad.addColorStop(1, '#5a6470');
+      } else {
+        topGrad.addColorStop(0, '#e4eef8');
+        topGrad.addColorStop(1, '#b9cfe4');
+      }
       context.fillStyle = topGrad;
       context.fill();
+      if (showEnclosure) drawMeshTop(frontLeft, frontTop, frontWidth, depth, backTop);
 
       // Side panel: same water tone, shaded darker to suggest it's turned away from the light.
       context.beginPath();
@@ -1573,10 +1823,42 @@
       context.lineTo(frontLeft + frontWidth, frontTop + frontHeight);
       context.closePath();
       var sideGrad = context.createLinearGradient(frontLeft + frontWidth, frontTop, frontLeft + frontWidth + depth, frontTop);
-      sideGrad.addColorStop(0, '#a9cbdd');
-      sideGrad.addColorStop(1, '#6fa8bf');
+      if (showEnclosure || showTurtle) {
+        sideGrad.addColorStop(0, '#e2ecf1');
+        sideGrad.addColorStop(1, '#c6d6de');
+      } else {
+        sideGrad.addColorStop(0, '#a9cbdd');
+        sideGrad.addColorStop(1, '#6fa8bf');
+      }
       context.fillStyle = sideGrad;
       context.fill();
+      if (showTurtle) {
+        // Water seen through the side glass, up to the same water line as the front.
+        var sideWaterH = frontHeight * turtleWaterRatio;
+        context.beginPath();
+        context.moveTo(frontLeft + frontWidth, frontTop + frontHeight - sideWaterH);
+        context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight - sideWaterH);
+        context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight);
+        context.lineTo(frontLeft + frontWidth, frontTop + frontHeight);
+        context.closePath();
+        var sideWaterGrad = context.createLinearGradient(frontLeft + frontWidth, 0, frontLeft + frontWidth + depth, 0);
+        sideWaterGrad.addColorStop(0, '#9cc9dc');
+        sideWaterGrad.addColorStop(1, '#6fa8bf');
+        context.fillStyle = sideWaterGrad;
+        context.fill();
+      }
+      if (showEnclosure) {
+        // Substrate seen through the side glass.
+        var sideSubH = Math.max(6, frontHeight * 0.16);
+        context.beginPath();
+        context.moveTo(frontLeft + frontWidth, frontTop + frontHeight - sideSubH);
+        context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight - sideSubH);
+        context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight);
+        context.lineTo(frontLeft + frontWidth, frontTop + frontHeight);
+        context.closePath();
+        context.fillStyle = '#8f6844';
+        context.fill();
+      }
 
       context.strokeStyle = '#2c4a68';
       context.lineWidth = 1.6;
@@ -1589,6 +1871,8 @@
       context.lineTo(frontLeft + frontWidth + depth, backTop + frontHeight);
       context.lineTo(frontLeft + frontWidth, frontTop + frontHeight);
       context.stroke();
+
+      if (showEnclosure) drawEnclosureDoors(frontLeft, frontTop, frontWidth, frontHeight);
 
       if (showHighStrip) {
         var stripGrad = context.createLinearGradient(0, frontTop + 8, 0, frontTop + 16);
@@ -1772,6 +2056,7 @@
         highStrip: byId('highStrip').checked,
         aquascapeService: byId('aquascape').checked,
         enclosure: byId('enclosure').checked,
+        turtleTank: byId('turtleTank').checked,
         holeCount: byId('holeCount').value,
         dividerCount: byId('dividerCount').value,
         filtrationSump: {
@@ -2004,6 +2289,7 @@
       if (byId('aio').checked) extras.push('AIO (All-In-One)');
       if (byId('highStrip').checked) extras.push('High Strip');
       if (byId('enclosure').checked) extras.push('Enclosure');
+      if (byId('turtleTank').checked) extras.push('Turtle tank (basking area)');
       if (byId('aquascape').checked) extras.push('Aquascape service');
       if (extras.length > 0) {
         rows.push(['Add-ons', extras.join(', ')]);
@@ -2371,7 +2657,7 @@
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
         'holeCount', 'dividerCount',
-        'sumpEnabled', 'aquascape', 'enclosure', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
+        'sumpEnabled', 'aquascape', 'enclosure', 'turtleTank', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
         'sumpUnit', 'sumpGlass', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
@@ -2437,6 +2723,7 @@
       if (params.get('tempered') === '1') byId('tempered').checked = true;
       if (params.get('rimless') === '1') byId('rimless').checked = true;
       if (params.get('highStrip') === '1') byId('highStrip').checked = true;
+      if (params.get('turtleTank') === '1') byId('turtleTank').checked = true;
 
       if (params.get('standEnabled') === '1') {
         byId('standEnabled').checked = true;

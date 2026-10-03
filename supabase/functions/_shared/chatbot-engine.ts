@@ -531,6 +531,7 @@ interface AquariumQuoteInput {
   highStrip?: boolean;
   aquascapeService?: boolean;
   enclosure?: boolean;
+  turtleTank?: boolean;
   stand?: StandOptions;
   filtrationSump?: { enabled?: boolean };
   length: number;
@@ -588,6 +589,8 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   const hasHighStrip = Boolean(options.highStrip);
   const hasAquascapeService = Boolean(options.aquascapeService);
   const hasEnclosure = Boolean(options.enclosure);
+  // Turtle tank (water + basking platform): priced the same as Enclosure for now (x2.1 below).
+  const hasTurtleTank = Boolean(options.turtleTank);
   const hasStand = Boolean(options.stand && options.stand.enabled);
   const hasFiltrationSump = Boolean((options.filtrationSump && options.filtrationSump.enabled) || optionType.toLowerCase() === 'complete setup');
   const holeCount = Math.max(0, Math.round(Number(options.holeCount) || 0));
@@ -615,6 +618,9 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   }
   if (hasFiltrationSump && hasEnclosure) {
     return { ok: false, error: 'Enclosure cannot be selected when filtration sump is enabled.', autoChangeTo: null };
+  }
+  if (hasTurtleTank && hasEnclosure) {
+    return { ok: false, error: 'Turtle tank and enclosure cannot both be selected.', autoChangeTo: null };
   }
   if (isAio && extractGlassMm(glass) === 3) {
     glass = '6mm';
@@ -723,7 +729,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     calculatedPrice += components.aquascapeService;
   }
 
-  if (hasEnclosure) {
+  if (hasEnclosure || hasTurtleTank) {
     calculatedPrice = round2(calculatedPrice * 2.1);
     if (calculatedPrice >= 1000) {
       calculatedPrice = roundNearest10(calculatedPrice);
@@ -855,6 +861,7 @@ export const TOOLS: Anthropic.Tool[] = [
         high_strip: { type: 'boolean', description: 'An extra glass strip along the top rim.' },
         hole_count: { type: 'integer', description: 'Number of drilled holes for the aquarium, if any. Flat rate per hole - ask the customer how many they need before including this.' },
         divider_count: { type: 'integer', description: 'Number of internal glass dividers/partitions, if any. Priced from the tank\'s own glass rate for a Width x Height panel, plus 20%, per divider.' },
+        turtle_tank: { type: 'boolean', description: 'Set true if the customer wants a turtle tank - an aquarium with a built-in basking area (a ledge above the water line with a ramp into the water). It raises the aquarium price, so only set it when they ask for a turtle tank / basking area.' },
         add_stand: { type: 'boolean', description: 'Set true only if the customer wants a matching stand included.' },
         stand_layers: { type: 'integer', description: 'Number of stand shelves/layers, minimum 2. Only used when add_stand is true.' },
         stand_tubular: { type: 'string', enum: ['1x1', '1.5x1.5', '2x2'], description: 'Stand frame tubular size. Only used when add_stand is true.' },
@@ -1123,6 +1130,7 @@ export function buildSystemPrompt(
     '- 10mm and 12mm glass tanks take longer to finish than regular orders: the thick glass is pre-ordered and cut to size for the tank, and the thicker silicone joints need extra curing time to fully set (that is what makes the tank strong and leak-free). Mention this when quoting or discussing a 10mm/12mm tank so the customer expects a longer wait - but never promise a specific completion date.',
     '- Rimless tanks (no top frame bracing) need extra glass thickness to stay structurally safe without that frame: minimum 6mm from 10 gallons up, and 10mm once the tank is 30 gallons or more, over 15 inches tall, over 20 inches wide or over 48 inches long (12mm beyond the normal 10mm limits).',
     '- HANG-ON-BACK (HOB) FILTRATION: a hang-on-back filter hangs over the tank\'s rim, so a tank meant for one is supposed to be RIMLESS (no top frame in the way) - and that means the rimless glass rule above applies to it. Whenever you are advising a tank size or building a custom aquarium quote, and it isn\'t already clear from the conversation, ask what filtration they plan to use (hang-on-back, canister, sump, internal/sponge, etc.). If it\'s hang-on-back (they say "HOB", "hang on", "hang-on filter", "hanging filter", or name a typical HOB filter), treat the aquarium as rimless: pass rimless=true to compute_aquarium_quote (unless they explicitly say otherwise), tell them plainly that a hang-on-back setup means going rimless and why, and explain that rimless needs thicker glass for that size (see the rimless rule above) - the tool applies the exact glass thickness/price, so use its result rather than predicting it yourself. Other filter types (canister, sump, internal, sponge, etc.) don\'t trigger this on their own. Never claim a customer\'s filter type yourself - only act on what they actually told you.',
+    '- TURTLE TANK: we build turtle tanks - a custom aquarium with a built-in basking area (a ledge above the water line with a ramp down into the water). If the customer asks for a turtle tank or a basking area/platform, pass turtle_tank=true to compute_aquarium_quote and list "Turtle tank (basking area)" in the itemized summary. It costs more than a plain aquarium of the same size - only quote it through the tool, never estimate the difference yourself.',
     '- Cabinet and canopy (optional, with a stand): a cabinet encloses the stand in panels (front doors, both sides and a closed back) - by default 2 doors per 3ft of length (3ft = 2 doors, 6ft = 4 doors), but the customer can ask for a different number. Cabinet and canopy come in two types (cabinet_type): Laminated Plywood (18mm, the default) or Aluminum (4mm ACP panels, a more premium, moisture-proof finish that costs more) - ask which they prefer if they want a cabinet or canopy. A canopy is a box cover on top of the tank (default 6 inches high). Both are priced by panel area (with a minimum charge), so only quote them through compute_aquarium_quote (stand_cabinet / canopy) - never estimate them yourself. Only offer them when the customer asks about a cabinet, canopy, or a closed/enclosed stand.',
     '- Stand frames get a thicker tubular size automatically as the load/span grows: 10mm+ glass always needs a 2x2 stand frame; a stand over 30 inches long needs at least 1 1/2 x 1 1/2 tubular; a stand 49+ inches long AND 18+ inches wide always needs 2x2, no exceptions.',
     '- These are structural safety requirements, not preferences - never agree to skip, downgrade, or "just risk it" even if the customer insists, says a smaller tank held up fine before, or asks you to quote the unsafe spec anyway. Politely hold the line, explain it protects them from a cracked tank or a collapsed stand, and note that the quote you give already reflects the safe spec.',
@@ -1268,6 +1276,7 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     highStrip: Boolean(input.high_strip),
     holeCount: Number(input.hole_count) || 0,
     dividerCount: Number(input.divider_count) || 0,
+    turtleTank: Boolean(input.turtle_tank),
     option: 'Aquarium only',
     stand: addStand
       ? {
@@ -1324,6 +1333,7 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     if (normalized.temperedGlass) aquariumParams.set('tempered', '1');
     if (normalized.rimless) aquariumParams.set('rimless', '1');
     if (input.high_strip) aquariumParams.set('highStrip', '1');
+    if (input.turtle_tank) aquariumParams.set('turtleTank', '1');
     if (stand) {
       aquariumParams.set('standEnabled', '1');
       aquariumParams.set('standLayers', String(stand.layers));
