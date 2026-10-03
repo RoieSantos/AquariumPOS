@@ -97,6 +97,7 @@
                 <option value="Dispatcher">Dispatcher</option>
                 <option value="Cashier">Cashier</option>
                 <option value="ProductionManager">Production Manager</option>
+                <option value="AllBranchFabrication">All-Branch Fabrication</option>
                 <option value="__none">(no role)</option>
               </select>
             </div>
@@ -245,6 +246,7 @@
                   <label><input type="checkbox" value="Dispatcher" /> Dispatcher</label>
                   <label><input type="checkbox" value="Cashier" /> Cashier</label>
                   <label title="Assigns Tank Maker / Stand Maker / Dispatcher on Online Orders"><input type="checkbox" value="ProductionManager" /> Production Manager</label>
+                  <label title="Also sees other branches' open orders that need fabrication (custom, 10mm / 12mm glass, stand) on Online Orders"><input type="checkbox" value="AllBranchFabrication" /> All-Branch Fabrication</label>
                 </div>
               </div>
               <div class="bc-field">
@@ -330,7 +332,7 @@
   <script src="js/auth.js?v=all1"></script>
   <script src="js/nav.js?v=all1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/userSetup.js?v=2"></script>
+  <script src="js/userSetup.js?v=3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

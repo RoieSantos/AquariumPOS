@@ -159,9 +159,43 @@ async function resolveIsProductionWarehouse(session) {
 // warehouse - same convention as Transfer Orders (js/transferOrders.js). Orders with no
 // resolved warehouse_name (e.g. LocationID didn't match any synced Warehouses row) are
 // hidden while scoped, since we can't confirm they belong to this user's warehouse.
+// All-Branch Fabrication staff role (supabase_online_order_all_branch_fabrication.sql) also sees other
+// branches' OPEN orders that need a maker (custom line, 10mm / 12mm glass, stand) - same rule as the
+// server's _online_order_open_fabrication.
 function matchesWarehouseFilter(order) {
   if (!currentSession.warehouseName) return true;
-  return (order.warehouse_name || '') === currentSession.warehouseName;
+  if ((order.warehouse_name || '') === currentSession.warehouseName) return true;
+  return canSeeAllBranchFabrication() && isOpenFabricationOrder(order);
+}
+
+function canSeeAllBranchFabrication() {
+  return (currentSession?.staffRoles || []).includes('AllBranchFabrication');
+}
+
+function isOpenFabricationOrder(order) {
+  if (!(order.has_aquarium_line || order.has_stand_line)) return false;
+  if (order.received_at_shop) return ['To Assign', 'Assigned', 'Production Done'].includes(order.walkin_stage);
+  return ['confirmed', 'submitted', 'printed', 'assigned', 'to ship', 'packing', 'packed']
+    .includes(String(order.status || '').trim().toLowerCase());
+}
+
+// An order from another branch, shown here only because it needs fabrication (see above).
+function otherBranchBadgeHtml(order) {
+  if (!currentSession?.warehouseName || !order.warehouse_name || order.warehouse_name === currentSession.warehouseName) return '';
+  return `<span class="badge badge-neutral" title="From another branch - shown because it needs fabrication (All-Branch Fabrication role).">${escapeHtml(order.warehouse_name)}</span>`;
+}
+
+// p_branch_scoped (supabase_online_order_all_branch_fabrication.sql) does the branch filter above
+// server-side, before paging. Until that file is run the RPC doesn't know the param (PGRST202) - retry
+// without it; matchesWarehouseFilter still filters in the browser either way.
+const branchScopedUnsupported = new Set();
+async function rpcBranchScoped(fnName, params) {
+  if (!branchScopedUnsupported.has(fnName)) {
+    const result = await supabaseClient.rpc(fnName, { ...params, p_branch_scoped: true });
+    if (result.error?.code !== 'PGRST202') return result;
+    branchScopedUnsupported.add(fnName);
+  }
+  return supabaseClient.rpc(fnName, params);
 }
 
 const STATUS_SUMMARY_ELEMENT_IDS = {
@@ -184,7 +218,7 @@ const STATUS_SUMMARY_ELEMENT_IDS = {
 async function loadStatusSummary() {
   if (!currentSession.password) return;
 
-  const { data, error } = await supabaseClient.rpc('admin_get_online_order_status_summary', {
+  const { data, error } = await rpcBranchScoped('admin_get_online_order_status_summary', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_warehouse_name: currentSession.warehouseName || null,
@@ -253,7 +287,7 @@ function releaseBadgeHtml(order) {
 }
 
 function orderBadgesHtml(order) {
-  return `${glassBadgeHtml(order)} ${customBadgeHtml(order)} ${gmaBadgeHtml(order)} ${prodOrderBadgeHtml(order)} ${releaseBadgeHtml(order)}`;
+  return `${otherBranchBadgeHtml(order)} ${glassBadgeHtml(order)} ${customBadgeHtml(order)} ${gmaBadgeHtml(order)} ${prodOrderBadgeHtml(order)} ${releaseBadgeHtml(order)}`;
 }
 
 // "Assigned To" dropdown(s) - per "maybe each order can be assign a tank maker and a stand maker.
@@ -1674,7 +1708,7 @@ function orderRowsHtml(orders) {
         <td>${assigneeCellHtml(o, o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}${productionDoneTickHtml(o, 'tank')}</td>
         <td>${assigneeCellHtml(o, o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}${productionDoneTickHtml(o, 'stand')}</td>
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
-        <td>${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
+        <td>${otherBranchBadgeHtml(o)} ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${prodOrderBadgeHtml(o)}</td>
         <td>${o.received_at_shop && posNoteSummary(o) ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${escapeHtml(posNoteSummary(o))}</span>` : escapeHtml(o.note_print)}${!o.received_at_shop && posNoteSummary(o) ? `${o.note_print ? ' ' : ''}<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}"><b>POS:</b> ${escapeHtml(posNoteSummary(o))}</span>` : ''}</td>
         ${hidePrices() ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
@@ -3979,7 +4013,7 @@ async function loadOrders(search, status) {
   const trimmedSearch = (search || '').trim();
   const trimmedStatus = (status || '').trim();
 
-  const { data, error } = await supabaseClient.rpc('admin_list_online_orders', {
+  const { data, error } = await rpcBranchScoped('admin_list_online_orders', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_search: trimmedSearch || null,
@@ -4004,12 +4038,11 @@ async function loadOrders(search, status) {
     return;
   }
 
-  // NOTE: warehouse-scoping/outstanding-only are client-side post-filters (no matching server
-  // param), applied AFTER the server already paged the unfiltered result - a warehouse-scoped
-  // or outstanding-only view can therefore show fewer than pageSize rows on a page, and the
-  // pagination bar's total/page count reflects the pre-filter total, not the filtered count
-  // actually shown. Same pre-existing tradeoff the old fixed-500-row fetch had; not something
-  // this pagination pass changes.
+  // NOTE: warehouse scoping is server-side once supabase_online_order_all_branch_fabrication.sql
+  // is run (p_branch_scoped - this filter is then a no-op); before that it's a client-side
+  // post-filter like outstanding-only, applied AFTER the server already paged the unfiltered
+  // result - so a page can show fewer than pageSize rows, and the pagination bar's total
+  // reflects the pre-filter total.
   let rows = myAssignmentsOnly ? (data || []) : (data || []).filter(matchesWarehouseFilter);
   if (myAssignmentsOnly) setMyAssignmentsCount(data?.[0]?.total_count || 0);
   if (outstandingOnly) {
@@ -4103,7 +4136,7 @@ async function exportOrdersToExcel() {
     const allRows = [];
     let page = 1;
     for (;;) {
-      const { data, error } = await supabaseClient.rpc('admin_list_online_orders', {
+      const { data, error } = await rpcBranchScoped('admin_list_online_orders', {
         p_admin_username: currentSession.username,
         p_admin_password: currentSession.password,
         p_search: trimmedSearch || null,
