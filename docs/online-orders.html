@@ -98,6 +98,14 @@
         <!-- Production Manager / Super User only: send finished parts back for rework -->
         <button class="bc-cmd hidden" id="listSendBackBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="listProductionDoneBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
+        <!-- Advance Orders tab only (js/onlineOrders.js initAdvanceOrdersView) - same actions as the online
+             list, on the selected advance order. Hidden on the Online / Walk-in lists. -->
+        <button class="bc-cmd bc-cmd-accent adv-cmd hidden" id="advOpenBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
+        <span class="bc-cmd-sep adv-cmd hidden"></span>
+        <button class="bc-cmd adv-cmd hidden" id="advAssignBtn" type="button" disabled title="Assign the Tank Maker / Stand Maker for the selected order"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
+        <button class="bc-cmd adv-cmd hidden" id="advNextBtn" type="button"></button>
+        <button class="bc-cmd adv-cmd hidden" id="advSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
+        <button class="bc-cmd adv-cmd hidden" id="advStepBackBtn" type="button" title="Undo the last stage (Shipped -> To Ship -> production)">Undo Stage</button>
         <span class="bc-cmd-sep"></span>
         <button class="bc-cmd" id="refreshOrdersBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
         <!-- Super users only - see js/onlineOrders.js's init() (session.isSuperUser gate). No icon:
@@ -130,6 +138,16 @@
         <button type="button" class="bc-tab status-summary-pill online-pill" data-status="To Ship">To Ship <span class="status-summary-count" id="statusCountToShip">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Shipped">Shipped <span class="status-summary-count" id="statusCountShipped">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Cancelled">Cancelled <span class="status-summary-count" id="statusCountCancelled">-</span></button>
+      </div>
+
+      <!-- Advance Orders' production stage tabs (staff_get_advance_order_status_summary) - same place and
+           look as the online status tabs above; shown only on ?scope=advance. Click to filter, again to clear. -->
+      <div class="bc-tabs status-summary-bar hidden" id="advanceStatusBar">
+        <button type="button" class="bc-tab status-summary-pill" data-adv-status="New" title="Not assigned yet">New <span class="status-summary-count" data-adv-count="New">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-adv-status="Assigned">Assigned <span class="status-summary-count" data-adv-count="Assigned">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-adv-status="Production Done" title="Every assigned part marked done">Production Done <span class="status-summary-count" data-adv-count="Production Done">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-adv-status="To Ship">To Ship <span class="status-summary-count" data-adv-count="To Ship">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-adv-status="Shipped">Shipped <span class="status-summary-count" data-adv-count="Shipped">-</span></button>
       </div>
 
       <div class="bc-body no-factbox" id="flatOrdersView">
@@ -178,33 +196,37 @@
         </section>
       </div>
 
-      <!-- Advance Orders tab (?scope=advance, super users only - js/onlineOrders.js initAdvanceOrdersView).
-           Read-only; the top search box filters it by transaction no, receipt no, or customer. -->
+      <!-- Advance Orders tab (?scope=advance, Super Users / Production Managers - js/onlineOrders.js
+           initAdvanceOrdersView). Same BC list as Online / Walk-in: click a row to select it, the action
+           bar (Open / Assign / next step / Send Back) works on it, the Transaction No opens the document. -->
       <div class="bc-body no-filterpane no-factbox hidden" id="advanceOrdersView">
         <section class="bc-main">
           <div class="bc-grid-wrap" id="advanceGridWrap">
-            <table class="bc-grid">
+            <table class="bc-grid oo-grid" data-resize-key="advance-orders-v1">
               <thead>
                 <tr>
                   <th>Transaction No</th>
                   <th>Receipt No</th>
-                  <th>User</th>
-                  <th>Customer</th>
-                  <th>Description</th>
                   <th>Date</th>
                   <th>Time</th>
+                  <th>Customer</th>
+                  <th>Warehouse</th>
+                  <th>Status</th>
+                  <th>Cashier</th>
+                  <th>Tank Maker</th>
+                  <th>Stand Maker</th>
+                  <th title="Custom tank / stand lines, rework">Flags</th>
+                  <th>Description</th>
                   <th class="num">Net Amount</th>
                   <th class="num">Downpayment</th>
                   <th class="num">Balance</th>
-                  <th>Online Order ID</th>
                   <th>Fully Paid</th>
                   <th>Date Paid</th>
-                  <th>Warehouse</th>
-                  <th>Lines</th>
+                  <th>Online Order ID</th>
                 </tr>
               </thead>
               <tbody id="advanceTableBody">
-                <tr><td colspan="15" class="cell-msg">Loading...</td></tr>
+                <tr><td colspan="18" class="cell-msg">Loading...</td></tr>
               </tbody>
             </table>
           </div>
@@ -221,6 +243,10 @@
            sql/supabase_production_orders.sql) - shown on every screen width while in My Assignments,
            hidden when there are none. Each card opens production-orders.html?no=. -->
       <div class="oo-prod-cards hidden" id="myProductionOrderCards"></div>
+
+      <!-- Advance Orders assigned to me with my part not done yet (js/onlineOrders.js loadMyAdvanceOrderCards,
+           sql/supabase_advance_order_production.sql) - same card + Production Done as the restock cards above. -->
+      <div class="oo-prod-cards hidden" id="myAdvanceOrderCards"></div>
 
       <!-- Online Order Staff only (js/onlineOrders.js's init()) - per "i want to show the online
            order per category: Confirmed / Printed / To-Ship... built it as a mobile GUI friendly.
@@ -438,6 +464,124 @@
         <div class="bc-doc-part hidden" id="orderCardPhotosPart">
           <div class="bc-doc-part-head">Photos Sent</div>
           <div id="orderCardPhotosList" style="display:flex; flex-wrap:wrap; gap:12px; padding:10px 0;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Advance Order document - same BC document shell as the Online Order card above, opened from the
+       Advance Orders tab's Transaction No / Receipt No link or a row double-click
+       (js/onlineOrders.js openAdvanceCard). Read-only: General + Payment FastTabs from the list row,
+       Lines from admin_list_advance_order_lines (same as advance-order-lines.html). -->
+  <div id="advanceCardModal" class="modal-backdrop hidden">
+    <div class="modal-panel to-manage-panel bc-doc" role="dialog" aria-modal="true" aria-labelledby="advanceCardTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">ADVANCE ORDER</div>
+          <div class="bc-doc-titleline">
+            <h2 id="advanceCardTitle">Advance Order</h2>
+            <span id="advanceCardPaidBadge" class="badge badge-neutral"></span>
+          </div>
+        </div>
+        <div class="bc-doc-window">
+          <button class="bc-cmd" id="advanceCardMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
+          <button class="bc-iconbtn bc-doc-close" id="closeAdvanceCardBtn" type="button" aria-label="Close" title="Close">&times;</button>
+        </div>
+      </div>
+
+      <!-- Same process as an online order, portal-owned (sql/supabase_advance_order_production.sql):
+           Assign -> Assigned -> makers' Production Done -> Ready to Ship -> Mark Shipped, plus Send Back.
+           Super User / Production Manager only (js/onlineOrders.js updateAdvanceCardActions). -->
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd" id="advanceCardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
+        <button class="bc-cmd hidden" id="advanceCardNextBtn" type="button"></button>
+        <button class="bc-cmd hidden" id="advanceCardSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
+        <button class="bc-cmd hidden" id="advanceCardStepBackBtn" type="button" title="Undo the last stage (Shipped -> To Ship -> production)">Undo Stage</button>
+      </div>
+
+      <div class="bc-doc-body">
+        <details class="doc-fasttab" open>
+          <summary>Assignment <span class="doc-fasttab-summary" id="advanceCardAssignSummary"></span></summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field"><label>Status</label><div class="bc-doc-value" id="acProdStatus"></div></div>
+              <div class="bc-doc-field"><label>Needs</label><div class="bc-doc-value" id="acNeeds"></div></div>
+              <div class="bc-doc-field"><label>Ready to Ship</label><div class="bc-doc-value" id="acToShip"></div></div>
+              <div class="bc-doc-field"><label>Shipped</label><div class="bc-doc-value" id="acShipped"></div></div>
+            </div>
+            <div>
+              <div class="bc-doc-field"><label>Tank Maker</label><div class="bc-doc-value" id="acTankMaker"></div></div>
+              <div class="bc-doc-field"><label>Stand Maker</label><div class="bc-doc-value" id="acStandMaker"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Every Send Back on this advance order (staff_list_advance_order_rework). Hidden when none. -->
+        <details class="doc-fasttab hidden" id="advanceCardReworkTab" open>
+          <summary>Rework History <span class="doc-fasttab-summary" id="advanceCardReworkSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="bc-grid-wrap">
+              <table class="bc-grid oo-rh-grid">
+                <thead><tr><th>Sent Back</th><th>Part</th><th>Reason</th><th>Was Done By</th><th>Fixed</th></tr></thead>
+                <tbody id="acReworkBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" open>
+          <summary>General <span class="doc-fasttab-summary" id="advanceCardGeneralSummary"></span></summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field"><label>Transaction No</label><div class="bc-doc-value" id="acTransactionNo"></div></div>
+              <div class="bc-doc-field"><label>Receipt No</label><div class="bc-doc-value" id="acReceiptNo"></div></div>
+              <div class="bc-doc-field"><label>Customer</label><div class="bc-doc-value" id="acCustomer"></div></div>
+              <div class="bc-doc-field bc-doc-field-top"><label>Description</label><div class="bc-doc-value" id="acDescription"></div></div>
+            </div>
+            <div>
+              <div class="bc-doc-field"><label>Order Date</label><div class="bc-doc-value" id="acOrderDate"></div></div>
+              <div class="bc-doc-field"><label>Cashier</label><div class="bc-doc-value" id="acUser"></div></div>
+              <div class="bc-doc-field"><label>Warehouse</label><div class="bc-doc-value" id="acWarehouse"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <details class="doc-fasttab" open>
+          <summary>Payment <span class="doc-fasttab-summary" id="advanceCardPaymentSummary"></span></summary>
+          <div class="doc-fasttab-body bc-doc-cols">
+            <div>
+              <div class="bc-doc-field"><label>Net Amount</label><div class="bc-doc-value" id="acNetAmount"></div></div>
+              <div class="bc-doc-field"><label>Downpayment</label><div class="bc-doc-value" id="acDownpayment"></div></div>
+            </div>
+            <div>
+              <div class="bc-doc-field"><label>Balance</label><div class="bc-doc-value" id="acBalance"></div></div>
+              <div class="bc-doc-field"><label>Fully Paid</label><div class="bc-doc-value" id="acFullyPaid"></div></div>
+              <div class="bc-doc-field"><label>Date Paid</label><div class="bc-doc-value" id="acDatePaid"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <div class="bc-doc-part">
+          <div class="bc-doc-part-head">Lines</div>
+          <div class="line-items-wrap">
+            <table class="bc-grid bc-doc-lines">
+              <thead>
+                <tr>
+                  <th>Line No</th>
+                  <th>Type</th>
+                  <th>Item No.</th>
+                  <th style="min-width:320px;">Description</th>
+                  <th class="num">Quantity</th>
+                  <th class="num">Unit Price</th>
+                  <th class="num">Discount</th>
+                  <th class="num">Gross Amount</th>
+                  <th class="num">Net Amount</th>
+                </tr>
+              </thead>
+              <tbody id="advanceCardLinesBody"></tbody>
+              <tfoot id="advanceCardLinesFoot"></tfoot>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -688,7 +832,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=2"></script>
-  <script src="js/onlineOrders.js?v=bc62"></script>
+  <script src="js/onlineOrders.js?v=bc67"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

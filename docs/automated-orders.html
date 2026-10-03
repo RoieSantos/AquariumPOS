@@ -13,14 +13,98 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
   <style>
-    /* Per direct follow-up request - surfaces AutomatedOrderLines."Notes" (staff-entered per-line
-       note, see sql/supabase_gma_conversation_order_line_notes.sql) under the item name in this
-       order detail modal's Items table. */
-    .modal-line-note {
-      margin-top: 2px;
-      font-size: 12px;
-      color: var(--muted-text, #61738f);
-      font-style: italic;
+    /* Page-scoped styles for the Automated Orders list + detail modal. Colors come from the shared
+       theme tokens in css/styles.css so light/dark mode both work. */
+    .ao-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .ao-header h1 { margin: 0 0 4px; }
+    .ao-header p { margin: 0; }
+    .ao-search { position: relative; flex: 1 1 260px; max-width: 340px; }
+    .ao-search input { width: 100%; padding-left: 34px; box-sizing: border-box; }
+    .ao-search::before { content: '\1F50E'; position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-size: 13px; opacity: 0.55; pointer-events: none; }
+
+    .ao-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+    .ao-chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 999px;
+      border: 1px solid var(--panel-border); background: var(--panel-bg); color: var(--text-main);
+      font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s;
+    }
+    .ao-chip:hover { border-color: var(--primary); }
+    .ao-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .ao-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neutral); }
+    .ao-chip.active .dot { background: #fff; }
+    .dot-New { background: var(--primary) !important; }
+    .dot-Contacted { background: #d99a1c !important; }
+    .dot-Confirmed { background: #7b5bc9 !important; }
+    .dot-Completed { background: var(--success) !important; }
+    .dot-Cancelled { background: var(--danger) !important; }
+    .ao-chip.active .dot { background: #fff !important; }
+
+    #orderTableBody td { vertical-align: middle; }
+    .ao-order-no { font-weight: 700; color: var(--primary); white-space: nowrap; }
+    .ao-sub { display: block; margin-top: 2px; font-size: 12px; color: var(--text-muted); font-weight: 400; }
+    .ao-cust { font-weight: 600; color: var(--text-main); }
+    .ao-amount { text-align: right; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    th.ao-amount { font-weight: 600; }
+    .ao-pill {
+      display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
+      border: 1px solid var(--panel-border); color: var(--text-main); white-space: nowrap;
+    }
+    .ao-empty { text-align: center; padding: 34px 12px !important; color: var(--text-muted); }
+
+    /* Detail modal */
+    #orderModal .modal-panel { max-width: 860px; max-height: calc(100vh - 80px); overflow-y: auto; padding: 0; }
+    .ao-modal-head {
+      position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px;
+      padding: 18px 22px 14px; background: var(--panel-bg); border-bottom: 1px solid var(--panel-border); border-radius: 10px 10px 0 0;
+    }
+    .ao-modal-head h2 { margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .ao-modal-meta { margin-top: 4px; font-size: 12.5px; color: var(--text-muted); }
+    .ao-modal-head .modal-print-links { margin: 6px 0 0; }
+    .ao-close-x { border: none; background: transparent; font-size: 22px; line-height: 1; cursor: pointer; color: var(--text-muted); padding: 2px 6px; border-radius: 6px; }
+    .ao-close-x:hover { background: var(--page-bg); color: var(--text-main); }
+    .ao-modal-body { padding: 18px 22px 22px; }
+
+    .ao-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+    .ao-info { border: 1px solid var(--panel-border); border-radius: 10px; padding: 10px 12px; background: var(--page-bg); min-width: 0; }
+    .ao-info .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); font-weight: 600; }
+    .ao-info .v { margin-top: 3px; font-weight: 600; color: var(--text-main); overflow-wrap: anywhere; }
+    .ao-info.wide { grid-column: 1 / -1; }
+    .ao-info.wide .v { font-weight: 400; white-space: pre-wrap; }
+
+    .ao-section-title { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 10px; }
+    .ao-section-title h3 { margin: 0; font-size: 15px; }
+    .ao-section-title .muted { font-size: 12.5px; }
+
+    .ao-lines { width: 100%; }
+    .ao-lines td { vertical-align: top; }
+    .ao-line-name { font-weight: 600; color: var(--text-main); }
+    .ao-line-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+    .ao-tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 600; }
+    .ao-tag-sku { background: #eef1f6; color: #3d4b63; font-family: Consolas, 'Courier New', monospace; }
+    .ao-tag-variant { background: #ece5fa; color: #6a4bb8; }
+    .modal-line-note { margin-top: 5px; font-size: 12px; color: var(--text-muted); font-style: italic; }
+    .ao-lines .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .ao-lines tfoot td { font-weight: 700; border-top: 2px solid var(--panel-border); }
+    .ao-lines tfoot .ao-grand { font-size: 16px; color: var(--primary); }
+
+    .ao-pancake-box { border: 1px solid var(--panel-border); border-radius: 10px; padding: 12px 14px; }
+    .ao-pancake-box .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .ao-pancake-box pre { white-space: pre-wrap; word-break: break-all; background: var(--page-bg); color: var(--text-main); padding: 8px; border-radius: 6px; font-size: 12px; border: 1px solid var(--panel-border); }
+
+    .ao-modal-foot {
+      position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 14px 22px; background: var(--panel-bg); border-top: 1px solid var(--panel-border); border-radius: 0 0 10px 10px;
+    }
+    .ao-status-edit { display: flex; align-items: center; gap: 8px; }
+    .ao-status-edit label { margin: 0; font-weight: 600; }
+    .ao-status-edit select { width: auto; min-width: 150px; }
+    .ao-foot-buttons { display: flex; gap: 8px; }
+
+    @media (max-width: 640px) {
+      .ao-hide-sm { display: none; }
+      .ao-modal-head, .ao-modal-body, .ao-modal-foot { padding-left: 16px; padding-right: 16px; }
+      .ao-modal-foot { flex-direction: column; align-items: stretch; }
+      .ao-foot-buttons .btn { flex: 1; }
     }
   </style>
 </head>
@@ -28,36 +112,35 @@
   <div id="topnav"></div>
 
   <div class="page">
-    <h1>Automated Orders</h1>
-    <p class="muted">Order requests submitted by customers through the public order form (<a href="order-now.html" target="_blank" rel="noopener">order-now.html</a>).</p>
-
-    <div class="toolbar">
-      <h2 style="margin:0;">Requests</h2>
-      <div style="display:flex; gap:12px; align-items:center;">
-        <input type="text" id="orderSearchInput" placeholder="Search by order no, customer, phone..." style="max-width:280px;" />
-        <select id="statusFilterInput" style="max-width:160px;">
-          <option value="">All Statuses</option>
-          <option value="New">New</option>
-          <option value="Contacted">Contacted</option>
-          <option value="Confirmed">Confirmed</option>
-          <option value="Completed">Completed</option>
-          <option value="Cancelled">Cancelled</option>
-        </select>
+    <div class="ao-header">
+      <div>
+        <h1>Automated Orders</h1>
+        <p class="muted">Orders from the public order form (<a href="order-now.html" target="_blank" rel="noopener">order-now.html</a>) and the GMA Conversations page.</p>
       </div>
+      <div class="ao-search">
+        <input type="text" id="orderSearchInput" placeholder="Search order no, customer, phone..." />
+      </div>
+    </div>
+
+    <div class="ao-chips" id="statusChips">
+      <button type="button" class="ao-chip active" data-status=""><span class="dot"></span>All</button>
+      <button type="button" class="ao-chip" data-status="New"><span class="dot dot-New"></span>New</button>
+      <button type="button" class="ao-chip" data-status="Contacted"><span class="dot dot-Contacted"></span>Contacted</button>
+      <button type="button" class="ao-chip" data-status="Confirmed"><span class="dot dot-Confirmed"></span>Confirmed</button>
+      <button type="button" class="ao-chip" data-status="Completed"><span class="dot dot-Completed"></span>Completed</button>
+      <button type="button" class="ao-chip" data-status="Cancelled"><span class="dot dot-Cancelled"></span>Cancelled</button>
     </div>
 
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Order No</th>
-            <th>Received</th>
+            <th>Order</th>
             <th>Customer</th>
-            <th>Phone</th>
-            <th>Fulfillment</th>
-            <th>Est. Total</th>
+            <th class="ao-hide-sm">Fulfillment</th>
+            <th class="ao-amount">Est. Total</th>
             <th>Status</th>
-            <th>Pancake</th>
+            <th class="ao-hide-sm">Pancake</th>
             <th></th>
           </tr>
         </thead>
@@ -70,90 +153,82 @@
   <!-- Order detail modal -->
   <div class="modal-backdrop hidden" id="orderModal">
     <div class="modal-panel">
-      <h2 id="modalOrderNo" style="margin-top:0;"></h2>
-      <div class="modal-print-links">
-        <a id="modalOrderConfirmationLink" href="#" target="_blank" rel="noopener">Order Confirmation</a>
-        <a id="modalInvoiceLink" href="#" target="_blank" rel="noopener">Invoice</a>
-      </div>
-      <div class="form-grid">
+      <div class="ao-modal-head">
         <div>
-          <label>Customer</label>
-          <div class="muted" id="modalCustomerName"></div>
+          <h2><span id="modalOrderNo"></span><span id="modalStatusBadge"></span></h2>
+          <div class="ao-modal-meta" id="modalMeta"></div>
+          <div class="modal-print-links">
+            <a id="modalOrderConfirmationLink" href="#" target="_blank" rel="noopener">Order Confirmation &#8599;</a>
+            <a id="modalInvoiceLink" href="#" target="_blank" rel="noopener">Invoice &#8599;</a>
+          </div>
         </div>
-        <div>
-          <label>Phone</label>
-          <div class="muted" id="modalCustomerPhone"></div>
-        </div>
-        <div>
-          <label>Email</label>
-          <div class="muted" id="modalCustomerEmail"></div>
-        </div>
-        <div>
-          <label>Fulfillment</label>
-          <div class="muted" id="modalFulfillment"></div>
-        </div>
-        <div>
-          <label>Branch</label>
-          <div class="muted" id="modalLocation"></div>
-        </div>
-      </div>
-      <div class="form-row hidden" id="modalAddressRow">
-        <label>Delivery Address</label>
-        <div class="muted" id="modalAddress"></div>
-      </div>
-      <div class="form-row hidden" id="modalNotesRow">
-        <label>Notes</label>
-        <div class="muted" id="modalNotes"></div>
+        <button type="button" class="ao-close-x" id="modalCloseX" aria-label="Close">&times;</button>
       </div>
 
-      <div class="section-divider"></div>
-      <div class="form-row">
-        <label>Pancake Order</label>
-        <div id="modalPancakeStatus"></div>
-        <div class="error-text hidden" id="modalPancakeError" style="margin-top:6px;"></div>
-        <button type="button" class="btn btn-secondary btn-sm hidden" id="modalRetryPancakeBtn" style="margin-top:8px;">Retry Push to Pancake</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="modalViewPayloadBtn" style="margin-top:8px;">View Endpoint &amp; Payload</button>
-        <div class="hidden" id="modalPayloadBox" style="margin-top:8px;">
-          <div class="muted" style="margin-bottom:4px;">Endpoint</div>
-          <pre id="modalPayloadUrl" style="white-space:pre-wrap; word-break:break-all; background:#f5f5f5; padding:8px; border-radius:4px; font-size:12px;"></pre>
-          <div class="muted" style="margin:8px 0 4px;">Payload</div>
-          <pre id="modalPayloadJson" style="white-space:pre-wrap; word-break:break-all; background:#f5f5f5; padding:8px; border-radius:4px; font-size:12px; max-height:300px; overflow:auto;"></pre>
-          <div class="error-text hidden" id="modalPayloadError" style="margin-top:6px;"></div>
+      <div class="ao-modal-body">
+        <div class="ao-info-grid">
+          <div class="ao-info"><div class="k">Customer</div><div class="v" id="modalCustomerName"></div></div>
+          <div class="ao-info"><div class="k">Phone</div><div class="v" id="modalCustomerPhone"></div></div>
+          <div class="ao-info"><div class="k">Email</div><div class="v" id="modalCustomerEmail"></div></div>
+          <div class="ao-info"><div class="k">Fulfillment</div><div class="v" id="modalFulfillment"></div></div>
+          <div class="ao-info"><div class="k">Branch</div><div class="v" id="modalLocation"></div></div>
+          <div class="ao-info wide hidden" id="modalAddressRow"><div class="k">Delivery Address</div><div class="v" id="modalAddress"></div></div>
+          <div class="ao-info wide hidden" id="modalNotesRow"><div class="k">Notes</div><div class="v" id="modalNotes"></div></div>
         </div>
+
+        <div class="ao-section-title">
+          <h3>Items</h3>
+          <span class="muted" id="modalLinesCount"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="ao-lines">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th class="num">Qty</th>
+                <th class="num">Price</th>
+                <th class="num">Line Total</th>
+              </tr>
+            </thead>
+            <tbody id="modalLinesBody"></tbody>
+            <tfoot id="modalLinesFoot"></tfoot>
+          </table>
+        </div>
+
+        <div class="ao-section-title"><h3>Pancake</h3></div>
+        <div class="ao-pancake-box">
+          <div class="row">
+            <div id="modalPancakeStatus"></div>
+            <button type="button" class="btn btn-secondary btn-sm hidden" id="modalRetryPancakeBtn">Retry Push to Pancake</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="modalViewPayloadBtn">View Endpoint &amp; Payload</button>
+          </div>
+          <div class="error-text hidden" id="modalPancakeError" style="margin-top:8px;"></div>
+          <div class="hidden" id="modalPayloadBox" style="margin-top:10px;">
+            <div class="muted" style="margin-bottom:4px;">Endpoint</div>
+            <pre id="modalPayloadUrl"></pre>
+            <div class="muted" style="margin:8px 0 4px;">Payload</div>
+            <pre id="modalPayloadJson" style="max-height:300px; overflow:auto;"></pre>
+            <div class="error-text hidden" id="modalPayloadError" style="margin-top:6px;"></div>
+          </div>
+        </div>
+        <div id="modalStatusError" class="error-text hidden" style="margin-top:12px;"></div>
       </div>
 
-      <div class="section-divider"></div>
-      <h3>Items</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Qty</th>
-              <th>Price</th>
-              <th>Line Total</th>
-            </tr>
-          </thead>
-          <tbody id="modalLinesBody"></tbody>
-        </table>
-      </div>
-
-      <div class="section-divider"></div>
-      <div class="form-row">
-        <label for="modalStatusSelect">Status</label>
-        <select id="modalStatusSelect">
-          <option value="New">New</option>
-          <option value="Contacted">Contacted</option>
-          <option value="Confirmed">Confirmed</option>
-          <option value="Completed">Completed</option>
-          <option value="Cancelled">Cancelled</option>
-        </select>
-      </div>
-      <div id="modalStatusError" class="error-text hidden"></div>
-
-      <div class="wizard-nav-buttons" style="margin-top:18px;">
-        <button type="button" class="btn btn-secondary" id="modalCloseBtn">Close</button>
-        <button type="button" class="btn btn-primary" id="modalSaveStatusBtn">Save Status</button>
+      <div class="ao-modal-foot">
+        <div class="ao-status-edit">
+          <label for="modalStatusSelect">Status</label>
+          <select id="modalStatusSelect">
+            <option value="New">New</option>
+            <option value="Contacted">Contacted</option>
+            <option value="Confirmed">Confirmed</option>
+            <option value="Completed">Completed</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div class="ao-foot-buttons">
+          <button type="button" class="btn btn-secondary" id="modalCloseBtn">Close</button>
+          <button type="button" class="btn btn-primary" id="modalSaveStatusBtn">Save Status</button>
+        </div>
       </div>
     </div>
   </div>
@@ -164,7 +239,7 @@
   <script src="js/auth.js?v=all1"></script>
   <script src="js/nav.js?v=all1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/automatedOrders.js"></script>
+  <script src="js/automatedOrders.js?v=ao2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

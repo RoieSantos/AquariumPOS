@@ -10,6 +10,7 @@ let loadGeneration = 0;
 let currentPage = 1;
 let currentPageSize = 50;
 let currentOrderNo = null;
+let currentStatusFilter = '';
 // Verbatim request body from the open order's most recent Pancake push attempt - see
 // renderPancakeStatus / viewPancakePayload.
 let lastSentPayload = null;
@@ -57,22 +58,91 @@ function statusBadgeHtml(status) {
   return `<span class="badge ${cls}">${status || 'New'}</span>`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+  return new Date(value).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function fulfillmentPillHtml(type, location) {
+  const icon = type === 'Delivery' ? '&#128666;' : '&#127978;';
+  const branch = location ? ` &middot; ${escapeHtml(location)}` : '';
+  return `<span class="ao-pill">${icon} ${escapeHtml(type || '-')}${branch}</span>`;
+}
+
+// "Created by" = AutomatedOrders."UpdatedBy" - the portal username that created the order from the
+// GMA Conversations page (null for customer-submitted order-now.html requests). Status saves also
+// overwrite it, so it reads as "by" rather than strictly "created by".
 function orderRowsHtml(orders) {
   return orders
     .map((o) => `
-      <tr class="clickable-row" data-order-no="${o.order_no}">
-        <td>${o.order_no || ''}</td>
-        <td>${o.created_at_utc ? new Date(o.created_at_utc).toLocaleString() : ''}</td>
-        <td>${o.customer_name || ''}</td>
-        <td>${o.customer_phone || ''}</td>
-        <td>${o.fulfillment_type || ''}</td>
-        <td>${formatMoney(o.estimated_total)}</td>
+      <tr class="clickable-row" data-order-no="${escapeHtml(o.order_no)}">
+        <td>
+          <span class="ao-order-no">${escapeHtml(o.order_no)}</span>
+          <span class="ao-sub">${formatDateTime(o.created_at_utc)}</span>
+          ${o.updated_by ? `<span class="ao-sub">by ${escapeHtml(o.updated_by)}</span>` : ''}
+        </td>
+        <td>
+          <span class="ao-cust">${escapeHtml(o.customer_name)}</span>
+          <span class="ao-sub">${escapeHtml(o.customer_phone)}</span>
+        </td>
+        <td class="ao-hide-sm">${fulfillmentPillHtml(o.fulfillment_type, o.location)}</td>
+        <td class="ao-amount">${formatMoney(o.estimated_total)}</td>
         <td>${statusBadgeHtml(o.status)}</td>
-        <td>${pancakeBadgeWithLinkHtml(o.pancake_sync_status, o.pancake_order_id, o.pancake_order_link)}</td>
-        <td><button type="button" class="btn btn-secondary btn-sm" data-view="${o.order_no}">View</button></td>
+        <td class="ao-hide-sm">${pancakeBadgeWithLinkHtml(o.pancake_sync_status, o.pancake_order_id, o.pancake_order_link)}</td>
+        <td><button type="button" class="btn btn-secondary btn-sm" data-view="${escapeHtml(o.order_no)}">View</button></td>
       </tr>
     `)
     .join('');
+}
+
+// SKU / variant tags under an item name. sku + variant_name come from
+// supabase_automated_order_lines_sku_variant.sql; until that's run the RPC doesn't return them, so
+// fall back to the stored item code.
+function lineTagsHtml(l) {
+  const tags = [];
+  const sku = l.sku || l.item_code;
+  if (sku) tags.push(`<span class="ao-tag ao-tag-sku" title="SKU">${escapeHtml(sku)}</span>`);
+  if (l.variant_name && l.variant_name !== l.item_name) {
+    tags.push(`<span class="ao-tag ao-tag-variant" title="Variant">${escapeHtml(l.variant_name)}</span>`);
+  }
+  return tags.length ? `<div class="ao-line-tags">${tags.join('')}</div>` : '';
+}
+
+function renderOrderLines(lines) {
+  const rows = lines || [];
+  const totalQty = rows.reduce((sum, l) => sum + Number(l.quantity || 0), 0);
+  const totalAmount = rows.reduce((sum, l) => sum + Number(l.quantity || 0) * Number(l.price || 0), 0);
+
+  document.getElementById('modalLinesCount').textContent =
+    `${rows.length} line${rows.length === 1 ? '' : 's'} · ${totalQty} pc${totalQty === 1 ? '' : 's'}`;
+
+  document.getElementById('modalLinesBody').innerHTML = rows.length === 0
+    ? '<tr><td colspan="4" class="ao-empty">No items on this order.</td></tr>'
+    : rows.map((l) => `
+      <tr>
+        <td>
+          <div class="ao-line-name">${escapeHtml(l.item_name)}</div>
+          ${lineTagsHtml(l)}
+          ${l.notes ? `<div class="modal-line-note">Note: ${escapeHtml(l.notes)}</div>` : ''}
+        </td>
+        <td class="num">${l.quantity}</td>
+        <td class="num">${formatMoney(l.price)}</td>
+        <td class="num">${formatMoney(l.quantity * l.price)}</td>
+      </tr>
+    `).join('');
+
+  document.getElementById('modalLinesFoot').innerHTML = rows.length === 0 ? '' : `
+    <tr>
+      <td>Total</td>
+      <td class="num">${totalQty}</td>
+      <td></td>
+      <td class="num ao-grand">${formatMoney(totalAmount)}</td>
+    </tr>
+  `;
 }
 
 async function loadOrders(search, status) {
@@ -93,12 +163,12 @@ async function loadOrders(search, status) {
   if (myGeneration !== loadGeneration) return;
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   tbody.innerHTML = (data || []).length === 0
-    ? '<tr><td colspan="9" class="muted">No automated order requests found.</td></tr>'
+    ? '<tr><td colspan="7" class="ao-empty">No automated orders found.</td></tr>'
     : orderRowsHtml(data);
 
   tbody.querySelectorAll('[data-view]').forEach((btn) => {
@@ -131,7 +201,11 @@ async function openOrderModal(orderNo) {
   document.getElementById('modalPayloadError').classList.add('hidden');
   modal.classList.remove('hidden');
   document.getElementById('modalOrderNo').textContent = 'Loading...';
-  document.getElementById('modalLinesBody').innerHTML = '';
+  document.getElementById('modalStatusBadge').innerHTML = '';
+  document.getElementById('modalMeta').textContent = '';
+  document.getElementById('modalLinesCount').textContent = '';
+  document.getElementById('modalLinesBody').innerHTML = '<tr><td colspan="4" class="ao-empty">Loading items...</td></tr>';
+  document.getElementById('modalLinesFoot').innerHTML = '';
 
   const [{ data: orders, error: orderError }, { data: lines, error: lineError }] = await Promise.all([
     supabaseClient.rpc('admin_list_automated_orders', {
@@ -158,6 +232,11 @@ async function openOrderModal(orderNo) {
 
   const order = orders[0];
   document.getElementById('modalOrderNo').textContent = order.order_no;
+  document.getElementById('modalStatusBadge').innerHTML = statusBadgeHtml(order.status);
+  const metaParts = [`Received ${formatDateTime(order.created_at_utc)}`];
+  if (order.updated_by) metaParts.push(`by ${order.updated_by}`);
+  if (order.updated_at_utc && order.updated_at_utc !== order.created_at_utc) metaParts.push(`last updated ${formatDateTime(order.updated_at_utc)}`);
+  document.getElementById('modalMeta').textContent = metaParts.join(' · ');
   document.getElementById('modalOrderConfirmationLink').href = `online-order-receipt.html?order=${encodeURIComponent(order.order_no)}`;
   document.getElementById('modalInvoiceLink').href = `gma-order-invoice.html?order=${encodeURIComponent(order.order_no)}`;
   document.getElementById('modalCustomerName').textContent = order.customer_name || '';
@@ -178,19 +257,7 @@ async function openOrderModal(orderNo) {
 
   document.getElementById('modalStatusSelect').value = order.status || 'New';
 
-  document.getElementById('modalLinesBody').innerHTML = (lines || [])
-    .map((l) => `
-      <tr>
-        <td>
-          ${l.item_name}
-          ${l.notes ? `<div class="modal-line-note">Note: ${l.notes}</div>` : ''}
-        </td>
-        <td>${l.quantity}</td>
-        <td>${formatMoney(l.price)}</td>
-        <td>${formatMoney(l.quantity * l.price)}</td>
-      </tr>
-    `)
-    .join('');
+  renderOrderLines(lines);
 }
 
 function renderPancakeStatus(order) {
@@ -246,7 +313,7 @@ async function retryPancakePush() {
     pancake_order_link: data[0].pancake_order_link,
     pancake_last_payload: data[0].pancake_last_payload
   });
-  loadOrders(document.getElementById('orderSearchInput').value, document.getElementById('statusFilterInput').value);
+  loadOrders(document.getElementById('orderSearchInput').value, currentStatusFilter);
 }
 
 async function viewPancakePayload() {
@@ -313,24 +380,30 @@ async function saveOrderStatus() {
   }
 
   closeOrderModal();
-  loadOrders(document.getElementById('orderSearchInput').value, document.getElementById('statusFilterInput').value);
+  loadOrders(document.getElementById('orderSearchInput').value, currentStatusFilter);
 }
 
 function wireOrderFilters() {
   const searchInput = document.getElementById('orderSearchInput');
-  const statusInput = document.getElementById('statusFilterInput');
+  const chips = document.querySelectorAll('#statusChips .ao-chip');
 
-  const reload = () => {
+  const reload = (delay) => {
     currentPage = 1;
     clearTimeout(orderSearchDebounceHandle);
     orderSearchDebounceHandle = setTimeout(
-      () => loadOrders(searchInput.value.trim(), statusInput.value.trim()),
-      300
+      () => loadOrders(searchInput.value.trim(), currentStatusFilter),
+      delay
     );
   };
 
-  searchInput.addEventListener('input', reload);
-  statusInput.addEventListener('change', reload);
+  searchInput.addEventListener('input', () => reload(300));
+  chips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      currentStatusFilter = chip.dataset.status || '';
+      chips.forEach((c) => c.classList.toggle('active', c === chip));
+      reload(0);
+    });
+  });
 }
 
 (async function init() {
@@ -341,6 +414,10 @@ function wireOrderFilters() {
 
   wireOrderFilters();
   document.getElementById('modalCloseBtn').addEventListener('click', closeOrderModal);
+  document.getElementById('modalCloseX').addEventListener('click', closeOrderModal);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !document.getElementById('orderModal').classList.contains('hidden')) closeOrderModal();
+  });
   document.getElementById('modalSaveStatusBtn').addEventListener('click', saveOrderStatus);
   document.getElementById('modalRetryPancakeBtn').addEventListener('click', retryPancakePush);
   document.getElementById('modalViewPayloadBtn').addEventListener('click', viewPancakePayload);

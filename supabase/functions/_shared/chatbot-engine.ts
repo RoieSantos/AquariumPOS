@@ -1004,6 +1004,7 @@ export const TOOLS: Anthropic.Tool[] = [
             properties: {
               item_code: { type: 'string', description: 'A real catalog code from search_items/list_items_in_category, OR the literal string "CUSTOM-AQUARIUM"/"CUSTOM-STAND" for a custom-built one (never a made-up code).' },
               quantity: { type: 'integer' },
+              variant: { type: 'string', description: 'REQUIRED when the product comes in more than one option (e.g. aquariums/sumps: "Black Sealant" or "Clear Sealant"; stands: "Black Paint" or "White Paint") - the option the customer actually chose, or its SKU (e.g. "AQ-024-BlackSealant"). Never leave the chosen color only in notes - this field is what tags the right variant in Pancake. If you don\'t know which option they want, ask before ordering. Ignored for CUSTOM-AQUARIUM/CUSTOM-STAND.' },
               custom_price: { type: 'number', description: 'REQUIRED when item_code is "CUSTOM-AQUARIUM" or "CUSTOM-STAND", ignored otherwise: the exact total price already confirmed with the customer from an earlier compute_aquarium_quote call in THIS conversation (aquariumDrawingUrl\'s totalPrice, or the stand-only price) - never a number you calculate, estimate, or round yourself.' },
               notes: { type: 'string', description: 'Optional per-item note. REQUIRED when item_code is "CUSTOM-AQUARIUM" or "CUSTOM-STAND": the full build spec (dimensions, glass thickness, tempered/rimless, sealant color, stand tubular size/layers) exactly as confirmed with the customer - this is what tells staff/the workshop what to actually build, since the product tag alone doesn\'t carry it.' }
             },
@@ -1149,6 +1150,7 @@ export function buildSystemPrompt(
     'PLACING ORDERS:',
     '- You CAN place a real order yourself with the create_order tool, but ONLY once every one of these is true: the customer has confirmed the exact items and quantities they want (matched to real item_code values from a search_items or list_items_in_category result in THIS conversation - never invent or guess a code), you have a name, a valid PH mobile number, and an address for them, AND they have ALREADY sent proof of a downpayment or full payment (a payment screenshot) that this conversation has acknowledged. Ask for whatever is still missing rather than guessing or assuming.',
     '- Name: if CUSTOMER\'S FACEBOOK NAME is given below, ask the customer if you can just use that name for the order (e.g. "Can I use your Facebook name, {name}, for this order?") - if they say yes, use it as customer_name without asking them to type it out. If they say no, or no Facebook name is known, ask what name to use instead.',
+    '- Variant / color: many products come in options - aquariums and sumps in Black Sealant or Clear Sealant, stands in Black Paint or White Paint. Before ordering one, make sure you know which option the customer wants (ask if they haven\'t said), and pass it in that item\'s variant field (e.g. variant: "Black Sealant") - NOT only in notes, since notes don\'t change which variant gets tagged. If create_order replies that an item needs a variant, ask the customer to choose from the options it lists, then call it again.',
     '- Address: never ask the customer whether this is "pickup or delivery" - just ask for their address so it can be saved on the order, then always pass fulfillment_type as Delivery.',
     '- Never call create_order on a verbal promise to pay "later" or "after" - only once payment proof has actually been sent and acknowledged earlier in this same conversation.',
     '- If the conversation already shows an existing order, don\'t assume a new payment or a new item discussion belongs to that same order OR is automatically a new one - ASK the customer which it is (e.g. "Is this for your existing order, or a new one?") and only call create_order for a second order after they clearly say it\'s a new/separate purchase. If they mean the existing order, don\'t call create_order at all - just let them know staff will apply it/follow up.',
@@ -2147,7 +2149,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const location = String(input.location ?? '').trim() || String(aiSettings?.DefaultLocation ?? '').trim() || 'GMA';
       const notes = String(input.notes ?? '').trim();
       const items = Array.isArray(input.items)
-        ? (input.items as Array<{ item_code?: string; quantity?: number; custom_price?: number; notes?: string }>)
+        ? (input.items as Array<{ item_code?: string; quantity?: number; variant?: string; custom_price?: number; notes?: string }>)
         : [];
 
       if (!customerName) return 'Cannot place the order - customer_name is required. Ask the customer for it.';
@@ -2224,6 +2226,55 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         }
       }
 
+      // Resolve each catalog line's variant (color/option) to a real Variants."VariationId", stored
+      // on AutomatedOrderLines."VariationId" so _push_automated_order_to_pancake tags that exact
+      // variation. Without it the push falls back to Items."VariationId" - one representative
+      // variation per product - which is how AO-00029 (Black Sealant requested, only in the line
+      // note) went to Pancake as Clear Sealant. A product with 2+ variants is refused until the
+      // option is given, rather than silently defaulting.
+      const variationIdByItem = new Map<object, string>();
+      if (codes.length > 0) {
+        const { data: variantRows, error: variantsError } = await supabase
+          .from('Variants')
+          .select('VariationId, MainItemCode, SKU')
+          .in('MainItemCode', codes);
+        if (variantsError) return `Could not validate item variants: ${variantsError.message}`;
+
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+        // "AQ-024-BlackSealant" -> "Black Sealant" (same derivation as stock_by_variant's option -
+        // see sql/supabase_chatbot_stock_variant_option.sql).
+        const optionLabel = (sku: string | null, code: string, variationId: string) => {
+          if (!sku) return variationId;
+          const rest = sku.toUpperCase().startsWith(code.toUpperCase() + '-') ? sku.slice(code.length + 1) : sku;
+          return rest.replace(/([a-z])([A-Z])/g, '$1 $2').trim() || sku;
+        };
+
+        for (const it of catalogCodedItems) {
+          const code = String(it.item_code ?? '').trim();
+          const variants = ((variantRows ?? []) as Array<{ VariationId: string; MainItemCode: string; SKU: string | null }>)
+            .filter((v) => v.MainItemCode === code)
+            .map((v) => ({ id: v.VariationId, sku: v.SKU ?? '', option: optionLabel(v.SKU, code, v.VariationId) }));
+          if (variants.length === 0) continue;
+          if (variants.length === 1) {
+            variationIdByItem.set(it, variants[0].id);
+            continue;
+          }
+
+          const itemName = catalogByCode.get(code)?.Name ?? code;
+          const optionList = variants.map((v) => `${v.option} (${v.sku || v.id})`).join(', ');
+          const wanted = normalize(String(it.variant ?? ''));
+          if (!wanted) {
+            return `Cannot place the order - ${itemName} (${code}) comes in more than one option: ${optionList}. Confirm with the customer which one they want, then pass it as that item's variant.`;
+          }
+          const exact = variants.filter((v) => normalize(v.sku) === wanted || normalize(v.option) === wanted);
+          const matches = exact.length > 0 ? exact : variants.filter((v) => normalize(v.option).includes(wanted));
+          if (matches.length !== 1) {
+            return `Cannot place the order - "${it.variant}" doesn't match exactly one option of ${itemName} (${code}). Its options are: ${optionList}. Pass one of these as the variant.`;
+          }
+          variationIdByItem.set(it, matches[0].id);
+        }
+      }
+
       // Sanity-check the two custom placeholder rows actually exist in the catalog (they back
       // Items."Name" - see the block comment above) - a missing/renamed row should fail loudly
       // here rather than silently producing an unmatched Pancake push later.
@@ -2269,7 +2320,8 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
           ItemName: catalogItem.Name,
           Quantity: quantity,
           Price: price,
-          Notes: String(it.notes ?? '').trim() || null
+          Notes: String(it.notes ?? '').trim() || null,
+          VariationId: variationIdByItem.get(it) ?? null
         };
       });
 

@@ -1868,7 +1868,7 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
         if (String(nowStatus || '').trim().toLowerCase() === String(newStatus).trim().toLowerCase()) {
           alert(`Order ${orderId} is now ${newStatus} - the connection dropped before the reply came back, but it went through.`
             + (notifyCustomer ? ' Check the customer got the message.' : '')
-            + (fresh.length ? ' Reprint any new serial labels from the Serial Tracker.' : ''));
+            + (fresh.length ? ' Reprint any new serial labels with Print Serial Labels on the order card.' : ''));
           await refreshCurrentOrders();
           return;
         }
@@ -4077,6 +4077,7 @@ async function loadOrders(search, status) {
   document.getElementById('deliveryFeeHeader').classList.toggle('hidden', hidePrices());
   if (myAssignmentsOnly) renderMyAssignmentCards(rows);
   loadMyProductionOrderCards();
+  loadMyAdvanceOrderCards();
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
@@ -4242,7 +4243,7 @@ let myOnlineAssignmentCount = 0;
 let myProductionOrderCount = 0;
 function setMyAssignmentsCount(count) {
   if (count != null) myOnlineAssignmentCount = Number(count) || 0;
-  document.getElementById('myAssignmentsCount').textContent = String(myOnlineAssignmentCount + myProductionOrderCount);
+  document.getElementById('myAssignmentsCount').textContent = String(myOnlineAssignmentCount + myProductionOrderCount + myAdvanceOrderCount);
 }
 
 // Tab buttons for the grouped (Online Order Staff) view - switching tabs re-renders from the
@@ -4347,56 +4348,196 @@ if (new URLSearchParams(window.location.search).get('scope') === 'walkin') {
 
 // ---------------------------------------------------------------- Advance Orders tab
 // Per "how about the advance orders can we squeeze it in there" - the POS's deposit/downpayment
-// orders as a third list tab (?scope=advance, super users only), same read-only data and RPC as
-// advance-orders.html (admin_list_advance_orders). None of the online-order actions apply, so the
-// page's online wiring is skipped entirely in this mode (see init()).
+// orders as a third list tab (?scope=advance, Super Users and Production Managers). None of the
+// online-order list actions apply, so the page's online wiring is skipped entirely in this mode (see
+// init()). Per "in the advance order tab i want to see the assigning process end to end" - each
+// advance order goes through the same production flow as an online order, kept portal-side
+// (sql/supabase_advance_order_production.sql): Assign -> Assigned -> makers' Production Done ->
+// Ready to Ship -> Mark Shipped, with Send Back for rework. Makers see their part under My Assignments
+// (loadMyAdvanceOrderCards).
 let advancePage = 1;
 let advancePageSize = 50;
 let advanceLoadGeneration = 0;
+let advanceStatusFilter = null; // null = all, else New / Assigned / Production Done / To Ship / Shipped
+let advanceRowsByNo = new Map(); // transaction_no -> latest list row, for the Advance Order document
+let openAdvanceNo = null;
+let advanceCardLoadGeneration = 0;
+let advanceAssignNo = null;
+let advanceSendBackNo = null;
+let selectedAdvanceNo = null; // the list's selected row - what the action bar works on
+let myAdvanceOrderCount = 0;
+const ADVANCE_CARD_MAXIMIZED_KEY = 'advanceOrderCardMaximized';
+const ADVANCE_PARTS = ['tank', 'stand'];
 
 function formatAdvanceMoney(value) {
   return value === null || value === undefined ? '' : Number(value).toFixed(2);
 }
 
-async function loadAdvanceOrders() {
-  const tbody = document.getElementById('advanceTableBody');
-  tbody.innerHTML = '<tr><td colspan="15" class="cell-msg">Loading...</td></tr>';
-  const thisGeneration = ++advanceLoadGeneration;
-
-  const { data, error } = await supabaseClient.rpc('admin_list_advance_orders', {
+function advanceRpc(name, params) {
+  return supabaseClient.rpc(name, {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
+    ...params
+  });
+}
+
+function advanceDateTime(value) {
+  return value ? new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+}
+
+function advanceStatus(o) {
+  return o?.prod_status || 'New';
+}
+
+function advanceStatusBadgeHtml(status) {
+  const cls = status === 'Shipped' || status === 'Production Done' ? 'badge-success'
+    : status === 'To Ship' ? 'badge-primary'
+      : status === 'Assigned' ? 'badge-warning' : 'badge-neutral';
+  return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
+}
+
+function advancePartLabel(part) {
+  return MAKER_ROLES[part].label;
+}
+
+function advanceMakerName(o, part) {
+  return o[`${part}_maker_name`] || o[`${part}_maker`] || '';
+}
+
+function advanceAssignedParts(o) {
+  return ADVANCE_PARTS.filter((p) => o[`${p}_maker`]);
+}
+
+function advanceDoneParts(o) {
+  return advanceAssignedParts(o).filter((p) => o[`${p}_done_at`]);
+}
+
+function advanceNeedsText(o) {
+  const needs = [o.needs_tank ? 'custom tank work' : null, o.needs_stand ? 'a stand / top cover' : null].filter(Boolean);
+  return needs.length ? `Lines show ${needs.join(' and ')}` : 'No custom lines - assign whichever maker builds it';
+}
+
+// Tank / Stand Maker cell - same look as the online list: name + "✓ Done", "-" when the lines need
+// that maker but nobody is set, blank when not needed.
+function advanceMakerCellHtml(o, part) {
+  const name = advanceMakerName(o, part);
+  if (!name) return o[`needs_${part}`] ? '<span class="muted">-</span>' : '';
+  const doneAt = o[`${part}_done_at`];
+  return `${escapeHtml(name)}${doneAt ? ` <span class="oo-done" title="Production done · ${escapeHtml(advanceDateTime(doneAt))}">&#10003; Done</span>` : ''}`;
+}
+
+function advanceFlagsHtml(o) {
+  return [
+    o.needs_tank ? '<span class="badge badge-custom" title="Has a custom tank line">Tank</span>' : '',
+    o.needs_stand ? '<span class="badge badge-custom" title="Has a stand / top cover line">Stand</span>' : '',
+    Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : ''
+  ].filter(Boolean).join(' ');
+}
+
+function advanceRowsHtml(rows) {
+  const link = (o, text) => text
+    ? `<a class="bc-doc-no" href="#" data-open-advance="${escapeHtml(o.transaction_no || '')}" title="Open this advance order">${escapeHtml(text)}</a>`
+    : '';
+  return rows.map((o) => `
+    <tr data-advance-no="${escapeHtml(o.transaction_no || '')}" class="${String(o.transaction_no) === selectedAdvanceNo ? 'selected' : ''}">
+      <td>${link(o, o.transaction_no)}</td>
+      <td>${link(o, o.receipt_no)}</td>
+      <td>${escapeHtml(o.order_date || '')}</td>
+      <td>${escapeHtml(o.order_time || '')}</td>
+      <td>${escapeHtml(o.customer_name || '')}</td>
+      <td>${escapeHtml(o.warehouse || '')}</td>
+      <td>${escapeHtml(advanceStatus(o))}</td>
+      <td>${escapeHtml(o.user_id || '')}</td>
+      <td>${advanceMakerCellHtml(o, 'tank')}</td>
+      <td>${advanceMakerCellHtml(o, 'stand')}</td>
+      <td>${advanceFlagsHtml(o)}</td>
+      <td>${escapeHtml(o.order_description || '')}</td>
+      <td class="num">${formatAdvanceMoney(o.net_amount)}</td>
+      <td class="num">${formatAdvanceMoney(o.downpayment)}</td>
+      <td class="num">${formatAdvanceMoney(o.balance)}</td>
+      <td>${o.fully_paid ? 'Yes' : 'No'}</td>
+      <td>${o.date_paid ? escapeHtml(new Date(o.date_paid).toLocaleString()) : ''}</td>
+      <td>${escapeHtml(o.online_order_id || '')}</td>
+    </tr>`).join('');
+}
+
+function selectAdvanceRow(transactionNo) {
+  selectedAdvanceNo = transactionNo ? String(transactionNo) : null;
+  document.querySelectorAll('#advanceTableBody tr[data-advance-no]').forEach((tr) => {
+    tr.classList.toggle('selected', tr.dataset.advanceNo === selectedAdvanceNo);
+  });
+  updateAdvanceListActions();
+}
+
+// What the action buttons show for an order - shared by the list's action bar and the document's,
+// like the online list's nextStepFor:
+//   New / Production Done -> Ready to Ship    Assigned -> In Production 1/2 (disabled)
+//   To Ship -> Mark Shipped                   Shipped  -> none (Undo Stage steps back)
+function advanceActionState(o) {
+  const canManage = canAssignOrders();
+  const status = advanceStatus(o);
+  const assigned = advanceAssignedParts(o);
+  let next = null;
+  if (status === 'New' || status === 'Production Done') next = { label: 'Ready to Ship', stage: 'To Ship', icon: 'ico-done' };
+  else if (status === 'Assigned') next = { label: `In Production ${advanceDoneParts(o).length}/${assigned.length}`, stage: 'To Ship', icon: 'ico-done', disabled: true };
+  else if (status === 'To Ship') next = { label: 'Mark Shipped', stage: 'Shipped', icon: 'ico-ship' };
+  return {
+    canManage,
+    assignDisabled: status === 'Shipped',
+    next: canManage ? next : null,
+    nextTitle: status === 'New' ? 'No makers assigned - mark it ready without production' : '',
+    sendBack: canManage && status !== 'Shipped' && advanceDoneParts(o).length > 0,
+    stepBack: canManage && ['To Ship', 'Shipped'].includes(status)
+  };
+}
+
+function applyAdvanceActions(ids, o) {
+  const st = o ? advanceActionState(o) : null;
+  const assignBtn = document.getElementById(ids.assign);
+  assignBtn.classList.toggle('hidden', !canAssignOrders());
+  assignBtn.disabled = !st || st.assignDisabled;
+  const next = document.getElementById(ids.next);
+  next.classList.toggle('hidden', !st?.next);
+  if (st?.next) {
+    next.disabled = !!st.next.disabled;
+    next.dataset.stage = st.next.stage;
+    next.title = st.nextTitle;
+    next.innerHTML = `<svg class="bc-ico"><use href="#${st.next.icon}"/></svg>${escapeHtml(st.next.label)}`;
+  }
+  document.getElementById(ids.sendBack).classList.toggle('hidden', !st?.sendBack);
+  document.getElementById(ids.stepBack).classList.toggle('hidden', !st?.stepBack);
+}
+
+function updateAdvanceListActions() {
+  const o = selectedAdvanceNo ? advanceRowsByNo.get(selectedAdvanceNo) : null;
+  document.getElementById('advOpenBtn').disabled = !o;
+  applyAdvanceActions({ assign: 'advAssignBtn', next: 'advNextBtn', sendBack: 'advSendBackBtn', stepBack: 'advStepBackBtn' }, o);
+}
+
+async function loadAdvanceOrders() {
+  const tbody = document.getElementById('advanceTableBody');
+  tbody.innerHTML = '<tr><td colspan="18" class="cell-msg">Loading...</td></tr>';
+  const thisGeneration = ++advanceLoadGeneration;
+
+  const { data, error } = await advanceRpc('admin_list_advance_orders', {
     p_search: document.getElementById('orderSearchInput').value.trim() || null,
     p_page: advancePage,
-    p_page_size: advancePageSize
+    p_page_size: advancePageSize,
+    p_prod_status: advanceStatusFilter
   });
   if (thisGeneration !== advanceLoadGeneration) return; // superseded by a newer search/page
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="15" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="18" class="cell-msg error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_order_production.sql.' : ''}</td></tr>`;
     return;
   }
 
+  (data || []).forEach((o) => advanceRowsByNo.set(String(o.transaction_no), o));
+  if (selectedAdvanceNo && !(data || []).some((o) => String(o.transaction_no) === selectedAdvanceNo)) selectedAdvanceNo = null;
   tbody.innerHTML = !data || data.length === 0
-    ? '<tr><td colspan="15" class="cell-msg">No advance orders found.</td></tr>'
-    : data.map((o) => `
-      <tr>
-        <td>${escapeHtml(o.transaction_no || '')}</td>
-        <td>${escapeHtml(o.receipt_no || '')}</td>
-        <td>${escapeHtml(o.user_id || '')}</td>
-        <td>${escapeHtml(o.customer_name || '')}</td>
-        <td>${escapeHtml(o.order_description || '')}</td>
-        <td>${escapeHtml(o.order_date || '')}</td>
-        <td>${escapeHtml(o.order_time || '')}</td>
-        <td class="num">${formatAdvanceMoney(o.net_amount)}</td>
-        <td class="num">${formatAdvanceMoney(o.downpayment)}</td>
-        <td class="num">${formatAdvanceMoney(o.balance)}</td>
-        <td>${escapeHtml(o.online_order_id || '')}</td>
-        <td><span class="badge ${o.fully_paid ? 'badge-success' : 'badge-neutral'}">${o.fully_paid ? 'Yes' : 'No'}</span></td>
-        <td>${o.date_paid ? escapeHtml(new Date(o.date_paid).toLocaleString()) : ''}</td>
-        <td>${escapeHtml(o.warehouse || '')}</td>
-        <td><a href="advance-order-lines.html?transaction=${encodeURIComponent(o.transaction_no)}">View</a></td>
-      </tr>`).join('');
+    ? `<tr><td colspan="18" class="cell-msg">No advance orders found${advanceStatusFilter ? ` in ${escapeHtml(advanceStatusFilter)}` : ''}.</td></tr>`
+    : advanceRowsHtml(data);
+  updateAdvanceListActions();
 
   renderPaginationBar(
     document.getElementById('advancePaginationBar'),
@@ -4406,6 +4547,449 @@ async function loadAdvanceOrders() {
       onPageSizeChange: (newSize) => { advancePageSize = newSize; advancePage = 1; loadAdvanceOrders(); }
     }
   );
+}
+
+async function loadAdvanceStatusSummary() {
+  const { data, error } = await advanceRpc('staff_get_advance_order_status_summary', {});
+  const counts = new Map((data || []).map((r) => [r.status, Number(r.order_count) || 0]));
+  document.querySelectorAll('#advanceStatusBar [data-adv-count]').forEach((el) => {
+    el.textContent = error ? '-' : String(counts.get(el.dataset.advCount) || 0);
+  });
+  document.querySelectorAll('#advanceStatusBar [data-adv-status]').forEach((pill) => {
+    pill.classList.toggle('active', pill.dataset.advStatus === advanceStatusFilter);
+  });
+}
+
+// After any action: re-read that one order (it may have left the filtered page), then the list + counts.
+async function refreshAdvanceAfterAction(transactionNo) {
+  const { data } = await advanceRpc('admin_list_advance_orders', { p_transaction_no: transactionNo });
+  const row = data?.[0];
+  if (row) {
+    advanceRowsByNo.set(String(transactionNo), row);
+    if (openAdvanceNo === String(transactionNo)) {
+      fillAdvanceCard(row);
+      loadAdvanceCardRework(openAdvanceNo);
+    }
+  }
+  loadAdvanceOrders();
+  loadAdvanceStatusSummary();
+}
+
+// ---- Advance Order document (#advanceCardModal) - same BC document shell as the Online Order card.
+function applyAdvanceCardMaximized(maximized) {
+  const modal = document.getElementById('advanceCardModal');
+  modal.classList.toggle('modal-maximized', maximized);
+  modal.querySelector('.modal-panel').classList.toggle('modal-maximized', maximized);
+  const btn = document.getElementById('advanceCardMaximizeBtn');
+  btn.textContent = maximized ? 'Restore' : 'Maximize';
+  btn.title = maximized ? 'Restore this document to a window' : 'Maximize this document to fill the window';
+}
+
+function advanceMakerFieldHtml(o, part) {
+  const name = advanceMakerName(o, part);
+  if (!name) return '<span class="muted">Not assigned</span>';
+  const doneAt = o[`${part}_done_at`];
+  return `${escapeHtml(name)} ${doneAt
+    ? `<span class="badge badge-success">Done ${escapeHtml(advanceDateTime(doneAt))}</span>`
+    : '<span class="badge badge-warning">In production</span>'}`;
+}
+
+function fillAdvanceCard(o) {
+  const status = advanceStatus(o);
+  document.getElementById('advanceCardTitle').textContent = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  const badge = document.getElementById('advanceCardPaidBadge');
+  badge.textContent = o.fully_paid ? 'Fully Paid' : 'With Balance';
+  badge.className = `badge ${o.fully_paid ? 'badge-success' : 'badge-neutral'}`;
+
+  document.getElementById('acProdStatus').innerHTML = advanceStatusBadgeHtml(status)
+    + (Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : '');
+  setCardText('acNeeds', advanceNeedsText(o));
+  document.getElementById('acTankMaker').innerHTML = advanceMakerFieldHtml(o, 'tank');
+  document.getElementById('acStandMaker').innerHTML = advanceMakerFieldHtml(o, 'stand');
+  setCardText('acToShip', o.to_ship_at ? `${advanceDateTime(o.to_ship_at)} by ${o.to_ship_by || '-'}` : '');
+  setCardText('acShipped', o.shipped_at ? `${advanceDateTime(o.shipped_at)} by ${o.shipped_by || '-'}` : '');
+  const assigned = advanceAssignedParts(o);
+  document.getElementById('advanceCardAssignSummary').textContent = [
+    status,
+    assigned.length ? `${advanceDoneParts(o).length}/${assigned.length} parts done` : 'no makers yet'
+  ].join(' · ');
+
+  setCardText('acTransactionNo', o.transaction_no);
+  setCardText('acReceiptNo', o.receipt_no);
+  setCardText('acCustomer', o.customer_name);
+  setCardText('acDescription', o.order_description);
+  setCardText('acOrderDate', [o.order_date, o.order_time].filter(Boolean).join(' '));
+  setCardText('acUser', o.user_id);
+  setCardText('acWarehouse', o.warehouse);
+  setCardText('acNetAmount', formatAdvanceMoney(o.net_amount));
+  setCardText('acDownpayment', formatAdvanceMoney(o.downpayment));
+  setCardText('acBalance', formatAdvanceMoney(o.balance));
+  setCardText('acFullyPaid', o.fully_paid ? 'Yes' : 'No');
+  setCardText('acDatePaid', o.date_paid ? new Date(o.date_paid).toLocaleString() : '');
+  document.getElementById('advanceCardGeneralSummary').textContent =
+    [o.receipt_no && `Receipt ${o.receipt_no}`, o.order_date, o.warehouse].filter(Boolean).join(' · ');
+  document.getElementById('advanceCardPaymentSummary').textContent =
+    `Net ${formatAdvanceMoney(o.net_amount) || '0.00'} · Balance ${formatAdvanceMoney(o.balance) || '0.00'}`;
+
+  updateAdvanceCardActions(o);
+}
+
+function updateAdvanceCardActions(o) {
+  applyAdvanceActions({ assign: 'advanceCardAssignBtn', next: 'advanceCardNextBtn', sendBack: 'advanceCardSendBackBtn', stepBack: 'advanceCardStepBackBtn' }, o);
+}
+
+function openAdvanceCard(transactionNo) {
+  const o = advanceRowsByNo.get(String(transactionNo));
+  if (!o) return;
+  openAdvanceNo = String(o.transaction_no);
+  fillAdvanceCard(o);
+  document.getElementById('advanceCardModal').classList.remove('hidden');
+  loadAdvanceCardLines(openAdvanceNo);
+  loadAdvanceCardRework(openAdvanceNo);
+}
+
+async function loadAdvanceCardLines(transactionNo) {
+  const myGeneration = ++advanceCardLoadGeneration;
+  const tbody = document.getElementById('advanceCardLinesBody');
+  const tfoot = document.getElementById('advanceCardLinesFoot');
+  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
+  tfoot.innerHTML = '';
+
+  const { data, error } = await advanceRpc('staff_list_advance_order_lines', { p_no: transactionNo });
+  if (myGeneration !== advanceCardLoadGeneration) return; // closed or another order opened meanwhile
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    return;
+  }
+  const lines = data || [];
+  if (!lines.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No line items found for this order.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = lines.map((l) => `
+    <tr>
+      <td>${escapeHtml(l.line_no ?? '')}</td>
+      <td>${escapeHtml(l.type || '')}</td>
+      <td>${escapeHtml(l.item_no || '')}</td>
+      <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}</td>
+      <td class="num">${l.quantity ?? ''}</td>
+      <td class="num">${formatAdvanceMoney(l.price)}</td>
+      <td class="num">${formatAdvanceMoney(l.discount)}</td>
+      <td class="num">${formatAdvanceMoney(l.gross_amount)}</td>
+      <td class="num">${formatAdvanceMoney(l.net_amount)}</td>
+    </tr>`).join('');
+
+  const sum = (key) => lines.reduce((total, l) => total + (Number(l[key]) || 0), 0);
+  tfoot.innerHTML = `<tr>
+    <td>Total</td><td></td><td></td><td></td><td class="num">${sum('quantity')}</td>
+    <td></td><td class="num">${formatAdvanceMoney(sum('discount'))}</td>
+    <td class="num">${formatAdvanceMoney(sum('gross_amount'))}</td><td class="num">${formatAdvanceMoney(sum('net_amount'))}</td></tr>`;
+}
+
+async function loadAdvanceCardRework(transactionNo) {
+  const tab = document.getElementById('advanceCardReworkTab');
+  const { data, error } = await advanceRpc('staff_list_advance_order_rework', { p_no: transactionNo });
+  if (openAdvanceNo !== String(transactionNo)) return;
+  const rows = error ? [] : (data || []);
+  tab.classList.toggle('hidden', !rows.length);
+  document.getElementById('advanceCardReworkSummary').textContent = rows.length
+    ? `${rows.length} time${rows.length === 1 ? '' : 's'}${rows.some((r) => !r.fixed_at) ? ' · open' : ''}` : '';
+  document.getElementById('acReworkBody').innerHTML = rows.map((r) => `
+    <tr>
+      <td>${escapeHtml(advanceDateTime(r.sent_back_at))}<div class="muted">${escapeHtml(r.sent_back_by || '')}</div></td>
+      <td>${escapeHtml(advancePartLabel(r.part))}</td>
+      <td style="white-space:normal;">${escapeHtml(r.reason || '')}</td>
+      <td>${escapeHtml(r.was_done_by || '-')}</td>
+      <td>${r.fixed_at ? escapeHtml(advanceDateTime(r.fixed_at)) : '<span class="oo-rework">Open</span>'}</td>
+    </tr>`).join('');
+}
+
+function closeAdvanceCard() {
+  openAdvanceNo = null;
+  advanceCardLoadGeneration++;
+  document.getElementById('advanceCardModal').classList.add('hidden');
+}
+
+// ---- Assign (reuses the Online Order #assignDialog markup - its online wiring isn't set up in this mode).
+async function openAdvanceAssignDialog(transactionNo) {
+  const o = advanceRowsByNo.get(String(transactionNo));
+  if (!o || !canAssignOrders()) return;
+  await loadProductionMembers();
+  advanceAssignNo = String(o.transaction_no);
+
+  document.getElementById('assignDialogTitle').textContent = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  document.getElementById('assignDialogLede').textContent =
+    `${advanceNeedsText(o)}. It moves to Assigned once a maker is set; each maker marks their part Production Done from My Assignments.`;
+  // Advance order lines are free-typed at the POS, so both makers are always offered.
+  document.getElementById('assignTankRow').classList.remove('hidden');
+  document.getElementById('assignStandRow').classList.remove('hidden');
+  const current = {
+    assigned_tank_maker: o.tank_maker, assigned_tank_maker_name: o.tank_maker_name,
+    assigned_stand_maker: o.stand_maker, assigned_stand_maker_name: o.stand_maker_name
+  };
+  document.getElementById('assignTankSelect').innerHTML = assignOptionsHtml(current, 'tank');
+  document.getElementById('assignStandSelect').innerHTML = assignOptionsHtml(current, 'stand');
+  const missing = ['tank', 'stand']
+    .filter((p) => !productionMembers.some((m) => (m.staff_roles || []).includes(MAKER_ROLES[p].staffRole)))
+    .map((p) => MAKER_ROLES[p].label);
+  document.getElementById('assignDialogHint').textContent = productionMembersError
+    ? `Could not load the staff list: ${productionMembersError}`
+    : missing.length ? `No active staff has the ${missing.join(' / ')} role yet - tick it in User Setup > (employee) > Roles.` : '';
+  document.getElementById('assignDialogError').classList.add('hidden');
+  document.getElementById('assignDialog').classList.remove('hidden');
+}
+
+function closeAdvanceAssignDialog() {
+  advanceAssignNo = null;
+  document.getElementById('assignDialog').classList.add('hidden');
+}
+
+async function saveAdvanceAssignDialog() {
+  const no = advanceAssignNo;
+  const o = no && advanceRowsByNo.get(no);
+  if (!o) return closeAdvanceAssignDialog();
+  const picks = [['tank', 'assignTankSelect'], ['stand', 'assignStandSelect']]
+    .map(([part, id]) => [part, document.getElementById(id).value || null])
+    .filter(([part, value]) => value !== (o[`${part}_maker`] || null));
+  if (!picks.length) return closeAdvanceAssignDialog();
+
+  const btn = document.getElementById('saveAssignDialogBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const failures = [];
+  for (const [part, value] of picks) {
+    const { error } = await advanceRpc('staff_assign_advance_order_maker', { p_no: no, p_role: part, p_username: value });
+    if (error) failures.push(`${advancePartLabel(part)}: ${error.message}`);
+  }
+  btn.disabled = false;
+  btn.textContent = 'OK';
+  await refreshAdvanceAfterAction(no);
+
+  if (failures.length) {
+    const errorEl = document.getElementById('assignDialogError');
+    errorEl.textContent = failures.join(' · ');
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  closeAdvanceAssignDialog();
+}
+
+// ---- Send Back (reuses #sendBackDialog markup).
+function openAdvanceSendBackDialog(transactionNo) {
+  const o = advanceRowsByNo.get(String(transactionNo));
+  if (!o || !advanceDoneParts(o).length) return;
+  advanceSendBackNo = String(o.transaction_no);
+  document.getElementById('sendBackTitle').textContent = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  document.getElementById('sendBackParts').innerHTML = advanceDoneParts(o).map((part) => `
+    <label class="oo-sb-part"><input type="checkbox" value="${part}" />
+      <span><b>${escapeHtml(advancePartLabel(part))}</b> - ${escapeHtml(advanceMakerName(o, part))}<small>Done ${escapeHtml(advanceDateTime(o[`${part}_done_at`]))}</small></span></label>`).join('');
+  document.getElementById('sendBackReason').value = '';
+  document.getElementById('sendBackError').classList.add('hidden');
+  document.getElementById('sendBackDialog').classList.remove('hidden');
+  document.getElementById('sendBackReason').focus();
+}
+
+function closeAdvanceSendBackDialog() {
+  advanceSendBackNo = null;
+  document.getElementById('sendBackDialog').classList.add('hidden');
+}
+
+async function saveAdvanceSendBack() {
+  const no = advanceSendBackNo;
+  const errorEl = document.getElementById('sendBackError');
+  const parts = [...document.querySelectorAll('#sendBackParts input:checked')].map((i) => i.value);
+  const reason = document.getElementById('sendBackReason').value.trim();
+  const fail = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+  if (!parts.length) return fail('Pick at least one part to send back.');
+  if (!reason) return fail('Please give a reason so the maker knows what to fix.');
+
+  const btn = document.getElementById('saveSendBackBtn');
+  btn.disabled = true;
+  const failures = [];
+  for (const part of parts) {
+    const { error } = await advanceRpc('staff_send_back_advance_order', { p_no: no, p_part: part, p_reason: reason });
+    if (error) failures.push(`${advancePartLabel(part)}: ${error.message}`);
+  }
+  btn.disabled = false;
+  await refreshAdvanceAfterAction(no);
+  if (failures.length) return fail(failures.join(' · '));
+  closeAdvanceSendBackDialog();
+}
+
+// ---- Ready to Ship / Mark Shipped / Undo Stage
+async function setAdvanceStage(no, stage, btn) {
+  const o = no && advanceRowsByNo.get(no);
+  if (!o) return;
+  const status = advanceStatus(o);
+  const copy = stage === 'Shipped'
+    ? { caption: 'MARK SHIPPED', message: 'Mark this advance order Shipped (released to the customer)?', confirmLabel: 'Yes, Mark Shipped', tone: 'is-done' }
+    : stage === 'To Ship'
+      ? { caption: 'READY TO SHIP', message: status === 'New' ? 'No makers are assigned. Mark it Ready to Ship anyway?' : 'Production is done. Mark it Ready to Ship?', confirmLabel: 'Yes, Ready to Ship', tone: 'is-done' }
+      : { caption: 'UNDO STAGE', message: `Step this order back from ${status}?`, confirmLabel: 'Yes, Undo', tone: '' };
+  const ok = await confirmAction({ ...copy, title: `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}` });
+  if (!ok) return;
+  btn.disabled = true;
+  const { error } = await advanceRpc('staff_set_advance_order_stage', { p_no: no, p_stage: stage });
+  btn.disabled = false;
+  if (error) window.alert(error.message);
+  await refreshAdvanceAfterAction(no);
+}
+
+function wireAdvanceCard() {
+  applyAdvanceCardMaximized(readStoredFlag(ADVANCE_CARD_MAXIMIZED_KEY, false));
+  document.getElementById('advanceCardMaximizeBtn').addEventListener('click', () => {
+    const next = !document.getElementById('advanceCardModal').classList.contains('modal-maximized');
+    writeStoredFlag(ADVANCE_CARD_MAXIMIZED_KEY, next);
+    applyAdvanceCardMaximized(next);
+  });
+  document.getElementById('closeAdvanceCardBtn').addEventListener('click', closeAdvanceCard);
+  document.getElementById('advanceCardAssignBtn').addEventListener('click', () => openAdvanceNo && openAdvanceAssignDialog(openAdvanceNo));
+  document.getElementById('advanceCardSendBackBtn').addEventListener('click', () => openAdvanceNo && openAdvanceSendBackDialog(openAdvanceNo));
+  document.getElementById('advanceCardNextBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, e.currentTarget.dataset.stage, e.currentTarget));
+  document.getElementById('advanceCardStepBackBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, null, e.currentTarget));
+
+  // The list's action bar - same actions, on the selected row.
+  document.getElementById('advOpenBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceCard(selectedAdvanceNo));
+  document.getElementById('advAssignBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceAssignDialog(selectedAdvanceNo));
+  document.getElementById('advSendBackBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceSendBackDialog(selectedAdvanceNo));
+  document.getElementById('advNextBtn').addEventListener('click', (e) => setAdvanceStage(selectedAdvanceNo, e.currentTarget.dataset.stage, e.currentTarget));
+  document.getElementById('advStepBackBtn').addEventListener('click', (e) => setAdvanceStage(selectedAdvanceNo, null, e.currentTarget));
+
+  document.getElementById('saveAssignDialogBtn').addEventListener('click', saveAdvanceAssignDialog);
+  document.getElementById('cancelAssignDialogBtn').addEventListener('click', closeAdvanceAssignDialog);
+  document.getElementById('closeAssignDialogBtn').addEventListener('click', closeAdvanceAssignDialog);
+  document.getElementById('saveSendBackBtn').addEventListener('click', saveAdvanceSendBack);
+  document.getElementById('cancelSendBackBtn').addEventListener('click', closeAdvanceSendBackDialog);
+  document.getElementById('closeSendBackBtn').addEventListener('click', closeAdvanceSendBackDialog);
+
+  // Escape closes the top-most thing only (the confirm dialog handles its own in the capture phase).
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const isOpen = (id) => !document.getElementById(id).classList.contains('hidden');
+    if (isOpen('confirmActionDialog')) return;
+    if (isOpen('assignDialog')) closeAdvanceAssignDialog();
+    else if (isOpen('sendBackDialog')) closeAdvanceSendBackDialog();
+    else if (isOpen('advanceCardModal')) closeAdvanceCard();
+  });
+
+  const tbody = document.getElementById('advanceTableBody');
+  tbody.addEventListener('click', (event) => {
+    const link = event.target.closest('[data-open-advance]');
+    if (link) {
+      event.preventDefault();
+      selectAdvanceRow(link.dataset.openAdvance);
+      openAdvanceCard(link.dataset.openAdvance);
+      return;
+    }
+    const tr = event.target.closest('tr[data-advance-no]');
+    if (tr) selectAdvanceRow(tr.dataset.advanceNo);
+  });
+  tbody.addEventListener('dblclick', (event) => {
+    const tr = event.target.closest('tr[data-advance-no]');
+    if (tr && !event.target.closest('a')) openAdvanceCard(tr.dataset.advanceNo);
+  });
+
+  document.getElementById('advanceStatusBar').addEventListener('click', (event) => {
+    const pill = event.target.closest('[data-adv-status]');
+    if (!pill) return;
+    advanceStatusFilter = advanceStatusFilter === pill.dataset.advStatus ? null : pill.dataset.advStatus;
+    advancePage = 1;
+    loadAdvanceStatusSummary();
+    loadAdvanceOrders();
+  });
+}
+
+// ---- Makers: advance orders under My Assignments (same card + Production Done as the restock cards).
+async function loadMyAdvanceOrderCards() {
+  const box = document.getElementById('myAdvanceOrderCards');
+  if (!box) return;
+  if (!myAssignmentsOnly || !currentSession.isOrderMaker) {
+    box.classList.add('hidden');
+    return;
+  }
+  const { data, error } = await advanceRpc('staff_list_my_advance_orders', {});
+  // Quietly skipped until supabase_advance_order_production.sql has been run.
+  if (error) { console.warn('staff_list_my_advance_orders:', error.message); box.classList.add('hidden'); return; }
+  const rows = (data || []).filter((o) => (o.my_parts || []).length);
+  myAdvanceOrderCount = rows.length;
+  setMyAssignmentsCount(null);
+  if (!myAssignmentsOnly || !rows.length) { box.classList.add('hidden'); return; }
+  document.querySelectorAll('#myAssignmentCards .oo-mc-empty, #orderTableBody .cell-msg').forEach((el) => {
+    el.textContent = 'No online orders assigned to you - see your Advance Orders below.';
+  });
+
+  const linesByNo = new Map();
+  await Promise.all(rows.map(async (o) => {
+    const { data: lines, error: linesError } = await advanceRpc('staff_list_advance_order_lines', { p_no: o.transaction_no });
+    linesByNo.set(o.transaction_no, linesError ? null : (lines || []));
+  }));
+  if (!myAssignmentsOnly) { box.classList.add('hidden'); return; }
+
+  box.innerHTML = `<h3 class="oo-prod-cards-title">Advance Orders</h3>` + rows.map((o) => {
+    const parts = o.my_parts;
+    const partLabel = parts.map(advancePartLabel).join(' + ');
+    const lines = linesByNo.get(o.transaction_no);
+    // This maker's lines when the POS lines say which part they are; otherwise every line.
+    const mineOnly = (lines || []).filter((l) => parts.includes(l.part));
+    const shown = mineOnly.length ? mineOnly : (lines || []);
+    return `
+      <article class="oo-mc oo-prod-mc" data-adv-no="${escapeHtml(o.transaction_no)}" data-adv-parts="${escapeHtml(parts.join(','))}">
+        <header class="oo-mc-head">
+          <span class="oo-mc-id">${escapeHtml(o.transaction_no)}</span>
+          <span class="oo-mc-status">${escapeHtml(partLabel)}</span>${(o.open_rework || []).length ? '<span class="oo-rework">&#8634; Rework</span>' : ''}
+        </header>
+        ${(o.open_rework || []).map((r) => `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(r || '')}</div>`).join('')}
+        <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
+        ${o.order_description ? `<div class="oo-mc-line"><span>Order</span>${escapeHtml(o.order_description)}</div>` : ''}
+        <div class="oo-mc-line"><span>Receipt</span>${escapeHtml(o.receipt_no || '-')} · ${escapeHtml(o.order_date || '')}</div>
+        <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse || '-')}</div>
+        ${lines === null
+          ? '<div class="oo-mc-note">Could not load the lines.</div>'
+          : `<table class="oo-prod-lines">
+              <thead><tr><th>Build</th><th class="num">Qty</th></tr></thead>
+              <tbody>${shown.map((l) => `<tr><td>${escapeHtml(l.description || l.item_no || '')}</td><td class="num"><b>${formatProdQty(l.quantity)}</b></td></tr>`).join('')
+                || '<tr><td colspan="2" class="oo-prod-none">No lines.</td></tr>'}</tbody>
+            </table>`}
+        <div class="oo-mc-actions">
+          <button type="button" class="oo-mc-btn primary" data-adv-done="${escapeHtml(o.transaction_no)}">&#10003; Production Done</button>
+        </div>
+      </article>`;
+  }).join('');
+  box.classList.remove('hidden');
+
+  if (!box.dataset.wired) {
+    box.dataset.wired = '1';
+    box.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-adv-done]');
+      if (btn) handleAdvanceDoneClick(btn);
+    });
+  }
+}
+
+async function handleAdvanceDoneClick(btn) {
+  const card = btn.closest('[data-adv-no]');
+  const no = card.dataset.advNo;
+  const parts = card.dataset.advParts.split(',').filter(Boolean);
+  const ok = await confirmAction({
+    caption: 'PRODUCTION DONE',
+    title: `Advance order ${no}`,
+    message: `Is your part (${parts.join(' and ')}) completely finished?\n\nThe order will leave your list.`,
+    confirmLabel: 'Yes, Production Done',
+    tone: 'is-done'
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  for (const part of parts) {
+    const { error } = await advanceRpc('staff_set_advance_order_part_done', { p_no: no, p_part: part, p_done: true });
+    if (error) {
+      btn.disabled = false;
+      window.alert(`Could not mark ${no} Production Done: ${error.message}`);
+      return;
+    }
+  }
+  loadMyAdvanceOrderCards();
 }
 
 function fitAdvanceGridToViewport() {
@@ -4418,25 +5002,32 @@ async function initAdvanceOrdersView() {
   document.getElementById('orderScopeTabs').classList.remove('hidden');
   document.getElementById('scopeTabAdvance').classList.add('active');
   document.querySelector('.bc-title').textContent = 'Advance Orders';
-  document.getElementById('ordersSubtitle').textContent = 'Customer deposit/downpayment orders from the POS (read-only).';
+  document.getElementById('ordersSubtitle').textContent = 'Customer deposit/downpayment orders from the POS. Open one to assign makers and follow it to Shipped.';
   document.title = document.title.replace('Online Orders', 'Advance Orders');
   document.getElementById('orderSearchInput').placeholder = 'Search transaction, receipt, or customer';
 
-  // Only Refresh applies here - hide every other action, the status tabs, and the online list.
+  // Same layout as the Online / Walk-in lists: the advance actions (.adv-cmd) + Refresh on the action
+  // bar, the advance stage tabs where the online status tabs sit, and the advance list.
   document.querySelectorAll('#orderCmdbar > :not(#refreshOrdersBtn)').forEach((el) => el.classList.add('hidden'));
+  document.querySelectorAll('#orderCmdbar > .adv-cmd').forEach((el) => el.classList.remove('hidden'));
+  document.getElementById('refreshOrdersBtn').previousElementSibling.classList.remove('hidden'); // separator before Refresh
   ['statusSummaryBar', 'flatOrdersView', 'filterPaneBtn'].forEach((id) => document.getElementById(id).classList.add('hidden'));
+  document.getElementById('advanceStatusBar').classList.remove('hidden');
   document.getElementById('advanceOrdersView').classList.remove('hidden');
+  wireAdvanceCard();
+  updateAdvanceListActions(); // nothing selected yet - Open/Assign disabled, stage buttons hidden
 
   let searchDebounce = null;
   document.getElementById('orderSearchInput').addEventListener('input', () => {
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => { advancePage = 1; loadAdvanceOrders(); }, 300);
   });
-  document.getElementById('refreshOrdersBtn').addEventListener('click', loadAdvanceOrders);
-  if (window.initPullToRefresh) initPullToRefresh(loadAdvanceOrders);
+  const refresh = () => { loadAdvanceOrders(); loadAdvanceStatusSummary(); };
+  document.getElementById('refreshOrdersBtn').addEventListener('click', refresh);
+  if (window.initPullToRefresh) initPullToRefresh(refresh);
   window.addEventListener('resize', fitAdvanceGridToViewport);
 
-  await loadAdvanceOrders();
+  await Promise.all([loadAdvanceOrders(), loadAdvanceStatusSummary()]);
   fitAdvanceGridToViewport();
 }
 
@@ -4459,8 +5050,10 @@ async function initAdvanceOrdersView() {
   // Makers land here instead of the Dashboard - ask them to turn on job notifications
   // (no-op for anyone who isn't a Sales User / Tank / Stand Maker).
   maybeShowPushLoginPrompt(session);
-  document.getElementById('scopeTabAdvance').classList.toggle('hidden', !session.isSuperUser);
-  if (session.isSuperUser && new URLSearchParams(window.location.search).get('scope') === 'advance') {
+  // Super Users and Production Managers (who assign the makers) - see initAdvanceOrdersView.
+  const canSeeAdvance = !!(session.isSuperUser || session.isProductionManager);
+  document.getElementById('scopeTabAdvance').classList.toggle('hidden', !canSeeAdvance);
+  if (canSeeAdvance && new URLSearchParams(window.location.search).get('scope') === 'advance') {
     await initAdvanceOrdersView();
     return;
   }
@@ -4626,7 +5219,23 @@ async function initAdvanceOrdersView() {
   document.getElementById('statusSummaryBar').classList.toggle('hidden', !showStatusSummary);
   if (currentScope === 'walkin' && showScopeTabs) document.getElementById('myAssignmentsTab').classList.add('hidden');
 
-  const loaders = [loadOrders('', myAssignmentsOnly ? '' : statusParam)];
+  // ?open=<order id>[&assign=1] - opens that order's document (and its Assign dialog) on arrival.
+  // Used by the Advance Order document's Open Online Order / Assign buttons: an advance order is
+  // pushed to Pancake as a normal online order, so it's assigned through this same flow.
+  const openParam = (urlParams.get('open') || '').trim();
+  if (openParam) document.getElementById('orderSearchInput').value = openParam;
+
+  const loaders = [loadOrders(openParam, myAssignmentsOnly ? '' : statusParam)];
   if (showStatusSummary && !myAssignmentsLocked) loaders.push(loadStatusSummary());
   await Promise.all(loaders);
+
+  if (openParam) {
+    if (!findFlatOrder(openParam)) {
+      alert(`Online order ${openParam} isn't in this list yet - it may not have synced from Pancake. Try Refresh in a few minutes.`);
+      return;
+    }
+    selectOrderRow(openParam);
+    openOrderCard(openParam);
+    if (urlParams.get('assign') === '1' && canAssignOrders()) openAssignDialog(openParam);
+  }
 })();

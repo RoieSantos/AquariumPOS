@@ -1,3 +1,11 @@
+-- !! DO NOT RE-RUN THIS FILE WHOLE !! It holds OLD versions of staff_search_items,
+-- staff_create_purchase_order, staff_add_purchase_order_line, staff_list_purchase_order_lines,
+-- staff_list_posted_purchase_order_lines and staff_post_purchase_order - superseded by
+-- supabase_item_vendors_catalog.sql, supabase_units_of_measure.sql, supabase_purchase_order_line_variant.sql
+-- and supabase_purchase_order_allow_zero_cost_post.sql. Re-running it reverts those (it did on
+-- 2026-10-02: secondary vendors vanished from the PO item picker). For admin_get_purchase_summary
+-- run supabase_purchase_summary_by_posted_date.sql instead.
+--
 -- Item cost tracking + Purchase Order line cost - per direct request: "in the items can we add
 -- cost per item? this will help us track the cost and also auto compute cost on what we are
 -- ordering".
