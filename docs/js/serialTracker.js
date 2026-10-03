@@ -370,6 +370,10 @@ async function loadSerials() {
     UpdatedBy: r.updated_by,
     Maker: null
   }));
+  // Latest change first (UpdatedAtUtc, else CreatedAtUtc) - same order the search RPC uses once
+  // supabase_serial_tracker_sort_latest_update.sql is run.
+  const lastChange = (r) => Date.parse(r.UpdatedAtUtc || r.CreatedAtUtc || '') || 0;
+  allSerials.sort((a, b) => lastChange(b) - lastChange(a) || String(b.SerialNo).localeCompare(String(a.SerialNo)));
   renderSerials();
   attachSerialMakers();
 }

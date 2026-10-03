@@ -1139,8 +1139,15 @@ async function handleNextStepClick(orderId, btn) {
     if (!ok) return;
     await handleToShipClick(String(o.order_id), btn, { readyToShip: true });
   } else if (btn.dataset.action === 'ship-stock') {
-    // Re-check now - the cached check can be from before the order's lines changed (order 105852
-    // still showed a removed duplicate line, 2 + 2 needed, until the page was reloaded).
+    // Fresh lines from Pancake first, then re-check stock - the cached check / saved lines can still
+    // hold old copies of the lines (order 105852 asked for 2 + 2).
+    btn.disabled = true;
+    const refreshError = await refreshOrderLinesFromPancake(o.order_id);
+    btn.disabled = false;
+    if (refreshError) {
+      alert(refreshError);
+      return;
+    }
     stockStatusCache.delete(String(o.order_id));
     await ensureStockStatus(o);
     const s = stockStatusFor(o);
@@ -1156,7 +1163,7 @@ async function handleNextStepClick(orderId, btn) {
       tone: 'is-ship'
     });
     if (!ok) return;
-    await handleToShipClick(String(o.order_id), btn, { readyToShip: true, fromStock: true });
+    await handleToShipClick(String(o.order_id), btn, { readyToShip: true, fromStock: true, linesRefreshed: true });
     stockStatusCache.delete(String(o.order_id));
   } else if (btn.dataset.action === 'build') {
     await openStockBuildDialog(o);
@@ -1856,8 +1863,23 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
       result.message_sent = gma.sent;
       result.message_error = gma.error;
     }
-    if (notifyCustomer && result && !result.message_sent) {
+    // The message goes last in that call, so a slow Pancake can run it out of time ("HTTP request
+    // cancelled") after the status already changed - re-send it as its own call, and if that fails too
+    // open the To-Ship Message dialog prefilled so staff can just press Send
+    // (supabase_online_order_message_timeout.sql).
+    const isToShip = String(newStatus).trim().toLowerCase() === 'to ship';
+    if (notifyCustomer && result && !result.message_sent && !isToShip) {
       alert('Status updated, but the customer notification failed to send: ' + (result.message_error || 'unknown error'));
+    } else if (notifyCustomer && result && !result.message_sent) {
+      let resent = false;
+      if (!result.gma_psid) {
+        showSendStatusBanner('Status updated - sending the customer message again...');
+        resent = await resendToShipMessage(orderId);
+      }
+      if (!resent) {
+        alert(`Status updated, but the customer message didn't go (${result.message_error || 'unknown error'}).\n\nThe To-Ship Message window opens next - check the text and press Send.`);
+        openSendMessageModal(orderId);
+      }
     }
 
     const gmaPhotoPsid = photoUrl ? (result?.gma_psid || await getGmaPsid(orderId)) : null;
@@ -1994,6 +2016,21 @@ async function printOrderSerialLabels(orderId, btn) {
 // supabase_online_order_to_ship_serials.sql (resolves Pancake's item_code/category server-side and
 // applies the same prefix/IsProductionCategory rule OnlineOrdersForm.cs uses, so the client doesn't
 // need to duplicate that logic).
+// Re-reads the order's lines from Pancake right now (supabase_online_order_refresh_lines_before_ship.sql)
+// - Pancake gives lines new IDs when an order is saved again, and until the background sync catches up
+// the saved lines can hold old + new copies (Ready to Ship asked for 4 serials on a 2-line order).
+// Returns null when done (or the SQL isn't run yet), else the error message.
+async function refreshOrderLinesFromPancake(orderId) {
+  const { error } = await supabaseClient.rpc('staff_refresh_online_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  if (!error) return null;
+  if (/could not find the function|does not exist/i.test(error.message || '')) return null;
+  return error.message || 'unknown error';
+}
+
 async function getOrderSerialRequirements(orderId) {
   const { data, error } = await supabaseClient.rpc('admin_get_online_order_serial_requirements', {
     p_admin_username: currentSession.username,
@@ -2328,6 +2365,16 @@ function handleOrderTableClick(event) {
 let sendMessageOrderId = null;
 let sendMessageRoute = null;
 
+// Sends the standard "your order is ready" message (same template as the dialog) for a Pancake
+// conversation order, with no dialog. True when Pancake accepted it.
+async function resendToShipMessage(orderId) {
+  const creds = { p_admin_username: currentSession.username, p_admin_password: currentSession.password, p_order_id: orderId };
+  const { data: text, error: renderError } = await supabaseClient.rpc('admin_render_online_order_to_ship_message', creds);
+  if (renderError || !text || !String(text).trim()) return false;
+  const { error } = await supabaseClient.rpc('admin_send_online_order_message', { ...creds, p_message: text });
+  return !error;
+}
+
 async function openSendMessageModal(orderId) {
   sendMessageOrderId = orderId;
   sendMessageRoute = null;
@@ -2498,7 +2545,7 @@ async function handleAssignProductionMemberChange(event) {
 // all when the logged-in staff's own warehouse is Production (currentSessionIsProductionWarehouse,
 // resolved once at init) - a regular store's To Ship never needed this, same as the desktop.
 // Cancelling the serial picker aborts the whole To Ship action (nothing sent, nothing changed).
-async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, fromStock = false } = {}) {
+async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, fromStock = false, linesRefreshed = false } = {}) {
   // Ready to Ship (the Production Manager's next-step button on a Production Done order) runs this
   // real flow even while the general To Ship button is still switched off - see nextStepFor.
   if (!TO_SHIP_ENABLED && !readyToShip) {
@@ -2515,6 +2562,14 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
 
   if (currentSessionIsProductionWarehouse || fromStock) {
     toShipBtn.disabled = true;
+    if (!linesRefreshed) {
+      const refreshError = await refreshOrderLinesFromPancake(orderId);
+      if (refreshError) {
+        alert(refreshError);
+        toShipBtn.disabled = false;
+        return;
+      }
+    }
     let requirements;
     try {
       requirements = await getOrderSerialRequirements(orderId);

@@ -6,6 +6,17 @@ Whenever telling the user which `.sql` file(s) to run, or handing them a newly g
 
 Save one-off/generated SQL as an actual `.sql` file in the `sql/` folder (matching the existing `supabase_*.sql` naming convention) before linking it, so the user can click to open and copy it into the Supabase SQL editor. This applies project-wide, not just to one page/feature.
 
+The Supabase SQL editor only shows the LAST statement's result, so a read-only check/diagnostic file the user runs as a whole must end in ONE result query (combine several checks with `union all` and a `section` column) - never several separate SELECTs they'd have to highlight and run one by one.
+
+### Always give an ordered run list
+
+Whenever a change needs SQL run (one file or several), end the reply with a numbered **"Run in this order"** list - every file the user still has to run, in the exact order, each as a clickable link with a one-line "what it does". Don't scatter run instructions through the text.
+
+- Include files from earlier in the session that the user hasn't confirmed running yet, so the list is always the complete picture - not just the newest file.
+- Put a file AFTER anything it depends on (its "Run AFTER ..." header), and put urgent fixes (data loss, broken flows) first.
+- Say which files are already done (user ran them / confirmed output) and which must NOT be re-run (e.g. an older file that would overwrite a newer version of the same function).
+- Note which are safe to re-run and which are read-only checks, and end with any follow-up step (e.g. reload the page for a new JS cache version).
+
 ## Changelog
 
 Whenever you make a code change (any edit/add/delete to a tracked file - SQL, JS, HTML, Edge Functions, etc.), append a dated entry to [CHANGELOG.md](CHANGELOG.md) summarizing what changed and why, in the same session as the change itself - don't wait to be asked. Newest entries go at the top, under a `## YYYY-MM-DD` heading (reuse today's heading if one already exists from earlier in the day). Keep each entry to 1-2 lines per change; this is a running log for the user, not a detailed diff.
