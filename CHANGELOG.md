@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-04
+
+- Bot ("Alice"): can now quote an **Enclosure** (terrarium/vivarium). There's a new `enclosure` input on `compute_aquarium_quote` and a prompt rule for when to use it (reptiles and other dry pets; never with a sump, AIO or turtle tank). Its drawing link passes `enclosure=1`. The Turtle tank rule now also describes its drawing. The calculator page accepts `enclosure=1` in the link.
+
 ## 2026-10-03
 
 - Turtle tank is now priced the same as Enclosure (aquarium price ×2.1, rounded to the nearest 10 from ₱1,000) in [custom-aquarium-calculator.js](docs/WebAquariumCalculator/custom-aquarium-calculator.js) (`?v=turtle1`), and it can't be combined with Enclosure. The bot (`chatbot-engine.ts`) has the same pricing, a new `turtle_tank` input on `compute_aquarium_quote`, a prompt rule, and passes `turtleTank=1` in its drawing link.
