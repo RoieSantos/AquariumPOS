@@ -746,6 +746,30 @@
        here (see supabase_online_order_to_ship_serials.sql's header comment) - if there aren't
        enough available, staff are told to finish on the desktop app instead. Reuses the same
        .serial-tag-picker/.serial-tag-chip styling Transfer Orders already established. -->
+  <!-- SET package explosion before To Ship (js/onlineOrders.js runSetAssemblyStep,
+       sql/supabase_online_order_set_explode.sql) - the portal's version of the desktop's
+       PrepareSetAssemblyForOrder: each SET line's BOM components are added to the order at price 0. -->
+  <div id="setAssemblyModal" class="modal-backdrop hidden">
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:640px;" role="dialog" aria-modal="true" aria-labelledby="setAssemblyModalTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">ONLINE ORDER</div>
+          <h2 id="setAssemblyModalTitle">SET Assembly</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" style="margin:0 0 12px;">This order has SET item(s). Check the parts going out with each set - they're added to the order at no extra charge so stock and serials follow the real items.</p>
+        <div id="setAssemblyModalSets"></div>
+        <p class="error-text hidden" id="setAssemblyModalError" style="margin-top:12px;"></p>
+      </div>
+      <div class="bc-doc-foot">
+        <span style="flex:1;"></span>
+        <button type="button" class="bc-btn bc-btn-primary" id="setAssemblyModalConfirmBtn">Confirm &amp; Continue</button>
+        <button type="button" class="bc-btn" id="setAssemblyModalCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="shipSerialModal" class="modal-backdrop hidden">
     <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:560px;" role="dialog" aria-modal="true" aria-labelledby="shipSerialModalTitle">
       <div class="bc-doc-head">
@@ -832,7 +856,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=2"></script>
-  <script src="js/onlineOrders.js?v=bc68"></script>
+  <script src="js/onlineOrders.js?v=bc79"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -37,6 +37,24 @@
       box-shadow: inset 0 0 0 1px var(--primary);
     }
 
+    /* Paint colour - same pill look as the Tubular toggle, two columns. */
+    .paint-toggle {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      max-width: 360px;
+    }
+
+    .paint-swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: -1px;
+      border: 1px solid #9aa9c0;
+    }
+
     .tubular-option.option-disabled {
       opacity: 0.4;
       cursor: not-allowed;
@@ -137,6 +155,17 @@
             <label class="checkbox-row"><input id="cabinet" type="checkbox">Cabinet</label>
             <label class="checkbox-row"><input id="canopy" type="checkbox">Canopy</label>
             <label class="checkbox-row"><input id="sumpHolder" type="checkbox">Sump Holder</label>
+          </div>
+
+          <!-- Paint colour (per "can you put option black or white paint") - spec only, no price change;
+               same Black Paint / White Paint options regular stands come in. Hidden for Stainless. -->
+          <div id="paintWrap">
+            <div class="sub-head">Paint</div>
+            <div class="paint-toggle">
+              <div class="tubular-option selected" data-value="Black" id="paintBlack"><span class="paint-swatch" style="background:#1b1b1b;"></span>Black Paint</div>
+              <div class="tubular-option" data-value="White" id="paintWhite"><span class="paint-swatch" style="background:#fff;"></span>White Paint</div>
+            </div>
+            <input type="hidden" id="paint" value="Black">
           </div>
 
           <div id="cabinetTypeWrap" class="reveal-block hidden">
@@ -311,7 +340,14 @@
       btn15.classList.toggle('option-disabled', check15.tubular !== '1.5x1.5');
     }
 
+    function selectPaint(value) {
+      byId('paint').value = value;
+      byId('paintBlack').classList.toggle('selected', value === 'Black');
+      byId('paintWhite').classList.toggle('selected', value === 'White');
+    }
+
     function setVisibilityState() {
+      byId('paintWrap').classList.toggle('hidden', byId('stainless').checked);
       byId('sumpWidthWrap').classList.toggle('hidden', !byId('sumpHolder').checked);
       byId('cabinetDoorsWrap').classList.toggle('hidden', !byId('cabinet').checked);
       byId('cabinetTypeWrap').classList.toggle('hidden', !byId('cabinet').checked && !byId('canopy').checked);
@@ -803,6 +839,7 @@
         ['Quantity', String(qty)]
       ];
       rows.push(['Stainless', byId('stainless').checked ? 'Yes' : 'No']);
+      if (!byId('stainless').checked) rows.push(['Paint', byId('paint').value]);
       // Approx. OUTER size (frame end posts + 18mm boards) - see calculateStandPlywood.
       function outerSize(o) { return round1(o.lengthInches) + '" x ' + round1(o.widthInches) + '" x ' + round1(o.heightInches) + '"'; }
       if (n.cabinet || n.canopy) rows.push(['Cabinet / Canopy Type', n.cabinetType]);
@@ -856,6 +893,13 @@
     }
 
     function attachHandlers() {
+      ['paintBlack', 'paintWhite'].forEach(function (id) {
+        byId(id).addEventListener('click', function () {
+          selectPaint(byId(id).dataset.value);
+          calculateStand(true);
+        });
+      });
+
       ['tubular1x1', 'tubular1_5x1_5', 'tubular2x2'].forEach(function (id) {
         byId(id).addEventListener('click', function () {
           selectTubular(byId(id).dataset.value);
@@ -909,5 +953,6 @@
     })();
   </script>
   <script src="./calculator-ui.js?v=1"></script>
+  <script src="./calc-embed-bridge.js?v=2"></script>
 </body>
 </html>

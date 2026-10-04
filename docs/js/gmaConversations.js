@@ -420,6 +420,8 @@ function renderCustomerPanel(conv) {
   newOrderConv = conv;
   const panelEl = document.getElementById('customerPanelEl');
   const name = conv.customer_name || 'Unknown Customer';
+  // Accent the whole panel while building an order, so it stands out from the chat (see .is-create-mode).
+  panelEl.classList.toggle('is-create-mode', activeCustomerTab === 'create');
 
   panelEl.innerHTML = `
     <div class="inbox-customer-header">
@@ -1179,8 +1181,9 @@ function renderCreateOrderTab(conv) {
     </div>
     ` : ''}
 
-    <div class="form-group">
+    <div class="form-group og-customer">
       <div class="form-group-title">
+        <span class="og-step">1</span>
         <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="6.5" r="3"/><path d="M3.5 16.5c0-3.3 2.9-5.5 6.5-5.5s6.5 2.2 6.5 5.5" stroke-linecap="round"/></svg>
         Customer
       </div>
@@ -1228,32 +1231,45 @@ function renderCreateOrderTab(conv) {
       </div>
     </div>
 
-    <div class="form-group">
+    <div class="form-group og-product">
       <div class="form-group-title">
+        <span class="og-step">2</span>
         <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6">
           <path d="M3 6.5 10 3l7 3.5-7 3.5-7-3.5Z" stroke-linejoin="round" stroke-linecap="round" />
           <path d="M3 6.5v7L10 17l7-3.5v-7" stroke-linejoin="round" stroke-linecap="round" />
           <path d="M10 10v7" stroke-linecap="round" />
         </svg>
-        Product
+        Products
       </div>
       <div class="product-search-wrap">
         <input type="text" id="productSearchInput" placeholder="Search product by name...">
         <div id="productSearchResults" class="product-search-results hidden"></div>
       </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
-        <button type="button" class="btn btn-secondary btn-sm" id="openCustomQuoteBtn">+ Custom Aquarium / Stand Quote</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="openCustomStickerBtn">+ Custom Stickers / Accessories</button>
+      <div class="custom-build-label">Or build a custom item</div>
+      <div class="custom-build-grid">
+        <button type="button" class="custom-build-tile tile-aquarium" id="openCustomQuoteBtn">
+          <span class="tile-icon"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="4" width="15" height="11" rx="1.2"/><path d="M2.5 11c2-1.2 3.5-1.2 5 0s3 1.2 5 0 3.5-1.2 5 0" stroke-linecap="round"/><path d="M5 17.5h10" stroke-linecap="round"/></svg></span>
+          Custom Aquarium
+          <small>+ stand, sump, stickers</small>
+        </button>
+        <button type="button" class="custom-build-tile tile-stand" id="openCustomStandBtn">
+          <span class="tile-icon"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4.5h14M3 10h14M4 4.5v12M16 4.5v12" stroke-linecap="round"/></svg></span>
+          Custom Stand
+          <small>stand only</small>
+        </button>
+        <button type="button" class="custom-build-tile tile-sticker" id="openCustomStickerBtn">
+          <span class="tile-icon"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 3.5h8.5l4 4V16a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z" stroke-linejoin="round"/><path d="M12.5 3.5v4h4" stroke-linejoin="round"/></svg></span>
+          Stickers
+          <small>accessories, glass, mats</small>
+        </button>
       </div>
 
-      <table class="new-order-lines-table">
-        <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
-        <tbody id="newOrderLinesBody"></tbody>
-      </table>
+      <div class="order-lines-list" id="newOrderLinesBody"></div>
     </div>
 
-    <div class="form-group">
+    <div class="form-group og-payment">
       <div class="form-group-title">
+        <span class="og-step">3</span>
         <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="5" width="15" height="10" rx="1.5"/><path d="M2.5 8.5h15" stroke-linecap="round"/></svg>
         Payment (optional)
       </div>
@@ -1324,7 +1340,8 @@ function renderCreateOrderTab(conv) {
     renderCustomerPanel(conv);
   });
   document.getElementById('newOrderSubmitBtn').addEventListener('click', submitNewOrder);
-  document.getElementById('openCustomQuoteBtn').addEventListener('click', openCustomQuoteModal);
+  document.getElementById('openCustomQuoteBtn').addEventListener('click', () => openCalcEmbedModal('aquarium'));
+  document.getElementById('openCustomStandBtn').addEventListener('click', () => openCalcEmbedModal('stand'));
   document.getElementById('openCustomStickerBtn').addEventListener('click', openCustomStickerModal);
   document.querySelectorAll('#newOrderFulfillmentToggle .fulfillment-toggle-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1579,28 +1596,34 @@ function renderNewOrderLines() {
   if (!bodyEl || !totalEl) return;
 
   if (newOrderLines.length === 0) {
-    bodyEl.innerHTML = '<tr><td colspan="5" class="muted">No items added yet.</td></tr>';
+    bodyEl.innerHTML = '<div class="order-lines-empty">No items added yet - search a product or build a custom item above.</div>';
     totalEl.textContent = '0.00';
     return;
   }
 
+  // One card per line (per "let the user remove per item instead of clear all") - the old 5-column
+  // table was wider than this panel, so its last column (the remove button) got clipped out of view.
   bodyEl.innerHTML = newOrderLines.map((line, index) => `
-    <tr data-row="${index}">
-      <td>
-        ${escapeHtml(line.item_name)}
+    <div class="order-line-card" data-row="${index}">
+      <div class="order-line-top">
+        <div class="order-line-name">${escapeHtml(line.item_name)}</div>
         <button type="button" class="line-note-btn${line.note ? ' has-note' : ''}" data-index="${index}" title="${line.note ? escapeHtml(line.note) : 'Add a note'}">&#9998;</button>
-      </td>
-      <td>
+        <button type="button" class="line-remove-btn" title="Remove this item" data-index="${index}">
+          <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Remove
+        </button>
+      </div>
+      <div class="order-line-bottom">
         <div class="qty-stepper">
           <button type="button" class="qty-step-btn" data-index="${index}" data-dir="-1" title="Decrease">&minus;</button>
           <input type="number" class="line-qty-input" data-index="${index}" value="${line.quantity}" min="1" step="1">
           <button type="button" class="qty-step-btn" data-index="${index}" data-dir="1" title="Increase">&plus;</button>
         </div>
-      </td>
-      <td><input type="number" class="line-price-input" data-index="${index}" value="${line.price}" min="0" step="0.01"></td>
-      <td class="line-total-cell">${(line.price * line.quantity).toFixed(2)}</td>
-      <td><button type="button" class="btn btn-secondary line-remove-btn" title="Remove this item" data-index="${index}">&times;</button></td>
-    </tr>
+        <span class="order-line-x">&times;</span>
+        <input type="number" class="line-price-input" data-index="${index}" value="${line.price}" min="0" step="0.01" title="Unit price">
+        <div class="order-line-total">&#8369; <span class="line-total-cell">${(line.price * line.quantity).toFixed(2)}</span></div>
+      </div>
+    </div>
   `).join('');
 
   updateOrderTotal();
@@ -1658,7 +1681,7 @@ function stepLineQuantity(index, delta) {
   if (!line) return;
   line.quantity = Math.max(line.quantity + delta, 1);
 
-  const row = document.querySelector(`#newOrderLinesBody tr[data-row="${index}"]`);
+  const row = document.querySelector(`#newOrderLinesBody [data-row="${index}"]`);
   if (row) {
     row.querySelector('.line-qty-input').value = line.quantity;
     row.querySelector('.line-total-cell').textContent = (line.price * line.quantity).toFixed(2);
@@ -1674,7 +1697,7 @@ function updateLineField(index, field, rawValue) {
     ? Math.max(parseInt(rawValue, 10) || 1, 1)
     : Math.max(parseFloat(rawValue) || 0, 0);
 
-  const row = document.querySelector(`#newOrderLinesBody tr[data-row="${index}"]`);
+  const row = document.querySelector(`#newOrderLinesBody [data-row="${index}"]`);
   if (row) row.querySelector('.line-total-cell').textContent = (line.price * line.quantity).toFixed(2);
 
   updateOrderTotal();
@@ -1687,86 +1710,9 @@ function updateOrderTotal() {
   totalEl.textContent = total.toFixed(2);
 }
 
-// Custom Aquarium/Stand quote - per direct follow-up request, lets staff quote a custom build right
-// from the conversation and drop it straight into the order being built, instead of only being
-// reachable via the separate, disconnected Aquarium Calculator nav page (which explicitly saves
-// nothing - "Client-side calculator only"). Uses the EXACT same pricing engine the AI bot's own
-// compute_aquarium_quote tool calls (WebAquariumCalculator/custom-aquarium-calculator.js's
-// calculateCustomAquarium, loaded as a plain global - window.CustomAquariumCalculator - via a
-// <script> tag, same as docs/order-now.html) and the same public_get_glass_pricing/public_get_
-// tubular_pricing RPCs, so this quotes identically to both of those, not a third re-implementation.
-let customQuoteResult = null;
-
-function openCustomQuoteModal() {
-  document.getElementById('customQuoteModal').classList.remove('hidden');
-  document.getElementById('customQuoteError').classList.add('hidden');
-  document.getElementById('customQuoteResult').classList.add('hidden');
-  document.getElementById('customQuoteResult').innerHTML = '';
-  document.getElementById('addCustomQuoteToSaleBtn').classList.add('hidden');
-  customQuoteResult = null;
-}
-
-function closeCustomQuoteModal() {
-  document.getElementById('customQuoteModal').classList.add('hidden');
-}
-
-function toggleCustomQuoteStandFields() {
-  const enabled = document.getElementById('customQuoteStandEnabled').checked;
-  document.getElementById('customQuoteStandFields').classList.toggle('hidden', !enabled);
-}
-
-function toggleCustomQuoteSumpFields() {
-  const enabled = document.getElementById('customQuoteSumpEnabled').checked;
-  document.getElementById('customQuoteSumpFields').classList.toggle('hidden', !enabled);
-}
-
-function toggleCustomQuoteStandSumpWidth() {
-  const enabled = document.getElementById('customQuoteStandSumpHolder').checked;
-  document.getElementById('customQuoteStandSumpWidthWrap').classList.toggle('hidden', !enabled);
-}
-
-function toggleCustomQuoteStickerBgFields() {
-  const enabled = document.getElementById('customQuoteStickerBgEnabled').checked;
-  document.getElementById('customQuoteStickerBgFields').classList.toggle('hidden', !enabled);
-}
-
-function toggleCustomQuoteStickerBottomFields() {
-  const enabled = document.getElementById('customQuoteStickerBottomEnabled').checked;
-  document.getElementById('customQuoteStickerBottomFields').classList.toggle('hidden', !enabled);
-}
-
-// Matches the wording the bot itself is instructed to give a customer (dimensions, unit, glass
-// thickness, tempered/rimless/etc) - see PLACING ORDERS' custom-item notes rule in chatbot-engine.ts
-// - so a staff-created custom line reads the same way as a bot-created one. Extended (per direct
-// request) to cover almost every field the calculator supports, not just the AI bot's own subset -
-// AIO/Enclosure/Aquascape Service/Filtration Sump/Stickers are all folded into the aquarium's own
-// totalPrice by calculateCustomAquarium (only the Stand is a separate price - see
-// customStandSpecText), so they show up here as spec text rather than as extra order lines.
-function customAquariumSpecText(result) {
-  const n = result.normalized;
-  const bits = [`${n.lengthInches}x${n.widthInches}x${n.heightInches}in`, n.glassThickness];
-  if (n.temperedGlass) bits.push('Tempered');
-  if (document.getElementById('customQuoteLowIron').checked) bits.push('Low-Iron');
-  if (n.rimless) bits.push('Rimless');
-  if (document.getElementById('customQuoteHighStrip').checked) bits.push('High Strip');
-  if (document.getElementById('customQuoteAio').checked) bits.push('AIO');
-  if (document.getElementById('customQuoteEnclosure').checked) bits.push('Enclosure');
-  if (document.getElementById('customQuoteAquascape').checked) bits.push('Aquascape Service');
-  if (n.sump) bits.push(`${n.sump.type} Filtration`);
-  if (document.getElementById('customQuoteStickerBgEnabled').checked) {
-    const bgType = document.getElementById('customQuoteStickerBgType');
-    bits.push(`${bgType.selectedOptions[0].textContent} Background${document.getElementById('customQuoteStickerBgAllSides').checked ? ' (All Sides)' : ''}`);
-  }
-  if (document.getElementById('customQuoteStickerBottomEnabled').checked) {
-    const bottomType = document.getElementById('customQuoteStickerBottomType');
-    bits.push(`${bottomType.selectedOptions[0].textContent} Bottom`);
-  }
-  return bits.join(', ');
-}
-
-// Full build sheet for the order line's note - per "do better details on the note if the order is
-// customized.. be specific". customAquariumSpecText above stays the short one-liner for the line name;
-// this is what the makers (Pancake note, maker lists, the Assigned message's "Note :") actually read.
+// Full build sheet helpers for custom line notes - per "do better details on the note if the order is
+// customized.. be specific" (used by the sticker modal below; the aquarium/stand builders take theirs
+// straight from the embedded calculator - see calcEmbedNote).
 const fmtIn = (v) => `${Number(v).toFixed(2).replace(/\.?0+$/, '')}`;
 
 function customEnteredSizeText(unit, values) {
@@ -1774,80 +1720,200 @@ function customEnteredSizeText(unit, values) {
   return ` (entered as ${values.map(fmtIn).join(' x ')} ${unit.toLowerCase()})`;
 }
 
-function customAquariumNoteText(result) {
-  const n = result.normalized;
-  const checked = (id) => document.getElementById(id).checked;
-  const selectedText = (id) => document.getElementById(id).selectedOptions[0].textContent;
-  const lines = [];
-
-  lines.push(`CUSTOM AQUARIUM`);
-  lines.push(`Size (L x W x H): ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} x ${fmtIn(n.heightInches)} in`
-    + customEnteredSizeText(n.unit, ['customQuoteLength', 'customQuoteWidth', 'customQuoteHeight'].map((id) => document.getElementById(id).value)));
-  lines.push(`Volume: approx. ${fmtIn(result.gallons)} gallons`);
-
-  const glass = [n.glassThickness, n.temperedGlass ? 'Tempered' : 'Regular (non-tempered)'];
-  if (checked('customQuoteLowIron')) glass.push('Low-Iron (ultra clear)');
-  let glassLine = `Glass: ${glass.join(', ')}`;
-  const requested = result.requested || {};
-  if (requested.glassThickness && requested.glassThickness !== n.glassThickness) glassLine += ` - upgraded from ${requested.glassThickness} for safety`;
-  if (requested.temperedGlass === false && n.temperedGlass) glassLine += ' - tempered required for this size';
-  lines.push(glassLine);
-
-  lines.push(`Frame: ${n.rimless ? 'Rimless' : 'With rim/bracing'}${checked('customQuoteHighStrip') ? ', High Strip' : ''}`);
-  if (checked('customQuoteAio')) lines.push('Type: AIO (all-in-one, built-in rear filter compartment)');
-  if (checked('customQuoteEnclosure')) lines.push('Type: Enclosure');
-
-  if (n.sump) {
-    const s = n.sump;
-    const extras = [];
-    if (checked('customQuoteSumpFilterMedias')) extras.push('Filter Media');
-    if (checked('customQuoteSumpOverflowBox')) extras.push('Overflow Box');
-    if (checked('customQuoteSumpPiping')) extras.push('Piping');
-    if (checked('customQuoteSumpAllumTopCover')) extras.push('Allum Top Cover');
-    lines.push(`Filtration: ${s.type} ${fmtIn(s.lengthInches)} x ${fmtIn(s.widthInches)} x ${fmtIn(s.heightInches)} in`
-      + (extras.length ? ` - with ${extras.join(', ')}` : ' - glass only'));
+// Custom Aquarium / Custom Stand builders - per "we have our custom aquarium calculator and Stand
+// calculator can we use that". Instead of a cut-down copy of their fields, the real calculator pages
+// (WebAquariumCalculator/index.html and stand.html - every option, the drawing, the glass cut sheet)
+// open in a same-origin iframe, the same way the portal's Aquarium/Stand Calculator nav pages embed
+// them. The footer reads the calculator's own globals (lastResult, computeQuotedTotal,
+// lastDetailRows) so the lines added here are priced exactly as the calculator shows them:
+//   Aquarium page -> CUSTOM-AQUARIUM x Quantity, + CUSTOM-STAND x Stand Quantity, + CUSTOM-SUMP x Sump
+//                    Quantity (when the sump is priced separately), matching computeQuotedTotal.
+//   Stand page    -> CUSTOM-STAND x Qty.
+const CALC_EMBED_KINDS = {
+  aquarium: {
+    src: 'WebAquariumCalculator/index.html?embed=gma',
+    title: 'Custom Aquarium',
+    sub: 'Full calculator - aquarium plus optional stand, sump and stickers. Build it, then Add to Order.'
+  },
+  stand: {
+    src: 'WebAquariumCalculator/stand.html?embed=gma',
+    title: 'Custom Stand Only',
+    sub: 'A stand with no aquarium - priced off its own length and width. Build it, then Add to Order.'
   }
+};
+const CALC_TUBULAR_LABELS = { '1x1': '1x1', '1.5x1.5': '1 1/2x1 1/2', '2x2': '2x2' };
+let calcEmbedKind = null;
+let calcEmbedPollTimer = null;
+let calcEmbedPendingLines = [];
+let calcEmbedProblem = '';
+let calcEmbedFooterKey = '';
+// Latest quote the calculator posted (see WebAquariumCalculator/calc-embed-bridge.js). Read via
+// postMessage, not contentWindow - the browser treated the iframe as another origin ("Can't read
+// the calculator from this page"), which blocks direct access but not messages.
+let calcEmbedSnapshot = null;
+let calcEmbedOpenedAt = 0;
 
-  if (checked('customQuoteStickerBgEnabled')) {
-    lines.push(`Background Sticker: ${selectedText('customQuoteStickerBgType')}${checked('customQuoteStickerBgAllSides') ? ' - all sides (back + left + right)' : ' - back panel only'}`);
+window.addEventListener('message', (event) => {
+  const frame = document.getElementById('calcEmbedFrame');
+  if (!frame || event.source !== frame.contentWindow) return;
+  if (!event.data || event.data.type !== 'rs-calc-state') return;
+  calcEmbedSnapshot = event.data;
+  refreshCalcEmbedFooter();
+});
+
+function sendCalcEmbedInit() {
+  const frame = document.getElementById('calcEmbedFrame');
+  try {
+    frame.contentWindow.postMessage({ type: 'rs-calc-embed-init' }, '*');
+  } catch (err) {
+    // not loaded yet - the next poll retries
   }
-  if (checked('customQuoteStickerBottomEnabled')) lines.push(`Bottom Sticker: ${selectedText('customQuoteStickerBottomType')}`);
-  if (checked('customQuoteAquascape')) lines.push('Aquascape Service: Yes');
-  lines.push(`Stand: ${n.stand ? 'Yes - see Custom Stand line' : 'None (aquarium only)'}`);
-  lines.push(`Drawing: ${buildAquariumDrawingUrl(result)}`);
-  return lines.join('\n');
 }
 
-function customStandNoteText(result) {
-  const stand = result.normalized.stand;
-  if (!stand) return '';
-  const n = result.normalized;
-  const tubularLabel = { '1x1': '1x1', '1.5x1.5': '1 1/2 x 1 1/2', '2x2': '2x2' }[stand.tubular] || stand.tubular;
-  const lines = [
-    'CUSTOM STAND',
-    `For aquarium: ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} x ${fmtIn(n.heightInches)} in (stand top = ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} in)`,
-    `Frame: ${stand.layers}-layer, ${tubularLabel} in tubular, ${stand.stainless ? 'Stainless steel' : 'Standard (painted) steel'}`,
-    `Height: ${fmtIn(stand.heightInches)} in total floor-to-top${Number(stand.footingInches) > 0 ? ` (includes ${fmtIn(stand.footingInches)} in footing)` : ''}`,
-    `Cabinet: ${stand.cabinet ? 'Yes' : 'No (open frame)'}`,
-    `Sump Holder: ${stand.sumpHolder ? `Yes - ${fmtIn(stand.sumpWidth)} in wide` : 'No'}`
-  ];
-  return lines.join('\n');
+function openCalcEmbedModal(kind) {
+  const cfg = CALC_EMBED_KINDS[kind];
+  document.getElementById('calcEmbedTitle').textContent = cfg.title;
+  document.getElementById('calcEmbedSub').textContent = cfg.sub;
+  document.getElementById('calcEmbedPanel').classList.toggle('calc-embed-stand', kind === 'stand');
+  // Reopening the same calculator keeps what was already typed (e.g. closed by accident); switching
+  // calculators, or reopening after Add to Order, starts fresh.
+  if (calcEmbedKind !== kind) {
+    calcEmbedKind = kind;
+    calcEmbedSnapshot = null;
+    calcEmbedOpenedAt = Date.now();
+    const frame = document.getElementById('calcEmbedFrame');
+    frame.onload = sendCalcEmbedInit;
+    frame.src = cfg.src;
+  }
+  document.getElementById('calcEmbedModal').classList.remove('hidden');
+  // Re-sends init every 1.5s while open: covers the iframe finishing its load before/after our
+  // handler and the calculator's own Reset (which reloads it). The bridge only posts on change.
+  clearInterval(calcEmbedPollTimer);
+  calcEmbedPollTimer = setInterval(() => {
+    sendCalcEmbedInit();
+    refreshCalcEmbedFooter();
+  }, 1500);
+  sendCalcEmbedInit();
+  refreshCalcEmbedFooter();
 }
 
-function customStandSpecText(result) {
-  const stand = result.normalized.stand;
-  if (!stand) return '';
-  const tubularLabel = { '1x1': '1x1', '1.5x1.5': '1 1/2x1 1/2', '2x2': '2x2' }[stand.tubular] || stand.tubular;
-  const bits = [`${stand.layers}-Layer ${tubularLabel} Tubular${stand.stainless ? ' (Stainless)' : ''}`, `${stand.heightInches}in height`];
-  if (stand.cabinet) bits.push('Cabinet');
-  if (stand.sumpHolder) bits.push(`Sump Holder (${stand.sumpWidth}in)`);
-  return bits.join(', ');
+function closeCalcEmbedModal() {
+  clearInterval(calcEmbedPollTimer);
+  calcEmbedPollTimer = null;
+  document.getElementById('calcEmbedModal').classList.add('hidden');
 }
 
-// Same query param construction as chatbot-engine.ts's computeAquariumQuote (aquariumDrawingUrl) -
-// lets staff see the exact same visual diagram the bot would share with a customer for this quote.
-function buildAquariumDrawingUrl(result) {
-  const n = result.normalized;
+function refreshCalcEmbedFooter() {
+  const state = readCalcEmbedState();
+  calcEmbedPendingLines = state.lines;
+  calcEmbedProblem = state.problem;
+  renderCalcEmbedFooter();
+}
+
+// The posted snapshot dressed up as the calculator window the line builders below expect
+// (lastResult / computeQuotedTotal / lastDetailRows / document.getElementById(id).value|checked).
+function calcEmbedWinFromSnapshot(s) {
+  const fields = s.fields || {};
+  const doc = {
+    getElementById: (id) => {
+      if (!(id in fields)) return null;
+      return typeof fields[id] === 'boolean' ? { checked: fields[id], value: '' } : { value: fields[id], checked: false };
+    }
+  };
+  return {
+    lastResult: s.result,
+    computeQuotedTotal: s.quote ? () => s.quote : undefined,
+    lastDetailRows: Array.isArray(s.detailRows) ? s.detailRows : [],
+    document: doc
+  };
+}
+
+// What's stopping Add to Order, in plain words - per "the add to order is still disabled. Can we
+// point out the user what is it missing?". Checked in order: has the calculator answered at all,
+// required fields, the calculator's own error (e.g. sump holder width), then the priced result.
+function readCalcEmbedState() {
+  if (!calcEmbedSnapshot) {
+    return {
+      lines: [],
+      problem: Date.now() - calcEmbedOpenedAt < 8000
+        ? 'Loading the calculator...'
+        : "The calculator isn't responding - press Ctrl+F5 to reload this page, then open it again."
+    };
+  }
+  const win = calcEmbedWinFromSnapshot(calcEmbedSnapshot);
+
+  const missing = calcEmbedMissingFields(win.document);
+  if (missing.length) return { lines: [], problem: `Missing: ${missing.join(', ')}` };
+
+  const r = win.lastResult;
+  if (r && !r.ok) return { lines: [], problem: r.error || 'The calculator could not price this - check its fields.' };
+  if (!r) return { lines: [], problem: 'Waiting for a price - press Calculate in the calculator.' };
+
+  try {
+    const lines = calcEmbedKind === 'stand' ? buildStandCalcLines(win) : buildAquariumCalcLines(win);
+    return lines.length ? { lines, problem: '' } : { lines: [], problem: 'Waiting for a price - press Calculate in the calculator.' };
+  } catch (err) {
+    return { lines: [], problem: `Could not read the quote: ${err.message}` };
+  }
+}
+
+
+function calcEmbedMissingFields(doc) {
+  const num = (id) => Number(doc.getElementById(id)?.value) || 0;
+  const checked = (id) => Boolean(doc.getElementById(id)?.checked);
+  const missing = [];
+  if (!(num('length') > 0)) missing.push('Length');
+  if (!(num('width') > 0)) missing.push('Width');
+  if (calcEmbedKind !== 'stand' && !(num('height') > 0)) missing.push('Height');
+  if (!doc.getElementById('unit')?.value) missing.push('Unit of measure');
+  if (calcEmbedKind === 'stand') {
+    if (checked('sumpHolder') && !(num('sumpWidth') > 0)) missing.push('Sump Holder width');
+  } else {
+    if (checked('sumpEnabled') && !(num('sumpLength') > 0 && num('sumpWidth') > 0 && num('sumpHeight') > 0)) missing.push('Sump length / width / height');
+    if (checked('standEnabled') && checked('standSumpHolder') && !(num('standSumpWidth') > 0)) missing.push('Stand Sump Holder width');
+  }
+  return missing;
+}
+
+function renderCalcEmbedFooter() {
+  const lines = calcEmbedPendingLines;
+  const key = JSON.stringify([calcEmbedProblem, lines.map((l) => [l.item_name, l.price, l.quantity])]);
+  if (key === calcEmbedFooterKey) return; // polled every 600ms - don't redraw (and flicker) when nothing changed
+  calcEmbedFooterKey = key;
+
+  const linesEl = document.getElementById('calcEmbedLines');
+  const totalEl = document.getElementById('calcEmbedTotal');
+  const addBtn = document.getElementById('addCalcEmbedToOrderBtn');
+  if (!lines.length) {
+    const problem = calcEmbedProblem || 'Fill in the calculator - the lines to add will show here.';
+    linesEl.innerHTML = `<div class="calc-embed-problem">&#9888; ${escapeHtml(problem)}</div>`;
+    totalEl.textContent = '-';
+    addBtn.disabled = true;
+    addBtn.title = problem;
+    return;
+  }
+  linesEl.innerHTML = lines.map((line) => `
+    <div title="${escapeHtml(line.item_name)}"><strong>${line.quantity} &times;</strong> ${escapeHtml(line.item_name)} - ${(line.price * line.quantity).toFixed(2)}</div>
+  `).join('');
+  const total = lines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  totalEl.textContent = `\u20B1 ${total.toFixed(2)}`;
+  addBtn.disabled = false;
+  addBtn.title = '';
+}
+
+function buildCalcEmbedLines() {
+  return readCalcEmbedState().lines;
+}
+
+// lastDetailRows (index.html's Details summary) -> "Label: value" build-sheet lines, minus the price
+// rows (makers read this note; prices are already on the line itself).
+function calcDetailRowsText(rows, filter) {
+  return rows
+    .filter(([label]) => !/Price|^↳|^Total/.test(label) && filter(label))
+    .map(([label, value]) => (/^(Hole for Aquarium|Divider)/.test(label) ? label : `${label}: ${value}`));
+}
+
+function buildAquariumDrawingUrlFrom(n, highStrip) {
   const params = new URLSearchParams({
     length: String(n.lengthInches),
     width: String(n.widthInches),
@@ -1857,7 +1923,7 @@ function buildAquariumDrawingUrl(result) {
   });
   if (n.temperedGlass) params.set('tempered', '1');
   if (n.rimless) params.set('rimless', '1');
-  if (document.getElementById('customQuoteHighStrip').checked) params.set('highStrip', '1');
+  if (highStrip) params.set('highStrip', '1');
   if (n.stand) {
     params.set('standEnabled', '1');
     params.set('standLayers', String(n.stand.layers));
@@ -1867,195 +1933,147 @@ function buildAquariumDrawingUrl(result) {
   return `https://rspetstop.com/WebAquariumCalculator/index.html?${params.toString()}`;
 }
 
-async function calculateCustomQuote() {
-  const errorEl = document.getElementById('customQuoteError');
-  const resultEl = document.getElementById('customQuoteResult');
-  const addBtn = document.getElementById('addCustomQuoteToSaleBtn');
-  const calcBtn = document.getElementById('calculateCustomQuoteBtn');
-  errorEl.classList.add('hidden');
-  resultEl.classList.add('hidden');
-  addBtn.classList.add('hidden');
-  customQuoteResult = null;
+function buildAquariumCalcLines(win) {
+  const r = win.lastResult;
+  if (!r || !r.ok || typeof win.computeQuotedTotal !== 'function') return [];
+  const n = r.normalized;
+  const doc = win.document;
+  const checked = (id) => Boolean(doc.getElementById(id)?.checked);
+  const val = (id) => doc.getElementById(id)?.value || '';
+  const q = win.computeQuotedTotal(r);
+  const rows = Array.isArray(win.lastDetailRows) ? win.lastDetailRows : [];
+  const sumpSeparate = q.sumpEnabled && q.sumpUnitPrice > 0;
+  const standSeparate = q.standEnabled && q.standUnitPrice > 0;
+  const size = `${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} x ${fmtIn(n.heightInches)} in`;
+  const isSumpRow = (label) => /^(Filtration Sump|Sump )/.test(label);
+  const isStandRow = (label) => /^Stand/.test(label);
 
-  const length = parseFloat(document.getElementById('customQuoteLength').value);
-  const width = parseFloat(document.getElementById('customQuoteWidth').value);
-  const height = parseFloat(document.getElementById('customQuoteHeight').value);
-  if (!(length > 0) || !(width > 0) || !(height > 0)) {
-    errorEl.textContent = 'Enter a valid length, width, and height.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
+  const bits = [`${fmtIn(n.lengthInches)}x${fmtIn(n.widthInches)}x${fmtIn(n.heightInches)}in`, n.glassThickness];
+  if (n.option && n.option !== 'Aquarium only') bits.unshift(n.option);
+  if (n.temperedGlass) bits.push('Tempered');
+  if (checked('lowIron')) bits.push('Low-Iron');
+  if (n.rimless) bits.push('Rimless');
+  if (checked('highStrip')) bits.push('High Strip');
+  if (checked('aio')) bits.push('AIO');
+  if (checked('enclosure')) bits.push('Enclosure');
+  if (checked('turtleTank')) bits.push('Turtle Tank');
+  if (checked('aquascape')) bits.push('Aquascape Service');
+  if (Number(val('holeCount')) > 0) bits.push(`${val('holeCount')} Hole(s)`);
+  if (Number(val('dividerCount')) > 0) bits.push(`${val('dividerCount')} Divider(s)`);
+  if (n.sump && !sumpSeparate) bits.push(`${n.sump.type} Filtration`);
 
-  const unit = document.getElementById('customQuoteUnit').value;
-  const standEnabled = document.getElementById('customQuoteStandEnabled').checked;
-  const sumpEnabled = document.getElementById('customQuoteSumpEnabled').checked;
-  const stickerBgEnabled = document.getElementById('customQuoteStickerBgEnabled').checked;
-  const stickerBottomEnabled = document.getElementById('customQuoteStickerBottomEnabled').checked;
+  const drawingUrl = buildAquariumDrawingUrlFrom(n, checked('highStrip'));
+  const aquariumNote = ['CUSTOM AQUARIUM']
+    .concat(calcDetailRowsText(rows, (label) => !isStandRow(label) && !(sumpSeparate && isSumpRow(label))))
+    .concat(standSeparate ? ['Stand: Yes - see Custom Stand line'] : ['Stand: None (aquarium only)'])
+    .concat(sumpSeparate ? ['Filtration: see Custom Sump line'] : [])
+    .concat([`Drawing: ${drawingUrl}`]);
 
-  calcBtn.disabled = true;
-  try {
-    const [
-      { data: glassRows, error: glassError },
-      { data: tubularRows, error: tubularError },
-      { data: stickerRows, error: stickerError }
-    ] = await Promise.all([
-      supabaseClient.rpc('public_get_glass_pricing'),
-      supabaseClient.rpc('public_get_tubular_pricing'),
-      supabaseClient.rpc('public_get_sticker_pricing')
-    ]);
-    if (glassError || tubularError || stickerError) throw glassError || tubularError || stickerError;
-
-    const result = window.CustomAquariumCalculator.calculateCustomAquarium({
-      unit,
-      length,
-      width,
-      height,
-      glassThickness: document.getElementById('customQuoteGlass').value,
-      temperedGlass: document.getElementById('customQuoteTempered').checked,
-      lowIron: document.getElementById('customQuoteLowIron').checked,
-      rimless: document.getElementById('customQuoteRimless').checked,
-      highStrip: document.getElementById('customQuoteHighStrip').checked,
-      aio: document.getElementById('customQuoteAio').checked,
-      enclosure: document.getElementById('customQuoteEnclosure').checked,
-      aquascapeService: document.getElementById('customQuoteAquascape').checked,
-      option: 'Aquarium only',
-      filtrationSump: sumpEnabled
-        ? {
-            enabled: true,
-            type: document.getElementById('customQuoteSumpType').value,
-            length: document.getElementById('customQuoteSumpLength').value,
-            width: document.getElementById('customQuoteSumpWidth').value,
-            height: document.getElementById('customQuoteSumpHeight').value,
-            unit,
-            filterMedias: document.getElementById('customQuoteSumpFilterMedias').checked,
-            overflowBox: document.getElementById('customQuoteSumpOverflowBox').checked,
-            piping: document.getElementById('customQuoteSumpPiping').checked,
-            allumTopCover: document.getElementById('customQuoteSumpAllumTopCover').checked
-          }
-        : { enabled: false },
-      stand: standEnabled
-        ? {
-            enabled: true,
-            layers: parseInt(document.getElementById('customQuoteStandLayers').value, 10) || 2,
-            tubular: document.getElementById('customQuoteStandTubular').value,
-            stainless: document.getElementById('customQuoteStandStainless').checked,
-            cabinet: document.getElementById('customQuoteStandCabinet').checked,
-            sumpHolder: document.getElementById('customQuoteStandSumpHolder').checked,
-            sumpWidth: document.getElementById('customQuoteStandSumpWidth').value,
-            height: document.getElementById('customQuoteStandHeight').value,
-            footingInches: document.getElementById('customQuoteStandFooting').value,
-            unit
-          }
-        : { enabled: false },
-      stickerBackground: stickerBgEnabled
-        ? {
-            enabled: true,
-            type: document.getElementById('customQuoteStickerBgType').value,
-            allSides: document.getElementById('customQuoteStickerBgAllSides').checked
-          }
-        : { enabled: false },
-      stickerBottom: stickerBottomEnabled
-        ? { enabled: true, type: document.getElementById('customQuoteStickerBottomType').value }
-        : { enabled: false },
-      glassPricingSetupRows: glassRows || [],
-      glassPricingUom: 'MM',
-      tubularPricingSetupRows: tubularRows || [],
-      stickerPricingSetupRows: stickerRows || []
-    });
-
-    if (!result.ok) {
-      errorEl.textContent = result.error || 'Could not compute a quote for those dimensions.';
-      errorEl.classList.remove('hidden');
-      return;
-    }
-
-    customQuoteResult = result;
-    renderCustomQuoteResult(result);
-  } catch (err) {
-    errorEl.textContent = err?.message || 'Could not compute a quote right now.';
-    errorEl.classList.remove('hidden');
-  } finally {
-    calcBtn.disabled = false;
-  }
-}
-
-// Sub-lines shown "(included)" - they're already folded into the Aquarium price above by
-// calculateCustomAquarium (only the Stand is ever priced separately), so this is a transparency
-// breakdown, not extra charges to add on top.
-const CUSTOM_QUOTE_ADDON_LABELS = [
-  ['highStrip', 'High Strip'],
-  ['sumpGlass', 'Sump Glass'],
-  ['filterMedia', 'Filter Media'],
-  ['overflowBox', 'Overflow Box'],
-  ['piping', 'Piping'],
-  ['allumTopCover', 'Allum Top Cover'],
-  ['stickerBackground', 'Sticker Background'],
-  ['stickerBottom', 'Sticker Bottom'],
-  ['aquascapeService', 'Aquascape Service']
-];
-
-function renderCustomQuoteResult(result) {
-  const resultEl = document.getElementById('customQuoteResult');
-  const stand = result.normalized.stand;
-  const c = result.components || {};
-  const addonLines = CUSTOM_QUOTE_ADDON_LABELS
-    .filter(([key]) => Number(c[key]) > 0)
-    .map(([key, label]) => `<div class="custom-quote-line"><span>&nbsp;&nbsp;${label} (included)</span><span>${Number(c[key]).toFixed(2)}</span></div>`)
-    .join('');
-
-  resultEl.innerHTML = `
-    ${result.safetyNotice ? `<div class="custom-quote-notice">${escapeHtml(result.safetyNotice.message)}</div>` : ''}
-    ${result.standNotice ? `<div class="custom-quote-notice">${escapeHtml(result.standNotice)}</div>` : ''}
-    <div class="custom-quote-line"><span>Aquarium (${result.gallons} gal)</span><span>${(stand ? result.aquariumOnlyPrice : result.totalPrice).toFixed(2)}</span></div>
-    ${addonLines}
-    ${stand ? `<div class="custom-quote-line"><span>Stand</span><span>${Number(c.stand || 0).toFixed(2)}</span></div>` : ''}
-    <div class="custom-quote-line custom-quote-total"><span>Total</span><span>${result.totalPrice.toFixed(2)}</span></div>
-    <a href="${buildAquariumDrawingUrl(result)}" target="_blank" rel="noopener">View Drawing &#8599;</a>
-  `;
-  resultEl.classList.remove('hidden');
-  document.getElementById('addCustomQuoteToSaleBtn').classList.remove('hidden');
-}
-
-// Adds the quoted aquarium (and, if included, the stand) as its own line - same item_code/notes
-// convention the AI bot's own create_order handling already uses for a custom build (see
-// chatbot-engine.ts's create_order case and PLACING ORDERS system prompt rule), which
-// _push_automated_order_to_pancake already knows how to map to a real Pancake product (there's a
-// catalog Items row seeded for CUSTOM-AQUARIUM/CUSTOM-STAND specifically for this) - no new backend
-// handling needed for these lines to sync correctly.
-function addCustomQuoteToSale() {
-  if (!customQuoteResult) return;
-  const result = customQuoteResult;
-  const stand = result.normalized.stand;
-  const aquariumSpec = customAquariumSpecText(result);
-
-  // CategoryCode (not ItemCode) = 'CUSTOM-AQUARIUM', same as orderNow.js and the bot: the Items row is
-  // Code CI-005 / Name CUSTOM-AQUARIUM, which _push_automated_order_to_pancake only finds by Name when
-  // ItemCode is empty - an ItemCode of 'CUSTOM-AQUARIUM' matched nothing and failed the Pancake push.
-  newOrderLines.push({
+  const lines = [{
     category_code: 'CUSTOM-AQUARIUM',
     item_code: null,
-    item_name: `Custom Aquarium (${aquariumSpec})`,
-    price: stand ? result.aquariumOnlyPrice : result.totalPrice,
-    quantity: 1,
-    note: customAquariumNoteText(result),
+    item_name: `Custom Aquarium (${bits.join(', ')})`,
+    price: Math.round(q.perAquariumTotal * 100) / 100,
+    quantity: q.aquariumQty,
+    note: aquariumNote.join('\n'),
     variation_id: null
-  });
+  }];
 
-  if (stand) {
-    const standSpec = customStandSpecText(result);
-    newOrderLines.push({
+  if (standSeparate) {
+    const s = n.stand;
+    const standBits = [`${s.layers}-Layer ${CALC_TUBULAR_LABELS[s.tubular] || s.tubular} Tubular${s.stainless ? ' (Stainless)' : ''}`, `${fmtIn(s.heightInches)}in height`];
+    if (s.cabinet) standBits.push('Cabinet');
+    if (s.canopy) standBits.push('Canopy');
+    if (s.sumpHolder) standBits.push(`Sump Holder (${fmtIn(s.sumpWidth)}in)`);
+    lines.push({
       category_code: 'CUSTOM-STAND',
       item_code: null,
-      item_name: `Custom Stand (${standSpec})`,
-      price: Number(result.components.stand || 0),
-      quantity: 1,
-      note: customStandNoteText(result),
+      item_name: `Custom Stand (${standBits.join(', ')})`,
+      price: Math.round(q.standUnitPrice * 100) / 100,
+      quantity: q.standQty,
+      note: ['CUSTOM STAND', `For aquarium: ${size} (stand top = ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} in)`]
+        .concat(calcDetailRowsText(rows, isStandRow))
+        .concat([`Drawing: ${drawingUrl}`])
+        .join('\n'),
       variation_id: null
     });
   }
 
+  if (sumpSeparate) {
+    const sp = n.sump;
+    lines.push({
+      category_code: 'CUSTOM-SUMP',
+      item_code: null,
+      item_name: `Custom ${sp.type} Sump (${fmtIn(sp.lengthInches)}x${fmtIn(sp.widthInches)}x${fmtIn(sp.heightInches)}in)`,
+      price: Math.round(q.sumpUnitPrice * 100) / 100,
+      quantity: q.sumpQty,
+      note: ['CUSTOM SUMP / FILTRATION', `For aquarium: ${size}`]
+        .concat(calcDetailRowsText(rows, isSumpRow))
+        .join('\n'),
+      variation_id: null
+    });
+  }
+
+  return lines;
+}
+
+function buildStandCalcLines(win) {
+  const r = win.lastResult;
+  if (!r || !r.ok) return [];
+  const n = r.normalized;
+  const doc = win.document;
+  const qty = Math.max(1, Math.round(Number(doc.getElementById('qty')?.value) || 1));
+  const tubular = CALC_TUBULAR_LABELS[n.tubular] || n.tubular;
+  // Black / White paint from the stand calculator (spec only, no price) - not for stainless.
+  const paint = n.stainless ? '' : (doc.getElementById('paint')?.value || '');
+
+  const bits = [`${fmtIn(n.lengthInches)}x${fmtIn(n.widthInches)}x${fmtIn(n.heightInches)}in`, `${n.layers}-Layer ${tubular} Tubular${n.stainless ? ' (Stainless)' : ''}`];
+  if (paint) bits.push(`${paint} Paint`);
+  if (n.cabinet) bits.push('Cabinet');
+  if (n.canopy) bits.push('Canopy');
+  if (n.sumpHolder) bits.push(`Sump Holder (${fmtIn(n.sumpWidthInches)}in)`);
+
+  const params = new URLSearchParams({
+    length: String(n.lengthInches),
+    width: String(n.widthInches),
+    height: String(n.heightInches),
+    unit: 'Inches',
+    layers: String(n.layers),
+    tubular: String(n.tubular)
+  });
+  if (n.stainless) params.set('stainless', '1');
+
+  const note = [
+    'CUSTOM STAND (stand only - no aquarium)',
+    `Top size (L x W): ${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} in`
+      + customEnteredSizeText(n.unit, [doc.getElementById('length')?.value, doc.getElementById('width')?.value]),
+    `Frame: ${n.layers}-layer, ${tubular} in tubular, ${n.stainless ? 'Stainless steel' : `Standard steel, ${paint ? `${paint.toUpperCase()} PAINT` : 'painted'}`}`,
+    `Height: ${fmtIn(n.heightInches)} in total floor-to-top${Number(n.footingInches) > 0 ? ` (includes ${fmtIn(n.footingInches)} in footing)` : ''}`,
+    `Cabinet: ${n.cabinet ? `Yes - ${n.cabinetType || ''} ${n.cabinetDoors ? `${n.cabinetDoors} doors` : ''}`.trim() : 'No (open frame)'}`,
+    `Canopy: ${n.canopy ? `Yes${n.canopyHeightInches ? ` - ${fmtIn(n.canopyHeightInches)} in high` : ''}` : 'No'}`,
+    `Sump Holder: ${n.sumpHolder ? `Yes - ${fmtIn(n.sumpWidthInches)} in wide` : 'No'}`
+  ];
+  if (r.notice) note.push(`Note: ${r.notice.title} - ${r.notice.message}`);
+  note.push(`Drawing: https://rspetstop.com/WebAquariumCalculator/stand.html?${params.toString()}`);
+
+  return [{
+    category_code: 'CUSTOM-STAND',
+    item_code: null,
+    item_name: `Custom Stand (${bits.join(', ')})`,
+    price: Math.round(r.totalPrice * 100) / 100,
+    quantity: qty,
+    note: note.join('\n'),
+    variation_id: null
+  }];
+}
+
+function addCalcEmbedToOrder() {
+  const lines = buildCalcEmbedLines();
+  if (!lines.length) return;
+  lines.forEach((line) => newOrderLines.push(line));
   renderNewOrderLines();
-  closeCustomQuoteModal();
+  closeCalcEmbedModal();
+  calcEmbedKind = null; // next open starts a fresh build
 }
 
 // Second "+" quote button in the Create Order tab, for the desktop POS app's other "CUSTOM
@@ -3720,15 +3738,6 @@ async function handleGmaInboxEvent(payload) {
   document.getElementById('mediaLibraryFileInput').addEventListener('change', onMediaLibraryFileChange);
   document.getElementById('useMediaLibrarySelectionBtn').addEventListener('click', useMediaLibrarySelection);
   document.getElementById('closeVariantPickerModalBtn').addEventListener('click', closeVariantPickerModal);
-  document.getElementById('closeCustomQuoteModalBtn').addEventListener('click', closeCustomQuoteModal);
-  document.getElementById('cancelCustomQuoteBtn').addEventListener('click', closeCustomQuoteModal);
-  document.getElementById('customQuoteStandEnabled').addEventListener('change', toggleCustomQuoteStandFields);
-  document.getElementById('customQuoteSumpEnabled').addEventListener('change', toggleCustomQuoteSumpFields);
-  document.getElementById('customQuoteStandSumpHolder').addEventListener('change', toggleCustomQuoteStandSumpWidth);
-  document.getElementById('customQuoteStickerBgEnabled').addEventListener('change', toggleCustomQuoteStickerBgFields);
-  document.getElementById('customQuoteStickerBottomEnabled').addEventListener('change', toggleCustomQuoteStickerBottomFields);
-  document.getElementById('calculateCustomQuoteBtn').addEventListener('click', calculateCustomQuote);
-  document.getElementById('addCustomQuoteToSaleBtn').addEventListener('click', addCustomQuoteToSale);
   document.getElementById('closeCustomStickerModalBtn').addEventListener('click', closeCustomStickerModal);
   document.getElementById('cancelCustomStickerBtn').addEventListener('click', closeCustomStickerModal);
   document.getElementById('customStickerType').addEventListener('change', () => {
@@ -3744,6 +3753,8 @@ async function handleGmaInboxEvent(payload) {
   });
   document.getElementById('calculateCustomStickerBtn').addEventListener('click', calculateCustomSticker);
   document.getElementById('addCustomStickerToSaleBtn').addEventListener('click', addCustomStickerToSale);
+  document.getElementById('closeCalcEmbedBtn').addEventListener('click', closeCalcEmbedModal);
+  document.getElementById('addCalcEmbedToOrderBtn').addEventListener('click', addCalcEmbedToOrder);
   document.getElementById('closeLineNoteModalBtn').addEventListener('click', closeLineNoteModal);
   document.getElementById('lineNoteModalCancelBtn').addEventListener('click', closeLineNoteModal);
   document.getElementById('lineNoteModalSaveBtn').addEventListener('click', saveLineNoteModal);

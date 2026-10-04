@@ -892,7 +892,20 @@ function stockLinesSummary(s) {
 
 function nextStepForStock(o) {
   const s = stockStatusFor(o);
-  if (!s || !s.needs_serial || s.has_custom_line) return null;
+  if (!s || s.has_custom_line) return null;
+  // SET orders (supabase_online_order_stock_status_set.sql): Assemble first - staff pick the package's
+  // parts (variant / sealant colour / qty) and they're added to the order. After that the parts are real
+  // order lines and the normal stock check below gives Ready to Ship or Assign (build the short ones).
+  if (s.set_pending) {
+    return { action: 'set-assemble', label: 'Assemble', icon: 'ico-assign', title: s.set_unmapped
+      ? 'SET order - pick its package and the parts that go into it (adds them to the order).'
+      : `SET order - choose the parts that go into it (adds them to the order).\n${stockLinesSummary(s)}` };
+  }
+  // Assembled SET with no production part (nothing serial-tracked) - nothing to count, ship it.
+  if (s.has_set_line && !s.needs_serial) {
+    return { action: 'ship-stock', label: 'Ready to Ship', icon: 'ico-ship', title: 'SET order, assembled - move it to To Ship.' };
+  }
+  if (!s.needs_serial) return null;
   if (s.all_available) {
     return { action: 'ship-stock', label: 'Ready to Ship', icon: 'ico-ship', title: `In stock at ${s.warehouse_name || 'this branch'} - pick the serial(s) and move it to To Ship.\n${stockLinesSummary(s)}` };
   }
@@ -916,6 +929,12 @@ async function openStockBuildDialog(o) {
   const missing = (s.lines || []).filter((l) => l.available < l.needed)
     .map((l) => ({ ...l, qty: l.needed - l.available, part: /(stand(?!ard)|top[\s_-]*cover)/i.test(`${l.description || ''} ${l.item_code || ''}`) ? 'stand' : 'tank' }));
   if (!missing.length) return;
+  // A SET part whose package line has several variants and no default can't be built - which variant?
+  const noVariant = missing.filter((m) => m.choose_variant);
+  if (noVariant.length) {
+    alert(`Can't build ${noVariant.map((m) => m.description || m.item_code).join(', ')}: its SET package line doesn't name one exact variant. Set the package line's Item No to the exact variant code on the Customer Aquarium page, then try again.`);
+    return;
+  }
   await loadProductionMembers();
   const parts = [...new Set(missing.map((m) => m.part))];
   const makerOptions = (role) => '<option value="">(Not assigned)</option>' + productionMembers
@@ -936,7 +955,9 @@ async function openStockBuildDialog(o) {
       <p class="muted" style="margin:0 0 10px;">Not enough in stock at <b>${escapeHtml(s.warehouse_name || 'this branch')}</b>. This creates a Production Order for the missing units and hands it to the makers. Once its output is posted, the new serials are in stock and this order can go Ready to Ship.</p>
       <table class="bc-grid" style="width:100%; margin-bottom:12px;">
         <thead><tr><th>Build</th><th>Variant</th><th class="num">Need</th><th class="num">In stock</th><th class="num">To build</th></tr></thead>
-        <tbody>${missing.map((m) => `<tr><td>${escapeHtml(m.description || m.item_code)}</td><td>${escapeHtml(m.variant_name || '-')}</td><td class="num">${m.needed}</td><td class="num">${m.available}</td><td class="num"><b>${m.qty}</b></td></tr>`).join('')}</tbody>
+        <tbody>${missing.map((m, i) => `<tr><td>${escapeHtml(m.description || m.item_code)}</td><td>${m.sealant_any
+          ? `<select class="sb-sealant" data-idx="${i}"><option value="">Sealant?</option>${(m.sealant_options || []).map((opt, k) => `<option value="${k}">${escapeHtml(opt.colour)}</option>`).join('')}</select>`
+          : escapeHtml(m.variant_name || '-')}</td><td class="num">${m.needed}</td><td class="num">${m.available}</td><td class="num"><b>${m.qty}</b></td></tr>`).join('')}</tbody>
       </table>
       ${parts.includes('tank') ? `<label style="display:block; margin-bottom:8px;">Tank Maker<select id="sbTankMaker" style="width:100%;">${makerOptions('TankMaker')}</select></label>` : ''}
       ${parts.includes('stand') ? `<label style="display:block; margin-bottom:8px;">Stand Maker<select id="sbStandMaker" style="width:100%;">${makerOptions('StandMaker')}</select></label>` : ''}
@@ -963,6 +984,17 @@ async function openStockBuildDialog(o) {
       fail('Pick a maker for every part to build.');
       return;
     }
+    // SET sealant parts: build the colour picked here (the order's colour is chosen at Ready to Ship).
+    const buildLines = missing.map((m, i) => {
+      if (!m.sealant_any) return m;
+      const sel = dialog.querySelector(`.sb-sealant[data-idx="${i}"]`);
+      const opt = sel && sel.value !== '' ? m.sealant_options[Number(sel.value)] : null;
+      return opt ? { ...m, item_code: opt.item_code || m.item_code, variation_id: opt.variation_id, variant_name: opt.sku || `${opt.colour} sealant` } : null;
+    });
+    if (buildLines.some((m) => !m)) {
+      fail('Pick Black or Clear sealant for every aquarium / sump to build.');
+      return;
+    }
     btn.disabled = true;
     btn.textContent = 'Creating...';
     const creds = { p_admin_username: currentSession.username, p_admin_password: currentSession.password };
@@ -975,7 +1007,7 @@ async function openStockBuildDialog(o) {
       p_notes: `Built for online order ${o.order_id} - not enough in stock at ${s.warehouse_name || 'the branch'}.`,
       p_tank_maker: tankMaker,
       p_stand_maker: standMaker,
-      p_lines: missing.map((m) => ({
+      p_lines: buildLines.map((m) => ({
         line_no: null, item_code: m.item_code, variant_id: m.variation_id || null,
         description: [m.description || m.item_code, m.variant_name].filter(Boolean).join(' - '), quantity: m.qty
       }))
@@ -1172,6 +1204,21 @@ async function handleNextStepClick(orderId, btn) {
     });
     if (!ok) return;
     await handleToShipClick(String(o.order_id), btn, { readyToShip: true });
+  } else if (btn.dataset.action === 'set-assemble') {
+    // SET order: pick the parts and add them to the order (Pancake too). No status change - afterwards the
+    // stock check sees the parts as normal lines and offers Ready to Ship or Assign.
+    const result = await runSetAssemblyStep(String(o.order_id), btn, { confirmLabel: 'Assemble' });
+    if (result !== 'done') return;
+    stockStatusCache.delete(String(o.order_id));
+    await refreshCurrentOrders();
+    if (openCardOrderId === String(o.order_id)) loadOrderCardLines(String(o.order_id));
+    await ensureStockStatus(findFlatOrder(o.order_id) || o);
+    const s = stockStatusFor(findFlatOrder(o.order_id) || o);
+    alert(!s || !s.needs_serial
+      ? `Order ${o.order_id} is assembled.`
+      : s.all_available
+        ? `Order ${o.order_id} is assembled and every part is in stock at ${s.warehouse_name || 'this branch'} - it can go Ready to Ship.\n${stockLinesSummary(s)}`
+        : `Order ${o.order_id} is assembled, but not everything is in stock at ${s.warehouse_name || 'this branch'} - use Assign to build the missing parts.\n${stockLinesSummary(s)}`);
   } else if (btn.dataset.action === 'ship-stock') {
     // Fresh lines from Pancake first, then re-check stock - the cached check / saved lines can still
     // hold old copies of the lines (order 105852 asked for 2 + 2).
@@ -1185,14 +1232,18 @@ async function handleNextStepClick(orderId, btn) {
     stockStatusCache.delete(String(o.order_id));
     await ensureStockStatus(o);
     const s = stockStatusFor(o);
-    if (!s?.all_available) {
+    // Assembled SET with no production part: nothing to count.
+    const setUnchecked = !!s?.has_set_line && !s.set_pending && !s.needs_serial;
+    if (!s?.all_available && !setUnchecked) {
       alert(s ? `Not everything is in stock at ${s.warehouse_name || 'this branch'} any more:\n${stockLinesSummary(s)}` : 'Could not check the stock for this order - try again.');
       return;
     }
     const ok = await confirmAction({
       caption: 'READY TO SHIP - FROM STOCK',
       title: orderLabel(o),
-      messageHtml: `Everything is in stock at ${escapeHtml(s?.warehouse_name || 'this branch')}:\n${stockLinesHtml(s)}\n\nPick the serial(s) and move this order to To Ship in the portal and Pancake?`,
+      messageHtml: setUnchecked
+        ? 'This SET order is assembled and has no serial-tracked parts. Move it to To Ship in the portal and Pancake?'
+        : `Everything is in stock at ${escapeHtml(s?.warehouse_name || 'this branch')}:\n${stockLinesHtml(s)}\n\nPick the serial(s) and move this order to To Ship in the portal and Pancake?`,
       confirmLabel: 'Yes, Ready to Ship',
       tone: 'is-ship'
     });
@@ -2090,6 +2141,426 @@ async function refreshOrderLinesFromPancake(orderId) {
   return error.message || 'unknown error';
 }
 
+// --- SET package explosion (#setAssemblyModal) -------------------------------------------------
+// The portal's version of the desktop's PrepareSetAssemblyForOrder (OnlineOrdersForm.cs), run at the
+// start of To Ship: each SET line is matched to its Customer Aquarium BOM package (staff pick it once
+// per product, it's remembered), staff check the components (variant, qty, drop one), and
+// staff_save_online_order_set_materials adds them to the Pancake order at price 0 - see
+// sql/supabase_online_order_set_explode.sql. Phase 1: no accessory slots (light/media/pump/...) yet.
+
+let setAssemblyModalResolve = null;
+let setAssemblyState = null; // { orderId, sets: [{ ...set, chosenPackage, resolvedPackage, components }] }
+
+// Returns 'none' (no SET lines), 'done' (materials saved), 'skipped' (SQL not deployed) or null
+// (cancelled / failed - stop To Ship). 'none' and 'done' mean the lines were just re-read from Pancake.
+// pendingOnly (To Ship): skip SETs already assembled (via the Assemble button or the POS). The Assemble
+// button passes false so an assembled SET can be redone.
+async function runSetAssemblyStep(orderId, triggerBtn, { pendingOnly = false, confirmLabel = 'Confirm & Continue' } = {}) {
+  triggerBtn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_set_assembly', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  triggerBtn.disabled = false;
+
+  if (error) {
+    // Not deployed yet - keep To Ship working exactly as before.
+    if (/could not find the function|does not exist/i.test(error.message || '')) return 'skipped';
+    alert('Could not check this order for SET items: ' + (error.message || 'unknown error'));
+    return null;
+  }
+
+  const sets = (data?.sets || []).filter((s) => !pendingOnly || !s.exploded);
+  if (sets.length === 0) return 'none';
+
+  const packages = data?.packages || [];
+  if (packages.length === 0) {
+    alert('This order contains SET item(s), but no aquarium set packages with BOM lines are set up yet (Customer Aquarium page). Please set up the package first, or To Ship through the local POS.');
+    return null;
+  }
+
+  setAssemblyState = {
+    orderId: String(orderId),
+    packages,
+    sets: sets.map((s) => ({
+      ...s,
+      resolvedPackage: s.package_name || null,
+      chosenPackage: s.package_name || '',
+      components: s.components || [],
+      extras: [] // add-ons not in the package: { kind, pick, qty }
+    }))
+  };
+
+  return new Promise((resolve) => {
+    setAssemblyModalResolve = resolve;
+    document.getElementById('setAssemblyModalConfirmBtn').textContent = confirmLabel;
+    document.getElementById('setAssemblyModalError').classList.add('hidden');
+    renderSetAssemblyModal();
+    document.getElementById('setAssemblyModal').classList.remove('hidden');
+  });
+}
+
+function isWholeSetQuantity(qty) {
+  const n = parseFloat(qty);
+  return Number.isFinite(n) && n > 0 && Number.isInteger(n);
+}
+
+// Description / Variant / SKU of the item picked for a SET part (or a prompt while none is picked).
+function setCompDetailHtml(pick, comp) {
+  if (!pick) {
+    return `<div class="muted" style="font-size:12px;">${comp.sealant_choice ? 'Pick Black or Clear sealant above.' : 'Pick a variant above.'}</div>`;
+  }
+  const row = (label, value) => `<div style="display:flex; gap:8px;"><span class="muted" style="flex:0 0 78px;">${label}</span><span style="min-width:0; overflow-wrap:anywhere;">${value}</span></div>`;
+  return [
+    row('Description', escapeHtml(pick.description || pick.name || pick.item_code || '-')),
+    row('Variant', escapeHtml(pick.variant_name || '-')),
+    row('SKU', `<b>${escapeHtml(pick.sku || pick.item_code || '-')}</b>`),
+    typeof pick.in_stock === 'number'
+      ? row('In stock', pick.in_stock > 0 ? `${pick.in_stock} serial(s) at this branch` : '<span class="error-text">none at this branch - Assign will build it</span>')
+      : ''
+  ].join('');
+}
+
+// Dropdown text: SKU first - variants of one product often share the same name (e.g. Black / Clear
+// sealant), the SKU is what tells them apart.
+function setVariantOptionText(v) {
+  const sku = v.sku || v.item_code || '';
+  let label = v.variant_name || v.name || v.item_code || '';
+  // Variant names often repeat the code ("P-013 - A1100-SUBMERSIBLE-PUMP") - don't show it twice.
+  [v.item_code, v.sku].filter(Boolean).forEach((code) => {
+    if (label.toLowerCase().startsWith(`${code.toLowerCase()} - `)) label = label.slice(code.length + 3);
+  });
+  const text = sku && label && sku !== label ? `${sku} - ${label}` : (sku || label);
+  return typeof v.in_stock === 'number' ? `${text} (${v.in_stock} in stock)` : text;
+}
+
+// Row title: the product's Description only - the package line's own name is a variant SKU
+// ("AQ-021-BlackSealant") and read as if the colour were already decided. Variant / SKU live in the
+// dropdown and the detail box below it.
+function setComponentTitle(comp) {
+  const variants = comp.variants || [];
+  return (comp.default && comp.default.description)
+    || (variants.find((v) => v.description) || {}).description
+    || comp.bom_item_name;
+}
+
+function setComponentRowHtml(comp, compIdx) {
+  const def = comp.default || null;
+  const variants = comp.variants || [];
+  let picker = '';
+  let pick = def;
+  if (variants.length > 0) {
+    // Serial-tracked parts (aquarium / sump / stand): only the variants with serials in stock at the
+    // order's branch (in_stock from _set_components_add_stock). None in stock -> all of them, flagged, so
+    // staff can still pick what to build.
+    const inStock = variants.map((v, i) => i).filter((i) => (variants[i].in_stock || 0) > 0);
+    const filterToStock = comp.serial_tracked && inStock.length > 0;
+    const shown = filterToStock ? inStock : variants.map((v, i) => i);
+    let defIdx = def ? variants.findIndex((v) => v.variation_id === def.variation_id) : -1;
+    if (!shown.includes(defIdx)) defIdx = -1;
+    // Only one in-stock choice and nothing else to decide - pick it.
+    if (defIdx < 0 && filterToStock && shown.length === 1 && !comp.sealant_choice) defIdx = shown[0];
+    pick = defIdx >= 0 ? variants[defIdx] : null;
+    const noneNote = comp.serial_tracked && !filterToStock
+      ? '<div class="error-text" style="font-size:12px; margin-top:2px;">None in stock at this branch - pick the one to build (Assign builds it after Assemble).</div>'
+      : '';
+    picker = `
+      <select class="set-comp-variant" style="width:100%; margin-top:4px;">
+        <option value=""${defIdx < 0 ? ' selected' : ''}>${comp.sealant_choice ? '- choose sealant colour -' : '- choose variant -'}</option>
+        ${shown.map((i) => `<option value="${i}"${i === defIdx ? ' selected' : ''}>${escapeHtml(setVariantOptionText(variants[i]))}</option>`).join('')}
+      </select>${noneNote}`;
+  } else if (def && !def.variation_id) {
+    picker = '<div class="error-text" style="font-size:12px; margin-top:2px;">Not linked to a Pancake product - untick it or fix the item first.</div>';
+  }
+  return `
+    <div class="set-comp" data-comp-idx="${compIdx}" style="display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-top:1px solid var(--border, #e5e5e5);">
+      <input type="checkbox" class="set-comp-include" checked style="margin-top:4px;" aria-label="Include ${escapeHtml(setComponentTitle(comp))}" />
+      <div style="flex:1; min-width:0;">
+        <div style="font-weight:600;">${escapeHtml(setComponentTitle(comp))}</div>
+        <div class="muted" style="font-size:12px;">${escapeHtml(String(comp.qty_per))} per set</div>
+        ${picker}
+        <div class="set-comp-detail" style="font-size:12.5px; margin-top:6px; padding:6px 8px; border-radius:6px; background:var(--surface-2, rgba(127,127,127,.08));">${setCompDetailHtml(pick, comp)}</div>
+      </div>
+      <input type="number" class="set-comp-qty" min="0" step="1" value="${escapeHtml(String(comp.quantity))}" style="width:72px;" aria-label="Quantity" />
+    </div>`;
+}
+
+function renderSetAssemblyModal() {
+  const container = document.getElementById('setAssemblyModalSets');
+  const { sets, packages } = setAssemblyState;
+  container.innerHTML = sets.map((s, setIdx) => {
+    const qtyOk = isWholeSetQuantity(s.quantity);
+    const body = !qtyOk
+      ? `<p class="error-text" style="margin:6px 0 0;">SET quantity "${escapeHtml(String(s.quantity))}" is not a whole number - fix the order in Pancake first.</p>`
+      : !s.chosenPackage
+        ? '<p class="muted" style="margin:6px 0 0;">Pick the BOM package for this SET - it\'s remembered for this product next time.</p>'
+        : (s.components.length
+          ? s.components.map((c, i) => setComponentRowHtml(c, i)).join('')
+          : '<p class="muted" style="margin:6px 0 0;">Loading parts...</p>');
+    return `
+      <div class="set-assembly-set" data-set-idx="${setIdx}" style="margin-bottom:20px;">
+        <div style="font-weight:700; margin-bottom:6px;">${escapeHtml(s.description)} <span class="muted">&times; ${escapeHtml(String(s.quantity))}</span></div>
+        <div class="bc-field" style="margin-bottom:6px;">
+          <label>BOM Package</label>
+          <select class="set-package-select" style="width:100%;">
+            <option value=""${s.chosenPackage ? '' : ' selected'}>- select package -</option>
+            ${packages.map((p) => `<option value="${escapeHtml(p)}"${p === s.chosenPackage ? ' selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="set-comp-list">${body}</div>
+        ${qtyOk && s.chosenPackage && s.components.length ? `<div class="set-extras" style="margin-top:8px; padding-top:10px; border-top:1px solid var(--border, #e5e5e5);"></div>` : ''}
+      </div>`;
+  }).join('');
+  sets.forEach((s, setIdx) => renderSetExtras(setIdx));
+
+  // Keep the Description / Variant / SKU panel in step with the dropdown.
+  container.querySelectorAll('.set-comp-variant').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const row = sel.closest('.set-comp');
+      const s = setAssemblyState.sets[Number(sel.closest('.set-assembly-set').dataset.setIdx)];
+      const comp = s.components[Number(row.dataset.compIdx)];
+      const pick = sel.value === '' ? null : comp.variants[Number(sel.value)];
+      row.querySelector('.set-comp-detail').innerHTML = setCompDetailHtml(pick, comp);
+    });
+  });
+
+  container.querySelectorAll('.set-package-select').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const setIdx = Number(sel.closest('.set-assembly-set').dataset.setIdx);
+      loadSetPackageComponents(setIdx, sel.value);
+    });
+  });
+}
+
+// --- SET add-ons: items NOT in the package (the POS's accessory slots - Media 1-5, Light, Pump, Pipe,
+// Mesh Bag). Each button opens a search over that kind's items (staff_search_set_accessory_items, same
+// item pool as the POS); a pick becomes an extra part with its own qty. Rendered per set into its own
+// .set-extras box so adding one doesn't reset the package rows above.
+const SET_ADDON_KINDS = [
+  { kind: 'media', label: 'Media', max: 5 },
+  { kind: 'light', label: 'Light', max: 1 },
+  { kind: 'pump', label: 'Pump', max: 1 },
+  { kind: 'pipe', label: 'Pipe', max: 1 },
+  { kind: 'meshbag', label: 'Mesh Bag', max: 1 }
+];
+
+function renderSetExtras(setIdx) {
+  const setEl = document.querySelector(`#setAssemblyModalSets .set-assembly-set[data-set-idx="${setIdx}"]`);
+  const box = setEl?.querySelector('.set-extras');
+  if (!box) return;
+  const s = setAssemblyState.sets[setIdx];
+  const kindLabel = (kind) => SET_ADDON_KINDS.find((k) => k.kind === kind)?.label || kind;
+
+  box.innerHTML = `
+    <div style="font-weight:600; margin-bottom:4px;">Add-ons <span class="muted" style="font-weight:400; font-size:12px;">- items not in the package</span></div>
+    ${s.extras.map((x, i) => `
+      <div class="set-extra" data-extra-idx="${i}" style="display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--border, #e5e5e5);">
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:600;">${escapeHtml(kindLabel(x.kind))}${x.kind === 'media' ? ` ${s.extras.filter((e, j) => e.kind === 'media' && j <= i).length}` : ''}</div>
+          <div class="set-comp-detail" style="font-size:12.5px; margin-top:4px; padding:6px 8px; border-radius:6px; background:rgba(127,127,127,.08);">${setCompDetailHtml(x.pick, {})}</div>
+        </div>
+        <input type="number" class="set-extra-qty" min="1" step="1" value="${escapeHtml(String(x.qty))}" style="width:72px;" aria-label="Quantity" />
+        <button type="button" class="bc-btn set-extra-remove" title="Remove" aria-label="Remove">&times;</button>
+      </div>`).join('')}
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">
+      ${SET_ADDON_KINDS.map((k) => {
+        const full = s.extras.filter((x) => x.kind === k.kind).length >= k.max;
+        return `<button type="button" class="bc-btn set-addon-btn" data-kind="${k.kind}"${full ? ' disabled' : ''} title="${full ? `Max ${k.max}` : `Add a ${k.label.toLowerCase()} that isn't in the package`}">+ ${escapeHtml(k.label)}</button>`;
+      }).join('')}
+    </div>
+    <div class="set-addon-search hidden" style="margin-top:8px;">
+      <input type="search" class="set-addon-query" placeholder="Search..." autocomplete="off" style="width:100%;" />
+      <div class="set-addon-results" style="max-height:240px; overflow:auto; margin-top:4px; border:1px solid var(--border, #e5e5e5); border-radius:6px;"></div>
+    </div>`;
+
+  box.querySelectorAll('.set-extra-qty').forEach((input) => {
+    input.addEventListener('input', () => {
+      const x = s.extras[Number(input.closest('.set-extra').dataset.extraIdx)];
+      x.qty = input.value;
+    });
+  });
+  box.querySelectorAll('.set-extra-remove').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      s.extras.splice(Number(btn.closest('.set-extra').dataset.extraIdx), 1);
+      renderSetExtras(setIdx);
+    });
+  });
+
+  const searchBox = box.querySelector('.set-addon-search');
+  const queryInput = box.querySelector('.set-addon-query');
+  const results = box.querySelector('.set-addon-results');
+  let activeKind = null;
+  let searchTimer = null;
+  let searchSeq = 0;
+
+  const runSearch = async () => {
+    const seq = ++searchSeq;
+    results.innerHTML = '<div class="muted" style="padding:8px;">Searching...</div>';
+    const { data, error } = await supabaseClient.rpc('staff_search_set_accessory_items', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_kind: activeKind,
+      p_query: queryInput.value.trim() || null
+    });
+    if (seq !== searchSeq) return; // a newer search is running
+    if (error) {
+      results.innerHTML = `<div class="error-text" style="padding:8px;">${escapeHtml(error.message || 'Search failed')}</div>`;
+      return;
+    }
+    const rows = data || [];
+    results.innerHTML = rows.length
+      ? rows.map((r, i) => `
+          <button type="button" class="set-addon-result" data-i="${i}" style="display:block; width:100%; text-align:left; padding:8px; border:0; border-bottom:1px solid var(--border, #e5e5e5); background:none; cursor:pointer; color:inherit;">
+            <div><b>${escapeHtml(r.sku || r.item_code)}</b>${r.variant_name ? ` &middot; ${escapeHtml(r.variant_name)}` : ''}</div>
+            <div class="muted" style="font-size:12px;">${escapeHtml(r.description || r.name || '')}</div>
+          </button>`).join('')
+      : '<div class="muted" style="padding:8px;">No items found.</div>';
+    results.querySelectorAll('.set-addon-result').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        s.extras.push({ kind: activeKind, pick: rows[Number(btn.dataset.i)], qty: 1 });
+        renderSetExtras(setIdx);
+      });
+    });
+  };
+
+  box.querySelectorAll('.set-addon-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.kind;
+      if (activeKind === kind && !searchBox.classList.contains('hidden')) {
+        searchBox.classList.add('hidden'); // second tap closes it
+        activeKind = null;
+        return;
+      }
+      activeKind = kind;
+      queryInput.value = '';
+      queryInput.placeholder = `Search ${SET_ADDON_KINDS.find((k) => k.kind === kind).label.toLowerCase()} - SKU, name...`;
+      searchBox.classList.remove('hidden');
+      runSearch();
+      queryInput.focus();
+    });
+  });
+  queryInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 300);
+  });
+}
+
+async function loadSetPackageComponents(setIdx, packageName) {
+  const s = setAssemblyState.sets[setIdx];
+  s.chosenPackage = packageName || '';
+  s.components = [];
+  renderSetAssemblyModal();
+  if (!packageName || !isWholeSetQuantity(s.quantity)) return;
+
+  const { data, error } = await supabaseClient.rpc('staff_get_set_package_components', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_package_name: packageName,
+    p_set_qty: parseInt(s.quantity, 10),
+    p_order_id: setAssemblyState.orderId
+  });
+  if (!setAssemblyState || setAssemblyState.sets[setIdx] !== s || s.chosenPackage !== packageName) return; // changed meanwhile
+  if (error) {
+    const errorEl = document.getElementById('setAssemblyModalError');
+    errorEl.textContent = 'Could not load the package parts: ' + (error.message || 'unknown error');
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  s.components = data || [];
+  renderSetAssemblyModal();
+}
+
+function closeSetAssemblyModal(result) {
+  document.getElementById('setAssemblyModal').classList.add('hidden');
+  const resolve = setAssemblyModalResolve;
+  setAssemblyModalResolve = null;
+  setAssemblyState = null;
+  if (resolve) resolve(result);
+}
+
+function wireSetAssemblyModalButtons() {
+  document.getElementById('setAssemblyModalCancelBtn').addEventListener('click', () => closeSetAssemblyModal(null));
+
+  document.getElementById('setAssemblyModalConfirmBtn').addEventListener('click', async () => {
+    if (!setAssemblyState) return;
+    const errorEl = document.getElementById('setAssemblyModalError');
+    const confirmBtn = document.getElementById('setAssemblyModalConfirmBtn');
+    const problems = [];
+    const payload = [];
+
+    document.querySelectorAll('#setAssemblyModalSets .set-assembly-set').forEach((setEl) => {
+      const s = setAssemblyState.sets[Number(setEl.dataset.setIdx)];
+      if (!isWholeSetQuantity(s.quantity)) { problems.push(`${s.description}: quantity is not a whole number`); return; }
+      if (!s.chosenPackage) { problems.push(`${s.description}: pick a BOM package`); return; }
+      if (!s.components.length) { problems.push(`${s.description}: parts are still loading`); return; }
+
+      const materials = [];
+      setEl.querySelectorAll('.set-comp').forEach((row) => {
+        if (!row.querySelector('.set-comp-include').checked) return;
+        const comp = s.components[Number(row.dataset.compIdx)];
+        const qty = parseInt(row.querySelector('.set-comp-qty').value, 10);
+        if (!Number.isFinite(qty) || qty <= 0) return; // qty 0 = leave it out
+        let pick = comp.default || null;
+        const variantSel = row.querySelector('.set-comp-variant');
+        if (variantSel) {
+          pick = variantSel.value === '' ? null : comp.variants[Number(variantSel.value)];
+          if (!pick) { problems.push(`${setComponentTitle(comp)}: choose a variant`); return; }
+        }
+        if (!pick || !pick.variation_id) { problems.push(`${setComponentTitle(comp)}: not linked to a Pancake product - untick it`); return; }
+        materials.push({ item_code: pick.item_code || null, variation_id: pick.variation_id, name: pick.name || comp.bom_item_name, quantity: qty });
+      });
+
+      // Add-ons (not in the package).
+      (s.extras || []).forEach((x) => {
+        const qty = parseInt(x.qty, 10);
+        if (!Number.isFinite(qty) || qty <= 0) { problems.push(`${x.pick.sku || x.pick.name}: enter a quantity`); return; }
+        materials.push({ item_code: x.pick.item_code || null, variation_id: x.pick.variation_id, name: x.pick.name || x.pick.sku, quantity: qty });
+      });
+
+      payload.push({
+        line_id: s.line_id,
+        package_name: s.chosenPackage,
+        save_mapping: s.chosenPackage !== s.resolvedPackage,
+        materials
+      });
+    });
+
+    if (problems.length) {
+      errorEl.textContent = problems.join(' · ');
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    errorEl.classList.add('hidden');
+
+    const cancelBtn = document.getElementById('setAssemblyModalCancelBtn');
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true; // Pancake may already be updated - don't let a cancel strand To Ship
+    const originalLabel = confirmBtn.textContent;
+    confirmBtn.textContent = 'Saving to Pancake...';
+    const { data, error } = await supabaseClient.rpc('staff_save_online_order_set_materials', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: setAssemblyState.orderId,
+      p_sets: payload
+    });
+    confirmBtn.disabled = false;
+    cancelBtn.disabled = false;
+    confirmBtn.textContent = originalLabel;
+
+    if (error) {
+      errorEl.textContent = 'Could not save the SET parts: ' + (error.message || 'unknown error');
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (data && data.resynced === false) {
+      // Pancake has the parts; only the local copy is behind - the regular sync catches up.
+      alert('SET parts were saved to Pancake, but the portal could not re-read the order yet. If the serial picker is missing a part, cancel and try To Ship again in a minute.');
+    }
+    closeSetAssemblyModal('done');
+  });
+}
+
 async function getOrderSerialRequirements(orderId) {
   const { data, error } = await supabaseClient.rpc('admin_get_online_order_serial_requirements', {
     p_admin_username: currentSession.username,
@@ -2097,7 +2568,35 @@ async function getOrderSerialRequirements(orderId) {
     p_order_id: orderId
   });
   if (error) throw error;
-  return data || [];
+  const requirements = data || [];
+  if (requirements.length === 0) return requirements;
+
+  // Units that already have a serial SOLD to this order (e.g. 109342: created at Production Done / by
+  // the desktop) don't need another one. The RPC returns each line's full quantity, and
+  // admin_update_online_order_status refuses new serials beyond it ("this order needs 2 and 2 already
+  // have a serial"), so only the remainder is asked for - nothing left = no picker at all.
+  const { data: owned, error: ownedError } = await supabaseClient
+    .from('ItemSerialTracking')
+    .select('ItemCode, VariantCode')
+    .eq('SoldOnlineOrderId', String(orderId))
+    .eq('Status', 'SOLD');
+  if (ownedError) throw ownedError;
+  const ownedKey = (code, variation) => `${code || ''}|${(variation || '').trim()}`;
+  const haveByKey = new Map();
+  (owned || []).forEach((s) => {
+    const key = ownedKey(s.ItemCode, s.VariantCode);
+    haveByKey.set(key, (haveByKey.get(key) || 0) + 1);
+  });
+
+  return requirements
+    .map((r) => {
+      const key = ownedKey(r.item_code, r.variation_id);
+      const have = haveByKey.get(key) || 0;
+      const used = Math.min(have, r.quantity_needed);
+      haveByKey.set(key, have - used);
+      return { ...r, quantity_needed: r.quantity_needed - used };
+    })
+    .filter((r) => r.quantity_needed > 0);
 }
 
 // --- Serial picker modal (#shipSerialModal) ---------------------------------------------------
@@ -2611,6 +3110,15 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
     alert('To-Ship is under construction, please To-Ship through the local POS for now.');
     return;
   }
+
+  // SET items first, same order as the desktop (SET explosion, then serials): the exploded parts
+  // (tank, stand, ...) are real order lines by the time the serial check runs. This also re-reads the
+  // order from Pancake, so the refresh below is skipped.
+  const setStep = await runSetAssemblyStep(orderId, toShipBtn, { pendingOnly: true });
+  if (setStep === null) return;
+  if (setStep !== 'skipped') linesRefreshed = true;
+  // The SET parts are real order lines now - recount stock from them if To Ship stops after this.
+  if (setStep === 'done') stockStatusCache.delete(String(orderId));
 
   let serialRunningNos = null;
   // Shipping from stock (see stockStatusFor): the serials must be picked no matter which warehouse the
@@ -3229,6 +3737,35 @@ function setCardText(id, value) {
   el.textContent = value === null || value === undefined || value === '' ? '-' : value;
 }
 
+// Who last updated the order - the newest entry of Pancake's edit history
+// (supabase_online_order_last_editor.sql). Cached per order + update time, so a newer update re-reads it.
+const lastEditorCache = new Map(); // `${order_id}|${last_updated_at}` -> name, '' (none) or 'loading'
+
+function lastUpdatedText(o) {
+  const when = o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : '';
+  const name = lastEditorCache.get(`${o.order_id}|${o.last_updated_at || ''}`);
+  return name && name !== 'loading' ? [when, `by ${name}`].filter(Boolean).join(' · ') : when;
+}
+
+async function ensureLastEditor(o) {
+  const key = `${o.order_id}|${o.last_updated_at || ''}`;
+  if (lastEditorCache.has(key)) return;
+  lastEditorCache.set(key, 'loading');
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_last_editor', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(o.order_id)
+  });
+  if (error) {
+    // Quietly just the time until supabase_online_order_last_editor.sql is run.
+    console.warn('staff_get_online_order_last_editor:', error.message);
+    lastEditorCache.delete(key);
+    return;
+  }
+  lastEditorCache.set(key, data?.name || '');
+  if (String(openCardOrderId) === String(o.order_id)) setCardText('ocLastUpdated', lastUpdatedText(o));
+}
+
 function fillOrderCardHeader(o) {
   const displayStatus = listDisplayStatus(o);
   document.getElementById('orderCardTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
@@ -3256,7 +3793,8 @@ function fillOrderCardHeader(o) {
   setCardText('ocWarehouse', o.warehouse_name || o.location_id);
   setCardText('ocConfirmedBy', o.confirmed_by);
   setCardText('ocCreatedBy', o.created_by);
-  setCardText('ocLastUpdated', o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : '');
+  setCardText('ocLastUpdated', lastUpdatedText(o));
+  ensureLastEditor(o);
   setCardText('ocForDelivery', o.for_delivery ? 'Yes' : 'No');
   setCardText('ocEstDelivery', o.estimated_delivery_date);
   setCardText('ocDeliveryFee', o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '');
@@ -5082,8 +5620,9 @@ async function initAdvanceOrdersView() {
   // Makers land here instead of the Dashboard - ask them to turn on job notifications
   // (no-op for anyone who isn't a Sales User / Tank / Stand Maker).
   maybeShowPushLoginPrompt(session);
-  // Super Users and Production Managers (who assign the makers) - see initAdvanceOrdersView.
-  const canSeeAdvance = !!(session.isSuperUser || session.isProductionManager);
+  // Super Users and Production Managers (who assign the makers) - see initAdvanceOrdersView. Store
+  // Managers see it view-only (canAssignOrders hides the actions; supabase_advance_orders_store_manager_view.sql).
+  const canSeeAdvance = !!(session.isSuperUser || session.isProductionManager || session.isStoreManager);
   document.getElementById('scopeTabAdvance').classList.toggle('hidden', !canSeeAdvance);
   if (canSeeAdvance && new URLSearchParams(window.location.search).get('scope') === 'advance') {
     await initAdvanceOrdersView();
@@ -5102,6 +5641,7 @@ async function initAdvanceOrdersView() {
   document.getElementById('sendPhotoInput').addEventListener('cancel', handleSendPhotoCancelled);
   wireOrderFilters();
   wireShipSerialModalButtons();
+  wireSetAssemblyModalButtons();
   wireViewSerialsModalButtons();
   wireSendMessageModalButtons();
   wireOrderListActions();

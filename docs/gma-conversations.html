@@ -1931,6 +1931,383 @@
       }
     }
 
+    /* ===== Right panel / Create Order restyle - per "can you beautify this view.. i want this to stand
+       out and be noticeable". Gradient customer header, an accented Create Order tab, numbered
+       colour-coded section cards, big custom-build tiles and a bold total bar. Scoped to
+       .inbox-customer-card so nothing else in the portal changes. ===== */
+    .inbox-customer-card {
+      border: 2px solid #c9d8f0;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .inbox-customer-card.is-create-mode {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16), 0 10px 28px rgba(21, 52, 94, 0.14);
+      background: linear-gradient(180deg, #fff7ea 0%, #eef2f8 180px);
+    }
+    .inbox-customer-card .inbox-customer-header {
+      background: linear-gradient(135deg, #1d4f91 0%, #2f7fd1 100%);
+      color: #fff;
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 6px 16px rgba(29, 79, 145, 0.25);
+    }
+    .inbox-customer-card.is-create-mode .inbox-customer-header {
+      background: linear-gradient(135deg, #1d4f91 0%, #2f7fd1 60%, #f59e0b 140%);
+    }
+    .inbox-customer-card .inbox-customer-avatar {
+      background: #fff;
+      color: #1d4f91;
+      width: 42px;
+      height: 42px;
+      font-size: 16px;
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
+    }
+    .inbox-customer-card .inbox-customer-header-name h3 {
+      font-size: 15px;
+      color: #fff;
+    }
+    .inbox-customer-card .inbox-customer-header-sub {
+      color: rgba(255, 255, 255, 0.82);
+    }
+    .inbox-customer-card .panel-tabs {
+      background: #dde5f2;
+      padding: 4px;
+      border-radius: 12px;
+    }
+    .inbox-customer-card .panel-tab-btn {
+      padding: 10px 4px;
+      font-size: 13px;
+    }
+    .inbox-customer-card .panel-tab-btn[data-tab="create"] {
+      color: #c2410c;
+    }
+    .inbox-customer-card .panel-tab-btn[data-tab="create"].active {
+      background: linear-gradient(135deg, #f97316 0%, #f59e0b 100%);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+    }
+    /* Numbered, colour-coded section cards (1 Customer / 2 Products / 3 Payment). */
+    .inbox-customer-card .form-group {
+      border-left: 4px solid var(--og-accent, #1d4f91);
+    }
+    .inbox-customer-card .form-group-title {
+      color: var(--og-accent, #1d4f91);
+      background: var(--og-soft, #e2ecfb);
+      font-size: 11.5px;
+    }
+    .inbox-customer-card .form-group-title svg {
+      color: var(--og-accent, #1d4f91);
+    }
+    .og-customer { --og-accent: #1d4f91; --og-soft: #e2ecfb; }
+    .og-product { --og-accent: #0f766e; --og-soft: #d9f3ef; }
+    .og-payment { --og-accent: #15803d; --og-soft: #dcf5e3; }
+    .og-step {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--og-accent, #1d4f91);
+      color: #fff;
+      font-size: 10.5px;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+    /* Custom-build tiles (Aquarium / Stand / Stickers) - big, coloured, impossible to miss. */
+    .custom-build-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted, #61738f);
+      margin: 2px 0 8px;
+    }
+    .custom-build-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .custom-build-tile {
+      --tile: #1d4f91;
+      --tile-soft: #e8f0fc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 6px 10px;
+      border: 1.5px solid var(--tile-soft);
+      border-radius: 12px;
+      background: linear-gradient(180deg, #fff 0%, var(--tile-soft) 100%);
+      color: var(--tile);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: center;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+    }
+    .custom-build-tile:hover {
+      transform: translateY(-2px);
+      border-color: var(--tile);
+      box-shadow: 0 6px 16px rgba(21, 52, 94, 0.15);
+    }
+    .custom-build-tile .tile-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: var(--tile);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .custom-build-tile small {
+      font-size: 10.5px;
+      font-weight: 500;
+      color: var(--text-muted, #61738f);
+    }
+    .custom-build-tile.tile-aquarium { --tile: #0369a1; --tile-soft: #dbeefb; }
+    .custom-build-tile.tile-stand { --tile: #b45309; --tile-soft: #fdecd3; }
+    .custom-build-tile.tile-sticker { --tile: #7c3aed; --tile-soft: #ede4fd; }
+    /* Order lines - one card per item with its own Remove button (per "let the user remove per item
+       instead of clear all"; the old table clipped its remove column in this narrow panel). */
+    .order-lines-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .order-lines-empty {
+      text-align: center;
+      padding: 18px 10px;
+      font-size: 12.5px;
+      color: var(--text-muted, #61738f);
+      border: 1.5px dashed #c9d8f0;
+      border-radius: 10px;
+      background: #fafcff;
+    }
+    .order-line-card {
+      border: 1px solid var(--panel-border);
+      border-left: 3px solid var(--og-accent, #0f766e);
+      border-radius: 10px;
+      background: #fff;
+      padding: 9px 10px;
+    }
+    .order-line-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .order-line-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main, #1b355e);
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .order-lines-list .line-note-btn {
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border-radius: 50%;
+      border: 1px solid var(--panel-border);
+      background: #fff;
+      color: var(--muted-text, #61738f);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .order-lines-list .line-note-btn.has-note {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: #fff;
+    }
+    .order-lines-list .line-remove-btn {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 12px;
+      border: 1px solid #f3c4bf;
+      background: #fff5f4;
+      color: #c0392b;
+      font-size: 11.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .order-lines-list .line-remove-btn:hover {
+      background: #c0392b;
+      border-color: #c0392b;
+      color: #fff;
+    }
+    .order-line-bottom {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .order-line-x {
+      color: var(--text-muted, #61738f);
+      font-size: 12px;
+    }
+    .order-lines-list .line-qty-input {
+      width: 38px;
+      text-align: center;
+      padding: 4px 2px;
+      font-size: 12px;
+    }
+    .order-lines-list .line-price-input {
+      width: 90px;
+      padding: 4px 6px;
+      font-size: 12px;
+    }
+    .order-line-total {
+      margin-left: auto;
+      font-weight: 800;
+      font-size: 13.5px;
+      color: var(--text-main, #1b355e);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    /* Bold total bar + Create button */
+    .inbox-customer-card .inbox-order-sticky-footer {
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(4px);
+      box-shadow: 0 -6px 16px rgba(21, 52, 94, 0.08);
+    }
+    .inbox-customer-card .new-order-total-bar {
+      background: linear-gradient(135deg, #12305a 0%, #1d4f91 100%);
+      border-radius: 12px;
+      padding: 12px 16px;
+    }
+    .inbox-customer-card .new-order-total-bar .new-order-total-label {
+      color: rgba(255, 255, 255, 0.8);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 11.5px;
+    }
+    .inbox-customer-card .new-order-total-bar .new-order-total-value {
+      color: #fff;
+      font-size: 24px;
+      font-variant-numeric: tabular-nums;
+    }
+    .inbox-customer-card .new-order-total-bar .new-order-total-value::before {
+      content: "\20B1 ";
+      font-size: 16px;
+      opacity: 0.8;
+    }
+    .inbox-customer-card #newOrderSubmitBtn {
+      background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+      border-color: #15803d;
+      padding-left: 28px;
+      padding-right: 28px;
+      font-weight: 700;
+      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.35);
+    }
+    .inbox-customer-card #newOrderSubmitBtn:hover {
+      filter: brightness(1.06);
+    }
+
+    /* Embedded calculator popup - the real WebAquariumCalculator/index.html and stand.html pages in a
+       same-origin iframe, with our own "Add to Order" footer that reads the calculator's result. */
+    .calc-embed-panel {
+      width: min(1280px, 96vw);
+      max-width: none;
+      height: 92vh;
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+    }
+    .calc-embed-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      color: #fff;
+      background: linear-gradient(135deg, #0369a1 0%, #1d4f91 100%);
+    }
+    .calc-embed-panel.calc-embed-stand .calc-embed-header {
+      background: linear-gradient(135deg, #b45309 0%, #d97706 100%);
+    }
+    .calc-embed-header h2 {
+      margin: 0;
+      font-size: 16px;
+      color: #fff;
+    }
+    .calc-embed-header .calc-embed-sub {
+      font-size: 12px;
+      opacity: 0.85;
+    }
+    .calc-embed-header .btn {
+      margin-left: auto;
+    }
+    .calc-embed-frame {
+      flex: 1 1 auto;
+      width: 100%;
+      min-height: 0;
+      border: 0;
+      background: #f4f7fb;
+    }
+    .calc-embed-footer {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--panel-border);
+      background: #fff;
+      box-shadow: 0 -6px 16px rgba(21, 52, 94, 0.08);
+    }
+    .calc-embed-lines {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-size: 12.5px;
+      color: var(--text-main, #1b355e);
+    }
+    .calc-embed-lines div {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .calc-embed-lines .calc-embed-hint {
+      color: var(--text-muted, #61738f);
+    }
+    /* Why Add to Order is disabled - amber callout so it's obvious what still needs filling in. */
+    .calc-embed-lines .calc-embed-problem {
+      display: inline-block;
+      max-width: 100%;
+      background: #fff4e0;
+      color: #8a4b00;
+      border: 1px solid #f5c77e;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-weight: 600;
+      white-space: normal;
+    }
+    .calc-embed-total {
+      font-size: 20px;
+      font-weight: 800;
+      color: #12305a;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .calc-embed-footer .btn-primary {
+      background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+      border-color: #15803d;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    @media (max-width: 640px) {
+      .custom-build-grid { grid-template-columns: 1fr; }
+      .calc-embed-panel { width: 100vw; height: 100vh; border-radius: 0; }
+      .calc-embed-footer { flex-wrap: wrap; }
+    }
+
     /* This inbox is designed light-only (Messenger-style, many hard-coded light surfaces above), so
        in dark mode it used to mix white panels with near-white text and black inputs. Keep the page
        body light in dark mode too - the top nav and floating chat widget stay dark. */
@@ -2118,186 +2495,25 @@
     </div>
   </div>
 
-  <!-- Per direct follow-up request: lets staff quote a custom-built aquarium/stand right from the
-       Create Order tab (same pricing engine the AI bot itself uses - WebAquariumCalculator/custom-
-       aquarium-calculator.js's calculateCustomAquarium, loaded below - and the same public_get_
-       glass_pricing/public_get_tubular_pricing RPCs), then add the result straight into the order
-       currently being built (addCustomQuoteToSale pushes into newOrderLines) instead of only being
-       reachable via the separate, unconnected Aquarium Calculator nav page. -->
-  <div class="modal-backdrop hidden" id="customQuoteModal">
-    <div class="modal-panel custom-quote-panel">
-      <div class="toolbar">
-        <h2>Custom Aquarium / Stand Quote</h2>
-        <button class="btn btn-secondary btn-sm" id="closeCustomQuoteModalBtn" type="button" style="margin-left:auto;">Close</button>
+  <!-- Custom Aquarium / Custom Stand builder - per "we have our custom aquarium calculator and Stand
+       calculator can we use that": the real WebAquariumCalculator/index.html and stand.html pages
+       (full options, drawings, cut sheet) in a same-origin iframe. Our own footer reads the
+       calculator's result (lastResult / computeQuotedTotal) and adds it to the order - see
+       openCalcEmbedModal in gmaConversations.js. -->
+  <div class="modal-backdrop hidden" id="calcEmbedModal" style="padding:2vh 16px;">
+    <div class="modal-panel calc-embed-panel" id="calcEmbedPanel">
+      <div class="calc-embed-header">
+        <div>
+          <h2 id="calcEmbedTitle">Custom Aquarium</h2>
+          <div class="calc-embed-sub" id="calcEmbedSub">Build it in the calculator, then add it to this order.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="closeCalcEmbedBtn" type="button">Close</button>
       </div>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label>Length</label>
-          <input type="number" id="customQuoteLength" min="0" step="0.1">
-        </div>
-        <div class="form-row">
-          <label>Width</label>
-          <input type="number" id="customQuoteWidth" min="0" step="0.1">
-        </div>
-        <div class="form-row">
-          <label>Height</label>
-          <input type="number" id="customQuoteHeight" min="0" step="0.1">
-        </div>
-        <div class="form-row">
-          <label>Unit</label>
-          <select id="customQuoteUnit">
-            <option value="Inches">Inches</option>
-            <option value="CM">CM</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="form-grid">
-        <div class="form-row">
-          <label>Glass Thickness</label>
-          <select id="customQuoteGlass">
-            <option value="3mm">3mm</option>
-            <option value="6mm" selected>6mm</option>
-            <option value="10mm">10mm</option>
-            <option value="12mm">12mm</option>
-            <option value="19mm">19mm (3/4")</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Options</label>
-          <div class="custom-quote-checkbox-row">
-            <label><input type="checkbox" id="customQuoteTempered"> Tempered</label>
-            <label><input type="checkbox" id="customQuoteLowIron"> Low Iron</label>
-            <label><input type="checkbox" id="customQuoteRimless"> Rimless</label>
-            <label><input type="checkbox" id="customQuoteHighStrip"> High Strip</label>
-          </div>
-        </div>
-        <div class="form-row">
-          <label>Add-ons</label>
-          <div class="custom-quote-checkbox-row">
-            <label><input type="checkbox" id="customQuoteAio"> All-In-One (AIO)</label>
-            <label><input type="checkbox" id="customQuoteEnclosure"> Enclosure</label>
-            <label><input type="checkbox" id="customQuoteAquascape"> Aquascape Service</label>
-          </div>
-        </div>
-      </div>
-
-      <div class="custom-quote-section-label">Filtration Sump</div>
-      <div class="form-row">
-        <label><input type="checkbox" id="customQuoteSumpEnabled"> Include a filtration sump</label>
-      </div>
-      <div class="form-grid hidden" id="customQuoteSumpFields">
-        <div class="form-row">
-          <label>Sump Type</label>
-          <select id="customQuoteSumpType">
-            <option value="Undersump" selected>Undersump</option>
-            <option value="Overhead Sump">Overhead Sump</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Sump Length</label>
-          <input type="number" id="customQuoteSumpLength" min="0" step="0.1">
-        </div>
-        <div class="form-row">
-          <label>Sump Width</label>
-          <input type="number" id="customQuoteSumpWidth" min="0" step="0.1">
-        </div>
-        <div class="form-row">
-          <label>Sump Height</label>
-          <input type="number" id="customQuoteSumpHeight" min="0" step="0.1">
-        </div>
-        <div class="form-row">
-          <label>&nbsp;</label>
-          <div class="custom-quote-checkbox-row">
-            <label><input type="checkbox" id="customQuoteSumpFilterMedias"> Filter Medias</label>
-            <label><input type="checkbox" id="customQuoteSumpOverflowBox"> Overflow Box</label>
-            <label><input type="checkbox" id="customQuoteSumpPiping"> Piping</label>
-            <label><input type="checkbox" id="customQuoteSumpAllumTopCover"> Allum Top Cover</label>
-          </div>
-        </div>
-      </div>
-
-      <div class="custom-quote-section-label">Stand</div>
-      <div class="form-row">
-        <label><input type="checkbox" id="customQuoteStandEnabled"> Include a matching stand</label>
-      </div>
-      <div class="form-grid hidden" id="customQuoteStandFields">
-        <div class="form-row">
-          <label>Layers</label>
-          <select id="customQuoteStandLayers">
-            <option value="1">1</option>
-            <option value="2" selected>2</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Tubular</label>
-          <select id="customQuoteStandTubular">
-            <option value="1x1">1 x 1 in</option>
-            <option value="1.5x1.5">1 1/2 x 1 1/2 in</option>
-            <option value="2x2">2 x 2 in</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Height (override)</label>
-          <input type="number" id="customQuoteStandHeight" min="0" step="0.1" placeholder="Auto">
-        </div>
-        <div class="form-row">
-          <label>Footing (in)</label>
-          <input type="number" id="customQuoteStandFooting" min="0" step="0.5" value="3">
-        </div>
-        <div class="form-row">
-          <label>&nbsp;</label>
-          <div class="custom-quote-checkbox-row">
-            <label><input type="checkbox" id="customQuoteStandStainless"> Stainless</label>
-            <label><input type="checkbox" id="customQuoteStandCabinet"> Cabinet</label>
-            <label><input type="checkbox" id="customQuoteStandSumpHolder"> Sump Holder</label>
-          </div>
-        </div>
-        <div class="form-row hidden" id="customQuoteStandSumpWidthWrap">
-          <label>Sump Holder Width</label>
-          <input type="number" id="customQuoteStandSumpWidth" min="0" step="0.1">
-        </div>
-      </div>
-
-      <div class="custom-quote-section-label">Stickers</div>
-      <div class="form-row">
-        <label><input type="checkbox" id="customQuoteStickerBgEnabled"> Sticker Background</label>
-      </div>
-      <div class="form-grid hidden" id="customQuoteStickerBgFields">
-        <div class="form-row">
-          <label>Type</label>
-          <select id="customQuoteStickerBgType">
-            <option value="plain">Plain Sticker</option>
-            <option value="tiles">Sticker Tiles</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>&nbsp;</label>
-          <label><input type="checkbox" id="customQuoteStickerBgAllSides"> All Sides</label>
-        </div>
-      </div>
-      <div class="form-row">
-        <label><input type="checkbox" id="customQuoteStickerBottomEnabled"> Sticker Bottom</label>
-      </div>
-      <div class="form-grid hidden" id="customQuoteStickerBottomFields">
-        <div class="form-row">
-          <label>Type</label>
-          <select id="customQuoteStickerBottomType">
-            <option value="plain">Plain Sticker</option>
-            <option value="tiles">Sticker Tiles</option>
-          </select>
-        </div>
-      </div>
-
-      <div id="customQuoteError" class="error-text hidden"></div>
-      <button type="button" class="btn btn-secondary btn-sm" id="calculateCustomQuoteBtn">Calculate</button>
-
-      <div class="custom-quote-result hidden" id="customQuoteResult"></div>
-
-      <div class="custom-quote-modal-actions">
-        <button type="button" class="btn btn-secondary btn-sm" id="cancelCustomQuoteBtn">Cancel</button>
-        <button type="button" class="btn btn-primary btn-sm hidden" id="addCustomQuoteToSaleBtn">Add to Sale</button>
+      <iframe class="calc-embed-frame" id="calcEmbedFrame" title="Custom calculator"></iframe>
+      <div class="calc-embed-footer">
+        <div class="calc-embed-lines" id="calcEmbedLines"><div class="calc-embed-hint">Waiting for calculation...</div></div>
+        <div class="calc-embed-total" id="calcEmbedTotal">-</div>
+        <button type="button" class="btn btn-primary" id="addCalcEmbedToOrderBtn" disabled>Add to Order</button>
       </div>
     </div>
   </div>
