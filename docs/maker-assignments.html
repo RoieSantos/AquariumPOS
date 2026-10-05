@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Maker Assignments - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=aq2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .maker-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+    .maker-filters input[type="text"], .maker-filters select { max-width: 240px; }
+    .maker-filters label { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+    .maker-group { margin-bottom: 18px; }
+    .maker-group-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; cursor: pointer; }
+    .maker-group-head h2 { margin: 0; font-size: 1.1rem; }
+    .maker-group-head .maker-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .maker-group.collapsed .table-wrap, .maker-group.collapsed .maker-idle { display: none; }
+    .maker-group .table-wrap { margin-top: 10px; }
+    .maker-idle { margin: 8px 0 0; }
+    .maker-chevron { display: inline-block; width: 1em; transition: transform .15s; }
+    .maker-group.collapsed .maker-chevron { transform: rotate(-90deg); }
+    .rework-note { font-size: .85em; color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Maker Assignments</h1>
+    <p class="muted">Every open Tank Maker / Stand Maker assignment, grouped by maker, from Online / Walk-in, Advance and Production orders. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="stat-card-grid" id="makerStatCards"></div>
+
+      <div class="maker-filters">
+        <input type="text" id="makerSearchInput" placeholder="Search maker, order no, customer..." />
+        <select id="makerSourceFilter">
+          <option value="">All sources</option>
+          <option value="Online">Online</option>
+          <option value="Walk-in">Walk-in</option>
+          <option value="Advance">Advance</option>
+          <option value="Production">Production</option>
+        </select>
+        <select id="makerPartFilter">
+          <option value="">Tank &amp; Stand</option>
+          <option value="tank">Tank only</option>
+          <option value="stand">Stand only</option>
+        </select>
+        <label><input type="checkbox" id="makerHideDone" /> Hide done parts</label>
+        <label><input type="checkbox" id="makerShowIdle" checked /> Show idle makers</label>
+        <button class="btn" id="makerRefreshBtn" type="button">Refresh</button>
+      </div>
+
+      <div id="makerGroups"><p class="muted">Loading...</p></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=all1"></script>
+  <script src="js/nav.js?v=all1"></script>
+  <script src="js/makerAssignments.js?v=2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

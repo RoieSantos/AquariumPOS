@@ -18,19 +18,28 @@
        form + item table. Overrides styles.css's .page rule by appearing later in source order.
        Per direct request to widen the default view further - nearly edge-to-edge instead of a fixed
        cap that leaves large empty margins on wide monitors, while keeping a little breathing room. */
+    /* Per "remove that buttons above and make it full screen": edge-to-edge, no toolbar row, thin
+       gutters - the inbox takes the whole window below the top nav, like Messenger / Business Suite. */
+    /* width:100% + margin:0 - on desktop body is a flex column (see the min-width:801px block), where
+       styles.css's `margin: 0 auto` made .page shrink to its content: a short conversation drew the
+       inbox narrow, one with long URLs drew it wide. minmax(0, 1fr) keeps a long unbreakable line
+       from stretching the middle column past the window. */
     .page {
-      max-width: calc(100vw - 40px);
+      max-width: none;
+      width: 100%;
+      margin: 0;
+      box-sizing: border-box;
+      padding: 8px;
     }
     .inbox-grid {
       display: grid;
-      grid-template-columns: 320px 1fr 400px;
-      gap: 16px;
-      margin-top: 16px;
+      grid-template-columns: 340px minmax(0, 1fr) 400px;
+      gap: 8px;
       align-items: start;
     }
     @media (max-width: 1300px) {
       .inbox-grid {
-        grid-template-columns: 320px 1fr;
+        grid-template-columns: 320px minmax(0, 1fr);
       }
       .inbox-customer-card {
         grid-column: 1 / -1;
@@ -1004,6 +1013,25 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    /* Unread (no staff has opened it since the customer's latest message) - bold name, preview and
+       time plus a blue dot, like Messenger. */
+    .inbox-conv-unread .inbox-conv-psid { font-weight: 800; color: #0b1f3f; }
+    .inbox-conv-unread .inbox-conv-preview { font-weight: 700; color: #0b1f3f; }
+    .inbox-conv-unread .inbox-conv-time { font-weight: 700; color: #1877f2; }
+    .inbox-conv-time { display: inline-flex; align-items: center; gap: 6px; }
+    .inbox-unread-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #1877f2;
+      display: inline-block;
+    }
+    .inbox-seen-by {
+      align-self: flex-end;
+      margin-top: 6px;
+      font-size: 10.5px;
+      color: var(--muted, #6b7280);
+    }
     .inbox-badge {
       display: inline-block;
       font-size: 10px;
@@ -1102,6 +1130,128 @@
     .inbox-msg-status-seen {
       color: #2563eb;
     }
+    /* Messenger-style media/optimistic-send look (see renderMessages / sendMessageToCustomer in
+       gmaConversations.js): caption-less photos/videos drawn bare (no bubble), several in a row as a
+       grid, big emoji-only messages, faded "Sending..." rows, click-to-zoom lightbox, drop target. */
+    .inbox-auto-resume {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 8px;
+      font-size: 11.5px;
+      color: var(--muted, #6b7280);
+    }
+    .inbox-auto-resume.hidden { display: none; }
+    .inbox-auto-resume select {
+      font-size: 12px;
+      padding: 3px 6px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+    }
+    .inbox-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .inbox-pause-note {
+      font-size: 11.5px;
+      color: var(--muted, #6b7280);
+    }
+    .inbox-msg-image { cursor: zoom-in; background: rgba(127, 127, 127, 0.12); }
+    .inbox-msg-video {
+      display: block;
+      max-width: 100%;
+      max-height: 260px;
+      border-radius: 8px;
+      margin-bottom: 4px;
+      background: #000;
+    }
+    .inbox-msg-media { max-width: 100%; }
+    .inbox-msg-media .inbox-msg-image,
+    .inbox-msg-media .inbox-msg-video {
+      border-radius: 16px;
+      max-height: 260px;
+      margin: 0;
+    }
+    .inbox-msg-media-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 120px);
+      gap: 2px;
+    }
+    .inbox-msg-media-grid.inbox-msg-media-grid-3 { grid-template-columns: repeat(3, 96px); }
+    .inbox-msg-media-grid .inbox-msg-image,
+    .inbox-msg-media-grid .inbox-msg-video {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1;
+      object-fit: cover;
+      max-height: none;
+      border-radius: 6px;
+    }
+    .inbox-msg-emoji { font-size: 34px; line-height: 1.15; padding: 2px 0; }
+    .inbox-msg-row-pending .inbox-msg,
+    .inbox-msg-row-pending .inbox-msg-media,
+    .inbox-msg-row-pending .inbox-msg-emoji { opacity: 0.6; }
+    .inbox-msg-retry-btn {
+      border: none;
+      background: none;
+      padding: 0;
+      font: inherit;
+      font-weight: 600;
+      color: #2563eb;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .inbox-thread-card.inbox-drop-active {
+      outline: 2px dashed #1d4f91;
+      outline-offset: -4px;
+    }
+    .inbox-lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      background: rgba(0, 0, 0, 0.88);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .inbox-lightbox.hidden { display: none; }
+    .inbox-lightbox-img {
+      max-width: 88vw;
+      max-height: 84vh;
+      object-fit: contain;
+      border-radius: 6px;
+    }
+    .inbox-lightbox-btn {
+      position: absolute;
+      border: none;
+      background: rgba(255, 255, 255, 0.14);
+      color: #fff;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      font-size: 28px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .inbox-lightbox-btn:hover { background: rgba(255, 255, 255, 0.28); }
+    .inbox-lightbox-btn.hidden { display: none; }
+    .inbox-lightbox-close { top: 16px; right: 16px; }
+    .inbox-lightbox-prev { left: 16px; top: 50%; transform: translateY(-50%); }
+    .inbox-lightbox-next { right: 16px; top: 50%; transform: translateY(-50%); }
+    .inbox-lightbox-footer {
+      position: absolute;
+      bottom: 16px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      color: #ddd;
+      font-size: 13px;
+    }
+    .inbox-lightbox-open { color: #fff; }
     /* Row wrapper: holds the optional sender label, the bubble, and the optional meta line, all
        aligned to whichever side the bubble itself belongs on - lets the label/meta sit OUTSIDE the
        colored bubble (small, subtle, page-background text) instead of eating into its padding,
@@ -2354,18 +2504,23 @@
     </div>
 
     <div id="inboxContent" class="hidden">
-      <div class="toolbar">
-        <button class="btn btn-secondary btn-sm" id="refreshInboxBtn" type="button">Refresh</button>
-        <button class="btn btn-secondary btn-sm" id="importHistoryBtn" type="button">Import Facebook History</button>
-        <button class="btn btn-secondary btn-sm" id="fetchNamesBtn" type="button" title="Look up the Facebook name for every conversation still showing a PSID">Fetch Names</button>
-        <button class="btn btn-secondary btn-sm hidden" id="testHumanAgentBtn" type="button" title="Send a HUMAN_AGENT-tagged test message to the open conversation (for Meta's App Review test call)">Test Human Agent</button>
-        <span id="importHistoryStatus" class="muted hidden"></span>
-      </div>
 
       <div class="inbox-grid">
         <div class="inbox-list-wrap">
           <div class="inbox-list-search">
             <input type="text" id="conversationSearchInput" placeholder="Search conversations..." />
+            <label class="inbox-auto-resume hidden" id="autoResumeWrap" title="After a staff reply (here or in the Meta app) the AI pauses. If no staff reply follows within this time, the AI turns back on and answers any customer left waiting.">
+              <span>AI back on after staff is quiet for</span>
+              <select id="autoResumeMinutesSelect">
+                <option value="0">Never</option>
+                <option value="10">10 min</option>
+                <option value="15">15 min</option>
+                <option value="30">30 min</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+                <option value="240">4 hours</option>
+              </select>
+            </label>
           </div>
           <div class="inbox-list-card" id="conversationListEl">
             <div class="inbox-empty-state">Loading conversations...</div>
@@ -2429,7 +2584,7 @@
             </div>
             <div class="inbox-reply-pending-attachment hidden" id="pendingAttachmentEl">
               <div class="inbox-reply-pending-thumbs" id="pendingAttachmentList"></div>
-              <span>Attached - will send with this reply</span>
+              <span id="pendingAttachmentLabel">Attached - will send with this reply</span>
             </div>
             <textarea id="replyInput" rows="2" placeholder="Type a reply to send on Messenger..."></textarea>
             <div class="inbox-reply-toolbar">
@@ -2682,7 +2837,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=all1"></script>
   <script src="js/nav.js?v=all1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js"></script>
+  <script src="js/gmaConversations.js?v=meta6"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

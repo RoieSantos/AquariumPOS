@@ -2,7 +2,40 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-05
+
+- [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts): also reads `entry.standby` echoes (Meta-app replies when the Page inbox is in control of the conversation - previously ignored), and logs a one-line summary of every webhook entry (echo / app id / standby, no text) to trace delivery. Deployed.
+
+- Meta-app replies not syncing: confirmed the webhook resolves our own app id but has never received a staff echo (likely `message_echoes` not subscribed on the page). [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) now logs every echo received / skipped / recorded for tracing. Deployed.
+
+- Long-run review fixes: [supabase_chatbot_message_id_text.sql](sql/supabase_chatbot_message_id_text.sql) widens `ChatbotMessages."FacebookMessageId"` to `text` (the `"<mid>#2"` ids for extra photos could exceed varchar(100) and fail to save); GMA page keeps at most 30 conversations' messages in memory (`?v=meta6`). New read-only [supabase_check_gma_long_run_health.sql](sql/supabase_check_gma_long_run_health.sql) (attachment storage size / oldest file, message + conversation counts, failing cron jobs).
+
+- GMA Conversations: **unread** conversations show bold with a blue dot until a staff member opens or replies (shared by the team like a Page inbox; AI replies don't count as read), and **"Seen by Mark 3:45 PM, You 3:50 PM"** under the thread. Other open GMA tabs update live. New [supabase_gma_conversation_unread_seen_by.sql](sql/supabase_gma_conversation_unread_seen_by.sql) (`StaffReadAtUtc`, `ChatbotConversationReads`, `admin_mark_chatbot_conversation_read`, `admin_get_chatbot_conversation_seen_by`, list `is_unread`); [gmaConversations.js](docs/js/gmaConversations.js) `?v=meta5`.
+
+- Fix: GMA Conversations didn't move a conversation to the top / showed "1h ago" when a customer messaged a **paused** conversation - only bot/staff replies updated `LastMessageAtUtc`. [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) (before the live-update broadcast) and [chatbot-web-reply](supabase/functions/chatbot-web-reply/index.ts) now set it on every customer message; one-time catch-up [supabase_chatbot_last_message_backfill.sql](sql/supabase_chatbot_last_message_backfill.sql). Also: website chat honours an expired auto-resume timer, and auto-resume never tries to Messenger-send to a website visitor. Both deployed.
+
+- GMA Conversations: customer (and Meta-app staff) **videos and multi-photo messages** now sync - every attachment stored as its own row (extra rows `"<mid>#2"`...), videos up to 25 MB, voice notes / files / locations as "[Voice message]" / "[File]" / "[Location]" placeholders. Payment check runs on up to 3 photos per message; a video/voice/file with no text gets the staff hand-off ack; rate limit ignores the extra photo rows. Page hides the "[Video]" placeholder under a shown video (`?v=meta4`). [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) (`recordMessageWithAttachments`), deployed.
+
+- Fix: GMA Conversations width changed per conversation (short thread = narrow, long URLs = wide) - `.page` shrank to its content in the desktop flex layout. Now always full width (`width:100%`, `margin:0`), middle column `minmax(0, 1fr)` so long lines wrap instead of widening it. [gma-conversations.html](docs/gma-conversations.html).
+
+- pg_cron run log was 51 MB of a 97 MB database: new [supabase_cron_log_cleanup.sql](sql/supabase_cron_log_cleanup.sql) deletes log rows older than 7 days and schedules a daily purge (`purge-cron-run-log`). New read-only [supabase_check_cron_jobs.sql](sql/supabase_check_cron_jobs.sql) lists every job with runs / failures in the last 24h and its latest error.
+
+- New read-only check [supabase_check_cron_log_size.sql](sql/supabase_check_cron_log_size.sql): pg_cron run-log size/rows/failures vs whole database and ChatbotMessages size.
+
+- GMA Conversations: replies typed in the **Meta app / Business Suite** now sync in as "Staff (Meta app)" (webhook records message echoes not sent by our own app; photos stored too). Any staff reply pauses the AI and starts an **auto-resume timer** (default 30 min, selector above the conversation list; header shows "AI back at ..."); if staff stay quiet the AI turns back on and a 1-minute cron answers any customer left waiting. Manual "Pause AI" stays paused with no timer. New [supabase_gma_bot_auto_resume.sql](sql/supabase_gma_bot_auto_resume.sql), [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) (`processEcho`, `?task=auto-resume`, AI reply extracted to `generateAndSendAiReply`), [gmaConversations.js](docs/js/gmaConversations.js) `?v=meta3`.
+
+- GMA Conversations: removed the top toolbar (Refresh / Import Facebook History / Fetch Names / Test Human Agent) and their handlers - live updates cover refresh, the webhook fetches names itself. Inbox now fills the window edge-to-edge (no width cap, thin gutters). `?v=meta2`.
+
+- GMA Conversations now behaves more like Messenger. **Speed:** sends are optimistic ("Sending..." bubble right away, composer free immediately, queued in order, "Not sent - Retry" on failure); each thread is cached so switching back is instant; refreshes only redraw when something changed and don't jump the scroll while reading older messages; list and thread reload in parallel; attachments upload in parallel. **Media:** caption-less photos/videos show without a bubble, back-to-back ones as a grid, videos play inline, click a photo for a lightbox (arrows/Esc), big 👍/emoji-only messages, paste (Ctrl+V) or drag-drop files to attach. [gmaConversations.js](docs/js/gmaConversations.js) `?v=meta1`, [gma-conversations.html](docs/gma-conversations.html).
+- Edge Functions: a customer's photo is now saved and shown in the inbox *before* the AI payment-screenshot scan (the detected payment is filled in a moment later), and the live-update broadcast uses Realtime's REST endpoint (no websocket handshake, old method kept as fallback). [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts), [chatbot-staff-reply](supabase/functions/chatbot-staff-reply/index.ts).
+
+- Advance Orders tab: same **Custom** and **10mm / 12mm glass** badges as the Online Orders list, detected from the advance order's lines. New [supabase_advance_orders_custom_flags.sql](sql/supabase_advance_orders_custom_flags.sql) (`_advance_order_flags`, `admin_list_advance_orders` + `has_custom_line` / `glass_thickness`); [onlineOrders.js](docs/js/onlineOrders.js) `advanceFlagsHtml`, `?v=bc80`.
+
+- Maker Assignments: Advance rows now sort latest-updated first (`AdvanceOrderProduction."UpdatedAtUtc"`, new `updated_at` column + "Updated" column on the page) within each maker / part status. [supabase_maker_assignments_view.sql](sql/supabase_maker_assignments_view.sql), [makerAssignments.js](docs/js/makerAssignments.js) `?v=2`.
+
 ## 2026-10-04
+
+- New **Maker Assignments** page (Production menu, Super Users only): every open Tank / Stand Maker assignment grouped by maker - Online / Walk-in, Advance and Production orders - with Pending / Rework / Done per part, idle makers, and filters. New [supabase_maker_assignments_view.sql](sql/supabase_maker_assignments_view.sql) (`admin_list_maker_assignments`), [maker-assignments.html](docs/maker-assignments.html), [makerAssignments.js](docs/js/makerAssignments.js).
 
 - GMA Create Order > Products: each item is now its own card with a visible red **Remove** button (plus note, qty stepper, unit price, line total). The old table was wider than the panel, so its per-row remove (x) column was clipped and only "Clear" was reachable.
 

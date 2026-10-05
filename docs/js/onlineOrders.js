@@ -4996,8 +4996,12 @@ function advanceMakerCellHtml(o, part) {
   return `${escapeHtml(name)}${doneAt ? ` <span class="oo-done" title="Production done · ${escapeHtml(advanceDateTime(doneAt))}">&#10003; Done</span>` : ''}`;
 }
 
+// Custom / 10mm-12mm glass come from supabase_advance_orders_custom_flags.sql - same badges as the online
+// list (glass isn't a link here: glass-cut-list.html reads online order lines only).
 function advanceFlagsHtml(o) {
   return [
+    o.glass_thickness ? `<span class="badge badge-glass" title="This order has a ${escapeHtml(o.glass_thickness)} glass line">${escapeHtml(o.glass_thickness)} glass</span>` : '',
+    o.has_custom_line ? '<span class="badge badge-custom" title="This order has a custom-built line - it may need a maker assigned.">Custom</span>' : '',
     o.needs_tank ? '<span class="badge badge-custom" title="Has a custom tank line">Tank</span>' : '',
     o.needs_stand ? '<span class="badge badge-custom" title="Has a stand / top cover line">Stand</span>' : '',
     Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : ''

@@ -80,11 +80,15 @@ function renderConversationList() {
       c.is_paused ? '<span class="inbox-badge inbox-badge-paused">Paused</span>' : ''
     ].join('');
 
+    // Bold + blue dot until a staff member opens it (supabase_gma_conversation_unread_seen_by.sql) -
+    // never on the one currently open, since that's being read right now.
+    const unread = c.is_unread && c.psid !== selectedPsid;
+
     return `
-      <div class="inbox-conv-item${c.psid === selectedPsid ? ' active' : ''}" data-psid="${escapeHtml(c.psid)}">
+      <div class="inbox-conv-item${c.psid === selectedPsid ? ' active' : ''}${unread ? ' inbox-conv-unread' : ''}" data-psid="${escapeHtml(c.psid)}">
         <div class="inbox-conv-top">
           <span class="inbox-conv-psid">${escapeHtml(c.customer_name || c.psid)}${badges}</span>
-          <span class="inbox-conv-time">${formatRelativeTime(c.last_message_at_utc)}</span>
+          <span class="inbox-conv-time">${formatRelativeTime(c.last_message_at_utc)}${unread ? '<span class="inbox-unread-dot" title="Unread"></span>' : ''}</span>
         </div>
         <div class="inbox-conv-preview">${escapeHtml(c.last_message_preview || '(no messages)')}</div>
       </div>
@@ -98,11 +102,22 @@ function renderConversationList() {
 
 function renderThreadHeader(conv) {
   const headerEl = document.getElementById('threadHeaderEl');
+  // Paused by a staff reply -> the AI comes back by itself at auto_resume_at_utc if staff go quiet
+  // (supabase_gma_bot_auto_resume.sql); a manual Pause AI has no timer.
+  let pauseNote = '';
+  if (conv.is_paused) {
+    pauseNote = conv.auto_resume_at_utc && !conv.paused_manually
+      ? `AI back at ${formatMessageTime(conv.auto_resume_at_utc)} if no staff reply`
+      : 'AI paused until resumed';
+  }
   headerEl.innerHTML = `
     <span style="font-size:12px; font-weight:600;">${escapeHtml(conv.customer_name || conv.psid)}</span>
-    <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button">
-      ${conv.is_paused ? '▶ Resume AI' : '⏸ Pause AI'}
-    </button>
+    <span class="inbox-header-actions">
+      ${pauseNote ? `<span class="inbox-pause-note">${escapeHtml(pauseNote)}</span>` : ''}
+      <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button">
+        ${conv.is_paused ? '▶ Resume AI' : '⏸ Pause AI'}
+      </button>
+    </span>
   `;
   document.getElementById('togglePauseBtn').addEventListener('click', () => togglePause(conv));
 
@@ -128,6 +143,8 @@ async function togglePause(conv) {
   }
 
   conv.is_paused = nextPaused;
+  conv.paused_manually = nextPaused;
+  conv.auto_resume_at_utc = null;
   renderThreadHeader(conv);
   renderConversationList();
 }
@@ -153,6 +170,11 @@ function formatMessageTime(iso) {
 // mere existence here already proves it was received, so nothing is shown for those.
 function messageStatusLabel(m) {
   if (m.role === 'user') return '';
+  if (m.pending === 'sending') return '<span class="inbox-msg-status inbox-msg-status-sending">Sending...</span>';
+  if (m.pending === 'failed') {
+    return '<span class="inbox-msg-status inbox-msg-status-failed">Not sent</span>' +
+      `<button type="button" class="inbox-msg-retry-btn" data-send-id="${escapeHtml(m.send_id)}">Retry</button>`;
+  }
   if (m.seen_at_utc) return '<span class="inbox-msg-status inbox-msg-status-seen">Seen</span>';
   if (m.delivery_status === 'Failed') return '<span class="inbox-msg-status inbox-msg-status-failed">Failed to send</span>';
   if (m.delivery_status === 'Sent') return '<span class="inbox-msg-status inbox-msg-status-sent">Sent</span>';
@@ -163,82 +185,180 @@ function messageGroupKey(m) {
   return `${m.role}|${m.sent_by_username || ''}`;
 }
 
+function messageDayKey(m) {
+  return m.created_at_utc ? new Date(m.created_at_utc).toDateString() : null;
+}
+
+// Content the webhook stamps on a caption-less photo/video row (ChatbotMessages.Content is NOT NULL) -
+// hidden when the media itself is shown, but kept as text when the file couldn't be stored.
+const MEDIA_PLACEHOLDER_TEXT = new Set(['[Photo]', '[Video]']);
+
+// A photo/video with no caption and no detected-payment card - drawn the Messenger way, as the bare
+// media (no colored bubble around it), and consecutive ones from the same sender are merged into one
+// grid instead of a tall stack of separate bubbles.
+function isMediaOnlyMessage(m) {
+  const isMedia = (m.attachment_type === 'image' || m.attachment_type === 'video') && m.attachment_url;
+  const hasText = m.content && !(isMedia && MEDIA_PLACEHOLDER_TEXT.has(m.content));
+  return !!isMedia && !hasText && (m.detected_payment_amount === null || m.detected_payment_amount === undefined);
+}
+
+// A short emoji-only message (e.g. the Like button's 👍) is shown big with no bubble, like Messenger.
+function isEmojiOnlyText(text) {
+  const t = (text || '').trim();
+  return !!t && [...t].length <= 8 && /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|️|‍|\s)+$/u.test(t);
+}
+
+function mediaTileHtml(m) {
+  const url = escapeHtml(m.attachment_url);
+  return m.attachment_type === 'video'
+    ? `<video class="inbox-msg-video" src="${url}" controls preload="metadata" playsinline></video>`
+    : `<img class="inbox-msg-image" src="${url}" alt="Photo" data-lightbox-src="${url}">`;
+}
+
+// Per "make the conversation flow work like Meta": the thread keeps a per-conversation cache (switching
+// back to a conversation is instant, then refreshes quietly), staff sends appear immediately as
+// "Sending..." bubbles (pendingOutgoing) instead of waiting on Facebook, and a refresh only redraws
+// when something actually changed - and never yanks the scroll down while staff is reading older
+// messages.
+const messageCache = new Map(); // psid -> server rows (oldest first)
+const MESSAGE_CACHE_MAX = 30;
+const messageLoadSeq = new Map(); // psid -> seq of the newest load STARTED
+const messageAppliedSeq = new Map(); // psid -> seq of the newest load APPLIED
+let pendingOutgoing = []; // optimistic staff rows not yet confirmed by the server
+let lastThreadSignature = '';
+let threadStickToBottom = true;
+
+function threadIsNearBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+}
+
+function scrollThreadToBottom() {
+  const el = document.getElementById('threadMessagesEl');
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderThread(opts) {
+  if (!selectedPsid) return;
+  renderMessages(messageCache.get(selectedPsid) || [], opts);
+}
+
 // Messenger-style grouping: consecutive messages from the same sender (and same day) are drawn as
 // one visual cluster - sender label only on the first bubble, timestamp/status only on the last -
 // instead of repeating both on every single message, which is what made the thread so tall before.
-function renderMessages(rows) {
+function renderMessages(serverRows, opts = {}) {
   const messagesEl = document.getElementById('threadMessagesEl');
+  const rows = serverRows.concat(pendingOutgoing.filter((p) => p.psid === selectedPsid));
+
+  const seenByHtml = seenByLineHtml(rows);
+  const signature = selectedPsid + '#' + rows.map((m) =>
+    [m.message_id ?? m.temp_id, m.delivery_status, m.seen_at_utc, m.detected_payment_amount, m.detected_payment_applied_at_utc, m.pending].join('|')
+  ).join(';') + '#' + seenByHtml;
+  if (signature === lastThreadSignature) {
+    if (opts.forceBottom) {
+      threadStickToBottom = true;
+      scrollThreadToBottom();
+    }
+    return;
+  }
+  lastThreadSignature = signature;
 
   if (rows.length === 0) {
     messagesEl.innerHTML = '<div class="inbox-empty-state">No messages yet.</div>';
     return;
   }
 
+  const stick = opts.forceBottom || threadIsNearBottom(messagesEl);
+  const prevScrollTop = messagesEl.scrollTop;
+
   let lastDateKey = null;
   const parts = [];
 
-  rows.forEach((m, i) => {
-    const dateKey = m.created_at_utc ? new Date(m.created_at_utc).toDateString() : null;
+  let i = 0;
+  while (i < rows.length) {
+    const m = rows[i];
+    const dateKey = messageDayKey(m);
     const dateChanged = dateKey && dateKey !== lastDateKey;
     if (dateChanged) {
       parts.push(`<div class="inbox-date-divider"><span>${escapeHtml(formatDateDivider(m.created_at_utc))}</span></div>`);
       lastDateKey = dateKey;
     }
 
+    // A run of caption-less photos/videos from the same sender collapses into one grid.
+    const run = [m];
+    if (isMediaOnlyMessage(m)) {
+      while (i + run.length < rows.length) {
+        const n = rows[i + run.length];
+        if (!isMediaOnlyMessage(n) || messageGroupKey(n) !== messageGroupKey(m) || messageDayKey(n) !== dateKey) break;
+        run.push(n);
+      }
+    }
+    const last = run[run.length - 1];
     const prev = rows[i - 1];
-    const next = rows[i + 1];
+    const next = rows[i + run.length];
     const isGroupStart = dateChanged || !prev || messageGroupKey(prev) !== messageGroupKey(m);
-    const isGroupEnd = !next || (next.created_at_utc && new Date(next.created_at_utc).toDateString() !== dateKey) || messageGroupKey(next) !== messageGroupKey(m);
+    const isGroupEnd = !next || messageDayKey(next) !== dateKey || messageGroupKey(next) !== messageGroupKey(m);
 
     const rowClass = m.role === 'staff' ? 'inbox-msg-row-staff' : m.role === 'assistant' ? 'inbox-msg-row-assistant' : 'inbox-msg-row-user';
     const bubbleClass = m.role === 'staff' ? 'inbox-msg-staff' : m.role === 'assistant' ? 'inbox-msg-assistant' : 'inbox-msg-user';
     const sender = isGroupStart ? messageSenderLabel(m) : null;
-    const hasImage = m.attachment_type === 'image' && m.attachment_url;
-    // '[Photo]' is just the placeholder Content the webhook stamps on an image with no caption
-    // (ChatbotMessages.Content is NOT NULL) - skip showing it as redundant text under the image.
-    const showText = m.content && m.content !== '[Photo]';
-    // Claude's vision pass (extractPaymentDetails in the webhook) flags this as a likely payment
-    // screenshot - a SUGGESTION only, never auto-applied to any order's payments. Staff confirms by
-    // clicking through to the Add Payment form (see useDetectedPayment below).
-    const hasDetectedPayment = m.detected_payment_amount !== null && m.detected_payment_amount !== undefined;
-    const timeLabel = m.created_at_utc ? formatMessageTime(m.created_at_utc) : '';
-    const statusLabel = messageStatusLabel(m);
+    const timeLabel = last.created_at_utc ? formatMessageTime(last.created_at_utc) : '';
+    // A failed/sending item anywhere in a merged media run decides the status shown under it.
+    const statusSource = run.find((r) => r.pending === 'failed') || run.find((r) => r.pending === 'sending') || last;
+    const statusLabel = messageStatusLabel(statusSource);
+    const isPending = run.some((r) => r.pending);
 
-    // .inbox-msg uses white-space:pre-wrap so a customer/bot's OWN line breaks render correctly -
-    // which also means any incidental newlines/indentation from a multi-line template literal
-    // would render as extra blank lines inside the bubble. So its inner content is built as a
-    // single concatenated string with no embedded template-literal whitespace, unlike the row
-    // wrapper around it (not pre-wrap, safe to format normally).
-    const imageHtml = hasImage
-      ? `<a href="${escapeHtml(m.attachment_url)}" target="_blank" rel="noopener"><img class="inbox-msg-image" src="${escapeHtml(m.attachment_url)}" alt="Photo sent by customer"></a>`
-      : '';
-    const textHtml = showText ? escapeHtml(m.content) : '';
-    const paymentApplied = !!m.detected_payment_applied_at_utc;
-    const paymentHtml = hasDetectedPayment
-      ? '<div class="inbox-payment-detected">' +
-        `<div class="inbox-payment-detected-title">Detected Payment (${paymentApplied ? 'confirmed' : 'unconfirmed'})</div>` +
-        `<div>Amount: ${Number(m.detected_payment_amount).toFixed(2)}</div>` +
-        (m.detected_payment_method ? `<div>Method: ${escapeHtml(m.detected_payment_method)}</div>` : '') +
-        (m.detected_payment_reference ? `<div>Ref: ${escapeHtml(m.detected_payment_reference)}</div>` : '') +
-        (m.detected_payment_sender_name ? `<div>From: ${escapeHtml(m.detected_payment_sender_name)}</div>` : '') +
-        (m.detected_payment_at_text ? `<div>Paid on screenshot: ${escapeHtml(m.detected_payment_at_text)}</div>` : '') +
-        (paymentApplied
-          ? ''
-          : `<button type="button" class="btn btn-secondary btn-sm inbox-use-payment-btn" data-message-id="${m.message_id}" data-amount="${Number(m.detected_payment_amount)}" data-method="${escapeHtml(m.detected_payment_method || '')}" data-reference="${escapeHtml(m.detected_payment_reference || '')}">Use in Add Payment</button>`) +
-        '</div>'
-      : '';
-    const bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${imageHtml}${textHtml}${paymentHtml}</div>`;
+    let bubbleHtml;
+    if (isMediaOnlyMessage(m)) {
+      const gridClass = run.length === 1 ? '' : (run.length === 2 || run.length === 4) ? ' inbox-msg-media-grid' : ' inbox-msg-media-grid inbox-msg-media-grid-3';
+      bubbleHtml = `<div class="inbox-msg-media${gridClass}">${run.map(mediaTileHtml).join('')}</div>`;
+    } else if (!m.attachment_url && isEmojiOnlyText(m.content)) {
+      bubbleHtml = `<div class="inbox-msg-emoji">${escapeHtml(m.content.trim())}</div>`;
+    } else {
+      const hasMedia = (m.attachment_type === 'image' || m.attachment_type === 'video') && m.attachment_url;
+      // '[Photo]' / '[Video]' is just the placeholder Content the webhook stamps on media with no caption
+      // (ChatbotMessages.Content is NOT NULL) - skip showing it as redundant text under the image.
+      const showText = m.content && !(hasMedia && MEDIA_PLACEHOLDER_TEXT.has(m.content));
+      // Claude's vision pass (extractPaymentDetails in the webhook) flags this as a likely payment
+      // screenshot - a SUGGESTION only, never auto-applied to any order's payments. Staff confirms by
+      // clicking through to the Add Payment form (see useDetectedPayment below).
+      const hasDetectedPayment = m.detected_payment_amount !== null && m.detected_payment_amount !== undefined;
+
+      // .inbox-msg uses white-space:pre-wrap so a customer/bot's OWN line breaks render correctly -
+      // which also means any incidental newlines/indentation from a multi-line template literal
+      // would render as extra blank lines inside the bubble. So its inner content is built as a
+      // single concatenated string with no embedded template-literal whitespace, unlike the row
+      // wrapper around it (not pre-wrap, safe to format normally).
+      const mediaHtml = hasMedia ? mediaTileHtml(m) : '';
+      const textHtml = showText ? escapeHtml(m.content) : '';
+      const paymentApplied = !!m.detected_payment_applied_at_utc;
+      const paymentHtml = hasDetectedPayment
+        ? '<div class="inbox-payment-detected">' +
+          `<div class="inbox-payment-detected-title">Detected Payment (${paymentApplied ? 'confirmed' : 'unconfirmed'})</div>` +
+          `<div>Amount: ${Number(m.detected_payment_amount).toFixed(2)}</div>` +
+          (m.detected_payment_method ? `<div>Method: ${escapeHtml(m.detected_payment_method)}</div>` : '') +
+          (m.detected_payment_reference ? `<div>Ref: ${escapeHtml(m.detected_payment_reference)}</div>` : '') +
+          (m.detected_payment_sender_name ? `<div>From: ${escapeHtml(m.detected_payment_sender_name)}</div>` : '') +
+          (m.detected_payment_at_text ? `<div>Paid on screenshot: ${escapeHtml(m.detected_payment_at_text)}</div>` : '') +
+          (paymentApplied
+            ? ''
+            : `<button type="button" class="btn btn-secondary btn-sm inbox-use-payment-btn" data-message-id="${m.message_id}" data-amount="${Number(m.detected_payment_amount)}" data-method="${escapeHtml(m.detected_payment_method || '')}" data-reference="${escapeHtml(m.detected_payment_reference || '')}">Use in Add Payment</button>`) +
+          '</div>'
+        : '';
+      bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${mediaHtml}${textHtml}${paymentHtml}</div>`;
+    }
 
     parts.push(`
-      <div class="inbox-msg-row ${rowClass}${isGroupStart ? ' inbox-msg-group-start' : ''}">
+      <div class="inbox-msg-row ${rowClass}${isGroupStart ? ' inbox-msg-group-start' : ''}${isPending ? ' inbox-msg-row-pending' : ''}">
         ${sender ? `<span class="inbox-msg-sender">${escapeHtml(sender)}</span>` : ''}
         ${bubbleHtml}
-        ${isGroupEnd ? `<div class="inbox-msg-meta">${escapeHtml(timeLabel)}${statusLabel}</div>` : ''}
+        ${isGroupEnd || isPending ? `<div class="inbox-msg-meta">${escapeHtml(timeLabel)}${statusLabel}</div>` : ''}
       </div>
     `);
-  });
 
-  messagesEl.innerHTML = parts.join('');
+    i += run.length;
+  }
+
+  messagesEl.innerHTML = parts.join('') + seenByHtml;
 
   messagesEl.querySelectorAll('.inbox-use-payment-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -250,8 +370,13 @@ function renderMessages(rows) {
       );
     });
   });
+  messagesEl.querySelectorAll('.inbox-msg-retry-btn').forEach((btn) => {
+    btn.addEventListener('click', () => retryPendingSend(btn.dataset.sendId));
+  });
 
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  threadStickToBottom = stick;
+  if (stick) scrollThreadToBottom();
+  else messagesEl.scrollTop = prevScrollTop;
 }
 
 // Reads what Claude's vision pass detected on a payment screenshot and hands it to the
@@ -276,9 +401,21 @@ function useDetectedPayment(amount, method, reference, messageId) {
   renderCustomerPanel(conv);
 }
 
-async function loadMessages(psid) {
+// opts.forceBottom - jump to the newest message (opening a conversation / own send).
+// opts.beforeApply - runs just before the fresh rows are cached/drawn (or on error), so a send can
+// swap its "Sending..." placeholders for the real rows in one redraw with no flicker.
+async function loadMessages(psid, opts = {}) {
   const messagesEl = document.getElementById('threadMessagesEl');
-  messagesEl.innerHTML = '<div class="inbox-empty-state">Loading messages...</div>';
+  const seq = (messageLoadSeq.get(psid) || 0) + 1;
+  messageLoadSeq.set(psid, seq);
+
+  if (psid === selectedPsid) {
+    if (messageCache.has(psid)) renderThread({ forceBottom: opts.forceBottom });
+    else {
+      lastThreadSignature = '';
+      messagesEl.innerHTML = '<div class="inbox-empty-state">Loading messages...</div>';
+    }
+  }
 
   const { data, error } = await supabaseClient.rpc('admin_get_chatbot_conversation_messages', {
     p_admin_username: currentSession.username,
@@ -287,13 +424,36 @@ async function loadMessages(psid) {
     p_limit: 200
   });
 
+  if (opts.beforeApply) opts.beforeApply();
+
   if (error) {
-    messagesEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(error.message)}</div>`;
+    if (psid !== selectedPsid) return;
+    if (messageCache.has(psid)) renderThread();
+    else {
+      lastThreadSignature = '';
+      messagesEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(error.message)}</div>`;
+    }
     return;
   }
 
+  // An older request finishing after a newer one already landed would roll the thread back.
+  if (seq < (messageAppliedSeq.get(psid) || 0)) {
+    if (psid === selectedPsid) renderThread();
+    return;
+  }
+  messageAppliedSeq.set(psid, seq);
+
   const rows = data || [];
-  renderMessages(rows);
+  // Re-insert so the Map's order is least-recently-loaded first, then keep only the last
+  // MESSAGE_CACHE_MAX conversations - a tab left open all day shouldn't hold every thread in memory.
+  messageCache.delete(psid);
+  messageCache.set(psid, rows);
+  for (const key of messageCache.keys()) {
+    if (messageCache.size <= MESSAGE_CACHE_MAX) break;
+    if (key !== selectedPsid) messageCache.delete(key);
+  }
+  if (psid !== selectedPsid) return;
+  renderMessages(rows, { forceBottom: opts.forceBottom });
 
   // Walk backwards (rows are oldest-first) for the latest still-unconfirmed detection.
   latestDetectedPayment = null;
@@ -304,6 +464,69 @@ async function loadMessages(psid) {
       break;
     }
   }
+}
+
+// Click-to-zoom photo viewer (Messenger's own behavior) instead of opening each photo in a new tab -
+// arrows / Left-Right keys step through every photo in the open thread, Esc or a backdrop click closes.
+let lightboxState = { srcs: [], index: 0 };
+
+function ensureLightbox() {
+  let box = document.getElementById('inboxLightbox');
+  if (box) return box;
+  box = document.createElement('div');
+  box.id = 'inboxLightbox';
+  box.className = 'inbox-lightbox hidden';
+  box.innerHTML = `
+    <button type="button" class="inbox-lightbox-btn inbox-lightbox-close" data-action="close" title="Close (Esc)">&times;</button>
+    <button type="button" class="inbox-lightbox-btn inbox-lightbox-prev" data-action="prev" title="Previous">&#8249;</button>
+    <img class="inbox-lightbox-img" alt="">
+    <button type="button" class="inbox-lightbox-btn inbox-lightbox-next" data-action="next" title="Next">&#8250;</button>
+    <div class="inbox-lightbox-footer">
+      <span class="inbox-lightbox-count"></span>
+      <a class="inbox-lightbox-open" target="_blank" rel="noopener">Open full size</a>
+    </div>
+  `;
+  box.addEventListener('click', (e) => {
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    if (action === 'close' || e.target === box) closeLightbox();
+    else if (action === 'prev') stepLightbox(-1);
+    else if (action === 'next') stepLightbox(1);
+  });
+  document.body.appendChild(box);
+  return box;
+}
+
+function openLightbox(src) {
+  const srcs = Array.from(document.querySelectorAll('#threadMessagesEl [data-lightbox-src]')).map((el) => el.dataset.lightboxSrc);
+  lightboxState = { srcs: srcs.length ? srcs : [src], index: Math.max(0, srcs.indexOf(src)) };
+  ensureLightbox().classList.remove('hidden');
+  showLightboxImage();
+}
+
+function showLightboxImage() {
+  const box = ensureLightbox();
+  const { srcs, index } = lightboxState;
+  box.querySelector('.inbox-lightbox-img').src = srcs[index];
+  box.querySelector('.inbox-lightbox-open').href = srcs[index];
+  box.querySelector('.inbox-lightbox-count').textContent = srcs.length > 1 ? `${index + 1} / ${srcs.length}` : '';
+  box.querySelector('.inbox-lightbox-prev').classList.toggle('hidden', srcs.length < 2);
+  box.querySelector('.inbox-lightbox-next').classList.toggle('hidden', srcs.length < 2);
+}
+
+function stepLightbox(delta) {
+  const n = lightboxState.srcs.length;
+  if (n < 2) return;
+  lightboxState.index = (lightboxState.index + delta + n) % n;
+  showLightboxImage();
+}
+
+function closeLightbox() {
+  document.getElementById('inboxLightbox')?.classList.add('hidden');
+}
+
+function lightboxIsOpen() {
+  const box = document.getElementById('inboxLightbox');
+  return !!box && !box.classList.contains('hidden');
 }
 
 async function openConversation(psid) {
@@ -335,7 +558,9 @@ async function openConversation(psid) {
   flaggedOrderNo = null;
   activeDetectedPaymentMessageId = null;
   renderCustomerPanel(conv);
-  await loadMessages(psid);
+  markConversationRead(psid); // not awaited - marks read + loads "Seen by" alongside the messages
+  await loadMessages(psid, { forceBottom: true });
+  if (selectedPsid !== psid) return; // staff already moved on to another conversation
 
   // If the latest inbound photo detected an unconfirmed payment, pre-fill and flag it right away -
   // same effect as staff clicking "Use in Add Payment" on the message bubble, just automatic so
@@ -2338,158 +2563,64 @@ async function submitNewOrder() {
   }
 }
 
-// One-time (safe to re-run) pull of Page conversation history via the Conversations Graph API -
-// see supabase/functions/facebook-conversations-backfill. Mainly useful while pages_messaging is
-// still awaiting Meta App Review (the live webhook only fires for Testers/Admins until then) or
-// to catch anything that happened before the webhook existed at all.
-async function importFacebookHistory() {
-  const btn = document.getElementById('importHistoryBtn');
-  const statusEl = document.getElementById('importHistoryStatus');
-
-  if (!confirm('Import conversation history from the Facebook Page? This can take a while for a large inbox, and is safe to run more than once.')) return;
-
-  btn.disabled = true;
-  statusEl.classList.remove('hidden');
-  statusEl.textContent = 'Importing... this may take a minute.';
-
-  try {
-    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/facebook-conversations-backfill`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
-        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
-      },
-      body: JSON.stringify({
-        admin_username: currentSession.username,
-        admin_password: currentSession.password
-      })
-    });
-
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      statusEl.textContent = `Import failed: ${result.error || response.status}`;
-      return;
-    }
-
-    let summary = `Imported ${result.conversationsSeen} conversation(s), ${result.messagesProcessed} message(s), ${result.imagesStored} photo(s).`;
-    if (result.namesMissing) summary += ` ${describeNameResult(result)}`;
-    if (result.note) summary += ` ${result.note}`;
-    statusEl.textContent = summary;
-    await loadConversations();
-  } catch (err) {
-    statusEl.textContent = `Import failed: ${err instanceof Error ? err.message : 'network error'}`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function describeNameResult(result) {
-  let text = `Names: ${result.namesResolved} of ${result.namesMissing} found.`;
-  if (result.nameError && result.namesResolved < result.namesMissing) text += ` Facebook said: "${result.nameError}"`;
-  return text;
-}
-
-// Fills in the Facebook name for every conversation still showing a raw PSID - the live webhook
-// only looks names up when that customer sends a new message (facebook-conversations-backfill's
-// names_only mode).
-async function fetchMissingNames() {
-  const btn = document.getElementById('fetchNamesBtn');
-  const statusEl = document.getElementById('importHistoryStatus');
-
-  btn.disabled = true;
-  statusEl.classList.remove('hidden');
-  statusEl.textContent = 'Looking up names...';
-
-  try {
-    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/facebook-conversations-backfill`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
-        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
-      },
-      body: JSON.stringify({
-        admin_username: currentSession.username,
-        admin_password: currentSession.password,
-        mode: 'names_only'
-      })
-    });
-
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      statusEl.textContent = `Name lookup failed: ${result.error || response.status}`;
-      return;
-    }
-    statusEl.textContent = result.namesMissing ? describeNameResult(result) : 'Every conversation already has a name.';
-    await loadConversations();
-  } catch (err) {
-    statusEl.textContent = `Name lookup failed: ${err instanceof Error ? err.message : 'network error'}`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// SuperUser-only: sends "Human Agent test" to the open conversation with the HUMAN_AGENT tag forced
-// (chatbot-staff-reply's force_human_agent) - the App Dashboard's Human Agent test call, without
-// waiting for a customer to fall outside the 24h window. Shows Facebook's exact result.
-async function testHumanAgent() {
-  const btn = document.getElementById('testHumanAgentBtn');
-  const statusEl = document.getElementById('importHistoryStatus');
-  statusEl.classList.remove('hidden');
-  if (!selectedPsid) {
-    statusEl.textContent = 'Open a conversation first (your own, as an app admin/tester).';
-    return;
-  }
-  if (!confirm('Send "Human Agent test" to this conversation using the HUMAN_AGENT tag?')) return;
-
-  btn.disabled = true;
-  statusEl.textContent = 'Sending Human Agent test...';
-  try {
-    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
-        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
-      },
-      body: JSON.stringify({
-        admin_username: currentSession.username,
-        admin_password: currentSession.password,
-        psid: selectedPsid,
-        message: 'Human Agent test',
-        images: [],
-        force_human_agent: true
-      })
-    });
-    const result = await response.json().catch(() => ({}));
-    statusEl.textContent = response.ok
-      ? 'Human Agent test sent. The App Dashboard counter can take up to 24h to update.'
-      : `Human Agent test failed: ${result.error || response.status}`;
-    await loadMessages(selectedPsid);
-  } catch (err) {
-    statusEl.textContent = `Human Agent test failed: ${err instanceof Error ? err.message : 'network error'}`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 // Core send path shared by Enter-to-send in the textarea, a quick-reply/product-list pick, an
 // ad-hoc attachment, and the Like button below - all are "staff sends this to the customer right
 // now", just with a different source/payload. `images` accepts plain URL strings (Quick Reply/
 // Product List - no Storage object we own to clean up later) or {url, path} objects (an ad-hoc
 // attachment - path lets the server record AttachmentPath so the existing 60-day cleanup cron can
 // delete it). `like` sends Messenger's own native thumbs-up sticker instead of text/images - see
-// chatbot-staff-reply's LIKE_STICKER_ID. Returns true on success (caller decides what to clear/
-// reset).
-async function sendMessageToCustomer(message, images, like) {
+// chatbot-staff-reply's LIKE_STICKER_ID.
+//
+// Messenger-style optimistic send: the message shows up in the thread immediately as a "Sending..."
+// bubble and the composer is free again right away; the actual Facebook delivery runs in the
+// background through sendQueue (one send at a time, so rapid-fire messages arrive in the order they
+// were typed). If it can't be delivered the bubble turns into "Not sent - Retry". Resolves to true
+// once delivered (callers that care, like Product List, can still await it).
+let sendQueue = Promise.resolve();
+let sendBatchSeq = 0;
+const sendRequests = new Map(); // send_id -> { psid, message, images, like } (for Retry)
+
+function sendMessageToCustomer(message, images, like) {
   const errorEl = document.getElementById('replyErrorEl');
   errorEl.classList.add('hidden');
   const normalized = normalizePendingImages(images);
-  if (!selectedPsid || (!message && normalized.length === 0 && !like)) return false;
+  const psid = selectedPsid;
+  if (!psid || (!message && normalized.length === 0 && !like)) return Promise.resolve(false);
 
+  const sendId = `send-${++sendBatchSeq}`;
+  const base = {
+    psid,
+    send_id: sendId,
+    role: 'staff',
+    sent_by_username: currentSession.username,
+    created_at_utc: new Date().toISOString(),
+    pending: 'sending'
+  };
+  // Same split chatbot-staff-reply does server-side: one bubble per photo/video, then the text.
+  const items = like
+    ? [{ ...base, temp_id: `${sendId}-like`, content: '👍' }]
+    : [
+        ...normalized.map((img, i) => ({ ...base, temp_id: `${sendId}-${i}`, content: '', attachment_type: img.type, attachment_url: img.url })),
+        ...(message ? [{ ...base, temp_id: `${sendId}-text`, content: message }] : [])
+      ];
+  pendingOutgoing.push(...items);
+  sendRequests.set(sendId, { psid, message, images: normalized, like: !!like });
+  if (psid === selectedPsid) renderThread({ forceBottom: true });
+
+  const run = sendQueue.then(() => deliverPendingSend(sendId));
+  sendQueue = run.catch(() => {});
+  return run;
+}
+
+async function deliverPendingSend(sendId) {
+  const req = sendRequests.get(sendId);
+  if (!req) return false;
+  const errorEl = document.getElementById('replyErrorEl');
+
+  let response;
+  let result = {};
   try {
-    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+    response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2499,36 +2630,63 @@ async function sendMessageToCustomer(message, images, like) {
       body: JSON.stringify({
         admin_username: currentSession.username,
         admin_password: currentSession.password,
-        psid: selectedPsid,
-        message,
-        images: normalized,
-        like: !!like
+        psid: req.psid,
+        message: req.message,
+        images: req.images,
+        like: req.like
       })
     });
-
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      errorEl.textContent = result.error || `Send failed (${response.status}).`;
-      errorEl.classList.remove('hidden');
-      // A loggedOnly failure (Facebook delivery rejected) still recorded the message and
-      // auto-paused the conversation server-side - refresh so the portal reflects that.
-      if (result.loggedOnly) {
-        await loadConversations();
-        await loadMessages(selectedPsid);
-      }
-      return false;
-    }
-
-    await loadConversations();
-    const conv = conversations.find((c) => c.psid === selectedPsid);
-    if (conv) renderThreadHeader(conv);
-    await loadMessages(selectedPsid);
-    return true;
+    result = await response.json().catch(() => ({}));
   } catch (err) {
-    errorEl.textContent = err instanceof Error ? err.message : 'Could not reach the send function.';
-    errorEl.classList.remove('hidden');
+    markPendingSendFailed(sendId, err instanceof Error ? err.message : 'Could not reach the send function.');
     return false;
   }
+
+  // Not recorded at all server-side (bad session, etc.) - keep the bubble so staff can Retry.
+  if (!response.ok && !result.loggedOnly) {
+    markPendingSendFailed(sendId, result.error || `Send failed (${response.status}).`);
+    return false;
+  }
+
+  // Recorded server-side - either delivered, or (loggedOnly) logged with DeliveryStatus 'Failed'
+  // and the conversation auto-paused. Either way the real rows replace the placeholders now.
+  if (!response.ok && req.psid === selectedPsid) {
+    errorEl.textContent = result.error || `Send failed (${response.status}).`;
+    errorEl.classList.remove('hidden');
+  }
+  sendRequests.delete(sendId);
+  await Promise.all([
+    loadConversations().then(() => {
+      const conv = conversations.find((c) => c.psid === selectedPsid);
+      if (conv && req.psid === selectedPsid) renderThreadHeader(conv);
+    }),
+    loadMessages(req.psid, {
+      forceBottom: req.psid === selectedPsid && threadStickToBottom,
+      beforeApply: () => { pendingOutgoing = pendingOutgoing.filter((p) => p.send_id !== sendId); }
+    })
+  ]);
+  return response.ok;
+}
+
+function markPendingSendFailed(sendId, message) {
+  const req = sendRequests.get(sendId);
+  pendingOutgoing.forEach((p) => {
+    if (p.send_id === sendId) p.pending = 'failed';
+  });
+  if (req && req.psid === selectedPsid) {
+    const errorEl = document.getElementById('replyErrorEl');
+    errorEl.textContent = message;
+    errorEl.classList.remove('hidden');
+    renderThread();
+  }
+}
+
+function retryPendingSend(sendId) {
+  const req = sendRequests.get(sendId);
+  if (!req) return;
+  pendingOutgoing = pendingOutgoing.filter((p) => p.send_id !== sendId);
+  sendRequests.delete(sendId);
+  sendMessageToCustomer(req.message, req.images, req.like);
 }
 
 // Set when a quick reply/product photo (or an ad-hoc attachment) is loaded into the textbox (see
@@ -2569,9 +2727,16 @@ function setPendingReplyImages(images) {
   pendingReplyImageUrls = normalizePendingImages(images);
   const wrap = document.getElementById('pendingAttachmentEl');
   const listEl = document.getElementById('pendingAttachmentList');
+  const labelEl = document.getElementById('pendingAttachmentLabel');
+
+  if (labelEl) {
+    labelEl.textContent = attachmentUploadsInFlight > 0
+      ? `Uploading ${attachmentUploadsInFlight} file${attachmentUploadsInFlight === 1 ? '' : 's'}...`
+      : 'Attached - will send with this reply';
+  }
 
   if (pendingReplyImageUrls.length === 0) {
-    wrap.classList.add('hidden');
+    wrap.classList.toggle('hidden', attachmentUploadsInFlight === 0);
     listEl.innerHTML = '';
     return;
   }
@@ -2595,103 +2760,113 @@ function setPendingReplyImages(images) {
 }
 
 // Per direct request: no more explicit Send button for typed text - Enter (see the replyInput
-// keydown listener in init()) is the only way to send it now, same as most chat apps.
+// keydown listener in init()) is the only way to send it now, same as most chat apps. The box clears
+// instantly (optimistic send), so staff can keep typing the next message while this one goes out.
 async function sendReply() {
   const input = document.getElementById('replyInput');
+  // Enter pressed while a photo is still uploading - wait for it so it goes out with this message.
+  if (attachmentUploadPromise) await attachmentUploadPromise;
+
   const message = input.value.trim();
   const images = pendingReplyImageUrls;
   if (!message && images.length === 0) return;
 
-  input.disabled = true;
-  const ok = await sendMessageToCustomer(message, images);
-  input.disabled = false;
-  if (ok) {
-    input.value = '';
-    autoResizeReplyInput();
-    setPendingReplyImages([]);
-  }
+  input.value = '';
+  autoResizeReplyInput();
+  setPendingReplyImages([]);
   input.focus();
+  sendMessageToCustomer(message, images);
 }
 
 // The button that replaced Send in the toolbar - per direct request, matches Messenger's own
 // composer: a filled thumbs-up that sends Facebook's native "like" sticker on its own, independent
 // of whatever text/photos might currently be sitting in the box (those still only go out via Enter).
-async function sendLike() {
-  const btn = document.getElementById('likeBtn');
-  btn.disabled = true;
-  await sendMessageToCustomer('', [], true);
-  btn.disabled = false;
+function sendLike() {
+  sendMessageToCustomer('', [], true);
 }
 
 // Ad-hoc attachment - per direct request, a generic "attach a photo (or, per direct follow-up,
 // video) from my device" feature alongside Quick Reply/Product list, for a one-off file that isn't a
 // reusable template or catalog item. Reuses the same pendingReplyImageUrls staging area/UI as those
 // two - once uploaded, an attachment behaves identically to one picked from a Quick Reply (shown in
-// the same removable-thumbnail strip, sent alongside whatever text is typed).
+// the same removable-thumbnail strip, sent alongside whatever text is typed). Files can also be
+// pasted (Ctrl+V a screenshot) or dragged onto the conversation, like Messenger, and several upload
+// in parallel.
 //
 // 25MB matches the chatbot-attachments bucket's own limit (supabase_chatbot_attachment_video_
 // support.sql) - Facebook's own documented cap for a Send API attachment delivered by URL.
 const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+let attachmentUploadsInFlight = 0;
+let attachmentUploadPromise = null;
 
-async function onAttachmentFileChange() {
+function onAttachmentFileChange() {
   const input = document.getElementById('attachmentFileInput');
-  const errorEl = document.getElementById('replyErrorEl');
-  const btn = document.getElementById('toggleAttachmentBtn');
   const files = Array.from(input.files || []);
   input.value = '';
-  if (files.length === 0) return;
+  uploadAttachmentFiles(files);
+}
+
+async function uploadOneAttachment(file) {
+  const type = file.type.startsWith('video/') ? 'video' : 'image';
+
+  const { data: uploadRows, error: signError } = await supabaseClient.rpc('admin_create_chatbot_attachment_upload', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_file_name: file.name || `pasted-${Date.now()}.${(file.type.split('/')[1] || 'png')}`
+  });
+  const uploadInfo = uploadRows && uploadRows[0];
+  if (signError || !uploadInfo) throw signError || new Error('Could not prepare upload.');
+
+  const { error: uploadError } = await supabaseClient.storage
+    .from('chatbot-attachments')
+    .uploadToSignedUrl(uploadInfo.storage_path, uploadInfo.upload_token, file);
+  if (uploadError) throw uploadError;
+
+  const { data: signedUrl, error: urlError } = await supabaseClient.rpc('admin_get_chatbot_attachment_signed_url', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_storage_path: uploadInfo.storage_path
+  });
+  if (urlError || !signedUrl) throw urlError || new Error('Could not prepare file for sending.');
+
+  // path is kept alongside the url (unlike a Quick Reply/Product List image) so the eventual
+  // send records ChatbotMessages.AttachmentPath - this is a one-off file in the private
+  // chatbot-attachments bucket, and the existing 60-day cleanup cron needs that path to know
+  // which Storage object to delete later. type tells chatbot-staff-reply whether to send it to
+  // Facebook as an 'image' or 'video' attachment.
+  return { url: signedUrl, path: uploadInfo.storage_path, type };
+}
+
+async function uploadAttachmentFiles(rawFiles) {
+  const errorEl = document.getElementById('replyErrorEl');
+  const files = (rawFiles || []).filter((f) => f.type.startsWith('image/') || f.type.startsWith('video/'));
+  if (files.length === 0 || !selectedPsid) return;
 
   errorEl.classList.add('hidden');
-
   const oversized = files.find((f) => f.size > ATTACHMENT_MAX_BYTES);
   if (oversized) {
-    errorEl.textContent = `"${oversized.name}" is too large - max 25 MB per file.`;
+    errorEl.textContent = `"${oversized.name || 'Pasted file'}" is too large - max 25 MB per file.`;
     errorEl.classList.remove('hidden');
     return;
   }
 
-  btn.disabled = true;
-  const uploaded = [];
-  try {
-    for (const file of files) {
-      const type = file.type.startsWith('video/') ? 'video' : 'image';
+  attachmentUploadsInFlight += files.length;
+  setPendingReplyImages(pendingReplyImageUrls);
 
-      const { data: uploadRows, error: signError } = await supabaseClient.rpc('admin_create_chatbot_attachment_upload', {
-        p_admin_username: currentSession.username,
-        p_admin_password: currentSession.password,
-        p_file_name: file.name
-      });
-      const uploadInfo = uploadRows && uploadRows[0];
-      if (signError || !uploadInfo) throw signError || new Error('Could not prepare upload.');
+  const work = Promise.allSettled(files.map(uploadOneAttachment));
+  const tracked = attachmentUploadPromise ? Promise.all([attachmentUploadPromise, work]) : work;
+  attachmentUploadPromise = tracked;
+  const results = await work;
+  if (attachmentUploadPromise === tracked) attachmentUploadPromise = null;
+  attachmentUploadsInFlight -= files.length;
 
-      const { error: uploadError } = await supabaseClient.storage
-        .from('chatbot-attachments')
-        .uploadToSignedUrl(uploadInfo.storage_path, uploadInfo.upload_token, file);
-      if (uploadError) throw uploadError;
-
-      const { data: signedUrl, error: urlError } = await supabaseClient.rpc('admin_get_chatbot_attachment_signed_url', {
-        p_admin_username: currentSession.username,
-        p_admin_password: currentSession.password,
-        p_storage_path: uploadInfo.storage_path
-      });
-      if (urlError || !signedUrl) throw urlError || new Error('Could not prepare file for sending.');
-
-      // path is kept alongside the url (unlike a Quick Reply/Product List image) so the eventual
-      // send records ChatbotMessages.AttachmentPath - this is a one-off file in the private
-      // chatbot-attachments bucket, and the existing 60-day cleanup cron needs that path to know
-      // which Storage object to delete later. type tells chatbot-staff-reply whether to send it to
-      // Facebook as an 'image' or 'video' attachment.
-      uploaded.push({ url: signedUrl, path: uploadInfo.storage_path, type });
-    }
-  } catch (err) {
-    errorEl.textContent = err?.message || 'Could not attach file.';
+  const failed = results.find((r) => r.status === 'rejected');
+  if (failed) {
+    errorEl.textContent = failed.reason?.message || 'Could not attach file.';
     errorEl.classList.remove('hidden');
   }
-
-  btn.disabled = false;
-  if (uploaded.length > 0) {
-    setPendingReplyImages([...pendingReplyImageUrls, ...uploaded]);
-  }
+  const uploaded = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+  setPendingReplyImages([...pendingReplyImageUrls, ...uploaded]);
 }
 
 // Media Library - per direct request ("a compilation of images and videos saved so they can resend
@@ -3328,21 +3503,15 @@ function buildProductListMessage(items) {
 
 async function sendProductList() {
   if (productLookupSelected.size === 0) return;
-  const btn = document.getElementById('sendProductListBtn');
   const items = Array.from(productLookupSelected.values());
   const message = buildProductListMessage(items);
   const imageUrls = items.map((item) => firstImageUrl(item.images)).filter(Boolean);
 
-  btn.disabled = true;
-  btn.textContent = 'Sending...';
-  const ok = await sendMessageToCustomer(message, imageUrls);
-  btn.disabled = false;
-  btn.textContent = 'Send';
-
-  if (ok) {
-    toggleProductLookupPanel(false);
-    resetProductLookup();
-  }
+  // Optimistic send - the bubbles appear in the thread immediately (with Retry if delivery fails),
+  // so the picker can close right away.
+  sendMessageToCustomer(message, imageUrls);
+  toggleProductLookupPanel(false);
+  resetProductLookup();
 }
 
 // Manage Quick Replies modal (opened via the pencil icon in the popover header, per direct request
@@ -3681,23 +3850,191 @@ async function runBulkImport() {
 // broadcastGmaEvent in either function). One conversation list refresh covers previews/ordering for
 // everyone; the open thread's own messages only reload when the event is actually about the
 // conversation currently on screen, so switching threads doesn't get interrupted by unrelated chatter.
+let gmaInboxChannel = null;
+
 function setupRealtimeInbox() {
-  supabaseClient
+  gmaInboxChannel = supabaseClient
     .channel('gma-inbox')
     .on('broadcast', { event: 'new_message' }, ({ payload }) => {
       handleGmaInboxEvent(payload);
     })
+    // Another staff member opened a conversation - its bold/unread state and "Seen by" changed.
+    .on('broadcast', { event: 'conversation_read' }, ({ payload }) => {
+      handleConversationReadEvent(payload);
+    })
     .subscribe();
 }
 
-async function handleGmaInboxEvent(payload) {
-  await loadConversations();
+// ---------------------------------------------------------------------------
+// Unread + "Seen by" (supabase_gma_conversation_unread_seen_by.sql). Unread is shared by the team,
+// like a Facebook Page inbox: opening a conversation marks it read for everyone, and the other open
+// GMA tabs hear about it over the same 'gma-inbox' channel. Each staff member's open time is kept
+// for the "Seen by ..." line under the conversation.
+const seenByCache = new Map(); // psid -> [{ username, display_name, last_read_at_utc }]
 
-  if (payload?.psid && payload.psid === selectedPsid) {
-    await loadMessages(selectedPsid);
+async function markConversationRead(psid) {
+  const conv = conversations.find((c) => c.psid === psid);
+  const { error } = await supabaseClient.rpc('admin_mark_chatbot_conversation_read', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: psid
+  });
+  if (error) return; // SQL not run yet - unread/seen-by just stay off
+  if (conv && conv.is_unread) {
+    conv.is_unread = false;
+    renderConversationList();
+  }
+  gmaInboxChannel?.send({ type: 'broadcast', event: 'conversation_read', payload: { psid } });
+  await loadSeenBy(psid);
+}
+
+async function loadSeenBy(psid) {
+  const { data, error } = await supabaseClient.rpc('admin_get_chatbot_conversation_seen_by', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: psid
+  });
+  if (error) return;
+  seenByCache.set(psid, data || []);
+  // Only redraw once the messages are in - otherwise the "Loading messages..." placeholder would flash
+  // to "No messages yet"; loadMessages draws the line itself when it lands.
+  if (psid === selectedPsid && messageCache.has(psid)) renderThread();
+}
+
+// "Seen by Mark 3:45 PM, You 3:50 PM" - staff who opened the conversation since the customer's
+// latest message (an older open didn't see that message). Empty when nobody has yet.
+function seenByLineHtml(rows) {
+  const lastCustomer = [...rows].reverse().find((m) => m.role === 'user' && m.created_at_utc);
+  if (!lastCustomer) return '';
+  const since = new Date(lastCustomer.created_at_utc).getTime();
+  const seen = (seenByCache.get(selectedPsid) || []).filter((r) => new Date(r.last_read_at_utc).getTime() >= since);
+  if (seen.length === 0) return '';
+  const names = seen.map((r) => {
+    const who = r.username === currentSession.username ? 'You' : (r.display_name || r.username);
+    return `${who} ${formatMessageTime(r.last_read_at_utc)}`;
+  });
+  return `<div class="inbox-seen-by">Seen by ${escapeHtml(names.join(', '))}</div>`;
+}
+
+async function handleConversationReadEvent(payload) {
+  if (!payload?.psid) return;
+  const conv = conversations.find((c) => c.psid === payload.psid);
+  if (conv && conv.is_unread) {
+    conv.is_unread = false;
+    renderConversationList();
+  }
+  if (payload.psid === selectedPsid) await loadSeenBy(payload.psid);
+}
+
+// A message landing in the conversation already open (and on screen) has been seen - mark it read
+// so it doesn't go bold for the rest of the team. Also when staff come back to the tab.
+function markOpenConversationReadIfVisible() {
+  if (!selectedPsid || document.visibilityState !== 'visible') return;
+  const conv = conversations.find((c) => c.psid === selectedPsid);
+  if (conv && conv.is_unread) markConversationRead(selectedPsid);
+}
+
+// "AI back on after staff is quiet for ..." - ChatbotAiSettings.StaffAutoResumeMinutes (see
+// supabase_gma_bot_auto_resume.sql). Stays hidden if that SQL hasn't been run yet.
+async function setupAutoResumeSetting() {
+  const wrap = document.getElementById('autoResumeWrap');
+  const select = document.getElementById('autoResumeMinutesSelect');
+  const { data, error } = await supabaseClient.rpc('admin_get_chatbot_auto_resume_minutes', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (error) return;
+
+  const minutes = String(data ?? 30);
+  if (!Array.from(select.options).some((o) => o.value === minutes)) {
+    select.add(new Option(`${minutes} min`, minutes));
+  }
+  select.value = minutes;
+  wrap.classList.remove('hidden');
+
+  select.addEventListener('change', async () => {
+    select.disabled = true;
+    const { error: saveError } = await supabaseClient.rpc('admin_set_chatbot_auto_resume_minutes', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_minutes: Number(select.value)
+    });
+    select.disabled = false;
+    if (saveError) alert(`Could not save: ${saveError.message}`);
+  });
+}
+
+// List + open thread refresh in parallel (not one after the other) so a new message lands faster.
+async function handleGmaInboxEvent(payload) {
+  const isOpenThread = payload?.psid && payload.psid === selectedPsid;
+  await Promise.all([
+    loadConversations(),
+    isOpenThread ? loadMessages(selectedPsid) : Promise.resolve()
+  ]);
+
+  if (isOpenThread) {
     const conv = conversations.find((c) => c.psid === selectedPsid);
     if (conv) renderThreadHeader(conv);
+    markOpenConversationReadIfVisible();
   }
+}
+
+// Messenger-feel wiring for the thread: click a photo to zoom, keep pinned to the newest message
+// while photos finish loading (only if staff hadn't scrolled up), paste / drag-and-drop to attach.
+function setupThreadInteractions() {
+  const messagesEl = document.getElementById('threadMessagesEl');
+  messagesEl.addEventListener('click', (e) => {
+    const img = e.target.closest('[data-lightbox-src]');
+    if (img) openLightbox(img.dataset.lightboxSrc);
+  });
+  messagesEl.addEventListener('scroll', () => {
+    threadStickToBottom = threadIsNearBottom(messagesEl);
+  });
+  // 'load' doesn't bubble - capture catches every <img>/<video> as it finishes.
+  const keepPinned = () => { if (threadStickToBottom) scrollThreadToBottom(); };
+  messagesEl.addEventListener('load', keepPinned, true);
+  messagesEl.addEventListener('loadedmetadata', keepPinned, true);
+
+  // Coming back to the tab with an unread message in the open conversation = seen now.
+  document.addEventListener('visibilitychange', markOpenConversationReadIfVisible);
+
+  document.addEventListener('keydown', (e) => {
+    if (!lightboxIsOpen()) return;
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === 'ArrowLeft') stepLightbox(-1);
+    else if (e.key === 'ArrowRight') stepLightbox(1);
+  });
+
+  document.getElementById('replyInput').addEventListener('paste', (e) => {
+    const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/') || f.type.startsWith('video/'));
+    if (files.length === 0) return; // plain text paste - leave it alone
+    e.preventDefault();
+    uploadAttachmentFiles(files);
+  });
+
+  const threadCard = messagesEl.closest('.inbox-thread-card');
+  let dragDepth = 0;
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+  threadCard.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e) || !selectedPsid) return;
+    e.preventDefault();
+    dragDepth++;
+    threadCard.classList.add('inbox-drop-active');
+  });
+  threadCard.addEventListener('dragover', (e) => {
+    if (hasFiles(e) && selectedPsid) e.preventDefault();
+  });
+  threadCard.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) threadCard.classList.remove('inbox-drop-active');
+  });
+  threadCard.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    threadCard.classList.remove('inbox-drop-active');
+    uploadAttachmentFiles(Array.from(e.dataTransfer.files || []));
+  });
 }
 
 (async function init() {
@@ -3719,13 +4056,6 @@ async function handleGmaInboxEvent(payload) {
   }
 
   document.getElementById('inboxContent').classList.remove('hidden');
-  document.getElementById('refreshInboxBtn').addEventListener('click', loadConversations);
-  document.getElementById('importHistoryBtn').addEventListener('click', importFacebookHistory);
-  document.getElementById('fetchNamesBtn').addEventListener('click', fetchMissingNames);
-  if (session.isSuperUser) {
-    document.getElementById('testHumanAgentBtn').classList.remove('hidden');
-    document.getElementById('testHumanAgentBtn').addEventListener('click', testHumanAgent);
-  }
   document.getElementById('conversationSearchInput').addEventListener('input', (e) => onConversationSearchInput(e.target.value));
   document.getElementById('toggleQuickRepliesBtn').addEventListener('click', () => toggleQuickRepliesPanel());
   document.getElementById('toggleAttachmentBtn').addEventListener('click', () => document.getElementById('attachmentFileInput').click());
@@ -3776,6 +4106,8 @@ async function handleGmaInboxEvent(payload) {
   });
   document.getElementById('replyInput').addEventListener('input', autoResizeReplyInput);
 
+  setupThreadInteractions();
+  setupAutoResumeSetting();
   setupRealtimeInbox();
   await loadConversations();
 })();

@@ -69,6 +69,25 @@ function jsonResponse(body: unknown, status = 200): Response {
 // webhook's broadcastGmaEvent, duplicated here rather than shared since these are two independent
 // Edge Functions. See that file's comment for why Broadcast (not postgres_changes).
 async function broadcastGmaEvent(supabase: ReturnType<typeof createClient>, psid: string): Promise<void> {
+  // Fast path: Realtime's REST broadcast endpoint - one plain HTTP call, no websocket handshake/
+  // subscribe wait (the old path below took up to a few seconds per call). Falls back to the
+  // subscribe-and-send path if the endpoint ever rejects it, so live updates never silently stop.
+  try {
+    const url = Deno.env.get('SUPABASE_URL');
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (url && key) {
+      const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ messages: [{ topic: 'gma-inbox', event: 'new_message', payload: { psid }, private: false }] })
+      });
+      if (res.ok) return;
+      console.error('REST broadcast failed, falling back to channel send:', res.status, await res.text());
+    }
+  } catch (err) {
+    console.error('REST broadcast error, falling back to channel send:', err instanceof Error ? err.message : err);
+  }
+
   try {
     const channel = supabase.channel('gma-inbox');
     await new Promise<void>((resolve) => {

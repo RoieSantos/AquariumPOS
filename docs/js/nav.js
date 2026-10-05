@@ -207,6 +207,11 @@ function renderTopNav(activeLabel) {
     // Where each built unit is stored, by serial (supabase_production_shelf_map.sql).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
   }
+  // Every maker's open assignments, grouped by maker (supabase_maker_assignments_view.sql) - Super
+  // Users only; the RPC re-checks with is_admin_authorized.
+  if (isSuperUser) {
+    production.push({ href: 'maker-assignments.html', label: 'Maker Assignments' });
+  }
   // Counting serial-tracked units - same access as the Physical Inventory Journal (its RPCs use
   // is_phys_journal_authorized: Super User or Store Manager).
   if (isSuperUser || isStoreManager) {

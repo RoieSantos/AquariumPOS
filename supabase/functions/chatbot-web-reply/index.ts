@@ -129,7 +129,9 @@ Deno.serve(async (req) => {
 
   await supabase
     .from('ChatbotConversations')
-    .update({ LastCustomerMessageAtUtc: new Date().toISOString(), AbandonedNudgeSentAtUtc: null })
+    // LastMessageAtUtc too - it drives the GMA inbox's sort order and "x min ago"; before, only a bot
+    // reply moved it, so a paused conversation stayed stuck at its last bot/staff message.
+    .update({ LastMessageAtUtc: new Date().toISOString(), LastCustomerMessageAtUtc: new Date().toISOString(), AbandonedNudgeSentAtUtc: null })
     .eq('Psid', psid);
 
   if (await isRateLimited(supabase, psid)) {
@@ -138,7 +140,13 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, reply });
   }
 
-  const { data: convState } = await supabase.from('ChatbotConversations').select('IsPaused, CustomerName').eq('Psid', psid).maybeSingle();
+  const { data: convState } = await supabase.from('ChatbotConversations').select('IsPaused, AutoResumeAtUtc, CustomerName').eq('Psid', psid).maybeSingle();
+  // Staff reply's auto-resume timer ran out (supabase_gma_bot_auto_resume.sql) - Alice answers again.
+  const resumeAt = convState?.AutoResumeAtUtc ? Date.parse(convState.AutoResumeAtUtc) : NaN;
+  if (convState?.IsPaused && resumeAt <= Date.now()) {
+    await supabase.from('ChatbotConversations').update({ IsPaused: false, AutoResumeAtUtc: null }).eq('Psid', psid);
+    convState.IsPaused = false;
+  }
   if (convState?.IsPaused) {
     // A staff member has taken over this conversation from the GMA Conversations portal - stay
     // quiet just like the Facebook bot does, so they can reply manually without the bot talking
