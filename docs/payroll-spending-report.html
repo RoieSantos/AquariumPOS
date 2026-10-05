@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payroll Spending Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=aq2" />
+  <script src="js/theme.js"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Payroll Spending</h1>
+    <p class="muted">How much payroll is costing - finalized pay runs by pay date, plus cash advances on the day they were released. Click a row to see what is inside it.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" data-period="month" type="button">This Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="prevmonth" type="button">Last Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="90d" type="button">Last 90 Days</button>
+        <button class="btn btn-primary btn-sm" data-period="year" type="button">This Year</button>
+        <button class="btn btn-secondary btn-sm" data-period="custom" type="button">Custom</button>
+      </div>
+      <div class="pm-filter-group hidden" id="customRange">
+        <input type="date" id="dateFrom" aria-label="From date" />
+        <span class="muted">to</span>
+        <input type="date" id="dateTo" aria-label="To date" />
+        <button class="btn btn-primary btn-sm" id="applyRangeBtn" type="button">Apply</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="branchSelect" aria-label="Branch">
+          <option value="">All branches</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="psLoading" class="muted">Loading...</div>
+    <div id="psError" class="error-text hidden"></div>
+
+    <div id="psResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💼</span> Payroll Cost</div>
+          <div class="stat-value" id="statCost">-</div>
+          <div class="muted" id="statCostSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💵</span> Cash Paid Out</div>
+          <div class="stat-value" id="statCash">-</div>
+          <div class="muted" id="statCashSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏦</span> Cash Advances Released</div>
+          <div class="stat-value" id="statAdvance">-</div>
+          <div class="muted" id="statAdvanceSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">👥</span> Employees Paid</div>
+          <div class="stat-value" id="statEmployees">-</div>
+          <div class="muted" id="statEmployeesSub" style="font-size:13px;"></div>
+        </div>
+      </div>
+
+      <div class="card ss-split-card">
+        <div class="ss-split-bar" id="splitBar" role="img" aria-label="Payroll cost breakdown"></div>
+        <div class="ss-split-legend" id="splitLegend"></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="pm-filter-group">
+          <button class="btn btn-secondary btn-sm hidden" id="backBtn" type="button">&larr; Back</button>
+          <h2 id="tableTitle" style="margin:0;">Payroll cost</h2>
+        </div>
+        <div class="pm-filter-group" id="groupByWrap">
+          <span class="muted">Group by</span>
+          <select id="groupSelect" aria-label="Group by">
+            <option value="employee">Employee</option>
+            <option value="branch">Branch</option>
+            <option value="month">Month</option>
+            <option value="run">Pay Run</option>
+            <option value="component">Pay Component</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="exportBtn" type="button">Export CSV</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead id="psTableHead"></thead>
+          <tbody id="psTableBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Payroll Cost = Base Pay + Additions - Deductions, not counting cash-advance repayments (that money was already paid out as the advance). Cash Paid Out = Net Pay + Cash Advances released in the period. Only finalized pay runs count - a Draft run shows nothing until it is finalized. Branch is the employee's branch today.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=all1"></script>
+  <script src="js/nav.js?v=all2"></script>
+  <script src="js/payrollSpendingReport.js?v=ps1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

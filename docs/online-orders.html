@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=aq2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=aq3" />
+  <link rel="stylesheet" href="css/bc-list.css?v=aq4" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -159,6 +159,14 @@
               <input type="text" id="statusFilterInput" placeholder="e.g. Printed" autocomplete="off" />
             </div>
             <p class="bc-fp-hint">Or pick a status tab above - click it again to clear.</p>
+            <!-- Field filters (js/onlineOrders.js ORDER_FILTER_FIELDS, sql/supabase_online_order_list_field_filters.sql) -->
+            <div id="orderFieldFilters"></div>
+            <div class="bc-fp-field">
+              <select id="addOrderFilterSelect" aria-label="Add a filter">
+                <option value="">+ Filter by field...</option>
+              </select>
+            </div>
+            <button type="button" class="bc-link hidden" id="clearOrderFieldFiltersBtn">Clear field filters</button>
           </div>
         </aside>
 
@@ -848,15 +856,15 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=all1"></script>
+  <script src="js/nav.js?v=all2"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/glassCutList.js?v=po2"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/pushNotifications.js?v=2"></script>
-  <script src="js/onlineOrders.js?v=bc80"></script>
+  <script src="js/pushNotifications.js?v=3"></script>
+  <script src="js/onlineOrders.js?v=bc82"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

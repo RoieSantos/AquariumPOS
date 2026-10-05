@@ -2,8 +2,8 @@
 // (storage), supabase_web_push_order_confirmed_trigger.sql (what triggers a send), and
 // supabase/functions/send-web-push (what actually sends it). Included on dashboard.html via the
 // "Enable Order Notifications" button - wirePushNotificationButton() is the entry point, called
-// from that page's own init() once a session exists. Online Orders / Production Orders also call
-// maybeShowPushLoginPrompt so makers (who can't open the Dashboard) get asked too.
+// from that page's own init() once a session exists. Online Orders / Production Orders / Delivery
+// also call maybeShowPushLoginPrompt so makers and drivers (who can't open the Dashboard) get asked too.
 
 // Paired with VAPID_PRIVATE_KEY (Edge Function secret only, never here) - this half is public by
 // design, same as any VAPID public key.
@@ -128,10 +128,14 @@ async function wirePushNotificationButton(session) {
 const PUSH_PROMPT_SESSION_KEY = 'pushPromptShownThisSession';
 
 // Who gets pushes (supabase_web_push_targeted.sql): Sales Users get "New confirmed order", Tank /
-// Stand Makers get their own job assignments. Anyone else gets nothing, so isn't prompted.
+// Stand Makers get their own job assignments, Delivery Team / Dispatchers get delivery route changes
+// (supabase_delivery_route_change_push.sql). Anyone else gets nothing, so isn't prompted.
 function pushNotificationAudience(session) {
   const roles = session?.staffRoles || [];
   const isMaker = roles.includes('TankMaker') || roles.includes('StandMaker');
+  if (session?.isDeliveryTeam || roles.includes('Dispatcher')) {
+    return { title: '🔔 Get notified of route changes?', text: 'Turn on notifications to get an alert on this phone whenever a delivery stop is added, moved, removed or changed.' };
+  }
   if (session?.isSalesUser && isMaker) {
     return { title: '🔔 Get order notifications?', text: 'Turn on notifications to get an alert on this device when an online order is confirmed or a job is assigned to you.' };
   }

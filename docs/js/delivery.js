@@ -1814,9 +1814,15 @@ function wireToolbarAndModal() {
   await loadVendorLookup();
   await loadAndRenderRouteSchedule();
 
-  const today = new Date();
+  // Route-change push notifications (supabase_delivery_route_change_push.sql) open
+  // delivery.html?date=YYYY-MM-DD - start on that day instead of today.
+  const dateParam = new URLSearchParams(window.location.search).get('date');
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(dateParam || '') ? new Date(`${dateParam}T00:00:00`) : new Date();
   currentYear = today.getFullYear();
   currentMonth = today.getMonth();
+
+  // Delivery Team / Dispatchers get asked to turn on route-change notifications (js/pushNotifications.js).
+  maybeShowPushLoginPrompt(session).catch(() => {});
 
   // Per "if user is delivery team they cannot assign order / they cannot do print" - rather than
   // hiding buttons inside the full admin calendar, Delivery Team gets its own single-day Driver
@@ -1831,6 +1837,15 @@ function wireToolbarAndModal() {
     wireDriverRouteNav();
     await Promise.all([loadMonthStops(currentYear, currentMonth), loadMonthDateVendors(currentYear, currentMonth)]);
     await renderDriverRouteView(toDateKey(today));
+
+    // Reload the day when the driver comes back to the app (e.g. after a route-change
+    // notification) so an already-open screen doesn't show the old stops.
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible' || !driverDate) return;
+      const viewed = new Date(`${driverDate}T00:00:00`);
+      await Promise.all([loadMonthStops(viewed.getFullYear(), viewed.getMonth()), loadMonthDateVendors(viewed.getFullYear(), viewed.getMonth())]);
+      await renderDriverRouteView(driverDate);
+    });
     return;
   }
 

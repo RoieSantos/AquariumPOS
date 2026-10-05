@@ -2753,3 +2753,27 @@ a.bc-cue:hover {
 /* Online order card - walk-in customer name / contact no. (js/onlineOrders.js, supabase_walkin_order_portal_status.sql). */
 .oc-walkin-customer { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .oc-walkin-customer input { flex: 1 1 140px; min-width: 0; }
+
+/* Online Orders field filters (js/onlineOrders.js ORDER_FILTER_FIELDS): label + remove (x) */
+.bc-ile .oo-field-filter label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bc-ile .oo-field-filter input,
+.bc-ile .oo-field-filter select,
+.bc-ile #addOrderFilterSelect {
+  width: 100%;
+}
+.bc-ile .oo-field-filter-x {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.bc-ile .oo-field-filter-x:hover {
+  color: inherit;
+}

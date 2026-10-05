@@ -605,7 +605,7 @@
     );
     var basePricePerSqFt = Number(glassPrices[glass]) || 100;
 
-    var components = { sumpGlass: 0, filterMedia: 0, overflowBox: 0, piping: 0, allumTopCover: 0 };
+    var components = { sumpGlass: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0 };
     var normalizedExtra = {};
 
     var sumpAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
@@ -624,7 +624,13 @@
       components.overflowBox = 1900;
     }
 
-    var subtotal = components.sumpGlass + components.filterMedia + components.overflowBox;
+    // Optional flat submersible light/pump totals (item price x qty) - the staff calculator's
+    // "Sump only" build passes them, Order Now doesn't. Added before the round-to-10 like
+    // calculateCustomAquarium does with its sump light/pump.
+    components.light = round2(Number(options.lightPrice) || 0);
+    components.pump = round2(Number(options.pumpPrice) || 0);
+
+    var subtotal = components.sumpGlass + components.filterMedia + components.overflowBox + components.light + components.pump;
     if (subtotal >= 1000) {
       subtotal = roundNearest10(subtotal);
     }

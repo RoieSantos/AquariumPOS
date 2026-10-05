@@ -192,7 +192,8 @@ const branchScopedUnsupported = new Set();
 async function rpcBranchScoped(fnName, params) {
   if (!branchScopedUnsupported.has(fnName)) {
     const result = await supabaseClient.rpc(fnName, { ...params, p_branch_scoped: true });
-    if (result.error?.code !== 'PGRST202') return result;
+    // With field filters, a missing signature is p_filters' (its SQL not run), not p_branch_scoped's.
+    if (result.error?.code !== 'PGRST202' || params.p_filters) return result;
     branchScopedUnsupported.add(fnName);
   }
   return supabaseClient.rpc(fnName, params);
@@ -1733,6 +1734,14 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+// Pancake times come as 24-hour "HH:MM:SS" - shown as standard time ("4:17:00 PM").
+function formatTime12(time) {
+  const m = String(time || '').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return time || '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]}${m[3] ? ':' + m[3] : ''} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 // Plain-text assignee for the list columns - '' when the order doesn't need that maker at all
 // (no aquarium/stand line), so an empty cell reads differently from "needed but unassigned" (-).
 function assigneeCellHtml(o, needed, username, name) {
@@ -1765,6 +1774,15 @@ function makerCellHtml(o, part, needed, username, name) {
   return needed ? assigneeCellHtml(o, needed, username, name) + productionDoneTickHtml(o, part) : '';
 }
 
+// List note cell: the print note and the POS description (posNoteSummary), both when both exist.
+// Walk-ins lead with the POS description (their column reads "POS Description / Print Note").
+function noteCellHtml(o) {
+  const summary = posNoteSummary(o);
+  const pos = summary ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${o.received_at_shop ? '' : '<b>POS:</b> '}${escapeHtml(summary)}</span>` : '';
+  const print = o.note_print ? `${o.received_at_shop && pos ? '<b>Print:</b> ' : ''}${escapeHtml(o.note_print)}` : '';
+  return (o.received_at_shop ? [pos, print] : [print, pos]).filter(Boolean).join(o.received_at_shop ? '<br>' : ' ');
+}
+
 // BC list rows: data only, no buttons. Every action (Open / Send Photo / To-Ship Message / To Ship)
 // lives on the action bar and works on the selected row (see wireOrderListActions), and the
 // Order ID drills into the Online Order document (openOrderCard) the way a BC "No." field does.
@@ -1775,7 +1793,7 @@ function orderRowsHtml(orders) {
       <tr data-order-id="${escapeHtml(o.order_id)}" class="${String(o.order_id) === String(selectedOrderId) ? 'selected' : ''}">
         <td><a class="bc-doc-no" href="#" data-open-order="${escapeHtml(o.order_id)}" title="Open this order">${escapeHtml(o.order_id)}</a></td>
         <td>${o.order_date || ''}</td>
-        <td>${o.order_time || ''}</td>
+        <td>${formatTime12(o.order_time)}</td>
         <td>${escapeHtml(o.customer_name)}</td>
         <td>${escapeHtml(o.warehouse_name || o.location_id)}</td>
         <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}</td>
@@ -1786,7 +1804,7 @@ function orderRowsHtml(orders) {
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${otherBranchBadgeHtml(o)} ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${prodOrderBadgeHtml(o)}</td>
-        <td>${o.received_at_shop && posNoteSummary(o) ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${escapeHtml(posNoteSummary(o))}</span>` : escapeHtml(o.note_print)}${!o.received_at_shop && posNoteSummary(o) ? `${o.note_print ? ' ' : ''}<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}"><b>POS:</b> ${escapeHtml(posNoteSummary(o))}</span>` : ''}</td>
+        <td>${noteCellHtml(o)}</td>
         ${hidePrices() ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
@@ -1815,7 +1833,7 @@ function orderCardHtml(o) {
       </div>
       <div class="order-card-customer">${o.customer_name || 'No name on order'}</div>
       <div class="order-card-grid">
-        <span class="order-card-label">Date</span><span>${o.order_date || ''} ${o.order_time || ''}</span>
+        <span class="order-card-label">Date</span><span>${o.order_date || ''} ${formatTime12(o.order_time)}</span>
         <span class="order-card-label">Warehouse</span><span>${o.warehouse_name || o.location_id || ''}</span>
         <span class="order-card-label">Delivery</span><span><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span> ${o.estimated_delivery_date ? '&middot; ' + o.estimated_delivery_date : ''}</span>
         <span class="order-card-label">Confirmed By</span><span>${o.confirmed_by || '-'}</span>
@@ -3776,7 +3794,7 @@ function fillOrderCardHeader(o) {
 
   setCardText('ocOrderId', o.order_id);
   setCardText('ocCustomer', [o.customer_name, o.walkin_customer_phone].filter(Boolean).join(' · '));
-  setCardText('ocOrderDate', [o.order_date, o.order_time].filter(Boolean).join(' '));
+  setCardText('ocOrderDate', [o.order_date, formatTime12(o.order_time)].filter(Boolean).join(' '));
   // Walk-in picked up: when and by whom (portal only).
   setCardText('ocStatus', o.walkin_stage === 'Completed' && o.picked_up_at
     ? `${displayStatus} · picked up ${new Date(o.picked_up_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${o.picked_up_by_name ? ' by ' + o.picked_up_by_name : ''}`
@@ -4594,12 +4612,16 @@ async function loadOrders(search, status) {
     p_page_size: currentPageSize,
     p_confirmed_by: currentConfirmedBy,
     p_status_in: grouped ? ONLINE_ORDER_STAFF_STATUS_SCOPE : null,
-    p_assigned_to_me: myAssignmentsOnly
+    p_assigned_to_me: myAssignmentsOnly,
+    ...orderFieldFiltersParam()
   });
 
   if (myGeneration !== loadGeneration) return;
 
   if (error) {
+    if (error.code === 'PGRST202' && orderFieldFiltersParam().p_filters) {
+      error.message = 'Field filters need sql/supabase_online_order_list_field_filters.sql to be run first.';
+    }
     if (grouped) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
@@ -4716,7 +4738,8 @@ async function exportOrdersToExcel() {
         p_walkin_only: currentScope === 'walkin',
         p_page: page,
         p_page_size: exportPageSize,
-        p_confirmed_by: currentConfirmedBy
+        p_confirmed_by: currentConfirmedBy,
+        ...orderFieldFiltersParam()
       });
 
       if (error) {
@@ -4752,7 +4775,7 @@ async function exportOrdersToExcel() {
       csvLines.push([
         o.order_id,
         o.order_date,
-        o.order_time,
+        formatTime12(o.order_time),
         o.status,
         o.customer_name,
         o.location_id,
@@ -4831,6 +4854,98 @@ function wireGroupedTabs() {
   });
 }
 
+// Field filters - per "in the orders can you allow the user to filter by specific fields". The
+// filter pane's "+ Filter by field..." adds one input per field; values go to admin_list_online_orders
+// as p_filters (sql/supabase_online_order_list_field_filters.sql), so they filter before paging.
+// walkin: false = online list only, true = walk-in list only, unset = both.
+const ORDER_FILTER_FIELDS = [
+  { key: 'order_id', label: 'Order ID' },
+  { key: 'customer', label: 'Customer', placeholder: 'Name or contact no.' },
+  { key: 'warehouse', label: 'Warehouse' },
+  { key: 'date_from', label: 'Date from', type: 'date' },
+  { key: 'date_to', label: 'Date to', type: 'date' },
+  { key: 'created_by', label: 'Created By' },
+  { key: 'confirmed_by', label: 'Confirmed By' },
+  { key: 'tank_maker', label: 'Tank Maker' },
+  { key: 'stand_maker', label: 'Stand Maker' },
+  { key: 'dispatcher', label: 'Dispatcher', walkin: false },
+  { key: 'note', label: 'Print Note / POS Description' },
+  { key: 'tag', label: 'Tags', type: 'select', options: [['custom', 'Custom'], ['10mm', '10mm glass'], ['12mm', '12mm glass'], ['gma', 'GMA']] },
+  { key: 'for_delivery', label: 'For Delivery', type: 'select', walkin: false, options: [['yes', 'Yes'], ['no', 'No']] }
+];
+const orderFieldFilters = new Map(); // key -> value, in the order they were added
+
+function orderFieldFiltersParam() {
+  const filters = {};
+  orderFieldFilters.forEach((value, key) => { if (String(value).trim()) filters[key] = String(value).trim(); });
+  return Object.keys(filters).length ? { p_filters: filters } : {};
+}
+
+function availableOrderFilterFields() {
+  return ORDER_FILTER_FIELDS.filter((f) => f.walkin === undefined || f.walkin === (currentScope === 'walkin'));
+}
+
+function renderOrderFieldFilters() {
+  const box = document.getElementById('orderFieldFilters');
+  box.innerHTML = [...orderFieldFilters.keys()].map((key) => {
+    const f = ORDER_FILTER_FIELDS.find((x) => x.key === key);
+    const value = orderFieldFilters.get(key) || '';
+    const input = f.type === 'select'
+      ? `<select data-filter-key="${key}"><option value="">Any</option>${f.options.map(([v, l]) => `<option value="${v}"${v === value ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('')}</select>`
+      : `<input type="${f.type || 'text'}" data-filter-key="${key}" value="${escapeHtml(value)}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" />`;
+    return `<div class="bc-fp-field oo-field-filter">
+        <label>${escapeHtml(f.label)} <button type="button" class="oo-field-filter-x" data-remove-filter="${key}" title="Remove this filter" aria-label="Remove ${escapeHtml(f.label)} filter">&times;</button></label>
+        ${input}
+      </div>`;
+  }).join('');
+  const select = document.getElementById('addOrderFilterSelect');
+  select.innerHTML = '<option value="">+ Filter by field...</option>' + availableOrderFilterFields()
+    .filter((f) => !orderFieldFilters.has(f.key))
+    .map((f) => `<option value="${f.key}">${escapeHtml(f.label)}</option>`).join('');
+  document.getElementById('clearOrderFieldFiltersBtn').classList.toggle('hidden', !orderFieldFilters.size);
+}
+
+function wireOrderFieldFilters(reload) {
+  const select = document.getElementById('addOrderFilterSelect');
+  const box = document.getElementById('orderFieldFilters');
+  renderOrderFieldFilters();
+
+  select.addEventListener('change', () => {
+    if (!select.value) return;
+    const key = select.value;
+    orderFieldFilters.set(key, '');
+    renderOrderFieldFilters();
+    box.querySelector(`[data-filter-key="${key}"]`)?.focus();
+  });
+  // Text boxes reload as you type (debounced, same as the search box); dates / dropdowns on change.
+  box.addEventListener('input', (event) => {
+    const el = event.target.closest('[data-filter-key]');
+    if (!el) return;
+    orderFieldFilters.set(el.dataset.filterKey, el.value);
+    if (el.tagName === 'INPUT' && el.type === 'text') reload();
+  });
+  box.addEventListener('change', (event) => {
+    const el = event.target.closest('[data-filter-key]');
+    if (!el || (el.tagName === 'INPUT' && el.type === 'text')) return;
+    orderFieldFilters.set(el.dataset.filterKey, el.value);
+    reload();
+  });
+  box.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-remove-filter]');
+    if (!btn) return;
+    const hadValue = String(orderFieldFilters.get(btn.dataset.removeFilter) || '').trim() !== '';
+    orderFieldFilters.delete(btn.dataset.removeFilter);
+    renderOrderFieldFilters();
+    if (hadValue) reload();
+  });
+  document.getElementById('clearOrderFieldFiltersBtn').addEventListener('click', () => {
+    const hadValue = !!orderFieldFiltersParam().p_filters;
+    orderFieldFilters.clear();
+    renderOrderFieldFilters();
+    if (hadValue) reload();
+  });
+}
+
 function wireOrderFilters() {
   const searchInput = document.getElementById('orderSearchInput');
   const statusInput = document.getElementById('statusFilterInput');
@@ -4847,6 +4962,7 @@ function wireOrderFilters() {
 
   searchInput.addEventListener('input', reload);
   statusInput.addEventListener('input', reload);
+  wireOrderFieldFilters(reload);
 
   // Per "make that button clickable so the user can filter out based on status" - clicking a
   // status-summary pill sets the status filter box to that status (or clears it if the same
@@ -4908,12 +5024,14 @@ function wireOrderFilters() {
 if (new URLSearchParams(window.location.search).get('scope') === 'walkin') {
   const walkinGrid = document.querySelector('.oo-grid');
   walkinGrid.classList.add('oo-walkin');
-  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v2';
-  const tagsHeader = walkinGrid.tHead.rows[0].cells[11];
+  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v3';
+  // Found by caption, not index - a fixed index went stale when the Production Order column was added.
+  const headerCells = [...walkinGrid.tHead.rows[0].cells];
+  const tagsHeader = headerCells.find((th) => th.textContent.trim() === 'Flags');
   if (tagsHeader) tagsHeader.textContent = 'Tags';
-  // Walk-ins have no print note - that slot shows the POS description instead (posNoteSummary).
-  const noteHeader = walkinGrid.tHead.rows[0].cells[12];
-  if (noteHeader) noteHeader.textContent = 'POS Description';
+  // Walk-ins show the POS description first, then any print note (walkinNoteCellHtml).
+  const noteHeader = headerCells.find((th) => th.textContent.trim() === 'Print Note');
+  if (noteHeader) noteHeader.textContent = 'POS Description / Print Note';
 }
 
 // ---------------------------------------------------------------- Advance Orders tab
@@ -5017,7 +5135,7 @@ function advanceRowsHtml(rows) {
       <td>${link(o, o.transaction_no)}</td>
       <td>${link(o, o.receipt_no)}</td>
       <td>${escapeHtml(o.order_date || '')}</td>
-      <td>${escapeHtml(o.order_time || '')}</td>
+      <td>${escapeHtml(formatTime12(o.order_time))}</td>
       <td>${escapeHtml(o.customer_name || '')}</td>
       <td>${escapeHtml(o.warehouse || '')}</td>
       <td>${escapeHtml(advanceStatus(o))}</td>
@@ -5192,7 +5310,7 @@ function fillAdvanceCard(o) {
   setCardText('acReceiptNo', o.receipt_no);
   setCardText('acCustomer', o.customer_name);
   setCardText('acDescription', o.order_description);
-  setCardText('acOrderDate', [o.order_date, o.order_time].filter(Boolean).join(' '));
+  setCardText('acOrderDate', [o.order_date, formatTime12(o.order_time)].filter(Boolean).join(' '));
   setCardText('acUser', o.user_id);
   setCardText('acWarehouse', o.warehouse);
   setCardText('acNetAmount', formatAdvanceMoney(o.net_amount));
@@ -5735,6 +5853,7 @@ async function initAdvanceOrdersView() {
 
   currentPeriod = periodParam === 'month' || periodParam === 'today' || periodParam === 'prevmonth' ? periodParam : null;
   currentScope = scopeParam === 'walkin' ? 'walkin' : null;
+  renderOrderFieldFilters(); // field list depends on the scope (no Dispatcher / For Delivery on walk-ins)
   outstandingOnly = filterParam === 'outstanding';
   currentConfirmedBy = confirmedByParam.trim() || null;
 

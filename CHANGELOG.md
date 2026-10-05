@@ -4,6 +4,20 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-05
 
+- Delivery: phone push notifications to Delivery Team / Dispatchers when a stop is added, removed, moved or modified (address/notes/print note/customer/order/truck), a date's vendor pickup changes, or a weekday route is renamed - today/future dates only. Triggers in [supabase_delivery_route_change_push.sql](sql/supabase_delivery_route_change_push.sql) reuse the targeted Web Push. Delivery page now prompts drivers to enable notifications, opens on `?date=` and reloads the day when the app is reopened; pushNotifications.js v3, delivery.js push1.
+
+- New **Payroll Spending** report ([payroll-spending-report.html](docs/payroll-spending-report.html), [payrollSpendingReport.js](docs/js/payrollSpendingReport.js)) - Payroll Cost / Cash Paid Out / Cash Advances / Employees, grouped by employee, branch, month, pay run or pay component with drill-down + CSV export. Backed by [supabase_payroll_spending_report.sql](sql/supabase_payroll_spending_report.sql) (finalized runs from the Payroll Ledger + released cash advances). Added to the nav for Super Users / Payroll Officers; nav.js cache bumped to all2 on every page.
+
+- Online / Walk-in Orders: order times now show as standard time (4:17:00 PM) on the list, order card, Advance Orders and the CSV export (`formatTime12`).
+- Online / Walk-in Orders: "+ Filter by field..." in the filter pane - Order ID, Customer, Warehouse, Date from/to, Created/Confirmed By, Tank/Stand Maker, Dispatcher, Print Note / POS Description, Tags, For Delivery. Filtered server-side via new `p_filters` on `admin_list_online_orders` ([supabase_online_order_list_field_filters.sql](sql/supabase_online_order_list_field_filters.sql)); also applies to Export. Cache bc82 / css aq4.
+
+- Added read-only [supabase_check_walkin_notes.sql](sql/supabase_check_walkin_notes.sql) - checks whether walk-in POS notes / print notes are synced (list showed them all blank).
+
+- Walk-in Orders list: the "POS Description" header was landing on the Production Order column (stale index after that column was added) - headers are now found by caption, the note column reads "POS Description / Print Note" and shows both (POS first), Flags is relabelled "Tags"; saved walk-in column widths reset (v3), cache bc81.
+
+- Aquarium calculator: Build type is now **Aquarium only / Sump only** (Undersump/Overheadsump removed). Sump only hides the tank fields, steps 2/3/5 and the Glass Cut Sheet, jumps to step 4, and prices the sump with `calculateStandaloneFiltration` (same as Order Now's Customize > Filtration - no x1.9) so staff and customer quotes match; Summary/drawing/print show a "Custom Sump Quote". [index.html](docs/WebAquariumCalculator/index.html) (`?v=sumponly1`), [custom-aquarium-calculator.js](docs/WebAquariumCalculator/custom-aquarium-calculator.js) (standalone sump now takes optional light/pump prices).
+- GMA Create Order > Custom Aquarium: a Sump only quote adds one CUSTOM-SUMP line and no longer needs tank L/W/H. [gmaConversations.js](docs/js/gmaConversations.js) `?v=sumponly1`, [calc-embed-bridge.js](docs/WebAquariumCalculator/calc-embed-bridge.js) `?v=3`. Portal Alice staff guide updated ([portal-chat-alice-reply](supabase/functions/portal-chat-alice-reply/index.ts), needs deploy).
+
 - [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts): also reads `entry.standby` echoes (Meta-app replies when the Page inbox is in control of the conversation - previously ignored), and logs a one-line summary of every webhook entry (echo / app id / standby, no text) to trace delivery. Deployed.
 
 - Meta-app replies not syncing: confirmed the webhook resolves our own app id but has never received a staff echo (likely `message_echoes` not subscribed on the page). [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) now logs every echo received / skipped / recorded for tracing. Deployed.

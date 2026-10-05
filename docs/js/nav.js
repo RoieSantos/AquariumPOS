@@ -268,6 +268,8 @@ function renderTopNav(activeLabel) {
     admin.push({ href: 'payroll-setup.html', label: 'Payroll Setup' });
     admin.push({ href: 'payroll-timesheets.html', label: 'Timesheets' });
     admin.push({ href: 'payroll-ledger.html', label: 'Payroll Ledger' });
+    // How much payroll costs, by employee / branch / month (supabase_payroll_spending_report.sql).
+    admin.push({ href: 'payroll-spending-report.html', label: 'Payroll Spending' });
   }
 
   const groups = [

@@ -2087,6 +2087,12 @@ function calcEmbedMissingFields(doc) {
   const num = (id) => Number(doc.getElementById(id)?.value) || 0;
   const checked = (id) => Boolean(doc.getElementById(id)?.checked);
   const missing = [];
+  // Sump only (aquarium calculator) hides the tank fields - only the sump's own size matters.
+  const sumpOnly = calcEmbedKind !== 'stand' && doc.getElementById('option')?.value === 'Sump only';
+  if (sumpOnly) {
+    if (!(num('sumpLength') > 0 && num('sumpWidth') > 0 && num('sumpHeight') > 0)) missing.push('Sump length / width / height');
+    return missing;
+  }
   if (!(num('length') > 0)) missing.push('Length');
   if (!(num('width') > 0)) missing.push('Width');
   if (calcEmbedKind !== 'stand' && !(num('height') > 0)) missing.push('Height');
@@ -2167,6 +2173,23 @@ function buildAquariumCalcLines(win) {
   const val = (id) => doc.getElementById(id)?.value || '';
   const q = win.computeQuotedTotal(r);
   const rows = Array.isArray(win.lastDetailRows) ? win.lastDetailRows : [];
+
+  // "Sump only" Build type - no aquarium, so the whole quote is one CUSTOM-SUMP line.
+  if (r.sumpOnly) {
+    const so = n.sumpOnly || {};
+    return [{
+      category_code: 'CUSTOM-SUMP',
+      item_code: null,
+      item_name: `Custom ${so.type} Sump (${fmtIn(n.lengthInches)}x${fmtIn(n.widthInches)}x${fmtIn(n.heightInches)}in)`,
+      price: Math.round(q.sumpUnitPrice * 100) / 100,
+      quantity: q.sumpQty,
+      note: ['CUSTOM SUMP / FILTRATION', 'Sump only - no aquarium']
+        .concat(calcDetailRowsText(rows, (label) => label !== 'Build type'))
+        .join('\n'),
+      variation_id: null
+    }];
+  }
+
   const sumpSeparate = q.sumpEnabled && q.sumpUnitPrice > 0;
   const standSeparate = q.standEnabled && q.standUnitPrice > 0;
   const size = `${fmtIn(n.lengthInches)} x ${fmtIn(n.widthInches)} x ${fmtIn(n.heightInches)} in`;

@@ -13,7 +13,7 @@
   if (window.parent === window) return;
 
   var FIELD_IDS = [
-    'length', 'width', 'height', 'unit', 'qty', 'stainless', 'paint',
+    'length', 'width', 'height', 'unit', 'option', 'qty', 'stainless', 'paint',
     'sumpHolder', 'sumpWidth',
     'sumpEnabled', 'sumpLength', 'sumpHeight',
     'standEnabled', 'standSumpHolder', 'standSumpWidth',
