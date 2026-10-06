@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-06
 
+- GMA Conversations > Create Order: **Sealant color** now required for Custom Aquarium (incl. Sump only), and **Paint color** for Custom Stand Only (non-stainless) - Add to Order shows "Missing: ..." until picked. [stand.html](docs/WebAquariumCalculator/stand.html) paint now starts unpicked instead of Black. [gmaConversations.js](docs/js/gmaConversations.js) `?v=standpaint3`, bridge `?v=6`.
+
+- Stand paint is now **mandatory** when a (non-stainless) stand is included: defaults to "-- select --"; POS Add to sale alerts and GMA Add to Order lists "Missing: Stand paint color" until picked ([index.html](docs/WebAquariumCalculator/index.html), [gmaConversations.js](docs/js/gmaConversations.js) `?v=standpaint2`, bridge `?v=5`).
+
+- Aquarium Calculator "Include a stand": new **Stand paint** (Black / White, spec only, no price; hidden for Stainless) - shown in Details/Summary, on the POS stand sale line ([MainForm.WebCalculator.cs](MainForm.WebCalculator.cs)) and GMA's Custom Stand line ([gmaConversations.js](docs/js/gmaConversations.js) `?v=standpaint1`, bridge `?v=4`). Alice already knows stands come in Black/White Paint - no bot change.
+
 - Local POS Custom Aquarium now opens the **portal's own Aquarium Calculator** (same UI/rules/19mm/summary/print quote), bundled with the POS and shown offline in WebView2 - [MainForm.WebCalculator.cs](MainForm.WebCalculator.cs) (new), [AquariumPOS.csproj](AquariumPOS.csproj) (WebView2 package + copies `docs/WebAquariumCalculator` into `WebCalculator\`). Its Add to sale makes the same component sale lines as the classic dialog (now behind "Open classic calculator" / automatic fallback).
 - [index.html](docs/WebAquariumCalculator/index.html): when hosted by the POS (`window.RSPosHost`), reads prices + lights/pumps from the POS and posts Add to sale to it instead of the "web demo" alert; portal behavior unchanged.
 - POS pricing sync now keeps each RPC's raw rows on disk for the embedded calculator, and also pulls Hole/Divider extras (`public_get_aquarium_extra_pricing`) - [OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs), [GlobalSettings.cs](GlobalSettings.cs).

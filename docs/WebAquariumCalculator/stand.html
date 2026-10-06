@@ -158,14 +158,15 @@
           </div>
 
           <!-- Paint colour (per "can you put option black or white paint") - spec only, no price change;
-               same Black Paint / White Paint options regular stands come in. Hidden for Stainless. -->
+               same Black Paint / White Paint options regular stands come in. Starts unpicked - GMA Add to Order
+               requires a choice for non-stainless stands. Hidden for Stainless. -->
           <div id="paintWrap">
             <div class="sub-head">Paint</div>
             <div class="paint-toggle">
-              <div class="tubular-option selected" data-value="Black" id="paintBlack"><span class="paint-swatch" style="background:#1b1b1b;"></span>Black Paint</div>
+              <div class="tubular-option" data-value="Black" id="paintBlack"><span class="paint-swatch" style="background:#1b1b1b;"></span>Black Paint</div>
               <div class="tubular-option" data-value="White" id="paintWhite"><span class="paint-swatch" style="background:#fff;"></span>White Paint</div>
             </div>
-            <input type="hidden" id="paint" value="Black">
+            <input type="hidden" id="paint" value="">
           </div>
 
           <div id="cabinetTypeWrap" class="reveal-block hidden">
@@ -839,7 +840,7 @@
         ['Quantity', String(qty)]
       ];
       rows.push(['Stainless', byId('stainless').checked ? 'Yes' : 'No']);
-      if (!byId('stainless').checked) rows.push(['Paint', byId('paint').value]);
+      if (!byId('stainless').checked && byId('paint').value) rows.push(['Paint', byId('paint').value]);
       // Approx. OUTER size (frame end posts + 18mm boards) - see calculateStandPlywood.
       function outerSize(o) { return round1(o.lengthInches) + '" x ' + round1(o.widthInches) + '" x ' + round1(o.heightInches) + '"'; }
       if (n.cabinet || n.canopy) rows.push(['Cabinet / Canopy Type', n.cabinetType]);
@@ -953,6 +954,6 @@
     })();
   </script>
   <script src="./calculator-ui.js?v=1"></script>
-  <script src="./calc-embed-bridge.js?v=2"></script>
+  <script src="./calc-embed-bridge.js?v=6"></script>
 </body>
 </html>

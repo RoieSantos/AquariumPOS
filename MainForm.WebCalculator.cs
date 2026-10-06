@@ -284,9 +284,11 @@ namespace AquariumPOS
             if (!sumpOnly && standUnitPrice > 0m && normalized.TryGetProperty("stand", out var stand) && stand.ValueKind == JsonValueKind.Object)
             {
                 string tubular = stand.TryGetProperty("tubular", out var tb) ? tb.GetString() ?? string.Empty : string.Empty;
+                bool stainless = stand.TryGetProperty("stainless", out var ss) && ss.ValueKind == JsonValueKind.True;
                 var standBits = new List<string?>
                 {
-                    $"{(int)Num(stand, "layers")}-Layer {tubular} Tubular{(stand.TryGetProperty("stainless", out var ss) && ss.ValueKind == JsonValueKind.True ? " (Stainless)" : "")}",
+                    $"{(int)Num(stand, "layers")}-Layer {tubular} Tubular{(stainless ? " (Stainless)" : "")}",
+                    stainless || string.IsNullOrWhiteSpace(Field("standPaint")) ? null : $"{Field("standPaint")} Paint",
                     $"{Fmt(Num(stand, "heightInches"))}in height",
                     stand.TryGetProperty("cabinet", out var cb) && cb.ValueKind == JsonValueKind.True ? "Cabinet" : null,
                     stand.TryGetProperty("canopy", out var cn) && cn.ValueKind == JsonValueKind.True ? "Canopy" : null,

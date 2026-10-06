@@ -559,6 +559,18 @@
               <label class="checkbox-row"><input id="standSumpHolder" type="checkbox">Sump Holder</label>
             </div>
 
+            <!-- Paint colour - spec only, no price change (same Black / White options as the Stand
+                 calculator, stand.html). Required whenever a non-stainless stand is included (Add to sale /
+                 GMA Add to Order are blocked until it's picked). Hidden for Stainless, which isn't painted. -->
+            <div id="standPaintWrap" class="field" style="margin-top: 12px;">
+              <label for="standPaint">Stand paint</label>
+              <select id="standPaint">
+                <option value="" selected>-- select --</option>
+                <option value="Black">Black Paint</option>
+                <option value="White">White Paint</option>
+              </select>
+            </div>
+
             <div id="standCabinetTypeWrap" class="field hidden" style="margin-top: 12px;">
               <label for="standCabinetType">Cabinet / canopy type</label>
               <select id="standCabinetType">
@@ -2095,6 +2107,7 @@
       byId('standSumpWidthWrap').classList.toggle('hidden', !standEnabled || !byId('standSumpHolder').checked);
       byId('standCabinetDoorsWrap').classList.toggle('hidden', !standEnabled || !byId('standCabinet').checked);
       byId('standCabinetTypeWrap').classList.toggle('hidden', !standEnabled || (!byId('standCabinet').checked && !byId('standCanopy').checked));
+      byId('standPaintWrap').classList.toggle('hidden', !standEnabled || byId('standStainless').checked);
       byId('standCanopyHeightWrap').classList.toggle('hidden', !standEnabled || !byId('standCanopy').checked);
     }
 
@@ -2423,6 +2436,7 @@
 
         var standExtras = [];
         if (n.stand.stainless) standExtras.push('Stainless');
+        else if (byId('standPaint').value) standExtras.push(byId('standPaint').value + ' Paint');
         if (n.stand.cabinet || n.stand.canopy) standExtras.push('Type: ' + n.stand.cabinetType);
         if (n.stand.cabinet) standExtras.push('Cabinet (' + n.stand.cabinetDoors + ' doors' + (n.stand.cabinetOuter ? ', approx. ' + formatOuterSize(n.stand.cabinetOuter) + ' outer' : '') + ')');
         if (n.stand.canopy) standExtras.push('Canopy (' + (n.stand.canopyOuter ? 'approx. ' + formatOuterSize(n.stand.canopyOuter) + ' outer' : formatInCm(n.stand.canopyHeightInches) + ' high') + ')');
@@ -2835,7 +2849,7 @@
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
         'holeCount', 'dividerCount',
-        'sumpEnabled', 'aquascape', 'enclosure', 'turtleTank', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
+        'sumpEnabled', 'aquascape', 'enclosure', 'turtleTank', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standPaint', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
         'sumpUnit', 'sumpGlass', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
@@ -2880,6 +2894,11 @@
             byId('sealant').focus();
             return;
           }
+          if (byId('standEnabled').checked && !byId('standStainless').checked && !byId('standPaint').value) {
+            window.alert('Please choose a stand paint color (Black or White).');
+            byId('standPaint').focus();
+            return;
+          }
           var lightSel = byId('lightItemSelect');
           var pumpSel = byId('pumpItemSelect');
           var lightOn = byId('submersibleLight').checked && lastResult.components && lastResult.components.light > 0;
@@ -2888,7 +2907,8 @@
           ['length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered',
             'rimless', 'highStrip', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount', 'sumpEnabled',
             'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight', 'sumpUnit', 'sumpGlass', 'stickerBackground', 'allSides',
-            'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote', 'lightQuantity', 'pumpQuantity'
+            'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote', 'lightQuantity', 'pumpQuantity',
+            'standPaint'
           ].forEach(function (id) {
             var el = byId(id);
             if (el) fields[id] = el.type === 'checkbox' ? Boolean(el.checked) : el.value;
@@ -2941,6 +2961,7 @@
         if (params.has('standLayers')) byId('standLayers').value = params.get('standLayers');
         if (params.has('standTubular')) byId('standTubular').value = params.get('standTubular');
         if (params.get('standStainless') === '1') byId('standStainless').checked = true;
+        if (params.get('standPaint') === 'White' || params.get('standPaint') === 'Black') byId('standPaint').value = params.get('standPaint');
         if (params.get('standCabinet') === '1') byId('standCabinet').checked = true;
         if (params.has('standCabinetDoors')) byId('standCabinetDoors').value = params.get('standCabinetDoors');
         if (params.get('standCanopy') === '1') byId('standCanopy').checked = true;
@@ -3905,6 +3926,6 @@
   </script>
 
   <script src="./calculator-ui.js?v=1"></script>
-  <script src="./calc-embed-bridge.js?v=3"></script>
+  <script src="./calc-embed-bridge.js?v=6"></script>
 </body>
 </html>

@@ -2089,8 +2089,11 @@ function calcEmbedMissingFields(doc) {
   const missing = [];
   // Sump only (aquarium calculator) hides the tank fields - only the sump's own size matters.
   const sumpOnly = calcEmbedKind !== 'stand' && doc.getElementById('option')?.value === 'Sump only';
+  // Sealant colour (aquarium calculator, incl. Sump only) - required, same as the POS's Add to sale.
+  const noSealant = calcEmbedKind !== 'stand' && !doc.getElementById('sealant')?.value;
   if (sumpOnly) {
     if (!(num('sumpLength') > 0 && num('sumpWidth') > 0 && num('sumpHeight') > 0)) missing.push('Sump length / width / height');
+    if (noSealant) missing.push('Sealant color');
     return missing;
   }
   if (!(num('length') > 0)) missing.push('Length');
@@ -2099,9 +2102,12 @@ function calcEmbedMissingFields(doc) {
   if (!doc.getElementById('unit')?.value) missing.push('Unit of measure');
   if (calcEmbedKind === 'stand') {
     if (checked('sumpHolder') && !(num('sumpWidth') > 0)) missing.push('Sump Holder width');
+    if (!checked('stainless') && !doc.getElementById('paint')?.value) missing.push('Paint color');
   } else {
+    if (noSealant) missing.push('Sealant color');
     if (checked('sumpEnabled') && !(num('sumpLength') > 0 && num('sumpWidth') > 0 && num('sumpHeight') > 0)) missing.push('Sump length / width / height');
     if (checked('standEnabled') && checked('standSumpHolder') && !(num('standSumpWidth') > 0)) missing.push('Stand Sump Holder width');
+    if (checked('standEnabled') && !checked('standStainless') && !doc.getElementById('standPaint')?.value) missing.push('Stand paint color');
   }
   return missing;
 }
@@ -2230,6 +2236,9 @@ function buildAquariumCalcLines(win) {
   if (standSeparate) {
     const s = n.stand;
     const standBits = [`${s.layers}-Layer ${CALC_TUBULAR_LABELS[s.tubular] || s.tubular} Tubular${s.stainless ? ' (Stainless)' : ''}`, `${fmtIn(s.heightInches)}in height`];
+    // Black / White paint from the aquarium calculator's stand step (spec only) - not for stainless.
+    const standPaint = s.stainless ? '' : val('standPaint');
+    if (standPaint) standBits.push(`${standPaint} Paint`);
     if (s.cabinet) standBits.push('Cabinet');
     if (s.canopy) standBits.push('Canopy');
     if (s.sumpHolder) standBits.push(`Sump Holder (${fmtIn(s.sumpWidth)}in)`);
