@@ -581,6 +581,248 @@ async function loadNotifications(session) {
   renderNotifications(notifications);
 }
 
+// Production group cards - admin_get_production_dashboard_summary
+// (sql/supabase_dashboard_production_summary.sql). Counts stay "-" if that SQL isn't run yet.
+async function loadProductionSummary(session) {
+  if (!session.password) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_production_dashboard_summary', {
+    p_admin_username: session.username,
+    p_admin_password: session.password
+  });
+
+  if (error || !data) {
+    console.error('admin_get_production_dashboard_summary failed:', error);
+    return;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return;
+
+  const fmt = (n) => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  document.getElementById('statProdOpen').textContent = fmt(row.open_count);
+  document.getElementById('statProdReleased').textContent = fmt(row.released_count);
+  document.getElementById('statProdOverdue').textContent = fmt(row.overdue_count);
+  document.getElementById('statProdFinishedMonth').textContent = fmt(row.finished_month_count);
+  document.getElementById('statProdOutputMonth').textContent = fmt(row.output_month_qty);
+  document.getElementById('statProdOverdue').closest('.finance-card')
+    .classList.toggle('finance-loss', Number(row.overdue_count) > 0);
+}
+
+// Production group's Maker Assignments summary - per "in production group i want to see the
+// makers assignment reports as well high level". Same RPC and counting rules as
+// js/makerAssignments.js's renderStatCards (rows with no source are idle makers), plus a
+// one-row-per-maker table; each maker links to maker-assignments.html?maker=... for the detail.
+// The "PO Tasks Built / PO Units (Month)" columns - per "in the maker view can we show the no. of
+// task build on production order as well" - come from admin_get_maker_production_built
+// (sql/supabase_dashboard_production_summary.sql); they show "-" if that SQL isn't run yet.
+async function loadMakerAssignmentSummary(session) {
+  const tbody = document.getElementById('dashMakerTableBody');
+  if (!session.password) return;
+
+  const auth = { p_admin_username: session.username, p_admin_password: session.password };
+  const [{ data, error }, built] = await Promise.all([
+    supabaseClient.rpc('admin_list_maker_assignments', auth),
+    supabaseClient.rpc('admin_get_maker_production_built', auth)
+  ]);
+  if (built.error) console.error('admin_get_maker_production_built failed:', built.error);
+  const builtByMaker = new Map((built.data || []).map(b => [b.maker, b]));
+
+  if (error) {
+    console.error('admin_list_maker_assignments failed:', error);
+    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${escapeDashboardHtml(error.message)}</td></tr>`;
+    return;
+  }
+
+  const rows = data || [];
+  const work = rows.filter(r => r.source);
+  const count = (s) => work.filter(r => r.part_status === s).length;
+  const pendingTank = work.filter(r => r.part_status === 'Pending' && r.part === 'tank').length;
+  const pendingStand = work.filter(r => r.part_status === 'Pending' && r.part === 'stand').length;
+  const busy = new Set(work.filter(r => r.part_status !== 'Done').map(r => r.maker)).size;
+  const allMakers = new Set(rows.map(r => r.maker)).size;
+
+  document.getElementById('statMakerPending').textContent = count('Pending');
+  document.getElementById('statMakerPendingSub').textContent = `${pendingTank} tank · ${pendingStand} stand`;
+  document.getElementById('statMakerRework').textContent = count('Rework');
+  document.getElementById('statMakerDone').textContent = count('Done');
+  document.getElementById('statMakerBusy').textContent = `${busy} / ${allMakers}`;
+
+  const makers = new Map();
+  for (const r of rows) {
+    if (!makers.has(r.maker)) {
+      makers.set(r.maker, { maker: r.maker, name: r.maker_name || r.maker, tank: 0, stand: 0, rework: 0, done: 0 });
+    }
+    const m = makers.get(r.maker);
+    if (!r.source) continue;
+    if (r.part_status === 'Pending') m[r.part === 'stand' ? 'stand' : 'tank']++;
+    else if (r.part_status === 'Rework') m.rework++;
+    else if (r.part_status === 'Done') m.done++;
+  }
+  // A maker who built Production Orders but has no row above (e.g. no longer set up as a maker).
+  for (const b of builtByMaker.values()) {
+    if (!makers.has(b.maker)) {
+      makers.set(b.maker, { maker: b.maker, name: b.maker, tank: 0, stand: 0, rework: 0, done: 0 });
+    }
+  }
+  const builtCell = (m, field) => {
+    if (built.error) return '-';
+    const b = builtByMaker.get(m.maker);
+    return b ? (Number(b[field]) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '0';
+  };
+
+  const list = Array.from(makers.values())
+    .sort((a, b) => (b.tank + b.stand + b.rework) - (a.tank + a.stand + a.rework) || a.name.localeCompare(b.name));
+
+  tbody.innerHTML = list.length === 0
+    ? '<tr><td colspan="8" class="muted">No makers set up yet.</td></tr>'
+    : list.map(m => {
+      const open = m.tank + m.stand + m.rework;
+      const status = m.rework ? '<span class="badge badge-danger">Has rework</span>'
+        : open ? '<span class="badge badge-warning">Busy</span>'
+        : m.done ? '<span class="badge badge-success">Done, waiting</span>'
+        : '<span class="badge badge-neutral">Idle</span>';
+      return `
+        <tr>
+          <td><a href="maker-assignments.html?maker=${encodeURIComponent(m.maker)}">${escapeDashboardHtml(m.name)}</a></td>
+          <td class="num">${m.tank}</td>
+          <td class="num">${m.stand}</td>
+          <td class="num">${m.rework}</td>
+          <td class="num">${m.done}</td>
+          <td class="num" title="All-time: ${builtCell(m, 'tasks_total')} task(s)">${builtCell(m, 'tasks_month')}</td>
+          <td class="num">${builtCell(m, 'units_month')}</td>
+          <td>${status}</td>
+        </tr>`;
+    }).join('');
+}
+
+// "Biggest Purchases & Expenses - This Month" - per "can you show me a report there what is the
+// biggest purchase and expense by ranking". admin_get_dashboard_spending_ranking
+// (sql/supabase_dashboard_spending_ranking.sql) returns the top 10 of every ranking in one call,
+// using the same month/warehouse rules as the Total Purchase / Expense This Month cards; each
+// card's tabs just redraw from that. Shows an error line if that SQL isn't run yet.
+async function loadSpendingRanking(session) {
+  if (!session.password) return;
+  const cards = document.querySelectorAll('.dash-ranking-card');
+
+  const { data, error } = await supabaseClient.rpc('admin_get_dashboard_spending_ranking', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_warehouse_name: session.warehouseName || null
+  });
+
+  if (error) {
+    console.error('admin_get_dashboard_spending_ranking failed:', error);
+    cards.forEach(card => {
+      card.querySelector('.dash-ranking-list').innerHTML =
+        `<div class="error-text">${escapeDashboardHtml(error.message)}</div>`;
+    });
+    return;
+  }
+
+  const rows = data || [];
+  const render = (card, dim) => {
+    const list = rows.filter(r => r.source === card.dataset.rankingSource && r.dimension === dim);
+    card.querySelectorAll('.dash-ranking-tab').forEach(t => t.classList.toggle('active', t.dataset.dim === dim));
+    const countWord = (n) => {
+      if (dim === 'entry') return '';
+      if (card.dataset.rankingSource === 'Expense') return `${n} ${n === 1 ? 'entry' : 'entries'}`;
+      if (dim === 'po') return `${n} ${n === 1 ? 'line' : 'lines'}`;
+      return `${n} ${n === 1 ? 'PO' : 'POs'}`;
+    };
+    card.querySelector('.dash-ranking-list').innerHTML = list.length === 0
+      ? '<div class="muted">Nothing posted this month yet.</div>'
+      : list.map(r => {
+        const pct = Math.max(0, Math.min(100, (Number(r.share) || 0) * 100));
+        const sub = [r.detail, countWord(Number(r.entry_count) || 0)].filter(Boolean).join(' · ');
+        return `
+          <div class="dash-ranking-row">
+            <span class="dash-ranking-rank">${r.rank}</span>
+            <div class="dash-ranking-main">
+              <div class="dash-ranking-line">
+                <span class="dash-ranking-name" title="${escapeDashboardHtml(r.name)}">${escapeDashboardHtml(r.name)}</span>
+                <span class="dash-ranking-amount">${formatCurrency(r.amount)}</span>
+              </div>
+              <div class="dash-ranking-bar"><span style="width:${pct.toFixed(1)}%"></span></div>
+              <div class="dash-ranking-sub"><span>${escapeDashboardHtml(sub)}</span><span>${pct.toFixed(1)}%</span></div>
+            </div>
+          </div>`;
+      }).join('');
+  };
+
+  cards.forEach(card => {
+    render(card, 'category');
+    card.querySelector('.dash-ranking-tabs').addEventListener('click', (e) => {
+      const tab = e.target.closest('.dash-ranking-tab');
+      if (tab) render(card, tab.dataset.dim);
+    });
+  });
+}
+
+// Per "dashboards are mostly for reportings - 1st group Sales, 2nd Production, 3rd Purchase and
+// Expense and payroll... put the grouping on the left" (super users first). The left
+// #dashGroupsNav shows one data-dash-group section of #financeCardGrid at a time. The shared
+// Sales Target / order-status / Sales by Staff blocks are moved into the Sales group, and the
+// nav-card shortcuts into a Shortcuts group sub-grouped by their data-group. Elements are moved
+// (not cloned) so their ids and the hidden/shown gating in init() still apply.
+const DASH_SHORTCUT_GROUPS = [
+  { key: 'orders', title: 'Orders' },
+  { key: 'calculators', title: 'Calculators & Quotes' },
+  { key: 'inventory', title: 'Inventory & Setup' },
+  { key: 'reports', title: 'Reports' },
+  { key: 'admin', title: 'Admin' }
+];
+const DASH_GROUP_STORAGE_KEY = 'dashboardGroup';
+
+function showDashboardGroup(key) {
+  document.querySelectorAll('#financeCardGrid .dash-group').forEach(section => {
+    section.classList.toggle('hidden', section.dataset.dashGroup !== key);
+  });
+  document.querySelectorAll('#dashGroupsNav .dash-group-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.dashTab === key);
+  });
+  try { localStorage.setItem(DASH_GROUP_STORAGE_KEY, key); } catch (e) { /* storage blocked */ }
+}
+
+function setupDashboardGroups() {
+  const extras = document.getElementById('dashSalesExtras');
+  ['salesTargetCard', 'statCardGrid', 'salesByStaffSection'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) extras.appendChild(el);
+  });
+
+  const shortcuts = document.getElementById('dashShortcutsGroup');
+  const grid = document.querySelector('#dashLayout .card-grid');
+  if (grid) {
+    DASH_SHORTCUT_GROUPS.forEach(group => {
+      const cards = Array.from(grid.querySelectorAll(`.nav-card[data-group="${group.key}"]`))
+        .filter(card => !card.classList.contains('hidden'));
+      if (!cards.length) return;
+      const heading = document.createElement('h3');
+      heading.className = 'finance-section-heading';
+      heading.textContent = group.title;
+      const list = document.createElement('div');
+      list.className = 'card-grid dash-shortcut-grid';
+      cards.forEach(card => list.appendChild(card));
+      shortcuts.append(heading, list);
+    });
+    grid.classList.add('hidden');
+  }
+
+  const nav = document.getElementById('dashGroupsNav');
+  nav.addEventListener('click', (e) => {
+    const tab = e.target.closest('.dash-group-tab');
+    if (tab) showDashboardGroup(tab.dataset.dashTab);
+  });
+  nav.classList.remove('hidden');
+  document.getElementById('dashLayout').classList.add('dash-grouped');
+
+  let saved = null;
+  try { saved = localStorage.getItem(DASH_GROUP_STORAGE_KEY); } catch (e) { /* storage blocked */ }
+  const valid = Array.from(nav.querySelectorAll('.dash-group-tab')).some(t => t.dataset.dashTab === saved);
+  showDashboardGroup(valid ? saved : 'sales');
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -651,12 +893,16 @@ async function loadNotifications(session) {
     document.getElementById('vendorSetupCard').classList.remove('hidden');
     document.getElementById('userSetupCard').classList.remove('hidden');
     document.getElementById('financeCardGrid').classList.remove('hidden');
+    setupDashboardGroups();
     await loadFinancialSummary(session);
     await loadExpenseSummary(session);
     await loadDailyByWarehouse(session);
     await loadPurchaseSummary(session);
     await loadPayrollSummary(session);
     renderProfitCard();
+    await loadSpendingRanking(session);
+    await loadProductionSummary(session);
+    await loadMakerAssignmentSummary(session);
   }
 
   // Per "if the user is a sales user show the dashboard sales by confirmation" - Sales Users

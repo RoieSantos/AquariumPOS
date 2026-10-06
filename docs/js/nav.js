@@ -250,7 +250,7 @@ function renderTopNav(activeLabel) {
   // Conversations Access sees GMA Conversations even without full Super User - same
   // "isSuperUser || is<Flag>" gate the page itself enforces in its own init().
   if (isSuperUser || isConversationsStaff) {
-    admin.push({ href: 'gma-conversations.html', label: 'GMA Conversations' });
+    admin.push({ href: 'gma-conversations.html', label: 'Conversations' });
   }
   if (isSuperUser) {
     admin.push({ href: 'customers.html', label: 'Customers' });

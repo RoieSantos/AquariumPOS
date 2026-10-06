@@ -180,6 +180,9 @@ function wireFilters() {
   }
 
   document.getElementById('setupContent').classList.remove('hidden');
+  // ?maker=<username> - from the Dashboard's Production group maker table: pre-fills the search.
+  const makerParam = new URLSearchParams(window.location.search).get('maker');
+  if (makerParam) document.getElementById('makerSearchInput').value = makerParam;
   wireFilters();
   await loadAssignments();
 })();

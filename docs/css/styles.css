@@ -129,6 +129,114 @@ body.app-has-photo-bg::before {
   }
 }
 
+/* Dashboard spans the full screen width (per "make this full screen so we can maximize the full
+   screen view") instead of the 1200px cap every other page uses - nav bar included so its links
+   line up with the content edges. */
+body.dashboard-full-width .page,
+body.dashboard-full-width .topnav-inner {
+  max-width: none;
+}
+
+@media (min-width: 1200px) {
+  body.dashboard-full-width .page {
+    padding: 20px 32px;
+  }
+  body.dashboard-full-width .topnav-inner {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+
+/* Dashboard report groups (super users - js/dashboard.js's setupDashboardGroups adds
+   .dash-grouped): Sales / Production / Purchase, Expense & Payroll / Shortcuts listed in a left
+   column, the selected group's cards on the right. Without .dash-grouped, .dash-layout is just a
+   plain block and the page looks as before. */
+.dash-layout.dash-grouped {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.dash-main {
+  min-width: 0;
+}
+
+.dash-groups-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: sticky;
+  top: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px;
+}
+
+.dash-group-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-main);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 11px 12px;
+  cursor: pointer;
+}
+
+.dash-group-tab:hover {
+  border-color: var(--panel-border);
+}
+
+.dash-group-tab.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.dash-group-tab-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.dash-group > .finance-section-heading:first-child {
+  margin-top: 0;
+}
+
+.dash-shortcut-grid {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+/* Too narrow for a side column - the groups become a scrollable tab row above the cards. */
+@media (max-width: 1000px) {
+  .dash-layout.dash-grouped {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .dash-groups-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 6px;
+  }
+
+  .dash-group-tab {
+    width: auto;
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding: 9px 12px;
+  }
+}
+
 .centered-page {
   min-height: 100vh;
   display: flex;
@@ -1040,6 +1148,198 @@ a.badge:hover { text-decoration: underline; }
 
 .finance-card.finance-payroll {
   background: linear-gradient(135deg, #2a9d8f 0%, #264653 100%);
+}
+
+/* Dashboard Production group cards. */
+.finance-card.finance-prod-open {
+  background: linear-gradient(135deg, #5c7cfa 0%, #364fc7 100%);
+}
+
+.finance-card.finance-prod-released {
+  background: linear-gradient(135deg, #f59f00 0%, #d9480f 100%);
+}
+
+.finance-card.finance-prod-overdue {
+  background: linear-gradient(135deg, #868e96 0%, #495057 100%);
+}
+
+.finance-card.finance-prod-overdue.finance-loss {
+  background: linear-gradient(135deg, #cb356b 0%, #bd3f32 100%);
+}
+
+.finance-card.finance-prod-finished {
+  background: linear-gradient(135deg, #43a047 0%, #1b5e20 100%);
+}
+
+.finance-card.finance-prod-output {
+  background: linear-gradient(135deg, #22b6a3 0%, #1d4f91 100%);
+}
+
+/* Dashboard Production group - Maker Assignments summary. */
+.finance-card.finance-maker-pending {
+  background: linear-gradient(135deg, #f7971e 0%, #d9480f 100%);
+}
+
+.finance-card.finance-maker-rework {
+  background: linear-gradient(135deg, #cb356b 0%, #bd3f32 100%);
+}
+
+.finance-card.finance-maker-done {
+  background: linear-gradient(135deg, #43a047 0%, #1b5e20 100%);
+}
+
+.finance-card.finance-maker-busy {
+  background: linear-gradient(135deg, #4a90d9 0%, #173f74 100%);
+}
+
+.dash-maker-summary {
+  margin-top: 18px;
+}
+
+.dash-maker-more {
+  display: inline-block;
+  margin-top: 12px;
+  font-weight: 600;
+}
+
+/* Dashboard "Biggest Purchases & Expenses" ranking cards (js/dashboard.js loadSpendingRanking). */
+.dash-ranking-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 16px;
+}
+
+.dash-ranking-card {
+  min-width: 0;
+}
+
+.dash-ranking-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.dash-ranking-head h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.dash-ranking-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--page-bg);
+  border: 1px solid var(--panel-border);
+}
+
+.dash-ranking-tab {
+  padding: 5px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dash-ranking-tab.active {
+  background: var(--panel-bg);
+  color: var(--text-main);
+  box-shadow: 0 1px 3px rgba(15, 35, 70, 0.14);
+}
+
+.dash-ranking-row {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.dash-ranking-row:last-child {
+  border-bottom: none;
+}
+
+.dash-ranking-rank {
+  flex: 0 0 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--page-bg);
+  border: 1px solid var(--panel-border);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dash-ranking-row:nth-child(-n+3) .dash-ranking-rank {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.dash-ranking-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-ranking-line,
+.dash-ranking-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dash-ranking-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.dash-ranking-amount {
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-ranking-bar {
+  height: 6px;
+  margin: 5px 0 4px;
+  border-radius: 3px;
+  background: var(--page-bg);
+  overflow: hidden;
+}
+
+.dash-ranking-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--primary);
+}
+
+[data-ranking-source="Expense"] .dash-ranking-bar span {
+  background: var(--danger);
+}
+
+.dash-ranking-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dash-ranking-sub span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .finance-card.finance-profit {

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=aq5" />
+  <link rel="stylesheet" href="css/styles.css?v=aq10" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
 </head>
-<body>
+<body class="dashboard-full-width">
   <div id="topnav"></div>
 
   <div class="page">
@@ -56,6 +56,18 @@
     </div>
 
     <div id="dashboardMainContent">
+    <div class="dash-layout" id="dashLayout">
+    <!-- Per "dashboards are mostly for reportings - 1st group Sales, 2nd Production, 3rd Purchase
+         and Expense and payroll... put the grouping on the left" - super users only for now:
+         js/dashboard.js's setupDashboardGroups un-hides this nav, switches .dash-layout to two
+         columns and shows one data-dash-group section at a time. Everyone else never sees it. -->
+    <nav class="dash-groups-nav hidden" id="dashGroupsNav" aria-label="Dashboard groups">
+      <button type="button" class="dash-group-tab" data-dash-tab="sales"><span class="dash-group-tab-icon">💰</span> Sales</button>
+      <button type="button" class="dash-group-tab" data-dash-tab="production"><span class="dash-group-tab-icon">🏭</span> Production</button>
+      <button type="button" class="dash-group-tab" data-dash-tab="costs"><span class="dash-group-tab-icon">🧾</span> Purchase, Expense &amp; Payroll</button>
+      <button type="button" class="dash-group-tab" data-dash-tab="shortcuts"><span class="dash-group-tab-icon">🔗</span> Shortcuts</button>
+    </nav>
+    <div class="dash-main">
     <!-- Hidden per request - the push-notification opt-in flow (js/pushNotifications.js) is
          still wired up and still reachable via the login prompt modal below, this just removes
          the manual toggle button from the Dashboard itself. -->
@@ -63,10 +75,36 @@
 
     <div class="notification-center hidden" id="notificationCenter"></div>
 
+    <!-- Super-user report cards, one section per left-nav group (data-dash-group). -->
     <div class="hidden" id="financeCardGrid">
-      <h3 class="finance-section-heading">Monthly</h3>
-      <!-- Monthly cards grouped into three rows per "can you group this": 1) Paid / To Receive /
-           Profit, 2) Total / Online / Walk-In Sales, 3) Purchase / Expense / Payroll. -->
+      <section class="dash-group" data-dash-group="sales">
+      <h3 class="finance-section-heading">Sales - This Month</h3>
+      <div class="finance-card-grid">
+        <!-- Online + Walk-In combined - per "add one more Total Sales This Month this consist of
+             Total Online Sales and Total Walkin sales this month". Not a link: online-orders.html
+             has no combined online+walk-in list to deep-link into (same as the Profit card). -->
+        <div class="finance-card finance-total-sales">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">💵</span> Total Sales This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthTotalSales">-</div>
+          <div class="finance-sub" id="statMonthTotalSalesSub">Online + Walk-In, current month to date</div>
+        </div>
+        <a class="finance-card finance-sales" href="online-orders.html?period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">📈</span> Online Sales This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthSales">-</div>
+          <div class="finance-sub" id="statMonthSalesSub">Online orders, current month to date</div>
+        </a>
+        <a class="finance-card finance-walkin" href="online-orders.html?scope=walkin&period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🏪</span> Walk-In Sales This Month</div>
+          </div>
+          <div class="finance-value" id="statWalkInSales">-</div>
+          <div class="finance-sub" id="statWalkInSalesSub">In-store orders, current month to date</div>
+        </a>
+      </div>
       <div class="finance-card-grid">
         <!-- Per "instead of amount to receive.. compute the amount paid for this month and amount
              about to receive for this month" - both scoped to this month's online orders
@@ -98,61 +136,8 @@
           <div class="finance-sub" id="statMonthProfitSub">Sales - Expense - Purchase - Payroll</div>
         </div>
       </div>
-      <div class="finance-card-grid">
-        <!-- Online + Walk-In combined - per "add one more Total Sales This Month this consist of
-             Total Online Sales and Total Walkin sales this month". Not a link: online-orders.html
-             has no combined online+walk-in list to deep-link into (same as the Profit card). -->
-        <div class="finance-card finance-total-sales">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">💵</span> Total Sales This Month</div>
-          </div>
-          <div class="finance-value" id="statMonthTotalSales">-</div>
-          <div class="finance-sub" id="statMonthTotalSalesSub">Online + Walk-In, current month to date</div>
-        </div>
-        <a class="finance-card finance-sales" href="online-orders.html?period=month">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">📈</span> Online Sales This Month</div>
-          </div>
-          <div class="finance-value" id="statMonthSales">-</div>
-          <div class="finance-sub" id="statMonthSalesSub">Online orders, current month to date</div>
-        </a>
-        <a class="finance-card finance-walkin" href="online-orders.html?scope=walkin&period=month">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">🏪</span> Walk-In Sales This Month</div>
-          </div>
-          <div class="finance-value" id="statWalkInSales">-</div>
-          <div class="finance-sub" id="statWalkInSalesSub">In-store orders, current month to date</div>
-        </a>
-      </div>
-      <div class="finance-card-grid">
-        <a class="finance-card finance-purchase" href="posted-purchase-orders.html">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">🛒</span> Total Purchase</div>
-          </div>
-          <div class="finance-value" id="statTotalPurchase">-</div>
-          <div class="finance-sub" id="statTotalPurchaseSub">Posted purchase orders, current month to date</div>
-        </a>
-        <a class="finance-card finance-expense" href="expense-entries.html?period=month">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">🧾</span> Expense This Month</div>
-          </div>
-          <div class="finance-value" id="statMonthExpense">-</div>
-          <div class="finance-sub" id="statMonthExpenseSub">Posted expenses, current month to date</div>
-        </a>
-        <!-- Per "after the finalize payroll run i want to show it here .. so I can track how much
-             is the salary spent for this month" - sum of Net Pay across every run finalized with a
-             Pay Date in the current month (see admin_get_payroll_month_summary). Shown to Payroll
-             Officers too, not just Super Users, alongside the rest of this grid's own gating. -->
-        <a class="finance-card finance-payroll" href="payroll-ledger.html">
-          <div class="finance-top">
-            <div class="finance-label"><span class="finance-icon">💵</span> Payroll This Month</div>
-          </div>
-          <div class="finance-value" id="statMonthPayroll">-</div>
-          <div class="finance-sub" id="statMonthPayrollSub">Net pay, finalized runs paid this month</div>
-        </a>
-      </div>
 
-      <h3 class="finance-section-heading">Daily</h3>
+      <h3 class="finance-section-heading">Sales - Today</h3>
       <div class="finance-card-grid">
         <a class="finance-card finance-daily-online" href="online-orders.html?period=today">
           <div class="finance-top">
@@ -170,6 +155,141 @@
           <div class="finance-sub" id="statTodayWalkInSalesSub">In-store orders, today</div>
           <div class="finance-breakdown hidden" id="statTodayWalkInSalesByWh"></div>
         </a>
+      </div>
+      <!-- js/dashboard.js's setupDashboardGroups moves the Sales Target, order-status cards and
+           Sales by Staff (shared with other roles, so they live further down the page) in here. -->
+      <div id="dashSalesExtras"></div>
+      </section>
+
+      <!-- Production cards - admin_get_production_dashboard_summary
+           (sql/supabase_dashboard_production_summary.sql), loaded by loadProductionSummary. -->
+      <section class="dash-group" data-dash-group="production">
+      <h3 class="finance-section-heading">Production - Now</h3>
+      <div class="finance-card-grid">
+        <a class="finance-card finance-prod-open" href="production-orders.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">📝</span> Open Production Orders</div>
+          </div>
+          <div class="finance-value" id="statProdOpen">-</div>
+          <div class="finance-sub">Created, not yet released to makers</div>
+        </a>
+        <a class="finance-card finance-prod-released" href="production-orders.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🔨</span> In Production (Released)</div>
+          </div>
+          <div class="finance-value" id="statProdReleased">-</div>
+          <div class="finance-sub">Released to makers, not yet finished</div>
+        </a>
+        <a class="finance-card finance-prod-overdue" href="production-orders.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">⏰</span> Overdue</div>
+          </div>
+          <div class="finance-value" id="statProdOverdue">-</div>
+          <div class="finance-sub">Open/Released orders past their due date</div>
+        </a>
+      </div>
+      <h3 class="finance-section-heading">Production - This Month</h3>
+      <div class="finance-card-grid">
+        <a class="finance-card finance-prod-finished" href="production-orders.html?view=finished">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🏁</span> Finished This Month</div>
+          </div>
+          <div class="finance-value" id="statProdFinishedMonth">-</div>
+          <div class="finance-sub">Production orders finished, current month to date</div>
+        </a>
+        <a class="finance-card finance-prod-output" href="production-orders.html?view=finished">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">📦</span> Units Output This Month</div>
+          </div>
+          <div class="finance-value" id="statProdOutputMonth">-</div>
+          <div class="finance-sub">Output posted to stock, current month to date</div>
+        </a>
+      </div>
+
+      <!-- Per "in production group i want to see the makers assignment reports as well high level" -
+           a summary of maker-assignments.html, from the same admin_list_maker_assignments RPC
+           (sql/supabase_maker_assignments_view.sql), loaded by loadMakerAssignmentSummary. -->
+      <h3 class="finance-section-heading">Maker Assignments - Open</h3>
+      <div class="finance-card-grid">
+        <a class="finance-card finance-maker-pending" href="maker-assignments.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">⏳</span> Pending Parts</div>
+          </div>
+          <div class="finance-value" id="statMakerPending">-</div>
+          <div class="finance-sub" id="statMakerPendingSub">Tank / stand parts not yet done</div>
+        </a>
+        <a class="finance-card finance-maker-rework" href="maker-assignments.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🔁</span> Rework</div>
+          </div>
+          <div class="finance-value" id="statMakerRework">-</div>
+          <div class="finance-sub">Parts sent back for rework</div>
+        </a>
+        <a class="finance-card finance-maker-done" href="maker-assignments.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">✔️</span> Done, Not Shipped</div>
+          </div>
+          <div class="finance-value" id="statMakerDone">-</div>
+          <div class="finance-sub">Finished parts waiting on their order</div>
+        </a>
+        <a class="finance-card finance-maker-busy" href="maker-assignments.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">👷</span> Makers Busy</div>
+          </div>
+          <div class="finance-value" id="statMakerBusy">-</div>
+          <div class="finance-sub">Makers with pending or rework parts</div>
+        </a>
+      </div>
+      <div class="card dash-maker-summary">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Maker</th><th class="num">Pending Tank</th><th class="num">Pending Stand</th>
+                <th class="num">Rework</th><th class="num">Done</th>
+                <th class="num" title="Production Order parts this maker finished this month">PO Tasks Built (Month)</th>
+                <th class="num" title="Units on those Production Order parts">PO Units (Month)</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="dashMakerTableBody">
+              <tr><td colspan="8" class="muted">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <a class="dash-maker-more" href="maker-assignments.html">Open full Maker Assignments →</a>
+      </div>
+      </section>
+
+      <section class="dash-group" data-dash-group="costs">
+      <h3 class="finance-section-heading">Purchase, Expense &amp; Payroll - This Month</h3>
+      <div class="finance-card-grid">
+        <a class="finance-card finance-purchase" href="posted-purchase-orders.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🛒</span> Total Purchase</div>
+          </div>
+          <div class="finance-value" id="statTotalPurchase">-</div>
+          <div class="finance-sub" id="statTotalPurchaseSub">Posted purchase orders, current month to date</div>
+        </a>
+        <a class="finance-card finance-expense" href="expense-entries.html?period=month">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">🧾</span> Expense This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthExpense">-</div>
+          <div class="finance-sub" id="statMonthExpenseSub">Posted expenses, current month to date</div>
+        </a>
+        <!-- Per "after the finalize payroll run i want to show it here .. so I can track how much
+             is the salary spent for this month" - sum of Net Pay across every run finalized with a
+             Pay Date in the current month (see admin_get_payroll_month_summary). -->
+        <a class="finance-card finance-payroll" href="payroll-ledger.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">💵</span> Payroll This Month</div>
+          </div>
+          <div class="finance-value" id="statMonthPayroll">-</div>
+          <div class="finance-sub" id="statMonthPayrollSub">Net pay, finalized runs paid this month</div>
+        </a>
+      </div>
+      <h3 class="finance-section-heading">Today</h3>
+      <div class="finance-card-grid">
         <a class="finance-card finance-daily-expense" href="expense-entries.html?period=today">
           <div class="finance-top">
             <div class="finance-label"><span class="finance-icon">🧾</span> Expense Today</div>
@@ -179,6 +299,42 @@
           <div class="finance-breakdown hidden" id="statTodayExpenseByWh"></div>
         </a>
       </div>
+
+      <!-- Per "can you show me a report there what is the biggest purchase and expense by ranking" -
+           top 10 per ranking this month, from admin_get_dashboard_spending_ranking
+           (sql/supabase_dashboard_spending_ranking.sql), loaded by loadSpendingRanking. The tab
+           buttons just switch which ranking is drawn - all of them load in one call. -->
+      <h3 class="finance-section-heading">Biggest Purchases &amp; Expenses - This Month</h3>
+      <div class="dash-ranking-grid">
+        <div class="card dash-ranking-card" data-ranking-source="Purchase">
+          <div class="dash-ranking-head">
+            <h4>🛒 Top Purchases</h4>
+            <div class="dash-ranking-tabs" role="tablist">
+              <button type="button" class="dash-ranking-tab active" data-dim="category">Category</button>
+              <button type="button" class="dash-ranking-tab" data-dim="vendor">Vendor</button>
+              <button type="button" class="dash-ranking-tab" data-dim="item">Item</button>
+              <button type="button" class="dash-ranking-tab" data-dim="po">Single PO</button>
+            </div>
+          </div>
+          <div class="dash-ranking-list"><div class="muted">Loading...</div></div>
+        </div>
+        <div class="card dash-ranking-card" data-ranking-source="Expense">
+          <div class="dash-ranking-head">
+            <h4>🧾 Top Expenses</h4>
+            <div class="dash-ranking-tabs" role="tablist">
+              <button type="button" class="dash-ranking-tab active" data-dim="category">Category</button>
+              <button type="button" class="dash-ranking-tab" data-dim="entry">Single Entry</button>
+            </div>
+          </div>
+          <div class="dash-ranking-list"><div class="muted">Loading...</div></div>
+        </div>
+      </div>
+      <a class="dash-maker-more" href="spending-report.html">Open full Purchases &amp; Expenses report →</a>
+      </section>
+
+      <!-- js/dashboard.js's setupDashboardGroups moves the nav-card shortcuts in here, sub-grouped
+           by each card's data-group. -->
+      <section class="dash-group" data-dash-group="shortcuts" id="dashShortcutsGroup"></section>
     </div>
 
     <div class="hidden" id="walkInOnlyCard">
@@ -252,118 +408,120 @@
     </div>
 
     <div class="card-grid">
-      <a class="nav-card" id="transferOrdersCard" href="transfer-orders.html">
+      <a class="nav-card" id="transferOrdersCard" href="transfer-orders.html" data-group="orders">
         <div class="icon">🚚</div>
         <div class="nav-card-text">
           <div class="title">Transfer Orders</div>
           <div class="muted">View &amp; create warehouse transfer requests</div>
         </div>
       </a>
-      <a class="nav-card" id="reportsCard" href="reports.html">
+      <a class="nav-card" id="reportsCard" href="reports.html" data-group="reports">
         <div class="icon">📊</div>
         <div class="nav-card-text">
           <div class="title">Reports</div>
           <div class="muted">Month End &amp; Expense reports</div>
         </div>
       </a>
-      <a class="nav-card" id="topSellingItemsCard" href="top-selling-items.html">
+      <a class="nav-card" id="topSellingItemsCard" href="top-selling-items.html" data-group="reports">
         <div class="icon">🏆</div>
         <div class="nav-card-text">
           <div class="title">Top Selling Items</div>
           <div class="muted">Best sellers by day/week/month</div>
         </div>
       </a>
-      <a class="nav-card" id="customerAquariumCard" href="customer-aquarium.html">
+      <a class="nav-card" id="customerAquariumCard" href="customer-aquarium.html" data-group="calculators">
         <div class="icon">🐠</div>
         <div class="nav-card-text">
           <div class="title">Customer Aquarium</div>
           <div class="muted">Manage complete aquarium set packages</div>
         </div>
       </a>
-      <a class="nav-card" href="stand-calculator.html">
+      <a class="nav-card" href="stand-calculator.html" data-group="calculators">
         <div class="icon">📐</div>
         <div class="nav-card-text">
           <div class="title">Custom Stand</div>
           <div class="muted">Aquarium stand pricing calculator</div>
         </div>
       </a>
-      <a class="nav-card" href="aquarium-calculator.html">
+      <a class="nav-card" href="aquarium-calculator.html" data-group="calculators">
         <div class="icon">🐠</div>
         <div class="nav-card-text">
           <div class="title">Aquarium Calculator</div>
           <div class="muted">Quote a complete set/aquarium build</div>
         </div>
       </a>
-      <a class="nav-card" href="sticker-calculator.html">
+      <a class="nav-card" href="sticker-calculator.html" data-group="calculators">
         <div class="icon">🏷️</div>
         <div class="nav-card-text">
           <div class="title">Custom Accessories / Stickers</div>
           <div class="muted">Plain/Tiles/Rubber/Glass/Acrylic sticker pricing</div>
         </div>
       </a>
-      <a class="nav-card" id="serialTrackerCard" href="serial-tracker.html">
+      <a class="nav-card" id="serialTrackerCard" href="serial-tracker.html" data-group="inventory">
         <div class="icon">🔎</div>
         <div class="nav-card-text">
           <div class="title">Serial Tracker</div>
           <div class="muted">Search &amp; update item serial numbers</div>
         </div>
       </a>
-      <a class="nav-card hidden" id="warehouseSetupCard" href="warehouse-setup.html">
+      <a class="nav-card hidden" id="warehouseSetupCard" href="warehouse-setup.html" data-group="inventory">
         <div class="icon">🏬</div>
         <div class="nav-card-text">
           <div class="title">Warehouse Setup</div>
           <div class="muted">View &amp; sync Warehouses from Pancake (super users only)</div>
         </div>
       </a>
-      <a class="nav-card hidden" id="itemSetupCard" href="item-setup.html">
+      <a class="nav-card hidden" id="itemSetupCard" href="item-setup.html" data-group="inventory">
         <div class="icon">📦</div>
         <div class="nav-card-text">
           <div class="title">Item Setup</div>
           <div class="muted">View &amp; sync Items from Pancake (super users only)</div>
         </div>
       </a>
-      <a class="nav-card hidden" id="variantSetupCard" href="variant-setup.html">
+      <a class="nav-card hidden" id="variantSetupCard" href="variant-setup.html" data-group="inventory">
         <div class="icon">🧩</div>
         <div class="nav-card-text">
           <div class="title">Variants</div>
           <div class="muted">View product variants linked to Items (super users only)</div>
         </div>
       </a>
-      <a class="nav-card" href="online-orders.html">
+      <a class="nav-card" href="online-orders.html" data-group="orders">
         <div class="icon">🛒</div>
         <div class="nav-card-text">
           <div class="title">Online Orders</div>
           <div class="muted">View customer orders synced from Pancake</div>
         </div>
       </a>
-      <a class="nav-card hidden" id="advanceOrdersCard" href="online-orders.html?scope=advance">
+      <a class="nav-card hidden" id="advanceOrdersCard" href="online-orders.html?scope=advance" data-group="orders">
         <div class="icon">💵</div>
         <div class="nav-card-text">
           <div class="title">Advance Orders</div>
           <div class="muted">View customer deposit/downpayment orders (super users only)</div>
         </div>
       </a>
-      <a class="nav-card hidden" id="orderTimingDashboardCard" href="order-timing-dashboard.html">
+      <a class="nav-card hidden" id="orderTimingDashboardCard" href="order-timing-dashboard.html" data-group="orders">
         <div class="icon">⏱️</div>
         <div class="nav-card-text">
           <div class="title">Order Timing</div>
           <div class="muted">See the best day/hour orders get confirmed (super users only)</div>
         </div>
       </a>
-      <a class="nav-card hidden" id="vendorSetupCard" href="vendor-setup.html">
+      <a class="nav-card hidden" id="vendorSetupCard" href="vendor-setup.html" data-group="inventory">
         <div class="icon">🧾</div>
         <div class="nav-card-text">
           <div class="title">Vendors</div>
           <div class="muted">Manage vendors, tag items, and track bills/payments (super users only)</div>
         </div>
       </a>
-      <a class="nav-card hidden" id="userSetupCard" href="user-setup.html">
+      <a class="nav-card hidden" id="userSetupCard" href="user-setup.html" data-group="admin">
         <div class="icon">🛠️</div>
         <div class="nav-card-text">
           <div class="title">User Setup</div>
           <div class="muted">Create new staff logins (super users only)</div>
         </div>
       </a>
+    </div>
+    </div>
     </div>
     </div>
   </div>
@@ -389,10 +547,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=all2"></script>
+  <script src="js/nav.js?v=all3"></script>
   <script src="js/companyBranding.js"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/dashboard.js"></script>
+  <script src="js/dashboard.js?v=grp5"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

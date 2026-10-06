@@ -27,7 +27,7 @@ const ACCESS_FLAGS = [
   ['is_production_member', 'p_is_production_member', 'cardProductionMember', 'Production Member', 'Can be assigned custom orders to build in Online Orders'],
   ['is_payroll_officer', 'p_is_payroll_officer', 'cardPayrollOfficer', 'Payroll Officer', 'Can access Payroll / Payroll Setup / Payroll Ledger'],
   ['is_store_manager', 'p_is_store_manager', 'cardStoreManager', 'Store Manager', 'Locked to Delivery, Payslips, Serial Tracker, Inventory Summary, Stock On Hand, Transfer Orders, Calculators, Online Orders, Automated Orders'],
-  ['is_conversations_staff', 'p_is_conversations_staff', 'cardConversationsStaff', 'Conversations Access', 'Can access GMA Conversations']
+  ['is_conversations_staff', 'p_is_conversations_staff', 'cardConversationsStaff', 'Conversations Access', 'Can access Conversations']
 ];
 
 function esc(value) {

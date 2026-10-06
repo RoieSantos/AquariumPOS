@@ -4,6 +4,36 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-06
 
+- POS: Custom Stand (and any calculator line falling back to item code `CUSTOM`) no longer hits "Insufficient Stock - 0 serial-tracked units" at non-production stores; bare `CUSTOM` now counts as made-to-order in `IsBuildToOrderItemCode` (MainForm.cs), same as `CUSTOM-`/`AQ-` codes.
+- POS: Stand Price Calculator "Add to sale" now adds the line exactly like the Custom Aquarium calculator's stand line - category + code `CUSTOM-STAND` (catalog variant resolved, made-to-order, no serial picker), calculator price kept as-is - instead of category `STAND` / code `CUSTOM`.
+- Conversations Product List: opening the panel (or clearing the search) now shows a default **Best sellers - last 90 days** list (ledger Sale entries, variants rolled up to the parent, then the rest A-Z) instead of an empty "Type to search". Empty query added to [supabase_gma_product_wildcard_search.sql](sql/supabase_gma_product_wildcard_search.sql). `?v=productlist5`.
+
+- Renamed "GMA Conversations" to **Conversations** in everything staff see (nav link, page title/tab, invoice back-link, User Setup permission text, Automated Orders / Message Timing blurbs) - it's going to cover all messaging platforms. File names/URLs (`gma-conversations.html`) unchanged so bookmarks keep working. `nav.js?v=all3` on every page, `userSetup.js?v=4`, `gmaOrderInvoice.js?v=2`, `gmaConversations.js?v=productlist4`.
+
+- GMA Product List stock fix (rev 2 of [supabase_gma_product_list_variant_stock.sql](sql/supabase_gma_product_list_variant_stock.sql)): per-variant stock now follows the ledger's own stock key - stock with no variant id on the variant's item code (or the parent's) counts when no other variant shares that code. Single-variant products (e.g. PORPOISE-AROWANA-FOOD CAN) showed 0 · 0.
+
+- GMA Conversations search (Product List + Create Order): new [supabase_gma_product_wildcard_search.sql](sql/supabase_gma_product_wildcard_search.sql) `staff_search_items_wildcard` - partial-word, any-order matching across name/SKU/code/category/variant names ("75" finds 75G, "*" wildcard, x = ×). Alice's whole-word `public_search_items` is unchanged. `?v=productlist3`.
+
+- GMA Product List: variants all showed "Out of stock" - stock filed under a variant's own item code was missed. New [supabase_gma_product_list_variant_stock.sql](sql/supabase_gma_product_list_variant_stock.sql) adds `stock_amaya`/`stock_gma` per variant to `public_list_item_variants` (serials or ledger). Picker always shows the Amaya · GMA split (even 0 · 0), and the parent row shows its variants' total. `?v=productlist2`.
+
+- GMA Conversations Product List: picker now shows staff the Amaya / GMA stock split per item and per variant (from `stock_by_location` / `stock_by_variant`; variants used to show the parent's combined total). Customer message no longer includes any stock - each product goes out as its own photo + numbered caption (name, price), with an intro line and a "reply with the number" closing. SKU only shown to the customer when two picked variants would read the same. [gmaConversations.js](docs/js/gmaConversations.js) `?v=productlist1`.
+
+- Shelf Map (inventory): one-off [supabase_shelf_map_copy_amaya_to_gma.sql](sql/supabase_shelf_map_copy_amaya_to_gma.sql) clones every Amaya shelf map (cells, labels, model codes, linked items, drawn qty, notes) into the GMA warehouse; skips names GMA already has. Now also copies the maintaining count (CurrentQty) into GMA cells that have none yet, never overwriting a GMA count.
+
+- Production Shelf Map: one-off [supabase_production_shelf_copy_amaya_to_gma.sql](sql/supabase_production_shelf_copy_amaya_to_gma.sql) clones every Amaya production shelf (layout, racks, positions, linked aquariums, capacity, materials - not placed serials) into the GMA warehouse; skips names GMA already has.
+
+- Dashboard Purchase/Expense/Payroll group: new **Biggest Purchases & Expenses - This Month** ranking (top 10, amount + % share bar) - purchases by Category / Vendor / Item / Single PO, expenses by Category / Single Entry; same month/warehouse rules as the Total Purchase / Expense cards. New RPC [supabase_dashboard_spending_ranking.sql](sql/supabase_dashboard_spending_ranking.sql); [dashboard.js](docs/js/dashboard.js) `?v=grp5`, [styles.css](docs/css/styles.css) `?v=aq10`.
+
+- Dashboard maker table: new **PO Tasks Built (Month)** / **PO Units (Month)** columns (tooltip = all-time tasks) - Production Order tank/stand parts each maker finished, via new `admin_get_maker_production_built` in [supabase_dashboard_production_summary.sql](sql/supabase_dashboard_production_summary.sql) ([dashboard.js](docs/js/dashboard.js) `?v=grp4`).
+
+- Dashboard Production group: added a high-level **Maker Assignments** summary (Pending / Rework / Done-not-shipped / Makers busy cards + per-maker table), reusing `admin_list_maker_assignments` - no new SQL. Maker names link to [maker-assignments.html](docs/maker-assignments.html)`?maker=` which now pre-fills the search ([makerAssignments.js](docs/js/makerAssignments.js) `?v=3`, [dashboard.js](docs/js/dashboard.js) `?v=grp3`, [styles.css](docs/css/styles.css) `?v=aq9`).
+
+- Portal Dashboard (**super users**) reworked into report groups picked from a **left-hand menu**: Sales (month/today sales, paid/to-receive, profit, target, order status, sales by staff), **Production** (new: Open / Released / Overdue / Finished this month / Units output this month), Purchase-Expense-Payroll, and Shortcuts (nav cards). Replaces the earlier right-hand shortcut column. New RPC [supabase_dashboard_production_summary.sql](sql/supabase_dashboard_production_summary.sql); [dashboard.js](docs/js/dashboard.js) `?v=grp2`, [styles.css](docs/css/styles.css) `?v=aq8`.
+
+- Portal Dashboard (**super users only** for now): shortcut cards now sit in a right-hand column grouped into Orders / Calculators & Quotes / Inventory & Setup / Reports / Admin, with the stats on the left; the column drops below the stats under 1000px. Other roles unchanged ([dashboard.html](docs/dashboard.html), [dashboard.js](docs/js/dashboard.js) `?v=grp1`, [styles.css](docs/css/styles.css) `?v=aq7`).
+
+- Portal Dashboard now uses the **full screen width** (no 1200px cap; nav bar too) via a `dashboard-full-width` body class ([dashboard.html](docs/dashboard.html), [styles.css](docs/css/styles.css) `?v=aq6`). Other pages unchanged.
+
 - GMA Conversations > Create Order: **Sealant color** now required for Custom Aquarium (incl. Sump only), and **Paint color** for Custom Stand Only (non-stainless) - Add to Order shows "Missing: ..." until picked. [stand.html](docs/WebAquariumCalculator/stand.html) paint now starts unpicked instead of Black. [gmaConversations.js](docs/js/gmaConversations.js) `?v=standpaint3`, bridge `?v=6`.
 
 - Stand paint is now **mandatory** when a (non-stainless) stand is included: defaults to "-- select --"; POS Add to sale alerts and GMA Add to Order lists "Missing: Stand paint color" until picked ([index.html](docs/WebAquariumCalculator/index.html), [gmaConversations.js](docs/js/gmaConversations.js) `?v=standpaint2`, bridge `?v=5`).

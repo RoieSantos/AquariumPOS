@@ -7228,7 +7228,14 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                                 {
                                     try
                                     {
-                                        AddToSale(sp.SelectedDescription ?? "Stand", 1, sp.SelectedPrice, "STAND");
+                                        // Same category/code/price handling as the Custom Aquarium
+                                        // calculator's stand line: CUSTOM-STAND resolves the catalog
+                                        // variant and is treated as a made-to-order build (no serial).
+                                        // Category is set directly, not resolved from the description -
+                                        // a "Sump-Holder" stand would otherwise resolve to CUSTOM-SUMP.
+                                        EnsureCustomAquariumCalculatorCategories();
+                                        string standDesc = FunctionEvents.ToAscii(sp.SelectedDescription ?? "Stand");
+                                        AddToSale(standDesc, 1, sp.SelectedPrice, "CUSTOM-STAND", "CUSTOM-STAND", null, standDesc, true);
                                         MessageBox.Show($"Added {sp.SelectedDescription} to sale!\nPrice: {sp.SelectedPrice:N2}", "Stand Added", MessageBoxButtons.OK, MessageBoxIcon.Information);
                                     }
                                     catch { }
@@ -15551,8 +15558,11 @@ ORDER BY VariantName, ItemCode", connection);
         // SHOULD still go through a normal sale when actually in stock.
         private static bool IsBuildToOrderItemCode(string? itemCode)
         {
+            // Bare "CUSTOM" is the fallback code calculator lines get when they have no matching
+            // Items row (e.g. Custom Stand from the Stand calculator) - also made-to-order.
             string normalizedItemCode = itemCode?.Trim() ?? string.Empty;
-            return normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
+            return string.Equals(normalizedItemCode, "CUSTOM", StringComparison.OrdinalIgnoreCase)
+                || normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM-", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM_", StringComparison.OrdinalIgnoreCase);
         }

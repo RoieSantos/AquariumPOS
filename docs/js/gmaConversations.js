@@ -1377,7 +1377,7 @@ async function searchCustomerOrders() {
 }
 
 // Create Order tab - creates a real AutomatedOrders row stamped with this conversation's
-// GmaPsid/GmaPageId (admin_create_gma_conversation_order). Item search uses public_search_items
+// GmaPsid/GmaPageId (admin_create_gma_conversation_order). Item search uses staff_search_items_wildcard
 // (free-text, anon, name/price/stock only - same safe field set as public_list_order_items) instead
 // of order-now.html's category-then-item cascading dropdowns, matching Pancake's single product
 // search box. newOrderLines persists across tab switches (only reset by Clear or a successful
@@ -1667,7 +1667,7 @@ async function runProductSearch(term) {
   const resultsEl = document.getElementById('productSearchResults');
   if (!resultsEl) return;
 
-  const { data, error } = await supabaseClient.rpc('public_search_items', { p_query: term });
+  const { data, error } = await supabaseClient.rpc('staff_search_items_wildcard', { p_query: term });
 
   if (error) {
     productSearchResultsCache = [];
@@ -3287,9 +3287,9 @@ function toggleQuickRepliesPanel(show) {
 }
 
 // Product list lookup - per direct request, mirrors Pancake's own "search products, check several,
-// hit Send" panel. Reuses public_search_items (sql/supabase_chatbot_search_items_variants.sql,
-// latest definition - same as the Create Order tab's own product search further up this file, plus
-// a has_variants flag) - anon-granted, no admin session needed for the search itself.
+// hit Send" panel. Uses staff_search_items_wildcard (sql/supabase_gma_product_wildcard_search.sql -
+// partial-word matching, same columns as Alice's public_search_items; also used by the Create Order tab,
+// plus a has_variants flag) - anon-granted, no admin session needed for the search itself.
 //
 // Per direct follow-up request, a product with variants (e.g. different sizes/colors) can't be
 // selected directly - it expands (click to toggle, via public_list_item_variants) into its own
@@ -3298,8 +3298,8 @@ function toggleQuickRepliesPanel(show) {
 //
 // productLookupSelected is keyed "item:<code>" or "variant:<variationId>" (not just a bare code) so
 // the two id spaces can never collide, and every entry is normalized to the same
-// {name, price, quantity_in_stock, images} shape regardless of which kind it is - so
-// buildProductListMessage/sendProductList below don't need to know or care which.
+// {name, sku, price, images} shape regardless of which kind it is - so sendProductList below
+// doesn't need to know or care which.
 let productLookupResults = [];
 let productLookupSelected = new Map();
 let productLookupSearchDebounce = null;
@@ -3324,6 +3324,8 @@ function toggleProductLookupPanel(show) {
   if (willShow) {
     toggleQuickRepliesPanel(false);
     toggleMediaLibraryPanel(false);
+    // Per "add default product list upon open" - an empty search box loads the best-sellers list.
+    if (!document.getElementById('productLookupSearchInput').value.trim()) runProductLookupSearch('');
   }
 }
 
@@ -3332,16 +3334,20 @@ function onProductLookupSearchInput(term) {
   productLookupSearchDebounce = setTimeout(() => runProductLookupSearch(term.trim()), 300);
 }
 
+// An empty term loads the default list (staff_search_items_wildcard('') = best sellers, last 90
+// days). productLookupSearchSeq drops a slower earlier response (e.g. the default list still loading
+// when staff start typing) so it can't overwrite newer results.
+let productLookupSearchSeq = 0;
+let productLookupDefaultMode = false;
+
 async function runProductLookupSearch(term) {
   const listEl = document.getElementById('productLookupList');
-  if (!term) {
-    productLookupResults = [];
-    listEl.innerHTML = '<div class="inbox-empty-state">Type to search products...</div>';
-    return;
-  }
+  const seq = ++productLookupSearchSeq;
 
-  listEl.innerHTML = '<div class="inbox-empty-state">Searching...</div>';
-  const { data, error } = await supabaseClient.rpc('public_search_items', { p_query: term });
+  listEl.innerHTML = `<div class="inbox-empty-state">${term ? 'Searching...' : 'Loading best sellers...'}</div>`;
+  const { data, error } = await supabaseClient.rpc('staff_search_items_wildcard', { p_query: term });
+  if (seq !== productLookupSearchSeq) return;
+  productLookupDefaultMode = !term;
 
   if (error) {
     listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(error.message)}</div>`;
@@ -3359,9 +3365,59 @@ function productLookupThumbHtml(images) {
     : '<span class="inbox-product-lookup-thumb-placeholder">&#128230;</span>';
 }
 
-function productLookupStockLabel(quantityInStock) {
-  const inStock = Number(quantityInStock || 0) > 0;
-  return { inStock, label: inStock ? `${quantityInStock} left` : 'Out of stock' };
+// Per "is it per location?" - the picker shows staff the Amaya / GMA split instead of one combined
+// total. Both come from public_search_items (sql/supabase_chatbot_stock_by_variant.sql):
+// stock_by_location for a plain item, stock_by_variant (matched on variant_id = VariationId) for a
+// variant - public_list_item_variants' own quantity_in_stock is the parent item's combined total,
+// not the variant's. Staff-only: none of this goes into the message the customer receives.
+function productLookupItemStock(item) {
+  const loc = item.stock_by_location;
+  if (!loc) return { total: Number(item.quantity_in_stock || 0), branches: null };
+  const branches = { Amaya: Number(loc.Amaya || 0), GMA: Number(loc.GMA || 0) };
+  return { total: branches.Amaya + branches.GMA, branches };
+}
+
+// Prefers public_list_item_variants' own stock_amaya/stock_gma (sql/supabase_gma_product_list_variant_
+// stock.sql - also counts stock filed under a variant's own item code, which stock_by_variant misses).
+function productLookupVariantStock(parentCode, variant) {
+  if (variant.stock_amaya !== undefined) {
+    const branches = { Amaya: Number(variant.stock_amaya || 0), GMA: Number(variant.stock_gma || 0) };
+    return { total: branches.Amaya + branches.GMA, branches };
+  }
+  const parent = productLookupResults.find((r) => r.code === parentCode);
+  if (!parent || !parent.stock_by_location) return { total: Number(variant.quantity_in_stock || 0), branches: null };
+  const row = (parent.stock_by_variant || []).find((s) => s.variant_id === variant.variation_id);
+  const branches = { Amaya: Number(row?.Amaya || 0), GMA: Number(row?.GMA || 0) };
+  return { total: branches.Amaya + branches.GMA, branches };
+}
+
+// Always shows the per-branch split (even 0 · 0) so staff can see where stock is, not just whether.
+function productLookupStockLabel({ total, branches }) {
+  const inStock = total > 0;
+  if (branches) return { inStock, label: `Amaya ${branches.Amaya} · GMA ${branches.GMA}` };
+  return { inStock, label: inStock ? `${total} left` : 'Out of stock' };
+}
+
+// Parent row of a product with variants: the sum of its variants once they're loaded, else the
+// parent's own stock_by_location (blank when that's all zero - variant stock often isn't filed there).
+function productLookupParentStockHtml(item) {
+  const variants = productLookupVariantsCache.get(item.code);
+  let stock = null;
+  if (variants && variants.length > 0) {
+    const branches = { Amaya: 0, GMA: 0 };
+    variants.forEach((v) => {
+      const s = productLookupVariantStock(item.code, v);
+      branches.Amaya += s.branches ? s.branches.Amaya : 0;
+      branches.GMA += s.branches ? s.branches.GMA : 0;
+    });
+    stock = { total: branches.Amaya + branches.GMA, branches };
+  } else {
+    const own = productLookupItemStock(item);
+    if (own.total > 0) stock = own;
+  }
+  if (!stock) return '<span class="muted">Tap to choose a variant</span>';
+  const { inStock, label } = productLookupStockLabel(stock);
+  return `<span class="inbox-product-lookup-stock${inStock ? '' : ' out-of-stock'}">${escapeHtml(label)}</span>`;
 }
 
 function renderProductLookupList() {
@@ -3372,7 +3428,8 @@ function renderProductLookupList() {
     return;
   }
 
-  listEl.innerHTML = productLookupResults.map((item) => renderProductLookupItemHtml(item)).join('');
+  listEl.innerHTML = (productLookupDefaultMode ? '<div class="inbox-product-lookup-section-label">Best sellers · last 90 days</div>' : '')
+    + productLookupResults.map((item) => renderProductLookupItemHtml(item)).join('');
 
   listEl.querySelectorAll('.inbox-product-lookup-parent').forEach((el) => {
     el.addEventListener('click', () => toggleProductLookupExpand(el.dataset.expandCode));
@@ -3393,15 +3450,15 @@ function renderProductLookupItemHtml(item) {
           ${productLookupThumbHtml(item.images)}
           <span class="inbox-product-lookup-info">
             <span class="inbox-product-lookup-name">${escapeHtml(item.name)}</span>
-            <span class="inbox-product-lookup-meta"><span class="muted">Tap to choose a variant</span></span>
+            <span class="inbox-product-lookup-meta">${productLookupParentStockHtml(item)}</span>
           </span>
         </div>
-        ${expanded ? renderProductLookupVariantsHtml(productLookupVariantsCache.get(item.code)) : ''}
+        ${expanded ? renderProductLookupVariantsHtml(item.code, productLookupVariantsCache.get(item.code)) : ''}
       </div>
     `;
   }
 
-  const { inStock, label } = productLookupStockLabel(item.quantity_in_stock);
+  const { inStock, label } = productLookupStockLabel(productLookupItemStock(item));
   const key = `item:${item.code}`;
   const checked = productLookupSelected.has(key) ? 'checked' : '';
   return `
@@ -3419,7 +3476,7 @@ function renderProductLookupItemHtml(item) {
   `;
 }
 
-function renderProductLookupVariantsHtml(variants) {
+function renderProductLookupVariantsHtml(parentCode, variants) {
   if (variants === undefined) {
     return '<div class="inbox-product-lookup-variants"><div class="inbox-empty-state">Loading variants...</div></div>';
   }
@@ -3427,7 +3484,7 @@ function renderProductLookupVariantsHtml(variants) {
     return '<div class="inbox-product-lookup-variants"><div class="inbox-empty-state">No variants found.</div></div>';
   }
   const rows = variants.map((v) => {
-    const { inStock, label } = productLookupStockLabel(v.quantity_in_stock);
+    const { inStock, label } = productLookupStockLabel(productLookupVariantStock(parentCode, v));
     const key = `variant:${v.variation_id}`;
     const checked = productLookupSelected.has(key) ? 'checked' : '';
     return `
@@ -3476,8 +3533,9 @@ function onProductLookupCheckboxChange(cb) {
   updateProductLookupSelectedCount();
 }
 
-// Normalizes a selected item or variant into the same {name, price, quantity_in_stock, images}
-// shape, so the send path below never needs to know which kind of row it came from.
+// Normalizes a selected item or variant into the same {name, sku, price, images} shape, so the send
+// path below never needs to know which kind of row it came from. No stock in here on purpose - the
+// customer message must never show stock counts.
 function resolveProductLookupEntry(key) {
   const separatorIndex = key.indexOf(':');
   const kind = key.slice(0, separatorIndex);
@@ -3486,7 +3544,7 @@ function resolveProductLookupEntry(key) {
   if (kind === 'item') {
     const item = productLookupResults.find((r) => r.code === id);
     if (!item) return null;
-    return { name: item.name, price: item.price, quantity_in_stock: item.quantity_in_stock, images: item.images };
+    return { name: item.name, sku: null, price: item.price, images: item.images };
   }
 
   if (kind === 'variant') {
@@ -3494,13 +3552,8 @@ function resolveProductLookupEntry(key) {
       const v = (variants || []).find((vv) => vv.variation_id === id);
       if (v) {
         const parent = productLookupResults.find((r) => r.code === itemCode);
-        // VariantName alone is frequently IDENTICAL across a product's variants (e.g. two sealant
-        // colors both named "AQ-028 - STANDARD-75G (...)") - only the SKU actually distinguishes
-        // them (per direct report, staff couldn't tell which sealant color was selected), so it's
-        // appended here whenever present rather than relying on VariantName alone.
-        const variantLabel = v.sku ? `${v.variant_name} - ${v.sku}` : v.variant_name;
-        const name = parent ? `${parent.name} (${variantLabel})` : variantLabel;
-        return { name, price: v.price, quantity_in_stock: v.quantity_in_stock, images: v.images };
+        const name = parent ? `${parent.name} (${v.variant_name})` : v.variant_name;
+        return { name, sku: v.sku || null, price: v.price, images: v.images };
       }
     }
   }
@@ -3513,6 +3566,7 @@ function updateProductLookupSelectedCount() {
 }
 
 function resetProductLookup() {
+  productLookupSearchSeq++; // drop any in-flight search
   productLookupResults = [];
   productLookupSelected = new Map();
   productLookupExpanded = new Set();
@@ -3522,26 +3576,36 @@ function resetProductLookup() {
   updateProductLookupSelectedCount();
 }
 
-// One line per selected product (name, price, stock) - sent as the message text, with each
-// product's own photo (if it has one) sent alongside as image_urls, same as a multi-photo Quick
-// Reply (see sendMessageToCustomer/chatbot-staff-reply).
-function buildProductListMessage(items) {
-  return items.map((item) => {
-    const inStock = Number(item.quantity_in_stock || 0) > 0;
-    const stockLabel = inStock ? `${item.quantity_in_stock} left` : 'Out of stock';
-    return `${item.name}\n₱${Number(item.price || 0).toLocaleString()} - ${stockLabel}`;
-  }).join('\n\n');
+// Customer-facing wording for a Product List send - name + price only, never stock (staff see the
+// Amaya / GMA split in the picker; the customer doesn't).
+const PRODUCT_LIST_INTRO = 'Here are the options for you 🐠';
+const PRODUCT_LIST_OUTRO_MULTI = "Just reply with the number of the item you'd like and we'll get it ready for you 😊";
+const PRODUCT_LIST_OUTRO_SINGLE = "Let us know if you'd like to order this and we'll get it ready for you 😊";
+
+// The customer sees the variant name only - except when two picked variants would read identically
+// (VariantName is often the same across e.g. sealant colors), then the SKU tells them apart.
+function productListCaption(item, index, items) {
+  const duplicate = item.sku && items.some((other) => other !== item && other.name === item.name);
+  const name = duplicate ? `${item.name} - ${item.sku}` : item.name;
+  const number = items.length > 1 ? `${index + 1}. ` : '';
+  return `${number}${name}\n₱${Number(item.price || 0).toLocaleString()}`;
 }
 
+// Each product goes out as its own photo with its numbered caption right under it (one
+// sendMessageToCustomer each - chatbot-staff-reply sends the photo first, then the text), so the
+// customer can tell which photo is which. Everything rides sendQueue, so the order holds.
 async function sendProductList() {
   if (productLookupSelected.size === 0) return;
   const items = Array.from(productLookupSelected.values());
-  const message = buildProductListMessage(items);
-  const imageUrls = items.map((item) => firstImageUrl(item.images)).filter(Boolean);
 
   // Optimistic send - the bubbles appear in the thread immediately (with Retry if delivery fails),
   // so the picker can close right away.
-  sendMessageToCustomer(message, imageUrls);
+  if (items.length > 1) sendMessageToCustomer(PRODUCT_LIST_INTRO, []);
+  items.forEach((item, index) => {
+    const img = firstImageUrl(item.images);
+    sendMessageToCustomer(productListCaption(item, index, items), img ? [img] : []);
+  });
+  sendMessageToCustomer(items.length > 1 ? PRODUCT_LIST_OUTRO_MULTI : PRODUCT_LIST_OUTRO_SINGLE, []);
   toggleProductLookupPanel(false);
   resetProductLookup();
 }
@@ -4073,7 +4137,7 @@ function setupThreadInteractions() {
   const session = await requireAuth();
   if (!session) return;
   currentSession = session;
-  renderTopNav('GMA Conversations');
+  renderTopNav('Conversations');
 
   if (!session.isSuperUser && !session.isConversationsStaff) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
@@ -4082,7 +4146,7 @@ function setupThreadInteractions() {
 
   if (!session.password) {
     document.getElementById('unlockBox').classList.remove('hidden');
-    document.getElementById('unlockError').textContent = 'Please log out and log back in to view GMA Conversations.';
+    document.getElementById('unlockError').textContent = 'Please log out and log back in to view Conversations.';
     document.getElementById('unlockBtn').addEventListener('click', logout);
     return;
   }

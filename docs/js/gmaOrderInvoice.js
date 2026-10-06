@@ -112,7 +112,7 @@ async function loadInvoice(orderNo) {
   const session = await requireAuth();
   if (!session) return;
   currentSession = session;
-  renderTopNav('GMA Conversations');
+  renderTopNav('Conversations');
 
   const orderNo = new URLSearchParams(window.location.search).get('order');
   if (!orderNo) {
