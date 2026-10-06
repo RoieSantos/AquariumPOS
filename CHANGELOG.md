@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-06
 
+- Local POS Custom Aquarium now opens the **portal's own Aquarium Calculator** (same UI/rules/19mm/summary/print quote), bundled with the POS and shown offline in WebView2 - [MainForm.WebCalculator.cs](MainForm.WebCalculator.cs) (new), [AquariumPOS.csproj](AquariumPOS.csproj) (WebView2 package + copies `docs/WebAquariumCalculator` into `WebCalculator\`). Its Add to sale makes the same component sale lines as the classic dialog (now behind "Open classic calculator" / automatic fallback).
+- [index.html](docs/WebAquariumCalculator/index.html): when hosted by the POS (`window.RSPosHost`), reads prices + lights/pumps from the POS and posts Add to sale to it instead of the "web demo" alert; portal behavior unchanged.
+- POS pricing sync now keeps each RPC's raw rows on disk for the embedded calculator, and also pulls Hole/Divider extras (`public_get_aquarium_extra_pricing`) - [OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs), [GlobalSettings.cs](GlobalSettings.cs).
+
+- Orders: portal-only **date override** - new `OnlineOrders."DateOverride"` + trigger that forces `"Date"` to it so the Pancake sync can't revert it; used to move walk-in 111233 from today to 2026-10-05 for today's sales. [supabase_online_order_date_override.sql](sql/supabase_online_order_date_override.sql) (SQL-only, no UI yet).
+
 - Alice: taught **Acrylic Sump Cover** - customer bot knows what it is, asks for the sump top size and quotes it via `compute_sticker_quote` (never revealing the markup) ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)); staff portal Alice knows the type/markup row and the new Print Quote button ([portal-chat-alice-reply/index.ts](supabase/functions/portal-chat-alice-reply/index.ts)).
 
 - Aquarium Calculator: **Print Quote** button in the price panel - prints the full summary (drawings, spec, price breakdown, total) as a customer quote, leaving out the glass cut sheet and the production Special Note, with a short quote footer. [index.html](docs/WebAquariumCalculator/index.html) `printQuote`.

@@ -7213,7 +7213,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         ShowSalesItemsDialog();
                         break;
                     case "CustomAquarium":
-                        ShowCustomAquariumDialog();
+                        ShowWebAquariumCalculatorOrClassic();
                         break;
                     case "VoidLine":
                         VoidSelectedLine();

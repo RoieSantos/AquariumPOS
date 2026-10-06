@@ -59,6 +59,21 @@
     <PackageReference Include="System.Data.SqlClient" Version="4.8.5" />
     <PackageReference Include="Microsoft.VisualBasic" Version="10.3.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
+  </ItemGroup>
+
+  <!-- The portal's Aquarium Calculator, shipped with the POS so the Custom Aquarium screen runs the
+       exact same page offline (see WebAquariumCalculatorForm.cs). Copied from docs/ on every build,
+       keeping the docs/ folder layout so the page's ../js/ references still resolve. -->
+  <ItemGroup>
+    <Content Include="docs\WebAquariumCalculator\index.html;docs\WebAquariumCalculator\custom-aquarium-calculator.js;docs\WebAquariumCalculator\calculator-ui.css;docs\WebAquariumCalculator\calculator-ui.js;docs\WebAquariumCalculator\calc-embed-bridge.js">
+      <Link>WebCalculator\WebAquariumCalculator\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="docs\js\config.js;docs\js\supabaseClient.js;docs\js\glassCutList.js">
+      <Link>WebCalculator\js\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

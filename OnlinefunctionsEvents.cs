@@ -7745,6 +7745,7 @@ END", connection);
 
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+            WebCalculatorPricingCache.Save("glass", respText);
 
             using var conn = new SqlConnection(GlobalSettings.ConnectionString);
             conn.Open();
@@ -7802,6 +7803,7 @@ END", connection);
 
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+            WebCalculatorPricingCache.Save("tubular", respText);
 
             foreach (var row in doc.RootElement.EnumerateArray())
             {
@@ -7845,6 +7847,7 @@ END", connection);
 
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+            WebCalculatorPricingCache.Save("sticker", respText);
 
             foreach (var row in doc.RootElement.EnumerateArray())
             {
@@ -7904,6 +7907,64 @@ END", connection);
             try { await SyncGlassPricingFromSupabaseAsync().ConfigureAwait(false); } catch { }
             try { await SyncTubularPricingFromSupabaseAsync().ConfigureAwait(false); } catch { }
             try { await SyncStickerPricingFromSupabaseAsync().ConfigureAwait(false); } catch { }
+            try { await SyncAquariumExtraPricingFromSupabaseAsync().ConfigureAwait(false); } catch { }
+        }
+
+        /// <summary>
+        /// Pulls public_get_aquarium_extra_pricing (Hole / Divider etc. flat prices). Only the POS's
+        /// embedded portal calculator uses these, so they're just saved for it (WebCalculatorPricingCache).
+        /// </summary>
+        public static async Task SyncAquariumExtraPricingFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            using var req = new HttpRequestMessage(HttpMethod.Get, GlobalSettings.AquariumExtraPricingRpcEndpoint);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Aquarium extra pricing Supabase GET failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+            WebCalculatorPricingCache.Save("extra", respText);
+        }
+
+        /// <summary>
+        /// Raw rows of the last successful pricing pull per RPC (glass / tubular / sticker / extra),
+        /// kept on disk so the embedded portal Aquarium Calculator (WebAquariumCalculatorForm) prices
+        /// with exactly what the portal sees, even after a restart with no internet. A missing file
+        /// means the page falls back to its own built-in defaults, same as the portal does.
+        /// </summary>
+        public static class WebCalculatorPricingCache
+        {
+            public static string Folder => Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RSPETSTOP POS", "WebCalculatorPricing");
+
+            public static void Save(string name, string json)
+            {
+                try
+                {
+                    Directory.CreateDirectory(Folder);
+                    File.WriteAllText(Path.Combine(Folder, name + ".json"), json);
+                }
+                catch { }
+            }
+
+            public static string? Load(string name)
+            {
+                try
+                {
+                    string path = Path.Combine(Folder, name + ".json");
+                    return File.Exists(path) ? File.ReadAllText(path) : null;
+                }
+                catch { return null; }
+            }
         }
 
         public static async Task<int> SyncCategoriesAsync(TimeSpan? timeout = null)

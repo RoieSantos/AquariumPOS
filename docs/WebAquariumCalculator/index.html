@@ -2541,6 +2541,17 @@
 
     function ensureGlassPricingLoaded() {
       if (pricingSetupLoadPromise) return pricingSetupLoadPromise;
+      // Local POS (offline, WebAquariumCalculatorForm.cs): the desktop app hands over the same RPC
+      // rows from its last successful pricing sync instead - no Supabase call. Empty = defaults.
+      if (window.RSPosHost) {
+        var hostPricing = window.RSPosHost.pricing || {};
+        glassPricingSetupRows = Array.isArray(hostPricing.glass) ? hostPricing.glass : [];
+        tubularPricingSetupRows = Array.isArray(hostPricing.tubular) ? hostPricing.tubular : [];
+        stickerPricingSetupRows = Array.isArray(hostPricing.sticker) ? hostPricing.sticker : [];
+        extraPricingSetupRows = Array.isArray(hostPricing.extra) ? hostPricing.extra : [];
+        pricingSetupLoadPromise = Promise.resolve();
+        return pricingSetupLoadPromise;
+      }
       pricingSetupLoadPromise = Promise.all([
         supabaseClient.rpc('public_get_glass_pricing'),
         supabaseClient.rpc('public_get_tubular_pricing'),
@@ -2629,6 +2640,19 @@
       }
 
       aquariumItemsLoadPromise = (async function () {
+        // Local POS: lights/pumps come from the desktop's own Items table (no portal login offline).
+        if (window.RSPosHost) {
+          var hostItems = window.RSPosHost.items || {};
+          populateAquariumItemSelect(byId('lightItemSelect'), hostItems.LIGHTS || [], {
+            emptyText: 'No light items found', includeBlankOption: true, blankText: 'Select a light...'
+          });
+          populateAquariumItemSelect(byId('pumpItemSelect'), hostItems.PUMP || [], {
+            emptyText: 'No pump items found', includeBlankOption: true, blankText: 'Select a pump...'
+          });
+          applyDefaultAccessorySelections();
+          return;
+        }
+
         var session = getPortalSessionForCalculator();
         if (!session || !session.username || !session.password || typeof supabaseClient === 'undefined') {
           populateAquariumItemSelect(byId('lightItemSelect'), [], { emptyText: 'Not available (open via the portal)' });
@@ -2848,6 +2872,38 @@
         }
 
         var q = computeQuotedTotal(lastResult);
+
+        // Local POS: hand the quote to the desktop app, which adds the sale lines and closes this window.
+        if (window.RSPosHost && window.chrome && window.chrome.webview) {
+          if (!byId('sealant').value) {
+            window.alert('Please choose a sealant color for this custom aquarium.');
+            byId('sealant').focus();
+            return;
+          }
+          var lightSel = byId('lightItemSelect');
+          var pumpSel = byId('pumpItemSelect');
+          var lightOn = byId('submersibleLight').checked && lastResult.components && lastResult.components.light > 0;
+          var pumpOn = byId('submersiblePump').checked && lastResult.components && lastResult.components.pump > 0;
+          var fields = {};
+          ['length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered',
+            'rimless', 'highStrip', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount', 'sumpEnabled',
+            'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight', 'sumpUnit', 'sumpGlass', 'stickerBackground', 'allSides',
+            'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote', 'lightQuantity', 'pumpQuantity'
+          ].forEach(function (id) {
+            var el = byId(id);
+            if (el) fields[id] = el.type === 'checkbox' ? Boolean(el.checked) : el.value;
+          });
+          window.chrome.webview.postMessage({
+            type: 'rs-pos-add-to-sale',
+            result: JSON.parse(JSON.stringify(lastResult)),
+            quote: q,
+            fields: fields,
+            light: lightOn && lightSel.value ? { code: lightSel.value, name: lightSel.options[lightSel.selectedIndex].textContent } : null,
+            pump: pumpOn && pumpSel.value ? { code: pumpSel.value, name: pumpSel.options[pumpSel.selectedIndex].textContent } : null
+          });
+          return;
+        }
+
         var totalText = q.grandTotal.toFixed(2) + formatQuoteBreakdown(q);
         window.alert('Web demo only. Add to sale would use the current total: ' + totalText);
       });

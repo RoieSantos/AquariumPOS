@@ -209,6 +209,7 @@ namespace AquariumPOS
         public static string GlassPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_glass_pricing";
         public static string TubularPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_tubular_pricing";
         public static string StickerPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_sticker_pricing";
+        public static string AquariumExtraPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_aquarium_extra_pricing";
 
         /// <summary>
         /// Optional: Page ID and Conversation IDs to receive admin notifications via the Public API.
