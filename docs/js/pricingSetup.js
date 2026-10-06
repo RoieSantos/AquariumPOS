@@ -186,6 +186,9 @@ function stickerThicknessLabel(row) {
   if (row.sticker_type === 'Marine Plywood' || row.sticker_type === 'Laminated Plywood') {
     return row.thickness ? `${row.thickness}mm` : '<span class="muted">-</span>';
   }
+  if (row.sticker_type === 'Acrylic Sump Cover') {
+    return 'Markup (x Acrylic rate, not pesos)';
+  }
   return '<span class="muted">-</span>';
 }
 

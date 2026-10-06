@@ -910,13 +910,13 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'compute_sticker_quote',
     description:
-      'Compute a real price quote for a custom accessory/sticker/background (Plain Sticker, Tiles Sticker, Acrylic, Allum TopCover, Rubber Matting, Glass, Marine Plywood, or Laminated Plywood) - the store\'s own official pricing formula, the exact same live rates staff use. Priced from Length x Width only (no height - these are flat pieces). Ask for the type, and thickness if that type needs one (Rubber Matting/Glass/Marine Plywood/Laminated Plywood only - Plain Sticker/Tiles Sticker/Acrylic/Allum TopCover have a single flat rate with no thickness choice). State the result with confidence, not as a rough estimate. Never state accessory/sticker/background pricing without calling this tool first - do not recite or guess a price from memory, even if you think you know it.',
+      'Compute a real price quote for a custom accessory/sticker/background (Plain Sticker, Tiles Sticker, Acrylic, Acrylic Sump Cover, Allum TopCover, Rubber Matting, Glass, Marine Plywood, or Laminated Plywood) - the store\'s own official pricing formula, the exact same live rates staff use. Priced from Length x Width only (no height - these are flat pieces). Ask for the type, and thickness if that type needs one (Rubber Matting/Glass/Marine Plywood/Laminated Plywood only - Plain Sticker/Tiles Sticker/Acrylic/Acrylic Sump Cover/Allum TopCover have a single flat rate with no thickness choice). State the result with confidence, not as a rough estimate. Never state accessory/sticker/background pricing without calling this tool first - do not recite or guess a price from memory, even if you think you know it.',
     input_schema: {
       type: 'object',
       properties: {
         type: {
           type: 'string',
-          enum: ['Plain Sticker', 'Tiles Sticker', 'Acrylic', 'Allum TopCover', 'Rubber Matting', 'Glass', 'Marine Plywood', 'Laminated Plywood'],
+          enum: ['Plain Sticker', 'Tiles Sticker', 'Acrylic', 'Acrylic Sump Cover', 'Allum TopCover', 'Rubber Matting', 'Glass', 'Marine Plywood', 'Laminated Plywood'],
           description: 'Which accessory/sticker/background type.'
         },
         length: { type: 'number', description: 'Length.' },
@@ -1384,6 +1384,8 @@ const RUBBER_STICKER_PRICE_PER_SQFT: Record<string, number> = { '3mm': 26, '6mm'
 const RUBBER_STICKER_BASE_PRICE_PER_SQFT = 85;
 const MARINE_PLYWOOD_PRICE_PER_SQFT: Record<string, number> = { '6mm': 90, '18mm': 185 };
 const LAMINATED_PLYWOOD_PRICE_PER_SQFT: Record<string, number> = { '6mm': 125, '18mm': 210 };
+// Acrylic Sump Cover = live Acrylic rate x this markup (StickerPricingSetup row 'Acrylic Sump Cover').
+const ACRYLIC_SUMP_COVER_MARKUP = 1.5;
 
 function stickerTypeHasThickness(type: string): boolean {
   return type === 'Rubber Matting' || type === 'Glass' || type === 'Marine Plywood' || type === 'Laminated Plywood';
@@ -1395,6 +1397,7 @@ interface StickerPriceLookup {
   rubberBase: number;
   marinePlywood: Record<string, number>;
   laminatedPlywood: Record<string, number>;
+  acrylicSumpCoverMarkup: number;
 }
 
 function buildStickerPriceLookup(rows: Array<Record<string, unknown>> | null | undefined): StickerPriceLookup {
@@ -1403,6 +1406,7 @@ function buildStickerPriceLookup(rows: Array<Record<string, unknown>> | null | u
   let rubberBase = RUBBER_STICKER_BASE_PRICE_PER_SQFT;
   const marinePlywood = Object.assign({}, MARINE_PLYWOOD_PRICE_PER_SQFT);
   const laminatedPlywood = Object.assign({}, LAMINATED_PLYWOOD_PRICE_PER_SQFT);
+  let acrylicSumpCoverMarkup = ACRYLIC_SUMP_COVER_MARKUP;
   const items = Array.isArray(rows) ? rows : [];
 
   for (const row of items) {
@@ -1421,18 +1425,21 @@ function buildStickerPriceLookup(rows: Array<Record<string, unknown>> | null | u
       marinePlywood[normalizeGlass(thicknessRaw)] = price;
     } else if (type === 'Laminated Plywood' && thicknessRaw) {
       laminatedPlywood[normalizeGlass(thicknessRaw)] = price;
+    } else if (type === 'Acrylic Sump Cover') {
+      acrylicSumpCoverMarkup = price;
     } else if (Object.prototype.hasOwnProperty.call(flat, type)) {
       flat[type] = price;
     }
   }
 
-  return { flat, rubber, rubberBase, marinePlywood, laminatedPlywood };
+  return { flat, rubber, rubberBase, marinePlywood, laminatedPlywood, acrylicSumpCoverMarkup };
 }
 
 function stickerPricePerSqFt(type: string, thickness: string | null, stickerLookup: StickerPriceLookup, glassLookup: Record<string, number>): number {
-  const { flat, rubber, rubberBase, marinePlywood, laminatedPlywood } = stickerLookup;
+  const { flat, rubber, rubberBase, marinePlywood, laminatedPlywood, acrylicSumpCoverMarkup } = stickerLookup;
   const glass = glassLookup || DEFAULT_GLASS_PRICES;
 
+  if (type === 'Acrylic Sump Cover') return flat['Acrylic'] * acrylicSumpCoverMarkup;
   if (type === 'Rubber Matting') return (thickness && rubber[thickness]) || rubberBase;
   if (type === 'Glass') return (thickness && glass[thickness]) || glass['6mm'];
   if (type === 'Marine Plywood') return (thickness && marinePlywood[thickness]) || marinePlywood['6mm'];

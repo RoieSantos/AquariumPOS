@@ -108,6 +108,9 @@
         <button class="bc-cmd adv-cmd hidden" id="advStepBackBtn" type="button" title="Undo the last stage (Shipped -> To Ship -> production)">Undo Stage</button>
         <span class="bc-cmd-sep"></span>
         <button class="bc-cmd" id="refreshOrdersBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
+        <!-- Super users only (js/onlineOrders.js wireItemLedgerButton) - opens Item Ledger Entries, filtered
+             to the selected order when one is selected. -->
+        <button type="button" class="bc-cmd hidden" id="itemLedgerBtn" title="Open Item Ledger Entries - filtered to the selected order's stock movements, or all entries if none is selected">Item Ledger Entries</button>
         <!-- Super users only - see js/onlineOrders.js's init() (session.isSuperUser gate). No icon:
              exportOrdersToExcel restores the label with textContent, which would drop it. -->
         <button type="button" class="bc-cmd hidden" id="exportExcelBtn">Export to Excel</button>
@@ -869,7 +872,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=bc84"></script>
+  <script src="js/onlineOrders.js?v=bc85"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

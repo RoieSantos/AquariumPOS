@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-06
 
+- Custom Sticker & Panel Calculator: new **Acrylic Sump Cover** type, priced at the live Acrylic rate x a markup (default 1.5x, editable in Pricing Setup as the 'Acrylic Sump Cover' row). [custom-aquarium-calculator.js](docs/WebAquariumCalculator/custom-aquarium-calculator.js), [sticker.html](docs/WebAquariumCalculator/sticker.html), [pricingSetup.js](docs/js/pricingSetup.js), Alice's copy + `compute_sticker_quote` enum in [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts), [supabase_sticker_pricing_add_acrylic_sump_cover.sql](sql/supabase_sticker_pricing_add_acrylic_sump_cover.sql).
+
+- Online / Walk-in / Advance Orders: **Item Ledger Entries** button on the action bar (Super Users) - opens the ledger in a new tab, filtered to the selected order (`?search=` order id; advance orders use their Online Order ID), or all entries if nothing is selected. [online-orders.html](docs/online-orders.html), [onlineOrders.js](docs/js/onlineOrders.js) `wireItemLedgerButton` (bc85).
+
 - Walk-in Orders list: POS description split into its own columns - **POS Receipt, POS Customer, POS Description, POS Items** (one per line), **Cashier** (+ discount parts) - after Print Note, which is now print note only. Online list hides these and keeps the combined cell. [online-orders.html](docs/online-orders.html), [onlineOrders.js](docs/js/onlineOrders.js) `posFieldCellsHtml` (bc84), [bc-list.css](docs/css/bc-list.css) (aq6, walk-in hidden-column numbers renumbered); saved column widths reset (online v5, walk-in v4).
 
 - Online / Walk-in Orders list: the POS Description column now shows the same parts as the order page's POS Description box - Customer · Description, the sold items (first 3 + "+N more"), then receipt / cashier - instead of only the one-line Description; also on the mobile cards. [onlineOrders.js](docs/js/onlineOrders.js) `posNoteListHtml` (bc83), [bc-list.css](docs/css/bc-list.css) (aq5).

@@ -693,6 +693,12 @@
   var MARINE_PLYWOOD_PRICE_PER_SQFT = { '6mm': 90, '18mm': 185 };
   var LAMINATED_PLYWOOD_PRICE_PER_SQFT = { '6mm': 125, '18mm': 210 };
 
+  // Acrylic Sump Cover - no price of its own: it's the (live) Acrylic per-sqft rate x this markup, so
+  // an Acrylic price change carries over automatically. Editable from Pricing Setup as the
+  // StickerPricingSetup row StickerType='Acrylic Sump Cover' (its PricePerSqFt column holds the
+  // multiplier, e.g. 1.5 - not pesos).
+  var ACRYLIC_SUMP_COVER_MARKUP = 1.5;
+
   var STANDARD_STICKER_THICKNESS_OPTIONS = ['3mm', '6mm', '10mm', '12mm'];
   var PLYWOOD_THICKNESS_OPTIONS = ['6mm', '18mm'];
 
@@ -726,6 +732,7 @@
     var rubberBase = RUBBER_STICKER_BASE_PRICE_PER_SQFT;
     var marinePlywood = Object.assign({}, MARINE_PLYWOOD_PRICE_PER_SQFT);
     var laminatedPlywood = Object.assign({}, LAMINATED_PLYWOOD_PRICE_PER_SQFT);
+    var acrylicSumpCoverMarkup = ACRYLIC_SUMP_COVER_MARKUP;
     var items = Array.isArray(rows) ? rows : [];
 
     for (var i = 0; i < items.length; i += 1) {
@@ -747,12 +754,14 @@
         marinePlywood[normalizeGlass(thicknessRaw)] = price;
       } else if (type === 'Laminated Plywood' && thicknessRaw) {
         laminatedPlywood[normalizeGlass(thicknessRaw)] = price;
+      } else if (type === 'Acrylic Sump Cover') {
+        acrylicSumpCoverMarkup = price;
       } else if (Object.prototype.hasOwnProperty.call(flat, type)) {
         flat[type] = price;
       }
     }
 
-    return { flat: flat, rubber: rubber, rubberBase: rubberBase, marinePlywood: marinePlywood, laminatedPlywood: laminatedPlywood };
+    return { flat: flat, rubber: rubber, rubberBase: rubberBase, marinePlywood: marinePlywood, laminatedPlywood: laminatedPlywood, acrylicSumpCoverMarkup: acrylicSumpCoverMarkup };
   }
 
   function stickerPricePerSqFt(type, thickness, stickerLookup, glassLookup) {
@@ -761,8 +770,10 @@
     var rubberBase = (stickerLookup && stickerLookup.rubberBase) || RUBBER_STICKER_BASE_PRICE_PER_SQFT;
     var marinePlywood = (stickerLookup && stickerLookup.marinePlywood) || MARINE_PLYWOOD_PRICE_PER_SQFT;
     var laminatedPlywood = (stickerLookup && stickerLookup.laminatedPlywood) || LAMINATED_PLYWOOD_PRICE_PER_SQFT;
+    var acrylicSumpCoverMarkup = (stickerLookup && stickerLookup.acrylicSumpCoverMarkup) || ACRYLIC_SUMP_COVER_MARKUP;
     var glass = glassLookup || DEFAULT_GLASS_PRICES;
 
+    if (type === 'Acrylic Sump Cover') return flat['Acrylic'] * acrylicSumpCoverMarkup;
     if (type === 'Rubber Matting') return rubber[thickness] || rubberBase;
     if (type === 'Glass') return glass[thickness] || glass['6mm'];
     if (type === 'Marine Plywood') return marinePlywood[thickness] || marinePlywood['6mm'];

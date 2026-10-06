@@ -5732,6 +5732,23 @@ function fitAdvanceGridToViewport() {
   el.style.maxHeight = Math.max(240, window.innerHeight - el.getBoundingClientRect().top - 64) + 'px';
 }
 
+// Per "in the orders (online / advance / walk-in) can you have a button there linking to the Item
+// Ledger entries" - opens item-ledger-entries.html in a new tab. With a row selected it uses the
+// ledger's ?search= deep link (matches Document No., all dates): sales post there under the online
+// order id (supabase_item_ledger_sales.sql), so an advance order uses its Online Order ID. Super
+// Users only, same as the ledger page itself (nav.js).
+function wireItemLedgerButton(session) {
+  const btn = document.getElementById('itemLedgerBtn');
+  btn.classList.toggle('hidden', !session?.isSuperUser);
+  btn.addEventListener('click', () => {
+    const docNo = new URLSearchParams(window.location.search).get('scope') === 'advance'
+      ? (selectedAdvanceNo ? advanceRowsByNo.get(selectedAdvanceNo)?.online_order_id : '')
+      : selectedOrderId;
+    const url = 'item-ledger-entries.html' + (docNo ? `?search=${encodeURIComponent(docNo)}` : '');
+    window.open(url, '_blank', 'noopener');
+  });
+}
+
 async function initAdvanceOrdersView() {
   document.getElementById('orderScopeTabs').classList.remove('hidden');
   document.getElementById('scopeTabAdvance').classList.add('active');
@@ -5790,9 +5807,11 @@ async function initAdvanceOrdersView() {
   document.getElementById('scopeTabAdvance').classList.toggle('hidden', !canSeeAdvance);
   if (canSeeAdvance && new URLSearchParams(window.location.search).get('scope') === 'advance') {
     await initAdvanceOrdersView();
+    wireItemLedgerButton(session); // after initAdvanceOrdersView, which hides the other bar buttons
     return;
   }
   document.getElementById('exportExcelBtn').classList.toggle('hidden', !session.isSuperUser);
+  wireItemLedgerButton(session);
   // Delegated on #setupContent (not #orderTableBody directly) so the same "To Ship" handling
   // works whether the click lands in the flat table or one of the three grouped-view tables
   // (see the isOnlineOrderStaff branch below) - handleOrderTableClick already finds its target
