@@ -6,6 +6,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 - POS Transaction List: new **Resend Selected** button ([TransactionListForm.cs](TransactionListForm.cs)) - resends one receipt to Pancake (portal follows) and shows the exact error / Pancake response in a copyable dialog, plus the last recorded attempt from `InstoreOnlineOrderMap`. Warns before resending a receipt that already reached Pancake (would duplicate) and explains non-SALES receipts are skipped by design.
 - Resend Selected result dialog now has a **Request Payload** tab - the exact JSON body + endpoint (API key hidden) sent to Pancake, flagged if it's from an earlier attempt; Copy includes it.
+- Resend Selected: on failure it now runs a **Pancake Item Check** tab (`DiagnoseInstoreOrderPayloadItemsAsync` in [OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs)) - looks up every line's variation_id in Pancake and flags not-found / hidden / removed / locked / wrong item / missing warehouse / low stock, since Pancake's bare 500 doesn't say which line is bad (RS-0000011082).
 
 ## 2026-10-05
 

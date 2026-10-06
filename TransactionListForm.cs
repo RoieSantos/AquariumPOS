@@ -2492,10 +2492,29 @@ namespace AquariumPOS
             }
             catch (Exception ex)
             {
+                // Pancake's errors (often a bare 500) don't say which line is wrong, so check every
+                // line's variation in Pancake using the body that was just sent.
+                string? itemCheck = null;
+                string payloadPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"last_instore_order_payload_{receiptNo}.json");
+                try
+                {
+                    if (System.IO.File.Exists(payloadPath) && System.IO.File.GetLastWriteTime(payloadPath) >= attemptStartedAt.AddSeconds(-2))
+                    {
+                        btnResendSelected.Text = "Checking items...";
+                        string sentJson = System.IO.File.ReadAllText(payloadPath);
+                        itemCheck = await System.Threading.Tasks.Task.Run(() => OnlinefunctionsEvents.DiagnoseInstoreOrderPayloadItemsAsync(sentJson));
+                    }
+                }
+                catch (Exception checkEx)
+                {
+                    itemCheck = "Item check failed: " + checkEx.Message;
+                }
+
                 ShowSyncDetails($"Resend FAILED - {receiptNo}",
                     $"FAILED - receipt {receiptNo} did not sync.\n\nReason: {DescribeSyncError(ex)}",
                     "Full error:\r\n" + ex,
-                    BuildSentPayloadText(receiptNo, attemptStartedAt));
+                    BuildSentPayloadText(receiptNo, attemptStartedAt),
+                    itemCheck);
             }
             finally
             {
@@ -2579,7 +2598,7 @@ namespace AquariumPOS
         // Resizable read-only dialog so the full Pancake response/stack trace can be read and copied
         // (a MessageBox truncates long text and can't be selected). With a payload, the response/error
         // and the request body sit on separate tabs, and Copy copies both.
-        private void ShowSyncDetails(string title, string summary, string details, string? payload = null)
+        private void ShowSyncDetails(string title, string summary, string details, string? payload = null, string? itemCheck = null)
         {
             using var dlg = new Form
             {
@@ -2611,6 +2630,7 @@ namespace AquariumPOS
             var btnOk = new Button { Text = "Close", Size = new Size(100, 32), DialogResult = DialogResult.OK };
             var btnCopy = new Button { Text = "Copy", Size = new Size(100, 32) };
             string copyText = summary + "\r\n\r\n" + details +
+                (itemCheck == null ? "" : "\r\n\r\n===== PANCAKE ITEM CHECK =====\r\n" + itemCheck) +
                 (payload == null ? "" : "\r\n\r\n===== REQUEST SENT =====\r\n" + payload);
             btnCopy.Click += (_, __) => { try { Clipboard.SetText(copyText); } catch { } };
             buttons.Controls.Add(btnOk);
@@ -2637,6 +2657,22 @@ namespace AquariumPOS
                     Font = new Font("Consolas", 9)
                 });
                 tabs.TabPages.Add(tabDetails);
+                if (itemCheck != null)
+                {
+                    var tabCheck = new TabPage("Pancake Item Check");
+                    tabCheck.Controls.Add(new TextBox
+                    {
+                        Text = itemCheck.Replace("\r\n", "\n").Replace("\n", "\r\n"),
+                        Multiline = true,
+                        ReadOnly = true,
+                        ScrollBars = ScrollBars.Both,
+                        WordWrap = false,
+                        Dock = DockStyle.Fill,
+                        Font = new Font("Consolas", 9)
+                    });
+                    tabs.TabPages.Add(tabCheck);
+                    tabs.SelectedTab = tabCheck;
+                }
                 tabs.TabPages.Add(tabPayload);
                 dlg.Controls.Add(tabs);
             }

@@ -5278,6 +5278,127 @@ WHERE ISNULL(SentToOnline,0) = 0
             return null;
         }
 
+        // Per "here is the error" (Pancake answered a walk-in resend with a bare 500 "Server internal
+        // error") - Pancake gives no hint which line it choked on, so look up every variation_id in
+        // the request body that was just sent (read-only GET, same endpoint as above) and report the
+        // usual culprits per line: not found, hidden/removed/locked flags, warehouse missing from the
+        // variation, or less stock at that warehouse than ordered. Returns a plain-text report.
+        public static async Task<string> DiagnoseInstoreOrderPayloadItemsAsync(string payloadJson, TimeSpan? timeout = null)
+        {
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string apiKey = GlobalSettings.OnlineOrdersApiKey ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
+                return "Cannot check items - OnlineOrdersApiBaseUrl / OnlineOrdersApiKey is not configured.";
+
+            using var payloadDoc = JsonDocument.Parse(payloadJson);
+            var payload = payloadDoc.RootElement;
+            string shopId = payload.TryGetProperty("shop_id", out var s) ? s.ToString() : (GlobalSettings.OnlineOrdersShopId ?? string.Empty);
+            string warehouseId = payload.TryGetProperty("warehouse_id", out var w) ? w.ToString() : string.Empty;
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"Order warehouse_id: {warehouseId}");
+            if (warehouseId.Contains("{{"))
+                sb.AppendLine("  !! warehouse_id is an unresolved placeholder - the POS could not find its current warehouse (Warehouses.Current_Location).");
+            sb.AppendLine();
+
+            if (!payload.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+                return sb.AppendLine("Payload has no items array.").ToString();
+
+            using var http = new HttpClient { Timeout = timeout ?? TimeSpan.FromSeconds(15) };
+            int lineNo = 0, problems = 0;
+            foreach (var item in items.EnumerateArray())
+            {
+                lineNo++;
+                string variationId = item.TryGetProperty("variation_id", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty;
+                string displayId = item.TryGetProperty("variation_info", out var vi) && vi.ValueKind == JsonValueKind.Object && vi.TryGetProperty("display_id", out var d) ? d.ToString() : string.Empty;
+                decimal qty = item.TryGetProperty("quantity", out var q) && q.TryGetDecimal(out var qd) ? qd : 0m;
+
+                sb.Append($"{lineNo,2}. {displayId,-10} qty {qty:0.##}  ");
+                if (string.IsNullOrWhiteSpace(variationId))
+                {
+                    sb.AppendLine("one-time/custom line (no variation_id) - not checked");
+                    continue;
+                }
+
+                var issues = new List<string>();
+                string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/variations/{Uri.EscapeDataString(variationId)}?api_key={Uri.EscapeDataString(apiKey)}";
+                try
+                {
+                    using var resp = await http.GetAsync(endpoint).ConfigureAwait(false);
+                    string body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        issues.Add($"Pancake lookup returned {(int)resp.StatusCode} {resp.ReasonPhrase}: {(body.Length > 200 ? body.Substring(0, 200) : body)}");
+                    }
+                    else
+                    {
+                        using var doc = JsonDocument.Parse(body);
+                        var root = doc.RootElement;
+                        var variation = root;
+                        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object) variation = data;
+                        if (variation.TryGetProperty("variation", out var inner) && inner.ValueKind == JsonValueKind.Object) variation = inner;
+
+                        if (root.TryGetProperty("success", out var ok) && ok.ValueKind == JsonValueKind.False)
+                            issues.Add("Pancake says success=false (variation not found?): " + (body.Length > 200 ? body.Substring(0, 200) : body));
+
+                        // Any true is_* flag (is_hidden, is_removed, is_locked, ...) on the variation or its product.
+                        void CollectFlags(JsonElement obj, string prefix)
+                        {
+                            if (obj.ValueKind != JsonValueKind.Object) return;
+                            foreach (var p in obj.EnumerateObject())
+                                if (p.Name.StartsWith("is_", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == JsonValueKind.True
+                                    && !p.Name.Equals("is_sell_negative_variation", StringComparison.OrdinalIgnoreCase))
+                                    issues.Add($"{prefix}{p.Name} = true");
+                        }
+                        CollectFlags(variation, "");
+                        if (variation.TryGetProperty("product", out var product)) CollectFlags(product, "product.");
+
+                        if (variation.TryGetProperty("display_id", out var actualDisplay) && !string.IsNullOrEmpty(displayId)
+                            && !string.Equals(actualDisplay.ToString(), displayId, StringComparison.OrdinalIgnoreCase))
+                            issues.Add($"variation_id belongs to '{actualDisplay}' in Pancake, not '{displayId}'");
+
+                        if (variation.TryGetProperty("variations_warehouses", out var vw) && vw.ValueKind == JsonValueKind.Array)
+                        {
+                            decimal? remain = null;
+                            foreach (var row in vw.EnumerateArray())
+                            {
+                                if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty("warehouse_id", out var rw)
+                                    && string.Equals(rw.ToString(), warehouseId, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    if (row.TryGetProperty("remain_quantity", out var rq) && rq.TryGetDecimal(out var rqd)) remain = rqd;
+                                    else remain = 0m;
+                                }
+                            }
+                            if (remain == null) issues.Add("not set up in the order's warehouse");
+                            else
+                            {
+                                sb.Append($"stock {remain:0.##}  ");
+                                if (remain < qty) issues.Add($"stock at warehouse ({remain:0.##}) is less than qty ordered ({qty:0.##})");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    issues.Add("lookup failed: " + ex.Message);
+                }
+
+                if (issues.Count == 0) sb.AppendLine("OK");
+                else
+                {
+                    problems++;
+                    sb.AppendLine("<< PROBLEM");
+                    foreach (var issue in issues) sb.AppendLine("      - " + issue);
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine(problems == 0
+                ? "All lines look fine in Pancake - the 500 is likely on Pancake's side (or caused by order-level fields). Try again later or send this payload to Pancake support."
+                : $"{problems} line(s) flagged above - fix those in Pancake (unhide / restore / add stock or warehouse), then Resend Selected again.");
+            return sb.ToString();
+        }
+
         public sealed class CloudVariationDetails
         {
             public string ProductId { get; init; } = string.Empty;
