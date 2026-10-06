@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=aq2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=aq4" />
+  <link rel="stylesheet" href="css/bc-list.css?v=aq6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -172,7 +172,7 @@
 
         <section class="bc-main">
           <div class="bc-grid-wrap" id="orderGridWrap">
-            <table class="bc-grid oo-grid" data-resize-key="online-orders-v4">
+            <table class="bc-grid oo-grid" data-resize-key="online-orders-v5">
               <thead>
                 <tr>
                   <th>Order ID</th>
@@ -189,6 +189,11 @@
                   <th title="Glass thickness, Custom and GMA badges">Flags</th>
                   <th>Production Order</th>
                   <th>Print Note</th>
+                  <th>POS Receipt</th>
+                  <th>POS Customer</th>
+                  <th>POS Description</th>
+                  <th>POS Items</th>
+                  <th>Cashier</th>
                   <th id="deliveryFeeHeader" class="num">Delivery Fee</th>
                   <th>For Delivery</th>
                   <th>Est. Delivery Date</th>
@@ -196,7 +201,7 @@
                 </tr>
               </thead>
               <tbody id="orderTableBody">
-                <tr><td colspan="18" class="cell-msg">Loading...</td></tr>
+                <tr><td colspan="23" class="cell-msg">Loading...</td></tr>
               </tbody>
             </table>
           </div>
@@ -864,7 +869,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=bc82"></script>
+  <script src="js/onlineOrders.js?v=bc84"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

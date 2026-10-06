@@ -5321,6 +5321,7 @@ WHERE ISNULL(SentToOnline,0) = 0
                 }
 
                 var issues = new List<string>();
+                var notes = new List<string>();
                 string endpoint = $"{baseUrl}/shops/{Uri.EscapeDataString(shopId)}/variations/{Uri.EscapeDataString(variationId)}?api_key={Uri.EscapeDataString(apiKey)}";
                 try
                 {
@@ -5355,9 +5356,16 @@ WHERE ISNULL(SentToOnline,0) = 0
 
                         if (variation.TryGetProperty("display_id", out var actualDisplay) && !string.IsNullOrEmpty(displayId)
                             && !string.Equals(actualDisplay.ToString(), displayId, StringComparison.OrdinalIgnoreCase))
-                            issues.Add($"variation_id belongs to '{actualDisplay}' in Pancake, not '{displayId}'");
+                            notes.Add($"Pancake calls this variant '{actualDisplay}' (POS sent '{displayId}') - usually harmless, the order goes by variation_id");
 
-                        if (variation.TryGetProperty("variations_warehouses", out var vw) && vw.ValueKind == JsonValueKind.Array)
+                        // RS-0000011082: the one line with no warehouse inventory in Pancake's response
+                        // stood out from every line that had it - flag that rather than negative stock,
+                        // which Pancake evidently allows (items at -74 still sync).
+                        if (!variation.TryGetProperty("variations_warehouses", out var vw) || vw.ValueKind != JsonValueKind.Array || vw.GetArrayLength() == 0)
+                        {
+                            issues.Add("Pancake returned NO warehouse inventory for this variation - unlike a normal item (deleted/combo/inventory not tracked?). Open it in Pancake.");
+                        }
+                        else
                         {
                             decimal? remain = null;
                             foreach (var row in vw.EnumerateArray())
@@ -5373,7 +5381,7 @@ WHERE ISNULL(SentToOnline,0) = 0
                             else
                             {
                                 sb.Append($"stock {remain:0.##}  ");
-                                if (remain < qty) issues.Add($"stock at warehouse ({remain:0.##}) is less than qty ordered ({qty:0.##})");
+                                if (remain < qty) notes.Add($"stock {remain:0.##} < qty {qty:0.##} (info only - Pancake allows negative stock)");
                             }
                         }
                     }
@@ -5390,6 +5398,7 @@ WHERE ISNULL(SentToOnline,0) = 0
                     sb.AppendLine("<< PROBLEM");
                     foreach (var issue in issues) sb.AppendLine("      - " + issue);
                 }
+                foreach (var note in notes) sb.AppendLine("      (note) " + note);
             }
 
             sb.AppendLine();

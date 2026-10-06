@@ -555,7 +555,7 @@ function renderMyAssignmentCards(rows) {
         <div class="oo-mc-parts">${partChips}</div>
         ${reworkNoteText(o) ? `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(reworkNoteText(o))}</div>` : ''}
         ${o.note_print ? `<div class="oo-mc-note">${escapeHtml(o.note_print)}</div>` : ''}
-        ${posNoteSummary(o) ? `<div class="oo-mc-note"><b>POS:</b> ${escapeHtml(posNoteSummary(o))}</div>` : ''}
+        ${posNoteListHtml(o) ? `<div class="oo-mc-note"><b>POS:</b> ${posNoteListHtml(o)}</div>` : ''}
         ${pdBtn ? `<div class="oo-mc-actions">${pdBtn}</div>` : ''}
       </article>`;
   }).join('');
@@ -1774,13 +1774,37 @@ function makerCellHtml(o, part, needed, username, name) {
   return needed ? assigneeCellHtml(o, needed, username, name) + productionDoneTickHtml(o, part) : '';
 }
 
-// List note cell: the print note and the POS description (posNoteSummary), both when both exist.
-// Walk-ins lead with the POS description (their column reads "POS Description / Print Note").
+// Per "can you write it per field/column" - on the Walk-in list the POS note is split into its own
+// columns (POS Receipt / Customer / Description / Items / Cashier), so the note column there is the
+// print note only. The Online list hides these columns (css .oo-grid:not(.oo-walkin)) and keeps the
+// combined POS cell, since most online orders have no POS note.
+function isWalkinListLayout() {
+  return !!document.querySelector('.oo-grid.oo-walkin');
+}
+
+function posFieldCellsHtml(o) {
+  const rows = o?.pos_note ? parsePosDescription(o.pos_note) : [];
+  const val = (label) => rows.find((r) => r.label === label)?.value || '';
+  const items = val('Details').split(/\s*\|\|\s*/).filter(Boolean);
+  // Anything else in the note (POS Discount, Discount Type, unlabelled text) rides along under Cashier.
+  const extra = rows
+    .filter((r) => !['Receipt', 'Customer', 'Description', 'Details', 'Cashier'].includes(r.label))
+    .map((r) => (r.label ? `${r.label}: ${r.value}` : r.value));
+  return `<td>${escapeHtml(val('Receipt'))}</td>`
+    + `<td>${escapeHtml(val('Customer'))}</td>`
+    + `<td>${escapeHtml(val('Description'))}</td>`
+    + `<td class="oo-pos-items-cell"${items.length ? ` title="${escapeHtml(items.join('\n'))}"` : ''}>${items.map((d) => `<div class="oo-pos-item">${escapeHtml(d)}</div>`).join('')}</td>`
+    + `<td>${escapeHtml(val('Cashier'))}${extra.length ? `<div class="muted">${escapeHtml(extra.join(' · '))}</div>` : ''}</td>`;
+}
+
+// List note cell: the print note and the POS description (posNoteListHtml), both when both exist.
+// On the Walk-in list the POS parts have their own columns (posFieldCellsHtml), so print note only.
 function noteCellHtml(o) {
-  const summary = posNoteSummary(o);
-  const pos = summary ? `<span class="oo-pos-note" title="${escapeHtml(o.pos_note)}">${o.received_at_shop ? '' : '<b>POS:</b> '}${escapeHtml(summary)}</span>` : '';
-  const print = o.note_print ? `${o.received_at_shop && pos ? '<b>Print:</b> ' : ''}${escapeHtml(o.note_print)}` : '';
-  return (o.received_at_shop ? [pos, print] : [print, pos]).filter(Boolean).join(o.received_at_shop ? '<br>' : ' ');
+  if (isWalkinListLayout()) return o.note_print ? escapeHtml(o.note_print) : '';
+  const posHtml = posNoteListHtml(o);
+  const pos = posHtml ? `${o.received_at_shop ? '' : '<b>POS:</b>'}${posHtml}` : '';
+  const print = o.note_print ? `<div>${pos ? '<b>Print:</b> ' : ''}${escapeHtml(o.note_print)}</div>` : '';
+  return (o.received_at_shop ? [pos, print] : [print, pos]).filter(Boolean).join('');
 }
 
 // BC list rows: data only, no buttons. Every action (Open / Send Photo / To-Ship Message / To Ship)
@@ -1805,6 +1829,7 @@ function orderRowsHtml(orders) {
         <td>${otherBranchBadgeHtml(o)} ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${prodOrderBadgeHtml(o)}</td>
         <td>${noteCellHtml(o)}</td>
+        ${posFieldCellsHtml(o)}
         ${hidePrices() ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
@@ -4588,11 +4613,29 @@ async function attachReleaseSummary(rows) {
 }
 
 // One-line POS description for the list / phone cards: the cashier's Order text, else the items.
-function posNoteSummary(o) {
+// Per "this pos description in lines of walk-in orders can you show this on the list as well" -
+// the same parts as the order page's POS Description box (renderPosDescription), compacted for a
+// list row: Customer · Description, then the sold items one per line (first 3 + "+N more"), then
+// receipt / cashier / any other parts muted. Full note on hover.
+const POS_LIST_MAX_ITEMS = 3;
+function posNoteListHtml(o) {
   if (!o?.pos_note) return '';
   const rows = parsePosDescription(o.pos_note);
-  const pick = rows.find((r) => r.label === 'Description') || rows.find((r) => r.label === 'Details');
-  return pick ? pick.value.replace(/\s*\|\|\s*/g, ' · ') : '';
+  if (!rows.length) return '';
+  const val = (label) => rows.find((r) => r.label === label)?.value || '';
+  const head = [val('Customer'), val('Description')].filter(Boolean).map((v, i) => i === 0 ? `<b>${escapeHtml(v)}</b>` : escapeHtml(v)).join(' · ');
+  const items = val('Details').split(/\s*\|\|\s*/).filter(Boolean);
+  const shown = items.slice(0, POS_LIST_MAX_ITEMS).map((d) => `<div class="oo-pos-item">${escapeHtml(d)}</div>`).join('');
+  const more = items.length > POS_LIST_MAX_ITEMS ? `<div class="oo-pos-item muted">+${items.length - POS_LIST_MAX_ITEMS} more</div>` : '';
+  const rest = rows
+    .filter((r) => !['Customer', 'Description', 'Details'].includes(r.label))
+    .map((r) => escapeHtml(r.label && r.label !== 'Receipt' ? `${r.label}: ${r.value}` : r.value))
+    .join(' · ');
+  return `<div class="oo-pos-desc-list" title="${escapeHtml(o.pos_note)}">`
+    + (head ? `<div>${head}</div>` : '')
+    + shown + more
+    + (rest ? `<div class="muted">${rest}</div>` : '')
+    + `</div>`;
 }
 
 async function loadOrders(search, status) {
@@ -4625,7 +4668,7 @@ async function loadOrders(search, status) {
     if (grouped) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
-      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="18" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="23" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     }
     return;
   }
@@ -4673,7 +4716,7 @@ async function loadOrders(search, status) {
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
-    ? `<tr><td colspan="18" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
+    ? `<tr><td colspan="23" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
 
   renderPaginationBar(
@@ -5024,14 +5067,13 @@ function wireOrderFilters() {
 if (new URLSearchParams(window.location.search).get('scope') === 'walkin') {
   const walkinGrid = document.querySelector('.oo-grid');
   walkinGrid.classList.add('oo-walkin');
-  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v3';
   // Found by caption, not index - a fixed index went stale when the Production Order column was added.
   const headerCells = [...walkinGrid.tHead.rows[0].cells];
   const tagsHeader = headerCells.find((th) => th.textContent.trim() === 'Flags');
   if (tagsHeader) tagsHeader.textContent = 'Tags';
-  // Walk-ins show the POS description first, then any print note (walkinNoteCellHtml).
-  const noteHeader = headerCells.find((th) => th.textContent.trim() === 'Print Note');
-  if (noteHeader) noteHeader.textContent = 'POS Description / Print Note';
+  // The POS description has its own columns here (posFieldCellsHtml) - "Print Note" stays as is.
+  // v4: five POS columns were added after Print Note, so older saved widths no longer line up.
+  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v4';
 }
 
 // ---------------------------------------------------------------- Advance Orders tab

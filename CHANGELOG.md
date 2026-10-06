@@ -4,9 +4,15 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-06
 
+- Walk-in Orders list: POS description split into its own columns - **POS Receipt, POS Customer, POS Description, POS Items** (one per line), **Cashier** (+ discount parts) - after Print Note, which is now print note only. Online list hides these and keeps the combined cell. [online-orders.html](docs/online-orders.html), [onlineOrders.js](docs/js/onlineOrders.js) `posFieldCellsHtml` (bc84), [bc-list.css](docs/css/bc-list.css) (aq6, walk-in hidden-column numbers renumbered); saved column widths reset (online v5, walk-in v4).
+
+- Online / Walk-in Orders list: the POS Description column now shows the same parts as the order page's POS Description box - Customer · Description, the sold items (first 3 + "+N more"), then receipt / cashier - instead of only the one-line Description; also on the mobile cards. [onlineOrders.js](docs/js/onlineOrders.js) `posNoteListHtml` (bc83), [bc-list.css](docs/css/bc-list.css) (aq5).
+
 - POS Transaction List: new **Resend Selected** button ([TransactionListForm.cs](TransactionListForm.cs)) - resends one receipt to Pancake (portal follows) and shows the exact error / Pancake response in a copyable dialog, plus the last recorded attempt from `InstoreOnlineOrderMap`. Warns before resending a receipt that already reached Pancake (would duplicate) and explains non-SALES receipts are skipped by design.
 - Resend Selected result dialog now has a **Request Payload** tab - the exact JSON body + endpoint (API key hidden) sent to Pancake, flagged if it's from an earlier attempt; Copy includes it.
 - Resend Selected: on failure it now runs a **Pancake Item Check** tab (`DiagnoseInstoreOrderPayloadItemsAsync` in [OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs)) - looks up every line's variation_id in Pancake and flags not-found / hidden / removed / locked / wrong item / missing warehouse / low stock, since Pancake's bare 500 doesn't say which line is bad (RS-0000011082).
+- Pancake Item Check tuned after the first real run: negative/low stock and BlackSealant display-id differences are now info notes (Pancake allows negative stock), and a variation with no warehouse inventory in Pancake's response is flagged as the problem (item 932 on RS-0000011082).
+- New local POS (SSMS) script [local_fix_receipt_item_mispunch.sql](sql/local_fix_receipt_item_mispunch.sql) - swaps a mis-punched item on a posted receipt (RS-0000011082: 932 -> FT-043) in ItemLedgerEntry, moves the stock back, keeps the sold amounts, resets SentToOnline; preview mode by default.
 
 ## 2026-10-05
 
