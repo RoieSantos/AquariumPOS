@@ -62,7 +62,9 @@ const STORE_TIMEZONE = 'Asia/Manila';
 
 interface FacebookAttachment {
   type?: string;
-  payload?: { url?: string };
+  title?: string;
+  url?: string;
+  payload?: { url?: string; title?: string; coordinates?: { lat?: number; long?: number } };
 }
 
 interface FacebookWebhookBody {
@@ -227,6 +229,10 @@ async function fetchConversationParticipantName(psid: string, pageId: string, pa
 // "out of v1 scope", same cut as before this existed). Best-effort: any failure here just means
 // the attachment is dropped (falls back to text-only handling, or the whole event is dropped if
 // there was no text either) - never blocks the rest of message processing.
+// Voice messages ('audio') and files ('file') too now - per "make attachments readable on the
+// conversations"; the original file name is kept in the path (bucket types widened in
+// sql/supabase_chatbot_attachment_files_audio.sql). Location still isn't downloaded - its map link
+// goes into the row's Content instead.
 // Videos too now (kind 'video', no base64 - nothing reads a video's bytes). Capped at the bucket's
 // own 25MB limit (supabase_chatbot_attachment_video_support.sql) - a bigger video is dropped and
 // its row just says "[Video]".
@@ -239,20 +245,54 @@ interface StoredAttachment {
   contentType: string;
 }
 
-async function storeChatbotAttachment(supabase: SupabaseClient, psid: string, sourceUrl: string, kind: 'image' | 'video' = 'image'): Promise<StoredAttachment | null> {
+// Original file name from a Facebook CDN file URL (".../Quotation.pdf?_nc_cat=..."), made storage-safe.
+// Kept in the Storage path so Conversations can show it on the file chip (see attachmentFileName in
+// docs/js/gmaConversations.js).
+function fileNameFromUrl(sourceUrl: string): string {
+  try {
+    const last = decodeURIComponent(new URL(sourceUrl).pathname.split('/').pop() || '');
+    return last.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(-80) || 'file';
+  } catch {
+    return 'file';
+  }
+}
+
+// Storage content type for a voice message / file: Facebook's CDN often says application/octet-stream,
+// so the extension decides when it can (the bucket's allowed_mime_types - supabase_chatbot_attachment_
+// files_audio.sql - lists these).
+const FILE_EXT_MIME: Record<string, string> = {
+  pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain', csv: 'text/csv', zip: 'application/zip',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', ogg: 'audio/ogg', mp4: 'audio/mp4'
+};
+
+async function storeChatbotAttachment(supabase: SupabaseClient, psid: string, sourceUrl: string, kind: 'image' | 'video' | 'audio' | 'file' = 'image'): Promise<StoredAttachment | null> {
   try {
     const res = await fetch(sourceUrl);
     if (!res.ok) return null;
     if (Number(res.headers.get('content-length') || 0) > ATTACHMENT_MAX_BYTES) return null;
 
-    const contentType = res.headers.get('content-type') || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
-    const ext = kind === 'video'
-      ? (contentType.includes('quicktime') ? 'mov' : 'mp4')
-      : contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : contentType.includes('gif') ? 'gif' : 'jpg';
+    let contentType = res.headers.get('content-type') || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
+    let ext: string;
+    let namePart = '';
+    if (kind === 'audio' || kind === 'file') {
+      const name = fileNameFromUrl(sourceUrl);
+      const nameExt = (name.match(/\.([A-Za-z0-9]{1,5})$/)?.[1] || '').toLowerCase();
+      ext = nameExt || (kind === 'audio' ? 'mp4' : 'bin');
+      // Voice messages arrive as .mp4 audio clips - stored as audio/mp4 so the <audio> player takes them.
+      contentType = (kind === 'audio' && ext === 'mp4') ? 'audio/mp4' : (FILE_EXT_MIME[ext] || contentType.split(';')[0]);
+      namePart = `-${name.replace(/\.[A-Za-z0-9]{1,5}$/, '')}`;
+    } else {
+      ext = kind === 'video'
+        ? (contentType.includes('quicktime') ? 'mov' : 'mp4')
+        : contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : contentType.includes('gif') ? 'gif' : 'jpg';
+    }
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.length > ATTACHMENT_MAX_BYTES) return null;
     // Random suffix - several attachments from one message are stored in parallel, same millisecond.
-    const path = `${psid}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+    const path = `${psid}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}${namePart}.${ext}`;
 
     const { error: uploadError } = await supabase.storage
       .from('chatbot-attachments')
@@ -272,7 +312,7 @@ async function storeChatbotAttachment(supabase: SupabaseClient, psid: string, so
       return null;
     }
 
-    if (kind === 'video') return { path, signedUrl: signedData.signedUrl, base64: null, contentType };
+    if (kind !== 'image') return { path, signedUrl: signedData.signedUrl, base64: null, contentType };
 
     // base64-encode the bytes we already have in memory, so extractPaymentDetails (below) can hand
     // this straight to Claude's vision input without re-downloading the image from Facebook's CDN a
@@ -305,14 +345,39 @@ interface RecordedPart {
   kind: string;
   stored: StoredAttachment | null;
   rowId: number | null;
+  // Row text for this part when it has no caption - the placeholder, or for a location / shared link
+  // the actual link, so Conversations can show it as a clickable link.
+  label: string;
+}
+
+// Link carried by a location pin or a shared link/post (Messenger sends shares as 'fallback' or
+// 'share' attachments, sometimes with no message text at all - these used to be dropped).
+function attachmentLink(a: FacebookAttachment): string | null {
+  const c = a.payload?.coordinates;
+  if (a.type === 'location' && c && c.lat != null && c.long != null) return `https://maps.google.com/?q=${c.lat},${c.long}`;
+  if (a.type === 'location' || a.type === 'fallback' || a.type === 'share' || a.type === 'template') {
+    return a.payload?.url || a.url || null;
+  }
+  return null;
+}
+
+function attachmentLabel(a: FacebookAttachment, link: string | null): string {
+  const kind = a.type as string;
+  if (kind === 'location') return link ? `[Location] ${link}` : '[Location]';
+  if (link) {
+    const title = (a.title || a.payload?.title || '').trim();
+    return title ? `${title}\n${link}` : link;
+  }
+  return ATTACHMENT_PLACEHOLDER[kind] || '[Attachment]';
 }
 
 // Saves one Messenger message (customer's, or a staff echo from the Meta app) as ChatbotMessages
 // rows: one row per attachment, in order, so several photos picked together show as a grid. The
 // text rides on the first row (as a caption), or gets a row of its own when there are no
 // attachments. The first row carries the real Facebook mid (ChatbotMessages.FacebookMessageId's
-// unique index = redelivery guard -> 'duplicate'); extra rows use "<mid>#2", "#3", ... 'fallback'
-// attachments (link previews) are skipped - the link is already in the text.
+// unique index = redelivery guard -> 'duplicate'); extra rows use "<mid>#2", "#3", ... A link preview
+// whose link is already in the text is skipped; a location pin / shared link with no text gets its link
+// written into Content (see attachmentLabel).
 async function recordMessageWithAttachments(
   supabase: SupabaseClient,
   psid: string,
@@ -322,19 +387,26 @@ async function recordMessageWithAttachments(
   attachments: FacebookAttachment[] | undefined,
   extra: Record<string, unknown> | null
 ): Promise<{ parts: RecordedPart[] } | 'duplicate' | 'empty'> {
-  const wanted = (attachments ?? []).filter((a) => a.type && a.type !== 'fallback');
+  // A shared-link preview whose link is already in the message text adds nothing - skipped, as before.
+  // One with NO text (or a different link) is kept, so the link isn't lost.
+  const wanted = (attachments ?? []).filter((a) => {
+    if (!a.type) return false;
+    if (a.type !== 'fallback' && a.type !== 'share' && a.type !== 'template') return true;
+    const link = attachmentLink(a);
+    return !!link && !(text || '').includes(link);
+  });
   const parts: RecordedPart[] = await Promise.all(wanted.map(async (a) => {
     const kind = a.type as string;
-    const stored = (kind === 'image' || kind === 'video') && a.payload?.url
+    const stored = (kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'file') && a.payload?.url
       ? await storeChatbotAttachment(supabase, psid, a.payload.url, kind)
       : null;
-    return { kind, stored, rowId: null };
+    return { kind, stored, rowId: null, label: attachmentLabel(a, attachmentLink(a)) };
   }));
 
   const rows = parts.map((p, i) => ({
     Psid: psid,
     Role: role,
-    Content: i === 0 && text ? text : (ATTACHMENT_PLACEHOLDER[p.kind] || '[Attachment]'),
+    Content: i === 0 && text ? text : p.label,
     FacebookMessageId: i === 0 ? mid : `${mid}#${i + 1}`,
     AttachmentPath: p.stored?.path ?? null,
     AttachmentUrl: p.stored?.signedUrl ?? null,

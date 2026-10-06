@@ -88,7 +88,7 @@ function renderConversationList() {
       <div class="inbox-conv-item${c.psid === selectedPsid ? ' active' : ''}${unread ? ' inbox-conv-unread' : ''}" data-psid="${escapeHtml(c.psid)}">
         <div class="inbox-conv-top">
           <span class="inbox-conv-psid">${escapeHtml(c.customer_name || c.psid)}${badges}</span>
-          <span class="inbox-conv-time">${formatRelativeTime(c.last_message_at_utc)}${unread ? '<span class="inbox-unread-dot" title="Unread"></span>' : ''}</span>
+          <span class="inbox-conv-time">${viewerBadgesHtml(c.psid)}${formatRelativeTime(c.last_message_at_utc)}${unread ? '<span class="inbox-unread-dot" title="Unread"></span>' : ''}</span>
         </div>
         <div class="inbox-conv-preview">${escapeHtml(c.last_message_preview || '(no messages)')}</div>
       </div>
@@ -112,6 +112,7 @@ function renderThreadHeader(conv) {
   }
   headerEl.innerHTML = `
     <span style="font-size:12px; font-weight:600;">${escapeHtml(conv.customer_name || conv.psid)}</span>
+    <span class="inbox-thread-viewers" id="threadViewersEl"></span>
     <span class="inbox-header-actions">
       ${pauseNote ? `<span class="inbox-pause-note">${escapeHtml(pauseNote)}</span>` : ''}
       <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button">
@@ -120,6 +121,7 @@ function renderThreadHeader(conv) {
     </span>
   `;
   document.getElementById('togglePauseBtn').addEventListener('click', () => togglePause(conv));
+  renderThreadViewers();
 
   document.getElementById('replyRowEl').classList.remove('hidden');
 }
@@ -191,7 +193,62 @@ function messageDayKey(m) {
 
 // Content the webhook stamps on a caption-less photo/video row (ChatbotMessages.Content is NOT NULL) -
 // hidden when the media itself is shown, but kept as text when the file couldn't be stored.
-const MEDIA_PLACEHOLDER_TEXT = new Set(['[Photo]', '[Video]']);
+const MEDIA_PLACEHOLDER_TEXT = new Set(['[Photo]', '[Video]', '[Voice message]', '[File]', '[Attachment]']);
+
+// Per "if we are sending links.. can you hyperlink it": escapes the text and turns every http(s)://
+// or www. link into a clickable link (new tab). Trailing punctuation (a sentence's "." or ")") is
+// left outside the link.
+const LINK_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+function linkifyText(text) {
+  const s = String(text || '');
+  let out = '';
+  let last = 0;
+  for (const match of s.matchAll(LINK_PATTERN)) {
+    let url = match[0];
+    const trail = url.match(/[.,!?;:)\]}]+$/);
+    if (trail) url = url.slice(0, -trail[0].length);
+    out += escapeHtml(s.slice(last, match.index));
+    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    out += `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+    last = match.index + url.length;
+  }
+  return out + escapeHtml(s.slice(last));
+}
+
+// Message text as HTML: a location pin (webhook writes "[Location] <maps link>") reads as a map
+// link; everything else is linkified text.
+function messageTextHtml(text) {
+  const loc = String(text || '').match(/^\[Location\]\s+(https?:\/\/\S+)\s*$/);
+  if (loc) {
+    return `📍 Shared a location · <a href="${escapeHtml(loc[1])}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>`;
+  }
+  return linkifyText(text);
+}
+
+// Original file name from a stored file's signed URL - the webhook saves files as
+// "<psid>/<ms>-<rand8>-<Name>.<ext>" (facebook-messenger-webhook storeChatbotAttachment).
+function attachmentFileName(url) {
+  try {
+    const last = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+    const name = last.replace(/^\d+-[0-9a-f]{8}-?/i, '');
+    return name.startsWith('.') || !name ? `File${name}` : name;
+  } catch {
+    return 'File';
+  }
+}
+
+// Voice message -> inline player; file -> a download chip with its name. (Photos/videos: mediaTileHtml.)
+function attachmentExtraHtml(m) {
+  if (!m.attachment_url) return '';
+  const url = escapeHtml(m.attachment_url);
+  if (m.attachment_type === 'audio') {
+    return `<audio class="inbox-msg-audio" src="${url}" controls preload="none"></audio>`;
+  }
+  if (m.attachment_type === 'file') {
+    return `<a class="inbox-msg-file" href="${url}" target="_blank" rel="noopener noreferrer" download>📄 <span>${escapeHtml(attachmentFileName(m.attachment_url))}</span></a>`;
+  }
+  return '';
+}
 
 // A photo/video with no caption and no detected-payment card - drawn the Messenger way, as the bare
 // media (no colored bubble around it), and consecutive ones from the same sender are merged into one
@@ -315,9 +372,11 @@ function renderMessages(serverRows, opts = {}) {
       bubbleHtml = `<div class="inbox-msg-emoji">${escapeHtml(m.content.trim())}</div>`;
     } else {
       const hasMedia = (m.attachment_type === 'image' || m.attachment_type === 'video') && m.attachment_url;
-      // '[Photo]' / '[Video]' is just the placeholder Content the webhook stamps on media with no caption
-      // (ChatbotMessages.Content is NOT NULL) - skip showing it as redundant text under the image.
-      const showText = m.content && !(hasMedia && MEDIA_PLACEHOLDER_TEXT.has(m.content));
+      const extraHtml = attachmentExtraHtml(m);
+      // '[Photo]' / '[Video]' / '[Voice message]' / '[File]' is just the placeholder Content the webhook
+      // stamps on an attachment with no caption (ChatbotMessages.Content is NOT NULL) - skip showing it
+      // as redundant text when the attachment itself is shown.
+      const showText = m.content && !((hasMedia || extraHtml) && MEDIA_PLACEHOLDER_TEXT.has(m.content));
       // Claude's vision pass (extractPaymentDetails in the webhook) flags this as a likely payment
       // screenshot - a SUGGESTION only, never auto-applied to any order's payments. Staff confirms by
       // clicking through to the Add Payment form (see useDetectedPayment below).
@@ -329,7 +388,7 @@ function renderMessages(serverRows, opts = {}) {
       // single concatenated string with no embedded template-literal whitespace, unlike the row
       // wrapper around it (not pre-wrap, safe to format normally).
       const mediaHtml = hasMedia ? mediaTileHtml(m) : '';
-      const textHtml = showText ? escapeHtml(m.content) : '';
+      const textHtml = showText ? messageTextHtml(m.content) : '';
       const paymentApplied = !!m.detected_payment_applied_at_utc;
       const paymentHtml = hasDetectedPayment
         ? '<div class="inbox-payment-detected">' +
@@ -344,7 +403,7 @@ function renderMessages(serverRows, opts = {}) {
             : `<button type="button" class="btn btn-secondary btn-sm inbox-use-payment-btn" data-message-id="${m.message_id}" data-amount="${Number(m.detected_payment_amount)}" data-method="${escapeHtml(m.detected_payment_method || '')}" data-reference="${escapeHtml(m.detected_payment_reference || '')}">Use in Add Payment</button>`) +
           '</div>'
         : '';
-      bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${mediaHtml}${textHtml}${paymentHtml}</div>`;
+      bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${mediaHtml}${extraHtml}${textHtml}${paymentHtml}</div>`;
     }
 
     parts.push(`
@@ -531,6 +590,7 @@ function lightboxIsOpen() {
 
 async function openConversation(psid) {
   selectedPsid = psid;
+  trackPresence();
   renderConversationList();
 
   const conv = conversations.find((c) => c.psid === psid);
@@ -3950,7 +4010,8 @@ let gmaInboxChannel = null;
 
 function setupRealtimeInbox() {
   gmaInboxChannel = supabaseClient
-    .channel('gma-inbox')
+    .channel('gma-inbox', { config: { presence: { key: `${currentSession.username}:${presenceTabId}` } } })
+    .on('presence', { event: 'sync' }, onPresenceSync)
     .on('broadcast', { event: 'new_message' }, ({ payload }) => {
       handleGmaInboxEvent(payload);
     })
@@ -3958,7 +4019,77 @@ function setupRealtimeInbox() {
     .on('broadcast', { event: 'conversation_read' }, ({ payload }) => {
       handleConversationReadEvent(payload);
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') trackPresence();
+    });
+
+  // A hidden/minimized tab isn't "reading" - it drops off the viewers until it's visible again.
+  document.addEventListener('visibilitychange', trackPresence);
+}
+
+// ---------------------------------------------------------------------------
+// Who's viewing - per "show an icon on the conversation if my staff is on that conversation". Supabase
+// Realtime Presence on the same 'gma-inbox' channel (no table/SQL): every open Conversations tab
+// announces which conversation it has open (none while the tab is hidden), and Realtime drops a tab by
+// itself when it closes or loses connection. Shown as initials badges on the conversation list and a
+// "viewing" line in the open thread's header. Your own account isn't shown (you know you're there).
+const presenceTabId = Math.random().toString(36).slice(2, 10);
+let presenceByPsid = new Map(); // psid -> [{ username, display_name }] - other staff, one per account
+
+function trackPresence() {
+  if (!gmaInboxChannel) return;
+  gmaInboxChannel.track({
+    username: currentSession.username,
+    display_name: currentSession.displayName || currentSession.username,
+    psid: document.hidden ? null : selectedPsid
+  }).catch(() => {});
+}
+
+function onPresenceSync() {
+  const map = new Map();
+  Object.values(gmaInboxChannel.presenceState()).forEach((metas) => {
+    metas.forEach((m) => {
+      if (!m.psid || m.username === currentSession.username) return;
+      const list = map.get(m.psid) || [];
+      if (!list.some((x) => x.username === m.username)) list.push({ username: m.username, display_name: m.display_name });
+      map.set(m.psid, list);
+    });
+  });
+  presenceByPsid = map;
+  renderConversationList();
+  renderThreadViewers();
+}
+
+function viewerInitials(name) {
+  const words = String(name || '?').trim().split(/\s+/).filter(Boolean);
+  return ((words[0]?.[0] || '?') + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
+}
+
+// Same account -> same color on every screen.
+function viewerColor(username) {
+  let h = 0;
+  for (const ch of String(username)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${h}, 55%, 42%)`;
+}
+
+function viewerBadgesHtml(psid) {
+  const viewers = presenceByPsid.get(psid) || [];
+  if (viewers.length === 0) return '';
+  const names = viewers.map((v) => v.display_name || v.username);
+  const shown = viewers.slice(0, 3).map((v) =>
+    `<span class="inbox-viewer-badge" style="background:${viewerColor(v.username)}">${escapeHtml(viewerInitials(v.display_name || v.username))}</span>`
+  ).join('');
+  const more = viewers.length > 3 ? `<span class="inbox-viewer-badge inbox-viewer-more">+${viewers.length - 3}</span>` : '';
+  return `<span class="inbox-viewers" title="${escapeHtml(names.join(', '))} viewing">${shown}${more}</span>`;
+}
+
+function renderThreadViewers() {
+  const el = document.getElementById('threadViewersEl');
+  if (!el) return;
+  const viewers = presenceByPsid.get(selectedPsid) || [];
+  el.innerHTML = viewers.length === 0
+    ? ''
+    : `${viewerBadgesHtml(selectedPsid)}<span class="inbox-viewers-label">${escapeHtml(viewers.map((v) => v.display_name || v.username).join(', '))} ${viewers.length === 1 ? 'is' : 'are'} viewing</span>`;
 }
 
 // ---------------------------------------------------------------------------

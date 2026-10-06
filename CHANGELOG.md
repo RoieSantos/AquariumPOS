@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-06
 
+- Conversations: "who's viewing" - Supabase Realtime Presence on the existing `gma-inbox` channel; other staff's initials badges show on each conversation they have open (list + "X is viewing" in the thread header). Hidden tabs drop off; no SQL. `gmaConversations.js?v=viewers1`.
+
+- Read-only check [supabase_check_chatbot_attachment_storage.sql](sql/supabase_check_chatbot_attachment_storage.sql): Conversations attachment storage by type, bucket total, files past 60 days / orphaned, and whether the 60-day cleanup's Vault key + cron job are in place.
+
+- Conversations: links in messages are now clickable (open in a new tab); customers' voice messages play inline and files show as a named download chip; a shared location shows "Open in Google Maps". [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) now stores audio + file attachments (original file name kept), writes the map link for locations, and keeps shared links sent with no text (were dropped). Bucket types widened in [supabase_chatbot_attachment_files_audio.sql](sql/supabase_chatbot_attachment_files_audio.sql). `gmaConversations.js?v=links1`.
+
 - POS: Custom Stand (and any calculator line falling back to item code `CUSTOM`) no longer hits "Insufficient Stock - 0 serial-tracked units" at non-production stores; bare `CUSTOM` now counts as made-to-order in `IsBuildToOrderItemCode` (MainForm.cs), same as `CUSTOM-`/`AQ-` codes.
 - POS: Stand Price Calculator "Add to sale" now adds the line exactly like the Custom Aquarium calculator's stand line - category + code `CUSTOM-STAND` (catalog variant resolved, made-to-order, no serial picker), calculator price kept as-is - instead of category `STAND` / code `CUSTOM`.
 - Conversations Product List: opening the panel (or clearing the search) now shows a default **Best sellers - last 90 days** list (ledger Sale entries, variants rolled up to the parent, then the rest A-Z) instead of an empty "Type to search". Empty query added to [supabase_gma_product_wildcard_search.sql](sql/supabase_gma_product_wildcard_search.sql). `?v=productlist5`.

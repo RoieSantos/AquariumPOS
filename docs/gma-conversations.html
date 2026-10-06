@@ -1019,6 +1019,33 @@
     .inbox-conv-unread .inbox-conv-preview { font-weight: 700; color: #0b1f3f; }
     .inbox-conv-unread .inbox-conv-time { font-weight: 700; color: #1877f2; }
     .inbox-conv-time { display: inline-flex; align-items: center; gap: 6px; }
+    /* Who's viewing (Realtime Presence - viewerBadgesHtml / renderThreadViewers in gmaConversations.js) */
+    .inbox-viewers { display: inline-flex; align-items: center; }
+    .inbox-viewer-badge {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 20px;
+      text-align: center;
+      border: 2px solid var(--panel-bg, #fff);
+      margin-left: -5px;
+      box-sizing: content-box;
+    }
+    .inbox-viewer-badge:first-child { margin-left: 0; }
+    .inbox-viewer-more { background: #8a8d91; }
+    .inbox-thread-viewers {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      font-size: 11px;
+      color: var(--muted-text, #61738f);
+    }
+    .inbox-viewers-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .inbox-unread-dot {
       width: 9px;
       height: 9px;
@@ -1167,6 +1194,31 @@
       margin-bottom: 4px;
       background: #000;
     }
+    /* Links in message text (linkifyText), voice messages and file chips (attachmentExtraHtml). */
+    .inbox-msg a {
+      color: inherit;
+      text-decoration: underline;
+      overflow-wrap: anywhere;
+    }
+    .inbox-msg-audio {
+      display: block;
+      width: 260px;
+      max-width: 100%;
+      height: 40px;
+      margin-bottom: 4px;
+    }
+    .inbox-msg a.inbox-msg-file {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      margin-bottom: 4px;
+      border-radius: 8px;
+      background: rgba(127, 127, 127, 0.15);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .inbox-msg a.inbox-msg-file span { text-decoration: underline; overflow-wrap: anywhere; }
     .inbox-msg-media { max-width: 100%; }
     .inbox-msg-media .inbox-msg-image,
     .inbox-msg-media .inbox-msg-video {
@@ -2845,7 +2897,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=all1"></script>
   <script src="js/nav.js?v=all3"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=productlist5"></script>
+  <script src="js/gmaConversations.js?v=viewers1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
