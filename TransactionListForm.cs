@@ -30,6 +30,7 @@ namespace AquariumPOS
         private Button? btnReturnExchange;
     private Button? btnPayCommission;
     private Button? btnRetryFailed;
+    private Button? btnResendSelected;
         private TextBox? txtSearch;
         private Label? lblSearch;
         private DateTimePicker? dtpFromDate;
@@ -418,6 +419,20 @@ namespace AquariumPOS
             btnRetryFailed.Click += BtnRetryFailed_Click;
             btnRetryFailed.Location = new Point(896, 10);
             bottomPanel.Controls.Add(btnRetryFailed);
+
+            // Per "resend that specific order in transaction list and show the exact error why its
+            // not syncing" - Retry Failed above resends every unsent receipt but only logs each
+            // failure to Debug output, so staff never see WHY one is stuck. This resends just the
+            // selected receipt and shows the real Pancake response/error.
+            btnResendSelected = new Button();
+            btnResendSelected.Text = "Resend Selected";
+            btnResendSelected.Size = new Size(150, 40);
+            btnResendSelected.BackColor = Color.DarkCyan;
+            btnResendSelected.ForeColor = Color.White;
+            btnResendSelected.Font = new Font("Arial", 10, FontStyle.Bold);
+            btnResendSelected.Click += BtnResendSelected_Click;
+            btnResendSelected.Location = new Point(1036, 10);
+            bottomPanel.Controls.Add(btnResendSelected);
 
             btnClose = new Button();
             btnClose.Text = "Close";
@@ -2376,6 +2391,259 @@ namespace AquariumPOS
                 btnRetryFailed.Text = originalText;
                 LoadTransactions();
             }
+        }
+
+        // Resends ONE receipt via the same OnlinefunctionsEvents.CreateInstoreOnlineOrder call the
+        // checkout and Retry Failed use (the portal then picks the order up from Pancake), but
+        // surfaces the outcome instead of swallowing it: first the last recorded attempt from
+        // dbo.InstoreOnlineOrderMap (CreateInstoreOnlineOrder already saves the full exception there
+        // as CREATE_FAILED - it just was never shown), then the live result of the resend.
+        private async void BtnResendSelected_Click(object? sender, EventArgs e)
+        {
+            if (btnResendSelected == null || dgvTransactions == null) return;
+
+            if (dgvTransactions.SelectedRows.Count == 0)
+            {
+                MessageBox.Show("Please select the transaction to resend.", "No Selection", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var selectedRow = dgvTransactions.SelectedRows[0];
+            string receiptNo = selectedRow.Cells["ReceiptNo"]?.Value?.ToString()?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(receiptNo))
+            {
+                MessageBox.Show("Selected transaction does not have a Receipt No.", "Invalid Selection", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string type = string.Empty;
+            bool sentToOnline = false;
+            string mappedOrderId = string.Empty, lastAction = string.Empty, lastResponse = string.Empty, lastAttempt = string.Empty;
+            try
+            {
+                OnlinefunctionsEvents.EnsureInstoreOnlineOrderMapTable();
+                using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+                conn.Open();
+                using (var cmd = new SqlCommand("SELECT TOP 1 Type, CAST(ISNULL(SentToOnline, 0) AS INT) AS SentToOnline FROM TransactionHeader WHERE ReceiptNo = @ReceiptNo", conn))
+                {
+                    cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                    using var rdr = cmd.ExecuteReader();
+                    if (rdr.Read())
+                    {
+                        type = rdr["Type"]?.ToString()?.Trim() ?? string.Empty;
+                        sentToOnline = Convert.ToInt32(rdr["SentToOnline"]) == 1;
+                    }
+                }
+                using (var cmd = new SqlCommand("SELECT TOP 1 OnlineOrderId, LastAction, LastResponse, UpdatedAtUtc FROM dbo.InstoreOnlineOrderMap WHERE LocalReceiptNo = @ReceiptNo", conn))
+                {
+                    cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                    using var rdr = cmd.ExecuteReader();
+                    if (rdr.Read())
+                    {
+                        mappedOrderId = rdr["OnlineOrderId"]?.ToString()?.Trim() ?? string.Empty;
+                        lastAction = rdr["LastAction"]?.ToString()?.Trim() ?? string.Empty;
+                        lastResponse = rdr["LastResponse"]?.ToString() ?? string.Empty;
+                        if (rdr["UpdatedAtUtc"] is DateTime updatedUtc)
+                            lastAttempt = updatedUtc.AddHours(8).ToString("yyyy-MM-dd h:mm:ss tt");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not read the sync status for {receiptNo}: {ex.Message}", "Resend Selected", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            if (!string.Equals(type, "SALES", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowSyncDetails($"Sync Status - {receiptNo}",
+                    $"Receipt {receiptNo} is Type '{type}'. Only SALES transactions are sent to Pancake/portal, so this one is skipped on purpose and will always show Sent to Online = No.",
+                    BuildLastAttemptText(mappedOrderId, lastAction, lastAttempt, lastResponse));
+                return;
+            }
+
+            // CreateInstoreOnlineOrder always POSTs a NEW Pancake order - resending one that already
+            // reached Pancake would create a duplicate, so make staff confirm that case explicitly.
+            bool alreadyInPancake = sentToOnline || !string.IsNullOrEmpty(mappedOrderId);
+            string prompt = alreadyInPancake
+                ? $"Receipt {receiptNo} looks like it ALREADY reached Pancake" +
+                  (string.IsNullOrEmpty(mappedOrderId) ? "" : $" (order {mappedOrderId})") +
+                  ".\n\nResending will create a DUPLICATE order in Pancake. Only continue if you checked Pancake and it is not there.\n\nResend anyway?"
+                : $"Resend receipt {receiptNo} to Pancake/portal now?" +
+                  (string.IsNullOrEmpty(lastAction) ? "" : $"\n\nLast attempt: {lastAction}" + (string.IsNullOrEmpty(lastAttempt) ? "" : $" at {lastAttempt}"));
+            if (MessageBox.Show(prompt, "Resend Selected", MessageBoxButtons.YesNo,
+                    alreadyInPancake ? MessageBoxIcon.Warning : MessageBoxIcon.Question,
+                    alreadyInPancake ? MessageBoxDefaultButton.Button2 : MessageBoxDefaultButton.Button1) != DialogResult.Yes)
+                return;
+
+            btnResendSelected.Enabled = false;
+            string originalText = btnResendSelected.Text;
+            btnResendSelected.Text = "Sending...";
+            DateTime attemptStartedAt = DateTime.Now;
+            try
+            {
+                string response = await System.Threading.Tasks.Task.Run(() => OnlinefunctionsEvents.CreateInstoreOnlineOrder(receiptNo));
+                string newOrderId = OnlinefunctionsEvents.GetMappedOnlineOrderIdForReceipt(receiptNo);
+                ShowSyncDetails($"Resent - {receiptNo}",
+                    $"SUCCESS - receipt {receiptNo} was sent to Pancake" + (string.IsNullOrEmpty(newOrderId) ? "." : $" as order {newOrderId}.") +
+                    " The portal will show it after its next Pancake sync.",
+                    "Pancake response:\r\n" + PrettyPrintJson(response),
+                    BuildSentPayloadText(receiptNo, attemptStartedAt));
+            }
+            catch (Exception ex)
+            {
+                ShowSyncDetails($"Resend FAILED - {receiptNo}",
+                    $"FAILED - receipt {receiptNo} did not sync.\n\nReason: {DescribeSyncError(ex)}",
+                    "Full error:\r\n" + ex,
+                    BuildSentPayloadText(receiptNo, attemptStartedAt));
+            }
+            finally
+            {
+                btnResendSelected.Enabled = true;
+                btnResendSelected.Text = originalText;
+                LoadTransactions();
+            }
+        }
+
+        private static string BuildLastAttemptText(string mappedOrderId, string lastAction, string lastAttempt, string lastResponse)
+        {
+            if (string.IsNullOrEmpty(lastAction) && string.IsNullOrEmpty(mappedOrderId))
+                return "No sync attempt has been recorded for this receipt.";
+
+            return $"Last recorded attempt: {(string.IsNullOrEmpty(lastAction) ? "-" : lastAction)}" +
+                   (string.IsNullOrEmpty(lastAttempt) ? "" : $" at {lastAttempt}") +
+                   (string.IsNullOrEmpty(mappedOrderId) ? "" : $"\r\nPancake order: {mappedOrderId}") +
+                   "\r\n\r\n" + lastResponse;
+        }
+
+        // Plain-language first line for the common failure shapes; the full exception is shown below it.
+        private static string DescribeSyncError(Exception ex)
+        {
+            if (ex is System.Threading.Tasks.TaskCanceledException || ex.InnerException is System.Threading.Tasks.TaskCanceledException)
+                return "Pancake did not answer within 30 seconds (timeout). Check the internet connection and try again.";
+            if (ex is System.Net.Http.HttpRequestException && ex.Message.Contains("CreateInstoreOnlineOrder failed:"))
+                return "Pancake rejected the order - " + ex.Message.Replace("CreateInstoreOnlineOrder failed: ", "");
+            if (ex is System.Net.Http.HttpRequestException)
+                return "Could not reach Pancake (no internet / DNS / connection refused): " + ex.Message;
+            return ex.Message;
+        }
+
+        // Per "also show the payload so we can debug on our end" - CreateInstoreOnlineOrder already
+        // dumps the exact request body to last_instore_order_payload_{ReceiptNo}.json right before the
+        // POST, so read that back. Only trust it if it was written during THIS attempt: a failure
+        // before the body is built (receipt not found, API settings missing) leaves an older file.
+        private static string BuildSentPayloadText(string receiptNo, DateTime attemptStartedAt)
+        {
+            string baseUrl = GlobalSettings.OnlineOrdersApiBaseUrl?.TrimEnd('/') ?? string.Empty;
+            string shopId = GlobalSettings.OnlineOrdersShopId ?? string.Empty;
+            string endpoint = $"POST {baseUrl}/shops/{shopId}/orders?api_key=*** (hidden)";
+
+            string payloadPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"last_instore_order_payload_{receiptNo}.json");
+            try
+            {
+                if (!System.IO.File.Exists(payloadPath))
+                    return endpoint + "\r\n\r\nNo request body was built - the sync failed before it got that far (see the Error / Response tab).";
+
+                bool fromThisAttempt = System.IO.File.GetLastWriteTime(payloadPath) >= attemptStartedAt.AddSeconds(-2);
+                string body = PrettyPrintJson(System.IO.File.ReadAllText(payloadPath));
+                return endpoint + "\r\n" + payloadPath + "\r\n" +
+                       (fromThisAttempt
+                           ? ""
+                           : $"NOTE: this body is from an EARLIER attempt ({System.IO.File.GetLastWriteTime(payloadPath):yyyy-MM-dd h:mm:ss tt}) - this resend failed before building a new one.\r\n") +
+                       "\r\n" + body;
+            }
+            catch (Exception ex)
+            {
+                return endpoint + $"\r\n\r\nCould not read {payloadPath}: {ex.Message}";
+            }
+        }
+
+        private static string PrettyPrintJson(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return text ?? string.Empty;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(text);
+                return System.Text.Json.JsonSerializer.Serialize(doc.RootElement, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                }).Replace("\n", "\r\n");
+            }
+            catch
+            {
+                return text;
+            }
+        }
+
+        // Resizable read-only dialog so the full Pancake response/stack trace can be read and copied
+        // (a MessageBox truncates long text and can't be selected). With a payload, the response/error
+        // and the request body sit on separate tabs, and Copy copies both.
+        private void ShowSyncDetails(string title, string summary, string details, string? payload = null)
+        {
+            using var dlg = new Form
+            {
+                Text = title,
+                Size = new Size(820, 520),
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                ShowInTaskbar = false
+            };
+            var lblSummary = new Label
+            {
+                Text = summary,
+                Dock = DockStyle.Top,
+                Height = 90,
+                Padding = new Padding(10),
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            var txtDetails = new TextBox
+            {
+                Text = details,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Both,
+                WordWrap = true,
+                Dock = DockStyle.Fill,
+                Font = new Font("Consolas", 9)
+            };
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 45, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(5) };
+            var btnOk = new Button { Text = "Close", Size = new Size(100, 32), DialogResult = DialogResult.OK };
+            var btnCopy = new Button { Text = "Copy", Size = new Size(100, 32) };
+            string copyText = summary + "\r\n\r\n" + details +
+                (payload == null ? "" : "\r\n\r\n===== REQUEST SENT =====\r\n" + payload);
+            btnCopy.Click += (_, __) => { try { Clipboard.SetText(copyText); } catch { } };
+            buttons.Controls.Add(btnOk);
+            buttons.Controls.Add(btnCopy);
+
+            if (payload == null)
+            {
+                dlg.Controls.Add(txtDetails);
+            }
+            else
+            {
+                var tabs = new TabControl { Dock = DockStyle.Fill };
+                var tabDetails = new TabPage("Error / Response");
+                tabDetails.Controls.Add(txtDetails);
+                var tabPayload = new TabPage("Request Payload");
+                tabPayload.Controls.Add(new TextBox
+                {
+                    Text = payload,
+                    Multiline = true,
+                    ReadOnly = true,
+                    ScrollBars = ScrollBars.Both,
+                    WordWrap = false,
+                    Dock = DockStyle.Fill,
+                    Font = new Font("Consolas", 9)
+                });
+                tabs.TabPages.Add(tabDetails);
+                tabs.TabPages.Add(tabPayload);
+                dlg.Controls.Add(tabs);
+            }
+            dlg.Controls.Add(lblSummary);
+            dlg.Controls.Add(buttons);
+            dlg.AcceptButton = btnOk;
+            dlg.ShowDialog(this);
         }
 
         private void BtnClose_Click(object? sender, EventArgs e)

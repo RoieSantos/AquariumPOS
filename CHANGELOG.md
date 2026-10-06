@@ -2,6 +2,11 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-06
+
+- POS Transaction List: new **Resend Selected** button ([TransactionListForm.cs](TransactionListForm.cs)) - resends one receipt to Pancake (portal follows) and shows the exact error / Pancake response in a copyable dialog, plus the last recorded attempt from `InstoreOnlineOrderMap`. Warns before resending a receipt that already reached Pancake (would duplicate) and explains non-SALES receipts are skipped by design.
+- Resend Selected result dialog now has a **Request Payload** tab - the exact JSON body + endpoint (API key hidden) sent to Pancake, flagged if it's from an earlier attempt; Copy includes it.
+
 ## 2026-10-05
 
 - Delivery: phone push notifications to Delivery Team / Dispatchers when a stop is added, removed, moved or modified (address/notes/print note/customer/order/truck), a date's vendor pickup changes, or a weekday route is renamed - today/future dates only. Triggers in [supabase_delivery_route_change_push.sql](sql/supabase_delivery_route_change_push.sql) reuse the targeted Web Push. Delivery page now prompts drivers to enable notifications, opens on `?date=` and reloads the day when the app is reopened; pushNotifications.js v3, delivery.js push1.
