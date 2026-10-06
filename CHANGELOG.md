@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-06
 
+- Aquarium Calculator: **Print Quote** button in the price panel - prints the full summary (drawings, spec, price breakdown, total) as a customer quote, leaving out the glass cut sheet and the production Special Note, with a short quote footer. [index.html](docs/WebAquariumCalculator/index.html) `printQuote`.
+
 - Custom Sticker & Panel Calculator: new **Acrylic Sump Cover** type, priced at the live Acrylic rate x a markup (default 1.5x, editable in Pricing Setup as the 'Acrylic Sump Cover' row). [custom-aquarium-calculator.js](docs/WebAquariumCalculator/custom-aquarium-calculator.js), [sticker.html](docs/WebAquariumCalculator/sticker.html), [pricingSetup.js](docs/js/pricingSetup.js), Alice's copy + `compute_sticker_quote` enum in [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts), [supabase_sticker_pricing_add_acrylic_sump_cover.sql](sql/supabase_sticker_pricing_add_acrylic_sump_cover.sql).
 
 - Online / Walk-in / Advance Orders: **Item Ledger Entries** button on the action bar (Super Users) - opens the ledger in a new tab, filtered to the selected order (`?search=` order id; advance orders use their Online Order ID), or all entries if nothing is selected. [online-orders.html](docs/online-orders.html), [onlineOrders.js](docs/js/onlineOrders.js) `wireItemLedgerButton` (bc85).

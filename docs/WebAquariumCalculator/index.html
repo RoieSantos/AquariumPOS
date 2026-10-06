@@ -201,6 +201,14 @@
       margin-top: 22px;
     }
 
+    .sv-quote-foot {
+      margin-top: 26px;
+      padding-top: 12px;
+      border-top: 1px solid #d0d7de;
+      font-size: 12px;
+      color: #57606a;
+    }
+
     .sv-section h3 {
       margin: 0 0 10px;
       font-size: 13px;
@@ -816,7 +824,8 @@
             <button id="addToSale" class="btn btn-success full" type="button">Add to sale</button>
             <button id="cutSheetButton" class="btn btn-neutral" type="button">Glass Cut Sheet</button>
             <button id="closeButton" class="btn btn-neutral" type="button">Reset</button>
-            <button id="openSummaryButton" class="btn btn-neutral full" type="button">View full summary</button>
+            <button id="openSummaryButton" class="btn btn-neutral" type="button">View full summary</button>
+            <button id="printQuoteButton" class="btn btn-primary" type="button">Print Quote</button>
           </div>
         </div>
 
@@ -3720,7 +3729,9 @@
         return '<section class="sv-section sv-break"><h3>Glass cut sheet</h3>' + body + '</section>';
       }
 
-      function render() {
+      // quoteMode = the customer-facing "Print Quote" version: same sheet, minus staff-only parts
+      // (glass cut sheet, the production Special Note) plus a short quote footer.
+      function render(quoteMode) {
         var result = typeof lastResult !== 'undefined' ? lastResult : null;
         if (!result || !result.ok || !lastDetailRows.length) {
           summarySheet.innerHTML =
@@ -3732,7 +3743,9 @@
         var n = result.normalized;
         var q = computeQuotedTotal(result);
         var breakdown = formatQuoteBreakdown(q).trim();
-        var specRows = lastDetailRows.filter(function (r) { return !isPriceRow(r[0]); });
+        var specRows = lastDetailRows.filter(function (r) {
+          return !isPriceRow(r[0]) && !(quoteMode && /^Special Note/.test(r[0]));
+        });
         var priceRows = lastDetailRows.filter(function (r) { return isPriceRow(r[0]) && r[0] !== 'Total Price'; });
 
         var groups = {};
@@ -3786,7 +3799,25 @@
               rowsTable(priceRows.concat([['Total', q.grandTotal.toFixed(2) + (breakdown ? ' ' + breakdown : '')]]), 'sv-price-table') +
             '</section>' +
           '</div>' +
-          (sumpOnly ? '' : cutSheetSection()); // the cut sheet is the tank's panels
+          (quoteMode
+            ? '<footer class="sv-quote-foot">This quote is based on the size, glass and options listed above - any change to them will change the price. Thank you for choosing RS Pet Stop!</footer>'
+            : (sumpOnly ? '' : cutSheetSection())); // the cut sheet is the tank's panels
+      }
+
+      function printQuote() {
+        var result = typeof lastResult !== 'undefined' ? lastResult : null;
+        if (!result || !result.ok || !lastDetailRows.length) {
+          alert('Calculate the aquarium first, then print the quote.');
+          return;
+        }
+        showView('summary');
+        render(true);
+        // Put the normal (staff) summary back once the print dialog closes.
+        window.addEventListener('afterprint', function restore() {
+          window.removeEventListener('afterprint', restore);
+          render();
+        });
+        window.print();
       }
 
       function showView(view) {
@@ -3812,7 +3843,8 @@
       document.getElementById('openSummaryButton').addEventListener('click', function () { showView('summary'); });
       document.getElementById('summaryBack').addEventListener('click', function () { showView('build'); });
       document.getElementById('summaryPrint').addEventListener('click', function () { window.print(); });
-      includeCutSheet.addEventListener('change', render);
+      document.getElementById('printQuoteButton').addEventListener('click', printQuote);
+      includeCutSheet.addEventListener('change', function () { render(); });
     })();
   </script>
 
