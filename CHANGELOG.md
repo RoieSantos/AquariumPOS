@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-07
 
+- Portal Online Orders: Store Managers can To Ship their own branch's Printed/Assigned orders (button stays "under construction" for everyone else). Always picks serials at their store; at a non-production store no "+ New serial" and short lines can ship after a confirm. onlineOrders.js v=smship1.
+
 - POS Online Orders: non-production stores now get the serial picker on To Ship (was skipped), so units received by Transfer Order get marked SOLD. Shortfall there warns and continues without minting serials (production-only); lines already tagged by production are still skipped (OnlineOrdersForm.cs).
 
 - Item Ledger sales self-check (`supabase_item_ledger_sales_audit.sql`): every 15 min compares each order since the cutover with its Sales Order entries, re-queues any mismatch (auto-fix) and logs it; Item Ledger Entries' message bar turns amber listing open issues + auto-fixed count (itemLedgerEntries.js v=salesaudit1).

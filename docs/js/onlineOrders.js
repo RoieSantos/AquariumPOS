@@ -2680,6 +2680,9 @@ function updateShipSerialTagCount(picker) {
 // (supabase_online_order_ship_new_serials.sql). Placeholders use negative ids so they never clash
 // with a real RunningSerialNo.
 let shipNewSerialSeq = 0;
+// False for a Store Manager's To Ship at a non-production store (set by handleToShipClick): no
+// "+ New serial" - only production creates serials - and a short line can ship without one.
+let shipAllowsNewSerials = true;
 function addNewSerialPlaceholder(picker) {
   const selected = getSelectedSerialsForShipPicker(picker);
   const required = Math.max(0, parseFloat(picker.dataset.required) || 0);
@@ -2787,7 +2790,7 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
 
 function wireShipSerialPicker(lineEl, picker) {
   updateShipSerialTagCount(picker);
-  picker.querySelector('.serial-tag-new').addEventListener('click', () => addNewSerialPlaceholder(picker));
+  picker.querySelector('.serial-tag-new')?.addEventListener('click', () => addNewSerialPlaceholder(picker));
 
   const searchInput = picker.querySelector('.serial-tag-search');
   const dropdown = picker.querySelector('.serial-tag-dropdown');
@@ -2815,7 +2818,7 @@ function renderShipSerialModal(requirements) {
           <div class="serial-tag-chips"></div>
           <div class="serial-tag-row">
             <input type="text" class="serial-tag-search" placeholder="Search serial no..." autocomplete="off" />
-            <button type="button" class="bc-btn serial-tag-new" title="No serial in stock - create one when the order ships and print its label">&#65291; New serial</button>
+            ${shipAllowsNewSerials ? '<button type="button" class="bc-btn serial-tag-new" title="No serial in stock - create one when the order ships and print its label">&#65291; New serial</button>' : ''}
           </div>
           <div class="serial-tag-dropdown hidden"></div>
         </div>
@@ -2828,7 +2831,7 @@ function renderShipSerialModal(requirements) {
     wireShipSerialPicker(lineEl, picker);
     // Custom builds start pre-filled with "+ New serial" (see isCustomBuildItem) - removable if a
     // unit does have a serial already.
-    if (isCustomBuildItem(lineEl.dataset.itemCode, lineEl.dataset.description)) {
+    if (shipAllowsNewSerials && isCustomBuildItem(lineEl.dataset.itemCode, lineEl.dataset.description)) {
       const required = Math.max(0, Math.round(parseFloat(picker.dataset.required) || 0));
       for (let i = 0; i < required; i++) addNewSerialPlaceholder(picker);
     }
@@ -2853,7 +2856,7 @@ let shipSerialModalResolve = null;
 function openShipSerialModal(requirements) {
   // Only custom builds on the order - nothing to pick, so no picker at all: every unit gets a new
   // serial and its label prints once the status change goes through.
-  if (requirements.length && requirements.every((r) => isCustomBuildItem(r.item_code, r.description))) {
+  if (shipAllowsNewSerials && requirements.length && requirements.every((r) => isCustomBuildItem(r.item_code, r.description))) {
     return Promise.resolve({
       running: [],
       fresh: requirements.map((r) => ({
@@ -2907,6 +2910,13 @@ function wireShipSerialModalButtons() {
         });
       }
     });
+
+    // Non-production store: ship what's on hand, the rest stays without a serial (desktop does the same).
+    if (incompleteLabels.length > 0 && !shipAllowsNewSerials) {
+      if (!window.confirm(`This store doesn't have a serial for every unit:\n${incompleteLabels.join('\n')}\n\nShip anyway? Those units will stay without a serial (only production can create serials).`)) return;
+      closeShipSerialModal({ running, fresh: [] });
+      return;
+    }
 
     if (incompleteLabels.length > 0) {
       errorEl.textContent = `Pick a serial for every unit needed: ${incompleteLabels.join(', ')}. No serial in stock? Tap "+ New serial".`;
@@ -3147,9 +3157,22 @@ async function handleAssignProductionMemberChange(event) {
 // resolved once at init) - a regular store's To Ship never needed this, same as the desktop.
 // Cancelling the serial picker aborts the whole To Ship action (nothing sent, nothing changed).
 async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, fromStock = false, linesRefreshed = false } = {}) {
+  // Store Managers can To Ship their own branch's orders even while the general button is off - per
+  // "can we allow the store manager to-ship the order". They always pick serials at their own store,
+  // and a non-production store can't create new ones (same as the desktop's To Ship).
+  const storeManagerShip = !readyToShip && !!currentSession?.isStoreManager && !currentSession?.isSuperUser;
+  if (storeManagerShip) {
+    const order = findFlatOrder(orderId);
+    if (currentSession.warehouseName && order && (order.warehouse_name || '') !== currentSession.warehouseName) {
+      alert(`Order ${orderId} belongs to ${order.warehouse_name || 'another branch'} - you can only To Ship orders for ${currentSession.warehouseName}.`);
+      return;
+    }
+  }
+  shipAllowsNewSerials = !(storeManagerShip && !currentSessionIsProductionWarehouse);
+
   // Ready to Ship (the Production Manager's next-step button on a Production Done order) runs this
   // real flow even while the general To Ship button is still switched off - see nextStepFor.
-  if (!TO_SHIP_ENABLED && !readyToShip) {
+  if (!TO_SHIP_ENABLED && !readyToShip && !storeManagerShip) {
     alert('To-Ship is under construction, please To-Ship through the local POS for now.');
     return;
   }
@@ -3170,7 +3193,7 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   if (fromStock) shipFromStockOrderIds.add(String(orderId));
   else shipFromStockOrderIds.delete(String(orderId));
 
-  if (currentSessionIsProductionWarehouse || fromStock) {
+  if (currentSessionIsProductionWarehouse || fromStock || storeManagerShip) {
     toShipBtn.disabled = true;
     if (!linesRefreshed) {
       const refreshError = await refreshOrderLinesFromPancake(orderId);
