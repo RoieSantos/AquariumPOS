@@ -4,6 +4,13 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-07
 
+- POS Online Orders: non-production stores now get the serial picker on To Ship (was skipped), so units received by Transfer Order get marked SOLD. Shortfall there warns and continues without minting serials (production-only); lines already tagged by production are still skipped (OnlineOrdersForm.cs).
+
+- Item Ledger sales self-check (`supabase_item_ledger_sales_audit.sql`): every 15 min compares each order since the cutover with its Sales Order entries, re-queues any mismatch (auto-fix) and logs it; Item Ledger Entries' message bar turns amber listing open issues + auto-fixed count (itemLedgerEntries.js v=salesaudit1).
+- Item Ledger sales: walk-ins (112445, 112444, 112443, 112138, 106909, 106908) never posted - the sales job picks changed orders by timestamp and missed lines committed after it looked; walk-ins never change again so the miss was permanent. New `supabase_item_ledger_sales_change_queue.sql`: triggers on OnlineOrders/OnlineOrderLines queue each relevant change in the same transaction, the job clears only what it saw; queues the missed orders for posting.
+- Added read-only `supabase_diagnose_item_ledger_missed_sales.sql`: lists every counted order with no Sales Order ledger entries plus its sync vs. reconcile timestamps (112445 follow-up).
+- Added read-only `supabase_diagnose_item_ledger_order_112445.sql` to find why walk-in order 112445 (Shipped) has no Item Ledger sale entries.
+- Orders "Item Ledger Entries" button: no longer logs you out - it opened the ledger with `noopener`, which gives the new tab empty sessionStorage (where the portal session lives). Dropped `noopener`; onlineOrders.js cache bumped to v=bc86.
 - Alice `list_aquarium_sets`: describes a set from its Description (the real contents list) - the package lines are raw item codes and often incomplete, so never read out; sets priced 0 (e.g. AS-014) are filtered out so they're never quoted as free. Redeployed all 5 Alice functions.
 
 - Alice: "can I customize the set?" rule - add-ons on top of a set = set price + each add-on as its own line; a set can never have an item removed or swapped - offer a custom build (which can include only the parts they want); sealant/paint colour choice isn't a customization.

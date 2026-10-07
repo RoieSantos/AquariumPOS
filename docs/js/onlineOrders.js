@@ -5745,7 +5745,9 @@ function wireItemLedgerButton(session) {
       ? (selectedAdvanceNo ? advanceRowsByNo.get(selectedAdvanceNo)?.online_order_id : '')
       : selectedOrderId;
     const url = 'item-ledger-entries.html' + (docNo ? `?search=${encodeURIComponent(docNo)}` : '');
-    window.open(url, '_blank', 'noopener');
+    // No 'noopener': a noopener tab starts with empty sessionStorage, which is where the portal
+    // session lives (auth.js), so the ledger page bounced straight to the login screen.
+    window.open(url, '_blank');
   });
 }
 

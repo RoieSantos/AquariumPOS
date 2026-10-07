@@ -990,12 +990,43 @@ async function loadSalesPostingStatus() {
     statusEl.textContent = 'Sales posting is on since ' + new Date(setup.sales_posting_start_utc).toLocaleString() +
       ' - every order confirmed from then on takes its stock out of the ledger automatically.';
     btn.classList.add('hidden');
+    await showSalesPostingIssues(bar, statusEl);
   } else {
     bar.classList.add('bc-infobar-warn');
     statusEl.textContent = 'Sales are not reducing stock yet. Load your stock with a count first, then start posting sales: ' +
       'orders confirmed from that moment on take their stock out of the ledger (earlier orders are assumed to be in the stock you counted).';
     btn.classList.remove('hidden');
   }
+}
+
+// Per "can we make sure this will never happen again?" (walk-ins whose sales silently never posted):
+// the self-check (supabase_item_ledger_sales_audit.sql) compares every order since the cutover with its
+// Sales Order entries. Open mismatches turn the bar amber with the order numbers; they're re-queued
+// automatically every 15 minutes, so only a "Posting failed" one normally needs a person.
+async function showSalesPostingIssues(bar, statusEl) {
+  const { data, error } = await supabaseClient.rpc('admin_get_item_ledger_sales_issues', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (error || !data) return; // the plain "posting is on" line stays
+
+  const issues = data.issues || [];
+  const fixed = Number(data.auto_fixed_7d || 0);
+  const fixedNote = fixed > 0 ? ` ${fixed} order(s) were found and fixed automatically in the last 7 days.` : '';
+
+  if (issues.length === 0) {
+    statusEl.textContent += ' Self-check: every order matches the ledger.' + fixedNote;
+    return;
+  }
+
+  bar.classList.add('bc-infobar-warn');
+  const list = issues.slice(0, 10).map((i) =>
+    `<a href="item-ledger-entries.html?search=${encodeURIComponent(i.order_id)}">${escapeHtml(i.order_id)}</a>` +
+    `${i.walkin ? ' (walk-in)' : ''} - ${escapeHtml(i.issue)}`).join('; ');
+  const more = issues.length > 10 ? `; and ${issues.length - 10} more` : '';
+  statusEl.innerHTML = `${issues.length} order(s) don't match the ledger: ${list}${more}. ` +
+    'They are retried automatically every 15 minutes - one that keeps saying "Posting failed" needs its cause fixed.' +
+    escapeHtml(fixedNote);
 }
 
 async function startSalesPosting() {

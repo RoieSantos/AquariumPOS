@@ -2575,13 +2575,13 @@ END
             return result;
         }
 
-        private List<ProductSerialTrackingForm.AvailableSerialRecord>? PromptForOnlineOrderSerials(OnlineOrderSerialTrackingLine line, int quantityNeeded, IEnumerable<string>? additionalExcludedSerialNumbers = null)
+        private List<ProductSerialTrackingForm.AvailableSerialRecord>? PromptForOnlineOrderSerials(OnlineOrderSerialTrackingLine line, int quantityNeeded, bool isProductionWarehouse, IEnumerable<string>? additionalExcludedSerialNumbers = null)
         {
-            if (!IsCurrentWarehouseProduction())
-            {
-                return new List<ProductSerialTrackingForm.AvailableSerialRecord>();
-            }
-
+            // Previously skipped entirely at non-production warehouses - but those stores can now
+            // hold real IN_STOCK serials received via Transfer Orders (same reasoning as the sales
+            // counter's PromptForAquariumSaleSerials), and skipping meant a unit shipped from one of
+            // them never got marked SOLD. Non-production stores now get the same picker; the only
+            // difference is on a shortfall (see below), since they can't mint serials.
             int requiredQuantity = Math.Max(1, quantityNeeded);
             var excludedSerials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string serialNo in additionalExcludedSerialNumbers ?? Enumerable.Empty<string>())
@@ -2594,7 +2594,20 @@ END
             }
 
             var availableSerials = ProductSerialTrackingForm.GetAvailableSerials(line.ItemCode, line.VariationId, excludedSerials);
-            if (availableSerials.Count < requiredQuantity)
+            if (availableSerials.Count < requiredQuantity && !isProductionWarehouse)
+            {
+                // Non-production: pick what's on hand, leave the rest untagged rather than blocking
+                // an already-placed order (production tags made-to-order units when it builds them).
+                MessageBox.Show(this,
+                    string.IsNullOrWhiteSpace(line.VariationId)
+                        ? $"This order needs {requiredQuantity} serial-tracked unit(s) for {line.ItemCode}, but this store only has {availableSerials.Count} available. Select the ones on hand - the remaining unit(s) will stay without a serial (this store can't create serials)."
+                        : $"This order needs {requiredQuantity} serial-tracked unit(s) for {line.ItemCode} variant {line.VariationId}, but this store only has {availableSerials.Count} available. Select the ones on hand - the remaining unit(s) will stay without a serial (this store can't create serials).",
+                    "Serial Tracking",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                requiredQuantity = availableSerials.Count;
+            }
+            else if (availableSerials.Count < requiredQuantity)
             {
                 MessageBox.Show(this,
                     string.IsNullOrWhiteSpace(line.VariationId)
@@ -2792,10 +2805,7 @@ END
                 return true;
             }
 
-            if (!IsCurrentWarehouseProduction())
-            {
-                return true;
-            }
+            bool isProductionWarehouse = IsCurrentWarehouseProduction();
 
             try
             {
@@ -2832,7 +2842,7 @@ END
                 var excludedSerials = assignedSerialsAcrossOrder
                     .Where(serialNo => !assignedSerials.Contains(serialNo, StringComparer.OrdinalIgnoreCase))
                     .ToList();
-                var selectedSerials = PromptForOnlineOrderSerials(line, quantityNeeded, excludedSerials);
+                var selectedSerials = PromptForOnlineOrderSerials(line, quantityNeeded, isProductionWarehouse, excludedSerials);
                 if (selectedSerials == null)
                 {
                     MessageBox.Show(this,
@@ -2845,7 +2855,7 @@ END
 
                 int missingSerialCount = Math.Max(0, quantityNeeded - selectedSerials.Count);
                 var generatedSerialsForLine = new List<(string SerialNo, string ItemCode, string Description)>();
-                if (missingSerialCount > 0)
+                if (missingSerialCount > 0 && isProductionWarehouse)
                 {
                     using var serialConn = new SqlConnection(connectionString);
                     serialConn.Open();
