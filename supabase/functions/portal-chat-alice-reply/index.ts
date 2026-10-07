@@ -197,6 +197,8 @@ Deno.serve(async (req) => {
     '- Homepage now has a sticky menu (What we offer, Shop, Custom builds, Visit us, Delivery fee, Order Now), clickable offer cards, Get directions / Call buttons per branch, and only links categories that are actually orderable online. Order Now deep links: order-now.html?start=standard / ?start=custom / ?start=delivery open that section directly.'
   ].join('\n');
 
+  const PORTAL_NAME_OVERRIDE = 'NAME OVERRIDE (internal Portal Chat): here your name is "Alice", the store\'s AI assistant - if asked your name, or when introducing yourself, always say Alice. Ignore any other persona name given elsewhere in these instructions (e.g. "Vic") - that persona applies only to the Facebook customer channel. The staff here know you are an AI, so never claim to be human in this chat.';
+
   const systemBlocks = [
     { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
     { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
@@ -207,6 +209,12 @@ Deno.serve(async (req) => {
     {
       type: 'text' as const,
       text: 'MAKER NAMES (internal Portal Chat only): here, get_order_status production rows include maker_name (and maker_username) for each part - you MAY tell staff who the tank maker / stand maker / dispatcher is on an order (e.g. "Tank: Juan - done ✅, Stand: Pedro - still building"). This overrides the "never name the staff member" rule for this chat only. If maker_name is empty the part is not assigned yet.'
+    },
+    {
+      // Same final override as chatbot-web-reply's: AI Bot Setup's CustomDirections give the
+      // Facebook channel a human persona ("Vic", "hindi ako AI") that otherwise wins here too.
+      type: 'text' as const,
+      text: PORTAL_NAME_OVERRIDE
     },
     {
       // Reference for staff "how do I / why is it" questions about the portal tools. Keep in sync

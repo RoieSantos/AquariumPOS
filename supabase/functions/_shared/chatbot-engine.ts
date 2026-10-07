@@ -533,12 +533,29 @@ interface AquariumQuoteInput {
   enclosure?: boolean;
   turtleTank?: boolean;
   stand?: StandOptions;
-  filtrationSump?: { enabled?: boolean };
+  filtrationSump?: {
+    enabled?: boolean;
+    type?: string;
+    length?: number;
+    width?: number;
+    height?: number;
+    unit?: string;
+    glassThickness?: string;
+    filterMedias?: boolean;
+    piping?: boolean;
+    overflowBox?: boolean;
+    allumTopCover?: boolean;
+    lightPrice?: number;
+    pumpPrice?: number;
+  };
   length: number;
   width: number;
   height: number;
   holeCount?: number;
   dividerCount?: number;
+  stickerBackground?: { enabled?: boolean; allSides?: boolean; type?: string };
+  stickerBottom?: { enabled?: boolean; type?: string };
+  stickerPricingSetupRows?: Array<Record<string, unknown>>;
   glassPricingSetupRows?: Array<Record<string, unknown>>;
   glassPricingUom?: string;
   tubularPricingSetupRows?: Array<Record<string, unknown>>;
@@ -573,6 +590,20 @@ function buildExtraPriceLookup(rows: Array<Record<string, unknown>> | undefined)
     lookup[key] = price;
   }
   return lookup;
+}
+
+// custom-aquarium-calculator.js's calculateStickerPrice/getStickerRate (aquarium background/bottom
+// stickers). Rates come from StickerPricingSetup via buildStickerPriceLookup (defined further down).
+function calculateAquariumStickerPrice(panelLengthInches: number, panelWidthInches: number, pricePerSqFt: number): number {
+  if (panelLengthInches <= 0 || panelWidthInches <= 0 || pricePerSqFt <= 0) return 0;
+  return ceilNearest10((panelLengthInches / 12) * (panelWidthInches / 12) * pricePerSqFt);
+}
+
+function getAquariumStickerRate(stickerType: string | undefined, rows: Array<Record<string, unknown>> | undefined): number {
+  const flat = buildStickerPriceLookup(rows).flat;
+  return String(stickerType || 'plain').trim().toLowerCase() === 'tiles'
+    ? Number(flat['Tiles Sticker']) || 0
+    : Number(flat['Plain Sticker']) || 0;
 }
 
 function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unknown> {
@@ -671,9 +702,18 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   const components: Record<string, number> = {
     glass: 0,
     highStrip: 0,
+    sumpGlass: 0,
+    filterMedia: 0,
+    overflowBox: 0,
+    light: 0,
+    pump: 0,
+    piping: 0,
+    allumTopCover: 0,
     aquascapeService: 0,
     holes: 0,
     divider: 0,
+    stickerBackground: 0,
+    stickerBottom: 0,
     stand: standCalculation ? Number(standCalculation.price) || 0 : 0
   };
 
@@ -698,6 +738,63 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     calculatedPrice += components.highStrip;
   }
 
+  // Filtration sump - same as custom-aquarium-calculator.js: glass/media/overflow/light/pump go in
+  // BEFORE the multipliers and the round-to-10, piping and the Allum top cover after.
+  let normalizedSump: Record<string, unknown> | null = null;
+  if (hasFiltrationSump) {
+    const sump = options.filtrationSump || {};
+    const sumpUnit = sump.unit || unit;
+    const sumpType = String(sump.type || 'Undersump');
+    const sumpLengthInches = toInches(sump.length as number, sumpUnit);
+    const sumpWidthInches = toInches(sump.width as number, sumpUnit);
+    const sumpHeightInches = toInches(sump.height as number, sumpUnit);
+    const sumpGlass = sump.glassThickness ? normalizeGlass(sump.glassThickness) : glass;
+    normalizedSump = {
+      type: sumpType,
+      unit: sumpUnit,
+      glassThickness: sumpGlass,
+      lengthInches: round2(sumpLengthInches),
+      widthInches: round2(sumpWidthInches),
+      heightInches: round2(sumpHeightInches)
+    };
+    if (!(sumpLengthInches > 0 && sumpWidthInches > 0 && sumpHeightInches > 0)) {
+      return { ok: false, error: 'Please give the sump length, width and height (all greater than 0).', autoChangeTo: null };
+    }
+    const isOverhead = sumpType.toLowerCase() === 'overhead sump';
+    let sumpPricePerSqFt = Number(glassPrices[sumpGlass]) || basePricePerSqFt;
+    if (isTempered) sumpPricePerSqFt *= 2;
+    components.sumpGlass = round2(getGlassAreaSqFt(sumpLengthInches, sumpWidthInches, sumpHeightInches) * sumpPricePerSqFt);
+    calculatedPrice += components.sumpGlass;
+
+    if (sump.filterMedias) {
+      const liters = (sumpLengthInches / 12) * (sumpWidthInches / 12) * (sumpHeightInches / 12) * 28.316;
+      const mediaKg = Math.round(liters * (isOverhead ? 0.18 : 0.04));
+      components.filterMedia = round2(mediaKg * 300);
+      calculatedPrice += components.filterMedia;
+      normalizedSump.filterMediaKg = mediaKg;
+    }
+    if (sump.overflowBox) {
+      components.overflowBox = 1900;
+      calculatedPrice += components.overflowBox;
+    }
+    if (sump.lightPrice) {
+      components.light = round2(Number(sump.lightPrice) || 0);
+      calculatedPrice += components.light;
+    }
+    if (sump.pumpPrice) {
+      components.pump = round2(Number(sump.pumpPrice) || 0);
+      calculatedPrice += components.pump;
+    }
+    if (sump.piping) {
+      components.piping = isOverhead ? 540 : 2500;
+    }
+    if (sump.allumTopCover) {
+      const effectiveWidthInches = isOverhead ? Math.max(0, widthInches - sumpWidthInches) : widthInches;
+      const allumRate = buildStickerPriceLookup(options.stickerPricingSetupRows).flat['Allum TopCover'];
+      components.allumTopCover = ceilNearest10((lengthInches / 12) * (effectiveWidthInches / 12) * allumRate);
+    }
+  }
+
   const lowerOption = optionType.toLowerCase();
   if (lowerOption === 'undersump' || lowerOption === 'overheadsump' || lowerOption === 'overhead sump') {
     calculatedPrice = round2(calculatedPrice * 1.9);
@@ -710,6 +807,27 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   }
   if (calculatedPrice >= 1000) {
     calculatedPrice = roundNearest10(calculatedPrice);
+  }
+
+  if (components.piping > 0) calculatedPrice += components.piping;
+  if (components.allumTopCover > 0) calculatedPrice += components.allumTopCover;
+
+  // Background (back panel L x H, + both sides W x H when allSides) / Bottom (L x W) stickers -
+  // same as custom-aquarium-calculator.js's stickerBackground/stickerBottom components.
+  const stickerBackground = options.stickerBackground || {};
+  if (stickerBackground.enabled) {
+    const backgroundRate = getAquariumStickerRate(stickerBackground.type, options.stickerPricingSetupRows);
+    components.stickerBackground = calculateAquariumStickerPrice(lengthInches, heightInches, backgroundRate);
+    if (stickerBackground.allSides) {
+      components.stickerBackground += calculateAquariumStickerPrice(widthInches, heightInches, backgroundRate) * 2;
+    }
+    calculatedPrice += components.stickerBackground;
+  }
+  const stickerBottom = options.stickerBottom || {};
+  if (stickerBottom.enabled) {
+    const bottomRate = getAquariumStickerRate(stickerBottom.type, options.stickerPricingSetupRows);
+    components.stickerBottom = calculateAquariumStickerPrice(lengthInches, widthInches, bottomRate);
+    calculatedPrice += components.stickerBottom;
   }
 
   if (holeCount > 0) {
@@ -758,6 +876,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
       lengthInches: round2(lengthInches),
       widthInches: round2(widthInches),
       heightInches: round2(heightInches),
+      sump: normalizedSump,
       stand: standCalculation
     },
     safety,
@@ -793,6 +912,12 @@ export const TOOLS: Anthropic.Tool[] = [
     name: 'list_wholesale_prices',
     description:
       'List every item that currently has a wholesale price set (only Aquarium/Stand/Sump Filtration items ever do - see the WHOLESALE PRICING rule). Use this when a customer asks for the wholesale price LIST/catalog/rate sheet in general, not a specific item - for a specific item\'s price use search_items instead.',
+    input_schema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'list_aquarium_sets',
+    description:
+      'List the ready-made complete aquarium SETS (SET category packages) - each with its fixed package price, stock, and description. The DESCRIPTION is the customer-facing list of what the set includes (aquarium size/glass, stand, sump, piping, pump, lights, filter media, stickers, etc.) - describe the set from it, in plain words. "includes" is an internal, often incomplete list of item codes - never read those codes out or use them as the contents list. Use this whenever a customer asks for a complete setup / full setup / package, BEFORE building a custom quote, so you can offer a matching ready-made set first. Don\'t guess at anything the description doesn\'t say.',
     input_schema: { type: 'object', properties: {} }
   },
   {
@@ -861,6 +986,23 @@ export const TOOLS: Anthropic.Tool[] = [
         high_strip: { type: 'boolean', description: 'An extra glass strip along the top rim.' },
         hole_count: { type: 'integer', description: 'Number of drilled holes for the aquarium, if any. Flat rate per hole - ask the customer how many they need before including this.' },
         divider_count: { type: 'integer', description: 'Number of internal glass dividers/partitions, if any. Priced from the tank\'s own glass rate for a Width x Height panel, plus 20%, per divider.' },
+        add_sump: { type: 'boolean', description: 'Set true to include a filtration sump (part of a complete setup). Needs sump_length/sump_width/sump_height. Cannot be combined with enclosure.' },
+        sump_type: { type: 'string', enum: ['Undersump', 'Overhead Sump'], description: 'Undersump = the sump sits inside the stand under the tank (usually with an overflow box); Overhead Sump = a tray sump on top of the tank. Defaults to Undersump. Only used when add_sump is true.' },
+        sump_length: { type: 'number', description: 'Sump length, same unit as the tank. Only used when add_sump is true.' },
+        sump_width: { type: 'number', description: 'Sump width, same unit as the tank. Only used when add_sump is true.' },
+        sump_height: { type: 'number', description: 'Sump height, same unit as the tank. Only used when add_sump is true.' },
+        sump_glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm'], description: 'Sump glass. Leave out to use the same glass as the tank. Only used when add_sump is true.' },
+        sump_filter_media: { type: 'boolean', description: 'Include filter media for the sump (amount in kg is worked out from the sump size). Only used when add_sump is true.' },
+        sump_piping: { type: 'boolean', description: 'Include the set of piping/plumbing. Only used when add_sump is true.' },
+        sump_overflow_box: { type: 'boolean', description: 'Include an overflow box (normally for an Undersump). Only used when add_sump is true.' },
+        sump_allum_top_cover: { type: 'boolean', description: 'Include an aluminum top cover for the tank. Only used when add_sump is true.' },
+        pump_item_code: { type: 'string', description: 'Item code of the submersible pump to include, taken from list_items_in_category with category_code "PUMP" (pick one with the customer, or suggest one that fits the tank). Priced at that item\'s own catalog price. Only used when add_sump is true.' },
+        pump_quantity: { type: 'integer', description: 'How many of that pump per sump. Defaults to 1.' },
+        light_item_code: { type: 'string', description: 'Item code of the light to include, taken from list_items_in_category with category_code "LIGHTS". Priced at that item\'s own catalog price. Only used when add_sump is true.' },
+        light_quantity: { type: 'integer', description: 'How many of that light per sump. Defaults to 1.' },
+        sticker_background: { type: 'string', enum: ['none', 'plain', 'tiles'], description: 'Background sticker on the back glass: "plain" (Plain Sticker) or "tiles" (Sticker Tiles). Leave out / "none" unless the customer asks for a background sticker. Priced per sq ft of the back panel (Length x Height), rounded up to the nearest 10.' },
+        sticker_background_all_sides: { type: 'boolean', description: 'Also cover both side panels (Width x Height each) with the background sticker, not just the back. Only used when sticker_background is plain/tiles.' },
+        sticker_bottom: { type: 'string', enum: ['none', 'plain', 'tiles'], description: 'Bottom sticker under the tank floor (Length x Width): "plain" or "tiles". Leave out / "none" unless the customer asks for one.' },
         enclosure: { type: 'boolean', description: 'Set true if the customer wants an enclosure - a dry terrarium/vivarium-style glass build (e.g. for reptiles, amphibians, insects) with sliding glass front doors and a mesh screen top, no water. It raises the aquarium price, so only set it when they ask for an enclosure/terrarium/vivarium. Cannot be combined with turtle_tank.' },
         turtle_tank: { type: 'boolean', description: 'Set true if the customer wants a turtle tank - an aquarium with a built-in basking area (a ledge above the water line with a ramp into the water). It raises the aquarium price, so only set it when they ask for a turtle tank / basking area.' },
         add_stand: { type: 'boolean', description: 'Set true only if the customer wants a matching stand included.' },
@@ -1131,6 +1273,8 @@ export function buildSystemPrompt(
     '- 10mm and 12mm glass tanks take longer to finish than regular orders: the thick glass is pre-ordered and cut to size for the tank, and the thicker silicone joints need extra curing time to fully set (that is what makes the tank strong and leak-free). Mention this when quoting or discussing a 10mm/12mm tank so the customer expects a longer wait - but never promise a specific completion date.',
     '- Rimless tanks (no top frame bracing) need extra glass thickness to stay structurally safe without that frame: minimum 6mm from 10 gallons up, and 10mm once the tank is 30 gallons or more, over 15 inches tall, over 20 inches wide or over 48 inches long (12mm beyond the normal 10mm limits).',
     '- HANG-ON-BACK (HOB) FILTRATION: a hang-on-back filter hangs over the tank\'s rim, so a tank meant for one is supposed to be RIMLESS (no top frame in the way) - and that means the rimless glass rule above applies to it. Whenever you are advising a tank size or building a custom aquarium quote, and it isn\'t already clear from the conversation, ask what filtration they plan to use (hang-on-back, canister, sump, internal/sponge, etc.). If it\'s hang-on-back (they say "HOB", "hang on", "hang-on filter", "hanging filter", or name a typical HOB filter), treat the aquarium as rimless: pass rimless=true to compute_aquarium_quote (unless they explicitly say otherwise), tell them plainly that a hang-on-back setup means going rimless and why, and explain that rimless needs thicker glass for that size (see the rimless rule above) - the tool applies the exact glass thickness/price, so use its result rather than predicting it yourself. Other filter types (canister, sump, internal, sponge, etc.) don\'t trigger this on their own. Never claim a customer\'s filter type yourself - only act on what they actually told you.',
+    '- AQUARIUM STICKERS (background / bottom): when a customer quoting a custom aquarium wants a sticker ON that tank - a background on the back glass, a background on the back and both sides, or a bottom sticker under the floor - pass sticker_background ("plain" or "tiles", plus sticker_background_all_sides=true for back + both sides) and/or sticker_bottom ("plain" or "tiles") to compute_aquarium_quote, not compute_sticker_quote (that tool is for a loose sticker/panel cut to a size the customer gives, with no tank). In the itemized summary use the tool result\'s priceLines (it already splits Aquarium / Sticker Background / Sticker Bottom / Sump / Stand so they add up to totalPrice) - never calculate or subtract a sticker price yourself. If they want a sticker but don\'t say plain or tiles, ask which (Tiles costs more per sq ft).',
+    '- COMPLETE SETUP: when a customer asks for a "complete setup" / "full setup" / "complete set" (or the Tagalog equivalent, e.g. "buong setup", "kumpleto na"), FIRST call list_aquarium_sets and, if a ready-made set fits what they asked (size/gallons, or close to it), offer it: its name, fixed package price, and what it includes (from its description - name the parts plainly, never read out item codes, never give a per-part price; a set is only sold at its own package price). If they take a set, it\'s ordered like any catalog item (its code) - no compute_aquarium_quote. If they ask whether a set can be CUSTOMIZED: (a) ADDING things on top of the set as-is (an extra light, more filter media, a background sticker, a canopy, etc.) is fine - the set keeps its own package price and each add-on is priced separately (catalog items via search_items / list_items_in_category, a sticker via compute_sticker_quote with the size, anything custom-built via the matching tool) and listed as its own line on top of the set; (b) a set can NEVER have an item removed - it is only sold complete, as listed. If they don\'t want one of its parts (e.g. "set but no stand"), or want something inside it CHANGED (a different tank size or glass, a different pump/light/stand), say plainly that sets can\'t have items removed or swapped, and offer a CUSTOM build instead - a custom build can include only the parts they want - using the checklist below with their choices (it may cost more or less than the set; never discount or adjust the set price yourself); (c) choosing an option the set item itself offers (e.g. Black or Clear sealant, Black or White paint) is not a customization - just note their choice. Only if no set fits, they want a different size/spec, or they turn the set down, go custom: do NOT assume what they mean - first ask them to confirm which parts they want included, listing them: Aquarium, Stand, Sump (filtration), Pipes/plumbing, Pump, Lights, Filter media, and an Overflow box (for an undersump setup, where the sump sits inside the stand under the tank). Ask it as one short checklist question, e.g. "Just to confirm, by complete setup do you mean all of these: Aquarium, Stand, Sump, Pipes, Pump, Lights, Filter media, and an Overflow box (for undersump)? Or only some of them?" Also ask Undersump or Overhead Sump if they haven\'t said, and the sump size (length x width x height) - if they don\'t know it, ask what size they want rather than inventing one. Then quote it all in ONE compute_aquarium_quote call: the tank (+ add_stand and its options if Stand is included), add_sump=true with sump_type and the sump size, sump_piping / sump_filter_media / sump_overflow_box for the parts they confirmed, and for Pump/Lights first call list_items_in_category with category_code "PUMP" / "LIGHTS", pick a suitable one with the customer, and pass its code as pump_item_code / light_item_code (never pass a price yourself). In the itemized summary show the tool result\'s priceLines in order (Aquarium, any stickers, Sump, Stand), with each sumpBreakdown line (label + amount) listed under the Sump line, and totalPrice as the total - never add, round or estimate any part yourself, and never invent a package price for the whole setup. If a pump/light code comes back as not found, re-list that category and try again rather than guessing.',
     '- TURTLE TANK: we build turtle tanks - a custom aquarium with a built-in basking area (a ledge above the water line with a ramp down into the water). If the customer asks for a turtle tank or a basking area/platform, pass turtle_tank=true to compute_aquarium_quote and list "Turtle tank (basking area)" in the itemized summary. It costs more than a plain aquarium of the same size - only quote it through the tool, never estimate the difference yourself. The drawing link shows the tank with water about halfway up and the basking ledge, ramp and a turtle.',
     '- ENCLOSURE (terrarium/vivarium): we also build dry glass enclosures - for reptiles, amphibians, insects, etc. - with two sliding glass front doors (with handles and a lock), a mesh screen top for ventilation, and a vented bottom lip that holds the substrate. If the customer asks for an enclosure, terrarium, vivarium, or a tank for a reptile/lizard/gecko/snake/spider (anything that lives out of water), pass enclosure=true to compute_aquarium_quote and list "Enclosure" in the itemized summary. An enclosure is dry, so it cannot have a filtration sump or AIO, and it cannot be combined with a turtle tank (a turtle needs water - use turtle_tank for turtles instead). It costs more than a plain aquarium of the same size - only quote it through the tool. The drawing link shows the enclosure with its doors, mesh top and substrate.',
     '- Cabinet and canopy (optional, with a stand): a cabinet encloses the stand in panels (front doors, both sides and a closed back) - by default 2 doors per 3ft of length (3ft = 2 doors, 6ft = 4 doors), but the customer can ask for a different number. Cabinet and canopy come in two types (cabinet_type): Laminated Plywood (18mm, the default) or Aluminum (4mm ACP panels, a more premium, moisture-proof finish that costs more) - ask which they prefer if they want a cabinet or canopy. A canopy is a box cover on top of the tank (default 6 inches high). Both are priced by panel area (with a minimum charge), so only quote them through compute_aquarium_quote (stand_cabinet / canopy) - never estimate them yourself. Only offer them when the customer asks about a cabinet, canopy, or a closed/enclosed stand.',
@@ -1259,15 +1403,42 @@ export function buildSystemPrompt(
 }
 
 export async function computeAquariumQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const [{ data: glassRows }, { data: tubularRows }, { data: extraRows }] = await Promise.all([
+  const [{ data: glassRows }, { data: tubularRows }, { data: extraRows }, { data: stickerRows }] = await Promise.all([
     supabase.rpc('public_get_glass_pricing'),
     supabase.rpc('public_get_tubular_pricing'),
-    supabase.rpc('public_get_aquarium_extra_pricing')
+    supabase.rpc('public_get_aquarium_extra_pricing'),
+    supabase.rpc('public_get_sticker_pricing')
   ]);
 
   const addStand = Boolean(input.add_stand);
+  const stickerKind = (value: unknown) => (value === 'plain' || value === 'tiles' ? value : null);
+  const backgroundKind = stickerKind(input.sticker_background);
+  const bottomKind = stickerKind(input.sticker_bottom);
 
-  const result = calculateCustomAquarium({
+  // Sump pump/light = a real catalog item at its own price x qty, same as the calculator's
+  // PUMP/LIGHTS pickers - looked up here by code so Alice never supplies the price herself.
+  const addSump = Boolean(input.add_sump);
+  const pickCatalogItem = async (categoryCode: string, itemCode: unknown, qty: unknown) => {
+    const code = String(itemCode ?? '').trim();
+    if (!addSump || !code) return null;
+    const { data } = await supabase.rpc('public_list_order_items', { p_category_code: categoryCode });
+    const item = ((data ?? []) as Array<Record<string, unknown>>).find((row) => String(row.code).trim() === code);
+    if (!item) return { error: `No ${categoryCode} item with code "${code}" - use list_items_in_category with category_code "${categoryCode}" and pass one of its codes.` };
+    const quantity = Math.max(1, Math.round(Number(qty) || 1));
+    return { name: String(item.name), unitPrice: Number(item.price) || 0, quantity, total: round2((Number(item.price) || 0) * quantity) };
+  };
+  const [pumpPick, lightPick] = await Promise.all([
+    pickCatalogItem('PUMP', input.pump_item_code, input.pump_quantity),
+    pickCatalogItem('LIGHTS', input.light_item_code, input.light_quantity)
+  ]);
+  for (const pick of [pumpPick, lightPick]) {
+    if (pick && 'error' in pick) return { ok: false, error: pick.error };
+  }
+  const pump = pumpPick as { name: string; unitPrice: number; quantity: number; total: number } | null;
+  const light = lightPick as { name: string; unitPrice: number; quantity: number; total: number } | null;
+  const sumpType = input.sump_type === 'Overhead Sump' ? 'Overhead Sump' : 'Undersump';
+
+  const payload: AquariumQuoteInput = {
     unit: (input.unit as string) || 'Inches',
     length: Number(input.length),
     width: Number(input.width),
@@ -1281,7 +1452,27 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     dividerCount: Number(input.divider_count) || 0,
     enclosure: Boolean(input.enclosure),
     turtleTank: Boolean(input.turtle_tank),
+    stickerBackground: { enabled: Boolean(backgroundKind), allSides: Boolean(input.sticker_background_all_sides), type: backgroundKind || 'plain' },
+    stickerBottom: { enabled: Boolean(bottomKind), type: bottomKind || 'plain' },
+    stickerPricingSetupRows: stickerRows ?? [],
     option: 'Aquarium only',
+    filtrationSump: addSump
+      ? {
+          enabled: true,
+          type: sumpType,
+          length: Number(input.sump_length),
+          width: Number(input.sump_width),
+          height: Number(input.sump_height),
+          unit: (input.unit as string) || 'Inches',
+          glassThickness: (input.sump_glass_thickness as string) || undefined,
+          filterMedias: Boolean(input.sump_filter_media),
+          piping: Boolean(input.sump_piping),
+          overflowBox: Boolean(input.sump_overflow_box),
+          allumTopCover: Boolean(input.sump_allum_top_cover),
+          pumpPrice: pump ? pump.total : 0,
+          lightPrice: light ? light.total : 0
+        }
+      : { enabled: false },
     stand: addStand
       ? {
           enabled: true,
@@ -1299,7 +1490,48 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     glassPricingUom: 'MM',
     tubularPricingSetupRows: tubularRows ?? [],
     extraPricingSetupRows: extraRows ?? []
-  });
+  };
+  const result = calculateCustomAquarium(payload);
+
+  // The sump's own price = this build minus the same build without it (index.html's
+  // computeSumpUnitPrice) - its parts sit before the multipliers/round-to-10, so summing
+  // components alone would under-count. Itemized like buildSumpPriceBreakdownRows: pre-multiplier
+  // parts x the Low Iron 1.7, piping/top cover as-is, leftover from rounding as its own line.
+  if (result.ok && addSump) {
+    const noSump = calculateCustomAquarium({ ...payload, filtrationSump: { enabled: false } });
+    if (noSump.ok) {
+      const sumpPrice = round2(Number(result.totalPrice) - Number(noSump.totalPrice));
+      const c = result.components as Record<string, number>;
+      const markup = Boolean(input.low_iron) ? 1.7 : 1;
+      const sumpInfo = (result.normalized as Record<string, unknown>).sump as Record<string, unknown>;
+      const parts: Array<[string, number]> = [];
+      if (c.sumpGlass > 0) parts.push([`Sump glass (${sumpInfo.glassThickness})`, c.sumpGlass * markup]);
+      if (c.filterMedia > 0) parts.push([`Filter media (approx. ${sumpInfo.filterMediaKg} kg)`, c.filterMedia * markup]);
+      if (c.pump > 0 && pump) parts.push([`Submersible pump - ${pump.name}${pump.quantity > 1 ? ` x${pump.quantity}` : ''}`, c.pump * markup]);
+      if (c.light > 0 && light) parts.push([`Light - ${light.name}${light.quantity > 1 ? ` x${light.quantity}` : ''}`, c.light * markup]);
+      if (c.overflowBox > 0) parts.push(['Overflow box', c.overflowBox * markup]);
+      if (c.piping > 0) parts.push(['Set of piping', c.piping]);
+      if (c.allumTopCover > 0) parts.push(['Allum top cover', c.allumTopCover]);
+      const remainder = round2(sumpPrice - parts.reduce((sum, p) => sum + p[1], 0));
+      if (Math.abs(remainder) >= 0.01) parts.push(['Rounding', remainder]);
+      result.sumpPrice = sumpPrice;
+      result.sumpBreakdown = parts.map(([label, amount]) => ({ label, amount: round2(amount) }));
+    }
+  }
+
+  // Ready-to-show itemized lines that always add up to totalPrice (index.html's Summary does the
+  // same split) - the aquarium line is what's left after the stickers/sump/stand come out.
+  if (result.ok) {
+    const c = result.components as Record<string, number>;
+    const sumpPrice = Number(result.sumpPrice) || 0;
+    const lines: Array<{ label: string; amount: number }> = [];
+    lines.push({ label: 'Aquarium', amount: round2(Number(result.aquariumOnlyPrice) - (c.stickerBackground || 0) - (c.stickerBottom || 0) - sumpPrice) });
+    if (c.stickerBackground > 0) lines.push({ label: `Sticker Background (${backgroundKind === 'tiles' ? 'Tiles' : 'Plain'}${input.sticker_background_all_sides ? ', all sides' : ''})`, amount: c.stickerBackground });
+    if (c.stickerBottom > 0) lines.push({ label: `Sticker Bottom (${bottomKind === 'tiles' ? 'Tiles' : 'Plain'})`, amount: c.stickerBottom });
+    if (sumpPrice > 0) lines.push({ label: `Sump (${sumpType})`, amount: sumpPrice });
+    if ((result.normalized as Record<string, unknown>).stand) lines.push({ label: 'Stand', amount: c.stand });
+    result.priceLines = lines;
+  }
 
   // Links to the live drawing tool with the exact (already safety-adjusted) numbers, rather than
   // trying to render/send an image of it - see docs/WebAquariumCalculator/stand.html's
@@ -1339,6 +1571,32 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     if (input.high_strip) aquariumParams.set('highStrip', '1');
     if (input.enclosure) aquariumParams.set('enclosure', '1');
     if (input.turtle_tank) aquariumParams.set('turtleTank', '1');
+    if (backgroundKind) {
+      aquariumParams.set('stickerBackground', backgroundKind);
+      if (input.sticker_background_all_sides) aquariumParams.set('allSides', '1');
+    }
+    if (bottomKind) aquariumParams.set('stickerBottom', bottomKind);
+    const sumpInfo = normalized.sump as Record<string, unknown> | null | undefined;
+    if (sumpInfo) {
+      aquariumParams.set('sumpEnabled', '1');
+      aquariumParams.set('sumpType', String(sumpInfo.type));
+      aquariumParams.set('sumpLength', String(sumpInfo.lengthInches));
+      aquariumParams.set('sumpWidth', String(sumpInfo.widthInches));
+      aquariumParams.set('sumpHeight', String(sumpInfo.heightInches));
+      aquariumParams.set('sumpGlass', String(sumpInfo.glassThickness));
+      if (input.sump_filter_media) aquariumParams.set('filterMedias', '1');
+      if (input.sump_piping) aquariumParams.set('piping', '1');
+      if (input.sump_overflow_box) aquariumParams.set('overflowBox', '1');
+      if (input.sump_allum_top_cover) aquariumParams.set('allumTopCover', '1');
+      if (pump) {
+        aquariumParams.set('pumpItem', String(input.pump_item_code).trim());
+        aquariumParams.set('pumpQty', String(pump.quantity));
+      }
+      if (light) {
+        aquariumParams.set('lightItem', String(input.light_item_code).trim());
+        aquariumParams.set('lightQty', String(light.quantity));
+      }
+    }
     if (stand) {
       aquariumParams.set('standEnabled', '1');
       aquariumParams.set('standLayers', String(stand.layers));
@@ -2023,6 +2281,13 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const { data, error } = await supabase.rpc('public_list_wholesale_items');
       if (error) return `Lookup failed: ${error.message}`;
       return data && data.length > 0 ? JSON.stringify(data) : 'No wholesale prices are currently set on any item.';
+    }
+    case 'list_aquarium_sets': {
+      const { data, error } = await supabase.rpc('public_list_aquarium_sets');
+      if (error) return `Lookup failed: ${error.message}`;
+      // A set with no price yet (e.g. AS-014 at 0) must never be quoted as free - leave it out.
+      const sets = ((data ?? []) as Array<Record<string, unknown>>).filter((row) => Number(row.price) > 0);
+      return sets.length > 0 ? JSON.stringify(sets) : 'No ready-made aquarium sets are currently available.';
     }
     case 'list_items_in_category': {
       const categoryCode = String(input.category_code ?? '').trim();

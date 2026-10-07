@@ -2468,8 +2468,16 @@
       // next to a separate "Sump Price" row. (Complete setup bundles its sump: sumpUnitPrice is 0
       // there, so nothing is pulled out and no separate sump line shows.)
       var sumpPricedSeparately = Boolean(n.sump) && q.sumpUnitPrice > 0;
-      var aquariumBasePrice = result.aquariumOnlyPrice - (c.holes || 0) - (c.divider || 0) - (sumpPricedSeparately ? q.sumpUnitPrice : 0);
+      // Stickers likewise: fused into aquariumOnlyPrice by the calculator, pulled back out so the
+      // Summary shows what each sticker costs on its own line.
+      var aquariumBasePrice = result.aquariumOnlyPrice - (c.holes || 0) - (c.divider || 0) - (c.stickerBackground || 0) - (c.stickerBottom || 0) - (sumpPricedSeparately ? q.sumpUnitPrice : 0);
       rows.push(['Aquarium Price', aquariumBasePrice.toFixed(2)]);
+      if (c.stickerBackground > 0) {
+        rows.push(['Sticker Background Price', c.stickerBackground.toFixed(2)]);
+      }
+      if (c.stickerBottom > 0) {
+        rows.push(['Sticker Bottom Price', c.stickerBottom.toFixed(2)]);
+      }
       if (c.holes > 0) {
         rows.push(['Hole for Aquarium (' + byId('holeCount').value + ')', c.holes.toFixed(2)]);
       }
@@ -2669,6 +2677,33 @@
 
         var session = getPortalSessionForCalculator();
         if (!session || !session.username || !session.password || typeof supabaseClient === 'undefined') {
+          // No staff login (e.g. a customer opening Alice's quote link): fall back to the public
+          // catalog list Alice herself prices pumps/lights from, so a linked pump/light is priced.
+          if (typeof supabaseClient !== 'undefined') {
+            try {
+              var publicResults = await Promise.all([
+                supabaseClient.rpc('public_list_order_items', { p_category_code: 'LIGHTS' }),
+                supabaseClient.rpc('public_list_order_items', { p_category_code: 'PUMP' })
+              ]);
+              var toPickerItems = function (res) {
+                return res.error ? [] : (res.data || []).map(function (it) {
+                  return { code: it.code, item_name: it.name, price: it.price };
+                });
+              };
+              populateAquariumItemSelect(byId('lightItemSelect'), toPickerItems(publicResults[0]), {
+                emptyText: 'No light items found', includeBlankOption: true, blankText: 'Select a light...'
+              });
+              populateAquariumItemSelect(byId('pumpItemSelect'), toPickerItems(publicResults[1]), {
+                emptyText: 'No pump items found', includeBlankOption: true, blankText: 'Select a pump...'
+              });
+              applyLinkedAccessoryItems();
+              applyDefaultAccessorySelections();
+              if (linkedAccessoryItems.pump || linkedAccessoryItems.light) calculateAquarium(false);
+              return;
+            } catch (error) {
+              // fall through to "not available"
+            }
+          }
           populateAquariumItemSelect(byId('lightItemSelect'), [], { emptyText: 'Not available (open via the portal)' });
           populateAquariumItemSelect(byId('pumpItemSelect'), [], { emptyText: 'Not available (open via the portal)' });
           applyLightSelection();
@@ -2708,7 +2743,9 @@
           populateAquariumItemSelect(byId('pumpItemSelect'), [], { emptyText: 'Failed to load pumps' });
         }
 
+        applyLinkedAccessoryItems();
         applyDefaultAccessorySelections();
+        if (linkedAccessoryItems.pump || linkedAccessoryItems.light) calculateAquarium(false);
       })();
 
       return aquariumItemsLoadPromise;
@@ -2720,6 +2757,20 @@
     // leaves it blank so staff must choose. Each stops following once staff pick one by hand.
     var lightEditedByHand = false;
     var pumpEditedByHand = false;
+
+    // Pump/light item codes from Alice's quote link (pumpItem/lightItem) - picked once the item
+    // lists load, and locked like a hand pick so the length-based defaults don't replace them.
+    var linkedAccessoryItems = { pump: '', light: '' };
+    function applyLinkedAccessoryItems() {
+      if (linkedAccessoryItems.light) {
+        byId('lightItemSelect').value = linkedAccessoryItems.light;
+        if (byId('lightItemSelect').value) lightEditedByHand = true;
+      }
+      if (linkedAccessoryItems.pump) {
+        byId('pumpItemSelect').value = linkedAccessoryItems.pump;
+        if (byId('pumpItemSelect').value) pumpEditedByHand = true;
+      }
+    }
 
     function getAquariumLengthFeet() {
       // Sump only has no tank - size the light/pump off the sump's own length instead.
@@ -2955,6 +3006,41 @@
       if (params.get('highStrip') === '1') byId('highStrip').checked = true;
       if (params.get('enclosure') === '1') byId('enclosure').checked = true;
       if (params.get('turtleTank') === '1') byId('turtleTank').checked = true;
+      // Stickers from Alice's quote link: stickerBackground/stickerBottom = plain|tiles, allSides=1.
+      var linkStickerType = function (v) { return v === 'tiles' ? 'Sticker Tiles' : 'Plain Sticker'; };
+      if (params.get('stickerBackground') === 'plain' || params.get('stickerBackground') === 'tiles') {
+        byId('stickerBackground').checked = true;
+        byId('stickerBackgroundType').value = linkStickerType(params.get('stickerBackground'));
+        if (params.get('allSides') === '1') byId('allSides').checked = true;
+      }
+      if (params.get('stickerBottom') === 'plain' || params.get('stickerBottom') === 'tiles') {
+        byId('stickerBottom').checked = true;
+        byId('stickerBottomType').value = linkStickerType(params.get('stickerBottom'));
+      }
+      // Filtration sump from Alice's quote link (sizes already in inches). Pump/light come in as
+      // item codes + qty (pumpItem/pumpQty, lightItem/lightQty) and are picked once the lists load.
+      if (params.get('sumpEnabled') === '1') {
+        if (params.get('pumpItem')) {
+          byId('submersiblePump').checked = true;
+          linkedAccessoryItems.pump = params.get('pumpItem');
+          if (params.has('pumpQty')) byId('pumpQuantity').value = params.get('pumpQty');
+        }
+        if (params.get('lightItem')) {
+          byId('submersibleLight').checked = true;
+          linkedAccessoryItems.light = params.get('lightItem');
+          if (params.has('lightQty')) byId('lightQuantity').value = params.get('lightQty');
+        }
+        byId('sumpEnabled').checked = true;
+        if (params.get('sumpType') === 'Undersump' || params.get('sumpType') === 'Overhead Sump') byId('sumpType').value = params.get('sumpType');
+        ['sumpLength', 'sumpWidth', 'sumpHeight'].forEach(function (id) {
+          if (params.has(id)) byId(id).value = params.get(id);
+        });
+        byId('sumpUnit').value = 'Inches';
+        if (params.has('sumpGlass')) byId('sumpGlass').value = params.get('sumpGlass');
+        ['filterMedias', 'piping', 'overflowBox', 'allumTopCover'].forEach(function (id) {
+          if (params.get(id) === '1') byId(id).checked = true;
+        });
+      }
 
       if (params.get('standEnabled') === '1') {
         byId('standEnabled').checked = true;

@@ -1676,7 +1676,10 @@ declare
   v_attachment_type text := nullif(trim(coalesce(p_attachment_type, '')), '');
   v_attachment_path text := nullif(trim(coalesce(p_attachment_path, '')), '');
 begin
-  if not public.is_conversations_authorized(p_admin_username, p_admin_password) then
+  -- is_online_order_messenger_authorized (supabase_online_order_gma_message_managers.sql) lets managers
+  -- message online-order customers - kept here so re-running this file doesn't undo that.
+  if not (public.is_conversations_authorized(p_admin_username, p_admin_password)
+          or public.is_online_order_messenger_authorized(p_admin_username, p_admin_password, p_psid)) then
     raise exception 'Not authorized.';
   end if;
   if p_psid is null or trim(p_psid) = '' then

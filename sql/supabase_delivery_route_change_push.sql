@@ -103,13 +103,13 @@ begin
     end if;
 
   else
-    if NEW."ManualAddress" is distinct from OLD."ManualAddress" then v_changes := v_changes || 'address'; end if;
-    if NEW."Notes" is distinct from OLD."Notes" then v_changes := v_changes || 'notes'; end if;
-    if NEW."ManualNotePrint" is distinct from OLD."ManualNotePrint" then v_changes := v_changes || 'print note'; end if;
+    if NEW."ManualAddress" is distinct from OLD."ManualAddress" then v_changes := array_append(v_changes, 'address'); end if;
+    if NEW."Notes" is distinct from OLD."Notes" then v_changes := array_append(v_changes, 'notes'); end if;
+    if NEW."ManualNotePrint" is distinct from OLD."ManualNotePrint" then v_changes := array_append(v_changes, 'print note'); end if;
     if NEW."ManualCustomerName" is distinct from OLD."ManualCustomerName"
-       or NEW."ManualContactNumber" is distinct from OLD."ManualContactNumber" then v_changes := v_changes || 'customer details'; end if;
-    if NEW."StopSequence" is distinct from OLD."StopSequence" then v_changes := v_changes || 'stop order'; end if;
-    if NEW."TruckID" is distinct from OLD."TruckID" then v_changes := v_changes || 'truck'; end if;
+       or NEW."ManualContactNumber" is distinct from OLD."ManualContactNumber" then v_changes := array_append(v_changes, 'customer details'); end if;
+    if NEW."StopSequence" is distinct from OLD."StopSequence" then v_changes := array_append(v_changes, 'stop order'); end if;
+    if NEW."TruckID" is distinct from OLD."TruckID" then v_changes := array_append(v_changes, 'truck'); end if;
 
     -- Nothing driver-facing changed (e.g. geocode cache only) - stay quiet.
     if array_length(v_changes, 1) is not null then
