@@ -4,7 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-07
 
-- Portal Online Orders: Store Managers can To Ship their own branch's Printed/Assigned orders (button stays "under construction" for everyone else). Always picks serials at their store; at a non-production store no "+ New serial" and short lines can ship after a confirm. onlineOrders.js v=smship1.
+- Portal Online Orders: Store Managers can To Ship their own branch's Printed/Assigned orders (button stays "under construction" for everyone else). Always picks serials at their store; at a non-production store no "+ New serial" and short lines can ship after a confirm.
+- ...and from Confirmed too: new `supabase_online_order_store_manager_to_ship.sql` (admin_store_manager_to_ship_online_order) treats Confirmed as Printed in the same transaction, and enforces own-branch + no new serials off-production server-side. onlineOrders.js v=smship2.
 
 - POS Online Orders: non-production stores now get the serial picker on To Ship (was skipped), so units received by Transfer Order get marked SOLD. Shortfall there warns and continues without minting serials (production-only); lines already tagged by production are still skipped (OnlineOrdersForm.cs).
 

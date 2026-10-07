@@ -846,6 +846,7 @@ function canMarkShipped(o) {
 // Loaded per selected / opened order and cached until the list reloads.
 const stockStatusCache = new Map(); // order_id -> row of staff_get_online_order_stock_status, or 'loading'
 const shipFromStockOrderIds = new Set();
+const storeManagerShipOrderIds = new Set(); // To Ship by a Store Manager - see handleToShipClick
 let shipSerialWarehouse = null; // order's branch while picking serials for a ship-from-stock order
 
 function stockStatusFor(o) {
@@ -1962,7 +1963,10 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
   try {
     // Ship-from-stock orders may still be Confirmed - admin_ship_online_order_from_stock allows that
     // (supabase_online_order_stock_ship.sql); same parameters and result as the regular RPC.
-    const rpcName = shipFromStockOrderIds.has(String(orderId)) ? 'admin_ship_online_order_from_stock' : 'admin_update_online_order_status';
+    // Store Manager To Ship (may still be Confirmed; own branch, no new serials off-production -
+    // supabase_online_order_store_manager_to_ship.sql).
+    const rpcName = storeManagerShipOrderIds.has(String(orderId)) ? 'admin_store_manager_to_ship_online_order'
+      : shipFromStockOrderIds.has(String(orderId)) ? 'admin_ship_online_order_from_stock' : 'admin_update_online_order_status';
     const { data, error } = await supabaseClient.rpc(rpcName, {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -3160,7 +3164,9 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   // Store Managers can To Ship their own branch's orders even while the general button is off - per
   // "can we allow the store manager to-ship the order". They always pick serials at their own store,
   // and a non-production store can't create new ones (same as the desktop's To Ship).
-  const storeManagerShip = !readyToShip && !!currentSession?.isStoreManager && !currentSession?.isSuperUser;
+  const storeManagerShip = !readyToShip && isStoreManagerShipper();
+  if (storeManagerShip) storeManagerShipOrderIds.add(String(orderId));
+  else storeManagerShipOrderIds.delete(String(orderId));
   if (storeManagerShip) {
     const order = findFlatOrder(orderId);
     if (currentSession.warehouseName && order && (order.warehouse_name || '') !== currentSession.warehouseName) {
@@ -3484,10 +3490,20 @@ function isPrintedOrder(o) {
   return status === 'printed' || status === 'assigned';
 }
 
+// To Ship button state: Printed / Assigned for everyone; a Store Manager also from Confirmed
+// (admin_store_manager_to_ship_online_order, supabase_online_order_store_manager_to_ship.sql).
+function isStoreManagerShipper() {
+  return !!currentSession?.isStoreManager && !currentSession?.isSuperUser;
+}
+function canToShipOrder(o) {
+  if (isPrintedOrder(o)) return true;
+  return isStoreManagerShipper() && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase());
+}
+
 function updateOrderActionState() {
   const o = findFlatOrder(selectedOrderId);
   ['openOrderBtn', 'listSendPhotoBtn', 'listSendMessageBtn'].forEach((id) => { document.getElementById(id).disabled = !o; });
-  document.getElementById('listToShipBtn').disabled = !isPrintedOrder(o);
+  document.getElementById('listToShipBtn').disabled = !canToShipOrder(o);
   document.getElementById('listAssignBtn').disabled = !o;
   updateProductionDoneButton('listProductionDoneBtn', o);
   updateSendBackButton('listSendBackBtn', o);
@@ -3884,7 +3900,7 @@ function fillOrderCardHeader(o) {
   document.getElementById('orderCardDeliverySummary').textContent =
     o.for_delivery ? `For delivery${o.estimated_delivery_date ? ' · ' + o.estimated_delivery_date : ''}` : 'Pickup';
 
-  document.getElementById('cardToShipBtn').disabled = !isPrintedOrder(o);
+  document.getElementById('cardToShipBtn').disabled = !canToShipOrder(o);
   updateProductionDoneButton('cardProductionDoneBtn', o);
   fillMakerFocusSummary(o);
   updateSendBackButton('cardSendBackBtn', o);
