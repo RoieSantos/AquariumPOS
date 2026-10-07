@@ -1439,6 +1439,35 @@ a.badge:hover { text-decoration: underline; }
   opacity: 0.8;
 }
 
+/* Small caption ("By branch" / "By tender") when a card shows more than one breakdown. */
+.finance-breakdown-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+
+/* Walk-In card: branch row with its tenders indented under it (renderWalkInBranchTender). */
+.finance-breakdown-branch {
+  font-weight: 600;
+}
+
+.finance-breakdown-branch:not(:nth-child(2)) {
+  margin-top: 6px;
+}
+
+.finance-breakdown-sub {
+  padding-left: 14px;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.finance-breakdown-sub .finance-breakdown-value {
+  font-weight: 500;
+}
+
 /* Dashboard "Sales by Staff (Confirmed By)" cards (super users only) - one card per Sales User,
    each with three clickable figures (Daily/Monthly/Previous Month) that deep-link into Online
    Orders scoped to that staff member + period (see js/dashboard.js's loadSalesByStaff and
@@ -6173,7 +6202,7 @@ body:has(.wizard-page) {
 .cs-row-link:hover, .cs-row-link:focus { background: var(--pm-track); outline: none; }
 .cs-link { font-weight: 600; text-decoration: none; }
 
-/* "Starry night" animated background on every portal page except Dashboard and the
+/* "Comet night" animated background on every portal page except Dashboard and the
    print-only pages - js/nav.js loads js/nightSkyBg.js, which adds this canvas. Fixed behind .page
    (z-index 1) and #topnav; cards and lists keep their solid surfaces, so it shows in the gutters. */
 .app-sky-bg {
@@ -6184,10 +6213,10 @@ body:has(.wizard-page) {
   display: block;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, #dfe4f6 0%, #f4f1f4 100%);
+  background: linear-gradient(180deg, #c9d8f0 0%, #eef1f7 100%);
 }
 :root[data-theme="dark"] .app-sky-bg {
-  background: linear-gradient(180deg, #02040c 0%, #16183a 100%);
+  background: linear-gradient(180deg, #040816 0%, #2b5b86 100%);
 }
 
 @media print {

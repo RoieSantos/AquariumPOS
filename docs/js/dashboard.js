@@ -28,7 +28,8 @@ function wireThemeToggle() {
   if (!group) return;
 
   const refreshActiveState = () => {
-    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    // Highlight the saved choice (Light / Dark / Auto), not the theme Auto currently resolves to
+    const current = getPortalThemeChoice();
     group.querySelectorAll('.theme-toggle-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.themeChoice === current);
     });
@@ -340,22 +341,27 @@ function escapeDashboardHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function renderWarehouseBreakdown(elementId, rows, amountKey, countKey) {
+// nameKey/title are optional - the tender breakdown (loadDailyByTender) reuses this with
+// method_name rows and a "By tender" caption; the sales cards' branch split gets "By branch".
+function renderWarehouseBreakdown(elementId, rows, amountKey, countKey, nameKey = 'warehouse_name', title = '') {
   const el = document.getElementById(elementId);
   if (!el) return;
   const lines = rows
-    .filter((r) => (Number(r[countKey]) || 0) > 0)
+    .filter((r) => (Number(r[countKey]) || 0) > 0 || (Number(r[amountKey]) || 0) > 0)
     .sort((a, b) => (Number(b[amountKey]) || 0) - (Number(a[amountKey]) || 0));
-  el.innerHTML = lines
+  el.innerHTML = (title && lines.length ? `<div class="finance-breakdown-title">${escapeDashboardHtml(title)}</div>` : '') + lines
     .map((r) => `
       <div class="finance-breakdown-row">
-        <span class="finance-breakdown-name">${escapeDashboardHtml(r.warehouse_name)}</span>
+        <span class="finance-breakdown-name">${escapeDashboardHtml(r[nameKey])}</span>
         <span class="finance-breakdown-value">${formatCurrency(r[amountKey])} <span class="finance-breakdown-count">(${Number(r[countKey]) || 0})</span></span>
       </div>
     `)
     .join('');
   el.classList.toggle('hidden', lines.length === 0);
 }
+
+// Kept for renderWalkInBranchTender, which nests the Walk-In card's tenders under these branch rows.
+let dailyByWarehouseRows = [];
 
 async function loadDailyByWarehouse(session) {
   if (!session.password) return;
@@ -371,9 +377,66 @@ async function loadDailyByWarehouse(session) {
     return;
   }
 
-  renderWarehouseBreakdown('statTodayOnlineSalesByWh', data, 'online_sales', 'online_order_count');
-  renderWarehouseBreakdown('statTodayWalkInSalesByWh', data, 'walkin_sales', 'walkin_order_count');
+  dailyByWarehouseRows = data;
+  renderWarehouseBreakdown('statTodayOnlineSalesByWh', data, 'online_sales', 'online_order_count', 'warehouse_name', 'By branch');
+  renderWarehouseBreakdown('statTodayWalkInSalesByWh', data, 'walkin_sales', 'walkin_order_count', 'warehouse_name', 'By branch');
   renderWarehouseBreakdown('statTodayExpenseByWh', data, 'expense', 'expense_count');
+}
+
+// Per "is it possible we break it down too by the tender types?" - a second split under the two
+// "Sales - Today" cards: Cash / GCash / BDO... from admin_get_dashboard_daily_by_tender
+// (supabase_dashboard_daily_by_tender.sql), same "today" rules as the cards. Its "Unpaid / not
+// synced yet" row (balances owed + orders the 5-minute payment sync hasn't read) makes the rows
+// add up to the headline.
+async function loadDailyByTender(session) {
+  if (!session.password) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_dashboard_daily_by_tender', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_warehouse_name: session.warehouseName || null
+  });
+
+  if (error || !data) {
+    console.error('admin_get_dashboard_daily_by_tender failed:', error);
+    return;
+  }
+
+  // Online card: one flat tender list, summed across branches.
+  const onlineByMethod = new Map();
+  data.filter((r) => !r.is_walkin).forEach((r) => {
+    const m = onlineByMethod.get(r.method_name) || { method_name: r.method_name, amount: 0, order_count: 0 };
+    m.amount += Number(r.amount) || 0;
+    m.order_count += Number(r.order_count) || 0;
+    onlineByMethod.set(r.method_name, m);
+  });
+  renderWarehouseBreakdown('statTodayOnlineSalesByTender', [...onlineByMethod.values()], 'amount', 'order_count', 'method_name', 'By tender');
+
+  // Walk-In card - per "can you do By Branch By tender so they will have relationship": each branch
+  // row (from loadDailyByWarehouse) with its own tenders indented under it.
+  renderWalkInBranchTender(data.filter((r) => r.is_walkin));
+}
+
+function renderWalkInBranchTender(tenderRows) {
+  const el = document.getElementById('statTodayWalkInSalesByWh');
+  if (!el) return;
+  const branches = dailyByWarehouseRows
+    .filter((r) => (Number(r.walkin_order_count) || 0) > 0)
+    .sort((a, b) => (Number(b.walkin_sales) || 0) - (Number(a.walkin_sales) || 0));
+  if (!branches.length) return;
+  const row = (name, amount, count, cls) => `
+      <div class="finance-breakdown-row ${cls}">
+        <span class="finance-breakdown-name">${escapeDashboardHtml(name)}</span>
+        <span class="finance-breakdown-value">${formatCurrency(amount)} <span class="finance-breakdown-count">(${Number(count) || 0})</span></span>
+      </div>`;
+  el.innerHTML = '<div class="finance-breakdown-title">By branch · tender</div>' + branches
+    .map((b) => row(b.warehouse_name, b.walkin_sales, b.walkin_order_count, 'finance-breakdown-branch') + tenderRows
+      .filter((t) => t.warehouse_name === b.warehouse_name)
+      .sort((x, y) => (Number(y.amount) || 0) - (Number(x.amount) || 0))
+      .map((t) => row(t.method_name, t.amount, t.order_count, 'finance-breakdown-sub'))
+      .join(''))
+    .join('');
+  el.classList.remove('hidden');
 }
 
 // "Total Purchase" card, sourced from admin_get_purchase_summary()
@@ -897,6 +960,7 @@ function setupDashboardGroups() {
     await loadFinancialSummary(session);
     await loadExpenseSummary(session);
     await loadDailyByWarehouse(session);
+    await loadDailyByTender(session);
     await loadPurchaseSummary(session);
     await loadPayrollSummary(session);
     renderProfitCard();

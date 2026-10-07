@@ -4,6 +4,18 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-07
 
+- Online Orders **Release Items** dialog: fixed the layout. The global `input[type=number] { width:100% }` rule was stretching the qty box so the item name collapsed into a one-letter column. Each row is now [tick] [name + ordered/left] [Qty _ of N], the whole row can be tapped to tick it, picked rows are highlighted, and the qty box drops under the name on phones. [bc-list.css](docs/css/bc-list.css), [onlineOrders.js](docs/js/onlineOrders.js); cache `?v=rl1` in [online-orders.html](docs/online-orders.html).
+
+- Portal theme: new **Auto** option (now the default) - dark from 6 PM to 6 AM, light during the day, by the device clock; re-checked every minute so open pages flip on their own. Dashboard's theme toggle gets a third "🕒 Auto" button; anyone who already picked Light/Dark keeps it until they tap Auto. [theme.js](docs/js/theme.js), [dashboard.js](docs/js/dashboard.js), [dashboard.html](docs/dashboard.html); theme.js cache `?v=auto1` on all pages.
+
+- Portal background: starry sky upgraded to an anime-style "comet night" (inspired by *Your Name*) - deep blue-to-teal evening sky, two layers of drifting clouds with lit tops, and a big diagonal comet with a soft rainbow-edged tail, streaming dust, a pulsing head and two thin fragments splitting off; stars fade toward the horizon, sparkles and shooting stars kept. Clouds and tail are pre-rendered offscreen so frames stay cheap. [nightSkyBg.js](docs/js/nightSkyBg.js) (v=2), [nav.js](docs/js/nav.js), [styles.css](docs/css/styles.css) fallback colours; nav.js cache bumped to `sky2` on all pages.
+
+- Added read-only check [supabase_check_gma_walkin_tender_today.sql](sql/supabase_check_gma_walkin_tender_today.sql) - GMA's walk-in tender rows (11,559) exceed its walk-in total (5,121); compares stored payments with live Pancake per order.
+
+- Dashboard: Today's Walk-In Sales now nests each branch's tenders under that branch ("By branch · tender") instead of two separate lists; the tender RPC now returns the warehouse per row - [supabase_dashboard_daily_by_tender.sql](sql/supabase_dashboard_daily_by_tender.sql), [dashboard.js](docs/js/dashboard.js).
+
+- Dashboard: Today's Online / Walk-In Sales cards now show a "By tender" split (Cash, GCash, BDO...) under the "By branch" one, from the stored per-order payments; an "Unpaid / not synced yet" row makes it add up to the headline - new [supabase_dashboard_daily_by_tender.sql](sql/supabase_dashboard_daily_by_tender.sql), [dashboard.js](docs/js/dashboard.js), [dashboard.html](docs/dashboard.html), [styles.css](docs/css/styles.css).
+
 - Production Shelf Map: fixed unreadable racks in dark mode - the page used undefined CSS variables (`--card-bg`, `--border`, `--text`), so racks/chips stayed white under light dark-mode text; now uses the theme's `--panel-bg` / `--panel-border` / `--text-main`, plus dark colours for size tags, warning tags, hovers and a translucent dark floor-plan backdrop - [production-shelf-map.html](docs/production-shelf-map.html).
 
 - Portal background: swapped the koi-aquarium animation for a "starry night" sky - twinkling stars in 3 depth layers, sparkle flares, faint Milky Way, occasional shooting star (pale twilight in light theme so page text stays readable, real night sky in dark theme). New [nightSkyBg.js](docs/js/nightSkyBg.js) replaces the deleted aquariumBg.js; [nav.js](docs/js/nav.js) and [styles.css](docs/css/styles.css) updated (canvas class now `.app-sky-bg`), cache versions bumped to `sky1` on all pages.

@@ -1408,7 +1408,7 @@ function openReleaseDialog(o, lines) {
     return `<div class="oo-rl-line${left ? '' : ' is-done'}" data-line-id="${escapeHtml(l.line_id)}" data-left="${left}">
       <input type="checkbox" ${left ? 'checked' : 'disabled'} aria-label="Release ${escapeHtml(l.description || l.item_code || '')}" />
       <span class="oo-rl-info"><b>${escapeHtml(l.description || l.item_code || l.line_id)}</b><small>${left ? escapeHtml(sub) : '&#10003; All released'}</small></span>
-      ${left ? `<input type="number" class="oo-rl-qty" min="1" max="${left}" step="1" value="${left}" inputmode="numeric" aria-label="Quantity to release" />` : ''}
+      ${left ? `<span class="oo-rl-qtywrap">Qty <input type="number" class="oo-rl-qty" min="1" max="${left}" step="1" value="${left}" inputmode="numeric" aria-label="Quantity to release" /> of ${left}</span>` : ''}
     </div>`;
   }).join('');
   document.getElementById('releaseNote').value = '';
@@ -1434,6 +1434,9 @@ function releaseSelection() {
 // Keeps "Release everything left" and the button label in step with the picks: the label says whether
 // this batch ships the order or leaves part of it pending.
 function updateReleaseDialogState() {
+  document.querySelectorAll('#releaseLines .oo-rl-line').forEach((row) => {
+    row.classList.toggle('is-picked', !!row.querySelector('input[type="checkbox"]')?.checked && Number(row.dataset.left) > 0);
+  });
   const sel = releaseSelection().filter((s) => s.left > 0);
   const all = sel.length > 0 && sel.every((s) => s.quantity >= s.left);
   const any = sel.some((s) => s.quantity > 0);
@@ -1504,6 +1507,15 @@ function wireReleaseDialog() {
     updateReleaseDialogState();
   });
   box.addEventListener('input', updateReleaseDialogState);
+  // Tapping anywhere on a row toggles its tick (bigger target than the checkbox on a phone).
+  box.addEventListener('click', (e) => {
+    const row = e.target.closest('.oo-rl-line');
+    if (!row || row.classList.contains('is-done') || e.target.closest('input')) return;
+    const cb = row.querySelector('input[type="checkbox"]');
+    cb.checked = !cb.checked;
+    if (cb.checked && !(Number(row.querySelector('.oo-rl-qty').value) > 0)) row.querySelector('.oo-rl-qty').value = row.dataset.left;
+    updateReleaseDialogState();
+  });
   document.getElementById('releaseAll').addEventListener('change', (e) => {
     document.querySelectorAll('#releaseLines .oo-rl-line').forEach((row) => {
       const left = Number(row.dataset.left) || 0;

@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <script src="js/theme.js"></script>
+  <link rel="stylesheet" href="css/styles.css?v=tender2" />
+  <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
@@ -21,11 +21,12 @@
     <p class="muted" id="welcomeText">Welcome.</p>
 
     <!-- Site-wide light/dark theme toggle - see js/theme.js (applies the saved choice on every
-         portal page) and js/dashboard.js's wireThemeToggle (these are the only two buttons that
-         actually set it). -->
+         portal page) and js/dashboard.js's wireThemeToggle (these are the only buttons that
+         actually set it). Auto = dark 6 PM - 6 AM, light by day (the default). -->
     <div class="theme-toggle-group" id="themeToggleGroup">
       <button type="button" class="theme-toggle-btn" id="themeLightBtn" data-theme-choice="light">☀ Light</button>
       <button type="button" class="theme-toggle-btn" id="themeDarkBtn" data-theme-choice="dark">🌙 Dark</button>
+      <button type="button" class="theme-toggle-btn" id="themeAutoBtn" data-theme-choice="auto" title="Dark from 6 PM to 6 AM, light during the day">🕒 Auto</button>
     </div>
 
     <!-- Delivery Team accounts land here instead of the full dashboard below (see
@@ -146,6 +147,7 @@
           <div class="finance-value" id="statTodayOnlineSales">-</div>
           <div class="finance-sub" id="statTodayOnlineSalesSub">Online orders, today</div>
           <div class="finance-breakdown hidden" id="statTodayOnlineSalesByWh"></div>
+          <div class="finance-breakdown hidden" id="statTodayOnlineSalesByTender"></div>
         </a>
         <a class="finance-card finance-daily-walkin" href="online-orders.html?scope=walkin&period=today">
           <div class="finance-top">
@@ -547,10 +549,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky1"></script>
+  <script src="js/nav.js?v=sky2"></script>
   <script src="js/companyBranding.js"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/dashboard.js?v=grp5"></script>
+  <script src="js/dashboard.js?v=auto1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

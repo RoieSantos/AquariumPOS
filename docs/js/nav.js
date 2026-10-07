@@ -510,7 +510,7 @@ function mountChatWidget(session) {
   else document.addEventListener('DOMContentLoaded', start);
 })();
 
-// "Starry night" animated background (js/nightSkyBg.js draws it on a canvas) on every
+// "Comet night" animated background (js/nightSkyBg.js draws it on a canvas) on every
 // portal page that loads this file, except Dashboard (has its own company photo background) and
 // the print-only pages.
 (function () {
@@ -520,7 +520,7 @@ function mountChatWidget(session) {
   const SKIP = ['dashboard.html', 'gma-conversations.html', 'aquarium-calculator.html', 'stand-calculator.html', 'sticker-calculator.html', 'invoice.html', 'gma-order-invoice.html', 'delivery-receipt.html'];
   if (SKIP.includes(page) || page.includes('print')) return;
   const script = document.createElement('script');
-  script.src = 'js/nightSkyBg.js?v=1';
+  script.src = 'js/nightSkyBg.js?v=2';
   script.defer = true;
   (document.head || document.documentElement).appendChild(script);
 })();
