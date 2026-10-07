@@ -6173,10 +6173,10 @@ body:has(.wizard-page) {
 .cs-row-link:hover, .cs-row-link:focus { background: var(--pm-track); outline: none; }
 .cs-link { font-weight: 600; text-decoration: none; }
 
-/* "Inside the aquarium" animated background on every portal page except Dashboard and the
-   print-only pages - js/nav.js loads js/aquariumBg.js, which adds this canvas. Fixed behind .page
+/* "Starry night" animated background on every portal page except Dashboard and the
+   print-only pages - js/nav.js loads js/nightSkyBg.js, which adds this canvas. Fixed behind .page
    (z-index 1) and #topnav; cards and lists keep their solid surfaces, so it shows in the gutters. */
-.app-aqua-bg {
+.app-sky-bg {
   position: fixed;
   inset: 0;
   width: 100%;
@@ -6184,14 +6184,14 @@ body:has(.wizard-page) {
   display: block;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, #e4f3fa 0%, #79afc8 100%);
+  background: linear-gradient(180deg, #dfe4f6 0%, #f4f1f4 100%);
 }
-:root[data-theme="dark"] .app-aqua-bg {
-  background: linear-gradient(180deg, #0f3049 0%, #030c17 100%);
+:root[data-theme="dark"] .app-sky-bg {
+  background: linear-gradient(180deg, #02040c 0%, #16183a 100%);
 }
 
 @media print {
-  .app-aqua-bg { display: none; }
+  .app-sky-bg { display: none; }
 }
 
 /* ---- Order Now: Customize builder two-column layout (see layoutCustomizePanels in js/orderNow.js) ----

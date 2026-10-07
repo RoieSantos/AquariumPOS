@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Production Shelf Map - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=aq2" />
+  <link rel="stylesheet" href="css/styles.css?v=sky1" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -16,7 +16,7 @@
     .shelf-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: stretch; }
     .shelf-scroll { overflow-x: auto; }
     .shelf-scroll .shelf-row { min-width: min-content; }
-    .pspot { flex: 1 1 0; min-width: 150px; border: 2px solid var(--border, #c9d3e0); border-radius: 8px; padding: 8px; background: var(--card-bg, #fff); display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+    .pspot { flex: 1 1 0; min-width: 150px; border: 2px solid var(--panel-border, #c9d3e0); border-radius: 8px; padding: 8px; background: var(--panel-bg, #fff); display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
     .pspot:hover { border-color: #1d4f91; }
     .pspot.empty { border-style: dashed; }
     .pspot.full { border-color: #d98a00; }
@@ -32,20 +32,20 @@
     .shelf-add-cell { flex: 0 0 auto; align-self: center; }
     .shelf-legend span { display: inline-block; margin-right: 12px; font-size: 12px; }
     .shelf-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-    .tray { margin-top: 18px; border-top: 1px solid var(--border, #e0e6ee); padding-top: 10px; }
+    .tray { margin-top: 18px; border-top: 1px solid var(--panel-border, #e0e6ee); padding-top: 10px; }
     .tray h3 { margin: 0 0 6px; font-size: 16px; }
-    .serial-chip { display: inline-flex; flex-direction: column; gap: 1px; margin: 0 6px 6px 0; padding: 6px 8px; border: 1px solid var(--border, #c9d3e0); border-radius: 6px; font-size: 12px; background: var(--card-bg, #fff); text-align: left; font: inherit; color: inherit; cursor: pointer; max-width: 260px; }
+    .serial-chip { display: inline-flex; flex-direction: column; gap: 1px; margin: 0 6px 6px 0; padding: 6px 8px; border: 1px solid var(--panel-border, #c9d3e0); border-radius: 6px; font-size: 12px; background: var(--panel-bg, #fff); text-align: left; font: inherit; color: inherit; cursor: pointer; max-width: 260px; }
     .serial-chip b { font-family: monospace; font-size: 12.5px; }
     .serial-chip span { font-size: 11px; color: var(--text-muted, #666); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .serial-chip.selected { border-color: #1d4f91; background: rgba(29, 79, 145, .1); }
-    .spot-serial-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
+    .spot-serial-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--panel-border, #e0e6ee); font-size: 13px; }
     .spot-serial-row .grow { flex: 1 1 auto; min-width: 0; }
     .spot-serial-row b { font-family: monospace; }
     .cell-field { display: block; margin-bottom: 10px; }
     .cell-field label { display: block; font-size: 12px; margin-bottom: 2px; }
     /* Floor plan layout - spots at their own position/size (js/productionShelfMap.js renderFloor) */
     #shelfBody.floor-mode { overflow: auto; }
-    .floor-plan { position: relative; border: 1px solid var(--border, #e0e6ee); border-radius: 8px; background-image: radial-gradient(rgba(120, 130, 150, .18) 1px, transparent 1px); background-size: 20px 20px; }
+    .floor-plan { position: relative; border: 1px solid var(--panel-border, #e0e6ee); border-radius: 8px; background-image: radial-gradient(rgba(120, 130, 150, .18) 1px, transparent 1px); background-size: 20px 20px; }
     .floor-plan .pspot { position: absolute; min-width: 0; box-sizing: border-box; overflow: hidden; padding: 6px; }
     /* Small racks: label, tag and count wrap - side by side on a long short rack, stacked on a narrow upright one */
     .floor-plan .pspot.compact { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; align-content: center; gap: 2px 6px; text-align: center; padding: 3px; }
@@ -59,22 +59,22 @@
     .floor-plan .pspot.compact .pspot-tag { align-self: center; font-size: 11px; padding: 0 5px; }
     .serial-chip.fits { border-color: #2e9e5b; }
     .pspot-stock { font-size: 11px; line-height: 1.3; color: var(--text-muted, #666); }
-    .pspot-stock b { font-size: 13px; color: var(--text, inherit); }
+    .pspot-stock b { font-size: 13px; color: var(--text-main, inherit); }
     .floor-plan .pspot.compact .pspot-stock { font-size: 10.5px; white-space: nowrap; }
     .size-summary { width: 100%; max-width: 900px; border-collapse: collapse; font-size: 13px; }
-    .size-summary th, .size-summary td { padding: 6px 8px; border-bottom: 1px solid var(--border, #e0e6ee); text-align: left; vertical-align: top; }
+    .size-summary th, .size-summary td { padding: 6px 8px; border-bottom: 1px solid var(--panel-border, #e0e6ee); text-align: left; vertical-align: top; }
     .size-summary th { font-size: 12px; color: var(--text-muted, #666); font-weight: 600; }
     .size-summary .num { text-align: right; }
     .size-summary tbody tr { cursor: pointer; }
     .size-summary tbody tr:hover { background: rgba(29, 79, 145, 0.06); }
-    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
+    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--panel-border, #e0e6ee); font-size: 13px; }
     .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
     .modal-panel { max-height: 90vh; overflow-y: auto; }
     .page.page-full { max-width: none; }
     /* Toolbar: filters left, actions right, everything vertically centred and same height */
     .psm-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 12px; }
     .psm-toolbar.hidden { display: none; }
-    .psm-editbar { padding: 8px 10px; border: 1px solid var(--border, #e0e6ee); border-radius: 8px; background: rgba(29, 79, 145, .05); }
+    .psm-editbar { padding: 8px 10px; border: 1px solid var(--panel-border, #e0e6ee); border-radius: 8px; background: rgba(29, 79, 145, .05); }
     .psm-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
     .psm-actions { margin-left: auto; justify-content: flex-end; }
     .psm-field { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--text-muted, #666); white-space: nowrap; }
@@ -83,7 +83,7 @@
     .psm-toolbar .btn { display: inline-flex; align-items: center; white-space: nowrap; }
     .psm-find { width: 240px; max-width: 100%; }
     .psm-find-result { font-size: 12px; }
-    .psm-sep { width: 1px; height: 22px; background: var(--border, #d9dee5); margin: 0 2px; }
+    .psm-sep { width: 1px; height: 22px; background: var(--panel-border, #d9dee5); margin: 0 2px; }
     @media (max-width: 700px) {
       .psm-actions { margin-left: 0; justify-content: flex-start; }
       .psm-find { width: 100%; }
@@ -91,7 +91,7 @@
     :fullscreen body { overflow: auto; }
     /* Black / Clear split of a rack's serials (js/productionShelfMap.js colourChipsHtml) */
     .pspot-colours { display: flex; flex-wrap: wrap; gap: 4px 6px; justify-content: inherit; }
-    .colour-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border: 1px solid var(--border, #c9d3e0); border-radius: 999px; font-size: 12px; white-space: nowrap; background: var(--card-bg, #fff); }
+    .colour-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border: 1px solid var(--panel-border, #c9d3e0); border-radius: 999px; font-size: 12px; white-space: nowrap; background: var(--panel-bg, #fff); }
     .colour-chip b { font-size: 14px; }
     .colour-chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
     .colour-chip.colour-black i { background: #1b1b1b; }
@@ -99,7 +99,7 @@
     .colour-chip.colour-other i { background: #9aa4b2; }
     .floor-plan .pspot.compact .pspot-colours { justify-content: center; }
     .floor-plan .colour-chip { font-size: 13px; }
-    .colour-group-head { margin-top: 10px; padding: 4px 0; font-weight: 700; border-bottom: 2px solid var(--border, #e0e6ee); }
+    .colour-group-head { margin-top: 10px; padding: 4px 0; font-weight: 700; border-bottom: 2px solid var(--panel-border, #e0e6ee); }
     .zoom-controls { display: inline-flex; align-items: center; gap: 4px; }
     .zoom-controls.hidden { display: none; }
     .zoom-controls #zoomLabel { min-width: 40px; text-align: center; font-size: 12px; }
@@ -118,7 +118,7 @@
     .size-summary tr.unlinked-row { cursor: default; }
     .last-orders { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 10px 0 0; }
     .last-orders.hidden { display: none; }
-    .last-order { flex: 1 1 320px; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--border, #e0e6ee); border-left-width: 4px; border-radius: 8px; background: var(--card-bg, #fff); font-size: 13px; color: inherit; text-decoration: none; }
+    .last-order { flex: 1 1 320px; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--panel-border, #e0e6ee); border-left-width: 4px; border-radius: 8px; background: var(--panel-bg, #fff); font-size: 13px; color: inherit; text-decoration: none; }
     a.last-order:hover { border-color: #1d4f91; }
     .last-order.part-tank { border-left-color: #1d4f91; }
     .last-order.part-stand { border-left-color: #d98a00; }
@@ -131,6 +131,19 @@
     .auto-order-table tbody tr { cursor: default; }
     .auto-order-table tr.skip td { opacity: .5; }
     .place-banner { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: rgba(29, 79, 145, .1); font-size: 13px; }
+    /* Dark theme: racks/chips use the dark panel colours above; these fix the hard-coded light ones.
+       The floor plan gets a translucent dark panel so the starry background doesn't fight the racks. */
+    :root[data-theme="dark"] .floor-plan { background-color: rgba(11, 18, 32, .72); background-image: radial-gradient(rgba(140, 160, 200, .14) 1px, transparent 1px); }
+    :root[data-theme="dark"] .pspot { border-color: #34496d; }
+    :root[data-theme="dark"] .pspot:hover, :root[data-theme="dark"] .pspot.match, :root[data-theme="dark"] a.last-order:hover, :root[data-theme="dark"] .serial-chip.selected { border-color: #5b9be8; }
+    :root[data-theme="dark"] .pspot.full { border-color: #e0a030; }
+    :root[data-theme="dark"] .pspot-tag { background: #1d3a66; color: #cfe2ff; }
+    :root[data-theme="dark"] .pspot-tag.warn { background: #4a3710; color: #ffd27a; }
+    :root[data-theme="dark"] .pspot-count.muted { color: var(--text-muted); }
+    :root[data-theme="dark"] .serial-chip.selected, :root[data-theme="dark"] .place-banner { background: rgba(91, 155, 232, .18); }
+    :root[data-theme="dark"] .psm-editbar { background: rgba(17, 26, 44, .85); }
+    :root[data-theme="dark"] .size-summary tbody tr:hover, :root[data-theme="dark"] .item-hit:hover { background: rgba(91, 155, 232, .12); }
+    :root[data-theme="dark"] .colour-chip.colour-black i { background: #000; box-shadow: 0 0 0 1px #8a9bbd; }
   </style>
 </head>
 <body>
@@ -271,7 +284,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=all3"></script>
+  <script src="js/nav.js?v=sky1"></script>
   <script src="js/productionShelfMap.js?v=23"></script>
   <script src="js/pwa.js"></script>
 </body>

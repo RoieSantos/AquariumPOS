@@ -510,17 +510,17 @@ function mountChatWidget(session) {
   else document.addEventListener('DOMContentLoaded', start);
 })();
 
-// "Inside the aquarium" animated background (js/aquariumBg.js draws it on a canvas) on every
+// "Starry night" animated background (js/nightSkyBg.js draws it on a canvas) on every
 // portal page that loads this file, except Dashboard (has its own company photo background) and
 // the print-only pages.
 (function () {
   const page = (location.pathname.split('/').pop() || '').toLowerCase();
-  // gma-conversations.html is a full-width three-panel inbox - fish between the panels was too busy.
+  // gma-conversations.html is a full-width three-panel inbox - a busy background there is distracting.
   // The calculator pages are a full-screen iframe, so the background would never be visible anyway.
   const SKIP = ['dashboard.html', 'gma-conversations.html', 'aquarium-calculator.html', 'stand-calculator.html', 'sticker-calculator.html', 'invoice.html', 'gma-order-invoice.html', 'delivery-receipt.html'];
   if (SKIP.includes(page) || page.includes('print')) return;
   const script = document.createElement('script');
-  script.src = 'js/aquariumBg.js?v=2';
+  script.src = 'js/nightSkyBg.js?v=1';
   script.defer = true;
   (document.head || document.documentElement).appendChild(script);
 })();

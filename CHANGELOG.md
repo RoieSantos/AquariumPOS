@@ -4,6 +4,14 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-07
 
+- Production Shelf Map: fixed unreadable racks in dark mode - the page used undefined CSS variables (`--card-bg`, `--border`, `--text`), so racks/chips stayed white under light dark-mode text; now uses the theme's `--panel-bg` / `--panel-border` / `--text-main`, plus dark colours for size tags, warning tags, hovers and a translucent dark floor-plan backdrop - [production-shelf-map.html](docs/production-shelf-map.html).
+
+- Portal background: swapped the koi-aquarium animation for a "starry night" sky - twinkling stars in 3 depth layers, sparkle flares, faint Milky Way, occasional shooting star (pale twilight in light theme so page text stays readable, real night sky in dark theme). New [nightSkyBg.js](docs/js/nightSkyBg.js) replaces the deleted aquariumBg.js; [nav.js](docs/js/nav.js) and [styles.css](docs/css/styles.css) updated (canvas class now `.app-sky-bg`), cache versions bumped to `sky1` on all pages.
+
+- Serial Tracker: Super Users can bulk Mark Floating / Release serials (tick column + tick-all, buttons in the action bar). Floating = can't be picked for any sale (POS included) until released; not Sold, so no fake sales. New `supabase_serial_bulk_floating.sql` (admin_bulk_set_serial_status); skips Sold / In Transit; Item Ledger untouched; new Floating tab. Replaces the never-run bulk-delete version. serialTracker.js v=bc9.
+
+- Serial Tracker redesigned like Online Orders (BC list): status tabs with counts, a "Filter list by" pane (Status / Category / Location), click-to-select rows with Open / Reprint Label / Edit Location / Mark In Stock / Mark Sold in the action bar instead of inline row links, and a read-only Serial card (Open, double-click or the Serial No.). Same permissions as before. serialTracker.js v=bc7.
+
 - Portal Online Orders: Store Managers can To Ship their own branch's Printed/Assigned orders (button stays "under construction" for everyone else). Always picks serials at their store; at a non-production store no "+ New serial" and short lines can ship after a confirm.
 - ...and from Confirmed too: new `supabase_online_order_store_manager_to_ship.sql` (admin_store_manager_to_ship_online_order) treats Confirmed as Printed in the same transaction, and enforces own-branch + no new serials off-production server-side. onlineOrders.js v=smship2.
 

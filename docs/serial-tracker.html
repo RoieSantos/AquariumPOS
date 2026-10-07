@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Serial Tracker - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=aq2" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp11" />
+  <link rel="stylesheet" href="css/styles.css?v=sky1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=aq6" />
   <script src="js/theme.js"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -22,11 +22,20 @@
     <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
     <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
     <symbol id="ico-list" viewBox="0 0 16 16"><path d="M5.5 4h8M5.5 8h8M5.5 12h8"/><path d="M2.5 4h.5M2.5 8h.5M2.5 12h.5"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-open" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-done" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M5.2 8.2 7.1 10l3.7-4"/></symbol>
+    <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 5.5V2h7v3.5"/><path d="M4.5 11.5H2.5v-6h11v6h-2"/><path d="M4.5 9.5h7V14h-7z"/></symbol>
+    <symbol id="ico-pin" viewBox="0 0 16 16"><path d="M8 14.5s-4.5-4.6-4.5-8a4.5 4.5 0 0 1 9 0c0 3.4-4.5 8-4.5 8z"/><circle cx="8" cy="6.5" r="1.6"/></symbol>
+    <symbol id="ico-float" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M5.5 8h5"/></symbol>
+    <symbol id="ico-sold" viewBox="0 0 16 16"><path d="M2.5 8.6 7.4 13.5 13.5 7.4V2.5H8.6z"/><circle cx="10.6" cy="5.4" r="1"/></symbol>
   </svg>
 
-  <!-- Business Central list page (css/bc-list.css) - same shell as Purchase Orders / Production Orders,
-       per "can you beautify the list of serial tracker same way we do on the purchase order and other
-       orders". Search / Status / Category are server-side (staff_search_item_serial_tracking). -->
+  <!-- Business Central list page (css/bc-list.css) - same shell as Online Orders, per "make the serial
+       tracker view better same as the orders view.. like BC style": status view tabs with counts, a
+       "Filter list by" pane, and every row action in the action bar working on the selected row (click a
+       row to select it; Open / double-click / the Serial No. opens its card). Search / Status / Category /
+       Location are server-side (staff_search_item_serial_tracking). -->
   <div class="page bc-ile">
     <div class="bc-titlebar">
       <div>
@@ -38,42 +47,91 @@
           <svg class="bc-ico"><use href="#ico-search"/></svg>
           <input type="text" id="searchInput" placeholder="Search serial no., item or SKU" aria-label="Search by serial no. or item code" autocomplete="off" />
         </div>
+        <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+          <svg class="bc-ico"><use href="#ico-filter"/></svg>
+        </button>
       </div>
     </div>
 
+    <!-- Action bar: works on the selected row (js/serialTracker.js updateSerialActionState). Reprint is
+         Super User / Production Manager; Edit Location / Mark In Stock / Mark Sold are Serial Admin (Mark
+         In Stock on a Sold serial: Super User) - hidden for everyone else. -->
     <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+      <button class="bc-cmd bc-cmd-accent" id="openSerialBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd hidden" id="reprintBtn" type="button" disabled title="Reprint the selected serial's barcode label"><svg class="bc-ico"><use href="#ico-print"/></svg>Reprint Label</button>
+      <button class="bc-cmd hidden" id="editLocationBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-pin"/></svg>Edit Location</button>
+      <button class="bc-cmd hidden" id="markInStockBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-done"/></svg>Mark In Stock</button>
+      <button class="bc-cmd hidden" id="markSoldBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-sold"/></svg>Mark Sold</button>
+      <!-- Super User only: the ticked serials (or the selected row) - admin_bulk_set_serial_status,
+           supabase_serial_bulk_floating.sql. Floating = can't be sold; Release puts them back In Stock. -->
+      <button class="bc-cmd hidden" id="floatSerialsBtn" type="button" disabled title="Mark the ticked serials Floating so they can't be sold (Sold / In Transit ones are skipped)"><svg class="bc-ico"><use href="#ico-float"/></svg><span id="floatSerialsLabel">Mark Floating</span></button>
+      <button class="bc-cmd hidden" id="releaseSerialsBtn" type="button" disabled title="Put the ticked Floating serials back In Stock"><svg class="bc-ico"><use href="#ico-done"/></svg><span id="releaseSerialsLabel">Release</span></button>
+      <span class="bc-cmd-sep" id="adminCmdSep"></span>
       <button class="bc-cmd" id="refreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
       <a class="bc-cmd" href="inventory-summary.html"><svg class="bc-ico"><use href="#ico-list"/></svg>Inventory Summary</a>
-      <span class="bc-cmd-sep"></span>
-      <label class="bc-cmd" for="statusFilter" style="gap:6px;">Status
-        <select id="statusFilter">
-          <option value="">All</option>
-          <option value="IN_STOCK">In Stock</option>
-          <option value="SOLD">Sold</option>
-          <option value="IN_TRANSIT">In Transit</option>
-          <option value="RESERVED">Reserved</option>
-          <option value="RETURNED">Returned</option>
-          <option value="REVERSED">Reversed</option>
-          <option value="MISSING">Missing</option>
-        </select>
-      </label>
-      <label class="bc-cmd" for="categoryFilter" style="gap:6px;">Category
-        <select id="categoryFilter">
-          <option value="">All</option>
-        </select>
-      </label>
-      <span class="bc-cmd-sep"></span>
-      <span class="bc-cmd" id="serialCount" style="cursor:default; color:var(--text-muted);"></span>
+      <span class="bc-cmd" id="serialCount" style="cursor:default; color:var(--text-muted); margin-left:auto;"></span>
     </div>
 
     <p class="bc-infobar hidden" id="warehouseFilterNote" style="margin:8px 0 0;"></p>
 
-    <div class="bc-body no-filterpane no-factbox">
+    <!-- Status view tabs with counts (js/serialTracker.js loadStatusCounts) - counted at the location
+         you're viewing, not narrowed by the search / category. Click to filter, click again to clear. -->
+    <div class="bc-tabs status-summary-bar" id="statusTabs">
+      <button type="button" class="bc-tab status-summary-pill active" data-status="">All <span class="status-summary-count" data-count="">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="IN_STOCK">In Stock <span class="status-summary-count" data-count="IN_STOCK">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="IN_TRANSIT">In Transit <span class="status-summary-count" data-count="IN_TRANSIT">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="RESERVED">Reserved <span class="status-summary-count" data-count="RESERVED">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="SOLD">Sold <span class="status-summary-count" data-count="SOLD">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="RETURNED">Returned <span class="status-summary-count" data-count="RETURNED">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="REVERSED">Reversed <span class="status-summary-count" data-count="REVERSED">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="MISSING">Missing <span class="status-summary-count" data-count="MISSING">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-status="FLOATING" title="On hold - can't be sold until a Super User releases them">Floating <span class="status-summary-count" data-count="FLOATING">-</span></button>
+    </div>
+
+    <div class="bc-body no-factbox" id="serialListView">
+      <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+        <div class="bc-pane-head">Filter list by</div>
+        <div class="bc-pane-body">
+          <div class="bc-fp-field">
+            <label for="statusFilter">Status</label>
+            <select id="statusFilter">
+              <option value="">All</option>
+              <option value="IN_STOCK">In Stock</option>
+              <option value="SOLD">Sold</option>
+              <option value="IN_TRANSIT">In Transit</option>
+              <option value="RESERVED">Reserved</option>
+              <option value="RETURNED">Returned</option>
+              <option value="REVERSED">Reversed</option>
+              <option value="MISSING">Missing</option>
+              <option value="FLOATING">Floating</option>
+            </select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="categoryFilter">Category</label>
+            <select id="categoryFilter">
+              <option value="">All categories</option>
+            </select>
+          </div>
+          <!-- Hidden for store staff limited to their own warehouse (js/serialTracker.js init). -->
+          <div class="bc-fp-field" id="locationFilterField">
+            <label for="locationFilter">Location</label>
+            <select id="locationFilter">
+              <option value="">All locations</option>
+            </select>
+          </div>
+          <p class="bc-fp-hint">Or pick a status tab above - click it again to clear.</p>
+          <button type="button" class="bc-link" id="clearFiltersBtn">Clear filters</button>
+        </div>
+      </aside>
+
       <section class="bc-main">
         <div class="bc-grid-wrap" id="serialGridWrap">
-          <table class="bc-grid" data-resize-key="serial-tracker">
+          <table class="bc-grid" data-resize-key="serial-tracker-v2">
             <thead>
               <tr>
+                <!-- Super User only (bulk Mark Floating / Release) - ticks every serial in the list. -->
+                <th class="hidden" id="selectAllHead" style="width:34px;"><input type="checkbox" id="selectAllSerials" aria-label="Tick every serial in the list" /></th>
                 <th>Serial No.</th>
                 <th>Item</th>
                 <th>SKU</th>
@@ -92,6 +150,18 @@
           </table>
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- Serial card (Open / double-click / the Serial No. link) - read-only, every field of the unit. -->
+  <div id="serialCardModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:720px; width:95vw;">
+      <div class="toolbar">
+        <h2 id="serialCardTitle" style="margin:0;">Serial</h2>
+        <span id="serialCardStatus" class="badge badge-neutral"></span>
+        <button class="btn btn-secondary btn-sm" id="closeSerialCardBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <div class="form-grid" id="serialCardFields"></div>
     </div>
   </div>
 
@@ -185,10 +255,11 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=all3"></script>
+  <script src="js/nav.js?v=sky1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
+  <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/serialTracker.js?v=bc6"></script>
+  <script src="js/serialTracker.js?v=bc9"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

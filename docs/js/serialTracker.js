@@ -10,9 +10,22 @@ let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit
 let canReprintLabels = false; // Super User / Production Manager - per-row Reprint (js/labelPrinter.js)
 let warehouseOptions = []; // [{ id, name }] loaded once, used by the edit-location dropdown
 let editLocationSerialNo = null;
-let urlLocationFilter = null; // ?location= from an Inventory Summary deep link - see openEditLocationModal's sibling, applyUrlFilters
 let urlVariantFilter = null; // ?variant= from an Inventory Summary deep link - narrows to the exact variant that count's row represented, not just the item code
 let serialSearchDebounceHandle = null;
+let selectedSerialNo = null; // the selected list row - the action bar works on it (BC list, same as Online Orders)
+let canBulkFloat = false; // Super User - tick column + Mark Floating / Release (admin_bulk_set_serial_status)
+const checkedSerialNos = new Set(); // ticked for bulk Mark Floating / Release
+let visibleSerialNos = []; // rows currently in the list, for the tick-all box
+
+// Store staff limited to their own warehouse's serials (Serial Admins and production staff see every
+// location) - the server-side restriction loadSerials / loadStatusCounts both apply.
+function ownWarehouseRestriction() {
+  return (!isProductionWarehouseUser && !isSerialAdmin && currentSession?.warehouseName) ? currentSession.warehouseName : null;
+}
+
+function locationFilterValue() {
+  return document.getElementById('locationFilter').value.trim();
+}
 
 // Non-production (store) warehouses only see serial activity for their own location - Production
 // staff need the full cross-warehouse picture (that's who runs Stock Counts / ships Transfer
@@ -51,6 +64,17 @@ async function loadWarehouseOptionsOnce() {
   }
 
   warehouseOptions = (data || []).filter((w) => w.name).map((w) => ({ id: w.id, name: w.name }));
+}
+
+// Filter pane's Location pick list - the same warehouse list; keeps a deep-linked value
+// (?location= from Inventory Summary) selectable even if it isn't in the list.
+function fillLocationFilter(selectedValue) {
+  const select = document.getElementById('locationFilter');
+  const names = warehouseOptions.map((w) => w.name);
+  if (selectedValue && !names.includes(selectedValue)) names.push(selectedValue);
+  select.innerHTML = '<option value="">All locations</option>'
+    + names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+  select.value = selectedValue || '';
 }
 
 // Category dropdown options - loaded once, same reasoning as loadWarehouseOptionsOnce (a fixed
@@ -140,6 +164,7 @@ async function saveEditLocation() {
 
   document.getElementById('editLocationModal').classList.add('hidden');
   renderSerials();
+  loadStatusCounts();
 }
 
 function statusBadgeClass(status) {
@@ -150,6 +175,7 @@ function statusBadgeClass(status) {
     case 'RETURNED': return 'badge-danger';
     case 'IN_TRANSIT': return 'badge-primary';
     case 'MISSING': return 'badge-danger';
+    case 'FLOATING': return 'badge-warning';
     default: return 'badge-neutral';
   }
 }
@@ -162,6 +188,7 @@ function statusLabel(status) {
     case 'RETURNED': return 'Returned';
     case 'IN_TRANSIT': return 'In Transit';
     case 'MISSING': return 'Missing';
+    case 'FLOATING': return 'Floating';
     default: return status || '';
   }
 }
@@ -332,19 +359,16 @@ async function loadSerials() {
   const search = document.getElementById('searchInput').value.trim();
   const status = document.getElementById('statusFilter').value;
   const category = document.getElementById('categoryFilter').value;
-  // Same own-warehouse restriction renderSerials used to apply client-side (Serial Admins are
-  // exempt - they need the full cross-store picture).
-  const ownWarehouseRestrict = (!isProductionWarehouseUser && !isSerialAdmin && currentSession?.warehouseName)
-    ? currentSession.warehouseName
-    : null;
+  syncStatusTabs();
+  loadStatusCounts();
 
   const { data, error } = await supabaseClient.rpc('staff_search_item_serial_tracking', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_search: search || null,
     p_status: status || null,
-    p_location_restrict: ownWarehouseRestrict,
-    p_location_filter: urlLocationFilter || null,
+    p_location_restrict: ownWarehouseRestriction(),
+    p_location_filter: locationFilterValue() || null,
     p_variant_filter: urlVariantFilter || null,
     p_category_code: category || null
   });
@@ -462,8 +486,8 @@ function renderSerials() {
     const ownWarehouse = currentSession.warehouseName.trim().toLowerCase();
     rows = rows.filter((r) => (r.Location || '').trim().toLowerCase() === ownWarehouse);
   }
-  if (urlLocationFilter) {
-    const targetLocation = urlLocationFilter.toLowerCase();
+  if (locationFilterValue()) {
+    const targetLocation = locationFilterValue().toLowerCase();
     rows = rows.filter((r) => (r.Location || '').trim().toLowerCase() === targetLocation);
   }
   if (urlVariantFilter) {
@@ -478,11 +502,18 @@ function renderSerials() {
     );
   }
 
+  const colCount = canBulkFloat ? 11 : 10;
+  visibleSerialNos = rows.map((r) => r.SerialNo);
+  // Ticks only count for rows still in the list (a filter change drops the rest).
+  [...checkedSerialNos].forEach((sn) => { if (!visibleSerialNos.includes(sn)) checkedSerialNos.delete(sn); });
+
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">No serial records found.</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="cell-msg">No serial records found.</td></tr>`;
     document.getElementById('serialCount').textContent = '0 serials';
+    selectSerialRow(null);
     return;
   }
+  if (selectedSerialNo && !rows.some((r) => r.SerialNo === selectedSerialNo)) selectedSerialNo = null;
 
   // Status stays otherwise read-only here - it's owned by whichever workflow moved the serial
   // (Stock Counts, Transfer Order shipment tagging, a sale, etc.) and editing it freely could
@@ -495,34 +526,28 @@ function renderSerials() {
   // other exception, same admin gate. Both Mark buttons only show when the serial's current
   // Location already matches the admin's own warehouse - acting on a serial physically tagged to
   // a DIFFERENT store here would misrepresent stock that isn't actually on hand locally.
-  // Business Central list look (css/bc-list.css .bc-grid): the serial reads as the row's document
-  // no., actions are text links (.bc-row-action) instead of grey buttons, Sold Receipt / Sold Online
-  // share one "Sold To" column and the update date / user share "Last Updated".
+  // Business Central list look (css/bc-list.css .bc-grid), same as Online Orders: no buttons in the
+  // rows - click a row to select it and use the action bar (updateSerialActionState); the Serial No.
+  // opens its card. Sold Receipt / Sold Online share one "Sold To" column and the update date / user
+  // share "Last Updated".
   document.getElementById('serialCount').textContent = `${rows.length.toLocaleString()} serial${rows.length === 1 ? '' : 's'}`;
   const sub = (text) => (text ? `<div class="muted" style="font-size:11px; line-height:1.3;">${text}</div>` : '');
   tbody.innerHTML = rows
     .map((r) => {
-      const canAct = isSerialAdmin && isOwnWarehouseLocation(r.Location);
-      const statusUpper = (r.Status || '').toUpperCase();
-      const markInStockBtn = canMarkInStock(r)
-        ? `<button class="bc-row-action mark-in-stock-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark In Stock</button>`
-        : '';
-      const markSoldBtn = canAct && statusUpper === 'IN_STOCK'
-        ? `<button class="bc-row-action mark-sold-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button">Mark Sold</button>`
-        : '';
       const soldTo = r.SoldReceiptNo
         ? `${escapeHtml(r.SoldReceiptNo)}${sub('POS receipt')}`
         : r.SoldOnlineOrderId
           ? `${escapeHtml(r.SoldOnlineOrderId)}${sub('Online order')}`
           : '<span class="muted">-</span>';
       return `
-      <tr>
-        <td style="white-space:nowrap;"><span class="bc-doc-no">${escapeHtml(r.SerialNo)}</span>${canReprintLabels ? `<button class="bc-row-action reprint-label-btn" data-serial="${encodeURIComponent(r.SerialNo)}" type="button" title="Reprint this serial's barcode label">Reprint</button>` : ''}${reprintCountHtml(r)}</td>
+      <tr class="clickable-row${r.SerialNo === selectedSerialNo ? ' selected' : ''}" data-serial="${encodeURIComponent(r.SerialNo)}">
+        ${canBulkFloat ? `<td><input type="checkbox" class="serial-tick" aria-label="Tick ${escapeHtml(r.SerialNo)}"${checkedSerialNos.has(r.SerialNo) ? ' checked' : ''} /></td>` : ''}
+        <td style="white-space:nowrap;"><a href="#" class="bc-doc-no" data-open-serial="${encodeURIComponent(r.SerialNo)}">${escapeHtml(r.SerialNo)}</a>${reprintCountHtml(r)}</td>
         <td style="white-space:nowrap;">${escapeHtml(r.ItemCode)}</td>
         <td style="white-space:nowrap;">${escapeHtml(r.VariantSku) || '<span class="muted">-</span>'}${colourTagHtml(serialColour(r))}</td>
         <td class="cell-text" title="${escapeHtml(r.ItemDescription)}">${escapeHtml(r.ItemDescription)}</td>
-        <td style="white-space:nowrap;">${escapeHtml(r.Location) || '<span class="muted">Unassigned</span>'}${isSerialAdmin ? `<button class="bc-row-action edit-location-btn" data-serial="${encodeURIComponent(r.SerialNo)}" data-location="${encodeURIComponent(r.Location || '')}" type="button">Edit</button>` : ''}</td>
-        <td style="white-space:nowrap;"><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span>${markInStockBtn}${markSoldBtn}</td>
+        <td style="white-space:nowrap;">${escapeHtml(r.Location) || '<span class="muted">Unassigned</span>'}</td>
+        <td style="white-space:nowrap;"><span class="badge ${statusBadgeClass(r.Status)}">${statusLabel(r.Status)}</span></td>
         <td style="white-space:nowrap;">${renderSourceDocCell(r.SourceDocumentNo) || '<span class="muted">-</span>'}</td>
         <td style="white-space:nowrap;">${r.Maker ? `${escapeHtml(r.Maker.maker_name || 'Not assigned')}${sub(`${r.Maker.part === 'stand' ? 'Stand' : 'Tank'} maker`)}` : '<span class="muted">-</span>'}</td>
         <td style="white-space:nowrap;">${soldTo}</td>
@@ -532,31 +557,248 @@ function renderSerials() {
     })
     .join('');
   fitGridToViewport();
+  updateSerialActionState();
+}
 
-  tbody.querySelectorAll('.source-doc-link').forEach((link) => {
+// ---- Selection + action bar (same pattern as Online Orders' selectOrderRow / updateOrderActionState)
+
+function selectedSerialRow() {
+  return selectedSerialNo ? allSerials.find((r) => r.SerialNo === selectedSerialNo) || null : null;
+}
+
+function selectSerialRow(serialNo) {
+  selectedSerialNo = serialNo;
+  document.querySelectorAll('#serialTableBody tr[data-serial]').forEach((tr) => {
+    tr.classList.toggle('selected', decodeURIComponent(tr.dataset.serial) === serialNo);
+  });
+  updateSerialActionState();
+}
+
+// Same permission rules the old per-row links used: Reprint (Super User / Production Manager), Edit
+// Location (Serial Admin), Mark In Stock (canMarkInStock), Mark Sold (Serial Admin, own warehouse,
+// In Stock only). Buttons a user can never use stay hidden; the rest enable for the selected row.
+function updateSerialActionState() {
+  const r = selectedSerialRow();
+  const setBtn = (id, visible, enabled, title) => {
+    const btn = document.getElementById(id);
+    btn.classList.toggle('hidden', !visible);
+    btn.disabled = !enabled;
+    if (title !== undefined) btn.title = title;
+  };
+  document.getElementById('openSerialBtn').disabled = !r;
+  setBtn('reprintBtn', canReprintLabels, !!r);
+  setBtn('editLocationBtn', isSerialAdmin, !!r);
+  const canMarkAnySold = isSerialAdmin || isSuperUserSession();
+  setBtn('markInStockBtn', canMarkAnySold, !!r && canMarkInStock(r),
+    r && (r.Status || '').toUpperCase() === 'SOLD' && !isSuperUserSession()
+      ? 'Only a Super User can put a Sold serial back In Stock' : 'Mark the selected serial In Stock');
+  setBtn('markSoldBtn', isSerialAdmin, !!r && isOwnWarehouseLocation(r.Location) && (r.Status || '').toUpperCase() === 'IN_STOCK',
+    'Mark the selected In Stock serial Sold (own warehouse only)');
+  document.getElementById('adminCmdSep').classList.toggle('hidden', !(canReprintLabels || isSerialAdmin || canMarkAnySold || canBulkFloat));
+
+  // Mark Floating / Release: the ticked serials, else the selected row.
+  const bulkCount = checkedSerialNos.size || (r ? 1 : 0);
+  const countSuffix = checkedSerialNos.size ? ` (${checkedSerialNos.size})` : '';
+  setBtn('floatSerialsBtn', canBulkFloat, bulkCount > 0);
+  setBtn('releaseSerialsBtn', canBulkFloat, bulkCount > 0);
+  document.getElementById('floatSerialsLabel').textContent = `Mark Floating${countSuffix}`;
+  document.getElementById('releaseSerialsLabel').textContent = `Release${countSuffix}`;
+  const selectAll = document.getElementById('selectAllSerials');
+  selectAll.checked = visibleSerialNos.length > 0 && checkedSerialNos.size === visibleSerialNos.length;
+  selectAll.indeterminate = checkedSerialNos.size > 0 && checkedSerialNos.size < visibleSerialNos.length;
+}
+
+// Super User bulk Mark Floating / Release (supabase_serial_bulk_floating.sql). FLOATING = can't be
+// sold (every picker only offers IN_STOCK); Release puts Floating serials back IN_STOCK. Sold / In
+// Transit ones are skipped by the server.
+async function bulkSetSerialStatus(status, btn) {
+  const serialNos = checkedSerialNos.size ? [...checkedSerialNos] : (selectedSerialNo ? [selectedSerialNo] : []);
+  if (!serialNos.length || !canBulkFloat) return;
+  const floating = status === 'FLOATING';
+  const plural = serialNos.length === 1 ? '' : 's';
+  const preview = serialNos.slice(0, 10).join('\n') + (serialNos.length > 10 ? `\n...and ${serialNos.length - 10} more` : '');
+  if (!confirm(floating
+    ? `Mark ${serialNos.length} serial${plural} Floating?\n\n${preview}\n\n`
+      + "They stay in the list but can't be picked for a sale anywhere (POS included) until released. "
+      + 'Sold and In Transit serials are skipped. The Item Ledger is not changed.'
+    : `Release ${serialNos.length} serial${plural} back In Stock?\n\n${preview}\n\nOnly Floating serials are changed.`)) return;
+
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_bulk_set_serial_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_nos: serialNos,
+    p_status: status
+  });
+  btn.disabled = false;
+  if (error) {
+    alert(`Could not update: ${error.message}`);
+    return;
+  }
+
+  const results = data || [];
+  const changed = results.filter((x) => x.changed).length;
+  const skipped = results.filter((x) => !x.changed);
+  checkedSerialNos.clear();
+  alert(`${floating ? 'Marked Floating' : 'Released'}: ${changed} serial${changed === 1 ? '' : 's'}.`
+    + (skipped.length
+      ? `\n\nSkipped ${skipped.length}:\n` + skipped.slice(0, 15).map((x) => `${x.serial_no} - ${x.reason}`).join('\n')
+        + (skipped.length > 15 ? `\n...and ${skipped.length - 15} more` : '')
+      : ''));
+  await loadSerials();
+}
+
+function wireSerialListActions() {
+  const tbody = document.getElementById('serialTableBody');
+  tbody.addEventListener('click', (event) => {
+    const tick = event.target.closest('.serial-tick');
+    if (tick) {
+      const serialNo = decodeURIComponent(tick.closest('tr[data-serial]').dataset.serial);
+      if (tick.checked) checkedSerialNos.add(serialNo);
+      else checkedSerialNos.delete(serialNo);
+      updateSerialActionState();
+      return;
+    }
+    const openLink = event.target.closest('[data-open-serial]');
+    if (openLink) {
+      event.preventDefault();
+      const serialNo = decodeURIComponent(openLink.dataset.openSerial);
+      selectSerialRow(serialNo);
+      openSerialCard(serialNo);
+      return;
+    }
+    const docLink = event.target.closest('.source-doc-link');
+    if (docLink) {
+      event.preventDefault();
+      resolveAndOpenSourceDoc(decodeURIComponent(docLink.dataset.docNo));
+      return;
+    }
+    const tr = event.target.closest('tr[data-serial]');
+    if (tr) selectSerialRow(decodeURIComponent(tr.dataset.serial));
+  });
+  tbody.addEventListener('dblclick', (event) => {
+    const tr = event.target.closest('tr[data-serial]');
+    if (tr && !event.target.closest('a')) openSerialCard(decodeURIComponent(tr.dataset.serial));
+  });
+
+  document.getElementById('openSerialBtn').addEventListener('click', () => selectedSerialNo && openSerialCard(selectedSerialNo));
+  document.getElementById('reprintBtn').addEventListener('click', (e) => selectedSerialNo && reprintSerialLabel(selectedSerialNo, e.currentTarget));
+  document.getElementById('editLocationBtn').addEventListener('click', () => {
+    const r = selectedSerialRow();
+    if (r) openEditLocationModal(r.SerialNo, r.Location || '');
+  });
+  document.getElementById('markInStockBtn').addEventListener('click', () => selectedSerialNo && markInStock(selectedSerialNo));
+  document.getElementById('markSoldBtn').addEventListener('click', () => selectedSerialNo && markSold(selectedSerialNo));
+  document.getElementById('floatSerialsBtn').addEventListener('click', (e) => bulkSetSerialStatus('FLOATING', e.currentTarget));
+  document.getElementById('releaseSerialsBtn').addEventListener('click', (e) => bulkSetSerialStatus('IN_STOCK', e.currentTarget));
+  document.getElementById('selectAllSerials').addEventListener('change', (e) => {
+    if (e.target.checked) visibleSerialNos.forEach((sn) => checkedSerialNos.add(sn));
+    else checkedSerialNos.clear();
+    document.querySelectorAll('#serialTableBody .serial-tick').forEach((box) => { box.checked = e.target.checked; });
+    updateSerialActionState();
+  });
+}
+
+// ---- Serial card (read-only)
+
+function openSerialCard(serialNo) {
+  const r = allSerials.find((row) => row.SerialNo === serialNo);
+  if (!r) return;
+  document.getElementById('serialCardTitle').textContent = r.SerialNo;
+  const badge = document.getElementById('serialCardStatus');
+  badge.textContent = statusLabel(r.Status);
+  badge.className = `badge ${statusBadgeClass(r.Status)}`;
+
+  const dash = '<span class="muted">-</span>';
+  const field = (label, html) => `<div class="form-row"><label>${label}</label><div>${html || dash}</div></div>`;
+  const p = r.Reprints;
+  document.getElementById('serialCardFields').innerHTML = [
+    field('Item', escapeHtml(r.ItemCode)),
+    field('SKU', `${escapeHtml(r.VariantSku)}${colourTagHtml(serialColour(r))}`),
+    field('Description', escapeHtml(r.ItemDescription)),
+    field('Variant', escapeHtml(r.VariantCode)),
+    field('Location', escapeHtml(r.Location) || '<span class="muted">Unassigned</span>'),
+    field('Source Doc.', renderSourceDocCell(r.SourceDocumentNo)),
+    field('Maker', r.Maker ? `${escapeHtml(r.Maker.maker_name || 'Not assigned')} <span class="muted">(${r.Maker.part === 'stand' ? 'Stand' : 'Tank'} maker)</span>` : ''),
+    field('Sold To', r.SoldReceiptNo ? `${escapeHtml(r.SoldReceiptNo)} <span class="muted">(POS receipt)</span>`
+      : r.SoldOnlineOrderId ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Online order)</span>` : ''),
+    field('Created', escapeHtml(formatDateTime(r.CreatedAtUtc))),
+    field('Last Updated', `${escapeHtml(formatDateTime(r.UpdatedAtUtc))}${r.UpdatedBy ? ` <span class="muted">by ${escapeHtml(r.UpdatedBy)}</span>` : ''}`),
+    field('Label Reprints', p && p.reprint_count ? `${p.reprint_count}&times; <span class="muted">(last ${escapeHtml(formatDateTime(p.last_reprinted_at))}${p.last_reprinted_by ? ` by ${escapeHtml(p.last_reprinted_by)}` : ''})</span>` : '')
+  ].join('');
+
+  document.getElementById('serialCardFields').querySelectorAll('.source-doc-link').forEach((link) => {
     link.addEventListener('click', (event) => {
       event.preventDefault();
       resolveAndOpenSourceDoc(decodeURIComponent(link.dataset.docNo));
     });
   });
+  document.getElementById('serialCardModal').classList.remove('hidden');
+}
 
-  tbody.querySelectorAll('.edit-location-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      openEditLocationModal(decodeURIComponent(btn.dataset.serial), decodeURIComponent(btn.dataset.location));
+// ---- Status view tabs
+
+function syncStatusTabs() {
+  const status = document.getElementById('statusFilter').value;
+  document.querySelectorAll('#statusTabs [data-status]').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.status === status);
+  });
+}
+
+// One exact count per status at the location being viewed (own-warehouse restriction / Location
+// filter) - head-only counts, so nothing is downloaded. Not narrowed by search / category, same as
+// Online Orders' status tabs counting the whole list.
+let statusCountsSeq = 0;
+async function loadStatusCounts() {
+  const seq = ++statusCountsSeq;
+  const location = locationFilterValue() || ownWarehouseRestriction();
+  const tabs = Array.from(document.querySelectorAll('#statusTabs [data-count]'));
+  const results = await Promise.all(tabs.map(async (el) => {
+    let query = supabaseClient.from('ItemSerialTracking').select('SerialNo', { count: 'exact', head: true });
+    if (el.dataset.count) query = query.eq('Status', el.dataset.count);
+    if (location) query = query.eq('Location', location);
+    const { count, error } = await query;
+    return error ? null : count;
+  }));
+  if (seq !== statusCountsSeq) return; // a newer filter change already asked again
+  tabs.forEach((el, i) => { el.textContent = results[i] == null ? '-' : results[i].toLocaleString(); });
+}
+
+function wireStatusTabsAndFilterPane() {
+  document.querySelectorAll('#statusTabs [data-status]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const select = document.getElementById('statusFilter');
+      // Clicking the active tab again clears it (All).
+      select.value = select.value === tab.dataset.status ? '' : tab.dataset.status;
+      loadSerials();
     });
   });
 
-  tbody.querySelectorAll('.mark-in-stock-btn').forEach((btn) => {
-    btn.addEventListener('click', () => markInStock(decodeURIComponent(btn.dataset.serial)));
+  let filterPaneOpen = true;
+  document.getElementById('filterPaneBtn').addEventListener('click', () => {
+    filterPaneOpen = !filterPaneOpen;
+    document.getElementById('filterPane').classList.toggle('hidden', !filterPaneOpen);
+    document.getElementById('serialListView').classList.toggle('no-filterpane', !filterPaneOpen);
+    document.getElementById('filterPaneBtn').setAttribute('aria-pressed', filterPaneOpen ? 'true' : 'false');
+    fitGridToViewport();
   });
 
-  tbody.querySelectorAll('.mark-sold-btn').forEach((btn) => {
-    btn.addEventListener('click', () => markSold(decodeURIComponent(btn.dataset.serial)));
+  document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+    document.getElementById('statusFilter').value = '';
+    document.getElementById('categoryFilter').value = '';
+    document.getElementById('locationFilter').value = '';
+    urlVariantFilter = null;
+    showWarehouseRestrictionNote();
+    loadSerials();
   });
+}
 
-  tbody.querySelectorAll('.reprint-label-btn').forEach((btn) => {
-    btn.addEventListener('click', () => reprintSerialLabel(decodeURIComponent(btn.dataset.serial), btn));
-  });
+// "Showing serials at <store> only." for store staff limited to their own warehouse; hidden otherwise.
+function showWarehouseRestrictionNote() {
+  const note = document.getElementById('warehouseFilterNote');
+  const own = ownWarehouseRestriction();
+  note.textContent = own ? `Showing serials at ${own} only.` : '';
+  note.classList.toggle('hidden', !own);
 }
 
 // Per "can you allow super user and production manager to reprint serials in Serial tracker": the
@@ -640,6 +882,7 @@ async function markInStock(serialNo) {
   row.UpdatedAtUtc = new Date().toISOString();
   row.UpdatedBy = currentSession?.username || null;
   renderSerials();
+  loadStatusCounts();
 }
 
 // Reverse of markInStock() - manually flips a serial to SOLD without a linked receipt/online
@@ -671,6 +914,7 @@ async function markSold(serialNo) {
   row.UpdatedAtUtc = new Date().toISOString();
   row.UpdatedBy = currentSession?.username || null;
   renderSerials();
+  loadStatusCounts();
 }
 
 (async function init() {
@@ -682,25 +926,25 @@ async function markSold(serialNo) {
   isProductionWarehouseUser = await resolveIsProductionWarehouse(session);
   isSerialAdmin = !!session.isSerialAdmin;
   canReprintLabels = !!(session.isSuperUser || session.isProductionManager) && !!window.LabelPrinter;
+  canBulkFloat = !!session.isSuperUser;
+  document.getElementById('selectAllHead').classList.toggle('hidden', !canBulkFloat);
   if (canReprintLabels) LabelPrinter.init(session);
 
   // Serial Admins always see every warehouse (see renderSerials), so the "restricted to your own
-  // warehouse" note would be inaccurate for them even though they're non-production.
-  if (!isProductionWarehouseUser && !isSerialAdmin && session.warehouseName) {
-    const note = document.getElementById('warehouseFilterNote');
-    note.textContent = `Showing serials at ${session.warehouseName} only.`;
-    note.classList.remove('hidden');
-  }
-
-  if (isSerialAdmin) {
+  // warehouse" note would be inaccurate for them even though they're non-production. Store staff
+  // limited to their own warehouse get no Location filter - there's nothing else for them to pick.
+  showWarehouseRestrictionNote();
+  if (ownWarehouseRestriction()) {
+    document.getElementById('locationFilterField').classList.add('hidden');
+  } else {
     await loadWarehouseOptionsOnce();
   }
 
   await loadCategoryOptionsOnce();
 
   // Deep link from Inventory Summary's clickable counts (see inventorySummary.js) - pre-fills the
-  // search/status filters and adds a Location filter (which this page otherwise doesn't expose as
-  // its own control) so clicking a count there lands here already narrowed to exactly those units.
+  // search / status / location filters so clicking a count there lands here already narrowed to
+  // exactly those units.
   const urlParams = new URLSearchParams(window.location.search);
   const urlItem = urlParams.get('item');
   const urlStatus = urlParams.get('status');
@@ -709,10 +953,10 @@ async function markSold(serialNo) {
   if (urlItem) document.getElementById('searchInput').value = urlItem;
   if (urlStatus) document.getElementById('statusFilter').value = urlStatus;
   if (urlVariant) urlVariantFilter = urlVariant;
-  if (urlLocation) {
-    urlLocationFilter = urlLocation;
+  if (!ownWarehouseRestriction()) fillLocationFilter(urlLocation || '');
+  if (urlLocation || urlVariant) {
     const note = document.getElementById('warehouseFilterNote');
-    note.innerHTML = `Filtered by location: ${escapeHtml(urlLocation)}${urlVariant ? ', variant: ' + escapeHtml(urlVariant) : ''} (from Inventory Summary) - <a href="serial-tracker.html">Clear</a>`;
+    note.innerHTML = `Filtered from Inventory Summary${urlLocation ? ` - location: ${escapeHtml(urlLocation)}` : ''}${urlVariant ? `, variant: ${escapeHtml(urlVariant)}` : ''} - <a href="serial-tracker.html">Clear</a>`;
     note.classList.remove('hidden');
   }
 
@@ -724,7 +968,13 @@ async function markSold(serialNo) {
   });
   document.getElementById('statusFilter').addEventListener('change', loadSerials);
   document.getElementById('categoryFilter').addEventListener('change', loadSerials);
+  document.getElementById('locationFilter').addEventListener('change', loadSerials);
   document.getElementById('refreshBtn').addEventListener('click', loadSerials);
+  wireSerialListActions();
+  wireStatusTabsAndFilterPane();
+  document.getElementById('closeSerialCardBtn').addEventListener('click', () =>
+    document.getElementById('serialCardModal').classList.add('hidden')
+  );
   window.addEventListener('resize', fitGridToViewport);
   document.getElementById('closeViewTransferBtn').addEventListener('click', () =>
     document.getElementById('viewTransferModal').classList.add('hidden')
