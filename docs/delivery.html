@@ -139,7 +139,7 @@
       <div class="form-grid">
         <div class="form-row">
           <label for="assignSearchInput">Search Orders</label>
-          <input type="text" id="assignSearchInput" placeholder="Search by order ID or customer..." />
+          <input type="text" id="assignSearchInput" placeholder="Search by order ID, advance no. or customer..." />
         </div>
         <div class="form-row">
           <label for="assignDateInput">Delivery Date</label>
@@ -152,11 +152,11 @@
           <thead>
             <tr>
               <th></th>
-              <th>Order ID</th>
-              <th>Customer</th>
-              <th>Status</th>
-              <th>Address</th>
-              <th>Currently Scheduled</th>
+              <th class="sortable-th assign-sort-th" data-sort="order_id">Order ID<span class="sort-indicator"></span></th>
+              <th class="sortable-th assign-sort-th" data-sort="customer_name">Customer<span class="sort-indicator"></span></th>
+              <th class="sortable-th assign-sort-th" data-sort="status">Status<span class="sort-indicator"></span></th>
+              <th class="sortable-th assign-sort-th" data-sort="shipping_address">Address<span class="sort-indicator"></span></th>
+              <th class="sortable-th assign-sort-th" data-sort="type">Type<span class="sort-indicator"></span></th>
             </tr>
           </thead>
           <tbody id="assignOrdersTableBody">
@@ -233,6 +233,12 @@
           <label for="noAddressNotePrintInput">Print Note (shown on driver stop card + printed manifest/receipt)</label>
           <textarea id="noAddressNotePrintInput" rows="2" placeholder="e.g. Custom sump holder, sticker plain black, butas sa glass para sadrain"></textarea>
         </div>
+        <!-- Manual delivery fee (sql/supabase_delivery_stop_manual_fee.sql) - replaces the order's own fee
+             on this stop's receipt / invoice / manifest, and Total / Balance move with it. Blank = keep. -->
+        <div class="form-row walkin-extra-row hidden">
+          <label for="noAddressDeliveryFeeInput">Delivery Fee (manual)</label>
+          <input type="number" id="noAddressDeliveryFeeInput" min="0" step="0.01" inputmode="decimal" placeholder="Blank = keep the order's fee" />
+        </div>
       </div>
 
       <div style="margin-top:16px; text-align:right;">
@@ -260,10 +266,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky2"></script>
+  <script src="js/nav.js?v=bills1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/delivery.js?v=push1"></script>
+  <script src="js/delivery.js?v=advdeliv3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

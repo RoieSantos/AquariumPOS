@@ -759,12 +759,14 @@ async function handleProdOrderDoneClick(btn) {
   const orderNo = card.dataset.prodNo;
   const parts = card.dataset.prodParts.split(',').filter(Boolean);
   const partText = parts.map((p) => (p === 'tank' ? 'tank' : 'stand')).join(' and ');
-  const ok = await confirmAction({
+  const ok = await confirmWithPhoto({
     caption: 'PRODUCTION DONE',
     title: orderNo,
-    message: `Is your part (${partText}) completely finished?\n\nThe order will leave your list.`,
+    message: `Is your part (${partText}) completely finished?\n\nTake a photo of the finished ${partText} first. The order will leave your list.`,
     confirmLabel: 'Yes, Production Done',
-    tone: 'is-done'
+    tone: 'is-done',
+    refId: orderNo,
+    label: `Production Done (${partText})`
   });
   if (!ok) return false;
 
@@ -1187,6 +1189,153 @@ function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml
   });
 }
 
+// Same as confirmAction, plus a mandatory proof photo - per "can we mandatory ask them for picture once
+// they clicked Production done? same goes to release/ship". The confirm button stays disabled until a
+// photo is picked; on confirm it's uploaded (uploadOrderStatusPhoto - same bucket as Send Photo) and
+// recorded against refId with `label` (staff_record_online_order_proof_photo,
+// sql/supabase_online_order_proof_photos.sql). Not sent to the customer. Resolves true only once the
+// photo is saved; Cancel / Escape / backdrop -> false.
+// General Setup can switch the photo off (proofPhotoRequired) - then it's the plain confirmAction, minus
+// the "Take a photo of ... first." sentence.
+async function confirmWithPhoto(opts) {
+  const kind = /^Production Done/.test(opts.label || '') ? 'production' : 'release';
+  if (await proofPhotoRequired(kind)) return confirmWithPhotoDialog(opts);
+  const { caption, title, message, confirmLabel, tone } = opts;
+  return confirmAction({ caption, title, message: message.replace(/Take a photo of [^.]*first\.\s*/, '').trim(), confirmLabel, tone });
+}
+
+// PortalSettings PROOF_PHOTO_PRODUCTION_DONE / PROOF_PHOTO_RELEASE ('true' / 'false'), set on General
+// Setup -> Online Orders - Proof Photos. Read on every click so a change applies without a reload.
+// Not saved yet (or can't be read) -> required, the safe default.
+async function proofPhotoRequired(kind) {
+  const { data, error } = await supabaseClient.rpc('admin_get_public_portal_setting', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_setting_key: kind === 'production' ? 'PROOF_PHOTO_PRODUCTION_DONE' : 'PROOF_PHOTO_RELEASE'
+  });
+  if (error) console.warn('admin_get_public_portal_setting:', error.message);
+  return !!error || String(data ?? '').trim().toLowerCase() !== 'false';
+}
+
+function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = '', refId, label }) {
+  const dialog = document.getElementById('proofPhotoDialog');
+  const panel = dialog.querySelector('.oo-proof-dialog');
+  const okBtn = document.getElementById('proofPhotoOkBtn');
+  const cancelBtn = document.getElementById('proofPhotoCancelBtn');
+  const input = document.getElementById('proofPhotoInput');
+  const pick = dialog.querySelector('.oo-proof-pick');
+  const preview = document.getElementById('proofPhotoPreview');
+  const pickText = document.getElementById('proofPhotoPickText');
+  const errorEl = document.getElementById('proofPhotoError');
+  const pickPrompt = '\u{1F4F7} Take a photo (required)';
+  let file = null;
+  let previewUrl = null;
+
+  document.getElementById('proofPhotoCaption').textContent = caption;
+  document.getElementById('proofPhotoTitle').textContent = title;
+  document.getElementById('proofPhotoMessage').textContent = message;
+  okBtn.textContent = confirmLabel;
+  panel.classList.remove('is-done', 'is-ship', 'is-undo');
+  if (tone) panel.classList.add(tone);
+  input.value = '';
+  preview.classList.add('hidden');
+  preview.removeAttribute('src');
+  pick.classList.remove('has-photo');
+  pickText.textContent = pickPrompt;
+  errorEl.classList.add('hidden');
+
+  return new Promise((resolve) => {
+    let busy = false;
+    const finish = (answer) => {
+      dialog.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      dialog.removeEventListener('click', onBackdrop);
+      input.removeEventListener('change', onPick);
+      document.removeEventListener('keydown', onKey, true);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      resolve(answer);
+    };
+    const onPick = () => {
+      file = input.files && input.files[0] || null;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = file ? URL.createObjectURL(file) : null;
+      preview.classList.toggle('hidden', !file);
+      if (file) preview.src = previewUrl;
+      pick.classList.toggle('has-photo', !!file);
+      pickText.textContent = file ? 'Tap to retake' : pickPrompt;
+      errorEl.classList.add('hidden');
+      okBtn.disabled = !file;
+    };
+    const onOk = async () => {
+      if (!file || busy) return;
+      busy = true;
+      okBtn.disabled = cancelBtn.disabled = true;
+      okBtn.textContent = 'Saving photo...';
+      const fail = (msg) => {
+        errorEl.textContent = msg;
+        errorEl.classList.remove('hidden');
+        okBtn.textContent = confirmLabel;
+        okBtn.disabled = cancelBtn.disabled = false;
+        busy = false;
+      };
+      // Shrunk to a JPEG first: the bucket takes at most 10 MB and only JPEG/PNG/WebP, and some phones
+      // shoot 15+ MB or HEIC. If the browser can't read it, try the original.
+      const upload = await shrinkProofPhoto(file).catch(() => file);
+      const photo = await uploadOrderStatusPhoto(String(refId), upload, { quiet: true });
+      if (photo?.error) return fail(photo.error);
+      const { error } = await supabaseClient.rpc('staff_record_online_order_proof_photo', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_ref_id: String(refId),
+        p_label: label,
+        p_photo_url: photo.url,
+        p_photo_storage_path: photo.storagePath
+      });
+      if (error) return fail(`Could not save the photo: ${error.message}`);
+      okBtn.textContent = confirmLabel;
+      cancelBtn.disabled = false;
+      finish(true);
+    };
+    const onCancel = () => { if (!busy) finish(false); };
+    const onBackdrop = (e) => { if (e.target === dialog && !busy) finish(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopImmediatePropagation(); if (!busy) finish(false); }
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    dialog.addEventListener('click', onBackdrop);
+    input.addEventListener('change', onPick);
+    document.addEventListener('keydown', onKey, true);
+
+    okBtn.disabled = true;
+    cancelBtn.disabled = false;
+    dialog.classList.remove('hidden');
+    cancelBtn.focus();
+  });
+}
+
+// At most 1600px on the long side, re-encoded as JPEG - same idea as compressImage in defectItems.js.
+function shrinkProofPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob
+        ? resolve(new File([blob], 'proof.jpg', { type: 'image/jpeg' }))
+        : reject(new Error('Could not process the photo.'))), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a readable image.')); };
+    img.src = url;
+  });
+}
+
 function orderLabel(o) {
   return `Order ${o.order_id}${o.customer_name ? ` · ${o.customer_name}` : ''}`;
 }
@@ -1367,12 +1516,14 @@ async function markOrderShipped(orderId, btn) {
 }
 
 async function markOrderShippedWhole(o, btn) {
-  const ok = await confirmAction({
+  const ok = await confirmWithPhoto({
     caption: 'MARK SHIPPED',
     title: orderLabel(o),
-    message: `Has this order been shipped / handed to the customer?\n\nIt changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+    message: `Has this order been shipped / handed to the customer?\n\nTake a photo of what is leaving first. It changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
     confirmLabel: 'Yes, Mark Shipped',
-    tone: 'is-ship'
+    tone: 'is-ship',
+    refId: o.order_id,
+    label: 'Released - Shipped'
   });
   if (!ok) return;
   btn.disabled = true;
@@ -1457,20 +1608,25 @@ async function saveRelease() {
   if (bad) return fail(`Quantity must be a whole number from 1 to ${bad.left}.`);
   const full = releaseSelection().every((s) => s.quantity >= s.left);
 
-  const ok = await confirmAction(full
+  const count = sel.reduce((n, s) => n + s.quantity, 0);
+  const ok = await confirmWithPhoto(full
     ? {
       caption: 'RELEASE ALL - MARK SHIPPED',
       title: orderLabel(o),
-      message: `Release everything that is left?\n\nThe order changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+      message: `Release everything that is left?\n\nTake a photo of what is leaving first. The order changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
       confirmLabel: 'Yes, Mark Shipped',
-      tone: 'is-ship'
+      tone: 'is-ship',
+      refId: o.order_id,
+      label: 'Released - Shipped'
     }
     : {
       caption: 'PARTIAL RELEASE',
       title: orderLabel(o),
-      message: `Release ${sel.reduce((n, s) => n + s.quantity, 0)} item(s) now?\n\nThe rest stays pending - the order stays in To Ship until everything is released. Nothing changes in Pancake yet.`,
+      message: `Release ${count} item(s) now?\n\nTake a photo of what is leaving first. The rest stays pending - the order stays in To Ship until everything is released. Nothing changes in Pancake yet.`,
       confirmLabel: 'Yes, Release',
-      tone: 'is-ship'
+      tone: 'is-ship',
+      refId: o.order_id,
+      label: `Released (partial, ${count} item${count === 1 ? '' : 's'})`
     });
   if (!ok) return;
 
@@ -1662,20 +1818,22 @@ async function handleProductionDoneClick(orderId, btn) {
   if (!mine.length) return;
   const undo = mine.every((role) => o.production_done?.[role]);
   const parts = mine.map((r) => MAKER_ROLES[r].label.replace(' Maker', '').toLowerCase()).join(' and ');
-  const ok = await confirmAction(undo
-    ? {
+  const ok = undo
+    ? await confirmAction({
       caption: 'UNDO PRODUCTION DONE',
       title: orderLabel(o),
       message: `Undo Production Done for your part (${parts})?\n\nIt goes back to being in production.`,
       confirmLabel: 'Yes, Undo',
       tone: 'is-undo'
-    }
-    : {
+    })
+    : await confirmWithPhoto({
       caption: 'PRODUCTION DONE',
       title: orderLabel(o),
-      message: `Is your part (${parts}) completely finished?${myAssignmentsOnly ? '\n\nThe order will leave your list.' : ''}`,
+      message: `Is your part (${parts}) completely finished?\n\nTake a photo of the finished ${parts} first.${myAssignmentsOnly ? ' The order will leave your list.' : ''}`,
       confirmLabel: 'Yes, Production Done',
-      tone: 'is-done'
+      tone: 'is-done',
+      refId: o.order_id,
+      label: `Production Done (${parts})`
     });
   if (!ok) return;
 
@@ -1820,6 +1978,15 @@ function noteCellHtml(o) {
   return (o.received_at_shop ? [pos, print] : [print, pos]).filter(Boolean).join('');
 }
 
+// Dispatch Date column (sql/supabase_online_orders_list_sort.sql dispatched_at / advance shipped_at):
+// the date in the cell, the full date + time on hover. Blank until it's shipped / released / picked up.
+function dispatchDateHtml(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return escapeHtml(value);
+  return `<span title="${escapeHtml(d.toLocaleString())}">${escapeHtml(d.toLocaleDateString())}</span>`;
+}
+
 // BC list rows: data only, no buttons. Every action (Open / Send Photo / To-Ship Message / To Ship)
 // lives on the action bar and works on the selected row (see wireOrderListActions), and the
 // Order ID drills into the Online Order document (openOrderCard) the way a BC "No." field does.
@@ -1846,6 +2013,7 @@ function orderRowsHtml(orders) {
         ${hidePrices() ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
+        <td>${dispatchDateHtml(o.dispatched_at)}</td>
         <td>${o.last_updated_at ? new Date(o.last_updated_at).toLocaleString() : ''}</td>
       </tr>
     `)
@@ -3269,7 +3437,8 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
 // supabase_online_order_status_photo.sql) - returns {url, storagePath}, or null (with an alert) if
 // the upload itself failed. Shared by both the (currently disabled) To Ship photo step and the
 // standalone Send Photo button below - neither RPC it calls cares which flow triggered it.
-async function uploadOrderStatusPhoto(orderId, file) {
+// { quiet: true } (confirmWithPhoto) returns { error } instead of alerting.
+async function uploadOrderStatusPhoto(orderId, file, { quiet = false } = {}) {
   const { data, error } = await supabaseClient.rpc('admin_create_online_order_status_photo_upload', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
@@ -3278,7 +3447,9 @@ async function uploadOrderStatusPhoto(orderId, file) {
   });
 
   if (error || !data || !data[0]) {
-    alert('Could not prepare the photo upload: ' + (error ? error.message : 'unknown error'));
+    const msg = 'Could not prepare the photo upload: ' + (error ? error.message : 'unknown error');
+    if (quiet) return { error: msg };
+    alert(msg);
     return null;
   }
 
@@ -3288,7 +3459,9 @@ async function uploadOrderStatusPhoto(orderId, file) {
     .uploadToSignedUrl(storage_path, upload_token, file);
 
   if (uploadError) {
-    alert('Photo upload failed: ' + uploadError.message);
+    const msg = 'Photo upload failed: ' + uploadError.message;
+    if (quiet) return { error: msg };
+    alert(msg);
     return null;
   }
 
@@ -4430,7 +4603,9 @@ function cardStatusPhotoHtml(p) {
       <button type="button" class="status-photo-remove-btn" data-photo-id="${escapeHtml(p.photo_id)}" title="Remove photo">&times;</button>
       <div class="status-photo-meta">
         <div>${escapeHtml(p.status)} - ${takenAt}</div>
-        <div class="${p.sent_to_customer ? '' : 'error-text'}" title="${escapeHtml(p.send_error)}">${p.sent_to_customer ? 'Sent to customer' : 'Not sent to customer'}</div>
+        ${p.sent_to_customer == null
+          ? '<div class="muted">Proof photo</div>'
+          : `<div class="${p.sent_to_customer ? '' : 'error-text'}" title="${escapeHtml(p.send_error)}">${p.sent_to_customer ? 'Sent to customer' : 'Not sent to customer'}</div>`}
         <div class="muted">by ${escapeHtml(p.uploaded_by)}</div>
       </div>
     </div>`;
@@ -4544,6 +4719,36 @@ async function loadOrderCardPaymentMethods(orderId) {
   el.innerHTML = rows.map((r) => `<div title="${escapeHtml(r.code || '')}">${escapeHtml(r.method)}: ${money(r.amount)}</div>`).join('');
 }
 
+// Super-user-only "Delete Order" (cleanup of junk/test orders) - admin_delete_online_order in
+// supabase_online_order_admin_delete.sql. The RPC refuses orders that already posted stock or have
+// serials sold against them, and remembers the ID so the POS / Pancake sync can't push it back.
+async function deleteOnlineOrder(orderId, btn) {
+  if (!currentSession?.isSuperUser) {
+    alert('Only super users can delete orders.');
+    return;
+  }
+  const o = findFlatOrder(orderId);
+  const label = `#${orderId}${o?.customer_name ? ' (' + o.customer_name + ')' : ''}`;
+  if (!confirm(`Permanently delete order ${label} from the portal?\n\nThis is for cleaning up junk/test orders only - its lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring it back. This cannot be undone.`)) return;
+  if (prompt(`Type the order number (${orderId}) to confirm:`)?.trim() !== String(orderId)) {
+    alert('Order number did not match - nothing deleted.');
+    return;
+  }
+  btn.disabled = true;
+  const { error } = await supabaseClient.rpc('admin_delete_online_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  btn.disabled = false;
+  if (error) {
+    alert(`Could not delete order: ${error.message}`);
+    return;
+  }
+  closeOrderCard();
+  await refreshCurrentOrders();
+}
+
 function closeOrderCard() {
   openCardOrderId = null;
   orderCardLoadGeneration++;
@@ -4566,11 +4771,12 @@ function wireOrderCard() {
   document.getElementById('cardToShipBtn').addEventListener('click', (e) => openCardOrderId && handleToShipClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardProductionDoneBtn').addEventListener('click', (e) => openCardOrderId && handleProductionDoneClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardPrintSerialsBtn').addEventListener('click', (e) => openCardOrderId && printOrderSerialLabels(openCardOrderId, e.currentTarget));
+  document.getElementById('cardDeleteOrderBtn').addEventListener('click', (e) => openCardOrderId && deleteOnlineOrder(openCardOrderId, e.currentTarget));
   document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
-    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog', 'sendBackDialog', 'confirmActionDialog']
+    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog', 'sendBackDialog', 'confirmActionDialog', 'proofPhotoDialog']
       .some((id) => !document.getElementById(id).classList.contains('hidden'));
     if (!stacked) closeOrderCard();
   });
@@ -4707,7 +4913,8 @@ async function loadOrders(search, status) {
     p_confirmed_by: currentConfirmedBy,
     p_status_in: grouped ? ONLINE_ORDER_STAFF_STATUS_SCOPE : null,
     p_assigned_to_me: myAssignmentsOnly,
-    ...orderFieldFiltersParam()
+    ...orderFieldFiltersParam(),
+    ...listSortParam(orderListSort)
   });
 
   if (myGeneration !== loadGeneration) return;
@@ -4719,7 +4926,7 @@ async function loadOrders(search, status) {
     if (grouped) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
-      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="23" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="24" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     }
     return;
   }
@@ -4767,7 +4974,7 @@ async function loadOrders(search, status) {
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
-    ? `<tr><td colspan="23" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
+    ? `<tr><td colspan="24" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
 
   renderPaginationBar(
@@ -4780,6 +4987,44 @@ async function loadOrders(search, status) {
   );
   fitGridToViewport();
 }
+
+// Header click-to-sort - per "can you let the user sort it on what ever fields by clicking the field
+// header". Sorted server-side (sql/supabase_online_orders_list_sort.sql) since the lists are paged.
+// column null = the server's default order (latest update first). Online and Walk-in share one state
+// (same grid); Advance has its own.
+const orderListSort = { column: null, dir: 'asc' };
+const advanceListSort = { column: null, dir: 'asc' };
+
+// Only sent once a header was clicked, so the page still works before the sort SQL is run.
+function listSortParam(sort) {
+  return sort.column ? { p_sort_column: sort.column, p_sort_dir: sort.dir } : {};
+}
+
+function updateListSortHeaders(gridWrapId, sort) {
+  document.querySelectorAll(`#${gridWrapId} thead th.sortable`).forEach((th) => {
+    const active = th.dataset.sortKey === sort.column;
+    th.classList.toggle('sort-asc', active && sort.dir === 'asc');
+    th.classList.toggle('sort-desc', active && sort.dir === 'desc');
+    th.querySelector('.sort-arrow').textContent = active ? (sort.dir === 'asc' ? '▲' : '▼') : '';
+  });
+}
+
+// Click a header to sort by it, click it again to reverse (BC-style). Back to page 1 - the order changed.
+function wireListSortHeaders(gridWrapId, sort, reload) {
+  document.querySelectorAll(`#${gridWrapId} thead th.sortable`).forEach((th) => {
+    th.title = th.title || 'Click to sort - click again to reverse';
+    th.addEventListener('click', () => {
+      if (!currentSession) return;
+      sort.dir = sort.column === th.dataset.sortKey && sort.dir === 'asc' ? 'desc' : 'asc';
+      sort.column = th.dataset.sortKey;
+      updateListSortHeaders(gridWrapId, sort);
+      reload();
+    });
+  });
+}
+
+wireListSortHeaders('orderGridWrap', orderListSort, () => { currentPage = 1; refreshCurrentOrders(); });
+wireListSortHeaders('advanceGridWrap', advanceListSort, () => { advancePage = 1; loadAdvanceOrders(); });
 
 // The list grid fills the rest of the window (css/bc-list.css .bc-grid-wrap) - measured, since the
 // chrome above it (info bar, status tabs) comes and goes.
@@ -4833,7 +5078,8 @@ async function exportOrdersToExcel() {
         p_page: page,
         p_page_size: exportPageSize,
         p_confirmed_by: currentConfirmedBy,
-        ...orderFieldFiltersParam()
+        ...orderFieldFiltersParam(),
+        ...listSortParam(orderListSort)
       });
 
       if (error) {
@@ -4862,7 +5108,8 @@ async function exportOrdersToExcel() {
       'Order ID', 'Date', 'Time', 'Status', 'Customer', 'Location ID', 'Warehouse',
       'Money To Collect', 'Amount Paid', 'Discount', 'Balance', 'For Delivery',
       'Shipping Address', 'Est. Delivery Date', 'Last Updated', 'Synced At', 'Glass Thickness',
-      'Created By', 'Confirmed By', 'Print Note', 'Delivery Fee', 'Has Custom Line', 'Assigned Production Member'
+      'Created By', 'Confirmed By', 'Print Note', 'Delivery Fee', 'Has Custom Line', 'Assigned Production Member',
+      'Dispatch Date'
     ];
     const csvLines = [headers.map(escapeCsvValue).join(',')];
     allRows.forEach((o) => {
@@ -4889,7 +5136,8 @@ async function exportOrdersToExcel() {
         o.note_print,
         o.delivery_fee,
         o.has_custom_line ? 'Yes' : 'No',
-        o.assigned_production_member_name || o.assigned_production_member
+        o.assigned_production_member_name || o.assigned_production_member,
+        o.dispatched_at ? new Date(o.dispatched_at).toLocaleString() : ''
       ].map(escapeCsvValue).join(','));
     });
 
@@ -5124,7 +5372,7 @@ if (new URLSearchParams(window.location.search).get('scope') === 'walkin') {
   if (tagsHeader) tagsHeader.textContent = 'Tags';
   // The POS description has its own columns here (posFieldCellsHtml) - "Print Note" stays as is.
   // v4: five POS columns were added after Print Note, so older saved widths no longer line up.
-  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v4';
+  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v5';
 }
 
 // ---------------------------------------------------------------- Advance Orders tab
@@ -5242,6 +5490,7 @@ function advanceRowsHtml(rows) {
       <td class="num">${formatAdvanceMoney(o.balance)}</td>
       <td>${o.fully_paid ? 'Yes' : 'No'}</td>
       <td>${o.date_paid ? escapeHtml(new Date(o.date_paid).toLocaleString()) : ''}</td>
+      <td>${dispatchDateHtml(o.shipped_at)}</td>
       <td>${escapeHtml(o.online_order_id || '')}</td>
     </tr>`).join('');
 }
@@ -5301,26 +5550,27 @@ function updateAdvanceListActions() {
 
 async function loadAdvanceOrders() {
   const tbody = document.getElementById('advanceTableBody');
-  tbody.innerHTML = '<tr><td colspan="18" class="cell-msg">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="19" class="cell-msg">Loading...</td></tr>';
   const thisGeneration = ++advanceLoadGeneration;
 
   const { data, error } = await advanceRpc('admin_list_advance_orders', {
     p_search: document.getElementById('orderSearchInput').value.trim() || null,
     p_page: advancePage,
     p_page_size: advancePageSize,
-    p_prod_status: advanceStatusFilter
+    p_prod_status: advanceStatusFilter,
+    ...listSortParam(advanceListSort)
   });
   if (thisGeneration !== advanceLoadGeneration) return; // superseded by a newer search/page
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="18" class="cell-msg error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_order_production.sql.' : ''}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="19" class="cell-msg error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_order_production.sql.' : ''}</td></tr>`;
     return;
   }
 
   (data || []).forEach((o) => advanceRowsByNo.set(String(o.transaction_no), o));
   if (selectedAdvanceNo && !(data || []).some((o) => String(o.transaction_no) === selectedAdvanceNo)) selectedAdvanceNo = null;
   tbody.innerHTML = !data || data.length === 0
-    ? `<tr><td colspan="18" class="cell-msg">No advance orders found${advanceStatusFilter ? ` in ${escapeHtml(advanceStatusFilter)}` : ''}.</td></tr>`
+    ? `<tr><td colspan="19" class="cell-msg">No advance orders found${advanceStatusFilter ? ` in ${escapeHtml(advanceStatusFilter)}` : ''}.</td></tr>`
     : advanceRowsHtml(data);
   updateAdvanceListActions();
 
@@ -5613,7 +5863,10 @@ async function setAdvanceStage(no, stage, btn) {
     : stage === 'To Ship'
       ? { caption: 'READY TO SHIP', message: status === 'New' ? 'No makers are assigned. Mark it Ready to Ship anyway?' : 'Production is done. Mark it Ready to Ship?', confirmLabel: 'Yes, Ready to Ship', tone: 'is-done' }
       : { caption: 'UNDO STAGE', message: `Step this order back from ${status}?`, confirmLabel: 'Yes, Undo', tone: '' };
-  const ok = await confirmAction({ ...copy, title: `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}` });
+  const title = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  const ok = stage === 'Shipped'
+    ? await confirmWithPhoto({ ...copy, message: `${copy.message}\n\nTake a photo of what is leaving first.`, title, refId: no, label: 'Released - Shipped' })
+    : await confirmAction({ ...copy, title });
   if (!ok) return;
   btn.disabled = true;
   const { error } = await advanceRpc('staff_set_advance_order_stage', { p_no: no, p_stage: stage });
@@ -5757,12 +6010,14 @@ async function handleAdvanceDoneClick(btn) {
   const card = btn.closest('[data-adv-no]');
   const no = card.dataset.advNo;
   const parts = card.dataset.advParts.split(',').filter(Boolean);
-  const ok = await confirmAction({
+  const ok = await confirmWithPhoto({
     caption: 'PRODUCTION DONE',
     title: `Advance order ${no}`,
-    message: `Is your part (${parts.join(' and ')}) completely finished?\n\nThe order will leave your list.`,
+    message: `Is your part (${parts.join(' and ')}) completely finished?\n\nTake a photo of the finished ${parts.join(' and ')} first. The order will leave your list.`,
     confirmLabel: 'Yes, Production Done',
-    tone: 'is-done'
+    tone: 'is-done',
+    refId: no,
+    label: `Production Done (${parts.join(' and ')})`
   });
   if (!ok) return;
   btn.disabled = true;
@@ -5864,6 +6119,7 @@ async function initAdvanceOrdersView() {
     return;
   }
   document.getElementById('exportExcelBtn').classList.toggle('hidden', !session.isSuperUser);
+  document.getElementById('cardDeleteOrderBtn').classList.toggle('hidden', !session.isSuperUser);
   wireItemLedgerButton(session);
   // Delegated on #setupContent (not #orderTableBody directly) so the same "To Ship" handling
   // works whether the click lands in the flat table or one of the three grouped-view tables

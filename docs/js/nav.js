@@ -233,6 +233,8 @@ function renderTopNav(activeLabel) {
     reports.push({ href: 'message-timing.html', label: 'Message Timing' });
     reports.push({ href: 'expense-entries.html', label: 'Expenses' });
     reports.push({ href: 'expense-journal.html', label: 'Expense Journal' });
+    // Recurring must-pay bills - rent, utilities, BIR, SSS... (supabase_business_bills.sql).
+    reports.push({ href: 'business-bills.html', label: 'Bills & Dues' });
     // Purchases + expenses and each cause's share of the total (supabase_spending_report.sql).
     reports.push({ href: 'spending-report.html', label: 'Purchases & Expenses' });
     // Financials - super users only, matching the Expenses page it draws from. Both RPCs behind

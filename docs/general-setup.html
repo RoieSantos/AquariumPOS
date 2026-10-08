@@ -147,6 +147,37 @@
 
       <div class="section-divider"></div>
 
+      <!-- Proof photos on Online Orders (js/generalSetup.js loadProofPhotoSettings, read by
+           js/onlineOrders.js proofPhotoRequired). Stored as PortalSettings PROOF_PHOTO_PRODUCTION_DONE /
+           PROOF_PHOTO_RELEASE, visible to staff so the makers' pages can read them. -->
+      <div class="toolbar">
+        <h2 style="margin:0;">Online Orders - Proof Photos</h2>
+      </div>
+      <p class="muted">When on, staff must take a photo before the action goes through. The photo is saved on the order (Photos on the order card) and is not sent to the customer.</p>
+
+      <div class="form-row">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="proofPhotoProductionInput" style="width:auto;" />
+          <span>Require a photo on Production Done</span>
+        </label>
+        <span class="muted" style="font-size:12px; display:block; margin-top:2px;">Makers - online orders, restock Production Orders and Advance Orders.</span>
+      </div>
+      <div class="form-row">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="proofPhotoReleaseInput" style="width:auto;" />
+          <span>Require a photo on Release / Mark Shipped</span>
+        </label>
+        <span class="muted" style="font-size:12px; display:block; margin-top:2px;">Dispatchers - partial release, release all, Mark Shipped, and Advance Order Mark Shipped.</span>
+      </div>
+
+      <div id="proofPhotoError" class="error-text hidden"></div>
+      <div id="proofPhotoNotice" class="muted hidden" style="font-size:12px;"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveProofPhotoBtn" type="button">Save</button>
+      </div>
+
+      <div class="section-divider"></div>
+
       <!-- Barcode Printer (js/generalSetup.js + js/labelPrinter.js, sql/supabase_barcode_printer_settings.sql,
            supabase/functions/qz-sign) - serial labels print straight to this printer through QZ Tray. -->
       <div class="toolbar">
@@ -407,10 +438,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky2"></script>
+  <script src="js/nav.js?v=bills1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/generalSetup.js?v=bp3"></script>
+  <script src="js/generalSetup.js?v=pp1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

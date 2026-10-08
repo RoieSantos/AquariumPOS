@@ -314,7 +314,7 @@
 /* Walk-in Orders list: hide Dispatcher (11) and For Delivery, Est. Delivery Date (21-22) -
    walk-ins are picked up at the shop - so the Tags column sits closer to view. Tank / Stand
    Maker (9-10) stay: walk-ins can be assigned to makers. Column numbers match online-orders.html's
-   23-column header (Warehouse is column 5; the walk-in tab is never shown to accounts that hide
+   24-column header (Warehouse is column 5; Dispatch Date is 23 and stays visible; the walk-in tab is never shown to accounts that hide
    the Delivery Fee column). */
 .bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(11), :nth-child(21), :nth-child(22)) {
   display: none;
@@ -2731,7 +2731,22 @@ a.bc-cue:hover {
 .oo-confirm-dialog.is-done #confirmActionOkBtn { background: #1e7d3a; border-color: #1e7d3a; color: #fff; }
 .oo-confirm-dialog.is-ship #confirmActionOkBtn { background: #1f5fa8; border-color: #1f5fa8; color: #fff; }
 .oo-confirm-dialog.is-undo #confirmActionOkBtn { background: #9a2d2d; border-color: #9a2d2d; color: #fff; }
+/* Same dialog with a mandatory proof photo (confirmWithPhoto). */
+#proofPhotoDialog { z-index: 1200; }
+.oo-proof-dialog .oo-confirm-foot { flex-wrap: wrap; }
+.oo-proof-dialog .oo-confirm-foot .bc-dialog-msg { flex: 1 1 100%; margin: 0; }
+.oo-proof-dialog.is-done #proofPhotoOkBtn { background: #1e7d3a; border-color: #1e7d3a; color: #fff; }
+.oo-proof-dialog.is-ship #proofPhotoOkBtn { background: #1f5fa8; border-color: #1f5fa8; color: #fff; }
+.oo-proof-pick {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  margin-top: 12px; min-height: 120px; padding: 12px; cursor: pointer; text-align: center;
+  border: 2px dashed var(--bc-border, #c8c6c4); border-radius: 10px;
+  font-size: 15px; font-weight: 600; color: var(--bc-link, #1560a8);
+}
+.oo-proof-pick.has-photo { border-style: solid; border-color: #1e7d3a; color: var(--bc-muted, #5f6b7a); font-weight: 400; font-size: 13px; }
+.oo-proof-pick img { max-width: 100%; max-height: 40vh; border-radius: 6px; object-fit: contain; }
 @media (max-width: 640px) {
+  #proofPhotoDialog { align-items: flex-end; }
   #confirmActionDialog { align-items: flex-end; }
   .bc-dialog.oo-confirm-dialog { max-width: none; width: 100%; border-radius: 14px 14px 0 0; }
   .oo-confirm-foot .bc-btn { min-height: 52px; font-size: 16px; }

@@ -3892,6 +3892,10 @@ ORDER BY [RunningSerialNo]", connection);
             var lineRows = LoadAdvanceOrderLineRows();
             var (lineInserted, lineUpdated) = await UpsertAdvanceOrderLineRowsAsync(lineEndpoint, lineRows, timeout.Value).ConfigureAwait(false);
 
+            // Safety net for payments the per-receipt push missed - last 7 days only, so this 5-minute
+            // tick doesn't re-check every payment ever taken.
+            await TrySyncAdvanceOrderPaymentsAsync(null, DateTime.Today.AddDays(-7), timeout.Value).ConfigureAwait(false);
+
             return new MasterDataSyncSummary(headerRows.Count + lineRows.Count, headerInserted + lineInserted, headerUpdated + lineUpdated);
         }
 
@@ -3930,6 +3934,8 @@ ORDER BY [RunningSerialNo]", connection);
 
                 var lineRows = LoadAdvanceOrderLineRows(receiptNo);
                 var (lineInserted, lineUpdated) = await UpsertAdvanceOrderLineRowsAsync(lineEndpoint, lineRows, timeout.Value).ConfigureAwait(false);
+
+                await TrySyncAdvanceOrderPaymentsAsync(receiptNo, null, timeout.Value).ConfigureAwait(false);
 
                 string summary = $"{headerInserted + lineInserted} inserted, {headerUpdated + lineUpdated} updated";
                 UpsertAdvanceOrderPortalSyncStatus(receiptNo, "SYNCED", summary);
@@ -3992,6 +3998,92 @@ ORDER BY [RunningSerialNo]", connection);
             }
 
             return (inserted, updated);
+        }
+
+        // Per "possible we show the tender type too on today's advance orders" - pushes the advance
+        // orders' payments (dbo.TransPaymentEntry rows whose ReceiptNo matches an AdvanceOrderHeader -
+        // same rule as the EOD report's "ADV ORDER COLLECTIONS") into Supabase's AdvanceOrderPayments
+        // (supabase_advance_order_payments.sql), for the Dashboard's by-tender split. Best-effort: a
+        // failure here (e.g. that SQL not run yet) is only logged, so it never marks the order itself
+        // as SYNC_FAILED or breaks the header/line sync.
+        private static async Task TrySyncAdvanceOrderPaymentsAsync(string? receiptNoFilter, DateTime? sinceDate, TimeSpan timeout)
+        {
+            try
+            {
+                string endpoint = GlobalSettings.AdvanceOrderPaymentsSupabaseEndpoint?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(endpoint))
+                    return;
+
+                string warehouseName = GetCurrentAdvanceOrderWarehouseName();
+                foreach (var row in LoadAdvanceOrderPaymentRows(receiptNoFilter, sinceDate))
+                {
+                    row.Payload["Warehouse"] = string.IsNullOrWhiteSpace(warehouseName) ? null : warehouseName;
+                    var key = new[]
+                    {
+                        ("AdvanceTransactionNo", row.AdvanceTransactionNo),
+                        ("PaymentTransactionNo", row.PaymentTransactionNo),
+                        ("TenderTypeCode", row.TenderTypeCode),
+                        ("LineNo", row.LineNo)
+                    };
+                    string payloadJson = JsonSerializer.Serialize(row.Payload);
+                    if (await SupabaseRecordExistsAsync(endpoint, timeout, key).ConfigureAwait(false))
+                        await PatchJsonWithHeadersAsync(BuildSupabaseFilteredUrl(endpoint, key), payloadJson, timeout).ConfigureAwait(false);
+                    else
+                        await PostJsonWithHeadersAsync(endpoint, payloadJson, timeout).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Advance order payment sync failed ({receiptNoFilter ?? "bulk"}): {ex.Message}");
+            }
+        }
+
+        private static List<(string AdvanceTransactionNo, string PaymentTransactionNo, string TenderTypeCode, string LineNo, Dictionary<string, object?> Payload)> LoadAdvanceOrderPaymentRows(string? receiptNoFilter, DateTime? sinceDate)
+        {
+            var rows = new List<(string, string, string, string, Dictionary<string, object?>)>();
+            using var connection = new SqlConnection(GlobalSettings.ConnectionString);
+            connection.Open();
+
+            using var cmd = new SqlCommand(@"
+                SELECT ah.TransactionNo AS AdvanceTransactionNo, tp.TransactionNo, tp.TenderTypeCode, tp.[LineNo],
+                       tp.ReceiptNo, tp.Description, tp.Amount, tp.UserID, tp.Date, tp.Time
+                FROM dbo.TransPaymentEntry tp
+                CROSS APPLY (SELECT TOP 1 h.TransactionNo FROM dbo.AdvanceOrderHeader h
+                             WHERE h.ReceiptNo = tp.ReceiptNo ORDER BY h.TransactionNo) ah
+                WHERE ISNULL(tp.ReceiptNo, '') <> ''
+                  AND (@ReceiptNo IS NULL OR tp.ReceiptNo = @ReceiptNo)
+                  AND (@Since IS NULL OR tp.Date >= @Since)", connection);
+            cmd.Parameters.Add("@ReceiptNo", System.Data.SqlDbType.NVarChar, 50).Value = string.IsNullOrWhiteSpace(receiptNoFilter) ? DBNull.Value : (object)receiptNoFilter.Trim();
+            cmd.Parameters.Add("@Since", System.Data.SqlDbType.Date).Value = sinceDate.HasValue ? (object)sinceDate.Value.Date : DBNull.Value;
+
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                string advanceTransactionNo = rdr["AdvanceTransactionNo"]?.ToString()?.Trim() ?? string.Empty;
+                string paymentTransactionNo = rdr["TransactionNo"]?.ToString()?.Trim() ?? string.Empty;
+                string tenderTypeCode = rdr["TenderTypeCode"]?.ToString()?.Trim() ?? string.Empty;
+                string lineNo = rdr["LineNo"]?.ToString()?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(advanceTransactionNo) || string.IsNullOrWhiteSpace(lineNo))
+                    continue;
+
+                var payload = new Dictionary<string, object?>
+                {
+                    ["AdvanceTransactionNo"] = advanceTransactionNo,
+                    ["PaymentTransactionNo"] = paymentTransactionNo,
+                    ["TenderTypeCode"] = tenderTypeCode,
+                    ["LineNo"] = lineNo,
+                    ["ReceiptNo"] = rdr["ReceiptNo"] == DBNull.Value ? null : rdr["ReceiptNo"].ToString(),
+                    ["Description"] = rdr["Description"] == DBNull.Value ? null : rdr["Description"].ToString(),
+                    ["Amount"] = rdr["Amount"] == DBNull.Value ? null : ConvertSupabaseValue(rdr["Amount"]),
+                    ["UserID"] = rdr["UserID"] == DBNull.Value ? null : rdr["UserID"].ToString(),
+                    ["Date"] = rdr["Date"] is DateTime d ? d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null,
+                    ["Time"] = rdr["Time"] is TimeSpan t ? t.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture) : null,
+                    ["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture)
+                };
+                rows.Add((advanceTransactionNo, paymentTransactionNo, tenderTypeCode, lineNo, payload));
+            }
+
+            return rows;
         }
 
         private static readonly string[] OptionalAdvanceOrderHeaderColumns = new[]

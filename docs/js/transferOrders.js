@@ -2221,8 +2221,9 @@ async function searchVariantsForRow(row, searchText, page = 1) {
   renderVariantSuggestions(row, data || [], page, data?.[0]?.total_count || 0, (newPage) => searchVariantsForRow(row, searchText, newPage));
 }
 
-// From/To Warehouse are locked (disabled inputs, per direct request) - these two functions are
-// now the ONLY way those fields ever get a value, there's no manual lookup/override anymore.
+// From/To Warehouse are locked (disabled inputs, per direct request) for everyone except super
+// users - for them setupSuperUserWarehousePickers swaps in a <select> per side so they can create
+// any branch-to-branch transfer. Everyone else only ever gets values from these two functions.
 
 // Auto-picks a preferred From Warehouse the way the desktop's ApplyPreferredFromWarehouse does:
 // the first warehouse flagged Production (if useProductionCategory) or Stock (otherwise).
@@ -2238,6 +2239,45 @@ async function applyPreferredFromWarehouse(useProductionCategory) {
 
   document.getElementById('newFromWarehouse').value = preferred.name || '';
   document.getElementById('newFromWarehouseId').value = preferred.id || '';
+  document.getElementById('newFromWarehouseSelect').value = preferred.id || '';
+  refreshNewTransferGeneralSummary();
+}
+
+// Super users get a full warehouse list on both sides (pre-selected with the same defaults
+// everyone else gets locked to). Picking one writes straight through to the locked text input +
+// hidden ID, so saveNewTransfer and the rest of the page read exactly the same fields as before.
+async function setupSuperUserWarehousePickers() {
+  const isSuperUser = !!currentSession?.isSuperUser;
+  const sides = [
+    ['newFromWarehouseSelect', 'newFromWarehouse', 'newFromWarehouseId'],
+    ['newToWarehouseSelect', 'newToWarehouse', 'newToWarehouseId']
+  ];
+  sides.forEach(([selectId, inputId]) => {
+    document.getElementById(selectId).classList.toggle('hidden', !isSuperUser);
+    document.getElementById(inputId).classList.toggle('hidden', isSuperUser);
+  });
+  if (!isSuperUser) return;
+
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  const warehouses = error || !data ? [] : data;
+
+  sides.forEach(([selectId, inputId, idInputId]) => {
+    const select = document.getElementById(selectId);
+    const currentId = document.getElementById(idInputId).value;
+    select.innerHTML = '<option value="">- Select warehouse -</option>' + warehouses
+      .map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name || '')}</option>`)
+      .join('');
+    select.value = currentId;
+    select.onchange = () => {
+      const selected = select.options[select.selectedIndex];
+      document.getElementById(idInputId).value = select.value;
+      document.getElementById(inputId).value = select.value ? selected.textContent : '';
+      refreshNewTransferGeneralSummary();
+    };
+  });
 }
 
 // Whether the logged-in staff's own warehouse is flagged Production - gates who can search/pick
@@ -2491,6 +2531,7 @@ async function openNewTransferModal() {
   // just resolved against Supabase instead of local SQL.
   await applyPreferredFromWarehouse(false);
   document.getElementById('newToWarehouseId').value = await resolveWarehouseIdByName(currentSession?.warehouseName);
+  await setupSuperUserWarehousePickers();
   document.getElementById('newNo').value = await generateTransferNo();
   refreshNewTransferGeneralSummary();
 }
@@ -2514,6 +2555,14 @@ async function saveNewTransfer() {
   const requestedDate = document.getElementById('newRequestedDate').value || null;
   const estimatedDeliveryDate = document.getElementById('newEstimatedDeliveryDate').value || null;
   const useProductionCategory = document.getElementById('newUseProductionCategory').checked;
+
+  // Without both IDs the order can never be shipped (shipTransferOrder requires them), so stop it
+  // here rather than saving a dead order - e.g. a super user with no assigned warehouse.
+  if (!fromWarehouseId || !toWarehouseId) {
+    errorEl.textContent = !fromWarehouseId ? 'From Warehouse is required.' : 'To Warehouse is required.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
 
   // Same guard as the desktop's IsSameWarehouse - compare by ID when both sides have one,
   // otherwise fall back to name.

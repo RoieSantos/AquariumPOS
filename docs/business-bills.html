@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bills &amp; Dues - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=sky1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Bills &amp; Dues</h1>
+    <p class="muted">The business's recurring must-pay bills - rent, electricity, water, internet, BIR, SSS / PhilHealth / Pag-IBIG, permits, insurance, loans. Shows what's overdue and coming up, and records each payment (optionally logging it to the Expense Journal too). Supplier bills stay on Vendors. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="billsContent" class="hidden">
+      <div class="stat-card-grid" style="margin-bottom:18px;">
+        <div class="stat-card stat-cancelled">
+          <div class="stat-label">Overdue</div>
+          <div class="stat-value" id="statOverdue">-</div>
+          <div class="muted" id="statOverdueAmt" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card stat-printed">
+          <div class="stat-label">Due Soon</div>
+          <div class="stat-value" id="statDueSoon">-</div>
+          <div class="muted" id="statDueSoonAmt" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card stat-confirmed">
+          <div class="stat-label">Still to Pay This Month</div>
+          <div class="stat-value" id="statMonthLeft">-</div>
+          <div class="muted" id="statMonthLeftCount" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card stat-shipped">
+          <div class="stat-label">Paid This Month</div>
+          <div class="stat-value" id="statMonthPaid">-</div>
+          <div class="muted" id="statMonthPaidCount" style="font-size:12px;"></div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Bills</h2>
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:6px; margin:0;">
+            <input type="checkbox" id="showInactiveInput" style="width:auto;" />
+            <span>Show inactive</span>
+          </label>
+          <button class="btn btn-primary" id="newBillBtn" type="button">+ New Bill</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Bill</th>
+              <th>Category</th>
+              <th>Branch</th>
+              <th>Frequency</th>
+              <th>Next Due</th>
+              <th style="text-align:right;">Expected</th>
+              <th>Last Paid</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="billTableBody">
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Monthly Schedule</h2>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button">&lsaquo;</button>
+          <input type="month" id="scheduleMonthInput" style="max-width:170px;" />
+          <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button">&rsaquo;</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Due Date</th>
+              <th>Bill</th>
+              <th>Category</th>
+              <th>Branch</th>
+              <th style="text-align:right;">Expected</th>
+              <th style="text-align:right;">Paid</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="scheduleTableBody">
+            <tr><td colspan="8" class="muted">Loading...</td></tr>
+          </tbody>
+          <tfoot id="scheduleTableFoot"></tfoot>
+        </table>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;" id="paymentsTitle">Recent Payments</h2>
+        <button class="btn btn-secondary btn-sm hidden" id="clearPaymentFilterBtn" type="button">Show all bills</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Paid Date</th>
+              <th>Bill</th>
+              <th>For Due Date</th>
+              <th style="text-align:right;">Amount</th>
+              <th>Method</th>
+              <th>Reference</th>
+              <th>Expense</th>
+              <th>By</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="paymentTableBody">
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- New / edit bill -->
+  <div id="billModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:720px;">
+      <div class="toolbar">
+        <h2 style="margin:0;" id="billModalTitle">New Bill</h2>
+        <button class="btn btn-secondary btn-sm" id="closeBillModalBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="billName">Bill Name</label>
+          <input type="text" id="billName" placeholder="e.g. Meralco - Main Store" />
+        </div>
+        <div class="form-row">
+          <label for="billCategory">Category</label>
+          <input type="text" id="billCategory" list="billCategoryOptions" placeholder="e.g. Electricity" />
+          <datalist id="billCategoryOptions">
+            <option value="Rent"></option>
+            <option value="Electricity"></option>
+            <option value="Water"></option>
+            <option value="Internet / Phone"></option>
+            <option value="BIR Tax"></option>
+            <option value="SSS"></option>
+            <option value="PhilHealth"></option>
+            <option value="Pag-IBIG"></option>
+            <option value="Business Permit / Licenses"></option>
+            <option value="Insurance"></option>
+            <option value="Loan / Amortization"></option>
+            <option value="Subscription"></option>
+            <option value="Other"></option>
+          </datalist>
+        </div>
+        <div class="form-row">
+          <label for="billPayee">Pay To</label>
+          <input type="text" id="billPayee" placeholder="e.g. Meralco, BIR, Landlord" />
+        </div>
+        <div class="form-row">
+          <label for="billAccountNo">Account / Reference No.</label>
+          <input type="text" id="billAccountNo" />
+        </div>
+        <div class="form-row">
+          <label for="billWarehouse">Branch</label>
+          <select id="billWarehouse"><option value="">Company-wide</option></select>
+        </div>
+        <div class="form-row">
+          <label for="billFrequency">Frequency</label>
+          <select id="billFrequency">
+            <option value="Monthly">Monthly</option>
+            <option value="Quarterly">Quarterly</option>
+            <option value="Semi-Annual">Semi-Annual</option>
+            <option value="Yearly">Yearly</option>
+            <option value="One-time">One-time</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="billFirstDueDate">First Due Date</label>
+          <input type="date" id="billFirstDueDate" />
+        </div>
+        <div class="form-row">
+          <label for="billExpectedAmount">Usual Amount</label>
+          <input type="number" id="billExpectedAmount" min="0" step="0.01" placeholder="Leave blank if it varies" />
+        </div>
+        <div class="form-row">
+          <label for="billRemindDays">Show "Due Soon" (days before)</label>
+          <input type="number" id="billRemindDays" min="0" step="1" value="7" />
+        </div>
+        <div class="form-row">
+          <label for="billExpenseCategory">Expense Category (when paid)</label>
+          <input type="text" id="billExpenseCategory" list="expenseCategoryOptions" placeholder="Blank = don't log to Expenses" />
+          <datalist id="expenseCategoryOptions"></datalist>
+        </div>
+        <div class="form-row">
+          <label for="billNotes">Notes</label>
+          <input type="text" id="billNotes" />
+        </div>
+        <div class="form-row">
+          <label for="billActive" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="billActive" style="width:auto;" checked />
+            <span>Active</span>
+          </label>
+        </div>
+      </div>
+      <p class="muted" style="font-size:12px;">Later due dates repeat from the First Due Date - e.g. a Monthly bill first due on the 15th is due every 15th.</p>
+
+      <div id="billError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveBillBtn" type="button">Save Bill</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pay a bill -->
+  <div id="payModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:620px;">
+      <div class="toolbar">
+        <h2 style="margin:0;" id="payModalTitle">Pay Bill</h2>
+        <button class="btn btn-secondary btn-sm" id="closePayModalBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="payDueDate">For Due Date</label>
+          <input type="date" id="payDueDate" />
+        </div>
+        <div class="form-row">
+          <label for="payPaidDate">Paid Date</label>
+          <input type="date" id="payPaidDate" />
+        </div>
+        <div class="form-row">
+          <label for="payAmount">Amount</label>
+          <input type="number" id="payAmount" min="0" step="0.01" />
+        </div>
+        <div class="form-row">
+          <label for="payMethod">Method</label>
+          <input type="text" id="payMethod" list="payMethodOptions" placeholder="e.g. Cash, GCash, Bank Transfer" />
+          <datalist id="payMethodOptions"></datalist>
+        </div>
+        <div class="form-row">
+          <label for="payReference">Reference No.</label>
+          <input type="text" id="payReference" />
+        </div>
+        <div class="form-row">
+          <label for="payNotes">Notes</label>
+          <input type="text" id="payNotes" />
+        </div>
+        <div class="form-row">
+          <label for="payLogExpense" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="payLogExpense" style="width:auto;" />
+            <span>Also log to Expense Journal</span>
+          </label>
+        </div>
+        <div class="form-row" id="payExpenseCategoryRow">
+          <label for="payExpenseCategory">Expense Category</label>
+          <input type="text" id="payExpenseCategory" list="expenseCategoryOptions" />
+        </div>
+      </div>
+
+      <div id="payError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="savePayBtn" type="button">Record Payment</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=all1"></script>
+  <script src="js/nav.js?v=bills1"></script>
+  <script src="js/businessBills.js?v=1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

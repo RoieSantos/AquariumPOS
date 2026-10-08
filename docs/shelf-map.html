@@ -14,11 +14,19 @@
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
   <style>
     .shelf-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: stretch; }
-    .shelf-cell { flex: 1 1 0; min-width: 96px; border: 2px solid var(--border, #c9d3e0); border-radius: 8px; padding: 8px; background: var(--card-bg, #fff); display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: inherit; }
+    .shelf-cell { flex: 1 1 0; min-width: 96px; border: 2px solid var(--panel-border, #c9d3e0); border-radius: 8px; padding: 8px; background: var(--panel-bg, #fff); display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: inherit; }
     .shelf-cell .cell-label { font-size: 12px; font-weight: 600; line-height: 1.2; }
     .shelf-cell .cell-code { font-size: 12px; color: var(--text-muted, #666); }
-    .shelf-cell .cell-qty { font-size: 22px; font-weight: 700; line-height: 1.1; margin-top: auto; }
-    .shelf-cell input.cell-count { width: 100%; font-size: 20px; font-weight: 700; margin-top: auto; padding: 2px 4px; box-sizing: border-box; }
+    /* Shelf count (editable) and Stock on hand (Item Ledger) side by side, both big. */
+    .shelf-cell .cell-stats { display: flex; gap: 8px; margin-top: auto; align-items: flex-end; }
+    .shelf-cell .cell-stat { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+    .shelf-cell .cell-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted, #666); }
+    .shelf-cell .cell-qty { font-size: 22px; font-weight: 700; line-height: 1.1; }
+    .shelf-cell input.cell-count { width: 100%; font-size: 20px; font-weight: 700; padding: 2px 4px; box-sizing: border-box; }
+    .shelf-cell .cell-onhand { font-size: 26px; font-weight: 800; line-height: 1.1; padding: 2px 0; }
+    .shelf-cell.ok .cell-onhand { color: #2e9e5b; }
+    .shelf-cell.diff .cell-onhand { color: #d98a00; }
+    .shelf-cell.empty .cell-onhand { color: #d64545; }
     .shelf-cell .cell-sub { font-size: 11px; color: var(--text-muted, #666); }
     .shelf-cell.ok { border-color: #2e9e5b; }
     .shelf-cell.diff { border-color: #d98a00; }
@@ -32,7 +40,7 @@
     .shelf-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
     .cell-field { display: block; margin-bottom: 10px; }
     .cell-field label { display: block; font-size: 12px; margin-bottom: 2px; }
-    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
+    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--panel-border, #e0e6ee); font-size: 13px; }
     .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
     /* Use the whole window instead of the site-wide 1200px cap - same as production-shelf-map.html. */
     .page.page-full { max-width: none; }
@@ -44,7 +52,7 @@
   <!-- Full window width so more shelf spots fit side by side - see .page.page-full below -->
   <div class="page page-full">
     <h1>Shelf Map</h1>
-    <p class="muted">Each box is a spot on the shelf. The big number is the current count on that shelf spot - type a new number to update it. "Ledger" is the item's quantity on hand at the location (from the Item Ledger, always current), added up across every shelf spot holding that item; "Drawing" is the count written on the paper sketch.</p>
+    <p class="muted">Each box is a spot on the shelf. "Min. Shelf Count" is the minimum count for that shelf spot - type a new number to update it. "Stock on hand" is the item's quantity at the location from the Item Ledger (always current), coloured by the legend below.</p>
 
     <div class="toolbar">
       <label for="locationSelect" class="muted" style="margin:0;">Location</label>
@@ -70,8 +78,8 @@
     </div>
 
     <div class="shelf-legend muted" id="legend">
-      <span><i class="shelf-dot" style="background:#2e9e5b"></i>Ledger is more than half of the shelf qty</span>
-      <span><i class="shelf-dot" style="background:#d98a00"></i>Ledger is half or less of the shelf qty</span>
+      <span><i class="shelf-dot" style="background:#2e9e5b"></i>Stock on hand is more than half of the Min. Shelf Count</span>
+      <span><i class="shelf-dot" style="background:#d98a00"></i>Stock on hand is half or less of the Min. Shelf Count</span>
       <span><i class="shelf-dot" style="background:#d64545"></i>Out of stock</span>
       <span><i class="shelf-dot" style="background:#999"></i>Not linked to an item (dashed)</span>
     </div>
@@ -109,8 +117,8 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky2"></script>
-  <script src="js/shelfMap.js"></script>
+  <script src="js/nav.js?v=bills1"></script>
+  <script src="js/shelfMap.js?v=onhand2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

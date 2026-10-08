@@ -31,6 +31,16 @@ function isWalkInPlaceholderOrder(order) {
 // Used everywhere a stop's shipping_address is displayed or geocoded, so the placeholder is
 // treated exactly like "no address on file" rather than shown (or plotted) as if it meant
 // something.
+// Assign-list row identity: advance orders and online orders are separate number series.
+function assignOrderKey(o) {
+  return `${o.source || 'online'}:${o.order_id}`;
+}
+
+// Same "ADV-" prefix the stops list / receipt use for an advance stop's order_id.
+function assignOrderLabel(o) {
+  return o.source === 'advance' ? `ADV-${o.order_id}` : (o.order_id || '');
+}
+
 function isPlaceholderAddress(address) {
   const a = (address || '').trim().toLowerCase();
   return !a || a === 'walkin';
@@ -39,6 +49,9 @@ let assignSearchDebounceHandle = null;
 let assignSearch = '';
 let assignPage = 1;
 let assignPageSize = 50;
+// Assign-list header sort - null = latest update first. Sorted server-side (the list is paged).
+let assignSortColumn = null;
+let assignSortDir = 'asc';
 let dayMapInstance = null;
 let driverDate = null; // 'YYYY-MM-DD' currently viewed in the Driver Route View (Delivery Team only)
 let googleMapsReadyPromise = null;
@@ -537,7 +550,8 @@ async function openDriverOrderDetail(stopId) {
   document.getElementById('driverOrderDetailTitle').textContent = `Order ${header.order_id || ''}`;
 
   const attachmentsByLineId = {};
-  if (header.order_id) {
+  // Attachments only exist for online orders - an advance stop's "ADV-" id would never match.
+  if (header.order_id && header.source !== 'advance') {
     const { data: attachmentRows } = await supabaseClient.rpc('admin_list_online_order_line_attachments', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -1378,10 +1392,12 @@ function renderAssignOrdersTable(orders) {
   const tbody = document.getElementById('assignOrdersTableBody');
 
   // Cached here (rather than re-fetched after assignment) because admin_list_deliverable_
-  // online_orders only returns orders NOT YET marked ForDelivery - by the time confirmAssign()
+  // online_orders only returns orders with no delivery stop yet - by the time confirmAssign()
   // needs this order's shipping_address for geocoding, admin_create_delivery_stop has already
-  // flipped ForDelivery to true, so a fresh lookup would come back empty.
-  assignOrdersByOrderId = new Map((orders || []).map((o) => [o.order_id, o]));
+  // created one, so a fresh lookup would come back empty.
+  // Keyed by source + id - an advance order's TransactionNo can be the same number as an online
+  // OrderID (supabase_delivery_advance_and_walkin_orders.sql lists both).
+  assignOrdersByOrderId = new Map((orders || []).map((o) => [assignOrderKey(o), o]));
 
   if (!orders || orders.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">No deliverable orders found.</td></tr>';
@@ -1394,12 +1410,12 @@ function renderAssignOrdersTable(orders) {
   // way (isPlaceholderAddress) so it reads as missing here too, rather than as an actual address.
   tbody.innerHTML = orders.map((o) => `
     <tr>
-      <td><input type="radio" name="assignOrderRadio" value="${o.order_id}" /></td>
-      <td>${o.order_id || ''}</td>
-      <td>${o.customer_name || ''}${isWalkInPlaceholderOrder(o) ? ' <span class="muted">(walk-in)</span>' : ''}</td>
+      <td><input type="radio" name="assignOrderRadio" value="${assignOrderKey(o)}" /></td>
+      <td>${assignOrderLabel(o)}</td>
+      <td>${o.customer_name || ''}</td>
       <td>${o.status || ''}</td>
       <td>${isPlaceholderAddress(o.shipping_address) ? '<span class="muted">No address</span>' : o.shipping_address}</td>
-      <td>${o.scheduled_date || '-'}</td>
+      <td>${o.source === 'advance' ? 'Advance' : (o.is_walk_in || isWalkInPlaceholderOrder(o) ? 'Walk-in' : 'Online')}</td>
     </tr>
   `).join('');
 
@@ -1436,8 +1452,12 @@ async function loadAssignOrders() {
     p_admin_password: currentSession.password,
     p_search: assignSearch || null,
     p_page: assignPage,
-    p_page_size: assignPageSize
+    p_page_size: assignPageSize,
+    p_sort_column: assignSortColumn,
+    p_sort_dir: assignSortDir
   });
+
+  updateAssignSortIndicators();
 
   if (error) {
     document.getElementById('assignOrdersTableBody').innerHTML = `<tr><td colspan="6" class="error-text">${error.message}</td></tr>`;
@@ -1454,6 +1474,26 @@ async function loadAssignOrders() {
       onPageSizeChange: (newSize) => { assignPageSize = newSize; assignPage = 1; loadAssignOrders(); }
     }
   );
+}
+
+function updateAssignSortIndicators() {
+  document.querySelectorAll('.assign-sort-th').forEach((th) => {
+    th.querySelector('.sort-indicator').textContent =
+      th.dataset.sort === assignSortColumn ? (assignSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  });
+}
+
+// Click a header to sort by it, click again to reverse - back to page 1 since the order changed.
+function wireAssignSortHeaders() {
+  document.querySelectorAll('.assign-sort-th').forEach((th) => {
+    th.addEventListener('click', () => {
+      const column = th.dataset.sort;
+      assignSortDir = assignSortColumn === column && assignSortDir === 'asc' ? 'desc' : 'asc';
+      assignSortColumn = column;
+      assignPage = 1;
+      loadAssignOrders();
+    });
+  });
 }
 
 function openAssignModal(prefilledDate) {
@@ -1496,6 +1536,11 @@ async function geocodeAndSaveStop(stopId, address, details = null, { setManualAd
   const phone = details?.phone || null;
   const notes = details?.notes || null;
   const notePrint = details?.notePrint || null;
+  // Manual delivery fee (supabase_delivery_stop_manual_fee.sql) - only sent when one was typed, so a
+  // plain save still works before that SQL is run.
+  const feeParam = details?.deliveryFee !== null && details?.deliveryFee !== undefined
+    ? { p_delivery_fee: details.deliveryFee }
+    : {};
 
   if (!address || !address.trim()) {
     const { error } = await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
@@ -1510,7 +1555,8 @@ async function geocodeAndSaveStop(stopId, address, details = null, { setManualAd
       p_contact_number: phone,
       p_notes: notes,
       p_note_print: notePrint,
-      p_set_manual_address: setManualAddress
+      p_set_manual_address: setManualAddress,
+      ...feeParam
     });
     if (error) {
       console.error('admin_update_delivery_stop_geocode failed:', error);
@@ -1546,7 +1592,8 @@ async function geocodeAndSaveStop(stopId, address, details = null, { setManualAd
           p_contact_number: phone,
           p_notes: notes,
           p_note_print: notePrint,
-          p_set_manual_address: setManualAddress
+          p_set_manual_address: setManualAddress,
+          ...feeParam
         })
       : await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
           p_admin_username: currentSession.username,
@@ -1560,7 +1607,8 @@ async function geocodeAndSaveStop(stopId, address, details = null, { setManualAd
           p_contact_number: phone,
           p_notes: notes,
           p_note_print: notePrint,
-          p_set_manual_address: setManualAddress
+          p_set_manual_address: setManualAddress,
+          ...feeParam
         });
 
     if (error) {
@@ -1587,7 +1635,13 @@ let noAddressResolve = null;
 // title/message/prefill* let openFixStopDetails (below) reuse this same modal as a general "edit
 // an existing stop's details" tool, with its own wording and the values it already has typed in
 // rather than blank boxes.
-function openNoAddressModal(orderId, { askDetails = false, title, message, prefillAddress = '', prefillName = '', prefillPhone = '', prefillNotes = '', prefillNotePrint = '' } = {}) {
+function openNoAddressModal(orderId, { askDetails = false, title, message, prefillAddress = '', prefillName = '', prefillPhone = '', prefillNotes = '', prefillNotePrint = '', prefillDeliveryFee = '', orderDeliveryFee = null } = {}) {
+  const feeInput = document.getElementById('noAddressDeliveryFeeInput');
+  feeInput.value = prefillDeliveryFee === null || prefillDeliveryFee === undefined ? '' : prefillDeliveryFee;
+  // Shows the order's own fee as the hint, so it's clear what blank keeps.
+  feeInput.placeholder = orderDeliveryFee !== null && orderDeliveryFee !== undefined && orderDeliveryFee !== ''
+    ? `Blank = keep the order's fee (${Number(orderDeliveryFee).toFixed(2)})`
+    : "Blank = keep the order's fee";
   document.getElementById('noAddressOrderId').textContent = orderId;
   document.getElementById('noAddressInput').value = prefillAddress || '';
   document.getElementById('noAddressNameInput').value = prefillName || '';
@@ -1618,11 +1672,13 @@ function closeNoAddressModal(proceed) {
   const phone = document.getElementById('noAddressPhoneInput').value.trim();
   const notes = document.getElementById('noAddressNotesInput').value.trim();
   const notePrint = document.getElementById('noAddressNotePrintInput').value.trim();
+  const feeText = document.getElementById('noAddressDeliveryFeeInput').value.trim();
+  const deliveryFee = feeText === '' || !Number.isFinite(Number(feeText)) || Number(feeText) < 0 ? null : Number(feeText);
   document.getElementById('noAddressModal').classList.add('hidden');
 
   if (noAddressResolve) {
     noAddressResolve(proceed
-      ? { address: address || null, customerName: customerName || null, phone: phone || null, notes: notes || null, notePrint: notePrint || null }
+      ? { address: address || null, customerName: customerName || null, phone: phone || null, notes: notes || null, notePrint: notePrint || null, deliveryFee }
       : undefined);
     noAddressResolve = null;
   }
@@ -1649,7 +1705,11 @@ async function openFixStopDetails(stop) {
     prefillName: stop.customer_name || '',
     prefillPhone: stop.contact_number || '',
     prefillNotes: stop.notes || '',
-    prefillNotePrint: stop.note_print || ''
+    prefillNotePrint: stop.note_print || '',
+    // Only a fee typed here before is prefilled - the order's own fee shows as the hint instead, so
+    // saving without touching the box doesn't freeze the Pancake fee as a manual one.
+    prefillDeliveryFee: stop.is_manual_delivery_fee ? stop.delivery_fee : '',
+    orderDeliveryFee: stop.is_manual_delivery_fee ? null : stop.delivery_fee
   });
   if (manualDetails === undefined) return; // cancelled
 
@@ -1694,14 +1754,29 @@ async function confirmAssign() {
   let addressForGeocode = matchedOrder ? matchedOrder.shipping_address : null;
   let detailsForStop = null;
 
-  const needsWalkInDetails = isWalkInPlaceholderOrder(matchedOrder);
+  // Advance orders have no address / phone on file at all, so they always get the full details
+  // prompt (prefilled with the advance order's customer name).
+  const isAdvance = matchedOrder?.source === 'advance';
+  const needsWalkInDetails = isAdvance || isWalkInPlaceholderOrder(matchedOrder);
   // Tracks whether addressForGeocode ends up being something a staff member actually typed (via
   // the prompt below) rather than Pancake's own ShippingAddress - passed through to
   // geocodeAndSaveStop as setManualAddress so a genuinely manual address sticks as an override
   // (supabase_delivery_stop_manual_address.sql), the same as an "Edit Details" edit would.
   const manuallyEnteredAddress = needsWalkInDetails || isPlaceholderAddress(addressForGeocode);
   if (manuallyEnteredAddress) {
-    const manualDetails = await openNoAddressModal(selectedOrderId, { askDetails: needsWalkInDetails });
+    // Prefill whatever is already known - the walk-in name / phone typed on Online Orders, or the
+    // advance order's customer - but not Pancake's generic walk-in placeholders.
+    const knownName = (matchedOrder?.customer_name || '').trim();
+    const knownPhone = (matchedOrder?.contact_number || '').trim();
+    const manualDetails = await openNoAddressModal(matchedOrder ? assignOrderLabel(matchedOrder) : selectedOrderId, {
+      askDetails: needsWalkInDetails,
+      title: isAdvance ? 'Advance Order - Delivery Details' : undefined,
+      message: isAdvance
+        ? `Advance order <strong>${assignOrderLabel(matchedOrder)}</strong> has no delivery address on file. Where is it going, and who should the driver contact?`
+        : undefined,
+      prefillName: knownName.toLowerCase() === 'pos walkin orders' ? '' : knownName,
+      prefillPhone: knownPhone === '11111' ? '' : knownPhone
+    });
     if (manualDetails === undefined) return; // cancelled
     addressForGeocode = manualDetails.address;
     detailsForStop = manualDetails;
@@ -1710,8 +1785,9 @@ async function confirmAssign() {
   const { data: stopId, error } = await supabaseClient.rpc('admin_create_delivery_stop', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
-    p_order_id: selectedOrderId,
-    p_delivery_date: deliveryDate
+    p_order_id: matchedOrder ? matchedOrder.order_id : selectedOrderId,
+    p_delivery_date: deliveryDate,
+    p_source: matchedOrder?.source || 'online'
   });
 
   if (error) {
@@ -1777,6 +1853,8 @@ function wireToolbarAndModal() {
 
   document.getElementById('noAddressCloseBtn').addEventListener('click', () => closeNoAddressModal(false));
   document.getElementById('noAddressContinueBtn').addEventListener('click', () => closeNoAddressModal(true));
+
+  wireAssignSortHeaders();
 
   document.getElementById('assignSearchInput').addEventListener('input', (e) => {
     const value = e.target.value.trim();

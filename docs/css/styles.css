@@ -1134,6 +1134,10 @@ a.badge:hover { text-decoration: underline; }
   background: linear-gradient(135deg, #f7971e 0%, #b3336a 100%);
 }
 
+.finance-card.finance-daily-advance {
+  background: linear-gradient(135deg, #11998e 0%, #6a3093 100%);
+}
+
 .finance-card.finance-expense {
   background: linear-gradient(135deg, #8a5cf6 0%, #c0392b 100%);
 }

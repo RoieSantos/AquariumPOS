@@ -714,6 +714,7 @@ async function openReceiveModal(poNo) {
   document.getElementById('poCardGeneralTab').open = readStoredFlag(poCardGeneralTabKey(), true);
 
   document.getElementById('poEditSection').classList.toggle('hidden', !currentSession?.isSuperUser);
+  document.getElementById('mergePoBtn').classList.toggle('hidden', !currentSession?.isSuperUser);
   resetPoAddItemFields();
 
   const [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
@@ -764,6 +765,88 @@ async function openReceiveModal(poNo) {
 
   setPoCardStatus(lineRows || []);
   await renderReceiveLines(lineRows || []);
+}
+
+// Merge Purchase Orders - super users only. Lists this vendor's other open POs; the picked one's
+// lines move into the open PO (identical lines are combined) and it is deleted. A PO that has
+// already received anything can't be merged away - its receipts live in Pancake under its own
+// number (staff_merge_purchase_orders, sql/supabase_purchase_order_merge.sql).
+async function openMergePoModal() {
+  const poNo = currentReceivePoNo;
+  if (!poNo) return;
+  const body = document.getElementById('mergePoBody');
+  const errorEl = document.getElementById('mergePoError');
+  const confirmBtn = document.getElementById('mergePoConfirmBtn');
+  errorEl.classList.add('hidden');
+  confirmBtn.disabled = true;
+  document.getElementById('mergePoTitle').textContent = `Merge into ${poNo}`;
+  document.getElementById('mergePoIntro').textContent =
+    `Pick another open Purchase Order from ${document.getElementById('receiveVendor').textContent || 'this vendor'}. Its lines move into ${poNo} (identical lines are combined) and it is then deleted.`;
+  body.innerHTML = '<tr><td colspan="7" class="cell-msg">Loading...</td></tr>';
+  document.getElementById('mergePoModal').classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('staff_list_mergeable_purchase_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_target_po_no: poNo
+  });
+
+  if (error) {
+    body.innerHTML = `<tr><td colspan="7" class="cell-msg error-text">${escapeHtml(describeSupabaseError(error, 'Could not load Purchase Orders.'))}</td></tr>`;
+    return;
+  }
+
+  const rows = data || [];
+  if (rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="7" class="cell-msg">No other open Purchase Orders for this vendor.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = rows.map((po) => `
+    <tr${po.can_merge ? ' class="clickable-row"' : ' class="muted"'}>
+      <td>${po.can_merge
+        ? `<input type="radio" name="mergeSourcePo" value="${encodeURIComponent(po.po_no)}" />`
+        : '<span title="Already received stock - can\'t be merged away">&ndash;</span>'}</td>
+      <td><span class="bc-doc-no">${escapeHtml(po.po_no)}</span>${po.can_merge ? '' : ' <span class="badge badge-warning">Received</span>'}</td>
+      <td>${formatDate(po.order_date)}</td>
+      <td>${escapeHtml(po.warehouse_name || '')}</td>
+      <td class="num">${po.line_count ?? 0}</td>
+      <td class="num">${Number(po.total_quantity || 0).toLocaleString()}</td>
+      <td>${escapeHtml(po.notes || '')}</td>
+    </tr>
+  `).join('');
+}
+
+async function mergePurchaseOrders() {
+  const targetPoNo = currentReceivePoNo;
+  const picked = document.querySelector('input[name="mergeSourcePo"]:checked');
+  if (!targetPoNo || !picked) return;
+  const sourcePoNo = decodeURIComponent(picked.value);
+  if (!window.confirm(`Move every line of ${sourcePoNo} into ${targetPoNo} and delete ${sourcePoNo}? This cannot be undone.`)) return;
+
+  const errorEl = document.getElementById('mergePoError');
+  const confirmBtn = document.getElementById('mergePoConfirmBtn');
+  errorEl.classList.add('hidden');
+  confirmBtn.disabled = true;
+
+  const { data, error } = await supabaseClient.rpc('staff_merge_purchase_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_target_po_no: targetPoNo,
+    p_source_po_no: sourcePoNo
+  });
+
+  if (error) {
+    errorEl.textContent = describeSupabaseError(error, 'Could not merge the Purchase Orders.');
+    errorEl.classList.remove('hidden');
+    confirmBtn.disabled = false;
+    return;
+  }
+
+  const result = (data || [])[0] || {};
+  document.getElementById('mergePoModal').classList.add('hidden');
+  await Promise.all([openReceiveModal(targetPoNo), loadPurchaseOrders()]);
+  window.alert(`${sourcePoNo} merged into ${targetPoNo}: ${result.lines_moved ?? 0} line(s) moved, ${result.lines_combined ?? 0} combined with an existing line.`);
 }
 
 async function postPurchaseOrder() {
@@ -1893,6 +1976,19 @@ async function createNewPurchaseOrder() {
   });
 
   document.getElementById('postPoBtn').addEventListener('click', postPurchaseOrder);
+
+  document.getElementById('mergePoBtn').addEventListener('click', openMergePoModal);
+  document.getElementById('mergePoConfirmBtn').addEventListener('click', mergePurchaseOrders);
+  document.getElementById('mergePoCloseBtn').addEventListener('click', () =>
+    document.getElementById('mergePoModal').classList.add('hidden')
+  );
+  // Clicking anywhere on a mergeable row picks it, not just the radio.
+  document.getElementById('mergePoBody').addEventListener('click', (e) => {
+    const radio = e.target.closest('tr')?.querySelector('input[name="mergeSourcePo"]');
+    if (!radio) return;
+    radio.checked = true;
+    document.getElementById('mergePoConfirmBtn').disabled = false;
+  });
 
   document.getElementById('receiveLinesBody').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-remove-entry-no]');

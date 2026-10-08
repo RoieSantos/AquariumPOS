@@ -1016,7 +1016,6 @@ function wireForm() {
   // doesn't dispatch its own 'change' event to trigger a second, redundant quote.
   deliveryMethodSelect.addEventListener('change', async (e) => {
     const isLalamove = e.target.value === 'lalamove';
-    document.getElementById('lalamoveSandboxNote').classList.toggle('hidden', !isLalamove);
     lalamoveOnlyRowIds.forEach((id) => document.getElementById(id).classList.toggle('hidden', !isLalamove));
 
     // Lalamove booking only ever supports one sender/recipient pair - collapse back down to a

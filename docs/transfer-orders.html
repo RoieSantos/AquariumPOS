@@ -328,6 +328,9 @@
                 <label for="newFromWarehouse">From Warehouse</label>
                 <div>
                   <input type="text" id="newFromWarehouse" autocomplete="off" disabled />
+                  <!-- Super-user-only picker (js/transferOrders.js setupSuperUserWarehousePickers) -
+                       replaces the locked input above so a super user can do any branch-to-branch transfer. -->
+                  <select id="newFromWarehouseSelect" class="hidden"></select>
                   <input type="hidden" id="newFromWarehouseId" value="" />
                 </div>
               </div>
@@ -335,6 +338,7 @@
                 <label for="newToWarehouse">To Warehouse</label>
                 <div>
                   <input type="text" id="newToWarehouse" autocomplete="off" disabled />
+                  <select id="newToWarehouseSelect" class="hidden"></select>
                   <input type="hidden" id="newToWarehouseId" value="" />
                 </div>
               </div>
@@ -401,10 +405,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky2"></script>
+  <script src="js/nav.js?v=bills1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/transferOrders.js?v=bc6"></script>
+  <script src="js/transferOrders.js?v=bc7"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

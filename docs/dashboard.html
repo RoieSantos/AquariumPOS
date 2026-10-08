@@ -157,6 +157,17 @@
           <div class="finance-sub" id="statTodayWalkInSalesSub">In-store orders, today</div>
           <div class="finance-breakdown hidden" id="statTodayWalkInSalesByWh"></div>
         </a>
+        <!-- Advance orders placed today - admin_get_dashboard_daily_advance_orders
+             (supabase_dashboard_daily_advance_orders.sql), see js/dashboard.js's loadDailyAdvanceOrders. -->
+        <a class="finance-card finance-daily-advance" href="advance-orders.html">
+          <div class="finance-top">
+            <div class="finance-label"><span class="finance-icon">📝</span> Today's Advance Orders</div>
+          </div>
+          <div class="finance-value" id="statTodayAdvanceOrders">-</div>
+          <div class="finance-sub" id="statTodayAdvanceOrdersSub">Advance orders placed today</div>
+          <div class="finance-breakdown hidden" id="statTodayAdvanceOrdersByWh"></div>
+          <div class="finance-breakdown hidden" id="statTodayAdvanceOrdersByTender"></div>
+        </a>
       </div>
       <!-- js/dashboard.js's setupDashboardGroups moves the Sales Target, order-status cards and
            Sales by Staff (shared with other roles, so they live further down the page) in here. -->
@@ -549,10 +560,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky2"></script>
+  <script src="js/nav.js?v=bills1"></script>
   <script src="js/companyBranding.js"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/dashboard.js?v=auto1"></script>
+  <script src="js/dashboard.js?v=adv2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

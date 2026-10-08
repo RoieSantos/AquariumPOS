@@ -439,6 +439,47 @@ function renderWalkInBranchTender(tenderRows) {
   el.classList.remove('hidden');
 }
 
+// "Today's Advance Orders" card - per "can you show in the dashboard too today's advance order
+// sales". admin_get_dashboard_daily_advance_orders (supabase_dashboard_daily_advance_orders.sql)
+// returns one row per branch for advance orders dated today (Manila); the headline is their total
+// order value (NetAmount), the sub-line shows downpayments taken vs balance still owed.
+async function loadDailyAdvanceOrders(session) {
+  if (!session.password) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_dashboard_daily_advance_orders', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_warehouse_name: session.warehouseName || null
+  });
+
+  if (error || !data) {
+    console.error('admin_get_dashboard_daily_advance_orders failed:', error);
+    return;
+  }
+
+  const sum = (key) => data.reduce((t, r) => t + (Number(r[key]) || 0), 0);
+  const count = sum('order_count');
+  setStatValue('statTodayAdvanceOrders', formatCurrency(sum('net_amount')));
+  setStatValue('statTodayAdvanceOrdersSub',
+    `${count} ${count === 1 ? 'order' : 'orders'} · ${formatCurrency(sum('downpayment'))} downpayment · ${formatCurrency(sum('balance'))} balance`);
+  renderWarehouseBreakdown('statTodayAdvanceOrdersByWh', data, 'net_amount', 'order_count', 'warehouse_name', 'By branch');
+
+  // Per "possible we show the tender type too on today's advance orders" - payments actually taken
+  // today on ANY advance order (downpayments + balances, like the POS EOD "ADV ORDER COLLECTIONS"),
+  // from admin_get_dashboard_daily_advance_tender (supabase_advance_order_payments.sql). Separate
+  // call so the card still shows if that SQL hasn't been run yet.
+  const tender = await supabaseClient.rpc('admin_get_dashboard_daily_advance_tender', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_warehouse_name: session.warehouseName || null
+  });
+  if (tender.error || !tender.data) {
+    console.error('admin_get_dashboard_daily_advance_tender failed:', tender.error);
+    return;
+  }
+  renderWarehouseBreakdown('statTodayAdvanceOrdersByTender', tender.data, 'amount', 'payment_count', 'method_name', 'Collected today · by tender');
+}
+
 // "Total Purchase" card, sourced from admin_get_purchase_summary()
 // (supabase_item_cost_and_po_line_cost.sql) - the same Asia/Manila month boundary as
 // loadExpenseSummary/loadFinancialSummary above, so all three sections agree on "this month".
@@ -961,6 +1002,7 @@ function setupDashboardGroups() {
     await loadExpenseSummary(session);
     await loadDailyByWarehouse(session);
     await loadDailyByTender(session);
+    await loadDailyAdvanceOrders(session);
     await loadPurchaseSummary(session);
     await loadPayrollSummary(session);
     renderProfitCard();

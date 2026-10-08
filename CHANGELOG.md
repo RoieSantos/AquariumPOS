@@ -2,7 +2,47 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-08
+
+- General Setup: new **Online Orders - Proof Photos** section with two switches, "Require a photo on Production Done" and "Require a photo on Release / Mark Shipped" (PortalSettings `PROOF_PHOTO_PRODUCTION_DONE` / `PROOF_PHOTO_RELEASE`, default on). Off = the old plain confirm. Read on every click, no reload needed. [general-setup.html](docs/general-setup.html), [generalSetup.js](docs/js/generalSetup.js) (v=pp1), [onlineOrders.js](docs/js/onlineOrders.js) `proofPhotoRequired` (v=pp2). No new SQL.
+
+- Proof photos (Production Done / Release): the photo is now shrunk to a 1600px JPEG before upload - the bucket rejects files over 10 MB and HEIC, which some phone cameras produce. [onlineOrders.js](docs/js/onlineOrders.js) `shrinkProofPhoto`.
+
+- **Online Orders - Super User "Delete Order"** (cleanup only): new card button (online-orders.html, onlineOrders.js `deleteOnlineOrder`, cache `delorder1`) + `admin_delete_online_order` in `supabase_online_order_admin_delete.sql`. Refuses orders with Item Ledger sales or sold serials; deletes the order and all portal rows keyed on it, and records it in new `OnlineOrdersDeleted` so the POS/Pancake sync can't re-insert it.
+
+- Delivery Quote: removed the "Sandbox mode" warning shown under Delivery method when Lalamove is selected (HTML note + its toggle in deliveryQuote.js); bumped script to v=3.
+
+- **Purchase Orders: Merge.** Super users get a new "Merge" action on an open PO. It moves another open PO from the same vendor into this one, combining identical lines, and then deletes it. A PO that has already received stock can't be merged away. New RPCs are in [supabase_purchase_order_merge.sql](sql/supabase_purchase_order_merge.sql). `purchaseOrders.js?v=merge1`.
+- **Shelf Map: fixed dark mode.** The spot cards used `--card-bg`/`--border`, which aren't defined anywhere, so they always fell back to white and the light dark-mode text was unreadable. They now use the theme's `--panel-bg`/`--panel-border` ([shelf-map.html](docs/shelf-map.html)).
+
+- **New page: Bills & Dues** ([business-bills.html](docs/business-bills.html), Reports menu, super users). It tracks the business's recurring must-pay bills (rent, utilities, BIR, SSS/PhilHealth/Pag-IBIG, permits) and shows Overdue / Due Soon / Upcoming status, a monthly schedule, and payment history. "Pay" can also log an Expense Journal entry; voiding a payment removes that entry. Tables and RPCs are in [supabase_business_bills.sql](sql/supabase_business_bills.sql). `nav.js?v=bills1` on every page.
+
+- **Dashboard: new "Today's Advance Orders" card** in Sales - Today (super users). It shows the total value of advance orders placed today, the order count, downpayment vs balance, and a by-branch split. New RPC in [supabase_dashboard_daily_advance_orders.sql](sql/supabase_dashboard_daily_advance_orders.sql). `dashboard.js?v=adv1`.
+- **Advance orders: tender types on the dashboard.** The POS now uploads advance-order payments (TransPaymentEntry rows for advance-order receipts) to a new `AdvanceOrderPayments` table. This happens when an order is created or paid, plus a 5-minute catch-up of the last 7 days. The card shows a "Collected today · by tender" split. See [supabase_advance_order_payments.sql](sql/supabase_advance_order_payments.sql). `dashboard.js?v=adv2`; needs a new POS build.
+- Added the read-only check [supabase_check_advance_order_tender.sql](sql/supabase_check_advance_order_tender.sql), which shows why the tender split might be missing.
+
+- **Shelf Map: clearer spot boxes.** Each box now shows "Min. Shelf Count" and a big, colour-coded "Stock on hand" (Item Ledger) side by side. The "Drawing" count is removed from the boxes, and the page description and legend now say "Stock on hand" instead of "Ledger". `shelfMap.js?v=onhand2`.
+
+- **Transfer Orders: Super Users can pick both From and To Warehouse on New Transfer Order**, so any branch-to-branch transfer is possible. Dropdowns are pre-set to the usual defaults; everyone else still gets locked fields. Saving now requires both warehouse IDs, since an order missing one could never ship. `transferOrders.js?v=bc7`.
+
+- **Delivery calendar: manual Delivery Fee on Edit Details** (and on the assign prompt for walk-in / advance orders). New `DeliveryStops.ManualDeliveryFee` in [supabase_delivery_stop_manual_fee.sql](sql/supabase_delivery_stop_manual_fee.sql). It replaces the order's fee on the receipt / invoice / manifest, and Total / Balance move by the difference. Blank = keep, 0 = free delivery. Portal only, never written to Pancake. `delivery.js?v=advdeliv3`.
+
+- **Online Orders page: Dispatch Date column** (Online / Walk-in / Advance, sortable, also in Export to Excel). Filled once the order leaves the shop: online = Mark Shipped / last release, else latest partial release; walk-in = picked up; advance = Mark Shipped. Added to [supabase_online_orders_list_sort.sql](sql/supabase_online_orders_list_sort.sql) (new `dispatched_at` on `admin_list_online_orders`). `onlineOrders.js?v=sort2`, column-width keys bumped.
+
+- **Online Orders page: click-to-sort headers** on the Online, Walk-in and Advance tabs (click again to reverse, ▲/▼ arrow). Sorting is server-side over every page: new [supabase_online_orders_list_sort.sql](sql/supabase_online_orders_list_sort.sql) re-creates `admin_list_online_orders` and `admin_list_advance_orders` with `p_sort_column` / `p_sort_dir`. Flags / Production Order / POS columns aren't sortable (built per page). Export to Excel follows the chosen sort. `onlineOrders.js?v=sort1`.
+
+- **Delivery assign list: click-to-sort headers**: Order ID / Customer / Status / Address / Type sort on click (click again to reverse). Sorting is server-side (`p_sort_column` / `p_sort_dir` added to `admin_list_deliverable_online_orders` in [supabase_delivery_advance_and_walkin_orders.sql](sql/supabase_delivery_advance_and_walkin_orders.sql)) so it covers every page, not just the 50 rows on screen. `delivery.js?v=advdeliv2`.
+
+- **Delivery calendar: advance orders + walk-in fix**: [supabase_delivery_advance_and_walkin_orders.sql](sql/supabase_delivery_advance_and_walkin_orders.sql) lets a delivery stop point at an Advance Order (new `DeliveryStops.AdvanceTransactionNo`, shown as `ADV-<no>` with its AdvanceOrderLines on receipt/invoice/job order/driver view). It also stops hiding orders whose Pancake "free shipping" set `ForDelivery`; the list now hides only orders already on the calendar. Walk-in name/phone from Online Orders now shows on the calendar.
+- `docs/js/delivery.js` / `delivery.html` (`?v=advdeliv1`): assign list has a Type column (Online/Walk-in/Advance) and keys rows by source. Advance orders open the address/name/phone prompt, and the walk-in prompt is prefilled.
+
+- Added read-only `sql/supabase_diagnose_delivery_assign_10295.sql` to check why order 10295 (a POS Advance Order) can't be assigned on the Delivery calendar. The assign list only reads `OnlineOrders`.
+
+- Added read-only check [supabase_check_online_orders_list_speed.sql](sql/supabase_check_online_orders_list_speed.sql). It looks into why Online Orders is slow to open: it times the list query as it works today against a version that picks the 50-row page first, times each computed column on its own, shows the recorded per-call RPC timings (pg_stat_statements), and includes an EXPLAIN ANALYZE.
+
 ## 2026-10-07
+
+- Online Orders: **mandatory proof photo** on every Production Done (online orders, restock Production Orders, Advance Orders) and every Release / Mark Shipped (partial release, release all, whole-order ship, Advance Order Shipped). New confirm dialog with a camera button - the confirm button stays disabled until a photo is taken; it's uploaded and recorded (not sent to the customer) and shows as "Proof photo" in the order card's Photos part. Undo Production Done needs no photo. New [supabase_online_order_proof_photos.sql](sql/supabase_online_order_proof_photos.sql) (record RPC + proof photos kept 180 days instead of 30); [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css); cache `?v=pp1`.
 
 - Online Orders **Release Items** dialog: fixed the layout. The global `input[type=number] { width:100% }` rule was stretching the qty box so the item name collapsed into a one-letter column. Each row is now [tick] [name + ordered/left] [Qty _ of N], the whole row can be tapped to tick it, picked rows are highlighted, and the qty box drops under the name on phones. [bc-list.css](docs/css/bc-list.css), [onlineOrders.js](docs/js/onlineOrders.js); cache `?v=rl1` in [online-orders.html](docs/online-orders.html).
 

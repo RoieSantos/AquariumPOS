@@ -25,6 +25,7 @@
     <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
     <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3.2 8.4 6.4 11.5 12.8 4.6"/></symbol>
     <symbol id="ico-posted" viewBox="0 0 16 16"><path d="M3.5 2.5h6l3 3v8h-9z"/><path d="M5.8 9.2l1.6 1.6 3-3.2"/></symbol>
+    <symbol id="ico-merge" viewBox="0 0 16 16"><path d="M4 2.5v3c0 2.5 4 3 4 5.5v2.5M12 2.5v3c0 2.5-4 3-4 5.5"/><path d="M6 12l2 2 2-2"/></symbol>
   </svg>
 
   <!-- Business Central list page (css/bc-list.css) - same shell as Transfer Orders / Item Ledger
@@ -131,6 +132,8 @@
         </span>
         <span id="poCardExistingFooter" class="bc-cmd-group hidden">
           <button class="bc-cmd bc-cmd-accent" id="postPoBtn" type="button" title="Receive the Qty Received entered below into inventory; posts the order once nothing is outstanding"><svg class="bc-ico"><use href="#ico-posted"/></svg>Post</button>
+          <!-- Super users only (openReceiveModal) - pulls another open PO from this vendor into this one. -->
+          <button class="bc-cmd hidden" id="mergePoBtn" type="button" title="Move another open Purchase Order from this vendor into this one"><svg class="bc-ico"><use href="#ico-merge"/></svg>Merge</button>
           <span class="bc-cmd-sep"></span>
           <a id="poCardPrintLink" href="#" class="bc-cmd hidden"><svg class="bc-ico"><use href="#ico-print"/></svg>Print</a>
         </span>
@@ -355,14 +358,52 @@
     </div>
   </div>
 
+  <!-- Merge Purchase Orders (js/purchaseOrders.js openMergePoModal) - stacks above the PO card. Lists
+       the vendor's other open POs; the picked one's lines move into the open PO and it is deleted
+       (staff_merge_purchase_orders, sql/supabase_purchase_order_merge.sql). -->
+  <div id="mergePoModal" class="modal-backdrop hidden" style="z-index:110;">
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:760px;" role="dialog" aria-modal="true" aria-labelledby="mergePoTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">PURCHASE ORDER</div>
+          <h2 id="mergePoTitle">Merge into</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" id="mergePoIntro"></p>
+        <div class="bc-grid-wrap" style="max-height:340px;">
+          <table class="bc-grid">
+            <thead>
+              <tr>
+                <th></th>
+                <th>No.</th>
+                <th>Order Date</th>
+                <th>Warehouse</th>
+                <th class="num">Lines</th>
+                <th class="num">Quantity</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="mergePoBody"></tbody>
+          </table>
+        </div>
+        <div id="mergePoError" class="error-text hidden" style="margin-top:8px;"></div>
+      </div>
+      <div class="bc-doc-foot">
+        <button class="bc-btn bc-btn-primary" id="mergePoConfirmBtn" type="button" disabled>Merge</button>
+        <button class="bc-btn" id="mergePoCloseBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky2"></script>
+  <script src="js/nav.js?v=bills1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/purchaseOrders.js?v=bc2"></script>
+  <script src="js/purchaseOrders.js?v=merge1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

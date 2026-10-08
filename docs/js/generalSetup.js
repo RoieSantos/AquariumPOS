@@ -169,6 +169,45 @@ async function saveTransferPostingSetting() {
   await loadTransferPostingSetting();
 }
 
+// Online Orders proof photos on/off (read by onlineOrders.js proofPhotoRequired). Never saved -> on.
+const PROOF_PHOTO_SETTINGS = {
+  PROOF_PHOTO_PRODUCTION_DONE: { input: 'proofPhotoProductionInput', description: 'true = makers must take a photo on Production Done (Online Orders). Set from General Setup -> Online Orders - Proof Photos.' },
+  PROOF_PHOTO_RELEASE: { input: 'proofPhotoReleaseInput', description: 'true = dispatchers must take a photo on Release / Mark Shipped (Online Orders). Set from General Setup -> Online Orders - Proof Photos.' }
+};
+
+async function loadProofPhotoSettings() {
+  await Promise.all(Object.entries(PROOF_PHOTO_SETTINGS).map(async ([key, s]) => {
+    const value = await getPublicSetting(key);
+    document.getElementById(s.input).checked = String(value).trim().toLowerCase() !== 'false';
+  }));
+}
+
+async function saveProofPhotoSettings() {
+  const errorEl = document.getElementById('proofPhotoError');
+  const noticeEl = document.getElementById('proofPhotoNotice');
+  errorEl.classList.add('hidden');
+  noticeEl.classList.add('hidden');
+  const results = await Promise.all(Object.entries(PROOF_PHOTO_SETTINGS).map(([key, s]) =>
+    supabaseClient.rpc('admin_upsert_portal_setting', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_setting_key: key,
+      p_setting_value: document.getElementById(s.input).checked ? 'true' : 'false',
+      p_description: s.description,
+      p_is_public_to_staff: true
+    })));
+  const failed = results.find((r) => r.error);
+  if (failed) {
+    errorEl.textContent = failed.error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  noticeEl.textContent = 'Saved. Applies to the next Production Done / Release - no reload needed.';
+  noticeEl.classList.remove('hidden');
+  await loadProofPhotoSettings();
+  loadSettings();
+}
+
 // Shared upload flow for both the logo and the Login page background image - only the RPC name,
 // which CompanyInfo field the result overrides, and which UI elements to update differ.
 async function uploadCompanyAsset({ fileInputId, uploadBtnId, uploadBtnLabel, rpcName, overrideKey, assetLabel }) {
@@ -1004,6 +1043,7 @@ async function deleteSetting(key) {
   document.getElementById('saveCompanyInfoBtn').addEventListener('click', () => saveCompanyInfo());
   document.getElementById('savePromoBtn').addEventListener('click', savePromotionSetting);
   document.getElementById('saveTransferPostingBtn').addEventListener('click', saveTransferPostingSetting);
+  document.getElementById('saveProofPhotoBtn').addEventListener('click', saveProofPhotoSettings);
   document.getElementById('saveNoSeriesBtn').addEventListener('click', saveNoSeries);
   document.getElementById('cancelNoSeriesEditBtn').addEventListener('click', resetNoSeriesForm);
   document.getElementById('savePancakeApiKeyBtn').addEventListener('click', savePancakeApiKey);
@@ -1027,6 +1067,7 @@ async function deleteSetting(key) {
   await loadCompanyInfo();
   await loadPromotionSetting();
   await loadTransferPostingSetting();
+  await loadProofPhotoSettings();
   await loadNoSeries();
   await loadPancakeApiKeyStatus();
   await loadPancakePublicApiKeyStatus();

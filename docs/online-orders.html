@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=rl1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=pp1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -175,36 +175,40 @@
 
         <section class="bc-main">
           <div class="bc-grid-wrap" id="orderGridWrap">
-            <table class="bc-grid oo-grid" data-resize-key="online-orders-v5">
+            <table class="bc-grid oo-grid" data-resize-key="online-orders-v6">
               <thead>
                 <tr>
-                  <th>Order ID</th>
-                  <th>Date</th>
-                  <th>Time</th>
-                  <th>Customer</th>
-                  <th>Warehouse</th>
-                  <th>Status</th>
-                  <th>Confirmed By</th>
-                  <th>Created By</th>
-                  <th>Tank Maker</th>
-                  <th>Stand Maker</th>
-                  <th>Dispatcher</th>
+                  <!-- th.sortable: click to sort (server-side, js/onlineOrders.js wireListSortHeaders,
+                       sql/supabase_online_orders_list_sort.sql). Flags / Production Order / POS columns
+                       are built per page in the browser, so they can't be sorted across pages. -->
+                  <th class="sortable" data-sort-key="order_id">Order ID<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="order_date">Date<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="order_time">Time<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="customer_name">Customer<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="warehouse_name">Warehouse<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="status">Status<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="confirmed_by">Confirmed By<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="created_by">Created By<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="tank_maker">Tank Maker<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="stand_maker">Stand Maker<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="dispatcher">Dispatcher<span class="sort-arrow"></span></th>
                   <th title="Glass thickness, Custom and GMA badges">Flags</th>
                   <th>Production Order</th>
-                  <th>Print Note</th>
+                  <th class="sortable" data-sort-key="note_print">Print Note<span class="sort-arrow"></span></th>
                   <th>POS Receipt</th>
                   <th>POS Customer</th>
                   <th>POS Description</th>
                   <th>POS Items</th>
                   <th>Cashier</th>
-                  <th id="deliveryFeeHeader" class="num">Delivery Fee</th>
-                  <th>For Delivery</th>
-                  <th>Est. Delivery Date</th>
-                  <th>Last Updated</th>
+                  <th id="deliveryFeeHeader" class="num sortable" data-sort-key="delivery_fee">Delivery Fee<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="for_delivery">For Delivery<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="estimated_delivery_date">Est. Delivery Date<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="dispatched_at" title="When it left the shop - shipped / released (walk-ins: picked up). Blank until then.">Dispatch Date<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="last_updated_at">Last Updated<span class="sort-arrow"></span></th>
                 </tr>
               </thead>
               <tbody id="orderTableBody">
-                <tr><td colspan="23" class="cell-msg">Loading...</td></tr>
+                <tr><td colspan="24" class="cell-msg">Loading...</td></tr>
               </tbody>
             </table>
           </div>
@@ -218,31 +222,32 @@
       <div class="bc-body no-filterpane no-factbox hidden" id="advanceOrdersView">
         <section class="bc-main">
           <div class="bc-grid-wrap" id="advanceGridWrap">
-            <table class="bc-grid oo-grid" data-resize-key="advance-orders-v1">
+            <table class="bc-grid oo-grid" data-resize-key="advance-orders-v2">
               <thead>
                 <tr>
-                  <th>Transaction No</th>
-                  <th>Receipt No</th>
-                  <th>Date</th>
-                  <th>Time</th>
-                  <th>Customer</th>
-                  <th>Warehouse</th>
-                  <th>Status</th>
-                  <th>Cashier</th>
-                  <th>Tank Maker</th>
-                  <th>Stand Maker</th>
+                  <th class="sortable" data-sort-key="transaction_no">Transaction No<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="receipt_no">Receipt No<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="order_date">Date<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="order_time">Time<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="customer_name">Customer<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="warehouse">Warehouse<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="status">Status<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="cashier">Cashier<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="tank_maker">Tank Maker<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="stand_maker">Stand Maker<span class="sort-arrow"></span></th>
                   <th title="Custom tank / stand lines, rework">Flags</th>
-                  <th>Description</th>
-                  <th class="num">Net Amount</th>
-                  <th class="num">Downpayment</th>
-                  <th class="num">Balance</th>
-                  <th>Fully Paid</th>
-                  <th>Date Paid</th>
-                  <th>Online Order ID</th>
+                  <th class="sortable" data-sort-key="order_description">Description<span class="sort-arrow"></span></th>
+                  <th class="num sortable" data-sort-key="net_amount">Net Amount<span class="sort-arrow"></span></th>
+                  <th class="num sortable" data-sort-key="downpayment">Downpayment<span class="sort-arrow"></span></th>
+                  <th class="num sortable" data-sort-key="balance">Balance<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="fully_paid">Fully Paid<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="date_paid">Date Paid<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="shipped_at" title="When it was marked Shipped. Blank until then.">Dispatch Date<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="online_order_id">Online Order ID<span class="sort-arrow"></span></th>
                 </tr>
               </thead>
               <tbody id="advanceTableBody">
-                <tr><td colspan="18" class="cell-msg">Loading...</td></tr>
+                <tr><td colspan="19" class="cell-msg">Loading...</td></tr>
               </tbody>
             </table>
           </div>
@@ -319,6 +324,7 @@
         <button class="bc-cmd hidden" id="cardProductionDoneBtn" type="button"><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
         <button class="bc-cmd hidden" id="cardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
         <button class="bc-cmd" id="cardPrintSerialsBtn" type="button" title="Print (or reprint) the serial labels tied to this order"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serial Labels</button>
+        <button class="bc-cmd bc-cmd-danger hidden" id="cardDeleteOrderBtn" type="button" title="Super Users only - permanently delete this order from the portal (cleanup of junk/test orders)">Delete Order</button>
       </div>
 
       <div class="bc-doc-body">
@@ -478,7 +484,7 @@
              kept 30 days) - order-level, separate from the per-line attachments above. Hidden when
              the order has none. -->
         <div class="bc-doc-part hidden" id="orderCardPhotosPart">
-          <div class="bc-doc-part-head">Photos Sent</div>
+          <div class="bc-doc-part-head">Photos</div>
           <div id="orderCardPhotosList" style="display:flex; flex-wrap:wrap; gap:12px; padding:10px 0;"></div>
         </div>
       </div>
@@ -688,6 +694,33 @@
     </div>
   </div>
 
+  <!-- Production Done / Release / Mark Shipped with a mandatory proof photo (confirmWithPhoto in
+       onlineOrders.js, sql/supabase_online_order_proof_photos.sql). The confirm button stays disabled
+       until a photo is taken; the label opens the camera straight from the tap (works on iPhone too). -->
+  <div id="proofPhotoDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog oo-confirm-dialog oo-proof-dialog" role="dialog" aria-modal="true" aria-labelledby="proofPhotoTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div id="proofPhotoCaption" class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">PLEASE CONFIRM</div>
+          <h2 id="proofPhotoTitle">Order</h2>
+        </div>
+      </div>
+      <div class="bc-dialog-body">
+        <p id="proofPhotoMessage" class="bc-lede"></p>
+        <label class="oo-proof-pick" for="proofPhotoInput">
+          <img id="proofPhotoPreview" class="hidden" alt="Proof photo preview" />
+          <span id="proofPhotoPickText">&#128247; Take a photo (required)</span>
+        </label>
+        <input type="file" id="proofPhotoInput" accept="image/*" capture="environment" class="hidden" />
+      </div>
+      <div class="bc-dialog-foot oo-confirm-foot">
+        <p id="proofPhotoError" class="bc-dialog-msg error-text hidden"></p>
+        <button class="bc-btn" id="proofPhotoCancelBtn" type="button">Cancel</button>
+        <button class="bc-btn bc-btn-primary" id="proofPhotoOkBtn" type="button" disabled>Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <div id="sendBackDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="sendBackTitle">
       <div class="bc-dialog-head">
@@ -864,7 +897,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=sky2"></script>
+  <script src="js/nav.js?v=bills1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
@@ -872,7 +905,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=rl1"></script>
+  <script src="js/onlineOrders.js?v=pp2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -175,6 +175,7 @@ namespace AquariumPOS
         public static string OnlineOrderLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/OnlineOrderLines";
         public static string AdvanceOrdersSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrders";
         public static string AdvanceOrderLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrderLines";
+        public static string AdvanceOrderPaymentsSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/AdvanceOrderPayments";
         // Online Customers (Pancake customer/PSID records, mirrored from dbo.OnlineCustomers - see
         // OnlinefunctionsEvents.SyncCustomersAsync/SyncCustomersToSupabaseAsync) - same one-way
         // desktop -> Supabase pattern as everything else on this page. Not exposed to the Web

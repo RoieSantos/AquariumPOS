@@ -46,17 +46,17 @@ function currentShelf() {
 // the item) against the ledger's on-hand for that location. Orange = the ledger has dropped to half
 // of the shelf quantity or less, i.e. time to restock the shelf; green = more than half is still in
 // the ledger (including more than the shelf holds); red = nothing left anywhere.
+// onHand is the display value for the big "Stock on hand" number (null = nothing to show).
 function cellStatus(cell) {
-  const drawing = cell.drawn_qty != null ? `Drawing: ${formatQty(cell.drawn_qty)}` : '';
-  if (!cell.item_code) return { cls: 'unlinked', sub: drawing };
-  if (cell.on_hand === null || cell.on_hand === undefined) return { cls: 'unlinked', sub: [drawing, 'pick a location'].filter(Boolean).join(' - ') };
+  if (!cell.item_code) return { cls: 'unlinked', onHand: null, sub: '' };
+  if (cell.on_hand === null || cell.on_hand === undefined) return { cls: 'unlinked', onHand: null, sub: 'pick a location' };
   const onHand = Number(cell.on_hand);
   const shelfTotal = Number(cell.shelf_total || 0);
   let cls = 'ok';
   if (onHand <= 0 && shelfTotal === 0) cls = 'empty';
   else if (onHand <= shelfTotal / 2) cls = 'diff';
-  const shared = cell.item_cells > 1 ? ` (shelf total ${formatQty(shelfTotal)}, ${cell.item_cells} spots)` : '';
-  return { cls, sub: `Ledger: ${formatQty(onHand)}${shared}${drawing ? ' | ' + drawing : ''}` };
+  const shared = cell.item_cells > 1 ? `Shelf total ${formatQty(shelfTotal)} across ${cell.item_cells} spots` : '';
+  return { cls, onHand: formatQty(onHand), sub: shared };
 }
 
 // ---------------------------------------------------------------- replenishment transfer order
@@ -234,8 +234,17 @@ function renderShelf() {
       return `<div class="shelf-cell ${st.cls}${editing ? ' editable' : ''}" data-r="${r}" data-c="${c}">
         <span class="cell-label">${escapeHtml(cell.label)}</span>
         <span class="cell-code">${escapeHtml(cell.model_code || '')}</span>
-        ${countHtml}
-        <span class="cell-sub">${escapeHtml(st.sub)}</span>
+        <div class="cell-stats">
+          <div class="cell-stat">
+            <span class="cell-stat-label">Min. Shelf Count</span>
+            ${countHtml}
+          </div>
+          ${st.onHand !== null ? `<div class="cell-stat cell-stat-onhand">
+            <span class="cell-stat-label">Stock on hand</span>
+            <span class="cell-onhand">${escapeHtml(st.onHand)}</span>
+          </div>` : ''}
+        </div>
+        ${st.sub ? `<span class="cell-sub">${escapeHtml(st.sub)}</span>` : ''}
         ${itemLink}
         ${!editing && countedLabel(cell) ? `<span class="cell-sub">${escapeHtml(countedLabel(cell))}</span>` : ''}
         ${cell.notes ? `<span class="cell-sub">${escapeHtml(cell.notes)}</span>` : ''}
