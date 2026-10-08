@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=pp1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=photofb1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -114,6 +114,9 @@
         <!-- Super users only - see js/onlineOrders.js's init() (session.isSuperUser gate). No icon:
              exportOrdersToExcel restores the label with textContent, which would drop it. -->
         <button type="button" class="bc-cmd hidden" id="exportExcelBtn">Export to Excel</button>
+        <!-- Super users only - deletes the ticked rows (js/onlineOrders.js deleteCheckedOrders,
+             sql/supabase_online_order_admin_delete.sql). Cleanup of junk/test orders. -->
+        <button type="button" class="bc-cmd bc-cmd-danger hidden" id="deleteSelectedOrdersBtn" disabled>Delete Selected</button>
       </div>
 
       <!-- Shown when arriving from a Dashboard finance card (?period=/?scope=/?filter=), per
@@ -181,7 +184,7 @@
                   <!-- th.sortable: click to sort (server-side, js/onlineOrders.js wireListSortHeaders,
                        sql/supabase_online_orders_list_sort.sql). Flags / Production Order / POS columns
                        are built per page in the browser, so they can't be sorted across pages. -->
-                  <th class="sortable" data-sort-key="order_id">Order ID<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="order_id"><input type="checkbox" class="oo-row-check hidden" id="checkAllOrders" title="Select all orders on this page" aria-label="Select all orders on this page" />Order ID<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="order_date">Date<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="order_time">Time<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="customer_name">Customer<span class="sort-arrow"></span></th>
@@ -327,7 +330,10 @@
         <button class="bc-cmd bc-cmd-danger hidden" id="cardDeleteOrderBtn" type="button" title="Super Users only - permanently delete this order from the portal (cleanup of junk/test orders)">Delete Order</button>
       </div>
 
-      <div class="bc-doc-body">
+      <!-- Body split BC-style: the document on the left, the Photos FactBox on the right (stacks under
+           the document on a narrow screen). -->
+      <div class="bc-doc-body oc-split">
+       <div class="oc-main">
         <!-- Maker focus (js/onlineOrders.js fillMakerFocusSummary): the only header a maker-only account
              sees on the order - due date, their part and any rework note - above the lines. -->
         <div class="oc-maker-summary hidden" id="ocMakerSummary"></div>
@@ -480,13 +486,18 @@
           </div>
         </details>
 
-        <!-- Photos sent to the customer with Send Photo / To Ship (public."OnlineOrderStatusPhotos",
-             kept 30 days) - order-level, separate from the per-line attachments above. Hidden when
-             the order has none. -->
-        <div class="bc-doc-part hidden" id="orderCardPhotosPart">
-          <div class="bc-doc-part-head">Photos</div>
-          <div id="orderCardPhotosList" style="display:flex; flex-wrap:wrap; gap:12px; padding:10px 0;"></div>
-        </div>
+       </div>
+
+        <!-- Photos FactBox: proof photos and photos sent to the customer with Send Photo / To Ship
+             (public."OnlineOrderStatusPhotos", kept 30 days) - order-level, separate from the per-line
+             attachments. Filled by js/onlineOrders.js loadOrderCardStatusPhotos. -->
+        <aside class="oc-factbox" id="orderCardPhotosPart" aria-label="Photos">
+          <div class="oc-fact-title">Photos <span class="muted" id="orderCardPhotosCount"></span></div>
+          <div class="oc-fact-body">
+            <p class="oc-fact-empty muted" id="orderCardPhotosEmpty">No photos yet.</p>
+            <div id="orderCardPhotosList" class="oc-fact-photos"></div>
+          </div>
+        </aside>
       </div>
     </div>
   </div>
@@ -790,6 +801,29 @@
        triggered it. -->
   <input type="file" id="sendPhotoInput" accept="image/*" capture="environment" class="hidden" />
 
+  <!-- Send Photo: pick photo(s) the order already has (proof / sent photos + image line attachments)
+       or take a new one (js/onlineOrders.js handleSendPhotoClick). "Take New Photo" is a label for
+       sendPhotoInput so the camera opens straight from the tap (works on iPhone too). -->
+  <div id="sendPhotoPickDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog oo-photo-pick-dialog" role="dialog" aria-modal="true" aria-labelledby="sendPhotoPickTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">SEND PHOTO</div>
+          <h2 id="sendPhotoPickTitle">Order</h2>
+        </div>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede" id="sendPhotoPickLede">Choose the photo(s) to send to the customer, or take a new one.</p>
+        <div id="sendPhotoPickList" class="oo-photo-pick-list"></div>
+      </div>
+      <div class="bc-dialog-foot oo-confirm-foot">
+        <label class="bc-btn oo-photo-pick-take" for="sendPhotoInput">&#128247; Take New Photo</label>
+        <button class="bc-btn" id="sendPhotoPickCancelBtn" type="button">Cancel</button>
+        <button class="bc-btn bc-btn-primary" id="sendPhotoPickOkBtn" type="button" disabled>Send Selected</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Serial picker for To Ship at a production warehouse (js/onlineOrders.js) - mirrors the
        desktop's EnsureOrderSerialTrackingAsync gate. Only EXISTING IN_STOCK serials can be picked
        here (see supabase_online_order_to_ship_serials.sql's header comment) - if there aren't
@@ -905,7 +939,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=pp2"></script>
+  <script src="js/onlineOrders.js?v=photofb1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

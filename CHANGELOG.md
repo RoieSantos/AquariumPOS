@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-08
 
+- **Online Order card: Photos moved into a right-hand FactBox** (BC style; stacks below on narrow screens, hidden for makers, always shown with "No photos yet" when empty). **Send Photo now opens a picker** of the order's existing photos (proof / sent photos + image line attachments) to tick and re-send, plus "Take New Photo" for the camera. [supabase_online_order_status_photo_shared_delete.sql](sql/supabase_online_order_status_photo_shared_delete.sql) keeps the shared image file when one of its re-sent rows is removed. Cache `photofb1`.
+
+- **Online Orders - multi-select delete** (Super Users): tick boxes in the Order ID cells + select-all in the header, and a **Delete Selected (N)** toolbar button. New bulk RPC `admin_delete_online_orders` (shared `_delete_online_order_core`) in `supabase_online_order_admin_delete.sql` deletes each order on its own and reports refused ones. Cache `delmulti1` (onlineOrders.js, bc-list.css).
+
 - General Setup: new **Online Orders - Proof Photos** section with two switches, "Require a photo on Production Done" and "Require a photo on Release / Mark Shipped" (PortalSettings `PROOF_PHOTO_PRODUCTION_DONE` / `PROOF_PHOTO_RELEASE`, default on). Off = the old plain confirm. Read on every click, no reload needed. [general-setup.html](docs/general-setup.html), [generalSetup.js](docs/js/generalSetup.js) (v=pp1), [onlineOrders.js](docs/js/onlineOrders.js) `proofPhotoRequired` (v=pp2). No new SQL.
 
 - Proof photos (Production Done / Release): the photo is now shrunk to a 1600px JPEG before upload - the bucket rejects files over 10 MB and HEIC, which some phone cameras produce. [onlineOrders.js](docs/js/onlineOrders.js) `shrinkProofPhoto`.

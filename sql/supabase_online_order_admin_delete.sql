@@ -1,10 +1,13 @@
 -- Super User "Delete Order" on the Online Order card - per "can you allow a super user to delete a
--- order .. this is for cleaning purposes only". Generalizes the one-off
--- supabase_delete_online_order_1821.sql into an RPC behind a button.
+-- order .. this is for cleaning purposes only" - and multi-select "Delete Selected" on the list - per
+-- "can we do multi selection deletion on the list?". Generalizes the one-off
+-- supabase_delete_online_order_1821.sql into RPCs behind buttons.
 --
---   admin_delete_online_order(user, pass, order_id)   Super User only (is_admin_authorized).
+--   admin_delete_online_order(user, pass, order_id)      Super User only (is_admin_authorized) - card button.
+--   admin_delete_online_orders(user, pass, order_ids[])  Same, for the list's Delete Selected; returns one
+--                                                        row per order (deleted / refusal reason).
 --
--- Refuses (nothing deleted) when the order already touched stock:
+-- Refuses an order (nothing deleted for it) when it already touched stock:
 --   * ItemLedgerEntries rows with DocumentType 'Sales Order' for it - ledger rows are never deleted,
 --     that case needs a reversing entry instead.
 --   * Serials sold against it (ItemSerialTracking.SoldOnlineOrderId) - they'd be left pointing at an
@@ -61,14 +64,8 @@ create trigger trg_skip_deleted_online_order_line
   execute function public._skip_deleted_online_order();
 
 -- ---------------------------------------------------------------------------
--- 2. Delete RPC.
-drop function if exists public.admin_delete_online_order(text, text, text);
-
-create or replace function public.admin_delete_online_order(
-  p_admin_username text,
-  p_admin_password text,
-  p_order_id text
-)
+-- 2. Shared delete (no auth check - only called by the RPCs below). Raises when the order can't go.
+create or replace function public._delete_online_order_core(p_order_id text, p_deleted_by text)
 returns void
 language plpgsql
 security definer
@@ -80,9 +77,6 @@ declare
   v_status text;
   v_count int;
 begin
-  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
-    raise exception 'Only a Super User can delete an order.';
-  end if;
   if v_id = '' then
     raise exception 'Order is required.';
   end if;
@@ -107,7 +101,7 @@ begin
   end if;
 
   insert into public."OnlineOrdersDeleted" ("OrderID", "CustomerName", "Status", "DeletedBy")
-  values (v_id, v_customer, v_status, p_admin_username)
+  values (v_id, v_customer, v_status, p_deleted_by)
   on conflict ("OrderID") do update
     set "CustomerName" = excluded."CustomerName", "Status" = excluded."Status",
         "DeletedBy" = excluded."DeletedBy", "DeletedAtUtc" = now();
@@ -131,4 +125,67 @@ begin
 end;
 $$;
 
+revoke all on function public._delete_online_order_core(text, text) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 3. Single delete (Online Order card's Delete Order button).
+drop function if exists public.admin_delete_online_order(text, text, text);
+
+create or replace function public.admin_delete_online_order(
+  p_admin_username text,
+  p_admin_password text,
+  p_order_id text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Only a Super User can delete an order.';
+  end if;
+  perform public._delete_online_order_core(p_order_id, p_admin_username);
+end;
+$$;
+
 grant execute on function public.admin_delete_online_order(text, text, text) to anon;
+
+-- ---------------------------------------------------------------------------
+-- 4. Bulk delete (list's Delete Selected). Each order is its own sub-transaction: a refused one
+-- (stock posted / serials sold / not found) comes back with the reason and the rest still go.
+drop function if exists public.admin_delete_online_orders(text, text, text[]);
+
+create or replace function public.admin_delete_online_orders(
+  p_admin_username text,
+  p_admin_password text,
+  p_order_ids text[]
+)
+returns table (order_id text, deleted boolean, message text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_id text;
+begin
+  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Only a Super User can delete orders.';
+  end if;
+
+  for v_id in
+    select distinct trim(x) from unnest(coalesce(p_order_ids, '{}'::text[])) x
+    where coalesce(trim(x), '') <> ''
+  loop
+    begin
+      perform public._delete_online_order_core(v_id, p_admin_username);
+      order_id := v_id; deleted := true; message := null;
+    exception when others then
+      order_id := v_id; deleted := false; message := sqlerrm;
+    end;
+    return next;
+  end loop;
+end;
+$$;
+
+grant execute on function public.admin_delete_online_orders(text, text, text[]) to anon;

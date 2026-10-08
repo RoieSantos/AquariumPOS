@@ -1995,7 +1995,7 @@ function orderRowsHtml(orders) {
   return orders
     .map((o) => `
       <tr data-order-id="${escapeHtml(o.order_id)}" class="${String(o.order_id) === String(selectedOrderId) ? 'selected' : ''}">
-        <td><a class="bc-doc-no" href="#" data-open-order="${escapeHtml(o.order_id)}" title="Open this order">${escapeHtml(o.order_id)}</a></td>
+        <td>${currentSession?.isSuperUser ? `<input type="checkbox" class="oo-row-check" data-check-order="${escapeHtml(o.order_id)}" ${checkedOrderIds.has(String(o.order_id)) ? 'checked' : ''} aria-label="Select order ${escapeHtml(o.order_id)}" />` : ''}<a class="bc-doc-no" href="#" data-open-order="${escapeHtml(o.order_id)}" title="Open this order">${escapeHtml(o.order_id)}</a></td>
         <td>${o.order_date || ''}</td>
         <td>${formatTime12(o.order_time)}</td>
         <td>${escapeHtml(o.customer_name)}</td>
@@ -3501,10 +3501,100 @@ function handleToShipPhotoCancelled() {
 // packed-order photo to the customer regardless of To Ship's enabled state or the order's status.
 
 let pendingSendPhoto = null;
+let sendPhotoPickChoices = [];
 
-function handleSendPhotoClick(orderId, triggerEl) {
+// Per "if it clicks can you ask the user to choose on the photo of the order if there is any" - opens
+// a picker with the photos the order already has (proof / sent photos + image line attachments) so
+// one can be re-sent without retaking it; "Take New Photo" in the dialog still opens the camera.
+// Always opens the dialog (even when the order has no photos yet) because the photos are fetched
+// first, and a camera opened after an await loses the tap on iPhone.
+async function handleSendPhotoClick(orderId, triggerEl) {
   pendingSendPhoto = { orderId, triggerEl };
-  document.getElementById('sendPhotoInput').click();
+  sendPhotoPickChoices = [];
+  const o = findFlatOrder(orderId);
+  document.getElementById('sendPhotoPickTitle').textContent = `Order ${orderId}${o?.customer_name ? ' - ' + o.customer_name : ''}`;
+  document.getElementById('sendPhotoPickLede').textContent = 'Loading the photos of this order...';
+  document.getElementById('sendPhotoPickList').innerHTML = '';
+  document.getElementById('sendPhotoPickOkBtn').disabled = true;
+  document.getElementById('sendPhotoPickOkBtn').textContent = 'Send Selected';
+  document.getElementById('sendPhotoPickDialog').classList.remove('hidden');
+
+  const auth = { p_admin_username: currentSession.username, p_admin_password: currentSession.password, p_order_id: orderId };
+  const [photosRes, attachRes] = await Promise.all([
+    supabaseClient.rpc('admin_list_online_order_status_photos', auth),
+    supabaseClient.rpc('admin_list_online_order_line_attachments', auth)
+  ]);
+  if (!pendingSendPhoto || pendingSendPhoto.orderId !== orderId) return; // closed / reopened meanwhile
+
+  // Same photo re-sent shows up as several rows with one URL - list it once (newest first).
+  const seen = new Set();
+  const choices = [];
+  (photosRes.error ? [] : photosRes.data || []).forEach((p) => {
+    if (!p.public_url || seen.has(p.public_url)) return;
+    seen.add(p.public_url);
+    const when = p.uploaded_at_utc ? new Date(p.uploaded_at_utc).toLocaleString() : '';
+    const kind = p.sent_to_customer == null ? 'Proof photo' : (p.sent_to_customer ? 'Sent to customer' : 'Not sent');
+    choices.push({ url: p.public_url, label: `${kind} - ${p.status || ''}`, meta: when });
+  });
+  (attachRes.error ? [] : attachRes.data || []).forEach((a) => {
+    if (!a.public_url || !isImageFileName(a.file_name) || seen.has(a.public_url)) return;
+    seen.add(a.public_url);
+    choices.push({ url: a.public_url, label: 'Line attachment', meta: a.file_name || '' });
+  });
+  sendPhotoPickChoices = choices;
+
+  document.getElementById('sendPhotoPickLede').textContent = choices.length
+    ? 'Choose the photo(s) of this order to send to the customer, or take a new one.'
+    : 'This order has no photos yet - take a new one.';
+  document.getElementById('sendPhotoPickList').innerHTML = choices.map((c, i) => `
+    <label class="oo-photo-pick-item">
+      <input type="checkbox" value="${i}" />
+      <img src="${escapeHtml(c.url)}" alt="${escapeHtml(c.label)}" loading="lazy" />
+      <span class="oo-photo-pick-meta"><b>${escapeHtml(c.label)}</b><span class="muted">${escapeHtml(c.meta)}</span></span>
+    </label>`).join('');
+}
+
+function closeSendPhotoPickDialog() {
+  document.getElementById('sendPhotoPickDialog').classList.add('hidden');
+}
+
+function updateSendPhotoPickOk() {
+  const n = document.querySelectorAll('#sendPhotoPickList input:checked').length;
+  const btn = document.getElementById('sendPhotoPickOkBtn');
+  btn.disabled = n === 0;
+  btn.textContent = n > 1 ? `Send ${n} Photos` : 'Send Selected';
+}
+
+// Re-sends the picked existing photo(s) one by one through the same send path as a new photo (each
+// send logs its own OnlineOrderStatusPhotos row), then asks about shipping once.
+async function sendPickedOrderPhotos() {
+  const pending = pendingSendPhoto;
+  const picked = [...document.querySelectorAll('#sendPhotoPickList input:checked')].map((cb) => sendPhotoPickChoices[Number(cb.value)]);
+  pendingSendPhoto = null;
+  closeSendPhotoPickDialog();
+  if (!pending || !picked.length) return;
+
+  let anySent = false;
+  for (const c of picked) {
+    if (await sendOrderStatusPhoto(pending.orderId, c.url, null, pending.triggerEl)) anySent = true;
+  }
+  refreshOpenOrderCardPhotos(pending.orderId);
+  if (anySent) await promptShipAfterPhoto(pending.orderId);
+}
+
+function refreshOpenOrderCardPhotos(orderId) {
+  if (String(orderId) === String(openCardOrderId) && !document.getElementById('orderCardModal').classList.contains('hidden')) {
+    loadOrderCardStatusPhotos(orderId);
+  }
+}
+
+function wireSendPhotoPickDialog() {
+  document.getElementById('sendPhotoPickList').addEventListener('change', updateSendPhotoPickOk);
+  document.getElementById('sendPhotoPickOkBtn').addEventListener('click', sendPickedOrderPhotos);
+  document.getElementById('sendPhotoPickCancelBtn').addEventListener('click', () => {
+    pendingSendPhoto = null;
+    closeSendPhotoPickDialog();
+  });
 }
 
 // Same RPC call applyStatusChange makes for the photo half of To Ship, just fired on its own
@@ -3644,17 +3734,22 @@ async function handleSendPhotoSelected(event) {
   pendingSendPhoto = null;
   input.value = ''; // reset so picking the same file again still fires 'change' next time
 
-  if (!pending || !file) return; // no pending request, or staff cancelled the camera/file picker
+  if (!pending) return;
+  if (!file) { pendingSendPhoto = pending; return; } // camera cancelled - keep the picker open
+  closeSendPhotoPickDialog();
 
   const photo = await uploadOrderStatusPhoto(pending.orderId, file);
   if (!photo) return; // uploadOrderStatusPhoto already alerted with the reason
 
   const sent = await sendOrderStatusPhoto(pending.orderId, photo.url, photo.storagePath, pending.triggerEl);
+  refreshOpenOrderCardPhotos(pending.orderId);
   if (sent) await promptShipAfterPhoto(pending.orderId);
 }
 
+// Camera/file picker cancelled from the Send Photo picker - the picker stays open, so keep the
+// pending order; it's cleared when the picker itself is closed.
 function handleSendPhotoCancelled() {
-  pendingSendPhoto = null;
+  if (document.getElementById('sendPhotoPickDialog').classList.contains('hidden')) pendingSendPhoto = null;
 }
 
 // ---------------------------------------------------------------- BC list selection + action bar
@@ -3953,6 +4048,13 @@ function wireOrderListActions() {
       event.preventDefault();
       selectOrderRow(openLink.dataset.openOrder);
       openOrderCard(openLink.dataset.openOrder);
+      return;
+    }
+    const check = event.target.closest('[data-check-order]');
+    if (check) {
+      if (check.checked) checkedOrderIds.add(check.dataset.checkOrder);
+      else checkedOrderIds.delete(check.dataset.checkOrder);
+      updateCheckedOrdersState();
       return;
     }
     if (event.target.closest('a')) return; // Glass / GMA badge drill-down links keep their own navigation
@@ -4280,7 +4382,7 @@ async function loadOrderCardLines(orderId) {
   cardAttachmentsByLineId = {};
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines from Pancake...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
-  document.getElementById('orderCardPhotosPart').classList.add('hidden');
+  renderOrderCardPhotos([]);
   cardGlassTanks = [];
   document.getElementById('orderCardGlassTab').classList.add('hidden');
   renderPosDescription(null);
@@ -4618,13 +4720,15 @@ async function loadOrderCardStatusPhotos(orderId) {
     p_order_id: orderId
   });
   if (String(orderId) !== String(openCardOrderId)) return;
-  const part = document.getElementById('orderCardPhotosPart');
-  if (error || !data || !data.length) {
-    part.classList.add('hidden');
-    return;
-  }
-  document.getElementById('orderCardPhotosList').innerHTML = data.map(cardStatusPhotoHtml).join('');
-  part.classList.remove('hidden');
+  renderOrderCardPhotos(error ? [] : data || []);
+}
+
+// Photos FactBox on the right of the card - always shown (BC keeps its FactBoxes visible), with an
+// empty note when the order has none.
+function renderOrderCardPhotos(photos) {
+  document.getElementById('orderCardPhotosList').innerHTML = photos.map(cardStatusPhotoHtml).join('');
+  document.getElementById('orderCardPhotosEmpty').classList.toggle('hidden', photos.length > 0);
+  document.getElementById('orderCardPhotosCount').textContent = photos.length ? `(${photos.length})` : '';
 }
 
 async function removeOrderCardStatusPhoto(photoId) {
@@ -4749,6 +4853,78 @@ async function deleteOnlineOrder(orderId, btn) {
   await refreshCurrentOrders();
 }
 
+// List multi-select delete (super users) - the ticks in the Order ID cells, per "can we do multi
+// selection deletion on the list?". admin_delete_online_orders deletes each order on its own, so one
+// refused order (stock posted / serials sold) doesn't stop the rest - it's listed in the result alert.
+const checkedOrderIds = new Set();
+
+function updateCheckedOrdersState() {
+  const btn = document.getElementById('deleteSelectedOrdersBtn');
+  btn.disabled = checkedOrderIds.size === 0;
+  btn.textContent = checkedOrderIds.size ? `Delete Selected (${checkedOrderIds.size})` : 'Delete Selected';
+  const boxes = [...document.querySelectorAll('#orderTableBody [data-check-order]')];
+  const all = document.getElementById('checkAllOrders');
+  all.checked = boxes.length > 0 && boxes.every((b) => b.checked);
+  all.indeterminate = !all.checked && boxes.some((b) => b.checked);
+}
+
+function wireCheckedOrders(session) {
+  const isSuper = !!session?.isSuperUser;
+  document.getElementById('deleteSelectedOrdersBtn').classList.toggle('hidden', !isSuper);
+  document.getElementById('checkAllOrders').classList.toggle('hidden', !isSuper);
+  if (!isSuper) return;
+  const all = document.getElementById('checkAllOrders');
+  all.addEventListener('click', (e) => e.stopPropagation()); // don't sort the Order ID column
+  all.addEventListener('change', () => {
+    document.querySelectorAll('#orderTableBody [data-check-order]').forEach((b) => {
+      b.checked = all.checked;
+      if (all.checked) checkedOrderIds.add(b.dataset.checkOrder);
+      else checkedOrderIds.delete(b.dataset.checkOrder);
+    });
+    updateCheckedOrdersState();
+  });
+  document.getElementById('deleteSelectedOrdersBtn').addEventListener('click', (e) => deleteCheckedOrders(e.currentTarget));
+}
+
+async function deleteCheckedOrders(btn) {
+  if (!currentSession?.isSuperUser) {
+    alert('Only super users can delete orders.');
+    return;
+  }
+  const ids = [...checkedOrderIds];
+  if (!ids.length) return;
+  const preview = ids.slice(0, 15).map((id) => {
+    const o = findFlatOrder(id);
+    return `#${id}${o?.customer_name ? ' - ' + o.customer_name : ''}`;
+  }).join('\n') + (ids.length > 15 ? `\n...and ${ids.length - 15} more` : '');
+  if (!confirm(`Permanently delete ${ids.length} order(s) from the portal?\n\n${preview}\n\nThis is for cleaning up junk/test orders only - their lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring them back. This cannot be undone.`)) return;
+  if (prompt(`Type DELETE ${ids.length} to confirm:`)?.trim().toUpperCase() !== `DELETE ${ids.length}`) {
+    alert('Confirmation did not match - nothing deleted.');
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Deleting...';
+  const { data, error } = await supabaseClient.rpc('admin_delete_online_orders', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    updateCheckedOrdersState();
+    alert(`Could not delete orders: ${error.message}`);
+    return;
+  }
+  const results = data || [];
+  const done = results.filter((r) => r.deleted);
+  const refused = results.filter((r) => !r.deleted);
+  done.forEach((r) => checkedOrderIds.delete(String(r.order_id)));
+  if (openCardOrderId && done.some((r) => String(r.order_id) === openCardOrderId)) closeOrderCard();
+  await refreshCurrentOrders();
+  updateCheckedOrdersState();
+  alert(`Deleted ${done.length} of ${ids.length} order(s).`
+    + (refused.length ? `\n\nNot deleted (still ticked):\n${refused.map((r) => `#${r.order_id}: ${r.message}`).join('\n')}` : ''));
+}
+
 function closeOrderCard() {
   openCardOrderId = null;
   orderCardLoadGeneration++;
@@ -4776,7 +4952,7 @@ function wireOrderCard() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
-    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog', 'sendBackDialog', 'confirmActionDialog', 'proofPhotoDialog']
+    const stacked = ['shipSerialModal', 'viewSerialsModal', 'sendOrderMessageModal', 'assignDialog', 'sendBackDialog', 'confirmActionDialog', 'proofPhotoDialog', 'sendPhotoPickDialog']
       .some((id) => !document.getElementById(id).classList.contains('hidden'));
     if (!stacked) closeOrderCard();
   });
@@ -4959,6 +5135,9 @@ async function loadOrders(search, status) {
   }
 
   lastFlatRows = rows;
+  // Ticks only cover the page on screen - drop any for orders no longer listed.
+  const listedIds = new Set(rows.map((o) => String(o.order_id)));
+  [...checkedOrderIds].forEach((id) => { if (!listedIds.has(id)) checkedOrderIds.delete(id); });
   stockStatusCache.clear(); // stock may have moved since - re-checked for the selected / opened order
   if (selectedOrderId && !rows.some((o) => String(o.order_id) === String(selectedOrderId))) selectedOrderId = null;
   updateOrderActionState();
@@ -4976,6 +5155,7 @@ async function loadOrders(search, status) {
   tbody.innerHTML = rows.length === 0
     ? `<tr><td colspan="24" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
+  updateCheckedOrdersState();
 
   renderPaginationBar(
     document.getElementById('orderPaginationBar'),
@@ -6120,6 +6300,7 @@ async function initAdvanceOrdersView() {
   }
   document.getElementById('exportExcelBtn').classList.toggle('hidden', !session.isSuperUser);
   document.getElementById('cardDeleteOrderBtn').classList.toggle('hidden', !session.isSuperUser);
+  wireCheckedOrders(session);
   wireItemLedgerButton(session);
   // Delegated on #setupContent (not #orderTableBody directly) so the same "To Ship" handling
   // works whether the click lands in the flat table or one of the three grouped-view tables
@@ -6135,6 +6316,7 @@ async function initAdvanceOrdersView() {
   wireShipSerialModalButtons();
   wireSetAssemblyModalButtons();
   wireViewSerialsModalButtons();
+  wireSendPhotoPickDialog();
   wireSendMessageModalButtons();
   wireOrderListActions();
   wireOrderCard();

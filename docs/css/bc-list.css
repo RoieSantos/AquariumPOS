@@ -326,6 +326,8 @@
   display: none;
 }
 .bc-ile .oo-grid .oo-pos-items-cell { min-width: 260px; max-width: 420px; }
+/* Super-user multi-select delete ticks in the Order ID cell (js/onlineOrders.js checkedOrderIds). */
+.bc-ile .oo-grid .oo-row-check { margin: 0 6px 0 0; vertical-align: middle; cursor: pointer; }
 .bc-ile .oo-grid .oo-pos-items-cell .oo-pos-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Online Orders' Online / Walk-in list switch sits above the action bar */
@@ -2814,3 +2816,64 @@ a.bc-cue:hover {
 .bc-ile .oo-field-filter-x:hover {
   color: inherit;
 }
+
+/* ------------------------------------------------------------------ Online Order card: Photos FactBox
+   BC layout - the document on the left, a FactBox column on the right (docs/online-orders.html
+   #orderCardPhotosPart, filled by js/onlineOrders.js renderOrderCardPhotos). Stacks under the
+   document on a narrow screen; hidden for makers (maker-focus list above). The windowed card is a
+   bit wider than the shared .to-manage-panel so the lines keep their room next to the FactBox. */
+#orderCardModal .to-manage-panel:not(.modal-maximized) { max-width: 1380px; }
+#orderCardModal .bc-doc-body.oc-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 0 20px;
+  align-items: start;
+}
+#orderCardModal .oc-main { min-width: 0; }
+#orderCardModal .oc-factbox {
+  position: sticky;
+  top: 0;
+  margin-top: 10px;
+  border: 1px solid var(--bc-line);
+  background: var(--bc-surface-2);
+}
+#orderCardModal .oc-fact-title { padding: 9px 12px 6px; border-bottom: 1px solid var(--bc-line); font-size: 13px; font-weight: 600; }
+#orderCardModal .oc-fact-body { padding: 10px 12px 12px; }
+#orderCardModal .oc-fact-empty { margin: 0; font-size: 12.5px; }
+#orderCardModal .oc-fact-photos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+#orderCardModal .oc-fact-photos .status-photo-card { width: auto; border-radius: 2px; }
+#orderCardModal .oc-fact-photos .status-photo-thumb { width: 100%; height: 110px; }
+#orderCardModal .oc-fact-photos .status-photo-meta { padding: 4px 6px; font-size: 10.5px; overflow-wrap: anywhere; }
+#orderCardModal.maker-focus .bc-doc-body.oc-split { display: block; }
+@media (max-width: 900px) {
+  #orderCardModal .bc-doc-body.oc-split { grid-template-columns: minmax(0, 1fr); }
+  #orderCardModal .oc-factbox { position: static; margin-bottom: 10px; }
+  #orderCardModal .oc-fact-photos { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+/* Send Photo picker (#sendPhotoPickDialog) - tick the order's existing photo(s) to send, or take a new one. */
+.bc-dialog.oo-photo-pick-dialog { width: min(620px, calc(100vw - 32px)); max-width: 620px; }
+.oo-photo-pick-dialog .bc-lede { margin-top: 0; }
+.oo-photo-pick-dialog .oo-confirm-foot { flex-wrap: wrap; }
+.oo-photo-pick-dialog .oo-photo-pick-take { margin-right: auto; cursor: pointer; display: inline-flex; align-items: center; }
+.oo-photo-pick-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.oo-photo-pick-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 2px solid var(--bc-line, #e1dfdd);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  margin: 0;
+}
+.oo-photo-pick-item:has(input:checked) { border-color: var(--bc-link, #0f6cbd); box-shadow: 0 0 0 2px rgba(15, 108, 189, 0.25); }
+.oo-photo-pick-item input { position: absolute; top: 6px; left: 6px; width: 18px; height: 18px; margin: 0; }
+.oo-photo-pick-item img { width: 100%; height: 120px; object-fit: cover; display: block; }
+.oo-photo-pick-meta { display: flex; flex-direction: column; padding: 4px 6px; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
