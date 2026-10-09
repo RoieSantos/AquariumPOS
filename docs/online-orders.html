@@ -708,33 +708,6 @@
     </div>
   </div>
 
-  <!-- Production Done / Release / Mark Shipped with a mandatory proof photo (confirmWithPhoto in
-       onlineOrders.js, sql/supabase_online_order_proof_photos.sql). The confirm button stays disabled
-       until a photo is taken; the label opens the camera straight from the tap (works on iPhone too). -->
-  <div id="proofPhotoDialog" class="bc-dialog-backdrop hidden">
-    <div class="bc-dialog bc-assign-dialog oo-confirm-dialog oo-proof-dialog" role="dialog" aria-modal="true" aria-labelledby="proofPhotoTitle">
-      <div class="bc-dialog-head">
-        <div>
-          <div id="proofPhotoCaption" class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">PLEASE CONFIRM</div>
-          <h2 id="proofPhotoTitle">Order</h2>
-        </div>
-      </div>
-      <div class="bc-dialog-body">
-        <p id="proofPhotoMessage" class="bc-lede"></p>
-        <label class="oo-proof-pick" for="proofPhotoInput">
-          <img id="proofPhotoPreview" class="hidden" alt="Proof photo preview" />
-          <span id="proofPhotoPickText">&#128247; Take a photo (required)</span>
-        </label>
-        <input type="file" id="proofPhotoInput" accept="image/*" capture="environment" class="hidden" />
-      </div>
-      <div class="bc-dialog-foot oo-confirm-foot">
-        <p id="proofPhotoError" class="bc-dialog-msg error-text hidden"></p>
-        <button class="bc-btn" id="proofPhotoCancelBtn" type="button">Cancel</button>
-        <button class="bc-btn bc-btn-primary" id="proofPhotoOkBtn" type="button" disabled>Confirm</button>
-      </div>
-    </div>
-  </div>
-
   <div id="sendBackDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="sendBackTitle">
       <div class="bc-dialog-head">
@@ -942,7 +915,8 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=advserial1"></script>
+  <script src="js/proofPhoto.js?v=1"></script>
+  <script src="js/onlineOrders.js?v=proof3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

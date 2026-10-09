@@ -15,17 +15,25 @@
 -- Older POS Pay In Full serials (receipt only) still count when that receipt is used by ONE advance order
 -- and the serial sits at the order's warehouse - see _advance_order_serials.
 --
--- Which lines need a serial: same rule as the POS's Pay In Full (IsSerialTrackedAdvanceOrderItemCode):
--- ITEM lines whose code starts AQ- / CUSTOM- / CUSTOM_, or whose item is in a production category.
+-- Which lines need a serial (_advance_order_line_items): AdvanceOrderLines."No" is NOT the item code - the
+-- POS saves the sale list's Category column there (MainForm: SubItems[4] = Category; the Code column is
+-- never saved). So each line's real item is resolved from its VariationId (Variants / Items), then "No"
+-- as an item code (older lines), then its Description = an item / variant name. A line needs a serial
+-- when "No" (its category) or the resolved item's category is a production category (AQUARIUM / STAND /
+-- SUMP), or the item code starts AQ- / CUSTOM- / CUSTOM_. Lines whose item can't be resolved are skipped
+-- (a serial needs a real item code) - supabase_check_advance_order_serial_lines_10382.sql shows them.
 --
 --   staff_get_advance_order_serial_requirements - per item/variant: units needed, already tagged, still to tag.
 --   staff_advance_order_to_ship_with_serials    - claims picked serials + creates new ones, then
---       staff_set_advance_order_stage(..., 'To Ship'), all in ONE transaction (any failure = nothing changes).
+--       staff_set_advance_order_stage(..., 'To Ship'), all in ONE transaction (any failure = nothing
+--       changes). Serials are asked ONCE, at Ready to Ship only - Mark Shipped never asks. An order that
+--       reached To Ship before this file was run: Undo Stage, then Ready to Ship again.
 --       New serials only for a Super User or staff at a production warehouse (only production creates serials).
 --   staff_get_advance_order_serial_labels      - every serial tied to the order, for (re)printing labels.
 --
 -- Run AFTER supabase_advance_order_production.sql and supabase_online_order_ship_new_serials.sql
--- (_production_next_serial_no). Safe to re-run. Needs js/onlineOrders.js ?v=advserial1.
+-- (_production_next_serial_no). Safe to re-run. Needs the js/onlineOrders.js that calls
+-- staff_advance_order_to_ship_with_serials (collectAdvanceSerials).
 
 -- ---------------------------------------------------------------------------
 -- 0. The serials tied to an advance order (internal).
@@ -60,6 +68,99 @@ $$;
 
 revoke execute on function public._advance_order_serials(text) from public, anon, authenticated;
 
+-- Each ITEM line of an advance order with its real item resolved and whether it needs a serial (internal;
+-- also used by the read-only check files).
+create or replace function public._advance_order_line_items(p_no text)
+returns table(
+  line_no text,
+  category text,         -- AdvanceOrderLines."No" (the POS's Category column)
+  description text,
+  quantity int,
+  item_code text,        -- resolved real item code, null = couldn't resolve
+  variation_id text,
+  resolved_by text,      -- variation / item code / name / null
+  needs_serial boolean,
+  reason text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select l."LineNo"::text,
+         nullif(trim(l."No"), '')::text,
+         nullif(trim(l."Description"), '')::text,
+         greatest(ceil(coalesce(l."Quantity", 0)), 0)::int,
+         r.code::text,
+         coalesce(nullif(trim(l."VariationId"), ''), nullif(trim(r.item_variation), ''))::text,
+         r.how::text,
+         (r.code is not null and not s.is_set and (
+            coalesce(cl."IsProductionCategory", false) or coalesce(ci."IsProductionCategory", false)
+            or upper(r.code) like 'AQ-%' or left(upper(r.code), 7) in ('CUSTOM-', 'CUSTOM_'))),
+         case
+           when s.is_set then 'no - SET (mother item; its parts carry the serials)'
+           when r.code is null and (coalesce(cl."IsProductionCategory", false)
+                                    or left(upper(coalesce(trim(l."No"), '')), 7) in ('CUSTOM-', 'CUSTOM_'))
+             then 'NO - item not found (needs a serial, but no Items / Variants match its VariationId or name)'
+           when r.code is null then 'no - item not found, not a production category'
+           when coalesce(cl."IsProductionCategory", false) then 'YES - category ' || trim(l."No")
+           when coalesce(ci."IsProductionCategory", false) then 'YES - item category ' || r.category
+           when upper(r.code) like 'AQ-%' then 'YES - AQ- code'
+           when left(upper(r.code), 7) in ('CUSTOM-', 'CUSTOM_') then 'YES - CUSTOM code'
+           else 'no - not a production category'
+         end
+  from public."AdvanceOrderLines" l
+  left join public."Categories" cl on cl."Code" = trim(l."No")
+  left join lateral (
+    select x.code, x.category, x.item_variation, x.how
+    from (
+      -- 1. by VariationId
+      select coalesce(nullif(trim(v."ItemCode"), ''), nullif(trim(v."MainItemCode"), '')) as code,
+             coalesce(v."CategoryCode", vi."CategoryCode") as category, v."VariationId" as item_variation,
+             'variation' as how, 1 as rank
+      from public."Variants" v
+      left join public."Items" vi on vi."Code" = coalesce(nullif(trim(v."ItemCode"), ''), nullif(trim(v."MainItemCode"), ''))
+      where nullif(trim(l."VariationId"), '') is not null and v."VariationId" = trim(l."VariationId")
+      union all
+      select i."Code", i."CategoryCode", i."VariationId", 'variation', 2
+      from public."Items" i
+      where nullif(trim(l."VariationId"), '') is not null and i."VariationId" = trim(l."VariationId")
+      -- 2. "No" really is an item code (older lines)
+      union all
+      select i."Code", i."CategoryCode", i."VariationId", 'item code', 3
+      from public."Items" i
+      where i."Code" = trim(l."No")
+      -- 3. Description = an item / variant name
+      union all
+      select i."Code", i."CategoryCode", i."VariationId", 'name', 4
+      from public."Items" i
+      where nullif(trim(l."Description"), '') is not null
+        and (upper(trim(i."Name")) = upper(trim(l."Description")) or upper(trim(i."Description")) = upper(trim(l."Description")))
+      union all
+      select coalesce(nullif(trim(v."ItemCode"), ''), nullif(trim(v."MainItemCode"), '')),
+             coalesce(v."CategoryCode", vi."CategoryCode"), v."VariationId", 'name', 5
+      from public."Variants" v
+      left join public."Items" vi on vi."Code" = coalesce(nullif(trim(v."ItemCode"), ''), nullif(trim(v."MainItemCode"), ''))
+      where nullif(trim(l."Description"), '') is not null and upper(trim(v."VariantName")) = upper(trim(l."Description"))
+    ) x
+    where x.code is not null
+    order by x.rank
+    limit 1
+  ) r on true
+  left join public."Categories" ci on ci."Code" = r.category
+  -- A SET (e.g. "AQUARIUM SET") is the mother item - the POS lists its parts (tank / sump / stand) as
+  -- their own lines, and those carry the serials. By the line's category or the resolved item's.
+  cross join lateral (
+    select (upper(coalesce(trim(l."No"), '')) ~ '(^|[\s_-])SET$'
+            or upper(coalesce(trim(r.category), '')) ~ '(^|[\s_-])SET$') as is_set
+  ) s
+  where l."TransactionNo" = p_no
+    and upper(coalesce(l."Type", '')) = 'ITEM'
+    and coalesce(l."Quantity", 0) > 0;
+$$;
+
+revoke execute on function public._advance_order_line_items(text) from public, anon, authenticated;
+
 -- ---------------------------------------------------------------------------
 -- 1. What still needs a serial.
 
@@ -91,21 +192,10 @@ begin
 
   return query
     with lines as (
-      select trim(l."No") as code,
-             coalesce(nullif(trim(l."VariationId"), ''), nullif(trim(i."VariationId"), '')) as variant,
-             nullif(trim(l."Description"), '') as descr,
-             greatest(ceil(coalesce(l."Quantity", 0)), 0)::int as qty,
-             l."LineNo" as line_no
-      from public."AdvanceOrderLines" l
-      left join public."Items" i on i."Code" = trim(l."No")
-      left join public."Categories" c on c."Code" = i."CategoryCode"
-      where l."TransactionNo" = p_no
-        and upper(coalesce(l."Type", '')) = 'ITEM'
-        and nullif(trim(l."No"), '') is not null
-        and coalesce(l."Quantity", 0) > 0
-        and (upper(trim(l."No")) like 'AQ-%'
-             or left(upper(trim(l."No")), 7) in ('CUSTOM-', 'CUSTOM_')
-             or coalesce(c."IsProductionCategory", false))
+      select li.item_code as code, li.variation_id as variant, li.description as descr,
+             li.quantity as qty, li.line_no
+      from public._advance_order_line_items(p_no) li
+      where li.needs_serial
     ),
     grouped as (
       select code, variant,
@@ -138,6 +228,8 @@ grant execute on function public.staff_get_advance_order_serial_requirements(tex
 -- ---------------------------------------------------------------------------
 -- 2. Ready to Ship with serials.
 
+-- An earlier draft of this file also asked at Mark Shipped (+ p_stage) - removed, serials are asked once.
+drop function if exists public.staff_advance_order_set_stage_with_serials(text, text, text, text, bigint[], jsonb);
 drop function if exists public.staff_advance_order_to_ship_with_serials(text, text, text, bigint[], jsonb);
 
 create or replace function public.staff_advance_order_to_ship_with_serials(
@@ -200,6 +292,17 @@ begin
                       where r.item_code = s."ItemCode" and coalesce(r.variation_id, '') = coalesce(s."VariantCode", ''));
     if v_bad is not null then
       raise exception 'Serial(s) % don''t match any item on advance order % that needs a serial.', v_bad, p_no;
+    end if;
+
+    -- Picked serials must be at the order's own branch (AdvanceOrders."Warehouse") - same as the picker.
+    if v_order_warehouse is not null then
+      select string_agg(s."SerialNo" || ' (at ' || coalesce(nullif(trim(s."Location"), ''), 'no location') || ')', ', ') into v_bad
+      from public."ItemSerialTracking" s
+      where s."RunningSerialNo" = any(v_picks)
+        and lower(coalesce(trim(s."Location"), '')) <> lower(v_order_warehouse);
+      if v_bad is not null then
+        raise exception 'Serial(s) % aren''t at %, the branch of advance order %.', v_bad, v_order_warehouse, p_no;
+      end if;
     end if;
 
     select string_agg(r.item_code || ' (needs ' || r.quantity_needed || ', got ' || (coalesce(p.n, 0) + coalesce(nw.n, 0)) || ')', ', ')
@@ -332,5 +435,6 @@ from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in ('staff_get_advance_order_serial_requirements', 'staff_advance_order_to_ship_with_serials',
-                    'staff_get_advance_order_serial_labels', '_production_next_serial_no', '_advance_order_serials')
+                    'staff_get_advance_order_serial_labels', '_production_next_serial_no', '_advance_order_serials',
+                    '_advance_order_line_items')
 order by 1, 2;

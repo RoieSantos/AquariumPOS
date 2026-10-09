@@ -1191,7 +1191,7 @@ function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml
 
 // Same as confirmAction, plus a mandatory proof photo - per "can we mandatory ask them for picture once
 // they clicked Production done? same goes to release/ship". The confirm button stays disabled until a
-// photo is picked; on confirm it's uploaded (uploadOrderStatusPhoto - same bucket as Send Photo) and
+// photo is picked (confirmWithPhotoDialog / proofPhotoRequired in js/proofPhoto.js); on confirm it's uploaded and
 // recorded against refId with `label` (staff_record_online_order_proof_photo,
 // sql/supabase_online_order_proof_photos.sql). Not sent to the customer. Resolves true only once the
 // photo is saved; Cancel / Escape / backdrop -> false.
@@ -1202,138 +1202,6 @@ async function confirmWithPhoto(opts) {
   if (await proofPhotoRequired(kind)) return confirmWithPhotoDialog(opts);
   const { caption, title, message, confirmLabel, tone } = opts;
   return confirmAction({ caption, title, message: message.replace(/Take a photo of [^.]*first\.\s*/, '').trim(), confirmLabel, tone });
-}
-
-// PortalSettings PROOF_PHOTO_PRODUCTION_DONE / PROOF_PHOTO_RELEASE ('true' / 'false'), set on General
-// Setup -> Online Orders - Proof Photos. Read on every click so a change applies without a reload.
-// Not saved yet (or can't be read) -> required, the safe default.
-async function proofPhotoRequired(kind) {
-  const { data, error } = await supabaseClient.rpc('admin_get_public_portal_setting', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_setting_key: kind === 'production' ? 'PROOF_PHOTO_PRODUCTION_DONE' : 'PROOF_PHOTO_RELEASE'
-  });
-  if (error) console.warn('admin_get_public_portal_setting:', error.message);
-  return !!error || String(data ?? '').trim().toLowerCase() !== 'false';
-}
-
-function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = '', refId, label }) {
-  const dialog = document.getElementById('proofPhotoDialog');
-  const panel = dialog.querySelector('.oo-proof-dialog');
-  const okBtn = document.getElementById('proofPhotoOkBtn');
-  const cancelBtn = document.getElementById('proofPhotoCancelBtn');
-  const input = document.getElementById('proofPhotoInput');
-  const pick = dialog.querySelector('.oo-proof-pick');
-  const preview = document.getElementById('proofPhotoPreview');
-  const pickText = document.getElementById('proofPhotoPickText');
-  const errorEl = document.getElementById('proofPhotoError');
-  const pickPrompt = '\u{1F4F7} Take a photo (required)';
-  let file = null;
-  let previewUrl = null;
-
-  document.getElementById('proofPhotoCaption').textContent = caption;
-  document.getElementById('proofPhotoTitle').textContent = title;
-  document.getElementById('proofPhotoMessage').textContent = message;
-  okBtn.textContent = confirmLabel;
-  panel.classList.remove('is-done', 'is-ship', 'is-undo');
-  if (tone) panel.classList.add(tone);
-  input.value = '';
-  preview.classList.add('hidden');
-  preview.removeAttribute('src');
-  pick.classList.remove('has-photo');
-  pickText.textContent = pickPrompt;
-  errorEl.classList.add('hidden');
-
-  return new Promise((resolve) => {
-    let busy = false;
-    const finish = (answer) => {
-      dialog.classList.add('hidden');
-      okBtn.removeEventListener('click', onOk);
-      cancelBtn.removeEventListener('click', onCancel);
-      dialog.removeEventListener('click', onBackdrop);
-      input.removeEventListener('change', onPick);
-      document.removeEventListener('keydown', onKey, true);
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      resolve(answer);
-    };
-    const onPick = () => {
-      file = input.files && input.files[0] || null;
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      previewUrl = file ? URL.createObjectURL(file) : null;
-      preview.classList.toggle('hidden', !file);
-      if (file) preview.src = previewUrl;
-      pick.classList.toggle('has-photo', !!file);
-      pickText.textContent = file ? 'Tap to retake' : pickPrompt;
-      errorEl.classList.add('hidden');
-      okBtn.disabled = !file;
-    };
-    const onOk = async () => {
-      if (!file || busy) return;
-      busy = true;
-      okBtn.disabled = cancelBtn.disabled = true;
-      okBtn.textContent = 'Saving photo...';
-      const fail = (msg) => {
-        errorEl.textContent = msg;
-        errorEl.classList.remove('hidden');
-        okBtn.textContent = confirmLabel;
-        okBtn.disabled = cancelBtn.disabled = false;
-        busy = false;
-      };
-      // Shrunk to a JPEG first: the bucket takes at most 10 MB and only JPEG/PNG/WebP, and some phones
-      // shoot 15+ MB or HEIC. If the browser can't read it, try the original.
-      const upload = await shrinkProofPhoto(file).catch(() => file);
-      const photo = await uploadOrderStatusPhoto(String(refId), upload, { quiet: true });
-      if (photo?.error) return fail(photo.error);
-      const { error } = await supabaseClient.rpc('staff_record_online_order_proof_photo', {
-        p_admin_username: currentSession.username,
-        p_admin_password: currentSession.password,
-        p_ref_id: String(refId),
-        p_label: label,
-        p_photo_url: photo.url,
-        p_photo_storage_path: photo.storagePath
-      });
-      if (error) return fail(`Could not save the photo: ${error.message}`);
-      okBtn.textContent = confirmLabel;
-      cancelBtn.disabled = false;
-      finish(true);
-    };
-    const onCancel = () => { if (!busy) finish(false); };
-    const onBackdrop = (e) => { if (e.target === dialog && !busy) finish(false); };
-    const onKey = (e) => {
-      if (e.key === 'Escape') { e.stopImmediatePropagation(); if (!busy) finish(false); }
-    };
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', onCancel);
-    dialog.addEventListener('click', onBackdrop);
-    input.addEventListener('change', onPick);
-    document.addEventListener('keydown', onKey, true);
-
-    okBtn.disabled = true;
-    cancelBtn.disabled = false;
-    dialog.classList.remove('hidden');
-    cancelBtn.focus();
-  });
-}
-
-// At most 1600px on the long side, re-encoded as JPEG - same idea as compressImage in defectItems.js.
-function shrinkProofPhoto(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => (blob
-        ? resolve(new File([blob], 'proof.jpg', { type: 'image/jpeg' }))
-        : reject(new Error('Could not process the photo.'))), 'image/jpeg', 0.82);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a readable image.')); };
-    img.src = url;
-  });
 }
 
 function orderLabel(o) {
@@ -6046,43 +5914,30 @@ async function setAdvanceStage(no, stage, btn) {
       ? { caption: 'READY TO SHIP', message: status === 'New' ? 'No makers are assigned. Mark it Ready to Ship anyway?' : 'Production is done. Mark it Ready to Ship?', confirmLabel: 'Yes, Ready to Ship', tone: 'is-done' }
       : { caption: 'UNDO STAGE', message: `Step this order back from ${status}?`, confirmLabel: 'Yes, Undo', tone: '' };
   const title = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
-  const ok = stage === 'Shipped'
-    ? await confirmWithPhoto({ ...copy, message: `${copy.message}\n\nTake a photo of what is leaving first.`, title, refId: no, label: 'Released - Shipped' })
-    : await confirmAction({ ...copy, title });
-  if (!ok) return;
-  if (stage === 'To Ship') return advanceReadyToShip(no, btn);
-  btn.disabled = true;
-  const { error } = await advanceRpc('staff_set_advance_order_stage', { p_no: no, p_stage: stage });
-  btn.disabled = false;
-  if (error) window.alert(error.message);
-  await refreshAdvanceAfterAction(no);
-}
 
-// Ready to Ship with serials (sql/supabase_advance_order_serials.sql) - same picker as an online order's
-// To Ship (#shipSerialModal): pick In Stock serials, or "+ New serial" (production only; custom builds
-// start as new). Serials are tied to the advance order's Receipt No - the same link the POS's Pay In
-// Full uses - so units the POS already tagged aren't asked for again. The claim, the new serials and
-// the stage change are one server call: if any part fails, nothing changes.
-async function advanceReadyToShip(no, btn) {
+  // Mark Shipped / Undo Stage - no serials (they're asked once, at Ready to Ship).
+  if (stage !== 'To Ship') {
+    const ok = stage === 'Shipped'
+      ? await confirmWithPhoto({ ...copy, message: `${copy.message}\n\nTake a photo of what is leaving first.`, title, refId: no, label: 'Released - Shipped' })
+      : await confirmAction({ ...copy, title });
+    if (!ok) return;
+    btn.disabled = true;
+    const { error } = await advanceRpc('staff_set_advance_order_stage', { p_no: no, p_stage: stage });
+    btn.disabled = false;
+    if (error) window.alert(error.message);
+    await refreshAdvanceAfterAction(no);
+    return;
+  }
+
+  // Ready to Ship: serials first (sql/supabase_advance_order_serials.sql), then the confirm. Cancel
+  // either and nothing changes.
   btn.disabled = true;
   try {
-    const { data: reqData, error: reqError } = await advanceRpc('staff_get_advance_order_serial_requirements', { p_no: no });
-    if (reqError) {
-      window.alert(`Could not check this order's serials: ${reqError.message}${/function|schema cache/i.test(reqError.message) ? ' - run sql/supabase_advance_order_serials.sql.' : ''}`);
-      return;
-    }
-    const requirements = (reqData || []).filter((r) => (r.quantity_needed || 0) > 0);
+    const picked = await collectAdvanceSerials(no);
+    if (!picked) return; // cancelled or couldn't check - already said why
+    if (!await confirmAction({ ...copy, title })) return;
 
-    let picked = { running: [], fresh: [] };
-    if (requirements.length) {
-      // Only production creates serials (the server checks this too); a Super User can anywhere.
-      shipAllowsNewSerials = !!(currentSession.isSuperUser || currentSessionIsProductionWarehouse);
-      shipSerialWarehouse = null; // search the staff member's own location, like an online To Ship
-      document.querySelector('#shipSerialModal .bc-doc-caption').textContent = `ADVANCE ORDER ${no}`;
-      picked = await openShipSerialModal(requirements);
-      if (picked === null) return; // cancelled - nothing sent
-    }
-
+    // Serial claim, new serials and the stage change are one server call: if any part fails, nothing changes.
     const { data, error } = await advanceRpc('staff_advance_order_to_ship_with_serials', {
       p_no: no,
       p_serial_running_nos: picked.running?.length ? picked.running : null,
@@ -6097,14 +5952,40 @@ async function advanceReadyToShip(no, btn) {
       printSerialLabels(created.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
     }
   } finally {
-    document.querySelector('#shipSerialModal .bc-doc-caption').textContent = 'ONLINE ORDER';
     btn.disabled = false;
     await refreshAdvanceAfterAction(no);
   }
 }
 
-// "Print Serial Labels" on the advance order document - every serial tied to the order's Receipt No,
-// tagged here at Ready to Ship or by the POS at Pay In Full.
+// Same picker as an online order's To Ship (#shipSerialModal): pick In Stock serials, or "+ New serial"
+// (production / Super User only; custom builds start as new). Only units the order still needs - serials
+// already tied to it (portal, or the POS's Pay In Full) aren't asked for again.
+// Resolves { running, fresh } (both empty = nothing to tag), or null if cancelled / the check failed.
+async function collectAdvanceSerials(no) {
+  const { data, error } = await advanceRpc('staff_get_advance_order_serial_requirements', { p_no: no });
+  if (error) {
+    window.alert(`Could not check this order's serials: ${error.message}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_order_serials.sql.' : ''}`);
+    return null;
+  }
+  const requirements = (data || []).filter((r) => (r.quantity_needed || 0) > 0);
+  if (!requirements.length) return { running: [], fresh: [] };
+
+  // Only production creates serials (the server checks this too); a Super User can anywhere.
+  shipAllowsNewSerials = !!(currentSession.isSuperUser || currentSessionIsProductionWarehouse);
+  // Only serials at the order's own branch (AdvanceOrders."Warehouse"); the server checks this too. An
+  // order with no branch falls back to the staff member's own location, like an online To Ship.
+  shipSerialWarehouse = advanceRowsByNo.get(String(no))?.warehouse || null;
+  const caption = document.querySelector('#shipSerialModal .bc-doc-caption');
+  caption.textContent = `ADVANCE ORDER ${no}`;
+  try {
+    return await openShipSerialModal(requirements);
+  } finally {
+    caption.textContent = 'ONLINE ORDER';
+  }
+}
+
+// "Print Serial Labels" on the advance order document - every serial tied to the order, tagged here at
+// Ready to Ship or by the POS at Pay In Full.
 async function printAdvanceSerialLabels(no, btn) {
   btn.disabled = true;
   const { data, error } = await advanceRpc('staff_get_advance_order_serial_labels', { p_no: no });
@@ -6320,7 +6201,7 @@ async function initAdvanceOrdersView() {
   document.getElementById('advanceStatusBar').classList.remove('hidden');
   document.getElementById('advanceOrdersView').classList.remove('hidden');
   wireAdvanceCard();
-  wireShipSerialModalButtons(); // Ready to Ship's serial picker (advanceReadyToShip)
+  wireShipSerialModalButtons(); // Ready to Ship serial picker (collectAdvanceSerials)
   updateAdvanceListActions(); // nothing selected yet - Open/Assign disabled, stage buttons hidden
   currentSessionIsProductionWarehouse = await resolveIsProductionWarehouse(currentSession);
 

@@ -561,57 +561,81 @@ async function loadCardRework() {
 }
 
 // Per "in the mobile, i want the maker's view more Mobile friendly - just the Description / color of
-// variant / quantity and the button Production done": a maker opening their order gets only their
-// own part's lines as big rows and a full-width Production Done (the General tab, lines grid and
-// toolbar are hidden by #prodCardModal.maker-view in production-orders.html).
+// variant / quantity and the button Production done", and "beautify the production order same view as
+// the others": a maker opening their order gets the same layout as the Online Orders maker card
+// (js/onlineOrders.js openProdOrderCard / makerLineCardHtml) - a summary box, one card per line
+// (Item / Description / SKU / qty left), and big Production Done buttons. Shared styles in
+// css/bc-list.css (.oc-maker-summary, .oc-line-card, .oo-mc-*). The General tab, lines grid and toolbar
+// are hidden by #prodCardModal.maker-view in production-orders.html.
 function renderMakerView(lines) {
   const box = document.getElementById('prodMakerView');
   const o = openOrder;
   if (!o) { box.innerHTML = ''; return; }
   const me = currentSession.username;
   const myParts = ['tank', 'stand'].filter((part) => o[`needs_${part}`] && o[`${part}_maker`] === me);
+  const left = (l) => Math.max(0, Number(l.quantity || 0) - Number(l.qty_output || 0));
+
+  const rework = myParts.map((part) => cardRework.find((r) => r.part === part && !r.fixed_at)).filter(Boolean);
+  const summary = `
+    <div class="oc-maker-summary">
+      ${o.description ? `<div class="oc-ms-row"><span>Order</span>${escapeHtml(o.description)}</div>` : ''}
+      <div class="oc-ms-row"><span>Due</span>${dueHtml(o.due_date)}</div>
+      <div class="oc-ms-row"><span>Branch</span>${escapeHtml(o.warehouse_name || '-')}</div>
+      <div class="oc-ms-row"><span>Your part</span>${escapeHtml(myParts.map((p) => PART_LABEL[p]).join(' + ') || '-')}</div>
+      ${o.notes ? `<div class="oo-mc-note">${escapeHtml(o.notes)}</div>` : ''}
+      ${rework.map((r) => `<div class="oo-mc-rework"><b>Sent back for rework</b> ${escapeHtml(r.reason || '')}
+        <small>${escapeHtml(r.sent_back_by_name || '')} · ${escapeHtml(new Date(r.sent_back_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</small></div>`).join('')}
+    </div>`;
 
   const sections = myParts.map((part) => {
     const rows = lines.filter((l) => l.part === part);
-    const left = (l) => Math.max(0, Number(l.quantity || 0) - Number(l.qty_output || 0));
-    const total = rows.reduce((n, l) => n + left(l), 0);
-    const rework = cardRework.find((r) => r.part === part && !r.fixed_at);
+    const cards = rows.map((l) => {
+      const colour = lineColour(l);
+      const built = left(l) === 0;
+      return `
+        <article class="oc-line-card${built ? ' is-built' : ''}">
+          <div class="oc-lc-head">
+            <div class="oc-lc-desc"><span class="oc-lc-label">Item</span>${escapeHtml(printDescription(l) || '-')}
+              ${colour ? `<span class="oo-prod-colour ${colour.toLowerCase()}"><i></i>${escapeHtml(colour)}</span>` : ''}</div>
+            <div class="oc-lc-qty" title="${built ? 'All built' : 'Left to build'}">${built ? '&#10003; Built' : `x${escapeHtml(formatQty(left(l)))}`}</div>
+          </div>
+          <div class="oc-lc-row"><span class="oc-lc-label">Description</span>${l.description ? `<div class="oc-lc-note">${escapeHtml(l.description)}</div>` : '<div class="oc-lc-none">-</div>'}</div>
+          <div class="oc-lc-row"><span class="oc-lc-label">SKU</span><div class="oc-lc-code">${escapeHtml(l.sku || l.item_code || '-')}</div></div>
+        </article>`;
+    }).join('');
     return `
-      ${myParts.length > 1 ? `<div class="pm-part-title">${PART_LABEL[part]}</div>` : ''}
-      ${rework ? `<div class="pm-rework"><b>&#8634; Rework</b>${escapeHtml(rework.reason || '')}<small>Sent back by ${escapeHtml(rework.sent_back_by_name || '')} · ${escapeHtml(new Date(rework.sent_back_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</small></div>` : ''}
-      <div class="pm-lines">
-        ${rows.map((l) => {
-          const colour = lineColour(l);
-          const built = left(l) === 0;
-          return `<div class="pm-line${built ? ' built' : ''}">
-            <div class="pm-desc">${escapeHtml(printDescription(l))}</div>
-            ${colour
-              ? `<span class="pm-colour ${colour.toLowerCase()}"><i></i>${escapeHtml(colour)}</span>`
-              : `<span class="pm-colour none">${escapeHtml(l.variant_name && !l.variant_name.startsWith(l.item_code) ? l.variant_name : 'No colour')}</span>`}
-            <div class="pm-qty">${formatQty(left(l))}<small>${built ? 'built' : 'to build'}</small></div>
-          </div>`;
-        }).join('') || '<p class="muted">Nothing on this order for you.</p>'}
-      </div>
-      ${rows.length > 1 ? `<div class="pm-total"><span>Total</span><span>${formatQty(total)}</span></div>` : ''}`;
+      ${myParts.length > 1 ? `<h3 class="pm-part-title">${PART_LABEL[part]}</h3>` : ''}
+      <div class="oc-line-cards">${cards || '<div class="oo-mc-empty">Nothing on this order for you.</div>'}</div>`;
   }).join('');
 
   const actions = o.status !== 'Released' ? '' : myParts.map((part) => {
     const done = !!o[`${part}_done_at`];
     const label = myParts.length > 1 ? `${PART_LABEL[part]} ` : '';
     return done
-      ? `<div class="pm-done">&#10003; ${label}Production Done</div>
-         <button type="button" class="pm-btn undo" data-part-done="${part}" data-done="0">Undo ${label}Production Done</button>`
-      : `<button type="button" class="pm-btn" data-part-done="${part}" data-done="1">&#10003; ${label}Production Done</button>`;
+      ? `<button type="button" class="oo-mc-btn undo" data-part-done="${part}" data-done="0">&#8634; Undo ${label}Production Done</button>`
+      : `<button type="button" class="oo-mc-btn primary" data-part-done="${part}" data-done="1">&#10003; ${label}Production Done</button>`;
   }).join('');
 
   box.innerHTML = `
-    <div class="pm-meta">
-      <span>Due <b>${escapeHtml(o.due_date ? formatDate(o.due_date) : 'not set')}</b></span>
-      <span>${escapeHtml(o.warehouse_name || '')}</span>
-    </div>
-    ${o.notes ? `<div class="pm-note">${escapeHtml(o.notes)}</div>` : ''}
-    ${sections || '<p class="muted">You are not a maker on this order.</p>'}
-    ${actions ? `<div class="pm-actions">${actions}</div>` : ''}`;
+    ${summary}
+    ${sections || '<div class="oo-mc-empty">You are not a maker on this order.</div>'}
+    ${actions ? `<div class="oo-mc-actions pm-actions">${actions}</div>` : ''}`;
+}
+
+// Due date with time left, same look as Est. Delivery on the Online Orders maker card (etaHtml there).
+function dueHtml(dateStr) {
+  if (!dateStr) return '<span class="oo-eta none">Not set</span>';
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return `<span class="oo-eta">${escapeHtml(dateStr)}</span>`;
+  const due = new Date(y, m - 1, d);
+  const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((due - today) / 86400000);
+  const label = due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...(y !== today.getFullYear() ? { year: 'numeric' } : {}) });
+  const leftText = days < 0 ? `Overdue ${-days} day${days === -1 ? '' : 's'}`
+    : days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `in ${days} days`;
+  const tone = days < 0 ? 'late' : days <= 1 ? 'soon' : '';
+  return `<span class="oo-eta ${tone}"><b>${escapeHtml(label)}</b> <i>${escapeHtml(leftText)}</i></span>`;
 }
 
 // ---- Glass Cut
@@ -1527,14 +1551,28 @@ function wireLinesGrid() {
   document.getElementById('prodPrintOrderBtn').addEventListener('click', printOrder);
   document.getElementById('prodDeleteBtn').addEventListener('click', deleteOrder);
   document.getElementById('prodAddLineBtn').addEventListener('click', addLine);
-  const onPartDoneClick = (e) => {
+  const onPartDoneClick = async (e) => {
     const btn = e.target.closest('[data-part-done]');
     if (!btn) return;
     const done = btn.dataset.done === '1';
     const part = btn.dataset.partDone;
     if (done) {
-      if (!confirm(`Is the ${PART_LABEL[part]} part of ${openOrder.order_no} completely finished?`)) return;
-      setPartDone(part, true);
+      // Proof photo first when General Setup asks for one (js/proofPhoto.js) - saved against the PRD
+      // No., so it shows in this card's Photos FactBox and on My Assignments' card.
+      const question = `Is the ${PART_LABEL[part]} part of ${openOrder.order_no} completely finished?`;
+      const ok = await proofPhotoRequired('production')
+        ? await confirmWithPhotoDialog({
+          caption: 'PRODUCTION DONE',
+          title: `${openOrder.order_no}${openOrder.description ? ' · ' + openOrder.description : ''}`,
+          message: `${question}\n\nTake a photo of the finished ${PART_LABEL[part].toLowerCase()} first.`,
+          confirmLabel: 'Yes, Production Done',
+          tone: 'is-done',
+          refId: openOrder.order_no,
+          label: `Production Done (${PART_LABEL[part].toLowerCase()})`
+        })
+        : confirm(question);
+      if (!ok) return;
+      await setPartDone(part, true);
       return;
     }
     // Undo goes back to the maker as rework - ask what needs fixing (Cancel keeps it done).
