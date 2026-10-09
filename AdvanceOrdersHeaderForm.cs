@@ -1031,6 +1031,13 @@ ORDER BY aol.[LineNo]", conn);
             if (lines.Count == 0)
                 return true;
 
+            // Units already tagged to this order (SOLD to its ReceiptNo) aren't asked for again - e.g.
+            // picked or created in the Web Portal at Ready to Ship (supabase_advance_order_serials.sql),
+            // pulled down by SyncItemSerialTrackingFromSupabaseAsync.
+            lines = SubtractAlreadyTaggedUnits(transactionNo, lines);
+            if (lines.Count == 0)
+                return true;
+
             var alreadyPicked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var line in lines)
@@ -1072,6 +1079,56 @@ ORDER BY aol.[LineNo]", conn);
             }
 
             return true;
+        }
+
+        // Drops units that already have a SOLD serial tied to this order's ReceiptNo, per item/variant,
+        // spread over the lines in order. Best-effort: if the lookup fails, every unit is asked for as before.
+        private List<SerialTrackedAdvanceOrderLine> SubtractAlreadyTaggedUnits(string transactionNo, List<SerialTrackedAdvanceOrderLine> lines)
+        {
+            var tagged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                using var cmd = new SqlCommand(@"
+SELECT s.ItemCode, ISNULL(s.VariantCode, '') AS VariantCode, COUNT(*) AS Tagged
+FROM dbo.ItemSerialTracking s
+JOIN AdvanceOrderHeader h ON h.TransactionNo = @tn AND NULLIF(LTRIM(RTRIM(h.ReceiptNo)), '') IS NOT NULL
+WHERE s.SoldReceiptNo = h.ReceiptNo AND s.Status = 'SOLD'
+GROUP BY s.ItemCode, ISNULL(s.VariantCode, '')", conn);
+                cmd.Parameters.AddWithValue("@tn", transactionNo);
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                {
+                    string key = (rdr["ItemCode"]?.ToString()?.Trim() ?? string.Empty) + "|" + (rdr["VariantCode"]?.ToString()?.Trim() ?? string.Empty);
+                    tagged[key] = Convert.ToInt32(rdr["Tagged"]);
+                }
+            }
+            catch
+            {
+                return lines;
+            }
+
+            var remaining = new List<SerialTrackedAdvanceOrderLine>();
+            foreach (var line in lines)
+            {
+                string key = line.ItemCode + "|" + line.VariantCode;
+                int alreadyTagged = tagged.TryGetValue(key, out var count) ? count : 0;
+                int covered = Math.Min(alreadyTagged, line.Quantity);
+                if (covered > 0)
+                    tagged[key] = alreadyTagged - covered;
+                if (line.Quantity - covered > 0)
+                {
+                    remaining.Add(new SerialTrackedAdvanceOrderLine
+                    {
+                        ItemCode = line.ItemCode,
+                        VariantCode = line.VariantCode,
+                        Description = line.Description,
+                        Quantity = line.Quantity - covered
+                    });
+                }
+            }
+            return remaining;
         }
 
         private bool IsCurrentWarehouseProduction()

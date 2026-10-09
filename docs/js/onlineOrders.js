@@ -5743,7 +5743,7 @@ async function loadAdvanceOrders() {
   if (thisGeneration !== advanceLoadGeneration) return; // superseded by a newer search/page
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="19" class="cell-msg error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_order_production.sql.' : ''}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="19" class="cell-msg error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_orders_drop_old_list_overload.sql (or sql/supabase_online_orders_list_sort.sql if the function is missing).' : ''}</td></tr>`;
     return;
   }
 
@@ -5851,6 +5851,8 @@ function fillAdvanceCard(o) {
 
 function updateAdvanceCardActions(o) {
   applyAdvanceActions({ assign: 'advanceCardAssignBtn', next: 'advanceCardNextBtn', sendBack: 'advanceCardSendBackBtn', stepBack: 'advanceCardStepBackBtn' }, o);
+  // Same people who can Ready to Ship (staff_get_advance_order_serial_labels refuses view-only Store Managers).
+  document.getElementById('advanceCardPrintSerialsBtn').classList.toggle('hidden', !canAssignOrders());
 }
 
 function openAdvanceCard(transactionNo) {
@@ -6048,11 +6050,74 @@ async function setAdvanceStage(no, stage, btn) {
     ? await confirmWithPhoto({ ...copy, message: `${copy.message}\n\nTake a photo of what is leaving first.`, title, refId: no, label: 'Released - Shipped' })
     : await confirmAction({ ...copy, title });
   if (!ok) return;
+  if (stage === 'To Ship') return advanceReadyToShip(no, btn);
   btn.disabled = true;
   const { error } = await advanceRpc('staff_set_advance_order_stage', { p_no: no, p_stage: stage });
   btn.disabled = false;
   if (error) window.alert(error.message);
   await refreshAdvanceAfterAction(no);
+}
+
+// Ready to Ship with serials (sql/supabase_advance_order_serials.sql) - same picker as an online order's
+// To Ship (#shipSerialModal): pick In Stock serials, or "+ New serial" (production only; custom builds
+// start as new). Serials are tied to the advance order's Receipt No - the same link the POS's Pay In
+// Full uses - so units the POS already tagged aren't asked for again. The claim, the new serials and
+// the stage change are one server call: if any part fails, nothing changes.
+async function advanceReadyToShip(no, btn) {
+  btn.disabled = true;
+  try {
+    const { data: reqData, error: reqError } = await advanceRpc('staff_get_advance_order_serial_requirements', { p_no: no });
+    if (reqError) {
+      window.alert(`Could not check this order's serials: ${reqError.message}${/function|schema cache/i.test(reqError.message) ? ' - run sql/supabase_advance_order_serials.sql.' : ''}`);
+      return;
+    }
+    const requirements = (reqData || []).filter((r) => (r.quantity_needed || 0) > 0);
+
+    let picked = { running: [], fresh: [] };
+    if (requirements.length) {
+      // Only production creates serials (the server checks this too); a Super User can anywhere.
+      shipAllowsNewSerials = !!(currentSession.isSuperUser || currentSessionIsProductionWarehouse);
+      shipSerialWarehouse = null; // search the staff member's own location, like an online To Ship
+      document.querySelector('#shipSerialModal .bc-doc-caption').textContent = `ADVANCE ORDER ${no}`;
+      picked = await openShipSerialModal(requirements);
+      if (picked === null) return; // cancelled - nothing sent
+    }
+
+    const { data, error } = await advanceRpc('staff_advance_order_to_ship_with_serials', {
+      p_no: no,
+      p_serial_running_nos: picked.running?.length ? picked.running : null,
+      p_new_serials: picked.fresh?.length ? picked.fresh : null
+    });
+    if (error) {
+      window.alert(error.message);
+      return;
+    }
+    const created = Array.isArray(data?.[0]?.created_serials) ? data[0].created_serials : [];
+    if (created.length) {
+      printSerialLabels(created.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
+    }
+  } finally {
+    document.querySelector('#shipSerialModal .bc-doc-caption').textContent = 'ONLINE ORDER';
+    btn.disabled = false;
+    await refreshAdvanceAfterAction(no);
+  }
+}
+
+// "Print Serial Labels" on the advance order document - every serial tied to the order's Receipt No,
+// tagged here at Ready to Ship or by the POS at Pay In Full.
+async function printAdvanceSerialLabels(no, btn) {
+  btn.disabled = true;
+  const { data, error } = await advanceRpc('staff_get_advance_order_serial_labels', { p_no: no });
+  btn.disabled = false;
+  if (error) {
+    window.alert(`Could not load this order's serials: ${error.message}`);
+    return;
+  }
+  if (!data?.length) {
+    window.alert(`Advance order ${no} has no serials yet - they're picked or created at Ready to Ship (or by the POS at Pay In Full).`);
+    return;
+  }
+  printSerialLabels(data.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
 }
 
 function wireAdvanceCard() {
@@ -6067,6 +6132,7 @@ function wireAdvanceCard() {
   document.getElementById('advanceCardSendBackBtn').addEventListener('click', () => openAdvanceNo && openAdvanceSendBackDialog(openAdvanceNo));
   document.getElementById('advanceCardNextBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, e.currentTarget.dataset.stage, e.currentTarget));
   document.getElementById('advanceCardStepBackBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, null, e.currentTarget));
+  document.getElementById('advanceCardPrintSerialsBtn').addEventListener('click', (e) => openAdvanceNo && printAdvanceSerialLabels(openAdvanceNo, e.currentTarget));
 
   // The list's action bar - same actions, on the selected row.
   document.getElementById('advOpenBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceCard(selectedAdvanceNo));
@@ -6254,7 +6320,9 @@ async function initAdvanceOrdersView() {
   document.getElementById('advanceStatusBar').classList.remove('hidden');
   document.getElementById('advanceOrdersView').classList.remove('hidden');
   wireAdvanceCard();
+  wireShipSerialModalButtons(); // Ready to Ship's serial picker (advanceReadyToShip)
   updateAdvanceListActions(); // nothing selected yet - Open/Assign disabled, stage buttons hidden
+  currentSessionIsProductionWarehouse = await resolveIsProductionWarehouse(currentSession);
 
   let searchDebounce = null;
   document.getElementById('orderSearchInput').addEventListener('input', () => {

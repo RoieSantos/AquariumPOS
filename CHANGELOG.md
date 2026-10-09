@@ -2,6 +2,15 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-09
+
+- **Advance Orders: serial tagging at Ready to Ship** (portal). Uses the same picker as an online order's To Ship: pick In Stock serials, or **+ New serial** (production / Super User only; custom builds start as new, and labels print right away). Adds a **Print Serial Labels** button on the advance order. Serials are tied by the order's Receipt No (`SoldReceiptNo`), the same link the POS's Pay In Full uses, so no new columns. New RPCs are in [supabase_advance_order_serials.sql](sql/supabase_advance_order_serials.sql). `onlineOrders.js?v=advserial1`. Added the read-only pre-deploy check [supabase_check_advance_order_receipt_serial_link.sql](sql/supabase_check_advance_order_receipt_serial_link.sql) to confirm Receipt Nos are unique.
+- POS [AdvanceOrdersHeaderForm.cs](AdvanceOrdersHeaderForm.cs): Pay In Full no longer asks for serials on units already tagged to the order's receipt, e.g. in the portal (`SubtractAlreadyTaggedUnits`). Needs a new POS build.
+
+- **Advance Orders tab: "Could not choose the best candidate function".** An older 7-argument `admin_list_advance_orders` had come back next to the sort version, likely because the tab's own error message said to run the older `supabase_advance_order_production.sql`. New [supabase_advance_orders_drop_old_list_overload.sql](sql/supabase_advance_orders_drop_old_list_overload.sql) drops the old one. The error hint now points to that file, and the two older files carry a warning. `onlineOrders.js?v=photofb2`.
+
+- **Delivery calendar: manual Delivery Fee not saving.** The fee box was `type="number"`, which hands JS an empty value for input like "1,500", and that was silently treated as "blank = keep". It's now a text box that accepts commas and ₱, and an unreadable fee shows a message instead of being dropped. A saved manual fee now shows under Status in the day's stop list. Added the read-only check [supabase_check_delivery_stop_manual_fee.sql](sql/supabase_check_delivery_stop_manual_fee.sql). `delivery.js?v=advdeliv4`.
+
 ## 2026-10-08
 
 - **Online Order card: Photos moved into a right-hand FactBox** (BC style; stacks below on narrow screens, hidden for makers, always shown with "No photos yet" when empty). **Send Photo now opens a picker** of the order's existing photos (proof / sent photos + image line attachments) to tick and re-send, plus "Take New Photo" for the camera. [supabase_online_order_status_photo_shared_delete.sql](sql/supabase_online_order_status_photo_shared_delete.sql) keeps the shared image file when one of its re-sent rows is removed. Cache `photofb1`.

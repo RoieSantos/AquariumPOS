@@ -789,7 +789,7 @@ function showDayDetail(dateKey) {
           <td>${s.order_id || ''}</td>
           <td>${s.customer_name || ''}</td>
           <td>${s.route_name || ''}</td>
-          <td>${s.status || ''}</td>
+          <td>${s.status || ''}${s.is_manual_delivery_fee ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}</td>
           <td>${displayAddress}${isManuallyEnteredAddress ? ' <span class="muted">(manually entered)</span>' : ''}</td>
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
@@ -1672,8 +1672,16 @@ function closeNoAddressModal(proceed) {
   const phone = document.getElementById('noAddressPhoneInput').value.trim();
   const notes = document.getElementById('noAddressNotesInput').value.trim();
   const notePrint = document.getElementById('noAddressNotePrintInput').value.trim();
-  const feeText = document.getElementById('noAddressDeliveryFeeInput').value.trim();
-  const deliveryFee = feeText === '' || !Number.isFinite(Number(feeText)) || Number(feeText) < 0 ? null : Number(feeText);
+  // Commas / peso sign / spaces are stripped ("1,500", "₱ 500"). Anything still unreadable stops the
+  // save with a message instead of quietly counting as "blank = keep" - that silent drop is what made
+  // a typed fee look like it never saved.
+  const feeText = document.getElementById('noAddressDeliveryFeeInput').value.replace(/[,\s₱]|php/gi, '');
+  const deliveryFee = feeText === '' ? null : Number(feeText);
+  if (proceed && deliveryFee !== null && (!Number.isFinite(deliveryFee) || deliveryFee < 0)) {
+    window.alert(`"${document.getElementById('noAddressDeliveryFeeInput').value}" isn't a valid delivery fee. Type a number like 500 or 1500 (0 = free delivery), or leave it blank to keep the order's fee.`);
+    document.getElementById('noAddressDeliveryFeeInput').focus();
+    return;
+  }
   document.getElementById('noAddressModal').classList.add('hidden');
 
   if (noAddressResolve) {

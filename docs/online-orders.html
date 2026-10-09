@@ -530,6 +530,9 @@
         <button class="bc-cmd hidden" id="advanceCardNextBtn" type="button"></button>
         <button class="bc-cmd hidden" id="advanceCardSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="advanceCardStepBackBtn" type="button" title="Undo the last stage (Shipped -> To Ship -> production)">Undo Stage</button>
+        <!-- Serials tied to this order's Receipt No - tagged at Ready to Ship or by the POS at Pay In Full
+             (js/onlineOrders.js printAdvanceSerialLabels, sql/supabase_advance_order_serials.sql). -->
+        <button class="bc-cmd" id="advanceCardPrintSerialsBtn" type="button" title="Print (or reprint) the serial labels tied to this order"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serial Labels</button>
       </div>
 
       <div class="bc-doc-body">
@@ -939,7 +942,7 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/onlineOrders.js?v=photofb1"></script>
+  <script src="js/onlineOrders.js?v=advserial1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

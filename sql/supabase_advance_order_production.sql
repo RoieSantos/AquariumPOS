@@ -24,6 +24,9 @@
 -- supabase_advance_orders_sort_latest_update.sql (same latest-update sort is kept) - don't run either
 -- of those after this one.
 --
+-- WARNING: re-running this AFTER supabase_online_orders_list_sort.sql adds back an old admin_list_advance_orders
+-- next to the sort version (Advance Orders tab: "Could not choose the best candidate function") - run
+-- supabase_advance_orders_drop_old_list_overload.sql afterwards if you do.
 -- Run AFTER supabase_production_orders.sql (_production_is_manager), supabase_online_order_plywood_no_maker.sql
 -- (_online_order_line_part) and supabase_web_push_targeted.sql (_trigger_web_push). Safe to re-run.
 

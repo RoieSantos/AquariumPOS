@@ -12,6 +12,9 @@
 --
 -- Run AFTER supabase_advance_orders_store_manager_view.sql. Safe to re-run. If that file is ever re-run,
 -- run this one again afterwards (it would drop the two flag columns - the page just hides the badges).
+-- WARNING: re-running this AFTER supabase_online_orders_list_sort.sql adds back an old admin_list_advance_orders
+-- next to the sort version (Advance Orders tab: "Could not choose the best candidate function") - run
+-- supabase_advance_orders_drop_old_list_overload.sql afterwards if you do.
 
 -- Custom / glass flags from an advance order's lines.
 create or replace function public._advance_order_flags(p_no text, out has_custom_line boolean, out glass_thickness text)
