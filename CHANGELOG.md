@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-09
 
+- **Website compliance (payment gateway review).** Domain left as is (www.rspetstop.com already redirects to rspetstop.com). Every public page's footer (home, Order Now, T&C, Privacy, Help) now says the site is owned and operated by DTI-registered RSPETSTOP PET STORE (BN 6230461) and links the **Cancellation & Refund Policy** (new `#cancellation-refund` section in [terms-and-conditions.html](docs/terms-and-conditions.html)). Order Now lists only products with a photo (`orderNow.js?v=8`); [supabase_check_items_missing_photos.sql](sql/supabase_check_items_missing_photos.sql) lists the hidden ones. `landing.css?v=3`.
+
 - **Advance order serial picker: only the order's branch, no SET line.** The picker now searches serials at the advance order's own Warehouse, and the server refuses a picked serial from another branch. SET lines (the mother item, e.g. "AQUARIUM SET") no longer ask for a serial; their tank / sump / stand part lines do. [supabase_advance_order_serials.sql](sql/supabase_advance_order_serials.sql), [onlineOrders.js](docs/js/onlineOrders.js) `collectAdvanceSerials`.
 
 - **Advance order serials: aquarium / stand / sump lines weren't recognised.** The POS saves the sale list's *Category* column into `AdvanceOrderLines."No"` (shown as Item No.) and never saves the item *Code*, so the rule looked up `AQUARIUM` as an item code and found nothing. New `_advance_order_line_items` in [supabase_advance_order_serials.sql](sql/supabase_advance_order_serials.sql) treats `No` as the category and resolves the real item from VariationId, then item code, then name. Both check files show the resolved item and the reason.

@@ -705,6 +705,14 @@ img {
   text-decoration: underline;
 }
 
+/* "Owned and operated by ... DTI-registered" line - shown on every public page's footer. */
+.land-footer-owner {
+  max-width: 640px;
+  margin: 10px auto 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .land-social-row {
   margin-bottom: 12px;
   display: flex;

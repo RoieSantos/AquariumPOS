@@ -459,8 +459,13 @@ async function loadItems(codes) {
   // records that exact code (not a merged placeholder) even when this tile pooled items from more
   // than one duplicate-cased category - see loadCategories.
   const data = [];
+  // Only items with a product photo are listed (every listed product must show a photo - payment
+  // gateway review). Add photos in Item Setup to make an item appear here again;
+  // sql/supabase_check_items_missing_photos.sql lists the ones currently hidden.
   results.forEach((result, i) => {
-    (result.data || []).forEach((item) => data.push(Object.assign({}, item, { _sourceCategoryCode: codeList[i] })));
+    (result.data || [])
+      .filter((item) => firstImageUrl(item.images))
+      .forEach((item) => data.push(Object.assign({}, item, { _sourceCategoryCode: codeList[i] })));
   });
 
   if (data.length === 0) {
@@ -473,10 +478,8 @@ async function loadItems(codes) {
 
   grid.innerHTML = data
     .map((item) => {
-      const imgUrl = firstImageUrl(item.images);
-      const imgHtml = imgUrl
-        ? `<img class="item-card-img" src="${imgUrl}" alt="${item.name}" onerror="this.outerHTML='<div class=&quot;item-card-img-placeholder&quot;>${DEFAULT_CATEGORY_ICON}</div>'" />`
-        : `<div class="item-card-img-placeholder">${DEFAULT_CATEGORY_ICON}</div>`;
+      // A broken photo link hides the whole card rather than showing a photo-less product.
+      const imgHtml = `<img class="item-card-img" src="${firstImageUrl(item.images)}" alt="${item.name}" onerror="this.closest('.item-card').remove()" />`;
       const stockHtml = item.quantity_in_stock === null || item.quantity_in_stock === undefined
         ? ''
         : item.quantity_in_stock > 0

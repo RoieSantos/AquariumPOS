@@ -745,7 +745,7 @@
         <p class="payment-policy-callout">💡 Kindly send proof of payment + your full name after transaction.</p>
 
         <h4 class="payment-policy-subhead">🚫 Cancellation &amp; Refunds</h4>
-        <p class="muted" style="margin-bottom:0;">Down payments are non-refundable once processing begins.</p>
+        <p class="muted" style="margin-bottom:0;">Down payments are non-refundable once processing begins. See our full <a href="terms-and-conditions.html#cancellation-refund" target="_blank" rel="noopener">Cancellation &amp; Refund Policy</a>.</p>
       </div>
     </template>
 
@@ -1111,6 +1111,17 @@
     </div>
   </div>
 
+  <!-- Legal footer - owner/DTI line + T&C / Cancellation & Refund links (bottom padding clears the
+       sticky cart bar). -->
+  <footer style="text-align:center; font-size:0.8rem; line-height:1.5; opacity:0.85; padding:24px 16px 96px; max-width:680px; margin:0 auto;">
+    <p style="margin:0 0 6px;">
+      <a href="terms-and-conditions.html">Terms &amp; Conditions</a> &middot;
+      <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a> &middot;
+      <a href="privacy-policy.html">Privacy Policy</a>
+    </p>
+    <p style="margin:0;">This website (www.rspetstop.com) is owned and operated by <strong>RSPETSTOP PET STORE</strong>, a business registered with the Philippine Department of Trade and Industry (DTI Business Name Reg. No. 6230461).</p>
+  </footer>
+
   <!-- Sticky cart bar (Standard flow's browsing steps 1-2, and the whole Customize flow - see
        updateCartBar in js/orderNow.js) -->
   <div class="cart-bar hidden" id="cartBar">
@@ -1126,7 +1137,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/orderNow.js?v=7"></script>
+  <script src="js/orderNow.js?v=8"></script>
   <script src="js/chatWidget.js" defer></script>
 </body>
 </html>
