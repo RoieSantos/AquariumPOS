@@ -1,30 +1,29 @@
--- Read-only pre-deploy check for supabase_advance_order_serials.sql: advance-order serials are linked by
--- ItemSerialTracking."SoldReceiptNo" = AdvanceOrders."ReceiptNo", so that receipt number must point at ONE
--- order. Expect 0 in every "problem" row; the "info" rows are just context.
+-- Read-only check for supabase_advance_order_serials.sql. Advance-order serials are linked by
+-- ItemSerialTracking."SoldOnlineOrderId" = 'ADV-' || TransactionNo, because ReceiptNos repeat across stores
+-- (the first run of this check found shared receipts). This shows how much that matters for the OLDER POS
+-- Pay In Full serials, which only carry the receipt: those are only counted for an order when its receipt
+-- is used by ONE advance order and the serial sits at the order's warehouse. No "must be 0" rows any more.
 
-select 'problem' as kind, 'advance orders sharing a ReceiptNo' as item,
+select 'info' as kind, 'advance orders sharing a ReceiptNo (their older POS serials are not auto-linked)' as item,
        count(*)::text as detail
-from (
-  select "ReceiptNo" from public."AdvanceOrders"
-  where nullif(trim("ReceiptNo"), '') is not null
-  group by "ReceiptNo" having count(*) > 1
-) d
+from public."AdvanceOrders" a
+where nullif(trim(a."ReceiptNo"), '') is not null
+  and (select count(*) from public."AdvanceOrders" x where x."ReceiptNo" = a."ReceiptNo") > 1
 union all
-select 'problem', 'advance ReceiptNos also used as an online order sale (SoldOnlineOrderId set on its serials)',
-       count(distinct s."SoldReceiptNo")::text
-from public."ItemSerialTracking" s
-join public."AdvanceOrders" a on a."ReceiptNo" = s."SoldReceiptNo"
-where nullif(trim(s."SoldOnlineOrderId"), '') is not null
-union all
-select 'info', 'advance orders with no ReceiptNo (can''t take serials until resent from the POS)',
+select 'info', 'advance orders with no ReceiptNo (fine - the link uses TransactionNo)',
        count(*)::text
 from public."AdvanceOrders" where nullif(trim("ReceiptNo"), '') is null
 union all
-select 'info', 'serials already tied to an advance order receipt (POS Pay In Full)',
+select 'info', 'serials linked as ADV-<TransactionNo> (portal Ready to Ship / new POS build)',
+       count(*)::text
+from public."ItemSerialTracking" where "SoldOnlineOrderId" like 'ADV-%'
+union all
+select 'info', 'older POS serials with an advance ReceiptNo (receipt only)',
        count(*)::text
 from public."ItemSerialTracking" s
-join public."AdvanceOrders" a on a."ReceiptNo" = s."SoldReceiptNo"
+where nullif(trim(s."SoldOnlineOrderId"), '') is null
+  and exists (select 1 from public."AdvanceOrders" a where a."ReceiptNo" = s."SoldReceiptNo")
 union all
-select 'info', 'sample ReceiptNo values',
-       (select string_agg("ReceiptNo", ', ') from (select "ReceiptNo" from public."AdvanceOrders"
-         where nullif(trim("ReceiptNo"), '') is not null order by "SyncedAtUtc" desc nulls last limit 5) x);
+select 'problem', 'TransactionNo values that look duplicated across stores (must be 0)',
+       count(*)::text
+from (select upper(trim("TransactionNo")) from public."AdvanceOrders" group by 1 having count(*) > 1) d;

@@ -5,11 +5,15 @@
 -- warehouse. The portal's Ready to Ship had no serial step. Now Ready to Ship works like an online
 -- order's: pick In Stock serials, or "+ New serial" (created and label printed on the spot).
 --
--- Link to the order: ItemSerialTracking."SoldReceiptNo" = the advance order's own ReceiptNo, the SAME
--- value the POS's Pay In Full writes (AdvanceOrdersHeaderForm MarkSerialsSold / CreateSoldSerialRecords).
--- So the portal and the POS see each other's tags, and the POS pulls portal changes down unchanged
--- (SyncItemSerialTrackingFromSupabaseAsync already copies Status / SoldReceiptNo by UpdatedAtUtc).
--- No new columns.
+-- Link to the order: ItemSerialTracking."SoldOnlineOrderId" = 'ADV-' || TransactionNo. NOT the receipt
+-- number - supabase_check_advance_order_receipt_serial_link.sql showed ReceiptNos repeat across stores
+-- (every store counts RS-0000000001, ...), so a receipt alone can't say which order a serial belongs to.
+-- TransactionNo is AdvanceOrders' primary key, the 'ADV-' prefix can never match a Pancake order ID, and
+-- the POS already syncs SoldOnlineOrderId both ways (SyncItemSerialTrackingFromSupabaseAsync + push), so
+-- the POS sees portal tags with no pull change. SoldReceiptNo is still filled (info only, like the POS).
+-- The new POS build tags its own Pay In Full serials the same way (AdvanceOrdersHeaderForm.cs).
+-- Older POS Pay In Full serials (receipt only) still count when that receipt is used by ONE advance order
+-- and the serial sits at the order's warehouse - see _advance_order_serials.
 --
 -- Which lines need a serial: same rule as the POS's Pay In Full (IsSerialTrackedAdvanceOrderItemCode):
 -- ITEM lines whose code starts AQ- / CUSTOM- / CUSTOM_, or whose item is in a production category.
@@ -22,6 +26,39 @@
 --
 -- Run AFTER supabase_advance_order_production.sql and supabase_online_order_ship_new_serials.sql
 -- (_production_next_serial_no). Safe to re-run. Needs js/onlineOrders.js ?v=advserial1.
+
+-- ---------------------------------------------------------------------------
+-- 0. The serials tied to an advance order (internal).
+
+create or replace function public._advance_order_serials(p_no text)
+returns setof public."ItemSerialTracking"
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with o as (
+    select a."TransactionNo",
+           nullif(trim(a."ReceiptNo"), '') as receipt,
+           nullif(trim(a."Warehouse"), '') as warehouse,
+           -- the receipt points at this order only
+           (select count(*) from public."AdvanceOrders" x where x."ReceiptNo" = a."ReceiptNo") = 1 as receipt_unique
+    from public."AdvanceOrders" a
+    where a."TransactionNo" = p_no
+  )
+  select s.*
+  from o
+  join public."ItemSerialTracking" s
+    on s."SoldOnlineOrderId" = 'ADV-' || o."TransactionNo"
+    -- Older POS Pay In Full tags (receipt only): only when unambiguous.
+    or (nullif(trim(s."SoldOnlineOrderId"), '') is null
+        and o.receipt is not null and o.receipt_unique
+        and s."SoldReceiptNo" = o.receipt
+        and (o.warehouse is null or nullif(trim(s."Location"), '') is null
+             or lower(trim(s."Location")) = lower(o.warehouse)));
+$$;
+
+revoke execute on function public._advance_order_serials(text) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 1. What still needs a serial.
@@ -46,15 +83,11 @@ language plpgsql
 security definer
 set search_path = public, extensions
 as $$
-declare
-  v_receipt text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
      or not public._advance_order_can_view(p_admin_username, p_no) then
     raise exception 'Not authorized.';
   end if;
-
-  select nullif(trim(a."ReceiptNo"), '') into v_receipt from public."AdvanceOrders" a where a."TransactionNo" = p_no;
 
   return query
     with lines as (
@@ -80,24 +113,22 @@ begin
              sum(qty)::int as total
       from lines
       group by code, variant
+    ),
+    tagged as (
+      select s."ItemCode" as code, coalesce(s."VariantCode", '') as variant, count(*)::int as n
+      from public._advance_order_serials(p_no) s
+      where s."Status" = 'SOLD'
+      group by 1, 2
     )
     select (g.code || coalesce('|' || g.variant, ''))::text,
            g.code::text,
            g.variant::text,
            coalesce(g.descr, g.code)::text,
            g.total,
-           t.tagged,
-           greatest(g.total - t.tagged, 0)
+           coalesce(t.n, 0),
+           greatest(g.total - coalesce(t.n, 0), 0)
     from grouped g
-    cross join lateral (
-      select count(*)::int as tagged
-      from public."ItemSerialTracking" s
-      where v_receipt is not null
-        and s."SoldReceiptNo" = v_receipt
-        and s."Status" = 'SOLD'
-        and s."ItemCode" = g.code
-        and coalesce(s."VariantCode", '') = coalesce(g.variant, '')
-    ) t
+    left join tagged t on t.code = g.code and t.variant = coalesce(g.variant, '')
     order by g.code, g.variant;
 end;
 $$;
@@ -124,6 +155,7 @@ set search_path = public, extensions
 set statement_timeout = '50000'
 as $$
 declare
+  v_link text := 'ADV-' || p_no;
   v_receipt text;
   v_order_warehouse text;
   v_is_super boolean;
@@ -152,10 +184,6 @@ begin
   end if;
 
   if array_length(v_picks, 1) > 0 or v_has_new then
-    if v_receipt is null then
-      raise exception 'Advance order % has no Receipt No yet, so serials can''t be tied to it. Resend it from the POS first.', p_no;
-    end if;
-
     -- Every requested unit must belong to a serial-tracked line that still needs one: picks + new per
     -- item/variant never more than "still to tag".
     create temp table if not exists _adv_serial_req (item_code text, variation_id text, description text, quantity_needed int) on commit drop;
@@ -207,7 +235,8 @@ begin
     with claimed as (
       update public."ItemSerialTracking"
          set "Status" = 'SOLD',
-             "SoldReceiptNo" = v_receipt,
+             "SoldOnlineOrderId" = v_link,
+             "SoldReceiptNo" = coalesce(v_receipt, "SoldReceiptNo"),
              "UpdatedAtUtc" = now(),
              "UpdatedBy" = p_admin_username
        where "RunningSerialNo" = any(v_picks) and "Status" = 'IN_STOCK'
@@ -219,7 +248,7 @@ begin
     end if;
   end if;
 
-  -- Create new serials (production only), SOLD to this order's receipt, numbered like the desktop.
+  -- Create new serials (production only), SOLD to this order, numbered like the desktop.
   if v_has_new then
     select coalesce(s."SuperUser", false), nullif(trim(s."WarehouseName"), '')
       into v_is_super, v_staff_warehouse
@@ -243,11 +272,11 @@ begin
         -- UpdatedAtUtc set so the desktop POS pulls it down (SyncItemSerialTrackingFromSupabaseAsync).
         insert into public."ItemSerialTracking"
           ("SerialNo", "ItemCode", "ItemDescription", "Location", "Status", "SourceDocumentNo", "CreatedBy",
-           "VariantCode", "SoldReceiptNo", "UpdatedAtUtc", "UpdatedBy")
+           "VariantCode", "SoldOnlineOrderId", "SoldReceiptNo", "UpdatedAtUtc", "UpdatedBy")
         values
           (v_serial, v_req.item_code, left(coalesce(nullif(trim(v_req.description), ''), v_req.item_code), 255), v_location,
-           'SOLD', v_receipt, p_admin_username,
-           nullif(trim(coalesce(v_req.variation_id, '')), ''), v_receipt, now(), p_admin_username);
+           'SOLD', v_link, p_admin_username,
+           nullif(trim(coalesce(v_req.variation_id, '')), ''), v_link, v_receipt, now(), p_admin_username);
         v_created := v_created || jsonb_build_array(jsonb_build_object(
           'serial_no', v_serial, 'item_code', v_req.item_code,
           'description', coalesce(nullif(trim(v_req.description), ''), v_req.item_code)));
@@ -279,24 +308,16 @@ language plpgsql
 security definer
 set search_path = public, extensions
 as $$
-declare
-  v_receipt text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
      or not public._advance_order_can_view(p_admin_username, p_no) then
     raise exception 'Not authorized.';
   end if;
 
-  select nullif(trim(a."ReceiptNo"), '') into v_receipt from public."AdvanceOrders" a where a."TransactionNo" = p_no;
-  if v_receipt is null then
-    return;
-  end if;
-
   return query
     select s."SerialNo"::text, s."ItemCode"::text, coalesce(nullif(trim(s."ItemDescription"), ''), s."ItemCode")::text
-    from public."ItemSerialTracking" s
-    where s."SoldReceiptNo" = v_receipt
-      and coalesce(s."Status", '') <> 'REVERSED'
+    from public._advance_order_serials(p_no) s
+    where coalesce(s."Status", '') <> 'REVERSED'
     order by s."ItemCode", s."SerialNo";
 end;
 $$;
@@ -311,5 +332,5 @@ from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in ('staff_get_advance_order_serial_requirements', 'staff_advance_order_to_ship_with_serials',
-                    'staff_get_advance_order_serial_labels', '_production_next_serial_no')
+                    'staff_get_advance_order_serial_labels', '_production_next_serial_no', '_advance_order_serials')
 order by 1, 2;

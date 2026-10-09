@@ -573,7 +573,7 @@ namespace AquariumPOS
                     {
                         if (serialsToMarkSold.Count > 0)
                         {
-                            ProductSerialTrackingForm.MarkSerialsSold(serialsToMarkSold, receiptNo, null);
+                            ProductSerialTrackingForm.MarkSerialsSold(serialsToMarkSold, receiptNo, AdvanceOrderSerialLink(transactionNo));
                         }
 
                         if (serialShortfalls.Count > 0)
@@ -589,7 +589,7 @@ namespace AquariumPOS
                                     shortfall.VariantCode,
                                     shortfall.Description,
                                     receiptNo,
-                                    null,
+                                    AdvanceOrderSerialLink(transactionNo),
                                     CurrentUser.GetEffectiveUsername("POS_SYSTEM"),
                                     shortfall.Count);
                             }
@@ -1081,7 +1081,12 @@ ORDER BY aol.[LineNo]", conn);
             return true;
         }
 
-        // Drops units that already have a SOLD serial tied to this order's ReceiptNo, per item/variant,
+        // What ties a serial to an advance order (ItemSerialTracking.SoldOnlineOrderId) - same value the Web
+        // Portal writes at Ready to Ship (supabase_advance_order_serials.sql). The 'ADV-' prefix never
+        // matches a Pancake online order ID.
+        private static string AdvanceOrderSerialLink(string transactionNo) => "ADV-" + (transactionNo ?? string.Empty).Trim();
+
+        // Drops units that already have a SOLD serial tied to this order, per item/variant,
         // spread over the lines in order. Best-effort: if the lookup fails, every unit is asked for as before.
         private List<SerialTrackedAdvanceOrderLine> SubtractAlreadyTaggedUnits(string transactionNo, List<SerialTrackedAdvanceOrderLine> lines)
         {
@@ -1090,13 +1095,14 @@ ORDER BY aol.[LineNo]", conn);
             {
                 using var conn = new SqlConnection(connectionString);
                 conn.Open();
+                // Linked by SoldOnlineOrderId = 'ADV-<TransactionNo>' (AdvanceOrderSerialLink), not the
+                // receipt: receipt numbers repeat across stores, and serials from every store are pulled here.
                 using var cmd = new SqlCommand(@"
 SELECT s.ItemCode, ISNULL(s.VariantCode, '') AS VariantCode, COUNT(*) AS Tagged
 FROM dbo.ItemSerialTracking s
-JOIN AdvanceOrderHeader h ON h.TransactionNo = @tn AND NULLIF(LTRIM(RTRIM(h.ReceiptNo)), '') IS NOT NULL
-WHERE s.SoldReceiptNo = h.ReceiptNo AND s.Status = 'SOLD'
+WHERE s.SoldOnlineOrderId = @link AND s.Status = 'SOLD'
 GROUP BY s.ItemCode, ISNULL(s.VariantCode, '')", conn);
-                cmd.Parameters.AddWithValue("@tn", transactionNo);
+                cmd.Parameters.AddWithValue("@link", AdvanceOrderSerialLink(transactionNo));
                 using var rdr = cmd.ExecuteReader();
                 while (rdr.Read())
                 {

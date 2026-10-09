@@ -2817,38 +2817,42 @@ a.bc-cue:hover {
   color: inherit;
 }
 
-/* ------------------------------------------------------------------ Online Order card: Photos FactBox
-   BC layout - the document on the left, a FactBox column on the right (docs/online-orders.html
-   #orderCardPhotosPart, filled by js/onlineOrders.js renderOrderCardPhotos). Stacks under the
-   document on a narrow screen; hidden for makers (maker-focus list above). The windowed card is a
-   bit wider than the shared .to-manage-panel so the lines keep their room next to the FactBox. */
-#orderCardModal .to-manage-panel:not(.modal-maximized) { max-width: 1380px; }
-#orderCardModal .bc-doc-body.oc-split {
+/* ------------------------------------------------------------------ Photos FactBox (document cards)
+   BC layout - the document on the left, a FactBox column on the right. Online Order card
+   (docs/online-orders.html #orderCardPhotosPart, js/onlineOrders.js renderOrderCardPhotos) and
+   Production Order card (docs/production-orders.html #prodCardPhotosPart, js/productionOrders.js
+   loadCardPhotos). Stacks under the document on a narrow screen; hidden for makers. The windowed
+   Online Order card is a bit wider than the shared .to-manage-panel so the lines keep their room. */
+#orderCardModal .to-manage-panel:not(.modal-maximized),
+#prodCardModal .po-doc-panel:not(.modal-maximized) { max-width: 1380px; }
+.bc-doc .bc-doc-body.oc-split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 270px;
   gap: 0 20px;
   align-items: start;
 }
-#orderCardModal .oc-main { min-width: 0; }
-#orderCardModal .oc-factbox {
+.bc-doc .oc-main { min-width: 0; }
+.bc-doc .oc-factbox {
   position: sticky;
   top: 0;
   margin-top: 10px;
   border: 1px solid var(--bc-line);
   background: var(--bc-surface-2);
 }
-#orderCardModal .oc-fact-title { padding: 9px 12px 6px; border-bottom: 1px solid var(--bc-line); font-size: 13px; font-weight: 600; }
-#orderCardModal .oc-fact-body { padding: 10px 12px 12px; }
-#orderCardModal .oc-fact-empty { margin: 0; font-size: 12.5px; }
-#orderCardModal .oc-fact-photos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-#orderCardModal .oc-fact-photos .status-photo-card { width: auto; border-radius: 2px; }
-#orderCardModal .oc-fact-photos .status-photo-thumb { width: 100%; height: 110px; }
-#orderCardModal .oc-fact-photos .status-photo-meta { padding: 4px 6px; font-size: 10.5px; overflow-wrap: anywhere; }
-#orderCardModal.maker-focus .bc-doc-body.oc-split { display: block; }
+.bc-doc .oc-fact-title { padding: 9px 12px 6px; border-bottom: 1px solid var(--bc-line); font-size: 13px; font-weight: 600; }
+.bc-doc .oc-fact-body { padding: 10px 12px 12px; }
+.bc-doc .oc-fact-empty { margin: 0; font-size: 12.5px; }
+.bc-doc .oc-fact-photos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bc-doc .oc-fact-photos .status-photo-card { width: auto; border-radius: 2px; }
+.bc-doc .oc-fact-photos .status-photo-thumb { width: 100%; height: 110px; }
+.bc-doc .oc-fact-photos .status-photo-meta { padding: 4px 6px; font-size: 10.5px; overflow-wrap: anywhere; }
+#orderCardModal.maker-focus .bc-doc-body.oc-split,
+#prodCardModal.maker-view .bc-doc-body.oc-split { display: block; }
+#prodCardModal.maker-view .oc-factbox { display: none; }
 @media (max-width: 900px) {
-  #orderCardModal .bc-doc-body.oc-split { grid-template-columns: minmax(0, 1fr); }
-  #orderCardModal .oc-factbox { position: static; margin-bottom: 10px; }
-  #orderCardModal .oc-fact-photos { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .bc-doc .bc-doc-body.oc-split { grid-template-columns: minmax(0, 1fr); }
+  .bc-doc .oc-factbox { position: static; margin-bottom: 10px; }
+  .bc-doc .oc-fact-photos { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 }
 
 /* Send Photo picker (#sendPhotoPickDialog) - tick the order's existing photo(s) to send, or take a new one. */

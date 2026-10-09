@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Production Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=prod1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=photofb2" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -166,7 +166,10 @@
       <div id="prodCardError" class="bc-doc-error error-text hidden"></div>
       <div id="prodCardNotice" class="bc-doc-hint hidden" style="margin:8px 16px 0; color:var(--success);"></div>
 
-      <div class="bc-doc-body">
+      <!-- Body split BC-style: the document on the left, the Photos FactBox on the right (same as the
+           Online Order card; stacks under the document on a narrow screen, hidden in the maker view). -->
+      <div class="bc-doc-body oc-split">
+       <div class="oc-main">
         <!-- Maker view (js/productionOrders.js renderMakerView) - a Tank / Stand Maker opening their order
              sees only this: their lines (description, colour, qty) and a big Production Done button. -->
         <div id="prodMakerView" class="pm-view hidden"></div>
@@ -324,6 +327,18 @@
             </table>
           </div>
         </div>
+       </div>
+
+        <!-- Photos FactBox: the makers' Production Done proof photos, taken on My Assignments and saved
+             against this order's No. in public."OnlineOrderStatusPhotos" (kept 30 days).
+             js/productionOrders.js loadCardPhotos. -->
+        <aside class="oc-factbox" id="prodCardPhotosPart" aria-label="Photos">
+          <div class="oc-fact-title">Photos <span class="muted" id="prodCardPhotosCount"></span></div>
+          <div class="oc-fact-body">
+            <p class="oc-fact-empty muted" id="prodCardPhotosEmpty">No photos yet.</p>
+            <div id="prodCardPhotosList" class="oc-fact-photos"></div>
+          </div>
+        </aside>
       </div>
     </div>
   </div>
@@ -338,7 +353,7 @@
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/glassCutList.js?v=po3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/productionOrders.js?v=20"></script>
+  <script src="js/productionOrders.js?v=21"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

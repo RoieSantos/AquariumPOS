@@ -5,6 +5,12 @@
 
 let allSerials = [];
 let currentSession = null;
+
+// Advance-order serials carry 'ADV-<TransactionNo>' in SoldOnlineOrderId (sql/supabase_advance_order_serials.sql) -
+// receipt numbers repeat across stores, so the transaction is the real link. Shown as "Advance order".
+function isAdvanceOrderLink(value) {
+  return /^ADV-/i.test(String(value || ''));
+}
 let isProductionWarehouseUser = true; // unrestricted unless resolveIsProductionWarehouse says otherwise
 let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit control below
 let canReprintLabels = false; // Super User / Production Manager - per-row Reprint (js/labelPrinter.js)
@@ -534,11 +540,13 @@ function renderSerials() {
   const sub = (text) => (text ? `<div class="muted" style="font-size:11px; line-height:1.3;">${text}</div>` : '');
   tbody.innerHTML = rows
     .map((r) => {
-      const soldTo = r.SoldReceiptNo
-        ? `${escapeHtml(r.SoldReceiptNo)}${sub('POS receipt')}`
-        : r.SoldOnlineOrderId
-          ? `${escapeHtml(r.SoldOnlineOrderId)}${sub('Online order')}`
-          : '<span class="muted">-</span>';
+      const soldTo = isAdvanceOrderLink(r.SoldOnlineOrderId)
+        ? `${escapeHtml(r.SoldOnlineOrderId)}${sub(`Advance order${r.SoldReceiptNo ? ' · ' + escapeHtml(r.SoldReceiptNo) : ''}`)}`
+        : r.SoldReceiptNo
+          ? `${escapeHtml(r.SoldReceiptNo)}${sub('POS receipt')}`
+          : r.SoldOnlineOrderId
+            ? `${escapeHtml(r.SoldOnlineOrderId)}${sub('Online order')}`
+            : '<span class="muted">-</span>';
       return `
       <tr class="clickable-row${r.SerialNo === selectedSerialNo ? ' selected' : ''}" data-serial="${encodeURIComponent(r.SerialNo)}">
         ${canBulkFloat ? `<td><input type="checkbox" class="serial-tick" aria-label="Tick ${escapeHtml(r.SerialNo)}"${checkedSerialNos.has(r.SerialNo) ? ' checked' : ''} /></td>` : ''}
@@ -720,7 +728,9 @@ function openSerialCard(serialNo) {
     field('Location', escapeHtml(r.Location) || '<span class="muted">Unassigned</span>'),
     field('Source Doc.', renderSourceDocCell(r.SourceDocumentNo)),
     field('Maker', r.Maker ? `${escapeHtml(r.Maker.maker_name || 'Not assigned')} <span class="muted">(${r.Maker.part === 'stand' ? 'Stand' : 'Tank'} maker)</span>` : ''),
-    field('Sold To', r.SoldReceiptNo ? `${escapeHtml(r.SoldReceiptNo)} <span class="muted">(POS receipt)</span>`
+    field('Sold To', isAdvanceOrderLink(r.SoldOnlineOrderId)
+      ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Advance order${r.SoldReceiptNo ? ', receipt ' + escapeHtml(r.SoldReceiptNo) : ''})</span>`
+      : r.SoldReceiptNo ? `${escapeHtml(r.SoldReceiptNo)} <span class="muted">(POS receipt)</span>`
       : r.SoldOnlineOrderId ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Online order)</span>` : ''),
     field('Created', escapeHtml(formatDateTime(r.CreatedAtUtc))),
     field('Last Updated', `${escapeHtml(formatDateTime(r.UpdatedAtUtc))}${r.UpdatedBy ? ` <span class="muted">by ${escapeHtml(r.UpdatedBy)}</span>` : ''}`),
@@ -864,7 +874,7 @@ async function markInStock(serialNo) {
     return;
   }
   if ((row.Status || '').toUpperCase() === 'SOLD'
-    && !confirm(`${serialNo} is SOLD${row.SoldReceiptNo ? ` (receipt ${row.SoldReceiptNo})` : row.SoldOnlineOrderId ? ` (online order ${row.SoldOnlineOrderId})` : ''}.\n\nPutting it back In Stock means the unit is physically back on hand (e.g. a return). Continue?`)) return;
+    && !confirm(`${serialNo} is SOLD${isAdvanceOrderLink(row.SoldOnlineOrderId) ? ` (advance order ${row.SoldOnlineOrderId})` : row.SoldReceiptNo ? ` (receipt ${row.SoldReceiptNo})` : row.SoldOnlineOrderId ? ` (online order ${row.SoldOnlineOrderId})` : ''}.\n\nPutting it back In Stock means the unit is physically back on hand (e.g. a return). Continue?`)) return;
 
   if ((row.Status || '').toUpperCase() !== 'SOLD' && !confirm(`Mark ${serialNo} as IN_STOCK?`)) return;
 

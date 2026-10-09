@@ -990,6 +990,56 @@ function wireMaterialsGrid() {
   document.getElementById('prodPostMaterialsBtn').addEventListener('click', postMaterials);
 }
 
+// ---- Photos FactBox: Production Done proof photos the makers took on My Assignments (js/onlineOrders.js
+// handleProdOrderDoneClick), stored against this order's No. in OnlineOrderStatusPhotos - same list /
+// remove RPCs as the Online Order card (supabase_online_order_status_photo.sql).
+
+function cardPhotoHtml(p) {
+  const takenAt = p.uploaded_at_utc ? new Date(p.uploaded_at_utc).toLocaleString() : '';
+  return `
+    <div class="status-photo-card">
+      <a href="${escapeHtml(p.public_url)}" target="_blank" rel="noopener">
+        <img src="${escapeHtml(p.public_url)}" class="status-photo-thumb" alt="Production photo" loading="lazy" />
+      </a>
+      ${isManager ? `<button type="button" class="status-photo-remove-btn" data-photo-id="${escapeHtml(p.photo_id)}" title="Remove photo">&times;</button>` : ''}
+      <div class="status-photo-meta">
+        <div>${escapeHtml(p.status)} - ${escapeHtml(takenAt)}</div>
+        <div class="muted">by ${escapeHtml(p.uploaded_by)}</div>
+      </div>
+    </div>`;
+}
+
+function renderCardPhotos(photos) {
+  document.getElementById('prodCardPhotosList').innerHTML = photos.map(cardPhotoHtml).join('');
+  document.getElementById('prodCardPhotosEmpty').classList.toggle('hidden', photos.length > 0);
+  document.getElementById('prodCardPhotosCount').textContent = photos.length ? `(${photos.length})` : '';
+}
+
+async function loadCardPhotos() {
+  const no = openOrder?.order_no;
+  renderCardPhotos([]);
+  if (!no) return;
+  const { data, error } = await supabaseClient.rpc('admin_list_online_order_status_photos', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: no
+  });
+  if (openOrder?.order_no !== no) return; // card closed / another order opened meanwhile
+  if (error) console.warn('admin_list_online_order_status_photos:', error.message);
+  renderCardPhotos(error ? [] : data || []);
+}
+
+async function removeCardPhoto(photoId) {
+  if (!confirm('Remove this photo? This cannot be undone.')) return;
+  const { error } = await supabaseClient.rpc('admin_delete_online_order_status_photo', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_photo_id: photoId
+  });
+  if (error) { alert(`Could not remove photo: ${error.message}`); return; }
+  await loadCardPhotos();
+}
+
 function fillHeaderFields() {
   const o = openOrder;
   document.getElementById('prodDescription').value = o?.description || '';
@@ -1021,6 +1071,7 @@ async function openCard(orderRow) {
   if (orderRow?.order_no) document.getElementById('prodCardModal').dataset.historyUrl = `?no=${encodeURIComponent(orderRow.order_no)}`;
   else delete document.getElementById('prodCardModal').dataset.historyUrl;
   document.getElementById('prodCardModal').classList.remove('hidden');
+  loadCardPhotos();
   if (!orderRow) {
     renderLines([]);
     addLine();
@@ -1046,6 +1097,7 @@ async function reloadCard() {
   cardDirty = false;
   fillHeaderFields();
   renderCardHeader();
+  loadCardPhotos();
   await loadCardLines();
   await loadCardSerials();
   await loadCardMaterials();
@@ -1458,6 +1510,10 @@ function wireLinesGrid() {
 
   document.getElementById('newProdBtn').addEventListener('click', () => openCard(null));
   document.getElementById('prodCardCloseBtn').addEventListener('click', closeCard);
+  document.getElementById('prodCardPhotosList').addEventListener('click', (e) => {
+    const btn = e.target.closest('.status-photo-remove-btn');
+    if (btn) removeCardPhoto(btn.dataset.photoId);
+  });
   document.getElementById('prodCardMaximizeBtn').addEventListener('click', () => {
     const next = !document.getElementById('prodCardModal').classList.contains('modal-maximized');
     applyMaximized(next);
