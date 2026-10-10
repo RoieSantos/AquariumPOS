@@ -210,6 +210,8 @@ const STATUS_SUMMARY_ELEMENT_IDS = {
   'Completed': 'statusCountCompleted',
   'To Ship': 'statusCountToShip',
   'Shipped': 'statusCountShipped',
+  // Portal-only, set by Mark Done on the Delivery route view (supabase_delivery_stop_done_post.sql).
+  'Delivered': 'statusCountDelivered',
   'Cancelled': 'statusCountCancelled'
 };
 
@@ -4130,6 +4132,38 @@ function setCardText(id, value) {
   el.textContent = value === null || value === undefined || value === '' ? '-' : value;
 }
 
+// Delivered By / Delivered Date on the order and advance cards - set by Mark Done on the Delivery
+// route view (staff_get_order_delivery, supabase_delivery_stop_done_post.sql). Only looked up for
+// Delivered orders; `key` guards against a slow reply landing on a card that has moved on.
+async function fillDeliveredFields(byId, atId, { orderId = null, advanceNo = null, delivered }) {
+  const key = orderId || advanceNo;
+  const atEl = document.getElementById(atId);
+  setCardText(byId, '');
+  setCardText(atId, '');
+  atEl.dataset.key = key || '';
+  if (!delivered || !key) return;
+
+  const { data, error } = await supabaseClient.rpc('staff_get_order_delivery', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_order_id: orderId,
+    p_advance_no: advanceNo
+  });
+  const row = !error && data && data[0];
+  if (!row || atEl.dataset.key !== key) return;
+  setCardText(byId, row.delivered_by);
+  atEl.textContent = row.delivered_at_utc ? new Date(row.delivered_at_utc).toLocaleString() : '-';
+  [[row.facebook_post_url, 'Facebook post'], [row.photo_url, 'Photo']].forEach(([url, label]) => {
+    if (!url) return;
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = label;
+    atEl.append(' · ', link);
+  });
+}
+
 // Who last updated the order - the newest entry of Pancake's edit history
 // (supabase_online_order_last_editor.sql). Cached per order + update time, so a newer update re-reads it.
 const lastEditorCache = new Map(); // `${order_id}|${last_updated_at}` -> name, '' (none) or 'loading'
@@ -4164,7 +4198,7 @@ function fillOrderCardHeader(o) {
   document.getElementById('orderCardTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
   const badge = document.getElementById('orderCardStatusBadge');
   badge.textContent = displayStatus || '';
-  badge.className = 'badge ' + (['Assigned', 'Shipped', 'Completed'].includes(displayStatus) ? 'badge-success' : displayStatus === 'Cancelled' ? 'badge-danger' : 'badge-neutral');
+  badge.className = 'badge ' + (['Assigned', 'Shipped', 'Delivered', 'Completed'].includes(displayStatus) ? 'badge-success' : displayStatus === 'Cancelled' ? 'badge-danger' : 'badge-neutral');
   document.getElementById('orderCardBadges').innerHTML = orderBadgesHtml(o);
 
   setCardText('ocOrderId', o.order_id);
@@ -4189,6 +4223,10 @@ function fillOrderCardHeader(o) {
   setCardText('ocCreatedBy', o.created_by);
   setCardText('ocLastUpdated', lastUpdatedText(o));
   ensureLastEditor(o);
+  fillDeliveredFields('ocDeliveredBy', 'ocDeliveredAt', {
+    orderId: String(o.order_id),
+    delivered: (o.status || '').trim().toLowerCase() === 'delivered'
+  });
   setCardText('ocForDelivery', o.for_delivery ? 'Yes' : 'No');
   setCardText('ocEstDelivery', o.estimated_delivery_date);
   setCardText('ocDeliveryFee', o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '');
@@ -5630,7 +5668,7 @@ function advanceStatus(o) {
 }
 
 function advanceStatusBadgeHtml(status) {
-  const cls = status === 'Shipped' || status === 'Production Done' ? 'badge-success'
+  const cls = status === 'Shipped' || status === 'Delivered' || status === 'Production Done' ? 'badge-success'
     : status === 'To Ship' ? 'badge-primary'
       : status === 'Assigned' ? 'badge-warning' : 'badge-neutral';
   return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
@@ -5728,11 +5766,12 @@ function advanceActionState(o) {
   else if (status === 'To Ship') next = { label: 'Mark Shipped', stage: 'Shipped', icon: 'ico-ship' };
   return {
     canManage,
-    assignDisabled: status === 'Shipped',
+    assignDisabled: status === 'Shipped' || status === 'Delivered',
     next: canManage ? next : null,
     nextTitle: status === 'New' ? 'No makers assigned - mark it ready without production' : '',
-    sendBack: canManage && status !== 'Shipped' && advanceDoneParts(o).length > 0,
-    stepBack: canManage && ['To Ship', 'Shipped'].includes(status)
+    sendBack: canManage && status !== 'Shipped' && status !== 'Delivered' && advanceDoneParts(o).length > 0,
+    // Delivered (Mark Done on the Delivery route, supabase_delivery_stop_done_post.sql) steps back to Shipped.
+    stepBack: canManage && ['To Ship', 'Shipped', 'Delivered'].includes(status)
   };
 }
 
@@ -5857,6 +5896,7 @@ function fillAdvanceCard(o) {
   document.getElementById('acStandMaker').innerHTML = advanceMakerFieldHtml(o, 'stand');
   setCardText('acToShip', o.to_ship_at ? `${advanceDateTime(o.to_ship_at)} by ${o.to_ship_by || '-'}` : '');
   setCardText('acShipped', o.shipped_at ? `${advanceDateTime(o.shipped_at)} by ${o.shipped_by || '-'}` : '');
+  fillDeliveredFields('acDeliveredBy', 'acDeliveredAt', { advanceNo: o.transaction_no, delivered: status === 'Delivered' });
   const assigned = advanceAssignedParts(o);
   document.getElementById('advanceCardAssignSummary').textContent = [
     status,

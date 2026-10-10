@@ -152,6 +152,7 @@
         <button type="button" class="bc-tab status-summary-pill walkin-pill hidden" data-status="Completed" title="Walk-ins built and picked up by the customer">Completed <span class="status-summary-count" id="statusCountCompleted">-</span></button>
         <button type="button" class="bc-tab status-summary-pill online-pill" data-status="To Ship">To Ship <span class="status-summary-count" id="statusCountToShip">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Shipped">Shipped <span class="status-summary-count" id="statusCountShipped">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Delivered" title="Marked Done by the Delivery Team (portal only - Pancake still says Shipped)">Delivered <span class="status-summary-count" id="statusCountDelivered">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Cancelled">Cancelled <span class="status-summary-count" id="statusCountCancelled">-</span></button>
       </div>
 
@@ -163,6 +164,7 @@
         <button type="button" class="bc-tab status-summary-pill" data-adv-status="Production Done" title="Every assigned part marked done">Production Done <span class="status-summary-count" data-adv-count="Production Done">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-adv-status="To Ship">To Ship <span class="status-summary-count" data-adv-count="To Ship">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-adv-status="Shipped">Shipped <span class="status-summary-count" data-adv-count="Shipped">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill" data-adv-status="Delivered" title="Marked Done by the Delivery Team">Delivered <span class="status-summary-count" data-adv-count="Delivered">-</span></button>
       </div>
 
       <div class="bc-body" id="flatOrdersView">
@@ -430,6 +432,8 @@
               <div class="bc-doc-field"><label>Confirmed Date</label><div class="bc-doc-value" id="ocConfirmedAt"></div></div>
               <div class="bc-doc-field"><label>Created By</label><div class="bc-doc-value" id="ocCreatedBy"></div></div>
               <div class="bc-doc-field"><label>Last Updated</label><div class="bc-doc-value" id="ocLastUpdated"></div></div>
+              <div class="bc-doc-field"><label>Delivered By</label><div class="bc-doc-value" id="ocDeliveredBy"></div></div>
+              <div class="bc-doc-field"><label>Delivered Date</label><div class="bc-doc-value" id="ocDeliveredAt"></div></div>
             </div>
           </div>
         </details>
@@ -627,6 +631,8 @@
               <div class="bc-doc-field"><label>Needs</label><div class="bc-doc-value" id="acNeeds"></div></div>
               <div class="bc-doc-field"><label>Ready to Ship</label><div class="bc-doc-value" id="acToShip"></div></div>
               <div class="bc-doc-field"><label>Shipped</label><div class="bc-doc-value" id="acShipped"></div></div>
+              <div class="bc-doc-field"><label>Delivered By</label><div class="bc-doc-value" id="acDeliveredBy"></div></div>
+              <div class="bc-doc-field"><label>Delivered Date</label><div class="bc-doc-value" id="acDeliveredAt"></div></div>
             </div>
             <div>
               <div class="bc-doc-field"><label>Tank Maker</label><div class="bc-doc-value" id="acTankMaker"></div></div>
@@ -1075,7 +1081,7 @@
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
   <script src="js/proofPhoto.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=confdate1"></script>
+  <script src="js/onlineOrders.js?v=delivered3"></script>
   <script src="js/onlineNewOrders.js?v=1"></script>
   <script src="js/pwa.js"></script>
 </body>

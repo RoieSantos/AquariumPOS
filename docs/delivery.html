@@ -263,6 +263,31 @@
     </div>
   </div>
 
+  <!-- Mark Done: camera photo -> watermark + AI caption -> Facebook post (js/delivery.js markStopDone) -->
+  <input type="file" id="markDonePhotoInput" accept="image/*" capture="environment" class="hidden" />
+  <div id="markDoneTipModal" class="modal-backdrop hidden">
+    <div class="modal-panel driver-detail-panel" style="text-align:center;">
+      <div style="font-size:40px;">&#128248;</div>
+      <h2 style="margin:6px 0;">Grab a better image</h2>
+      <p style="margin:0 0 14px;">This will automatically post to our Facebook Page. Take a clear, bright photo of the finished setup - no customer faces or house numbers.</p>
+      <button class="btn btn-success" id="markDoneOpenCameraBtn" type="button" style="width:100%; padding:14px; font-size:16px;">Open Camera</button>
+      <button class="btn btn-secondary" id="markDoneTipCancelBtn" type="button" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>
+  </div>
+  <div id="markDoneModal" class="modal-backdrop hidden">
+    <div class="modal-panel driver-detail-panel">
+      <h2 style="margin:0 0 10px;">Mark Done</h2>
+      <img id="markDonePreview" alt="Delivery photo" style="width:100%; height:auto; border-radius:8px; display:block;" />
+      <p id="markDoneStatus" style="margin:10px 0 4px; font-weight:600;"></p>
+      <p id="markDoneCaption" class="muted" style="white-space:pre-wrap; font-size:13px; margin:0;"></p>
+      <p id="markDoneError" class="error-text hidden"></p>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-primary hidden" id="markDoneRetryBtn" type="button" style="flex:1;">Try Again</button>
+        <button class="btn btn-secondary" id="markDoneCloseBtn" type="button" style="flex:1;">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
@@ -270,7 +295,9 @@
   <script src="js/nav.js?v=qpdel1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/delivery.js?v=advdeliv4"></script>
+  <script src="js/facebookPostSettings.js?v=fbpost1"></script>
+  <script src="js/facebookPostShared.js?v=qp1"></script>
+  <script src="js/delivery.js?v=aosearch2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

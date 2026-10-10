@@ -36,9 +36,14 @@ function assignOrderKey(o) {
   return `${o.source || 'online'}:${o.order_id}`;
 }
 
-// Same "ADV-" prefix the stops list / receipt use for an advance stop's order_id.
+// Same "ADV-" prefix the stops list / receipt use for an advance stop's order_id. An online order
+// placed through the order wizard also shows its "AO-" request number, since that's what staff
+// search by (supabase_delivery_assign_automated_order_search.sql). A confirmed bot/GMA order's
+// order_id already IS "AO-00039", and so is a draft's (source 'automated') - no suffix for those.
 function assignOrderLabel(o) {
-  return o.source === 'advance' ? `ADV-${o.order_id}` : (o.order_id || '');
+  if (o.source === 'advance') return `ADV-${o.order_id}`;
+  const id = o.order_id || '';
+  return o.automated_order_no && o.automated_order_no !== id ? `${id} · ${o.automated_order_no}` : id;
 }
 
 function isPlaceholderAddress(address) {
@@ -470,12 +475,139 @@ async function renderDriverRouteView(dateKey) {
           ${s.route_name ? `<div class="driver-stop-route muted">&#128666; Route: ${s.route_name}</div>` : ''}
           ${s.notes ? `<div class="driver-stop-notes muted">&#128221; Note: ${s.notes}</div>` : ''}
           ${s.note_print ? `<div class="driver-stop-notes muted">&#128204; Delivery Note: ${s.note_print}</div>` : ''}
+          <div class="driver-stop-done" data-done-for="${s.stop_id}" style="margin-top:10px;">
+            <button type="button" class="btn btn-success driver-mark-done-btn" data-done-stop-id="${s.stop_id}" style="width:100%;">&#9989; Mark Done</button>
+          </div>
         </div>
       `;
     }).join('');
+    loadStopCompletions(stops.map((s) => s.stop_id));
   }
 
   await renderDayMap(stops, dateKey, 'driverRouteMap');
+}
+
+// --- Mark Done -------------------------------------------------------------------------------
+// Per "show a button mark Done ... it will ask for a picture then after taken picture it will
+// proceed on posting": camera photo -> watermark (AI Bot Setup > Facebook Posts defaults) ->
+// "Delivery Done / Setup Done" AI caption -> posted to the GMA Facebook Page straight away, via
+// facebook-page-post (shared helpers in js/facebookPostShared.js). The function records the stop
+// in DeliveryStopCompletions once Facebook accepts the post (supabase_delivery_stop_done_post.sql),
+// so the card then shows "Done" instead of the button, and sets the online order to the portal-only
+// "Delivered" status (not sent to Pancake). No customer details are sent to the AI.
+let markDoneStopId = null;
+let markDonePhotoBase64 = null;
+let fbPostReady = null; // { settings } once the watermark settings + logo have loaded
+
+function ensureFbPostReady() {
+  if (!fbPostReady) {
+    fbPostReady = Promise.all([loadFacebookPostSettings(), loadCompanyLogo()]).then(([settings]) => ({ settings }));
+  }
+  return fbPostReady;
+}
+
+async function loadStopCompletions(stopIds) {
+  if (!stopIds.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_list_delivery_stop_completions', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_stop_ids: stopIds
+  });
+  // Before supabase_delivery_stop_done_post.sql is run the RPC doesn't exist - keep the buttons.
+  if (error) return;
+  (data || []).forEach(showStopDone);
+}
+
+function showStopDone(row) {
+  const el = document.querySelector(`.driver-stop-done[data-done-for="${row.stop_id}"]`);
+  if (!el) return;
+  const when = row.done_at_utc ? new Date(row.done_at_utc).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  el.innerHTML = `<span class="badge badge-success">&#9989; Done</span> <span class="muted" style="font-size:12px;">${escapeHtmlText(row.done_by || '')}${when ? ` &middot; ${when}` : ''}</span>`
+    + (row.facebook_post_url ? ` &middot; <a href="${escapeHtmlText(row.facebook_post_url)}" target="_blank" rel="noopener" style="font-size:12px;">View post</a>` : '');
+}
+
+function escapeHtmlText(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function setMarkDoneState({ status, caption, error, canRetry }) {
+  document.getElementById('markDoneStatus').textContent = status || '';
+  if (caption !== undefined) document.getElementById('markDoneCaption').textContent = caption;
+  const errorEl = document.getElementById('markDoneError');
+  errorEl.textContent = error || '';
+  errorEl.classList.toggle('hidden', !error);
+  document.getElementById('markDoneRetryBtn').classList.toggle('hidden', !canRetry);
+}
+
+async function onMarkDonePhoto(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file || !markDoneStopId) return;
+
+  document.getElementById('markDoneModal').classList.remove('hidden');
+  setMarkDoneState({ status: 'Preparing photo...', caption: '' });
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const { settings } = await ensureFbPostReady();
+    const sourceImg = await loadImage(objectUrl, false);
+    const dataUrl = renderWatermarkedPhoto(sourceImg, watermarkOptionsFromSettings(settings));
+    markDonePhotoBase64 = dataUrl.split(',')[1];
+    document.getElementById('markDonePreview').src = dataUrl;
+  } catch (err) {
+    setMarkDoneState({ error: err.message || 'Could not read the photo.' });
+    return;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  await postStopDone();
+}
+
+async function postStopDone() {
+  const stopId = markDoneStopId;
+  try {
+    setMarkDoneState({ status: '✍️ Writing caption...', caption: '' });
+    const { caption } = await callFacebookPostFunction(currentSession, markDonePhotoBase64, { action: 'caption', context: 'delivery_done' });
+
+    setMarkDoneState({ status: '📤 Posting to Facebook...', caption });
+    const result = await callFacebookPostFunction(currentSession, markDonePhotoBase64, { action: 'post', caption, stop_id: stopId });
+
+    setMarkDoneState({
+      status: '✅ Done! Posted to the GMA Facebook Page.',
+      error: result.stop_done_error ? `Posted, but the stop could not be marked done: ${result.stop_done_error}` : ''
+    });
+    if (!result.stop_done_error) {
+      showStopDone({ stop_id: stopId, done_by: currentSession.displayName || currentSession.username, done_at_utc: new Date().toISOString(), facebook_post_url: result.post_url });
+    }
+  } catch (err) {
+    setMarkDoneState({ status: 'Not posted yet.', error: err.message, canRetry: true });
+  }
+}
+
+function wireMarkDone() {
+  document.getElementById('driverStopCards').addEventListener('click', (e) => {
+    const btn = e.target.closest('.driver-mark-done-btn');
+    if (!btn) return;
+    markDoneStopId = btn.dataset.doneStopId;
+    // Start loading settings/logo while the driver reads the tip and takes the photo.
+    ensureFbPostReady();
+    // Per "while taking picture show a note" - a web page can't draw over the phone's own camera
+    // screen, so the note shows right before it opens; Open Camera is the tap that opens it.
+    document.getElementById('markDoneTipModal').classList.remove('hidden');
+  });
+  document.getElementById('markDoneOpenCameraBtn').addEventListener('click', () => {
+    document.getElementById('markDoneTipModal').classList.add('hidden');
+    document.getElementById('markDonePhotoInput').click();
+  });
+  document.getElementById('markDoneTipCancelBtn').addEventListener('click', () => {
+    document.getElementById('markDoneTipModal').classList.add('hidden');
+    markDoneStopId = null;
+  });
+  document.getElementById('markDonePhotoInput').addEventListener('change', onMarkDonePhoto);
+  document.getElementById('markDoneRetryBtn').addEventListener('click', postStopDone);
+  document.getElementById('markDoneCloseBtn').addEventListener('click', () => {
+    document.getElementById('markDoneModal').classList.add('hidden');
+  });
 }
 
 async function changeDriverDay(deltaDays) {
@@ -550,8 +682,9 @@ async function openDriverOrderDetail(stopId) {
   document.getElementById('driverOrderDetailTitle').textContent = `Order ${header.order_id || ''}`;
 
   const attachmentsByLineId = {};
-  // Attachments only exist for online orders - an advance stop's "ADV-" id would never match.
-  if (header.order_id && header.source !== 'advance') {
+  // Attachments only exist for online orders - an advance stop's "ADV-" id (or a not-yet-synced
+  // "AO-" one) would never match.
+  if (header.order_id && header.source !== 'advance' && header.source !== 'automated') {
     const { data: attachmentRows } = await supabaseClient.rpc('admin_list_online_order_line_attachments', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -1415,7 +1548,7 @@ function renderAssignOrdersTable(orders) {
       <td>${o.customer_name || ''}</td>
       <td>${o.status || ''}</td>
       <td>${isPlaceholderAddress(o.shipping_address) ? '<span class="muted">No address</span>' : o.shipping_address}</td>
-      <td>${o.source === 'advance' ? 'Advance' : (o.is_walk_in || isWalkInPlaceholderOrder(o) ? 'Walk-in' : 'Online')}</td>
+      <td>${o.source === 'advance' ? 'Advance' : o.source === 'automated' ? 'Order Form' : (o.is_walk_in || isWalkInPlaceholderOrder(o) ? 'Walk-in' : 'Online')}</td>
     </tr>
   `).join('');
 
@@ -1921,6 +2054,7 @@ function wireToolbarAndModal() {
     document.getElementById('driverRouteView').classList.remove('hidden');
     document.getElementById('calendarView').classList.add('hidden');
     wireDriverRouteNav();
+    wireMarkDone();
     await Promise.all([loadMonthStops(currentYear, currentMonth), loadMonthDateVendors(currentYear, currentMonth)]);
     await renderDriverRouteView(toDateKey(today));
 

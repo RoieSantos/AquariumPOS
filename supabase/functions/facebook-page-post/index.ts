@@ -69,11 +69,15 @@ Reply with the caption text only - no preamble, no quotes, no options.`;
 // staff photograph freshly built tanks, store staff photograph what's on display at their branch,
 // delivery staff photograph orders going out - each reads best framed that way.
 // `openings`, when set, is enforced after generation - the caption must start with one of them.
-function posterAngle(staff: Record<string, unknown> | null): { label: string; instruction: string; openings?: string[] } {
+type PostAngle = { label: string; instruction: string; openings?: string[] };
+
+const DELIVERY_ANGLE: PostAngle = { label: 'Delivery', openings: ['Delivery Done! ✅', 'Setup Done! ✅'], instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. Never give customer names or exact addresses - a city/area is fine only if it is in the staff notes. Mention that we deliver and set up.' };
+
+// `context: 'delivery_done'` (Mark Done on a delivery stop, delivery.html) always uses the
+// Delivery angle, whoever is logged in.
+function posterAngle(staff: Record<string, unknown> | null, context: string): PostAngle {
   const roles = (staff?.StaffRoles as string[] | null) ?? [];
-  if (staff?.DeliveryTeam) {
-    return { label: 'Delivery', openings: ['Delivery Done! ✅', 'Setup Done! ✅'], instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. Never give customer names or exact addresses - a city/area is fine only if it is in the staff notes. Mention that we deliver and set up.' };
-  }
+  if (context === 'delivery_done' || staff?.DeliveryTeam) return DELIVERY_ANGLE;
   if (roles.includes('Dispatcher')) {
     return { label: 'Dispatch', instruction: 'Taken by our dispatcher as an order is sent out: frame it as an order on its way / ready for delivery. Do NOT mention any customer, name, address, city or destination - only the item. Mention that we deliver.' };
   }
@@ -148,7 +152,7 @@ Deno.serve(async (req) => {
     const { data: branch } = branchName
       ? await supabase.from('Warehouses').select('"Name", "Address", "ContactNo"').eq('Name', branchName).maybeSingle()
       : { data: null };
-    const angle = posterAngle(staff);
+    const angle = posterAngle(staff, String(body.context ?? ''));
     const businessFacts = [
       ['Business name', company?.CompanyName],
       ['Address', company?.Address],
@@ -259,12 +263,55 @@ Deno.serve(async (req) => {
       if (!res.ok || result.error) {
         return jsonResponse({ error: `Facebook: ${result?.error?.message || `HTTP ${res.status}`}` }, 502);
       }
+      const postUrl = result.post_id ? `https://www.facebook.com/${result.post_id}` : null;
+
+      // Mark Done on a delivery stop (supabase_delivery_stop_done_post.sql): records the stop as
+      // done and sets its online order to the portal-only "Delivered" status (not sent to Pancake).
+      // Only once Facebook accepted the post, so a failed post leaves the button there to retry.
+      // The post itself already went out, so a failure here is reported but not treated as an error.
+      let stopDoneError: string | null = null;
+      const stopId = String(body.stop_id ?? '').trim();
+      if (stopId) {
+        // Keep a copy of the (watermarked) photo in Supabase too - same bucket/path layout as the
+        // Shipped proof photos (<order or advance no>/<timestamp>_<name>), so it shows in the
+        // order's Photos as "Delivered". A failed upload doesn't block marking the stop done.
+        let photoPath: string | null = null;
+        let photoUrl: string | null = null;
+        // select('*'): AutomatedOrderNo (a draft AO stop) only exists once
+        // supabase_delivery_assign_automated_order_search.sql has been run.
+        const { data: stop } = await supabase.from('DeliveryStops').select('*').eq('StopID', stopId).maybeSingle();
+        const refId = (stop?.OrderID ?? stop?.AdvanceTransactionNo ?? stop?.AutomatedOrderNo) as string | undefined;
+        if (refId) {
+          const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 17);
+          const path = `${refId}/${stamp}_delivered.jpg`;
+          const { error: uploadError } = await supabase.storage.from('online-order-status-photos')
+            .upload(path, bytes, { contentType: mediaType, upsert: false });
+          if (uploadError) {
+            console.error(`Delivered photo upload failed for stop ${stopId}: ${uploadError.message}`);
+          } else {
+            photoPath = path;
+            photoUrl = supabase.storage.from('online-order-status-photos').getPublicUrl(path).data.publicUrl;
+          }
+        }
+
+        const { error } = await supabase.rpc('service_mark_delivery_stop_done', {
+          p_stop_id: stopId,
+          p_username: adminUsername,
+          p_post_id: result.post_id ?? result.id ?? null,
+          p_post_url: postUrl,
+          p_photo_storage_path: photoPath,
+          p_photo_url: photoUrl
+        });
+        if (error) stopDoneError = error.message;
+      }
+
       return jsonResponse({
         ok: true,
         scheduled: scheduledAt != null,
         photo_id: result.id ?? null,
         post_id: result.post_id ?? null,
-        post_url: result.post_id ? `https://www.facebook.com/${result.post_id}` : null
+        post_url: postUrl,
+        stop_done_error: stopDoneError
       });
     } catch (err) {
       return jsonResponse({ error: `Could not reach Facebook: ${err instanceof Error ? err.message : String(err)}` }, 502);
