@@ -971,7 +971,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'compute_aquarium_quote',
     description:
-      'Compute a real price quote for a custom aquarium tank. Ask for length/width/height and glass thickness at minimum; ask about a matching stand only if the customer mentions wanting one. This is the store\'s own official pricing formula - the exact same one staff use - so state the result with confidence, not as a rough estimate. Never state a price for a custom tank without calling this tool first.',
+      'Compute a real price quote for a custom aquarium tank. Only for a CUSTOM build - first check the ready-made standard aquariums with list_items_in_category("AQUARIUM") and offer one that fits the requested size (see the STANDARD SIZE FIRST rule); never assume custom just because the customer gave dimensions. Ask for length/width/height and glass thickness at minimum; ask about a matching stand only if the customer mentions wanting one. This is the store\'s own official pricing formula - the exact same one staff use - so state the result with confidence, not as a rough estimate. Never state a price for a custom tank without calling this tool first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1136,7 +1136,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_order',
     description:
-      'Places a REAL order for the customer, right now. Only ever call this after ALL of the following are true: (1) the customer has ALREADY sent proof of a downpayment or full payment (a payment screenshot - check the conversation for a prior message acknowledging one; never on a verbal promise to pay later), (2) you know exactly which items and quantities they want, using ONLY item_code values returned by a prior search_items or list_items_in_category call - never invent, guess, or reuse a code from a different conversation, (3) you have a name for them (offer to use CUSTOMER\'S FACEBOOK NAME if it\'s known - see the system prompt - rather than always asking them to type it), a valid PH mobile number, and their address (never ask "pickup or delivery" - just ask for the address to save; always pass fulfillment_type as Delivery). Ask for whatever is still missing before calling this, do not guess it. See the PLACING ORDERS system prompt rules for whether this is a second/new order for a conversation that already has one. After a successful call, tell the customer their order number (and Online Order ID - see PLACING ORDERS) and that staff will review and confirm it shortly - do NOT invent your own itemized receipt text, the system sends that separately.',
+      'Saves a REAL order for the customer in the store\'s system, right now (staff then review and confirm it - it is not sent to the order system until they do). Only ever call this after ALL of the following are true: (1) the customer has ALREADY sent proof of a downpayment or full payment (a payment screenshot - check the conversation for a prior message acknowledging one; never on a verbal promise to pay later), (2) you know exactly which items and quantities they want, using ONLY item_code values returned by a prior search_items or list_items_in_category call - never invent, guess, or reuse a code from a different conversation, (3) you have a name for them (offer to use CUSTOMER\'S FACEBOOK NAME if it\'s known - see the system prompt - rather than always asking them to type it), a valid PH mobile number, and their address (never ask "pickup or delivery" - just ask for the address to save; always pass fulfillment_type as Delivery). Ask for whatever is still missing before calling this, do not guess it. See the PLACING ORDERS system prompt rules for whether this is a second/new order for a conversation that already has one. After a successful call, follow the PLACING ORDERS receipt rule (order number, recap, receiptUrl, confirmation ask) and say staff will review and confirm it shortly.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1148,15 +1148,15 @@ export const TOOLS: Anthropic.Tool[] = [
         location: { type: 'string', enum: ['Amaya', 'GMA'], description: 'Which branch fulfills this order. Ask if not already clear; if you truly cannot tell, use the DEFAULT BRANCH given in your instructions.' },
         items: {
           type: 'array',
-          description: 'One entry per distinct item. item_code MUST come from a prior search_items or list_items_in_category result in THIS conversation - never invented - EXCEPT for a custom-built aquarium/stand, which has no real catalog price: use the literal item_code "CUSTOM-AQUARIUM" or "CUSTOM-STAND" for that line instead (see those fields\' own descriptions).',
+          description: 'One entry per distinct item. item_code MUST come from a prior search_items or list_items_in_category result in THIS conversation - never invented - EXCEPT for a custom-built aquarium/stand or a custom accessory/sticker, which have no real catalog price: use the literal item_code "CUSTOM-AQUARIUM", "CUSTOM-STAND" or "CUSTOM-STICKER" for that line instead (see those fields\' own descriptions).',
           items: {
             type: 'object',
             properties: {
-              item_code: { type: 'string', description: 'A real catalog code from search_items/list_items_in_category, OR the literal string "CUSTOM-AQUARIUM"/"CUSTOM-STAND" for a custom-built one (never a made-up code).' },
+              item_code: { type: 'string', description: 'A real catalog code from search_items/list_items_in_category, OR the literal string "CUSTOM-AQUARIUM"/"CUSTOM-STAND" for a custom-built one, or "CUSTOM-STICKER" for a custom accessory/sticker/panel quoted with compute_sticker_quote (never a made-up code).' },
               quantity: { type: 'integer' },
-              variant: { type: 'string', description: 'REQUIRED when the product comes in more than one option (e.g. aquariums/sumps: "Black Sealant" or "Clear Sealant"; stands: "Black Paint" or "White Paint") - the option the customer actually chose, or its SKU (e.g. "AQ-024-BlackSealant"). Never leave the chosen color only in notes - this field is what tags the right variant in Pancake. If you don\'t know which option they want, ask before ordering. Ignored for CUSTOM-AQUARIUM/CUSTOM-STAND.' },
-              custom_price: { type: 'number', description: 'REQUIRED when item_code is "CUSTOM-AQUARIUM" or "CUSTOM-STAND", ignored otherwise: the exact total price already confirmed with the customer from an earlier compute_aquarium_quote call in THIS conversation (aquariumDrawingUrl\'s totalPrice, or the stand-only price) - never a number you calculate, estimate, or round yourself.' },
-              notes: { type: 'string', description: 'Optional per-item note. REQUIRED when item_code is "CUSTOM-AQUARIUM" or "CUSTOM-STAND": the full build spec (dimensions, glass thickness, tempered/rimless, sealant color, stand tubular size/layers) exactly as confirmed with the customer - this is what tells staff/the workshop what to actually build, since the product tag alone doesn\'t carry it.' }
+              variant: { type: 'string', description: 'REQUIRED when the product comes in more than one option (e.g. aquariums/sumps: "Black Sealant" or "Clear Sealant"; stands: "Black Paint" or "White Paint") - the option the customer actually chose, or its SKU (e.g. "AQ-024-BlackSealant"). Never leave the chosen color only in notes - this field is what tags the right variant in Pancake. If you don\'t know which option they want, ask before ordering. Ignored for CUSTOM-AQUARIUM/CUSTOM-STAND/CUSTOM-STICKER.' },
+              custom_price: { type: 'number', description: 'REQUIRED when item_code is "CUSTOM-AQUARIUM", "CUSTOM-STAND" or "CUSTOM-STICKER", ignored otherwise: the exact price PER PIECE already confirmed with the customer in THIS conversation - for CUSTOM-AQUARIUM/CUSTOM-STAND the compute_aquarium_quote total (aquariumDrawingUrl\'s totalPrice, or the stand-only price), for CUSTOM-STICKER the compute_sticker_quote totalPrice for one piece (put the number of pieces in quantity). Never a number you calculate, estimate, or round yourself.' },
+              notes: { type: 'string', description: 'Optional per-item note. REQUIRED when item_code is "CUSTOM-AQUARIUM", "CUSTOM-STAND" or "CUSTOM-STICKER": the full spec exactly as confirmed with the customer - for a tank/stand: dimensions, glass thickness, tempered/rimless, sealant color, stand tubular size/layers; for a sticker: type (e.g. Plain Sticker, Tiles Sticker, Acrylic, Glass), length x width with unit, thickness if any, tempered/repair if any, and what it is for. This is what tells staff/the workshop what to actually make, since the product tag alone doesn\'t carry it.' }
             },
             required: ['item_code', 'quantity']
           }
@@ -1260,7 +1260,8 @@ export function buildSystemPrompt(
     '- What categories/kinds of products the store carries (use list_categories).',
     '- Store hours, delivery policy, payment methods, and pickup locations (see STORE INFO below).',
     '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Printed/Assigned/To Ship/Shipped/Cancelled - "Assigned" means our production team has been assigned and is now building/preparing it), and which branch/warehouse it was ordered from. If the Online Order result has a non-empty production array, also tell them how the build is going PER PART - part "tank" = the aquarium/sump (built by our tank maker), "stand" = the stand/top cover (built by our stand maker), "dispatcher" = order preparation. For each part: done=true -> that part is finished; assigned=true and done=false -> being built now; assigned=false -> queued, waiting to be assigned to a maker. Rows with source "production_order" also have build_status (Open = queued, not yet handed to the makers; Released = being built; Finished = all built) and qty/qty_built (e.g. 1 of 2 built) - use those the same way. Example: "Your tank is already done ✅, the stand is still being built by our stand maker - once both are ready we\'ll move it to shipping/delivery." Never name the staff member - say "our tank maker"/"our stand maker" only (the data has no names anyway). Never promise a finish date (none is stored); if they press for one, offer to have staff confirm (schedule_follow_up or escalate_to_staff). Once the order status is To Ship/Shipped, production is over - just give that status. WALK-IN ORDERS (orderType "Walk-in Order" - bought and paid at the counter of one of our stores, found by the POS receipt number like RS-0000010861): status_label is the in-store build stage, not a shipping status - "To Assign" = received, waiting for our production team to be assigned; "Assigned" = our makers are building it now; "Production Done" = built and ready for pickup at the branch in warehouse_name; "Completed" = already picked up / handed over (also what an ordinary in-store purchase with nothing to build shows - just confirm the purchase and items). Never call a walk-in "Shipped" or talk about shipping/delivery tracking for it. Use the same per-part production rundown as above. If target_ready_date is set, you may share it as our target ready date (e.g. "we\'re aiming to have it ready by Oct 8") - say it\'s a target, not a guarantee; with no target_ready_date, don\'t promise a date. There is no receiptUrl for walk-ins - they already have the printed POS receipt. If the customer says they bought something in store but has no number, ask for the receipt number printed on their receipt. For an Automated Order result, share its Pancake sync status plainly (e.g. still being processed vs. confirmed). There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
-    '- Custom aquarium and/or stand price quotes: if the customer only gives a GALLON size (e.g. "50 gallon", "75g") rather than asking for something custom (specific length/width/height, rimless, tempered, low iron, etc.), FIRST use search_items (try both "<N>g" and "<N> gallon", e.g. search_items("50g")) to check whether a ready-made standard aquarium of that size is already in the catalog - if one is, offer that real product first (its actual name and price, and offer to send a photo) instead of jumping to a custom quote. If they only asked the price, quote it and do NOT mention stock, even when it\'s 0 (see the stock rule above); only give the per-branch stock if they ask about availability. Only fall back to compute_aquarium_quote if no matching standard item exists, the customer explicitly wants custom dimensions/spec, or they say they don\'t want the standard one you offered. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote - also ask if they need any drilled holes (hole_count, flat rate per hole) or internal dividers/partitions (divider_count, priced from the tank\'s own glass rate for a Width x Height panel plus 20%), and include whichever they want. Before calling the tool, restate back what you understood - dimensions, unit, holes/dividers if any, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, holes/divider charges if any, the stand price and its spec (layers/tubular/stainless, plus cabinet/canopy and their prices if included) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
+    '- STANDARD SIZE FIRST - never assume an aquarium is custom. Whenever a customer asks about an aquarium by size - a GALLON size (e.g. "50 gallon", "75g"), length x width x height (e.g. "24x12x12", "2ft tank", "60cm"), or just a rough size ("small tank for a betta", "3 feet") - FIRST call list_items_in_category with category_code "AQUARIUM" and compare against the ready-made standard aquariums: each one\'s size is in its name/description (e.g. "STANDARD-5G (16x8x10in, 3MM GLASS)"). Convert units before comparing (1 ft = 12 in, 1 in = 2.54 cm). A standard tank FITS when its gallons match, or its length/width/height are each the same or within about 1 inch of what they asked. If one fits, offer that real product first (its actual name, size and price, and offer to send a photo), and say a custom tank in their exact size is also possible if they prefer - do NOT jump to compute_aquarium_quote. If none is an exact fit but one is close, offer the closest one or two too and ask if that works before going custom. Giving dimensions alone does NOT mean they want custom. If they only asked the price, quote it and do NOT mention stock, even when it\'s 0 (see the stock rule above); only give the per-branch stock if they ask about availability.',
+    '- Custom aquarium and/or stand price quotes: only use compute_aquarium_quote when no standard aquarium fits (see STANDARD SIZE FIRST above), the customer turns the standard one down, or they explicitly ask for something only a custom build has - "custom"/"made to order", rimless, tempered, low iron, 10mm/12mm glass, drilled holes, dividers, or a size no standard tank comes close to. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote - also ask if they need any drilled holes (hole_count, flat rate per hole) or internal dividers/partitions (divider_count, priced from the tank\'s own glass rate for a Width x Height panel plus 20%), and include whichever they want. Before calling the tool, restate back what you understood - dimensions, unit, holes/dividers if any, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, holes/divider charges if any, the stand price and its spec (layers/tubular/stainless, plus cabinet/canopy and their prices if included) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
     '- Delivery fees: first find out whether the customer wants the store\'s OWN TRUCK to deliver, or wants to arrange their own Lalamove courier - if it\'s not already clear which, ask. For the store\'s own truck: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. This is the store\'s own official distance-based formula - the same one staff use - so state it with confidence as the actual fee, not as a rough estimate pending staff confirmation. For Lalamove: ask which branch and the full delivery address, work out and tell the customer what size vehicle you recommend booking based on what they\'re having delivered (see compute_lalamove_quote\'s own description for how to pick one), then call compute_lalamove_quote with that vehicle type - this is a live quote straight from Lalamove\'s own system, so state the price with full confidence. Lalamove quoting is QUOTE ONLY - it cannot book the ride, so if the customer wants to proceed, tell them staff will arrange the actual Lalamove booking.',
     '- Scheduling a delivery date for an existing Online Order: first ask (if not already clear) whether they want the store\'s OWN TRUCK to deliver it, as opposed to a courier they\'re arranging themselves (e.g. Lalamove) or picking it up - only continue if they say the store\'s own truck. Get their order number, then call get_delivery_scheduling_options. If it comes back not eligible, explain the reason in plain words (e.g. already scheduled, order not ready yet). If eligible, tell the customer the deliveryFee it returned with confidence as the actual fee (whether deliveryFeeIsEstimate is true - the same official formula as compute_delivery_quote - or false - the order\'s already-recorded fee, makes no difference to how confidently you state it) AND the candidateDates, and get them to explicitly confirm both the fee and one specific date before calling schedule_delivery_date. Never book a date they haven\'t confirmed, and never invent a date that wasn\'t in candidateDates. Once booked, let them know it\'s confirmed and staff will also see it on the schedule.',
     '- Delivery whereabouts ("where is my delivery", "where is my order", "where is the driver with my stuff"): ALWAYS confirm first (if not already clear from the conversation) whether this is the STORE\'S OWN TRUCK delivering it, or a courier the customer arranged themselves (e.g. Lalamove) - never assume either way. If it\'s a Lalamove courier: explain plainly that the store can\'t track a Lalamove rider from here, and the customer needs to coordinate directly with their rider (through the Lalamove app, or whatever contact info Lalamove gave them). If it\'s the store\'s own truck: get their order number and call get_delivery_schedule_status. If it comes back scheduled for TODAY (is_today), tell them it\'s out for delivery today (mention the route_name if given), THEN call get_driver_location (TEST feature) and share its liveTrackingUrl (mention the page updates live as the driver moves) plus minutesSinceUpdate - if no driver is currently tracking, just tell the customer the truck is scheduled for today and a team member can give a more specific update. If scheduled_date is a different day, tell them that date instead. If for_delivery is false (not scheduled at all yet), let them know it hasn\'t been scheduled yet and offer to help schedule a date (see the delivery-scheduling item above) or that staff can confirm.',
@@ -1310,7 +1311,8 @@ export function buildSystemPrompt(
     '- Never call create_order on a verbal promise to pay "later" or "after" - only once payment proof has actually been sent and acknowledged earlier in this same conversation.',
     '- If the conversation already shows an existing order, don\'t assume a new payment or a new item discussion belongs to that same order OR is automatically a new one - ASK the customer which it is (e.g. "Is this for your existing order, or a new one?") and only call create_order for a second order after they clearly say it\'s a new/separate purchase. If they mean the existing order, don\'t call create_order at all - just let them know staff will apply it/follow up.',
     '- A custom-built aquarium/stand (see the custom quote rules above) CAN go through create_order too, not just staff manual processing - it is NOT a reason to fall back to sharing payment details for manual handling. For that line, set item_code to the literal "CUSTOM-AQUARIUM" or "CUSTOM-STAND", custom_price to the EXACT total the customer already confirmed from your earlier compute_aquarium_quote call (never a number you calculate or round yourself), and notes to the full confirmed build spec (dimensions, unit, glass thickness, tempered/rimless, sealant color, and stand tubular size/layers if a stand is included) - that note is what tells staff/the workshop what to actually build, so never leave it vague or blank.',
-    '- After a successful create_order call, your reply IS the customer\'s receipt - there is no separate automatic message for this path, so compose all of the following yourself: (1) their order number AND, if the result\'s onlineOrderId is not null, their Online Order ID too (e.g. "Order No: AO-00008, Online Order ID: #91364") - if onlineOrderId is null, just share the order number, (2) a quick recap of what was ordered (items/qty) and the total, (3) the result\'s receiptUrl, introduced as their order receipt (e.g. "Here\'s your receipt: {receiptUrl}") - NEVER share a Pancake order_link, only this receiptUrl, (4) explicitly ask them to confirm everything above is correct, e.g. "Is everything correct? Reply YES to confirm." Do not skip the confirmation ask - staff treat that reply as the customer confirming the order.',
+    '- A custom accessory/sticker/panel quoted with compute_sticker_quote (a loose sticker, a background add-on for a ready-made set, an acrylic sump cover, glass, plywood, rubber matting, etc.) CAN go through create_order too. For that line, set item_code to the literal "CUSTOM-STICKER", quantity to the number of pieces, custom_price to the EXACT compute_sticker_quote totalPrice for ONE piece (never a number you calculate or round yourself), and notes to the full confirmed spec (type, length x width with unit, thickness if any, tempered/repair if any, what it is for). A sticker ON a custom tank (sticker_background/sticker_bottom in compute_aquarium_quote) is already inside the CUSTOM-AQUARIUM total - do not add a separate CUSTOM-STICKER line for it.',
+    '- After a successful create_order call, your reply IS the customer\'s receipt - there is no separate automatic message for this path, so compose all of the following yourself: (1) their order number (e.g. "Order No: AO-00008"), (2) a quick recap of what was ordered (items/qty) and the total, (3) the result\'s receiptUrl, introduced as their order receipt (e.g. "Here\'s your receipt: {receiptUrl}") - NEVER share a Pancake order_link, only this receiptUrl, (4) explicitly ask them to confirm everything above is correct, e.g. "Is everything correct? Reply YES to confirm." Do not skip the confirmation ask - staff treat that reply as the customer confirming the order. Also say our team will review and confirm the order shortly - never say it is already confirmed/processed on our side.',
     '',
     'DISCOUNTS / PRICE CHANGES:',
     '- If a customer asks for a discount, a lower price, price matching, or otherwise tries to negotiate a price, politely decline yourself - do not escalate to staff for this alone. Explain, in your own friendly words, that all prices are system-generated and you don\'t have permission to apply a discount or change a price. Stay warm and helpful about everything else in the conversation - this is just a firm, final no on the price itself.',
@@ -2453,7 +2455,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       if (items.length === 0) return 'Cannot place the order - at least one item is required.';
 
       if (simulate) {
-        return `SANDBOX MODE - no real order was created. If this were live, an order for ${customerName} with ${items.length} item(s) would be placed and pushed to Pancake.`;
+        return `SANDBOX MODE - no real order was created. If this were live, an order for ${customerName} with ${items.length} item(s) would be saved for staff to review and confirm.`;
       }
       if (!pageId) return 'Cannot place the order right now - missing conversation context. Let the customer know staff will place it manually.';
 
@@ -2478,18 +2480,24 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       // Items row (matching docs/js/orderNow.js's own customer-facing wizard convention - see
       // ItemCode: null / CategoryCode: 'CUSTOM-AQUARIUM' there and _push_automated_order_to_pancake's
       // Name-based fallback match), just with its price/spec supplied here instead of read from
-      // that row's own (placeholder) RetailPrice/Price.
-      const CUSTOM_ITEM_CODES = new Set(['CUSTOM-AQUARIUM', 'CUSTOM-STAND']);
+      // that row's own (placeholder) RetailPrice/Price. CUSTOM-STICKER is the same idea for a
+      // compute_sticker_quote line (orderNow.js's 'Custom Accessory/Sticker' convention).
+      const CUSTOM_ITEM_CODES = new Set(['CUSTOM-AQUARIUM', 'CUSTOM-STAND', 'CUSTOM-STICKER']);
+      const CUSTOM_ITEM_NAMES: Record<string, string> = {
+        'CUSTOM-AQUARIUM': 'Custom Aquarium',
+        'CUSTOM-STAND': 'Custom Stand',
+        'CUSTOM-STICKER': 'Custom Accessory/Sticker'
+      };
       const customItems = items.filter((it) => CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
       const catalogCodedItems = items.filter((it) => !CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
 
       for (const it of customItems) {
         const tag = String(it.item_code ?? '').trim().toUpperCase();
         if (!(Number(it.custom_price) > 0)) {
-          return `Cannot place the order - ${tag} needs a custom_price greater than 0 (the total already confirmed via compute_aquarium_quote).`;
+          return `Cannot place the order - ${tag} needs a custom_price greater than 0 (the price already confirmed via ${tag === 'CUSTOM-STICKER' ? 'compute_sticker_quote' : 'compute_aquarium_quote'}).`;
         }
         if (!String(it.notes ?? '').trim()) {
-          return `Cannot place the order - ${tag} needs a notes value with the full confirmed build spec (dimensions, glass thickness, etc.).`;
+          return `Cannot place the order - ${tag} needs a notes value with the full confirmed spec (${tag === 'CUSTOM-STICKER' ? 'type, size, thickness, etc.' : 'dimensions, glass thickness, etc.'}).`;
         }
       }
 
@@ -2562,23 +2570,9 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         }
       }
 
-      // Sanity-check the two custom placeholder rows actually exist in the catalog (they back
-      // Items."Name" - see the block comment above) - a missing/renamed row should fail loudly
-      // here rather than silently producing an unmatched Pancake push later.
-      const customTagsNeeded = [...new Set(customItems.map((it) => String(it.item_code ?? '').trim().toUpperCase()))];
-      if (customTagsNeeded.length > 0) {
-        const { data: customCatalogRows, error: customItemsError } = await supabase
-          .from('Items')
-          .select('Name')
-          .in('Name', customTagsNeeded)
-          .eq('IsActive', true);
-        if (customItemsError) return `Could not validate items: ${customItemsError.message}`;
-        const foundNames = new Set((customCatalogRows ?? []).map((r: { Name: string }) => r.Name));
-        const missingTags = customTagsNeeded.filter((t) => !foundNames.has(t));
-        if (missingTags.length > 0) {
-          return `Cannot place the order - the catalog has no active "${missingTags.join('", "')}" product to tag a custom line to. Tell the customer staff will process this manually.`;
-        }
-      }
+      // No check here that the CUSTOM-* placeholder Items rows exist: the bot no longer pushes to
+      // Pancake (see the insert below), so a missing row only matters when staff push the order -
+      // and the push already refuses and shows the error then (PancakeSyncStatus 'Failed').
 
       let estimatedTotal = 0;
       const orderLines = items.map((it) => {
@@ -2591,7 +2585,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
           return {
             CategoryCode: tag,
             ItemCode: null,
-            ItemName: tag === 'CUSTOM-STAND' ? 'Custom Stand' : 'Custom Aquarium',
+            ItemName: CUSTOM_ITEM_NAMES[tag],
             Quantity: quantity,
             Price: price,
             Notes: String(it.notes ?? '').trim() || null
@@ -2632,7 +2626,11 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         Location: location,
         GmaPsid: psid,
         GmaPageId: pageId,
-        UpdatedBy: 'AI Bot'
+        UpdatedBy: 'AI Bot',
+        // Bot orders never go to Pancake - staff review it and click "Confirm Order", which creates
+        // the Online Orders entry directly (admin_confirm_bot_order, sql/supabase_bot_orders_portal_confirm.sql).
+        // Not 'Pending': cron_process_pending_automated_orders pushes every Pending row to Pancake.
+        PancakeSyncStatus: 'Not Pushed'
       });
       if (insertOrderError) return `Could not place the order: ${insertOrderError.message}`;
 
@@ -2650,17 +2648,6 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         .insert(orderLines.map((l) => ({ ...l, OrderNo: orderNo })));
       if (insertLinesError) return `Order ${orderNo} was created but its items could not be saved (${insertLinesError.message}) - tell the customer staff will fix this manually.`;
 
-      // Same push helper every other order-creation path uses - never raises (retries internally,
-      // writes PancakeSyncStatus/PancakeSyncError onto the row on failure), so re-select the row
-      // afterward to report the real outcome rather than trusting this call's own (always-empty)
-      // error.
-      await supabase.rpc('_push_automated_order_to_pancake', { p_order_no: orderNo });
-      const { data: pushedOrder } = await supabase
-        .from('AutomatedOrders')
-        .select('PancakeSyncStatus, PancakeSyncError, PancakeOrderId')
-        .eq('OrderNo', orderNo)
-        .maybeSingle();
-
       // Marks this order as awaiting the customer's confirmation reply to the message you're about
       // to send (see the PLACING ORDERS rule for what that message must contain) - the webhook's
       // reply-interception logic (facebook-messenger-webhook/index.ts) picks up a later "yes" reply
@@ -2674,11 +2661,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         ok: true,
         orderNo,
         estimatedTotal,
-        pancakeSyncStatus: pushedOrder?.PancakeSyncStatus ?? null,
-        pancakeSyncError: pushedOrder?.PancakeSyncError ?? null,
-        // The customer-facing "Online Order ID" (e.g. "91364") - share THIS alongside orderNo, not
-        // orderNo alone, per direct instruction. Null if the push above failed/hasn't resolved yet.
-        onlineOrderId: pushedOrder?.PancakeOrderId ?? null,
+        status: 'Saved - waiting for staff to review and confirm',
         // Portal-rendered receipt (docs/online-order-receipt.html), NOT Pancake's own order_link -
         // per direct decision, never share that. See the PLACING ORDERS rule - share this AND ask
         // for confirmation in your reply, don't just mention the order number.

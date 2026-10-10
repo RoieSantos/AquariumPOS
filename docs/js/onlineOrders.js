@@ -265,9 +265,13 @@ function customBadgeHtml(order) {
 // Flags an order that was created from a GMA conversation (docs/gma-conversations.html's "+ New
 // Order", see admin_list_online_orders' is_gma_order comment in supabase_orders_sync_tables.sql) -
 // links back to the originating Automated Order request for the full conversation/line detail.
+// Plus an "AI Bot" tag when Vic / website Alice placed it (OnlineOrders.CreatedBy = 'AI Bot', set by
+// admin_confirm_bot_order). No link - the old Automated Orders page it pointed to was removed.
 function gmaBadgeHtml(order) {
   if (!order.is_gma_order) return '';
-  return `<a class="badge badge-purple" href="automated-orders.html?order=${encodeURIComponent(order.gma_order_no || '')}" title="Created from a GMA conversation - click to see the originating request.">GMA Page</a>`;
+  const fromBot = order.created_by === 'AI Bot';
+  return `<span class="badge badge-purple" title="Created from a GMA page conversation (${escapeHtml(order.gma_order_no || '')})">GMA Page</span>`
+    + (fromBot ? ' <span class="badge badge-neutral" title="Placed by the AI bot">AI Bot</span>' : '');
 }
 
 // Production Order(s) built for this order (ProductionOrders.SourceOnlineOrderId - attachProductionOrders,
@@ -849,6 +853,14 @@ function canMarkShipped(o) {
 const stockStatusCache = new Map(); // order_id -> row of staff_get_online_order_stock_status, or 'loading'
 const shipFromStockOrderIds = new Set();
 const storeManagerShipOrderIds = new Set(); // To Ship by a Store Manager - see handleToShipClick
+const portalShipOrderIds = new Set(); // To Ship of a portal-only order - see handleToShipClick
+
+// Portal-only order: an AI bot order confirmed straight into Online Orders, with no Pancake order and
+// no POS (sql/supabase_bot_orders_portal_confirm.sql). Their Order ID is the AO number; Pancake IDs are
+// numeric. They never get a POS "Print", so To Ship is allowed from Confirmed (admin_portal_order_to_ship).
+function isPortalOnlyOrder(o) {
+  return /^AO-/i.test(String(o?.order_id || ''));
+}
 let shipSerialWarehouse = null; // order's branch while picking serials for a ship-from-stock order
 
 function stockStatusFor(o) {
@@ -1870,6 +1882,7 @@ function orderRowsHtml(orders) {
         <td>${escapeHtml(o.warehouse_name || o.location_id)}</td>
         <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}</td>
         <td>${escapeHtml(o.confirmed_by)}</td>
+        <td>${dispatchDateHtml(o.confirmed_at_utc)}</td>
         <td>${escapeHtml(o.created_by)}</td>
         <td>${makerCellHtml(o, 'tank', o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}</td>
         <td>${makerCellHtml(o, 'stand', o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}</td>
@@ -1897,7 +1910,7 @@ function orderCardHtml(o) {
   const status = o.status || '';
   // Mirrors the desktop app's IsPrintedStatusForRow gate on MarkRowAsToShipAsync (OnlineOrdersForm.cs)
   // and admin_update_online_order_status' matching server-side check.
-  const showToShipBtn = isPrintedOrder(o);
+  const showToShipBtn = isPrintedOrder(o) || (isPortalOnlyOrder(o) && canToShipOrder(o));
 
   return `
     <div class="order-card" data-order-id="${o.order_id}">
@@ -1911,6 +1924,7 @@ function orderCardHtml(o) {
         <span class="order-card-label">Warehouse</span><span>${o.warehouse_name || o.location_id || ''}</span>
         <span class="order-card-label">Delivery</span><span><span class="badge ${o.for_delivery ? 'badge-success' : 'badge-neutral'}">${o.for_delivery ? 'Yes' : 'No'}</span> ${o.estimated_delivery_date ? '&middot; ' + o.estimated_delivery_date : ''}</span>
         <span class="order-card-label">Confirmed By</span><span>${o.confirmed_by || '-'}</span>
+        ${o.confirmed_at_utc ? `<span class="order-card-label">Confirmed Date</span><span>${escapeHtml(new Date(o.confirmed_at_utc).toLocaleString())}</span>` : ''}
         ${o.note_print ? `<span class="order-card-label">Print Note</span><span>${o.note_print}</span>` : ''}
         <span class="order-card-label">Assigned To</span><span>${assignSelectHtml(o)}</span>
       </div>
@@ -2014,7 +2028,8 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
     // Store Manager To Ship (may still be Confirmed; own branch, no new serials off-production -
     // supabase_online_order_store_manager_to_ship.sql).
     const rpcName = storeManagerShipOrderIds.has(String(orderId)) ? 'admin_store_manager_to_ship_online_order'
-      : shipFromStockOrderIds.has(String(orderId)) ? 'admin_ship_online_order_from_stock' : 'admin_update_online_order_status';
+      : shipFromStockOrderIds.has(String(orderId)) ? 'admin_ship_online_order_from_stock'
+      : portalShipOrderIds.has(String(orderId)) ? 'admin_portal_order_to_ship' : 'admin_update_online_order_status';
     const { data, error } = await supabaseClient.rpc(rpcName, {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -2215,6 +2230,140 @@ async function printOrderSerialLabels(orderId, btn) {
     return;
   }
   printSerialLabels(data.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
+}
+
+// "Show Serials" on the order cards (Online / Walk-in and Advance) - the serials linked to the order,
+// from the same RPCs as Print Serial Labels, in a view-only popup (#linkedSerialsModal) that can also
+// print their labels. load() returns the RPC's { data, error }.
+let linkedSerialsRows = [];
+
+async function showLinkedSerials({ caption, orderLabel, load }, btn) {
+  btn.disabled = true;
+  const { data, error } = await load();
+  btn.disabled = false;
+  if (error) {
+    alert('Could not load this order\'s serials: ' + error.message);
+    return;
+  }
+  linkedSerialsRows = data || [];
+  const count = linkedSerialsRows.length;
+  document.getElementById('linkedSerialsModalCaption').textContent = caption;
+  document.getElementById('linkedSerialsModalTitle').textContent = `Linked Serials · ${orderLabel}`;
+  document.getElementById('linkedSerialsModalNote').textContent = count
+    ? `${count} serial${count === 1 ? '' : 's'} linked to this order.`
+    : 'No serials linked to this order yet - they\'re picked or created at Ready to Ship.';
+  document.getElementById('linkedSerialsModalGrid').classList.toggle('hidden', !count);
+  document.getElementById('linkedSerialsModalPrintBtn').disabled = !count;
+  document.getElementById('linkedSerialsModalBody').innerHTML = linkedSerialsRows
+    .map((s) => `<tr><td><strong>${escapeHtml(s.serial_no || '')}</strong></td><td>${escapeHtml(s.item_code || '')}</td><td>${escapeHtml(s.description || '')}</td></tr>`)
+    .join('');
+  document.getElementById('linkedSerialsModal').classList.remove('hidden');
+}
+
+function showOrderSerials(orderId, btn) {
+  return showLinkedSerials({
+    caption: currentScope === 'walkin' ? 'WALK-IN ORDER' : 'ONLINE ORDER',
+    orderLabel: String(orderId),
+    load: () => supabaseClient.rpc('staff_get_online_order_serial_labels', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: String(orderId)
+    })
+  }, btn);
+}
+
+function showAdvanceSerials(no, btn) {
+  return showLinkedSerials({
+    caption: 'ADVANCE ORDER',
+    orderLabel: String(no),
+    load: () => advanceRpc('staff_get_advance_order_serial_labels', { p_no: no })
+  }, btn);
+}
+
+// Serials FactBox on the right of the Online / Walk-in and Advance order cards - same rows as Show Serials.
+// prefix: 'orderCard' or 'advanceCard' (the #<prefix>SerialsList / Empty / Count elements).
+function renderSerialsFactbox(prefix, rows, errorMessage, emptyText = 'No serials linked yet.') {
+  document.getElementById(`${prefix}SerialsList`).innerHTML = rows
+    .map((s) => `<li><div class="oc-serial-no">${escapeHtml(s.serial_no || '')}</div>
+      <div class="oc-serial-item muted">${escapeHtml(s.item_code || '')}${s.description && s.description !== s.item_code ? ` · ${escapeHtml(s.description)}` : ''}</div></li>`)
+    .join('');
+  const empty = document.getElementById(`${prefix}SerialsEmpty`);
+  empty.textContent = !errorMessage ? emptyText
+    : /schema cache|could not find the function|does not exist/i.test(errorMessage)
+      ? `Serial lookup isn't set up in the database yet - run sql/${prefix.startsWith('advance') ? 'supabase_advance_order_serials.sql' : 'supabase_online_order_serial_labels.sql'}.`
+      : `Could not load serials: ${errorMessage}`;
+  empty.classList.toggle('hidden', rows.length > 0);
+  document.getElementById(`${prefix}SerialsCount`).textContent = rows.length ? `(${rows.length})` : '';
+}
+
+async function loadOrderCardSerials(orderId) {
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_serial_labels', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  if (String(orderId) !== String(openCardOrderId)) return;
+  renderSerialsFactbox('orderCard', error ? [] : data || [], error?.message);
+}
+
+async function loadAdvanceCardSerials(no) {
+  if (!canAssignOrders()) return; // view-only Store Managers: the FactBox is hidden (updateAdvanceCardActions)
+  const { data, error } = await advanceRpc('staff_get_advance_order_serial_labels', { p_no: no });
+  if (openAdvanceNo !== String(no)) return;
+  renderSerialsFactbox('advanceCard', error ? [] : data || [], error?.message);
+}
+
+// Serials FactBox on the lists (#orderListFactbox / #advanceListFactbox) - the selected row's serials.
+// One small call per selection, after it settles for 250ms (arrowing through rows doesn't fire one per
+// row); skipped while the FactBox is hidden (narrow screens). kind: 'online' (Online / Walk-in) or
+// 'advance'. Called on every action-state refresh - only a new selection (or forceReload after a list
+// reload, e.g. serials just tagged at To Ship) fetches.
+let listSerialsKey = null;
+let listSerialsTimer = null;
+
+function showListSerials(kind, id, forceReload = false) {
+  const prefix = kind === 'advance' ? 'advanceList' : 'orderList';
+  const box = document.getElementById(`${prefix}Factbox`);
+  const key = id ? `${kind}:${id}` : null;
+  if (key === listSerialsKey && !forceReload) return;
+  clearTimeout(listSerialsTimer);
+  if (!box.offsetParent) { listSerialsKey = null; return; } // hidden - fetch when it's on screen and a row is picked
+  listSerialsKey = key;
+  document.getElementById(`${prefix}SerialsOrder`).textContent = id ? `${kind === 'advance' ? 'Transaction' : 'Order'} ${id}` : '';
+  if (!id) {
+    renderSerialsFactbox(prefix, [], null, 'Select an order to see its serials.');
+    return;
+  }
+  if (!forceReload) renderSerialsFactbox(prefix, [], null, 'Loading...');
+  listSerialsTimer = setTimeout(async () => {
+    const { data, error } = kind === 'advance'
+      ? await advanceRpc('staff_get_advance_order_serial_labels', { p_no: id })
+      : await supabaseClient.rpc('staff_get_online_order_serial_labels', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_order_id: String(id)
+      });
+    if (listSerialsKey !== key) return; // another row picked meanwhile
+    renderSerialsFactbox(prefix, error ? [] : data || [], error?.message);
+  }, 250);
+}
+
+function closeLinkedSerialsModal() {
+  document.getElementById('linkedSerialsModal').classList.add('hidden');
+}
+
+function wireLinkedSerialsModal() {
+  document.getElementById('linkedSerialsModalCloseBtn').addEventListener('click', closeLinkedSerialsModal);
+  document.getElementById('linkedSerialsModalPrintBtn').addEventListener('click', () => {
+    if (linkedSerialsRows.length) printSerialLabels(linkedSerialsRows.map((s) => ({ serialNo: s.serial_no, itemCode: s.item_code, description: s.description })));
+  });
+  document.getElementById('linkedSerialsModal').addEventListener('click', (e) => { if (e.target.id === 'linkedSerialsModal') closeLinkedSerialsModal(); });
+  // Capture phase: Escape closes this popup only, not the order card underneath it.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || document.getElementById('linkedSerialsModal').classList.contains('hidden')) return;
+    e.stopImmediatePropagation();
+    closeLinkedSerialsModal();
+  }, true);
 }
 
 // Fetches which of this order's lines need a serial pick before shipping, and how many - see
@@ -3215,6 +3364,11 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   const storeManagerShip = !readyToShip && isStoreManagerShipper();
   if (storeManagerShip) storeManagerShipOrderIds.add(String(orderId));
   else storeManagerShipOrderIds.delete(String(orderId));
+  // Portal-only orders can't go through the POS at all, so their To Ship runs here regardless of
+  // TO_SHIP_ENABLED (admin_portal_order_to_ship).
+  const portalShip = !storeManagerShip && !fromStock && isPortalOnlyOrder(findFlatOrder(orderId));
+  if (portalShip) portalShipOrderIds.add(String(orderId));
+  else portalShipOrderIds.delete(String(orderId));
   if (storeManagerShip) {
     const order = findFlatOrder(orderId);
     if (currentSession.warehouseName && order && (order.warehouse_name || '') !== currentSession.warehouseName) {
@@ -3226,7 +3380,7 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
 
   // Ready to Ship (the Production Manager's next-step button on a Production Done order) runs this
   // real flow even while the general To Ship button is still switched off - see nextStepFor.
-  if (!TO_SHIP_ENABLED && !readyToShip && !storeManagerShip) {
+  if (!TO_SHIP_ENABLED && !readyToShip && !storeManagerShip && !portalShip) {
     alert('To-Ship is under construction, please To-Ship through the local POS for now.');
     return;
   }
@@ -3247,7 +3401,7 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   if (fromStock) shipFromStockOrderIds.add(String(orderId));
   else shipFromStockOrderIds.delete(String(orderId));
 
-  if (currentSessionIsProductionWarehouse || fromStock || storeManagerShip) {
+  if (currentSessionIsProductionWarehouse || fromStock || storeManagerShip || portalShip) {
     toShipBtn.disabled = true;
     if (!linesRefreshed) {
       const refreshError = await refreshOrderLinesFromPancake(orderId);
@@ -3645,6 +3799,7 @@ function isStoreManagerShipper() {
 }
 function canToShipOrder(o) {
   if (isPrintedOrder(o)) return true;
+  if (isPortalOnlyOrder(o) && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase())) return true;
   return isStoreManagerShipper() && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase());
 }
 
@@ -3657,6 +3812,7 @@ function updateOrderActionState() {
   updateSendBackButton('listSendBackBtn', o);
   updateNextStepButton('listNextStepBtn', o);
   ensureStockStatus(o);
+  showListSerials('online', o?.order_id);
 }
 
 // ---------------------------------------------------------------- Assign popup
@@ -4029,6 +4185,7 @@ function fillOrderCardHeader(o) {
   }
   setCardText('ocWarehouse', o.warehouse_name || o.location_id);
   setCardText('ocConfirmedBy', o.confirmed_by);
+  setCardText('ocConfirmedAt', o.confirmed_at_utc ? new Date(o.confirmed_at_utc).toLocaleString() : '');
   setCardText('ocCreatedBy', o.created_by);
   setCardText('ocLastUpdated', lastUpdatedText(o));
   ensureLastEditor(o);
@@ -4098,6 +4255,7 @@ function refreshOpenOrderCardHeader() {
   const o = findFlatOrder(openCardOrderId);
   if (o) fillOrderCardHeader(o);
   loadOrderCardStatusPhotos(openCardOrderId); // e.g. a photo just sent with Send Photo from the card
+  loadOrderCardSerials(openCardOrderId); // e.g. serials just tagged at To Ship
 }
 
 function money(value) {
@@ -4254,6 +4412,7 @@ async function loadOrderCardLines(orderId) {
   cardGlassTanks = [];
   document.getElementById('orderCardGlassTab').classList.add('hidden');
   renderPosDescription(null);
+  renderSerialsFactbox('orderCard', []); // clear the previous order's while loading
 
   const [linesRes] = await Promise.all([
     supabaseClient.rpc('admin_get_online_order_detail_live', {
@@ -4262,7 +4421,8 @@ async function loadOrderCardLines(orderId) {
       p_order_id: orderId
     }),
     loadOrderCardAttachments(orderId, false),
-    loadOrderCardStatusPhotos(orderId)
+    loadOrderCardStatusPhotos(orderId),
+    loadOrderCardSerials(orderId)
   ]);
   if (myGeneration !== orderCardLoadGeneration) return;
 
@@ -4814,6 +4974,7 @@ function wireOrderCard() {
   document.getElementById('cardSendMessageBtn').addEventListener('click', () => openCardOrderId && openSendMessageModal(openCardOrderId));
   document.getElementById('cardToShipBtn').addEventListener('click', (e) => openCardOrderId && handleToShipClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardProductionDoneBtn').addEventListener('click', (e) => openCardOrderId && handleProductionDoneClick(openCardOrderId, e.currentTarget));
+  document.getElementById('cardShowSerialsBtn').addEventListener('click', (e) => openCardOrderId && showOrderSerials(openCardOrderId, e.currentTarget));
   document.getElementById('cardPrintSerialsBtn').addEventListener('click', (e) => openCardOrderId && printOrderSerialLabels(openCardOrderId, e.currentTarget));
   document.getElementById('cardDeleteOrderBtn').addEventListener('click', (e) => openCardOrderId && deleteOnlineOrder(openCardOrderId, e.currentTarget));
   document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
@@ -4970,7 +5131,7 @@ async function loadOrders(search, status) {
     if (grouped) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
-      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="24" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="25" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     }
     return;
   }
@@ -5009,6 +5170,7 @@ async function loadOrders(search, status) {
   stockStatusCache.clear(); // stock may have moved since - re-checked for the selected / opened order
   if (selectedOrderId && !rows.some((o) => String(o.order_id) === String(selectedOrderId))) selectedOrderId = null;
   updateOrderActionState();
+  showListSerials('online', findFlatOrder(selectedOrderId)?.order_id, true); // re-read - e.g. serials just tagged at To Ship
   refreshOpenOrderCardHeader();
 
   document.getElementById('setupContent').classList.toggle('mine-mode', myAssignmentsOnly);
@@ -5021,7 +5183,7 @@ async function loadOrders(search, status) {
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
-    ? `<tr><td colspan="24" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
+    ? `<tr><td colspan="25" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
   updateCheckedOrdersState();
 
@@ -5156,7 +5318,7 @@ async function exportOrdersToExcel() {
       'Order ID', 'Date', 'Time', 'Status', 'Customer', 'Location ID', 'Warehouse',
       'Money To Collect', 'Amount Paid', 'Discount', 'Balance', 'For Delivery',
       'Shipping Address', 'Est. Delivery Date', 'Last Updated', 'Synced At', 'Glass Thickness',
-      'Created By', 'Confirmed By', 'Print Note', 'Delivery Fee', 'Has Custom Line', 'Assigned Production Member',
+      'Created By', 'Confirmed By', 'Confirmed Date', 'Print Note', 'Delivery Fee', 'Has Custom Line', 'Assigned Production Member',
       'Dispatch Date'
     ];
     const csvLines = [headers.map(escapeCsvValue).join(',')];
@@ -5181,6 +5343,7 @@ async function exportOrdersToExcel() {
         o.glass_thickness,
         o.created_by,
         o.confirmed_by,
+        o.confirmed_at_utc ? new Date(o.confirmed_at_utc).toLocaleString() : '',
         o.note_print,
         o.delivery_fee,
         o.has_custom_line ? 'Yes' : 'No',
@@ -5594,6 +5757,7 @@ function updateAdvanceListActions() {
   const o = selectedAdvanceNo ? advanceRowsByNo.get(selectedAdvanceNo) : null;
   document.getElementById('advOpenBtn').disabled = !o;
   applyAdvanceActions({ assign: 'advAssignBtn', next: 'advNextBtn', sendBack: 'advSendBackBtn', stepBack: 'advStepBackBtn' }, o);
+  showListSerials('advance', o?.transaction_no);
 }
 
 async function loadAdvanceOrders() {
@@ -5621,6 +5785,7 @@ async function loadAdvanceOrders() {
     ? `<tr><td colspan="19" class="cell-msg">No advance orders found${advanceStatusFilter ? ` in ${escapeHtml(advanceStatusFilter)}` : ''}.</td></tr>`
     : advanceRowsHtml(data);
   updateAdvanceListActions();
+  showListSerials('advance', selectedAdvanceNo, true); // re-read - e.g. serials just tagged at Ready to Ship
 
   renderPaginationBar(
     document.getElementById('advancePaginationBar'),
@@ -5652,6 +5817,7 @@ async function refreshAdvanceAfterAction(transactionNo) {
     if (openAdvanceNo === String(transactionNo)) {
       fillAdvanceCard(row);
       loadAdvanceCardRework(openAdvanceNo);
+      loadAdvanceCardSerials(openAdvanceNo); // serials just tagged at Ready to Ship
     }
   }
   loadAdvanceOrders();
@@ -5721,6 +5887,8 @@ function updateAdvanceCardActions(o) {
   applyAdvanceActions({ assign: 'advanceCardAssignBtn', next: 'advanceCardNextBtn', sendBack: 'advanceCardSendBackBtn', stepBack: 'advanceCardStepBackBtn' }, o);
   // Same people who can Ready to Ship (staff_get_advance_order_serial_labels refuses view-only Store Managers).
   document.getElementById('advanceCardPrintSerialsBtn').classList.toggle('hidden', !canAssignOrders());
+  document.getElementById('advanceCardShowSerialsBtn').classList.toggle('hidden', !canAssignOrders());
+  document.getElementById('advanceCardBody').classList.toggle('no-factbox', !canAssignOrders());
 }
 
 function openAdvanceCard(transactionNo) {
@@ -5731,6 +5899,8 @@ function openAdvanceCard(transactionNo) {
   document.getElementById('advanceCardModal').classList.remove('hidden');
   loadAdvanceCardLines(openAdvanceNo);
   loadAdvanceCardRework(openAdvanceNo);
+  renderSerialsFactbox('advanceCard', []); // clear the previous order's while loading
+  loadAdvanceCardSerials(openAdvanceNo);
 }
 
 async function loadAdvanceCardLines(transactionNo) {
@@ -6013,6 +6183,7 @@ function wireAdvanceCard() {
   document.getElementById('advanceCardSendBackBtn').addEventListener('click', () => openAdvanceNo && openAdvanceSendBackDialog(openAdvanceNo));
   document.getElementById('advanceCardNextBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, e.currentTarget.dataset.stage, e.currentTarget));
   document.getElementById('advanceCardStepBackBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, null, e.currentTarget));
+  document.getElementById('advanceCardShowSerialsBtn').addEventListener('click', (e) => openAdvanceNo && showAdvanceSerials(openAdvanceNo, e.currentTarget));
   document.getElementById('advanceCardPrintSerialsBtn').addEventListener('click', (e) => openAdvanceNo && printAdvanceSerialLabels(openAdvanceNo, e.currentTarget));
 
   // The list's action bar - same actions, on the selected row.
@@ -6191,6 +6362,9 @@ async function initAdvanceOrdersView() {
   document.getElementById('ordersSubtitle').textContent = 'Customer deposit/downpayment orders from the POS. Open one to assign makers and follow it to Shipped.';
   document.title = document.title.replace('Online Orders', 'Advance Orders');
   document.getElementById('orderSearchInput').placeholder = 'Search transaction, receipt, or customer';
+  // Serials FactBox only for those who can see serials (staff_get_advance_order_serial_labels refuses
+  // view-only Store Managers).
+  document.getElementById('advanceOrdersView').classList.toggle('no-factbox', !canAssignOrders());
 
   // Same layout as the Online / Walk-in lists: the advance actions (.adv-cmd) + Refresh on the action
   // bar, the advance stage tabs where the online status tabs sit, and the advance list.
@@ -6245,6 +6419,7 @@ async function initAdvanceOrdersView() {
   if (canSeeAdvance && new URLSearchParams(window.location.search).get('scope') === 'advance') {
     await initAdvanceOrdersView();
     wireItemLedgerButton(session); // after initAdvanceOrdersView, which hides the other bar buttons
+    wireLinkedSerialsModal();
     return;
   }
   document.getElementById('exportExcelBtn').classList.toggle('hidden', !session.isSuperUser);
@@ -6265,6 +6440,7 @@ async function initAdvanceOrdersView() {
   wireShipSerialModalButtons();
   wireSetAssemblyModalButtons();
   wireViewSerialsModalButtons();
+  wireLinkedSerialsModal();
   wireSendPhotoPickDialog();
   wireSendMessageModalButtons();
   wireOrderListActions();
@@ -6354,6 +6530,9 @@ async function initAdvanceOrdersView() {
 
   currentPeriod = periodParam === 'month' || periodParam === 'today' || periodParam === 'prevmonth' ? periodParam : null;
   currentScope = scopeParam === 'walkin' ? 'walkin' : null;
+  // New tab (js/onlineNewOrders.js): orders from conversations waiting to be confirmed - Online list only,
+  // for accounts that see the full list.
+  if (window.initNewOrdersTab) initNewOrdersTab(!scopeParam && !session.isOnlineOrderStaff && !isOrderMakerOnly(session));
   renderOrderFieldFilters(); // field list depends on the scope (no Dispatcher / For Delivery on walk-ins)
   outstandingOnly = filterParam === 'outstanding';
   currentConfirmedBy = confirmedByParam.trim() || null;

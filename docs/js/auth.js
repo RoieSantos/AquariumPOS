@@ -136,7 +136,6 @@ const STORE_MANAGER_ALLOWED_PAGES = [
   'physical-inventory-journal.html', 'serial-inventory-journal.html', 'defect-items.html',
   'stand-calculator.html', 'aquarium-calculator.html', 'repair-calculator.html', 'sticker-calculator.html', 'glass-cut-list.html',
   'online-orders.html', 'online-order-lines.html',
-  'automated-orders.html',
   'gma-conversations.html'
 ];
 

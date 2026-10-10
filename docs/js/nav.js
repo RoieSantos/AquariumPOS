@@ -141,7 +141,6 @@ function renderTopNav(activeLabel) {
     orders.push({ href: 'posted-transfer-orders.html', label: 'Posted Transfers' });
   }
   orders.push({ href: 'online-orders.html', label: 'Online Orders' });
-  orders.push({ href: 'automated-orders.html', label: 'Automated Orders' });
   if (isSuperUser) {
     orders.push({ href: 'advance-orders.html', label: 'Advance Orders' });
   }

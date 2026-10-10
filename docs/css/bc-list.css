@@ -311,18 +311,18 @@
   text-decoration: none;
 }
 
-/* Walk-in Orders list: hide Dispatcher (11) and For Delivery, Est. Delivery Date (21-22) -
+/* Walk-in Orders list: hide Dispatcher (12) and For Delivery, Est. Delivery Date (22-23) -
    walk-ins are picked up at the shop - so the Tags column sits closer to view. Tank / Stand
-   Maker (9-10) stay: walk-ins can be assigned to makers. Column numbers match online-orders.html's
-   24-column header (Warehouse is column 5; Dispatch Date is 23 and stays visible; the walk-in tab is never shown to accounts that hide
+   Maker (10-11) stay: walk-ins can be assigned to makers. Column numbers match online-orders.html's
+   25-column header (Warehouse is column 5; Confirmed Date is 8; Dispatch Date is 24 and stays visible; the walk-in tab is never shown to accounts that hide
    the Delivery Fee column). */
-.bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(11), :nth-child(21), :nth-child(22)) {
+.bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(12), :nth-child(22), :nth-child(23)) {
   display: none;
 }
-/* POS Receipt / Customer / Description / Items / Cashier (15-19) are Walk-in list columns only -
+/* POS Receipt / Customer / Description / Items / Cashier (16-20) are Walk-in list columns only -
    the Online list keeps the combined POS cell in Print Note (js/onlineOrders.js posFieldCellsHtml).
    Scoped to #orderGridWrap: the Advance Orders table is an .oo-grid too, with different columns. */
-.bc-ile #orderGridWrap .oo-grid:not(.oo-walkin) :is(th, td):is(:nth-child(15), :nth-child(16), :nth-child(17), :nth-child(18), :nth-child(19)) {
+.bc-ile #orderGridWrap .oo-grid:not(.oo-walkin) :is(th, td):is(:nth-child(16), :nth-child(17), :nth-child(18), :nth-child(19), :nth-child(20)) {
   display: none;
 }
 .bc-ile .oo-grid .oo-pos-items-cell { min-width: 260px; max-width: 420px; }
@@ -2824,6 +2824,7 @@ a.bc-cue:hover {
    loadCardPhotos). Stacks under the document on a narrow screen; hidden for makers. The windowed
    Online Order card is a bit wider than the shared .to-manage-panel so the lines keep their room. */
 #orderCardModal .to-manage-panel:not(.modal-maximized),
+#advanceCardModal .to-manage-panel:not(.modal-maximized),
 #prodCardModal .po-doc-panel:not(.modal-maximized) { max-width: 1380px; }
 .bc-doc .bc-doc-body.oc-split {
   display: grid;
@@ -2846,12 +2847,30 @@ a.bc-cue:hover {
 .bc-doc .oc-fact-photos .status-photo-card { width: auto; border-radius: 2px; }
 .bc-doc .oc-fact-photos .status-photo-thumb { width: 100%; height: 110px; }
 .bc-doc .oc-fact-photos .status-photo-meta { padding: 4px 6px; font-size: 10.5px; overflow-wrap: anywhere; }
+/* Several FactBoxes stacked in the right column (Photos + Serials) - the column is sticky, not each box. */
+.bc-doc .oc-factbox-col { position: sticky; top: 0; }
+.bc-doc .oc-factbox-col .oc-factbox { position: static; }
+/* Serials FactBox (online-orders.html - Online / Walk-in and Advance order cards, and the lists' FactBox). */
+.oc-fact-serials { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.oc-fact-serials li { padding: 6px 0; border-top: 1px solid var(--bc-line); font-size: 12.5px; overflow-wrap: anywhere; }
+.oc-fact-serials li:first-child { border-top: none; padding-top: 0; }
+.oc-fact-serials .oc-serial-no { font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+.oc-fact-serials .oc-serial-item { font-size: 11.5px; }
+.oc-fact-order { font-size: 12px; margin-bottom: 6px; }
+.oc-fact-order:empty { display: none; }
+/* In the list FactBox the box runs the grid's full height - let the list use it. */
+#orderListFactbox, #advanceListFactbox { overflow-y: auto; }
+#orderListFactbox .oc-fact-serials, #advanceListFactbox .oc-fact-serials { max-height: none; overflow: visible; }
+.bc-ile .bc-body.no-factbox > .bc-factbox { display: none; }
+#advanceCardModal .bc-doc-body.oc-split.no-factbox { display: block; }
+#advanceCardModal .bc-doc-body.oc-split.no-factbox .oc-factbox-col { display: none; }
 #orderCardModal.maker-focus .bc-doc-body.oc-split,
 #prodCardModal.maker-view .bc-doc-body.oc-split { display: block; }
 #prodCardModal.maker-view .oc-factbox { display: none; }
 @media (max-width: 900px) {
   .bc-doc .bc-doc-body.oc-split { grid-template-columns: minmax(0, 1fr); }
   .bc-doc .oc-factbox { position: static; margin-bottom: 10px; }
+  .bc-doc .oc-factbox-col { position: static; }
   .bc-doc .oc-fact-photos { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 }
 

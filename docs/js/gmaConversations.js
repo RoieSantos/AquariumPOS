@@ -651,7 +651,15 @@ const ORDER_STATUS_BADGE_CLASS = {
 const PANCAKE_SYNC_BADGE_CLASS = {
   Synced: 'badge-success',
   Failed: 'badge-danger',
-  Pending: 'badge-neutral'
+  Pending: 'badge-neutral',
+  // AI bot orders wait here until staff click "Confirm Order" (confirmBotOrder), then go straight into
+  // Online Orders with no Pancake order ('Portal') - sql/supabase_bot_orders_portal_confirm.sql.
+  'Not Pushed': 'badge-warning',
+  Portal: 'badge-success'
+};
+const PANCAKE_SYNC_BADGE_LABEL = {
+  'Not Pushed': 'Awaiting Confirm',
+  Portal: 'In Online Orders'
 };
 
 // Same vocabulary/colors as the Online Orders status-summary-bar (docs/online-orders.html) - this
@@ -694,7 +702,7 @@ function orderStatusBadgeHtml(status) {
 function pancakeSyncBadgeHtml(status) {
   if (!status) return '';
   const cls = PANCAKE_SYNC_BADGE_CLASS[status] || 'badge-neutral';
-  return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
+  return `<span class="badge ${cls}">${escapeHtml(PANCAKE_SYNC_BADGE_LABEL[status] || status)}</span>`;
 }
 
 function customerInitials(name) {
@@ -956,6 +964,22 @@ function orderPaymentsHtml(orderNo) {
 // collapsed card's top badge (pancakeStatusBadgeHtml), not repeated here. Only rendered once
 // PancakeSyncStatus is 'Synced' (before that there's no Pancake order to check at all).
 function pancakeLiveStatusHtml(o) {
+  // AI bot orders are saved as 'Not Pushed' drafts - staff review them here, then Confirm Order puts
+  // them straight into Online Orders, no Pancake (sql/supabase_bot_orders_portal_confirm.sql).
+  if (o.pancake_sync_status === 'Not Pushed') {
+    return `
+    <div class="inbox-order-pancake-row">
+      <button type="button" class="btn btn-primary btn-sm inbox-confirm-bot-order-btn" data-order="${escapeHtml(o.order_no)}">Confirm Order</button>
+    </div>
+  `;
+  }
+  if (o.pancake_sync_status === 'Portal') {
+    return `
+    <div class="inbox-order-pancake-row">
+      <a href="online-orders.html" target="_blank" rel="noopener" title="Open Online Orders">Online Order ${escapeHtml(o.order_no)} &#8599;</a>
+    </div>
+  `;
+  }
   if (o.pancake_sync_status !== 'Synced') return '';
 
   const idLink = o.pancake_order_id && o.pancake_order_link
@@ -1011,7 +1035,7 @@ function renderConversationOrderCards() {
       <div class="inbox-order-top" data-order="${escapeHtml(o.order_no)}">
         <div class="inbox-order-top-left">
           <svg class="inbox-order-chevron" viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <a href="automated-orders.html?order=${encodeURIComponent(o.order_no)}">${escapeHtml(o.order_no)}</a>
+          <span class="inbox-order-no">${escapeHtml(o.order_no)}</span>
         </div>
         <div class="inbox-order-badges">
           ${pancakeStatusBadgeHtml(o)}
@@ -1042,7 +1066,8 @@ function renderConversationOrderCards() {
 
         <div class="inbox-order-subsection">
           <div class="inbox-order-detail-label">Actions</div>
-          ${o.status !== 'Completed' && o.status !== 'Cancelled' ? `
+          ${pancakeHtml}
+          ${o.status !== 'Completed' && o.status !== 'Cancelled' && o.pancake_sync_status !== 'Portal' ? `
           <div class="inbox-order-edit-row">
             <button type="button" class="btn btn-secondary btn-sm inbox-edit-order-btn" data-order="${escapeHtml(o.order_no)}">Edit Order</button>
           </div>
@@ -1062,13 +1087,6 @@ function renderConversationOrderCards() {
           <div class="inbox-order-detail-label">Products</div>
           <div class="inbox-order-lines">${orderLinesHtml(o.order_no)}</div>
         </div>
-
-        ${pancakeHtml ? `
-        <div class="inbox-order-subsection">
-          <div class="inbox-order-detail-label">Pancake</div>
-          ${pancakeHtml}
-        </div>
-        ` : ''}
 
         <div class="inbox-order-subsection">
           <div class="inbox-order-detail-label">${o.fulfillment_type === 'Delivery' ? 'Delivery details' : 'Pickup details'}</div>
@@ -1138,6 +1156,9 @@ function renderConversationOrderCards() {
   });
   listEl.querySelectorAll('.inbox-cancel-pancake-btn').forEach((btn) => {
     btn.addEventListener('click', () => cancelOrderInPancake(btn.dataset.order, btn));
+  });
+  listEl.querySelectorAll('.inbox-confirm-bot-order-btn').forEach((btn) => {
+    btn.addEventListener('click', () => confirmBotOrder(btn.dataset.order, btn));
   });
 }
 
@@ -1278,6 +1299,39 @@ async function confirmOrderInPancake(orderNo, btn) {
   // exactly what Pancake now reports.
   orderPancakeStatusCache.delete(orderNo);
   await loadOrderExpandedDetails(orderNo);
+}
+
+// Called from the "Confirm Order" button (pancakeLiveStatusHtml) on an AI bot draft ('Not Pushed').
+// admin_confirm_bot_order creates the Online Orders entry directly - no Pancake order
+// (sql/supabase_bot_orders_portal_confirm.sql). On success the customer gets the same "order
+// confirmed" message as Confirm in Pancake.
+async function confirmBotOrder(orderNo, btn) {
+  if (!confirm(`Confirm order ${orderNo}? Check the items, prices and customer details first - it goes straight into Online Orders and can't be edited here afterwards.`)) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Confirming...';
+
+  const { error } = await supabaseClient.rpc('admin_confirm_bot_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo
+  });
+
+  if (error) {
+    alert(`Could not confirm the order: ${error.message}`);
+    btn.disabled = false;
+    btn.textContent = 'Confirm Order';
+    return;
+  }
+
+  const receiptLink = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`;
+  await sendMessageToCustomer(
+    `Your order has been confirmed, Please see receipt for your reference. We will keep you posted on the status of your order. Any concerns please let us know :) #HFK\n${receiptLink}`,
+    []
+  );
+
+  orderPancakeStatusCache.delete(orderNo);
+  await loadConversationOrders(conversationOrdersConv);
 }
 
 // Called from the "Cancel in Pancake" button - only ever shown while the live-fetched status is
@@ -2650,7 +2704,7 @@ async function submitNewOrder() {
   } else {
     renderCustomerPanel(newOrderConv);
     if (result && result.pancake_sync_status === 'Failed') {
-      alert(`Order ${result.order_no} was created, but the Pancake push failed: ${result.pancake_sync_error || '(no error detail)'}. It can be retried from the Automated Orders page.`);
+      alert(`Order ${result.order_no} was created, but the Pancake push failed: ${result.pancake_sync_error || '(no error detail)'}. Ask a super user to check it.`);
     }
   }
 }

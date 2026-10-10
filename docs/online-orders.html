@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=photofb2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=confdate1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -30,6 +30,7 @@
     <symbol id="ico-done" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M5.2 8.2 7.1 10l3.7-4"/></symbol>
     <symbol id="ico-sendback" viewBox="0 0 16 16"><path d="M6 3.5 2.5 7 6 10.5"/><path d="M2.8 7H10a3.5 3.5 0 0 1 0 7H8"/></symbol>
     <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 5.5V2h7v3.5"/><path d="M4.5 11.5H2.5v-6h11v6h-2"/><path d="M4.5 9.5h7V14h-7z"/></symbol>
+    <symbol id="ico-serials" viewBox="0 0 16 16"><path d="M2 3v10M4 3v10M6.5 3v10M9 3v10M11 3v10M14 3v10"/></symbol>
     <symbol id="ico-attach" viewBox="0 0 16 16"><path d="M12.5 7.5 7.8 12.2a3 3 0 0 1-4.2-4.2l5-5a2 2 0 0 1 2.8 2.8l-5 5a1 1 0 0 1-1.4-1.4L9.5 4.9"/></symbol>
   </svg>
 
@@ -83,6 +84,11 @@
            to select it) - the list itself has no buttons. Open (or double-click / the Order ID)
            opens the Online Order document with its lines. -->
       <div class="bc-cmdbar" role="toolbar" aria-label="Actions" id="orderCmdbar">
+        <!-- New tab only (js/onlineNewOrders.js) - orders waiting to be confirmed. Hidden on every other tab. -->
+        <button class="bc-cmd bc-cmd-accent new-cmd hidden" id="newOpenBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
+        <span class="bc-cmd-sep new-cmd hidden"></span>
+        <button class="bc-cmd new-cmd hidden" id="newConfirmBtn" type="button" disabled title="Confirm the selected order - it moves to Confirmed"><svg class="bc-ico"><use href="#ico-done"/></svg>Confirm Order</button>
+        <button class="bc-cmd bc-cmd-danger new-cmd hidden" id="newCancelBtn" type="button" disabled title="Cancel the selected order - it won't be confirmed">Cancel Order</button>
         <button class="bc-cmd bc-cmd-accent" id="openOrderBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
         <span class="bc-cmd-sep"></span>
         <button class="bc-cmd" id="listSendPhotoBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-camera"/></svg>Send Photo</button>
@@ -133,6 +139,9 @@
         <!-- Tank Maker / Stand Maker / Dispatcher only: the open orders assigned to the logged-in user
              (js/onlineOrders.js myAssignmentsOnly, supabase_online_order_my_assignments.sql). -->
         <button type="button" class="bc-tab status-summary-pill hidden" id="myAssignmentsTab" data-mine="1">My Assignments <span class="status-summary-count" id="myAssignmentsCount"></span></button>
+        <!-- Orders waiting to be confirmed - AI bot and GMA "+ New Order" (js/onlineNewOrders.js,
+             sql/supabase_online_orders_new_tab.sql). Shown on the Online list for full-list accounts. -->
+        <button type="button" class="bc-tab status-summary-pill hidden" id="newOrdersTab" data-status="__new__" title="Orders from conversations waiting to be confirmed">New <span class="status-summary-count" id="statusCountNew">-</span></button>
         <!-- online-pill / walkin-pill: the Walk-in tab swaps Confirmed / Printed / To Ship for its portal-only
              stages To Assign / Completed (js/onlineOrders.js, sql/supabase_walkin_order_portal_status.sql). -->
         <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Confirmed">Confirmed <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
@@ -156,7 +165,7 @@
         <button type="button" class="bc-tab status-summary-pill" data-adv-status="Shipped">Shipped <span class="status-summary-count" data-adv-count="Shipped">-</span></button>
       </div>
 
-      <div class="bc-body no-factbox" id="flatOrdersView">
+      <div class="bc-body" id="flatOrdersView">
         <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
           <div class="bc-pane-head">Filter list by</div>
           <div class="bc-pane-body">
@@ -178,7 +187,7 @@
 
         <section class="bc-main">
           <div class="bc-grid-wrap" id="orderGridWrap">
-            <table class="bc-grid oo-grid" data-resize-key="online-orders-v6">
+            <table class="bc-grid oo-grid" data-resize-key="online-orders-v7">
               <thead>
                 <tr>
                   <!-- th.sortable: click to sort (server-side, js/onlineOrders.js wireListSortHeaders,
@@ -191,6 +200,7 @@
                   <th class="sortable" data-sort-key="warehouse_name">Warehouse<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="status">Status<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="confirmed_by">Confirmed By<span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort-key="confirmed_at">Confirmed Date<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="created_by">Created By<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="tank_maker">Tank Maker<span class="sort-arrow"></span></th>
                   <th class="sortable" data-sort-key="stand_maker">Stand Maker<span class="sort-arrow"></span></th>
@@ -211,18 +221,61 @@
                 </tr>
               </thead>
               <tbody id="orderTableBody">
-                <tr><td colspan="24" class="cell-msg">Loading...</td></tr>
+                <tr><td colspan="25" class="cell-msg">Loading...</td></tr>
               </tbody>
             </table>
           </div>
           <div id="orderPaginationBar"></div>
+        </section>
+
+        <!-- Serials FactBox: the selected row's linked serials (js/onlineOrders.js showListSerials,
+             staff_get_online_order_serial_labels). Hidden below 1280px like every BC list FactBox. -->
+        <aside class="bc-factbox" id="orderListFactbox" aria-label="Serials">
+          <div class="bc-fact">
+            <div class="bc-fact-title">Serials <span class="muted" id="orderListSerialsCount"></span></div>
+            <div class="bc-fact-body">
+              <div class="muted oc-fact-order" id="orderListSerialsOrder"></div>
+              <p class="bc-fact-empty" id="orderListSerialsEmpty">Select an order to see its serials.</p>
+              <ul class="oc-fact-serials" id="orderListSerialsList"></ul>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- New tab (js/onlineNewOrders.js): orders waiting to be confirmed. Click a row to select it, the
+           Order No / double-click / Open shows its items; Confirm Order moves it to Confirmed. -->
+      <div class="bc-body no-filterpane no-factbox hidden" id="newOrdersView">
+        <section class="bc-main">
+          <div class="bc-grid-wrap">
+            <table class="bc-grid">
+              <thead>
+                <tr>
+                  <th>Order No</th>
+                  <th>Created</th>
+                  <th>Created By</th>
+                  <th>Customer</th>
+                  <th>Phone</th>
+                  <th>Fulfillment</th>
+                  <th>Branch</th>
+                  <th>Items</th>
+                  <th class="num">Total</th>
+                  <th class="num">Paid</th>
+                  <th class="num">Balance</th>
+                </tr>
+              </thead>
+              <tbody id="newOrdersBody">
+                <tr><td colspan="11" class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="newOrdersPaginationBar"></div>
         </section>
       </div>
 
       <!-- Advance Orders tab (?scope=advance, Super Users / Production Managers - js/onlineOrders.js
            initAdvanceOrdersView). Same BC list as Online / Walk-in: click a row to select it, the action
            bar (Open / Assign / next step / Send Back) works on it, the Transaction No opens the document. -->
-      <div class="bc-body no-filterpane no-factbox hidden" id="advanceOrdersView">
+      <div class="bc-body no-filterpane hidden" id="advanceOrdersView">
         <section class="bc-main">
           <div class="bc-grid-wrap" id="advanceGridWrap">
             <table class="bc-grid oo-grid" data-resize-key="advance-orders-v2">
@@ -256,6 +309,20 @@
           </div>
           <div id="advancePaginationBar"></div>
         </section>
+
+        <!-- Serials FactBox: the selected advance order's linked serials (js/onlineOrders.js showListSerials,
+             staff_get_advance_order_serial_labels). no-factbox is dropped in initAdvanceOrdersView for
+             those who can see serials (not view-only Store Managers). -->
+        <aside class="bc-factbox" id="advanceListFactbox" aria-label="Serials">
+          <div class="bc-fact">
+            <div class="bc-fact-title">Serials <span class="muted" id="advanceListSerialsCount"></span></div>
+            <div class="bc-fact-body">
+              <div class="muted oc-fact-order" id="advanceListSerialsOrder"></div>
+              <p class="bc-fact-empty" id="advanceListSerialsEmpty">Select an order to see its serials.</p>
+              <ul class="oc-fact-serials" id="advanceListSerialsList"></ul>
+            </div>
+          </div>
+        </aside>
       </div>
 
       <!-- My Assignments on a phone (js/onlineOrders.js renderMyAssignmentCards): one card per order
@@ -326,6 +393,7 @@
         <button class="bc-cmd hidden" id="cardSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="cardProductionDoneBtn" type="button"><svg class="bc-ico"><use href="#ico-done"/></svg><span class="pd-label">Production Done</span></button>
         <button class="bc-cmd hidden" id="cardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
+        <button class="bc-cmd" id="cardShowSerialsBtn" type="button" title="Show the serials linked to this order"><svg class="bc-ico"><use href="#ico-serials"/></svg>Show Serials</button>
         <button class="bc-cmd" id="cardPrintSerialsBtn" type="button" title="Print (or reprint) the serial labels tied to this order"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serial Labels</button>
         <button class="bc-cmd bc-cmd-danger hidden" id="cardDeleteOrderBtn" type="button" title="Super Users only - permanently delete this order from the portal (cleanup of junk/test orders)">Delete Order</button>
       </div>
@@ -359,6 +427,7 @@
             <div>
               <div class="bc-doc-field"><label>Warehouse</label><div class="bc-doc-value" id="ocWarehouse"></div></div>
               <div class="bc-doc-field"><label>Confirmed By</label><div class="bc-doc-value" id="ocConfirmedBy"></div></div>
+              <div class="bc-doc-field"><label>Confirmed Date</label><div class="bc-doc-value" id="ocConfirmedAt"></div></div>
               <div class="bc-doc-field"><label>Created By</label><div class="bc-doc-value" id="ocCreatedBy"></div></div>
               <div class="bc-doc-field"><label>Last Updated</label><div class="bc-doc-value" id="ocLastUpdated"></div></div>
             </div>
@@ -491,6 +560,7 @@
         <!-- Photos FactBox: proof photos and photos sent to the customer with Send Photo / To Ship
              (public."OnlineOrderStatusPhotos", kept 30 days) - order-level, separate from the per-line
              attachments. Filled by js/onlineOrders.js loadOrderCardStatusPhotos. -->
+        <div class="oc-factbox-col">
         <aside class="oc-factbox" id="orderCardPhotosPart" aria-label="Photos">
           <div class="oc-fact-title">Photos <span class="muted" id="orderCardPhotosCount"></span></div>
           <div class="oc-fact-body">
@@ -498,6 +568,16 @@
             <div id="orderCardPhotosList" class="oc-fact-photos"></div>
           </div>
         </aside>
+        <!-- Serials FactBox: serials linked to the order (staff_get_online_order_serial_labels) - picked
+             or created at Ready to Ship. Filled by js/onlineOrders.js loadOrderCardSerials. -->
+        <aside class="oc-factbox" aria-label="Serials">
+          <div class="oc-fact-title">Serials <span class="muted" id="orderCardSerialsCount"></span></div>
+          <div class="oc-fact-body">
+            <p class="oc-fact-empty muted" id="orderCardSerialsEmpty">No serials linked yet.</p>
+            <ul id="orderCardSerialsList" class="oc-fact-serials"></ul>
+          </div>
+        </aside>
+        </div>
       </div>
     </div>
   </div>
@@ -532,10 +612,13 @@
         <button class="bc-cmd hidden" id="advanceCardStepBackBtn" type="button" title="Undo the last stage (Shipped -> To Ship -> production)">Undo Stage</button>
         <!-- Serials tied to this order's Receipt No - tagged at Ready to Ship or by the POS at Pay In Full
              (js/onlineOrders.js printAdvanceSerialLabels, sql/supabase_advance_order_serials.sql). -->
+        <button class="bc-cmd" id="advanceCardShowSerialsBtn" type="button" title="Show the serials linked to this order"><svg class="bc-ico"><use href="#ico-serials"/></svg>Show Serials</button>
         <button class="bc-cmd" id="advanceCardPrintSerialsBtn" type="button" title="Print (or reprint) the serial labels tied to this order"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serial Labels</button>
       </div>
 
-      <div class="bc-doc-body">
+      <!-- Same split as the Online Order card: the document on the left, the Serials FactBox on the right. -->
+      <div class="bc-doc-body oc-split" id="advanceCardBody">
+       <div class="oc-main">
         <details class="doc-fasttab" open>
           <summary>Assignment <span class="doc-fasttab-summary" id="advanceCardAssignSummary"></span></summary>
           <div class="doc-fasttab-body bc-doc-cols">
@@ -619,6 +702,20 @@
             </table>
           </div>
         </div>
+       </div>
+
+        <!-- Serials FactBox: serials linked to the advance order (staff_get_advance_order_serial_labels) -
+             tagged at Ready to Ship or by the POS at Pay In Full. js/onlineOrders.js loadAdvanceCardSerials.
+             Hidden (and the split dropped) for view-only Store Managers, whom the RPC refuses. -->
+        <div class="oc-factbox-col" id="advanceCardFactboxes">
+        <aside class="oc-factbox" aria-label="Serials">
+          <div class="oc-fact-title">Serials <span class="muted" id="advanceCardSerialsCount"></span></div>
+          <div class="oc-fact-body">
+            <p class="oc-fact-empty muted" id="advanceCardSerialsEmpty">No serials linked yet.</p>
+            <ul id="advanceCardSerialsList" class="oc-fact-serials"></ul>
+          </div>
+        </aside>
+        </div>
       </div>
     </div>
   </div>
@@ -663,6 +760,40 @@
   <!-- Dispatcher release / Mark Shipped (js/onlineOrders.js openReleaseDialog,
        sql/supabase_online_order_partial_release.sql): pick which lines and how many leave now. A partial
        batch keeps the order To Ship; releasing the last remaining units marks it Shipped (portal + Pancake). -->
+  <!-- New order detail (js/onlineNewOrders.js) - read-only view of an order waiting to be confirmed.
+       Edits still go through GMA Conversations' Edit Order. -->
+  <div id="newOrderDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="newOrderTitle" style="max-width:760px;">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">NEW ORDER - WAITING TO BE CONFIRMED</div>
+          <h2 id="newOrderTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeNewOrderBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <div id="newOrderInfo" class="bc-lede"></div>
+        <div class="bc-grid-wrap" style="margin-top:10px;">
+          <table class="bc-grid">
+            <thead>
+              <tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr>
+            </thead>
+            <tbody id="newOrderLines"></tbody>
+            <tfoot id="newOrderFoot"></tfoot>
+          </table>
+        </div>
+        <p class="muted" style="margin-top:8px; font-size:12px;">To change items or details, use Edit Order on the order in GMA Conversations.</p>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="newOrderError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="newOrderConfirmBtn" type="button">Confirm Order</button>
+        <button class="bc-btn" id="newOrderCancelOrderBtn" type="button">Cancel Order</button>
+        <button class="bc-btn" id="newOrderCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="releaseDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog oo-release-dialog" role="dialog" aria-modal="true" aria-labelledby="releaseTitle">
       <div class="bc-dialog-head">
@@ -876,6 +1007,34 @@
     </div>
   </div>
 
+  <!-- "Show Serials" on the Online / Walk-in / Advance order cards - the serials linked to the order
+       (staff_get_online_order_serial_labels / staff_get_advance_order_serial_labels), view-only, with
+       a shortcut to print their labels. js/onlineOrders.js openLinkedSerialsModal. -->
+  <div id="linkedSerialsModal" class="modal-backdrop hidden">
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:640px;" role="dialog" aria-modal="true" aria-labelledby="linkedSerialsModalTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption" id="linkedSerialsModalCaption">ORDER</div>
+          <h2 id="linkedSerialsModalTitle">Linked Serials</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" id="linkedSerialsModalNote" style="margin:0 0 12px;"></p>
+        <div class="bc-grid-wrap" id="linkedSerialsModalGrid">
+          <table class="bc-grid">
+            <thead><tr><th>Serial No.</th><th>Item Code</th><th>Description</th></tr></thead>
+            <tbody id="linkedSerialsModalBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="bc-doc-foot">
+        <span style="flex:1;"></span>
+        <button type="button" class="bc-btn" id="linkedSerialsModalPrintBtn">Print Labels</button>
+        <button type="button" class="bc-btn" id="linkedSerialsModalCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- "TO-SHIP" button (js/onlineOrders.js) - routes to either the GMA Page's Graph API or
        Pancake's own conversation API depending on where the order came from, resolved by
        admin_get_online_order_messaging_route (sql/supabase_online_order_send_message.sql) right
@@ -907,7 +1066,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
-  <script src="js/nav.js?v=bills1"></script>
+  <script src="js/nav.js?v=newtab1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
@@ -916,7 +1075,8 @@
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
   <script src="js/proofPhoto.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=proof3"></script>
+  <script src="js/onlineOrders.js?v=confdate1"></script>
+  <script src="js/onlineNewOrders.js?v=1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
