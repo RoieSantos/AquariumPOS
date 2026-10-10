@@ -36,8 +36,7 @@ function renderTopNav(activeLabel) {
         <span class="topnav-brand">RS Pet Stop Portal</span>
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
-          <a class="topnav-link${activeLabel === 'Delivery' ? ' active' : ''}" href="delivery.html">Delivery</a>
-          <a class="topnav-link${activeLabel === 'Quick Post' ? ' active' : ''}" href="quick-post.html">Quick Post</a>${compactProductionLinks(session, activeLabel)}${allStaffLinks(activeLabel)}
+          <a class="topnav-link${activeLabel === 'Delivery' ? ' active' : ''}" href="delivery.html">Delivery</a>${compactProductionLinks(session, activeLabel)}${allStaffLinks(activeLabel)}
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>

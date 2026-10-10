@@ -1,4 +1,4 @@
-// Quick Post page logic (super users + Delivery Team) - the phone version of facebook-post-test.html:
+// Quick Post page logic (super users only) - the phone version of facebook-post-test.html:
 // take/choose a photo -> it is watermarked with the saved defaults and Claude writes the caption
 // straight away (both from AI Bot Setup > Facebook Posts) -> one tap on Post Now publishes it to
 // the GMA Page. The caption stays editable and Post Now stays a deliberate tap, so an AI caption
@@ -132,8 +132,8 @@ function startOver() {
   currentSession = session;
   renderTopNav('Quick Post');
 
-  // Shared with the Delivery Team (Delivery Done / Setup Done posts); facebook-page-post re-checks.
-  if (!session.isSuperUser && !session.isDeliveryTeam) {
+  // Super users only - the Delivery Team posts from Mark Done on the Delivery route view instead.
+  if (!session.isSuperUser) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
     return;
   }

@@ -98,7 +98,7 @@ const PASSWORD_CHANGE_EXEMPT_PAGES = ['change-password.html', 'staff-login.html'
 // from buttons on delivery.html's Stops table (js/delivery.js), so leaving them out would let a
 // Delivery Team account see the calendar but get bounced back to it the moment they clicked
 // Print/Print Invoice/Print Job Order.
-const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'delivery-receipt.html', 'invoice.html', 'job-order.html', 'dashboard.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html', 'quick-post.html'];
+const DELIVERY_TEAM_ALLOWED_PAGES = ['delivery.html', 'delivery-receipt.html', 'invoice.html', 'job-order.html', 'dashboard.html', 'change-password.html', 'staff-login.html', 'my-payslips.html', 'my-payslip-print.html'];
 
 // Same exclusive-lockdown shape as Delivery Team above, per "create me a field in the user setup
 // 'Online Order Staff' - when this is tick the user will only see Orders Printed that to be Ship."
