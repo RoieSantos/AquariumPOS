@@ -346,6 +346,52 @@ async function postToFacebook() {
   }
 }
 
+// Saved defaults (js/facebookPostSettings.js), kept so Save as Default can write the watermark
+// back without touching the caption directions that live in AI Bot Setup.
+let savedSettings = null;
+
+function applyWatermarkSettings(s) {
+  document.getElementById('fbWatermarkOn').checked = s.watermarkEnabled;
+  document.getElementById('fbWatermarkStyle').value = s.watermarkStyle;
+  document.getElementById('fbWatermarkPosition').value = s.watermarkPosition;
+  document.getElementById('fbWatermarkPosition').classList.toggle('hidden', s.watermarkStyle !== 'badge');
+  document.getElementById('fbWatermarkSize').value = s.watermarkSize;
+  document.getElementById('fbWatermarkOpacity').value = s.watermarkOpacity;
+  document.getElementById('fbWatermarkKnockout').checked = s.watermarkKnockout;
+  document.getElementById('fbWatermarkText').value = s.watermarkText;
+}
+
+async function saveWatermarkAsDefault() {
+  const btn = document.getElementById('fbSaveDefaultBtn');
+  const msgEl = document.getElementById('fbSaveDefaultMsg');
+  // Not loaded yet - saving now would blank the caption directions.
+  if (!savedSettings) return;
+  const o = getWatermarkOptions();
+  btn.disabled = true;
+  msgEl.textContent = '';
+  try {
+    const settings = {
+      ...savedSettings,
+      watermarkEnabled: o.enabled,
+      watermarkStyle: o.style,
+      watermarkPosition: o.position,
+      watermarkSize: Math.round(o.size * 100),
+      watermarkOpacity: Math.round(o.opacity * 100),
+      watermarkKnockout: o.knockout,
+      watermarkText: o.text
+    };
+    const message = await saveFacebookPostSettings(currentSession, settings);
+    if (message) {
+      showError(message);
+      return;
+    }
+    savedSettings = settings;
+    msgEl.textContent = 'Saved.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function toLocalInputValue(date) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -396,6 +442,12 @@ function toLocalInputValue(date) {
   document.getElementById('fbWatermarkStyle').addEventListener('change', () => {
     // Corner position only applies to the small badge.
     document.getElementById('fbWatermarkPosition').classList.toggle('hidden', document.getElementById('fbWatermarkStyle').value !== 'badge');
+    renderPhoto();
+  });
+  document.getElementById('fbSaveDefaultBtn').addEventListener('click', saveWatermarkAsDefault);
+  loadFacebookPostSettings().then((s) => {
+    savedSettings = s;
+    applyWatermarkSettings(s);
     renderPhoto();
   });
   loadCompanyLogo().then(renderPhoto);

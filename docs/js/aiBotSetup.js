@@ -9,6 +9,8 @@
 //     supabase/functions/chatbot-followup-dispatcher (the pg_cron-triggered function that actually
 //     detects and sends follow-ups - see supabase_chatbot_followups.sql) and by the webhook's
 //     schedule_follow_up tool.
+//   - Facebook Posts (public.FacebookPostSettings, see supabase_facebook_post_settings.sql) -
+//     standing AI caption directions + default watermark for facebook-post-test.html.
 // Same trust model as General Setup: super user status alone is enough, reusing session.password
 // captured at login (see auth.js) for the is_admin_authorized-gated RPCs below.
 let currentSession = null;
@@ -153,6 +155,49 @@ async function saveFollowUpSettings() {
   }
 }
 
+// Facebook Posts section - shared load/save in js/facebookPostSettings.js.
+async function loadFbPostSettings() {
+  const s = await loadFacebookPostSettings();
+  document.getElementById('fbCaptionDirectionsInput').value = s.captionDirections;
+  document.getElementById('fbWatermarkEnabledInput').checked = s.watermarkEnabled;
+  document.getElementById('fbWatermarkStyleInput').value = s.watermarkStyle;
+  document.getElementById('fbWatermarkSizeInput').value = s.watermarkSize;
+  document.getElementById('fbWatermarkOpacityInput').value = s.watermarkOpacity;
+  document.getElementById('fbWatermarkPositionInput').value = s.watermarkPosition;
+  document.getElementById('fbWatermarkTextInput').value = s.watermarkText;
+  document.getElementById('fbWatermarkKnockoutInput').checked = s.watermarkKnockout;
+}
+
+async function saveFbPostSettings() {
+  const errorEl = document.getElementById('fbPostSettingsError');
+  const saveBtn = document.getElementById('saveFbPostSettingsBtn');
+  errorEl.classList.add('hidden');
+
+  saveBtn.disabled = true;
+  try {
+    const message = await saveFacebookPostSettings(currentSession, {
+      captionDirections: document.getElementById('fbCaptionDirectionsInput').value.trim(),
+      watermarkEnabled: document.getElementById('fbWatermarkEnabledInput').checked,
+      watermarkStyle: document.getElementById('fbWatermarkStyleInput').value,
+      watermarkSize: document.getElementById('fbWatermarkSizeInput').value,
+      watermarkOpacity: document.getElementById('fbWatermarkOpacityInput').value,
+      watermarkPosition: document.getElementById('fbWatermarkPositionInput').value,
+      watermarkText: document.getElementById('fbWatermarkTextInput').value.trim(),
+      watermarkKnockout: document.getElementById('fbWatermarkKnockoutInput').checked
+    });
+
+    if (message) {
+      errorEl.textContent = message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    await loadFbPostSettings();
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
 function escapeHtml(value) {
   return (value ?? '').toString()
     .replace(/&/g, '&amp;')
@@ -248,10 +293,12 @@ async function updateCapabilityGapStatus(id, status) {
   document.getElementById('saveAiSettingsBtn').addEventListener('click', saveAiSettings);
   document.getElementById('saveStoreInfoBtn').addEventListener('click', saveStoreInfo);
   document.getElementById('saveFollowUpSettingsBtn').addEventListener('click', saveFollowUpSettings);
+  document.getElementById('saveFbPostSettingsBtn').addEventListener('click', saveFbPostSettings);
   document.getElementById('refreshCapabilityGapsBtn').addEventListener('click', loadCapabilityGaps);
 
   await loadAiSettings();
   await loadStoreInfo();
   await loadFollowUpSettings();
+  await loadFbPostSettings();
   await loadCapabilityGaps();
 })();

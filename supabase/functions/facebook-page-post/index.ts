@@ -3,7 +3,8 @@
 //
 //   { action: 'caption', image_base64, media_type, notes? }
 //       Claude looks at the photo (plus any staff notes - price, promo, stock) and writes a
-//       Facebook caption. Nothing is sent to Facebook.
+//       Facebook caption, following the standing FacebookPostSettings.CaptionDirections set in
+//       AI Bot Setup. Nothing is sent to Facebook.
 //
 //   { action: 'post', image_base64, media_type, caption, scheduled_at_unix? }
 //       Uploads the photo to the GMA Page via POST /{page-id}/photos. With scheduled_at_unix it is
@@ -94,12 +95,20 @@ Deno.serve(async (req) => {
     const model = Deno.env.get('CLAUDE_MODEL') || DEFAULT_MODEL;
     const notes = String(body.notes ?? '').trim();
 
+    // Standing caption directions from AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql).
+    // Optional - the table may not exist yet, in which case the built-in rules alone apply.
+    const { data: postSettings } = await supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle();
+    const directions = (postSettings?.CaptionDirections as string | undefined)?.trim();
+    const systemPrompt = directions
+      ? `${CAPTION_SYSTEM_PROMPT}\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`
+      : CAPTION_SYSTEM_PROMPT;
+
     try {
       const anthropic = new Anthropic({ apiKey: anthropicApiKey });
       const response = await anthropic.messages.create({
         model,
         max_tokens: 1024,
-        system: CAPTION_SYSTEM_PROMPT,
+        system: systemPrompt,
         messages: [{
           role: 'user',
           content: [

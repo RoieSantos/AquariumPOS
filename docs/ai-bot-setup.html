@@ -181,6 +181,68 @@
       <div class="section-divider"></div>
 
       <div class="toolbar">
+        <h2 style="margin:0;">Facebook Posts</h2>
+      </div>
+      <p class="muted">Defaults for <a href="facebook-post-test.html">Facebook Post Test</a>: what the AI should always follow when writing a post caption, and the watermark settings the page starts with.</p>
+
+      <div class="form-grid">
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="fbCaptionDirectionsInput">Caption Directions</label>
+          <textarea id="fbCaptionDirectionsInput" rows="5" placeholder="e.g. Always mention we deliver within Metro Manila and Cavite. Add our number 0917 xxx xxxx. Use #RSPetStop #AquariumPH. Keep it short, mostly English."></textarea>
+          <span class="muted" style="font-size:12px; display:block; margin-top:4px;">Used on every caption. The notes box on the post page is still there for one-off facts like this item's price or this week's promo.</span>
+        </div>
+
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="fbWatermarkEnabledInput" style="width:auto;" />
+            <span>Watermark photos</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label for="fbWatermarkStyleInput">Watermark Style</label>
+          <select id="fbWatermarkStyleInput">
+            <option value="center">Large logo, center</option>
+            <option value="tiled">Tiled logo (hardest to crop)</option>
+            <option value="badge">Small corner badge</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="fbWatermarkSizeInput">Size (% of photo width, 20-90)</label>
+          <input type="number" id="fbWatermarkSizeInput" min="20" max="90" step="5" />
+        </div>
+        <div class="form-row">
+          <label for="fbWatermarkOpacityInput">Opacity (%, 10-80)</label>
+          <input type="number" id="fbWatermarkOpacityInput" min="10" max="80" step="5" />
+        </div>
+        <div class="form-row">
+          <label for="fbWatermarkPositionInput">Badge Corner (small badge only)</label>
+          <select id="fbWatermarkPositionInput">
+            <option value="bottom-right">Bottom right</option>
+            <option value="bottom-left">Bottom left</option>
+            <option value="top-right">Top right</option>
+            <option value="top-left">Top left</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="fbWatermarkTextInput">Watermark Text</label>
+          <input type="text" id="fbWatermarkTextInput" placeholder="Blank = logo only" />
+        </div>
+        <div class="form-row">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="fbWatermarkKnockoutInput" style="width:auto;" />
+            <span>Clear the logo's white background</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="fbPostSettingsError" class="error-text hidden"></div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-success" id="saveFbPostSettingsBtn" type="button">Save Facebook Post Settings</button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="toolbar">
         <h2 style="margin:0;">Capability Gaps / Enhancement Requests</h2>
         <button class="btn btn-secondary btn-sm" id="refreshCapabilityGapsBtn" type="button" style="margin-left:auto;">Refresh</button>
       </div>
@@ -209,7 +271,8 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
   <script src="js/nav.js?v=fbpost1"></script>
-  <script src="js/aiBotSetup.js"></script>
+  <script src="js/facebookPostSettings.js?v=fbpost1"></script>
+  <script src="js/aiBotSetup.js?v=fbpost1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -109,11 +109,14 @@
         </div>
         <div class="fbpost-row fbpost-mode">
           <label>Text <input type="text" id="fbWatermarkText" value="RS Pet Stop GMA" placeholder="Optional text under the logo" /></label>
+          <button class="btn btn-secondary btn-sm" id="fbSaveDefaultBtn" type="button">Save as Default</button>
+          <span id="fbSaveDefaultMsg" class="muted" style="font-size:12px;"></span>
         </div>
         <img id="fbPhotoPreview" class="fbpost-preview hidden" alt="Selected photo" />
 
         <div>
-          <label for="fbNotesInput">2. Notes for the AI (optional)</label>
+          <label for="fbNotesInput">2. Notes for this post (optional)</label>
+          <span class="muted" style="font-size:12px; display:block; margin-bottom:4px;">One-off facts like this item's price or promo. Instructions the AI should always follow go in <a href="ai-bot-setup.html">AI Bot Setup</a> &gt; Facebook Posts.</span>
           <textarea id="fbNotesInput" rows="2" placeholder="e.g. 60-gallon tank with stand, ₱12,500, free delivery within GMA this week"></textarea>
         </div>
         <div class="fbpost-row">
@@ -149,7 +152,8 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
   <script src="js/nav.js?v=fbpost1"></script>
-  <script src="js/facebookPostTest.js?v=wm2"></script>
+  <script src="js/facebookPostSettings.js?v=fbpost1"></script>
+  <script src="js/facebookPostTest.js?v=wm3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
