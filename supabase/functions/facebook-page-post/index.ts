@@ -69,8 +69,11 @@ Reply with the caption text only - no preamble, no quotes, no options.`;
 // delivery staff photograph orders going out - each reads best framed that way.
 function posterAngle(staff: Record<string, unknown> | null): { label: string; instruction: string } {
   const roles = (staff?.StaffRoles as string[] | null) ?? [];
-  if (staff?.DeliveryTeam || roles.includes('Dispatcher')) {
-    return { label: 'Delivery', instruction: 'Taken by our delivery team: frame it as an order on its way to / delivered to a happy customer (no customer names or addresses). Mention that we deliver.' };
+  if (staff?.DeliveryTeam) {
+    return { label: 'Delivery', instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. Never give customer names or exact addresses - a city/area is fine only if it is in the staff notes. Mention that we deliver and set up.' };
+  }
+  if (roles.includes('Dispatcher')) {
+    return { label: 'Dispatch', instruction: 'Taken by our dispatcher as an order is sent out: frame it as an order on its way / ready for delivery. Do NOT mention any customer, name, address, city or destination - only the item. Mention that we deliver.' };
   }
   if (staff?.ProductionMember || roles.some((r) => ['TankMaker', 'StandMaker', 'ProductionManager'].includes(r))) {
     return { label: 'Production', instruction: 'Taken by our production team: frame it as freshly built in our own workshop, made to order in any size.' };
