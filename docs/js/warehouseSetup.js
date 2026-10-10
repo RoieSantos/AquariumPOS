@@ -10,7 +10,7 @@ function renderWarehouseRows(warehouses) {
   const tbody = document.getElementById('warehouseTableBody');
 
   if (!warehouses || warehouses.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="muted">No warehouses synced yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">No warehouses synced yet.</td></tr>';
     return;
   }
 
@@ -32,6 +32,11 @@ function renderWarehouseRows(warehouses) {
           <button class="btn btn-secondary btn-sm" data-action="save-address" data-id="${w.id}" type="button">Save</button>
           <span class="address-saved muted hidden" data-id="${w.id}">Saved</span>
         </td>
+        <td>
+          <input type="text" class="contact-input" data-id="${w.id}" value="${(w.contact_no ?? '').replace(/"/g, '&quot;')}" placeholder="09xx xxx xxxx" style="width:140px;" />
+          <button class="btn btn-secondary btn-sm" data-action="save-contact" data-id="${w.id}" type="button">Save</button>
+          <span class="contact-saved muted hidden" data-id="${w.id}">Saved</span>
+        </td>
         <td>${w.synced_at_utc ? new Date(w.synced_at_utc).toLocaleString() : '<span class="muted">Never</span>'}</td>
       </tr>
     `)
@@ -39,6 +44,9 @@ function renderWarehouseRows(warehouses) {
 
   tbody.querySelectorAll('button[data-action="save-sales-target"]').forEach((btn) => {
     btn.addEventListener('click', () => saveSalesTarget(btn.dataset.id));
+  });
+  tbody.querySelectorAll('button[data-action="save-contact"]').forEach((btn) => {
+    btn.addEventListener('click', () => saveContact(btn.dataset.id));
   });
   tbody.querySelectorAll('button[data-action="save-address"]').forEach((btn) => {
     btn.addEventListener('click', () => saveAddress(btn.dataset.id));
@@ -122,9 +130,31 @@ async function saveAddress(warehouseId) {
   setTimeout(() => savedLabel.classList.add('hidden'), 1500);
 }
 
+// The branch's contact number, shown on the Order Confirmation receipt (online-order-receipt.html,
+// sql/supabase_order_receipt_letterhead.sql).
+async function saveContact(warehouseId) {
+  const input = document.querySelector(`.contact-input[data-id="${warehouseId}"]`);
+  const savedLabel = document.querySelector(`.contact-saved[data-id="${warehouseId}"]`);
+
+  const { error } = await supabaseClient.rpc('admin_update_warehouse_contact', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_warehouse_id: warehouseId,
+    p_contact_no: input.value
+  });
+
+  if (error) {
+    window.alert(`Failed to save Contact No.: ${error.message}`);
+    return;
+  }
+
+  savedLabel.classList.remove('hidden');
+  setTimeout(() => savedLabel.classList.add('hidden'), 1500);
+}
+
 async function loadWarehouses() {
   const tbody = document.getElementById('warehouseTableBody');
-  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_warehouses', {
     p_admin_username: currentSession.username,
@@ -134,7 +164,7 @@ async function loadWarehouses() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
     return;
   }
 

@@ -1074,7 +1074,7 @@ function renderConversationOrderCards() {
           ` : ''}
           <div class="inbox-order-print-row">
             <a href="online-order-receipt.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Order Confirmation</a>
-            <a href="gma-order-invoice.html?order=${encodeURIComponent(o.order_no)}" target="_blank" rel="noopener">Invoice</a>
+            <a href="gma-order-invoice.html?order=${encodeURIComponent(o.order_no)}" onclick="window.open(this.href, '_blank'); return false;">Invoice</a>
           </div>
           <div class="inbox-order-send-row">
             <span>Send to customer:</span>
