@@ -40,6 +40,8 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
+// Small, cheap model for pulling just the city out of a delivery address (deliveryCity).
+const CITY_MODEL = 'claude-haiku-4-5-20251001';
 const DEFAULT_GRAPH_VERSION = 'v21.0';
 const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const PHOTO_BUCKET = 'online-order-status-photos';
@@ -86,7 +88,7 @@ Reply with the caption text only - no preamble, no quotes, no options.`;
 type PostAngle = { label: string; instruction: string; openings?: string[] };
 type Staff = Record<string, unknown> | null;
 
-const DELIVERY_ANGLE: PostAngle = { label: 'Delivery', openings: ['Delivery Done! ✅', 'Setup Done! ✅'], instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. Never give customer names or exact addresses - a city/area is fine only if it is in the staff notes. Mention that we deliver and set up.' };
+const DELIVERY_ANGLE: PostAngle = { label: 'Delivery', openings: ['Delivery Done! ✅', 'Setup Done! ✅'], instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. If the staff notes give a "Delivered to" city, mention it naturally (e.g. "delivered to our customer in Marikina") - the city only. Never give customer names, streets, barangays, subdivisions or house numbers, and never name a place that is not in the notes. Mention that we deliver and set up.' };
 
 // `context: 'delivery_done'` (Mark Done on a delivery stop, delivery.html) always uses the
 // Delivery angle, whoever is logged in.
@@ -199,6 +201,52 @@ async function writeCaption(
     caption = `${angle.openings[0]}\n${caption}`;
   }
   return { caption, angle: angle.label, branch: branchName };
+}
+
+// Per "can you include the main address (dont include the complete address) ... the city only":
+// the stop's address as the driver sees it (stop's manual address, else the order's / draft AO's
+// shipping address, else the map address for a walk-in), reduced to just the city / municipality
+// by a separate text-only call - so the caption writer only ever sees the city, never the full
+// address. null when there's no usable address or the city isn't clear (caption leaves it out).
+async function deliveryCity(supabase: SupabaseClient, stop: Record<string, unknown>): Promise<string | null> {
+  const clean = (v: unknown) => {
+    const s = typeof v === 'string' ? v.trim() : '';
+    return s && s.toLowerCase() !== 'walkin' ? s : null;
+  };
+  let address = clean(stop.ManualAddress);
+  if (!address && stop.OrderID) {
+    const { data } = await supabase.from('OnlineOrders').select('"ShippingAddress"').eq('OrderID', stop.OrderID).maybeSingle();
+    address = clean(data?.ShippingAddress);
+  }
+  if (!address && stop.AutomatedOrderNo) {
+    const { data } = await supabase.from('AutomatedOrders').select('"DeliveryAddress"').eq('OrderNo', stop.AutomatedOrderNo).maybeSingle();
+    address = clean(data?.DeliveryAddress);
+  }
+  address = address || clean(stop.GeocodedAddress);
+  const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!address || !anthropicApiKey) return null;
+
+  try {
+    const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+    const response = await anthropic.messages.create({
+      model: CITY_MODEL,
+      max_tokens: 20,
+      system: 'You are given a delivery address in the Philippines. Reply with ONLY the city or municipality name, in its usual short form (e.g. "Marikina", "Malabon", "Dasmariñas", "General Trias", "Quezon City"). No barangay, street, subdivision, province or country. If you cannot tell, reply NONE.',
+      messages: [{ role: 'user', content: address }]
+    });
+    const city = response.content
+      .filter((block) => block.type === 'text')
+      .map((block) => (block as { text: string }).text)
+      .join(' ')
+      .trim()
+      .replace(/^["']|["'.]$/g, '');
+    // Only a plain place name gets through - never anything that looks like part of an address.
+    if (!city || /^none$/i.test(city) || city.length > 40 || /\d|,|\b(brgy|barangay|street|st\.|blk|lot|purok|subd)\b/i.test(city)) return null;
+    return city;
+  } catch (err) {
+    console.error(`Delivery city lookup failed: ${errorText(err)}`);
+    return null;
+  }
 }
 
 // One POST /{page-id}/photos - the only place this code publishes to Facebook. No retry. Throws on
@@ -390,7 +438,10 @@ Deno.serve(async (req) => {
     const { data: blob, error: downloadError } = await supabase.storage.from(PHOTO_BUCKET).download(claim.photo_storage_path);
     if (downloadError || !blob) throw new Error(`Could not load the saved photo: ${downloadError?.message ?? 'not found'}`);
     const photoBytes = new Uint8Array(await blob.arrayBuffer());
-    caption = (await writeCaption(supabase, staff, 'delivery_done', '', bytesToBase64(photoBytes), 'image/jpeg')).caption;
+    // City only (deliveryCity) - the caption writer never sees the full address.
+    const { data: stop } = await supabase.from('DeliveryStops').select('*').eq('StopID', stopId).maybeSingle();
+    const city = stop ? await deliveryCity(supabase, stop) : null;
+    caption = (await writeCaption(supabase, staff, 'delivery_done', city ? `Delivered to: ${city}` : '', bytesToBase64(photoBytes), 'image/jpeg')).caption;
     const posted = await postPhotoToFacebook(photoBytes, 'image/jpeg', caption, null);
     // Record the post right away - this is what stops a second post.
     await finish({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption });
