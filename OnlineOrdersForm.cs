@@ -1126,7 +1126,8 @@ WHERE OrderID = @OrderID
                 }
             };
 
-            statusMenu.Items.AddRange(new ToolStripItem[] { submittedItem, newItem, confirmedItem, pendingTransferItem, inTransitItem, receivedItem, productionDoneItem, toShipItem, shippedItem, printedItem });
+            // No "Shipped" item - Shipped is set on the Web Portal only (see ShipOnPortalMessage).
+            statusMenu.Items.AddRange(new ToolStripItem[] { submittedItem, newItem, confirmedItem, pendingTransferItem, inTransitItem, receivedItem, productionDoneItem, toShipItem, printedItem });
             // Ensure the top panel is added before the grid so it remains at the top of the z-order
             Controls.Add(topPanel);
 
@@ -1272,15 +1273,14 @@ WHERE OrderID = @OrderID
                     }
 
                     // Only accept transitions to the actionable states from the UI.
-                    // In Online Orders, manual change is limited to Shipped only.
+                    // Shipped is never set here - it's done on the Web Portal (ShipOnPortalMessage), so
+                    // In Online Orders (current location) there is no manual change at all.
                     bool isAllowedManualStatus = _showNonCurrentLocationsOnly
-                        ? string.Equals(newStatus, "To Ship", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(newStatus, "Shipped", StringComparison.OrdinalIgnoreCase)
+                        && (string.Equals(newStatus, "To Ship", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(newStatus, "Pending Transfer", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(newStatus, "In-Transit", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(newStatus, "Received", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(newStatus, "Production Done", StringComparison.OrdinalIgnoreCase)
-                        : string.Equals(newStatus, "Shipped", StringComparison.OrdinalIgnoreCase);
+                            || string.Equals(newStatus, "Production Done", StringComparison.OrdinalIgnoreCase));
 
                     if (!isAllowedManualStatus)
                     {
@@ -1288,9 +1288,9 @@ WHERE OrderID = @OrderID
                         try
                         {
                             MessageBox.Show(
-                                _showNonCurrentLocationsOnly
-                                    ? "You can only change status from this grid to 'To Ship', 'Shipped', 'Pending Transfer', 'In-Transit', 'Received' or 'Production Done'. Use the context menu or sync for other status changes."
-                                    : "In Online Orders, manual status change is only allowed to 'Shipped'.",
+                                IsShippedStatus(newStatus) || !_showNonCurrentLocationsOnly
+                                    ? ShipOnPortalMessage
+                                    : "You can only change status from this grid to 'To Ship', 'Pending Transfer', 'In-Transit', 'Received' or 'Production Done'. Use the context menu or sync for other status changes.",
                                 "Invalid Status",
                                 MessageBoxButtons.OK,
                                 MessageBoxIcon.Warning);
@@ -1707,6 +1707,12 @@ WHERE OrderID = @OrderID", conn);
         private Task ChangeOrderStatusAsync(int rowIndex, string orderId, string newStatus)
         {
             if (string.IsNullOrWhiteSpace(orderId)) return Task.CompletedTask;
+            // Safety net: Shipped is set on the Web Portal only (ShipOnPortalMessage) - never from the POS.
+            if (IsShippedStatus(newStatus))
+            {
+                try { System.Diagnostics.Trace.TraceWarning($"Blocked POS status change to Shipped for {orderId} - ship on the Web Portal."); } catch { }
+                return Task.CompletedTask;
+            }
             UpdateOrderStatusLocal(rowIndex, orderId, newStatus);
 
             // Call upstream API but don't block UI — capture exceptions to trace
@@ -1778,21 +1784,7 @@ WHERE OrderID = @OrderID", conn);
 
                 if (markAsShipped)
                 {
-                    if (!CanManuallyChangeStatusForRow(idx, out var shippedMessage))
-                    {
-                        try { MessageBox.Show(shippedMessage, "Invalid Operation", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
-                        return;
-                    }
-
-                    try
-                    {
-                        var confirmShip = MessageBox.Show("Mark this order as shipped?", "Shipped", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                        if (confirmShip != DialogResult.Yes)
-                            return;
-                    }
-                    catch { }
-
-                    await ChangeOrderStatusAsync(idx, orderId, "Shipped").ConfigureAwait(false);
+                    ShowShipOnPortalMessage();
                     return;
                 }
 
@@ -3498,6 +3490,22 @@ WHERE Code = @Code
             }
         }
 
+        // Per "i want to control it on the PORTAL": the POS never marks an order Shipped. The Web Portal
+        // does it (Online Orders -> Release / Ship, with the proof photo, the Dispatcher record and the
+        // GMA Facebook post). Walk-in sales still go to Pancake as Shipped when they're created.
+        private const string ShipOnPortalMessage =
+            "Shipped is now set on the Web Portal only.\n\n" +
+            "Open Online Orders on the portal -> Release / Ship (take the photo of what is leaving). " +
+            "The POS can't mark orders Shipped.";
+
+        private static bool IsShippedStatus(string status) =>
+            string.Equals(status?.Trim(), "Shipped", StringComparison.OrdinalIgnoreCase);
+
+        private void ShowShipOnPortalMessage()
+        {
+            try { MessageBox.Show(ShipOnPortalMessage, "Ship on the Web Portal", MessageBoxButtons.OK, MessageBoxIcon.Information); } catch { }
+        }
+
         private const string CustomOrderPortalOnlyMessage =
             "Order {0} has custom item(s) (custom aquarium / stand / sump).\n\n" +
             "Custom orders are handled on the Web Portal: Online Orders -> Assign the Tank / Stand Maker, " +
@@ -3743,7 +3751,7 @@ WHERE Code = @Code
                 }
 
                 productionDoneButton.Visible = isProductionWarehouse;
-                productionDoneButton.Text = ShouldUseShippedButtonText() ? "Shipped" : "Production Done";
+                productionDoneButton.Text = ShouldUseShippedButtonText() ? "Ship on Portal" : "Production Done";
             }
             catch { }
         }
@@ -3796,7 +3804,7 @@ WHERE Code = @Code
                 }
 
                 toShipButton.Visible = hasCurrentWarehouse && !isProductionWarehouse;
-                toShipButton.Text = ShouldUseShippedButtonText() ? "Shipped" : "To Ship";
+                toShipButton.Text = ShouldUseShippedButtonText() ? "Ship on Portal" : "To Ship";
             }
             catch { }
         }
@@ -3935,24 +3943,7 @@ WHERE Code = @Code
                 string currentStatus = GetStatusForRow(idx);
                 if (string.Equals(currentStatus, "To Ship", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!CanManuallyChangeStatusForRow(idx, out var shippedMessage))
-                    {
-                        try { MessageBox.Show(shippedMessage, "Invalid Operation", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
-                        return;
-                    }
-
-                    string orderId = GetOrderIdForRow(idx);
-                    if (string.IsNullOrWhiteSpace(orderId)) return;
-
-                    try
-                    {
-                        var confirmShip = MessageBox.Show("Mark this order as shipped?", "Shipped", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                        if (confirmShip != DialogResult.Yes)
-                            return;
-                    }
-                    catch { }
-
-                    await ChangeOrderStatusAsync(idx, orderId, "Shipped").ConfigureAwait(false);
+                    ShowShipOnPortalMessage();
                     return;
                 }
 

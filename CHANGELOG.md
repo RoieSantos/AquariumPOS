@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- **Delivery route view: tap a stop card for details, and see the balance.** Tapping anywhere on a stop card now opens Order Details; Mark Done and the other buttons keep their own action. Each card and the details popup show "Balance to collect: ₱…", or a green "Fully paid" badge when nothing is owed. This uses the balance the stops list already returns, adjusted for any manual delivery fee. Item prices stay hidden. [delivery.js](docs/js/delivery.js) `v=balance1`, no SQL.
+
+- Read-only check [supabase_check_dispatcher_order_visibility.sql](sql/supabase_check_dispatcher_order_visibility.sql): shows why a To Ship order (114426) is hidden from a Dispatcher. It checks each Dispatcher's role, status and exact warehouse-name match, and whether the live list function still has the Dispatcher rule.
+
+- **POS can no longer mark online orders Shipped. The Web Portal controls it.** In [OnlineOrdersForm.cs](OnlineOrdersForm.cs), the "Shipped" right-click item is removed. Typing Shipped in the Status cell is refused. The To Ship / Production Done button on a To Ship order now reads "Ship on Portal" and points staff to Online Orders → Release / Ship. `ChangeOrderStatusAsync` also blocks Shipped as a safety net. Walk-in sales still go to Pancake as Shipped when created.
+
 - **Dispatcher ship photo auto-posts to the GMA Facebook Page.** When a Dispatcher fully ships a GMA-branch online order (Mark Shipped / Release All; not a partial release), the proof photo they took is watermarked and posted with the Dispatch caption (the item only, no customer, address or city). Posted at most once per order, and the server re-checks Shipped + GMA. A Facebook failure never undoes Shipped. New `post_ship` action in [facebook-page-post](supabase/functions/facebook-page-post/index.ts), [supabase_online_order_ship_post.sql](sql/supabase_online_order_ship_post.sql), [onlineOrders.js](docs/js/onlineOrders.js) / [proofPhoto.js](docs/js/proofPhoto.js) `v=shippost1`.
 
 ## 2026-10-10

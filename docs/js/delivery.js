@@ -462,15 +462,18 @@ async function renderDriverRouteView(dateKey) {
     // note (falls back to line-level notes, admin_list_delivery_stops' note_print column), shown
     // as its own line separate from the staff-typed "Note" (DeliveryStops."Notes") above it -
     // same distinction as the desktop Stops table's "Print Note" column.
+    // Per "show the details once the box has been clicked or tap" - the whole card opens Order
+    // Details (wireDriverRouteNav), not only the order-id button.
     cardsEl.innerHTML = vendorCardsHtml + stops.map((s) => {
       const displayAddress = isPlaceholderAddress(s.shipping_address) ? (s.geocoded_address || '') : s.shipping_address;
       return `
-        <div class="driver-stop-card">
+        <div class="driver-stop-card driver-stop-card-tappable" data-stop-id="${s.stop_id}" style="cursor:pointer;">
           <div class="driver-stop-card-header">
             <button type="button" class="driver-stop-order-id" data-stop-id="${s.stop_id}">${s.order_id || ''}</button>
             ${s.status ? `<span class="badge badge-primary">${s.status}</span>` : ''}
           </div>
           <div class="driver-stop-customer">${s.customer_name || ''}</div>
+          ${driverBalanceHtml(s.balance)}
           <div class="driver-stop-address">&#128205; ${displayAddress || '<span class="muted">No address on file</span>'}</div>
           ${s.route_name ? `<div class="driver-stop-route muted">&#128666; Route: ${s.route_name}</div>` : ''}
           ${s.notes ? `<div class="driver-stop-notes muted">&#128221; Note: ${s.notes}</div>` : ''}
@@ -485,6 +488,19 @@ async function renderDriverRouteView(dateKey) {
   }
 
   await renderDayMap(stops, dateKey, 'driverRouteMap');
+}
+
+// Per "show in the view the actual balance of the customer ? show Fully paid if they are fully paid
+// already" - the order's balance as admin_list_delivery_stops / admin_get_delivery_receipt return it
+// (already adjusted for a manual delivery fee). Only the amount left to collect - item prices stay
+// hidden from the driver. Unknown (null) shows nothing.
+function driverBalanceHtml(balance) {
+  if (balance === null || balance === undefined || balance === '') return '';
+  const amount = Number(balance);
+  if (!Number.isFinite(amount)) return '';
+  if (amount <= 0) return '<div class="driver-stop-balance" style="margin:2px 0 6px;"><span class="badge badge-success">&#9989; Fully paid</span></div>';
+  const peso = amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `<div class="driver-stop-balance" style="margin:2px 0 6px;"><span class="badge badge-warning">&#128176; Balance to collect: &#8369;${peso}</span></div>`;
 }
 
 // --- Mark Done -------------------------------------------------------------------------------
@@ -702,9 +718,14 @@ function wireDriverRouteNav() {
   document.getElementById('driverPrevDayBtn').addEventListener('click', () => changeDriverDay(-1));
   document.getElementById('driverNextDayBtn').addEventListener('click', () => changeDriverDay(1));
 
+  // A tap anywhere on a stop card opens its details - except on the card's own buttons and links
+  // (Mark Done, Post to Facebook, View post), which keep doing their own thing.
   document.getElementById('driverStopCards').addEventListener('click', (e) => {
     const btn = e.target.closest('.driver-stop-order-id');
-    if (btn) openDriverOrderDetail(btn.dataset.stopId);
+    if (btn) { openDriverOrderDetail(btn.dataset.stopId); return; }
+    if (e.target.closest('button, a, input, label')) return;
+    const card = e.target.closest('.driver-stop-card-tappable');
+    if (card) openDriverOrderDetail(card.dataset.stopId);
   });
 
   document.getElementById('driverOrderDetailCloseBtn').addEventListener('click', closeDriverOrderDetail);
@@ -715,8 +736,8 @@ function wireDriverRouteNav() {
 // by supabase_delivery_receipt_line_details.sql to also return each line's line_id/line_note),
 // keyed by stop_id rather than order_id since that's what a DeliveryStops row is identified by.
 // It already omits per-line price/unit cost entirely (Description/Quantity/Note only) - the only
-// money field it returns is delivery_fee, which is deliberately left unrendered below so nothing
-// price-related reaches the driver's screen. Attachments reuse the existing
+// price shown is the order's balance to collect (driverBalanceHtml, "Fully paid" at zero) - item
+// prices and delivery_fee stay unrendered. Attachments reuse the existing
 // admin_list_online_order_line_attachments RPC (same one Online Order Lines uses), matched to
 // each line via line_id.
 function isDriverAttachmentImage(fileName) {
@@ -773,6 +794,7 @@ async function openDriverOrderDetail(stopId) {
 
   body.innerHTML = `
     <div class="driver-detail-row"><strong>Customer:</strong> ${header.customer_name || ''}</div>
+    ${driverBalanceHtml(header.balance)}
     <div class="driver-detail-row"><strong>Phone:</strong> ${header.shipping_phone || '<span class="muted">Not on file</span>'}</div>
     <div class="driver-detail-row"><strong>Address:</strong> ${header.shipping_address || '<span class="muted">Not on file</span>'}</div>
     ${header.note_print ? `<div class="driver-detail-row"><strong>Notes:</strong> ${header.note_print}</div>` : ''}
