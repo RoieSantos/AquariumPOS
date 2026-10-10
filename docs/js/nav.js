@@ -256,6 +256,8 @@ function renderTopNav(activeLabel) {
   if (isSuperUser) {
     admin.push({ href: 'customers.html', label: 'Customers' });
     admin.push({ href: 'ai-bot-sandbox.html', label: 'AI Bot Sandbox' });
+    // Prototype automated Facebook posting (supabase/functions/facebook-page-post).
+    admin.push({ href: 'facebook-post-test.html', label: 'Facebook Post Test' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
     admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
