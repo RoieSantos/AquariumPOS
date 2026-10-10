@@ -44,9 +44,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const CAPTION_SYSTEM_PROMPT = `You write Facebook Page posts for RS Pet Stop GMA, an aquarium and pet supply store in the Philippines (custom aquariums, stands, fish, and aquarium/pet supplies).
 
-Write ONE ready-to-post caption for the photo you are given:
+Write ONE ready-to-post caption for the photo you are given. It must be about BOTH what is actually in the photo AND this business - a post this store would make about something it sells, builds or offers:
 - Friendly, upbeat, natural - English with light, casual Taglish is fine. Sound like a local shop, not an ad agency.
-- Open with a short hook line, then 1-3 short lines about what is in the photo.
+- Open with a short hook line, then 1-3 short lines about what is in the photo and why it matters to a customer of this store (e.g. available here, made to order, can be delivered).
+- If the photo shows something unclear or unrelated to the store, keep the description general rather than guessing what it is.
 - Use the staff notes for facts (prices, promos, stock, sizes). NEVER invent a price, discount, size or stock count that is not in the notes.
 - End with a call to action to message the Page to order or ask.
 - A few relevant emojis (not one per line) and 3-6 hashtags on the last line, including #RSPetStop.
@@ -95,13 +96,38 @@ Deno.serve(async (req) => {
     const model = Deno.env.get('CLAUDE_MODEL') || DEFAULT_MODEL;
     const notes = String(body.notes ?? '').trim();
 
-    // Standing caption directions from AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql).
-    // Optional - the table may not exist yet, in which case the built-in rules alone apply.
-    const { data: postSettings } = await supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle();
+    // Every caption is grounded in the real business (General Setup's CompanyInfo + AI Bot Setup's
+    // Store Info, the same facts Alice uses) AND the photo. Standing caption directions come from
+    // AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql) - optional, the table
+    // may not exist yet.
+    const [{ data: company }, { data: storeInfo }, { data: postSettings }] = await Promise.all([
+      supabase.from('CompanyInfo').select('*').eq('Id', 1).maybeSingle(),
+      supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
+      supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle()
+    ]);
+    const businessFacts = [
+      ['Business name', company?.CompanyName],
+      ['Address', company?.Address],
+      ['Contact number', company?.ContactNo],
+      ['Facebook', company?.FacebookUrl],
+      ['Business hours', storeInfo?.BusinessHours],
+      ['Delivery', storeInfo?.DeliveryPolicy],
+      ['Payment methods', storeInfo?.PaymentMethods],
+      ['Pickup locations', storeInfo?.PickupLocations],
+      ['Other store info', storeInfo?.AdditionalNotes]
+    ]
+      .filter(([, value]) => typeof value === 'string' && value.trim())
+      .map(([label, value]) => `- ${label}: ${(value as string).trim()}`)
+      .join('\n');
     const directions = (postSettings?.CaptionDirections as string | undefined)?.trim();
-    const systemPrompt = directions
-      ? `${CAPTION_SYSTEM_PROMPT}\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`
-      : CAPTION_SYSTEM_PROMPT;
+
+    let systemPrompt = CAPTION_SYSTEM_PROMPT;
+    if (businessFacts) {
+      systemPrompt += `\n\nAbout the business (real facts - use the ones that fit this post, e.g. delivery or how to order; never contradict them or invent others):\n${businessFacts}`;
+    }
+    if (directions) {
+      systemPrompt += `\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`;
+    }
 
     try {
       const anthropic = new Anthropic({ apiKey: anthropicApiKey });

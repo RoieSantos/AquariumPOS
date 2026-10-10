@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quick Post - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=sky1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .qp-wrap {
+      max-width: 560px;
+      margin: 12px auto 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .qp-big-btn {
+      width: 100%;
+      padding: 16px;
+      font-size: 17px;
+      font-weight: 600;
+      border-radius: 10px;
+    }
+    .qp-pick {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .qp-pick input[type="file"] {
+      display: none;
+    }
+    .qp-preview {
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+      border: 1px solid var(--panel-border);
+      display: block;
+    }
+    .qp-status {
+      text-align: center;
+      font-size: 14px;
+      color: var(--muted-text, #61738f);
+    }
+    .qp-wrap textarea {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 15px;
+    }
+    .qp-row {
+      display: flex;
+      gap: 8px;
+    }
+    .qp-row > * {
+      flex: 1;
+    }
+    .qp-result {
+      padding: 14px;
+      border-radius: 10px;
+      background: #eaf6ec;
+      color: #1d5b2a;
+      font-size: 15px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Quick Post</h1>
+    <p class="muted">Snap a photo and post it to the GMA Facebook Page. The watermark and caption rules come from <a href="ai-bot-setup.html">AI Bot Setup</a> &gt; Facebook Posts.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="qpContent" class="qp-wrap hidden">
+      <!-- Step 1: pick a photo -->
+      <div id="qpPickStep" class="qp-pick">
+        <label class="btn btn-primary qp-big-btn" for="qpCameraInput">📷 Take Photo</label>
+        <input type="file" id="qpCameraInput" accept="image/*" capture="environment" />
+        <label class="btn btn-secondary qp-big-btn" for="qpGalleryInput">🖼️ Choose from Gallery</label>
+        <input type="file" id="qpGalleryInput" accept="image/*" />
+      </div>
+
+      <!-- Step 2: review the watermarked photo + AI caption, then post -->
+      <div id="qpReviewStep" class="qp-wrap hidden" style="margin-top:0;">
+        <img id="qpPreview" class="qp-preview" alt="Photo to post" />
+        <div id="qpStatus" class="qp-status"></div>
+        <textarea id="qpCaption" rows="8" placeholder="The AI caption appears here - you can edit it."></textarea>
+        <textarea id="qpNotes" rows="2" placeholder="Optional: price, promo... then tap Rewrite"></textarea>
+        <div class="qp-row">
+          <button class="btn btn-secondary" id="qpRewriteBtn" type="button">Rewrite Caption</button>
+          <button class="btn btn-secondary" id="qpRetakeBtn" type="button">Retake</button>
+        </div>
+        <button class="btn btn-success qp-big-btn" id="qpPostBtn" type="button" disabled>Post Now</button>
+      </div>
+
+      <!-- Step 3: done -->
+      <div id="qpDoneStep" class="qp-wrap hidden" style="margin-top:0;">
+        <div id="qpResult" class="qp-result"></div>
+        <button class="btn btn-primary qp-big-btn" id="qpAnotherBtn" type="button">Post Another</button>
+      </div>
+
+      <div id="qpError" class="error-text hidden"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=all1"></script>
+  <script src="js/nav.js?v=qp1"></script>
+  <script src="js/facebookPostSettings.js?v=fbpost1"></script>
+  <script src="js/facebookPostShared.js?v=qp1"></script>
+  <script src="js/quickPost.js?v=qp1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

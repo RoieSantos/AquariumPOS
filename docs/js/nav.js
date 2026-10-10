@@ -258,6 +258,8 @@ function renderTopNav(activeLabel) {
     admin.push({ href: 'ai-bot-sandbox.html', label: 'AI Bot Sandbox' });
     // Prototype automated Facebook posting (supabase/functions/facebook-page-post).
     admin.push({ href: 'facebook-post-test.html', label: 'Facebook Post Test' });
+    // Phone flow: snap a photo -> auto watermark + AI caption -> Post Now.
+    admin.push({ href: 'quick-post.html', label: 'Quick Post' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
     admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
