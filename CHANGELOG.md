@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-10
 
+- **Facebook Post Test writes the caption automatically** once a photo is picked, like Quick Post already does. "Write Caption with AI" now redoes it, e.g. after adding notes ([facebookPostTest.js](docs/js/facebookPostTest.js) `v=auto1`).
 - **Fix: Delivery Team captions ignored "Delivery Done / Setup Done".** The role angle was buried mid-prompt, under the example caption and the standing directions. It now goes last as a REQUIRED rule and is repeated with the photo. For Delivery Team, the server adds "Delivery Done! ✅" if the caption doesn't start with Delivery/Setup Done ([facebook-page-post](supabase/functions/facebook-page-post/index.ts)).
 - **Quick Post shared with the Delivery Team.** Delivery Team users get **Quick Post** in their short menu and can open it ([auth.js](docs/js/auth.js) allowed pages, [nav.js](docs/js/nav.js), [quickPost.js](docs/js/quickPost.js)). [facebook-page-post](supabase/functions/facebook-page-post/index.ts) now checks `is_staff_authorized` + StaffUsers Super User or Delivery Team, instead of admin only. Facebook Post Test and the settings stay super-user only. `auth.js` / `nav.js?v=qpdel1` on every page.
 - **AI captions: Delivery and Dispatch angles split.** Delivery Team posts open with "Delivery Done! ✅" / "Setup Done! ✅" (a city/area only if it's in the notes). Dispatcher posts read as "on its way" with no customer, name, address or destination ([facebook-page-post](supabase/functions/facebook-page-post/index.ts)).

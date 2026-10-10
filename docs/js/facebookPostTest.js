@@ -59,9 +59,15 @@ async function onPhotoSelected(e) {
     renderPhoto();
   } catch (err) {
     showError(err.message);
+    return;
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+
+  // Same as Quick Post: write the caption straight away (Write Caption with AI re-runs it,
+  // e.g. after adding notes).
+  document.getElementById('fbCaptionInput').value = '';
+  await writeCaption();
 }
 
 async function writeCaption() {
