@@ -44,16 +44,42 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const CAPTION_SYSTEM_PROMPT = `You write Facebook Page posts for RS Pet Stop GMA, an aquarium and pet supply store in the Philippines (custom aquariums, stands, fish, and aquarium/pet supplies).
 
-Write ONE ready-to-post caption for the photo you are given. It must be about BOTH what is actually in the photo AND this business - a post this store would make about something it sells, builds or offers:
+Write ONE ready-to-post caption for the photo you are given. It must be about BOTH what is in the photo AND this business - a post this store would make about something it sells, builds or offers.
+
+Keep it HIGH LEVEL - do not over-describe the photo:
+- Name what it is in a few words only (e.g. "Custom aquarium set with stand and sump"). Do NOT describe backgrounds, decorations, colors, tiles, covers, filter media, parts or what is lying around.
+- 2-3 short lines in total, then a call to action to message the Page to order or ask.
+- If the photo is unclear or unrelated to the store, keep it general rather than guessing what it is.
+
+Style:
 - Friendly, upbeat, natural - English with light, casual Taglish is fine. Sound like a local shop, not an ad agency.
-- Open with a short hook line, then 1-3 short lines about what is in the photo and why it matters to a customer of this store (e.g. available here, made to order, can be delivered).
-- If the photo shows something unclear or unrelated to the store, keep the description general rather than guessing what it is.
 - Use the staff notes for facts (prices, promos, stock, sizes). NEVER invent a price, discount, size or stock count that is not in the notes.
-- End with a call to action to message the Page to order or ask.
-- A few relevant emojis (not one per line) and 3-6 hashtags on the last line, including #RSPetStop.
-- Keep it under about 600 characters.
+- A few relevant emojis (not one per line) and 2-4 hashtags on the last line, including #RSPetStop.
+- Keep it under about 300 characters.
+
+Example of the right level of detail:
+Bagong gawa! 🐟 Custom aquarium set with stand and built-in sump filter - ready for its new home.
+Message us to order yours! 📩
+#RSPetStop #CustomAquarium #AquariumPH
 
 Reply with the caption text only - no preamble, no quotes, no options.`;
+
+// Caption angle by who took the photo (StaffUsers flags/roles), checked in this order. Production
+// staff photograph freshly built tanks, store staff photograph what's on display at their branch,
+// delivery staff photograph orders going out - each reads best framed that way.
+function posterAngle(staff: Record<string, unknown> | null): { label: string; instruction: string } {
+  const roles = (staff?.StaffRoles as string[] | null) ?? [];
+  if (staff?.DeliveryTeam || roles.includes('Dispatcher')) {
+    return { label: 'Delivery', instruction: 'Taken by our delivery team: frame it as an order on its way to / delivered to a happy customer (no customer names or addresses). Mention that we deliver.' };
+  }
+  if (staff?.ProductionMember || roles.some((r) => ['TankMaker', 'StandMaker', 'ProductionManager'].includes(r))) {
+    return { label: 'Production', instruction: 'Taken by our production team: frame it as freshly built in our own workshop, made to order in any size.' };
+  }
+  if (staff?.StoreManager || staff?.SalesUser) {
+    return { label: 'Store', instruction: 'Taken by our store staff: frame it as available now at the branch below - invite people to visit or message to reserve.' };
+  }
+  return { label: 'General', instruction: 'General store post: frame it as something we offer.' };
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
@@ -100,11 +126,21 @@ Deno.serve(async (req) => {
     // Store Info, the same facts Alice uses) AND the photo. Standing caption directions come from
     // AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql) - optional, the table
     // may not exist yet.
-    const [{ data: company }, { data: storeInfo }, { data: postSettings }] = await Promise.all([
+    // Who is posting - read from StaffUsers by the username that just passed is_admin_authorized,
+    // never from anything the browser claims (not verify_login, which bumps login counters).
+    const [{ data: company }, { data: storeInfo }, { data: postSettings }, { data: staff }] = await Promise.all([
       supabase.from('CompanyInfo').select('*').eq('Id', 1).maybeSingle(),
       supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
-      supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle()
+      supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle(),
+      supabase.from('StaffUsers')
+        .select('"WarehouseName", "StaffRoles", "ProductionMember", "StoreManager", "SalesUser", "DeliveryTeam"')
+        .eq('Username', adminUsername).maybeSingle()
     ]);
+    const branchName = (staff?.WarehouseName as string | undefined)?.trim() || null;
+    const { data: branch } = branchName
+      ? await supabase.from('Warehouses').select('"Name", "Address", "ContactNo"').eq('Name', branchName).maybeSingle()
+      : { data: null };
+    const angle = posterAngle(staff);
     const businessFacts = [
       ['Business name', company?.CompanyName],
       ['Address', company?.Address],
@@ -124,6 +160,13 @@ Deno.serve(async (req) => {
     let systemPrompt = CAPTION_SYSTEM_PROMPT;
     if (businessFacts) {
       systemPrompt += `\n\nAbout the business (real facts - use the ones that fit this post, e.g. delivery or how to order; never contradict them or invent others):\n${businessFacts}`;
+    }
+    systemPrompt += `\n\nAngle for this post: ${angle.instruction}`;
+    if (branchName) {
+      const branchFacts = [`- Branch: RS Pet Stop ${branch?.Name || branchName}`];
+      if (branch?.Address) branchFacts.push(`- Branch address: ${branch.Address}`);
+      if (branch?.ContactNo) branchFacts.push(`- Branch contact: ${branch.ContactNo}`);
+      systemPrompt += `\nThe photo was taken at this branch - mention the branch name, and prefer its contact number over the main one:\n${branchFacts.join('\n')}`;
     }
     if (directions) {
       systemPrompt += `\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`;
@@ -148,7 +191,7 @@ Deno.serve(async (req) => {
         .map((block) => (block as { text: string }).text)
         .join('\n')
         .trim();
-      return jsonResponse({ ok: true, caption });
+      return jsonResponse({ ok: true, caption, angle: angle.label, branch: branchName });
     } catch (err) {
       return jsonResponse({ error: `Caption failed: ${err instanceof Error ? err.message : String(err)}` }, 500);
     }

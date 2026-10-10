@@ -70,7 +70,9 @@ async function writeCaption() {
     });
     if (requestId !== captionRequestId) return;
     document.getElementById('qpCaption').value = result.caption || '';
-    setStatus('Check the caption, then tap Post Now.');
+    // The angle comes from the poster's role/branch (see posterAngle in facebook-page-post).
+    const writtenAs = [result.angle, result.branch].filter(Boolean).join(' · ');
+    setStatus(`${writtenAs ? `Written as: ${writtenAs}. ` : ''}Check the caption, then tap Post Now.`);
   } catch (err) {
     if (requestId !== captionRequestId) return;
     setStatus('');

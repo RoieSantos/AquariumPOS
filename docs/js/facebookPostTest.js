@@ -80,6 +80,9 @@ async function writeCaption() {
       notes: document.getElementById('fbNotesInput').value.trim()
     });
     document.getElementById('fbCaptionInput').value = result.caption || '';
+    // The angle comes from the poster's role/branch (see posterAngle in facebook-page-post).
+    const writtenAs = [result.angle, result.branch].filter(Boolean).join(' · ');
+    document.getElementById('fbWrittenAs').textContent = writtenAs ? `Written as: ${writtenAs}` : '';
   } catch (err) {
     showError(err.message);
   } finally {
