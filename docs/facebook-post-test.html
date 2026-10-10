@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facebook Post Test - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=sky1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .fbpost-card {
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      max-width: 720px;
+      margin-top: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .fbpost-card label {
+      display: block;
+      font-weight: 600;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .fbpost-card textarea,
+    .fbpost-card input[type="datetime-local"] {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .fbpost-preview {
+      max-width: 100%;
+      max-height: 360px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      display: block;
+    }
+    .fbpost-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .fbpost-mode label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 400;
+      margin-right: 14px;
+    }
+    .fbpost-result {
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: #eaf6ec;
+      color: #1d5b2a;
+      font-size: 13px;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Facebook Post Test</h1>
+    <p class="muted">Prototype: upload a photo, let AI write the caption, edit it, then post it to the RSPetStop GMA Facebook Page. Use <strong>Schedule</strong> to test safely - the post waits in Meta Business Suite &gt; Planner, where you can check or delete it before it goes live. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="fbPostContent" class="hidden">
+      <div class="fbpost-card">
+        <div>
+          <label for="fbPhotoInput">1. Photo</label>
+          <input type="file" id="fbPhotoInput" accept="image/jpeg,image/png,image/webp" />
+        </div>
+        <div class="fbpost-row fbpost-mode">
+          <label><input type="checkbox" id="fbWatermarkOn" checked /> Watermark</label>
+          <input type="text" id="fbWatermarkText" value="RS Pet Stop GMA" placeholder="Watermark text" />
+          <select id="fbWatermarkPosition">
+            <option value="bottom-right">Bottom right</option>
+            <option value="bottom-left">Bottom left</option>
+            <option value="top-right">Top right</option>
+            <option value="top-left">Top left</option>
+            <option value="center">Center</option>
+          </select>
+        </div>
+        <img id="fbPhotoPreview" class="fbpost-preview hidden" alt="Selected photo" />
+
+        <div>
+          <label for="fbNotesInput">2. Notes for the AI (optional)</label>
+          <textarea id="fbNotesInput" rows="2" placeholder="e.g. 60-gallon tank with stand, ₱12,500, free delivery within GMA this week"></textarea>
+        </div>
+        <div class="fbpost-row">
+          <button class="btn btn-secondary" id="fbCaptionBtn" type="button">Write Caption with AI</button>
+        </div>
+
+        <div>
+          <label for="fbCaptionInput">3. Caption</label>
+          <textarea id="fbCaptionInput" rows="9" placeholder="Write a caption, or click Write Caption with AI."></textarea>
+        </div>
+
+        <div class="fbpost-mode">
+          <label><input type="radio" name="fbMode" value="schedule" checked /> Schedule (safe test)</label>
+          <label><input type="radio" name="fbMode" value="now" /> Publish now</label>
+        </div>
+        <div id="fbScheduleRow">
+          <label for="fbScheduleInput">Post on</label>
+          <input type="datetime-local" id="fbScheduleInput" />
+        </div>
+
+        <div class="fbpost-row">
+          <button class="btn btn-primary" id="fbPostBtn" type="button">Post to Facebook</button>
+        </div>
+
+        <div id="fbErrorEl" class="error-text hidden"></div>
+        <div id="fbResultEl" class="fbpost-result hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=all1"></script>
+  <script src="js/nav.js?v=newtab1"></script>
+  <script src="js/facebookPostTest.js?v=wm1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>
