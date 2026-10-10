@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-10
 
+- **Facebook Post Test: bigger, see-through logo watermark.** New styles: **Large logo, center** (default) and **Tiled logo** (rotated, repeated across the photo, hardest to crop), plus the old corner badge. Size and opacity sliders; the logo's white background is made transparent. Text now sits under the logo in white with a dark outline ([facebookPostTest.js](docs/js/facebookPostTest.js) `v=wm2`).
 - **Facebook Post Test added to the menu** (super users, after AI Bot Sandbox). Opening the URL in a new tab sent staff to login, since the login lives in that tab's sessionStorage. `nav.js?v=fbpost1` on every page.
 - **Facebook Post Test: watermark.** The photo gets the General Setup logo plus editable text ("RS Pet Stop GMA") in a white pill, with a corner/center choice and live preview. The watermarked photo is what gets posted ([facebookPostTest.js](docs/js/facebookPostTest.js) `v=wm1`).
 - **Prototype: Facebook Page posting.** New super-user test page [facebook-post-test.html](docs/facebook-post-test.html) ([facebookPostTest.js](docs/js/facebookPostTest.js)): upload a photo, Claude writes a caption from it (plus optional notes), edit, then schedule or publish it to the GMA Page. New Edge Function [facebook-page-post](supabase/functions/facebook-page-post/index.ts) uses its own `FACEBOOK_GMA_POST_TOKEN` / `FACEBOOK_GMA_PAGE_ID` secrets, separate from the Messenger bot's token. Not in the nav yet; open the URL directly.

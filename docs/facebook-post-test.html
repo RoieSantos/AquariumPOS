@@ -90,14 +90,25 @@
         </div>
         <div class="fbpost-row fbpost-mode">
           <label><input type="checkbox" id="fbWatermarkOn" checked /> Watermark</label>
-          <input type="text" id="fbWatermarkText" value="RS Pet Stop GMA" placeholder="Watermark text" />
-          <select id="fbWatermarkPosition">
+          <select id="fbWatermarkStyle">
+            <option value="center">Large logo, center</option>
+            <option value="tiled">Tiled logo (hardest to crop)</option>
+            <option value="badge">Small corner badge</option>
+          </select>
+          <select id="fbWatermarkPosition" class="hidden">
             <option value="bottom-right">Bottom right</option>
             <option value="bottom-left">Bottom left</option>
             <option value="top-right">Top right</option>
             <option value="top-left">Top left</option>
-            <option value="center">Center</option>
           </select>
+        </div>
+        <div class="fbpost-row fbpost-mode">
+          <label>Size <input type="range" id="fbWatermarkSize" min="20" max="90" value="60" /></label>
+          <label>Opacity <input type="range" id="fbWatermarkOpacity" min="10" max="80" value="35" /></label>
+          <label><input type="checkbox" id="fbWatermarkKnockout" checked /> Clear logo's white background</label>
+        </div>
+        <div class="fbpost-row fbpost-mode">
+          <label>Text <input type="text" id="fbWatermarkText" value="RS Pet Stop GMA" placeholder="Optional text under the logo" /></label>
         </div>
         <img id="fbPhotoPreview" class="fbpost-preview hidden" alt="Selected photo" />
 
@@ -138,7 +149,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=all1"></script>
   <script src="js/nav.js?v=fbpost1"></script>
-  <script src="js/facebookPostTest.js?v=wm1"></script>
+  <script src="js/facebookPostTest.js?v=wm2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
