@@ -1,8 +1,12 @@
 -- Delivery "Mark Done": on the Delivery Team's route view (delivery.html), each stop card has a
--- Mark Done button that takes a photo, posts it to the GMA Facebook Page as a "Delivery Done /
--- Setup Done" post (supabase/functions/facebook-page-post), then:
---   1. records the stop as done (DeliveryStopCompletions) so the card shows "Done", and
---   2. marks the stop's online order "Delivered" - a portal-only status, NOT sent to Pancake.
+-- Mark Done button that takes a photo, then (supabase/functions/facebook-page-post):
+--   1. MARK DONE - saves the photo and records the stop as done (DeliveryStopCompletions), marking
+--      its order "Delivered" (a portal-only status, NOT sent to Pancake). No Facebook involved, so
+--      a delivery is recorded even if Facebook is down or the posting token breaks.
+--   2. POST - posts it to the GMA Facebook Page as a "Delivery Done / Setup Done" post, at most
+--      ONCE per stop: service_claim_delivery_stop_post claims the stop before anything is sent, and
+--      a claim is never released after a successful post. A failed post releases the claim, and
+--      the card offers "Post to Facebook" to try again (using the stored photo).
 --
 -- DELIVERED vs THE PANCAKE SYNC. The Pancake sync rewrites OnlineOrders."Status" on every run
 -- ("Status" = excluded."Status"), which would flip a Delivered order back to Shipped. So the
@@ -32,7 +36,7 @@
 --
 -- Run AFTER supabase_delivery_advance_and_walkin_orders.sql, supabase_advance_order_production.sql
 -- and supabase_online_order_all_branch_fabrication.sql. Safe to re-run.
--- Needs js/delivery.js ?v=aosearch2 (or later) and js/onlineOrders.js ?v=delivered3.
+-- Needs js/delivery.js ?v=donefirst1 and js/onlineOrders.js ?v=delivered3.
 
 -- ---------------------------------------------------------------------------
 -- 1. Which stops are done, and the Facebook post made for each.
@@ -46,6 +50,15 @@ create table if not exists public."DeliveryStopCompletions" (
 );
 -- Table may already exist from an earlier run of this file.
 alter table public."DeliveryStopCompletions" add column if not exists "PhotoUrl" varchar(1000);
+-- The Facebook step (2 above): stored photo to post, the claim, and the outcome.
+alter table public."DeliveryStopCompletions" add column if not exists "PhotoStoragePath" varchar(500);
+alter table public."DeliveryStopCompletions" add column if not exists "PostClaimedAtUtc" timestamptz;
+alter table public."DeliveryStopCompletions" add column if not exists "PostedAtUtc" timestamptz;
+alter table public."DeliveryStopCompletions" add column if not exists "PostCaption" text;
+alter table public."DeliveryStopCompletions" add column if not exists "PostError" text;
+-- Rows from the earlier post-first version already went to Facebook.
+update public."DeliveryStopCompletions" set "PostedAtUtc" = "DoneAtUtc"
+ where "PostedAtUtc" is null and "FacebookPostId" is not null;
 
 alter table public."DeliveryStopCompletions" enable row level security;
 -- No policies: browser access only through the RPC below; the Edge Function uses the service role.
@@ -163,8 +176,10 @@ $$;
 grant execute on function public.staff_set_advance_order_stage(text, text, text, text) to anon;
 
 -- ---------------------------------------------------------------------------
--- 3. Mark a stop done (+ its order Delivered). Called only by the facebook-page-post Edge Function
--- with the service role, after Facebook accepted the post - not callable from the browser.
+-- 3. Mark a stop done (+ its order Delivered) - step 1, no Facebook. Called only by the
+-- facebook-page-post Edge Function with the service role - not callable from the browser.
+-- Returns true when this call marked it done, false when it was already done (left untouched).
+drop function if exists public.service_mark_delivery_stop_done(uuid, text, text, text, text, text);
 drop function if exists public.service_mark_delivery_stop_done(uuid, text, text, text);
 
 -- p_photo_storage_path / p_photo_url: the watermarked photo, uploaded by the Edge Function to the
@@ -173,12 +188,10 @@ drop function if exists public.service_mark_delivery_stop_done(uuid, text, text,
 create or replace function public.service_mark_delivery_stop_done(
   p_stop_id uuid,
   p_username text,
-  p_post_id text,
-  p_post_url text,
-  p_photo_storage_path text default null,
-  p_photo_url text default null
+  p_photo_storage_path text,
+  p_photo_url text
 )
-returns void
+returns boolean
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -197,12 +210,12 @@ begin
     raise exception 'Delivery stop not found.';
   end if;
 
-  insert into public."DeliveryStopCompletions" ("StopID", "DoneBy", "DoneAtUtc", "FacebookPostId", "FacebookPostUrl", "PhotoUrl")
-  values (p_stop_id, p_username, now(), p_post_id, p_post_url, p_photo_url)
-  on conflict ("StopID") do update
-    set "DoneBy" = excluded."DoneBy", "DoneAtUtc" = excluded."DoneAtUtc",
-        "FacebookPostId" = excluded."FacebookPostId", "FacebookPostUrl" = excluded."FacebookPostUrl",
-        "PhotoUrl" = excluded."PhotoUrl";
+  insert into public."DeliveryStopCompletions" ("StopID", "DoneBy", "DoneAtUtc", "PhotoStoragePath", "PhotoUrl")
+  values (p_stop_id, p_username, now(), p_photo_storage_path, p_photo_url)
+  on conflict ("StopID") do nothing;
+  if not found then
+    return false; -- already done (second phone / double tap)
+  end if;
 
   -- The order's Photos (OrderID holds the advance TransactionNo for advance orders, same as their
   -- Shipped proof photos; the AO number for a draft AO). A draft AO has no Delivered status of its
@@ -227,11 +240,74 @@ begin
            "UpdatedAtUtc" = now(), "UpdatedBy" = p_username
      where "TransactionNo" = v_advance_no;
   end if;
+
+  return true;
 end;
 $$;
 
-revoke all on function public.service_mark_delivery_stop_done(uuid, text, text, text, text, text) from public, anon, authenticated;
-grant execute on function public.service_mark_delivery_stop_done(uuid, text, text, text, text, text) to service_role;
+revoke all on function public.service_mark_delivery_stop_done(uuid, text, text, text) from public, anon, authenticated;
+grant execute on function public.service_mark_delivery_stop_done(uuid, text, text, text) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- 3a. Post to Facebook at most once per stop (step 2). The Edge Function claims the stop BEFORE
+-- calling Facebook; only one caller can win the claim (row lock + conditions), and a claim is only
+-- released by a FAILED post. A claim never expires on its own: if the function died after Facebook
+-- took the post but before recording it, auto-expiring could post it twice - a stuck claim
+-- ("in_progress") is cleared by hand instead, after checking the Page.
+create or replace function public.service_claim_delivery_stop_post(p_stop_id uuid)
+returns table(status text, photo_storage_path text, facebook_post_url text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_row public."DeliveryStopCompletions";
+begin
+  select * into v_row from public."DeliveryStopCompletions" where "StopID" = p_stop_id for update;
+  if not found then
+    return query select 'not_done'::text, null::text, null::text;
+  elsif v_row."PostedAtUtc" is not null or v_row."FacebookPostId" is not null then
+    return query select 'posted'::text, v_row."PhotoStoragePath"::text, v_row."FacebookPostUrl"::text;
+  elsif v_row."PostClaimedAtUtc" is not null then
+    return query select 'in_progress'::text, v_row."PhotoStoragePath"::text, null::text;
+  else
+    update public."DeliveryStopCompletions" set "PostClaimedAtUtc" = now(), "PostError" = null
+     where "StopID" = p_stop_id;
+    return query select 'claimed'::text, v_row."PhotoStoragePath"::text, null::text;
+  end if;
+end;
+$$;
+
+revoke all on function public.service_claim_delivery_stop_post(uuid) from public, anon, authenticated;
+grant execute on function public.service_claim_delivery_stop_post(uuid) to service_role;
+
+-- Outcome of a claimed post: p_post_id set = posted (claim kept for good); else failed (claim
+-- released so it can be tried again, p_error kept for the card).
+create or replace function public.service_finish_delivery_stop_post(
+  p_stop_id uuid, p_post_id text, p_post_url text, p_caption text, p_error text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if nullif(trim(coalesce(p_post_id, '')), '') is not null then
+    update public."DeliveryStopCompletions"
+       set "FacebookPostId" = p_post_id, "FacebookPostUrl" = p_post_url, "PostCaption" = p_caption,
+           "PostedAtUtc" = now(), "PostError" = null
+     where "StopID" = p_stop_id;
+  else
+    update public."DeliveryStopCompletions"
+       set "PostClaimedAtUtc" = null, "PostError" = left(coalesce(p_error, 'Post failed.'), 1000),
+           "PostCaption" = coalesce(p_caption, "PostCaption")
+     where "StopID" = p_stop_id;
+  end if;
+end;
+$$;
+
+revoke all on function public.service_finish_delivery_stop_post(uuid, text, text, text, text) from public, anon, authenticated;
+grant execute on function public.service_finish_delivery_stop_post(uuid, text, text, text, text) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- 3b. Order card: Delivered By / Delivered Date (+ the Facebook post and photo) for one online or
@@ -283,13 +359,17 @@ $$;
 grant execute on function public.staff_get_order_delivery(text, text, text, text) to anon;
 
 -- ---------------------------------------------------------------------------
--- 4. Driver view: which of these stops are done.
+-- 4. Driver view: which of these stops are done, and where their Facebook post stands
+-- (post_status: 'posted' | 'in_progress' | 'failed' | 'not_posted').
+drop function if exists public.staff_list_delivery_stop_completions(text, text, uuid[]);
+
 create or replace function public.staff_list_delivery_stop_completions(
   p_username text,
   p_password text,
   p_stop_ids uuid[]
 )
-returns table(stop_id uuid, done_by text, done_at_utc timestamptz, facebook_post_url text)
+returns table(stop_id uuid, done_by text, done_at_utc timestamptz, facebook_post_url text,
+              post_status text, post_error text, post_claimed_at_utc timestamptz)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -300,7 +380,12 @@ begin
   end if;
 
   return query
-  select c."StopID", coalesce(u."DisplayName", c."DoneBy")::text, c."DoneAtUtc", c."FacebookPostUrl"::text
+  select c."StopID", coalesce(u."DisplayName", c."DoneBy")::text, c."DoneAtUtc", c."FacebookPostUrl"::text,
+         case when c."PostedAtUtc" is not null or c."FacebookPostId" is not null then 'posted'
+              when c."PostClaimedAtUtc" is not null then 'in_progress'
+              when c."PostError" is not null then 'failed'
+              else 'not_posted' end,
+         c."PostError"::text, c."PostClaimedAtUtc"
     from public."DeliveryStopCompletions" c
     left join public."StaffUsers" u on u."Username" = c."DoneBy"
    where c."StopID" = any(p_stop_ids);
@@ -406,3 +491,42 @@ end;
 $$;
 
 grant execute on function public.admin_get_online_order_status_summary(text, text, text, boolean, boolean) to anon;
+
+-- ---------------------------------------------------------------------------
+-- 6. Draft AO confirmed later: when a done stop moves from its draft AO onto the new online order
+-- (supabase_delivery_assign_automated_order_search.sql sets OrderID and clears AutomatedOrderNo),
+-- carry the delivery over - the online order becomes Delivered, and the "Delivered" photo filed
+-- under the AO number moves to the order.
+create or replace function public._delivery_stop_carry_done_to_order()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_done public."DeliveryStopCompletions";
+  v_old_ref text := coalesce(to_jsonb(OLD) ->> 'AutomatedOrderNo', OLD."AdvanceTransactionNo");
+begin
+  select * into v_done from public."DeliveryStopCompletions" where "StopID" = NEW."StopID";
+  if not found then
+    return null;
+  end if;
+
+  update public."OnlineOrders"
+     set "DeliveredAtUtc" = coalesce("DeliveredAtUtc", v_done."DoneAtUtc"),
+         "DeliveredBy" = coalesce("DeliveredBy", v_done."DoneBy")
+   where "OrderID" = NEW."OrderID";
+
+  if v_old_ref is not null then
+    update public."OnlineOrderStatusPhotos" set "OrderID" = NEW."OrderID"
+     where "OrderID" = v_old_ref and "Status" = 'Delivered';
+  end if;
+  return null;
+end;
+$$;
+
+drop trigger if exists "TR_DeliveryStops_CarryDoneToOrder" on public."DeliveryStops";
+create trigger "TR_DeliveryStops_CarryDoneToOrder"
+  after update of "OrderID" on public."DeliveryStops"
+  for each row when (OLD."OrderID" is null and NEW."OrderID" is not null)
+  execute function public._delivery_stop_carry_done_to_order();

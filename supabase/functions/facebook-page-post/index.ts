@@ -1,16 +1,29 @@
-// PROTOTYPE - backs docs/facebook-post-test.html, built per direct request to try automated
-// Facebook Page posting before building the real scheduled-post queue. Two actions:
+// Facebook Page posting for the portal. Actions:
 //
-//   { action: 'caption', image_base64, media_type, notes? }
+//   { action: 'caption', image_base64, media_type, notes?, context? }
 //       Claude looks at the photo (plus any staff notes - price, promo, stock) and writes a
 //       Facebook caption, following the standing FacebookPostSettings.CaptionDirections set in
-//       AI Bot Setup. Nothing is sent to Facebook.
+//       AI Bot Setup. Nothing is sent to Facebook. (Quick Post / Facebook Post Test.)
 //
 //   { action: 'post', image_base64, media_type, caption, scheduled_at_unix? }
 //       Uploads the photo to the GMA Page via POST /{page-id}/photos. With scheduled_at_unix it is
 //       a SCHEDULED post (published=false + scheduled_publish_time) - it shows in Meta Business
-//       Suite > Planner, where it can be reviewed or deleted before it goes out, which is the safe
-//       way to test. Without it the post is published immediately.
+//       Suite > Planner, where it can be reviewed or deleted before it goes out. Without it the
+//       post is published immediately. (Quick Post / Facebook Post Test.)
+//
+//   Delivery route "Mark Done" (delivery.html) - two steps, so a delivery is recorded as Done even
+//   when Facebook is down or the posting token breaks (supabase_delivery_stop_done_post.sql):
+//   { action: 'mark_done', stop_id, image_base64, media_type }
+//       Saves the watermarked photo to the online-order-status-photos bucket and marks the stop
+//       Done / its order Delivered. No Facebook call. Already-done stops are left as they are.
+//   { action: 'post_stop', stop_id }
+//       Posts a Done stop to Facebook ONCE: claims the stop first (service_claim_delivery_stop_post),
+//       so a double tap, a second phone or a retry can never post the same stop twice. Uses the
+//       STORED photo and writes the Delivery Done caption itself, so it can be retried any time
+//       from the stop card ("Post to Facebook") even after the app was closed.
+//
+// Facebook is only ever called by 'post' and 'post_stop', once per request, with no automatic
+// retry - and nothing calls this function on a timer; every call is a staff tap.
 //
 // Uses its own secrets, NOT the Messenger bot's FACEBOOK_PAGE_ACCESS_TOKEN, so a posting token
 // problem can never break Alice:
@@ -19,16 +32,17 @@
 //
 // Staff-gated: the caller passes admin_username/admin_password, re-verified via
 // is_staff_authorized() on every call, and must be a Super User or on the Delivery Team
-// (Quick Post is shared with the Delivery Team).
+// (the Delivery Team uses Mark Done).
 //
 // Deploy: supabase functions deploy facebook-page-post --project-ref hymcmesqgpliyyeghpgq
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_GRAPH_VERSION = 'v21.0';
 const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const PHOTO_BUCKET = 'online-order-status-photos';
 // Facebook only accepts a scheduled_publish_time between 10 minutes and 30 days from now.
 const MIN_SCHEDULE_SECONDS = 10 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
@@ -70,12 +84,13 @@ Reply with the caption text only - no preamble, no quotes, no options.`;
 // delivery staff photograph orders going out - each reads best framed that way.
 // `openings`, when set, is enforced after generation - the caption must start with one of them.
 type PostAngle = { label: string; instruction: string; openings?: string[] };
+type Staff = Record<string, unknown> | null;
 
 const DELIVERY_ANGLE: PostAngle = { label: 'Delivery', openings: ['Delivery Done! ✅', 'Setup Done! ✅'], instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. Never give customer names or exact addresses - a city/area is fine only if it is in the staff notes. Mention that we deliver and set up.' };
 
 // `context: 'delivery_done'` (Mark Done on a delivery stop, delivery.html) always uses the
 // Delivery angle, whoever is logged in.
-function posterAngle(staff: Record<string, unknown> | null, context: string): PostAngle {
+function posterAngle(staff: Staff, context: string): PostAngle {
   const roles = (staff?.StaffRoles as string[] | null) ?? [];
   if (context === 'delivery_done' || staff?.DeliveryTeam) return DELIVERY_ANGLE;
   if (roles.includes('Dispatcher')) {
@@ -88,6 +103,138 @@ function posterAngle(staff: Record<string, unknown> | null, context: string): Po
     return { label: 'Store', instruction: 'Taken by our store staff: frame it as available now at the branch below - invite people to visit or message to reserve.' };
   }
   return { label: 'General', instruction: 'General store post: frame it as something we offer.' };
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+// Every caption is grounded in the real business (General Setup's CompanyInfo + AI Bot Setup's
+// Store Info, the same facts Alice uses) AND the photo. Standing caption directions come from
+// AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql) - optional, the table may not
+// exist yet. Throws on failure.
+async function writeCaption(
+  supabase: SupabaseClient, staff: Staff, context: string, notes: string, imageBase64: string, mediaType: string
+): Promise<{ caption: string; angle: string; branch: string | null }> {
+  const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!anthropicApiKey) throw new Error('Missing the ANTHROPIC_API_KEY secret.');
+  const model = Deno.env.get('CLAUDE_MODEL') || DEFAULT_MODEL;
+
+  const [{ data: company }, { data: storeInfo }, { data: postSettings }] = await Promise.all([
+    supabase.from('CompanyInfo').select('*').eq('Id', 1).maybeSingle(),
+    supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
+    supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle()
+  ]);
+  const branchName = (staff?.WarehouseName as string | undefined)?.trim() || null;
+  const { data: branch } = branchName
+    ? await supabase.from('Warehouses').select('"Name", "Address", "ContactNo"').eq('Name', branchName).maybeSingle()
+    : { data: null };
+  const angle = posterAngle(staff, context);
+  const businessFacts = [
+    ['Business name', company?.CompanyName],
+    ['Address', company?.Address],
+    ['Contact number', company?.ContactNo],
+    ['Facebook', company?.FacebookUrl],
+    ['Business hours', storeInfo?.BusinessHours],
+    ['Delivery', storeInfo?.DeliveryPolicy],
+    ['Payment methods', storeInfo?.PaymentMethods],
+    ['Pickup locations', storeInfo?.PickupLocations],
+    ['Other store info', storeInfo?.AdditionalNotes]
+  ]
+    .filter(([, value]) => typeof value === 'string' && value.trim())
+    .map(([label, value]) => `- ${label}: ${(value as string).trim()}`)
+    .join('\n');
+  const directions = (postSettings?.CaptionDirections as string | undefined)?.trim();
+
+  let systemPrompt = CAPTION_SYSTEM_PROMPT;
+  if (businessFacts) {
+    systemPrompt += `\n\nAbout the business (real facts - use the ones that fit this post, e.g. delivery or how to order; never contradict them or invent others):\n${businessFacts}`;
+  }
+  if (branchName) {
+    const branchFacts = [`- Branch: RS Pet Stop ${branch?.Name || branchName}`];
+    if (branch?.Address) branchFacts.push(`- Branch address: ${branch.Address}`);
+    if (branch?.ContactNo) branchFacts.push(`- Branch contact: ${branch.ContactNo}`);
+    systemPrompt += `\nThe photo was taken at this branch - mention the branch name, and prefer its contact number over the main one:\n${branchFacts.join('\n')}`;
+  }
+  if (directions) {
+    systemPrompt += `\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`;
+  }
+  // Last, so neither the example caption nor the standing directions can override it.
+  systemPrompt += `\n\nREQUIRED angle for this post, based on who took the photo (this overrides the example caption and any opening line above):\n${angle.instruction}`;
+
+  const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: mediaType as 'image/jpeg', data: imageBase64 } },
+        {
+          type: 'text',
+          text: [
+            `Photo taken by: ${angle.label} staff.${angle.openings ? ` The caption MUST start with ${angle.openings.map((o) => `"${o}"`).join(' or ')}.` : ''}`,
+            notes ? `Staff notes: ${notes}` : 'No staff notes - describe only what is visible, with no prices.'
+          ].join('\n')
+        }
+      ]
+    }]
+  });
+  let caption = response.content
+    .filter((block) => block.type === 'text')
+    .map((block) => (block as { text: string }).text)
+    .join('\n')
+    .trim();
+  // Safety net: if the model skipped the required opening (e.g. "Delivery Done! ✅"), add it.
+  // Leading emoji/punctuation is ignored, so "✅ Delivery Done!" also counts.
+  const captionStart = caption.replace(/^[^\p{L}]+/u, '').toLowerCase();
+  if (angle.openings && !angle.openings.some((o) => captionStart.startsWith(o.toLowerCase().replace(/[!✅ ]+$/u, '')))) {
+    caption = `${angle.openings[0]}\n${caption}`;
+  }
+  return { caption, angle: angle.label, branch: branchName };
+}
+
+// One POST /{page-id}/photos - the only place this code publishes to Facebook. No retry. Throws on
+// failure; returns Facebook's ids and the post link.
+async function postPhotoToFacebook(
+  bytes: Uint8Array, mediaType: string, caption: string, scheduledAt: number | null
+): Promise<{ photoId: string | null; postId: string | null; postUrl: string | null }> {
+  const pageToken = Deno.env.get('FACEBOOK_GMA_POST_TOKEN');
+  const pageId = Deno.env.get('FACEBOOK_GMA_PAGE_ID');
+  const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
+  if (!pageToken || !pageId) {
+    throw new Error('Missing the FACEBOOK_GMA_POST_TOKEN and/or FACEBOOK_GMA_PAGE_ID secret (Supabase > Edge Functions > Secrets).');
+  }
+
+  const form = new FormData();
+  form.append('source', new Blob([bytes], { type: mediaType }), 'photo');
+  form.append('caption', caption);
+  form.append('access_token', pageToken);
+  if (scheduledAt != null) {
+    form.append('published', 'false');
+    form.append('scheduled_publish_time', String(scheduledAt));
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`https://graph.facebook.com/${graphVersion}/${pageId}/photos`, { method: 'POST', body: form });
+  } catch (err) {
+    throw new Error(`Could not reach Facebook: ${errorText(err)}`);
+  }
+  const result = await res.json().catch(() => ({}));
+  if (!res.ok || result.error) throw new Error(`Facebook: ${result?.error?.message || `HTTP ${res.status}`}`);
+  return {
+    photoId: result.id ?? null,
+    postId: result.post_id ?? null,
+    postUrl: result.post_id ? `https://www.facebook.com/${result.post_id}` : null
+  };
 }
 
 Deno.serve(async (req) => {
@@ -113,10 +260,18 @@ Deno.serve(async (req) => {
   const action = String(body.action ?? '');
   const imageBase64 = String(body.image_base64 ?? '');
   const mediaType = String(body.media_type ?? 'image/jpeg');
+  const stopId = String(body.stop_id ?? '').trim();
 
   if (!adminUsername || !adminPassword) return jsonResponse({ error: 'Missing admin_username / admin_password.' }, 400);
-  if (!imageBase64) return jsonResponse({ error: 'Missing image_base64.' }, 400);
-  if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) return jsonResponse({ error: `Unsupported image type ${mediaType}.` }, 400);
+  if (!['caption', 'post', 'mark_done', 'post_stop'].includes(action)) {
+    return jsonResponse({ error: "action must be 'caption', 'post', 'mark_done' or 'post_stop'." }, 400);
+  }
+  // post_stop uses the photo already stored by mark_done.
+  if (action !== 'post_stop') {
+    if (!imageBase64) return jsonResponse({ error: 'Missing image_base64.' }, 400);
+    if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) return jsonResponse({ error: `Unsupported image type ${mediaType}.` }, 400);
+  }
+  if ((action === 'mark_done' || action === 'post_stop') && !stopId) return jsonResponse({ error: 'Missing stop_id.' }, 400);
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const { data: authorized, error: authError } = await supabase.rpc('is_staff_authorized', {
@@ -127,109 +282,30 @@ Deno.serve(async (req) => {
 
   // Who is posting - read from StaffUsers by the username that just passed is_staff_authorized,
   // never from anything the browser claims (not verify_login, which bumps login counters).
-  // Super users and the Delivery Team may post (Quick Post is shared with the Delivery Team).
   const { data: staff } = await supabase.from('StaffUsers')
     .select('"SuperUser", "WarehouseName", "StaffRoles", "ProductionMember", "StoreManager", "SalesUser", "DeliveryTeam"')
     .eq('Username', adminUsername).maybeSingle();
   if (!staff?.SuperUser && !staff?.DeliveryTeam) return jsonResponse({ error: 'Not authorized to post.' }, 403);
 
-  if (action === 'caption') {
-    const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
-    if (!anthropicApiKey) return jsonResponse({ error: 'Missing the ANTHROPIC_API_KEY secret.' }, 500);
-    const model = Deno.env.get('CLAUDE_MODEL') || DEFAULT_MODEL;
-    const notes = String(body.notes ?? '').trim();
-
-    // Every caption is grounded in the real business (General Setup's CompanyInfo + AI Bot Setup's
-    // Store Info, the same facts Alice uses) AND the photo. Standing caption directions come from
-    // AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql) - optional, the table
-    // may not exist yet.
-    const [{ data: company }, { data: storeInfo }, { data: postSettings }] = await Promise.all([
-      supabase.from('CompanyInfo').select('*').eq('Id', 1).maybeSingle(),
-      supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
-      supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle()
-    ]);
-    const branchName = (staff?.WarehouseName as string | undefined)?.trim() || null;
-    const { data: branch } = branchName
-      ? await supabase.from('Warehouses').select('"Name", "Address", "ContactNo"').eq('Name', branchName).maybeSingle()
-      : { data: null };
-    const angle = posterAngle(staff, String(body.context ?? ''));
-    const businessFacts = [
-      ['Business name', company?.CompanyName],
-      ['Address', company?.Address],
-      ['Contact number', company?.ContactNo],
-      ['Facebook', company?.FacebookUrl],
-      ['Business hours', storeInfo?.BusinessHours],
-      ['Delivery', storeInfo?.DeliveryPolicy],
-      ['Payment methods', storeInfo?.PaymentMethods],
-      ['Pickup locations', storeInfo?.PickupLocations],
-      ['Other store info', storeInfo?.AdditionalNotes]
-    ]
-      .filter(([, value]) => typeof value === 'string' && value.trim())
-      .map(([label, value]) => `- ${label}: ${(value as string).trim()}`)
-      .join('\n');
-    const directions = (postSettings?.CaptionDirections as string | undefined)?.trim();
-
-    let systemPrompt = CAPTION_SYSTEM_PROMPT;
-    if (businessFacts) {
-      systemPrompt += `\n\nAbout the business (real facts - use the ones that fit this post, e.g. delivery or how to order; never contradict them or invent others):\n${businessFacts}`;
-    }
-    if (branchName) {
-      const branchFacts = [`- Branch: RS Pet Stop ${branch?.Name || branchName}`];
-      if (branch?.Address) branchFacts.push(`- Branch address: ${branch.Address}`);
-      if (branch?.ContactNo) branchFacts.push(`- Branch contact: ${branch.ContactNo}`);
-      systemPrompt += `\nThe photo was taken at this branch - mention the branch name, and prefer its contact number over the main one:\n${branchFacts.join('\n')}`;
-    }
-    if (directions) {
-      systemPrompt += `\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`;
-    }
-    // Last, so neither the example caption nor the standing directions can override it.
-    systemPrompt += `\n\nREQUIRED angle for this post, based on who took the photo (this overrides the example caption and any opening line above):\n${angle.instruction}`;
-
+  let bytes: Uint8Array | null = null;
+  if (imageBase64) {
     try {
-      const anthropic = new Anthropic({ apiKey: anthropicApiKey });
-      const response = await anthropic.messages.create({
-        model,
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mediaType as 'image/jpeg', data: imageBase64 } },
-            {
-              type: 'text',
-              text: [
-                `Photo taken by: ${angle.label} staff.${angle.openings ? ` The caption MUST start with ${angle.openings.map((o) => `"${o}"`).join(' or ')}.` : ''}`,
-                notes ? `Staff notes: ${notes}` : 'No staff notes - describe only what is visible, with no prices.'
-              ].join('\n')
-            }
-          ]
-        }]
-      });
-      let caption = response.content
-        .filter((block) => block.type === 'text')
-        .map((block) => (block as { text: string }).text)
-        .join('\n')
-        .trim();
-      // Safety net: if the model skipped the required opening (e.g. "Delivery Done! ✅"), add it.
-      // Leading emoji/punctuation is ignored, so "✅ Delivery Done!" also counts.
-      const captionStart = caption.replace(/^[^\p{L}]+/u, '').toLowerCase();
-      if (angle.openings && !angle.openings.some((o) => captionStart.startsWith(o.toLowerCase().replace(/[!✅ ]+$/u, '')))) {
-        caption = `${angle.openings[0]}\n${caption}`;
-      }
-      return jsonResponse({ ok: true, caption, angle: angle.label, branch: branchName });
+      bytes = Uint8Array.from(atob(imageBase64), (c) => c.charCodeAt(0));
+    } catch {
+      return jsonResponse({ error: 'image_base64 is not valid base64.' }, 400);
+    }
+  }
+
+  if (action === 'caption') {
+    try {
+      const result = await writeCaption(supabase, staff, String(body.context ?? ''), String(body.notes ?? '').trim(), imageBase64, mediaType);
+      return jsonResponse({ ok: true, ...result });
     } catch (err) {
-      return jsonResponse({ error: `Caption failed: ${err instanceof Error ? err.message : String(err)}` }, 500);
+      return jsonResponse({ error: `Caption failed: ${errorText(err)}` }, 500);
     }
   }
 
   if (action === 'post') {
-    const pageToken = Deno.env.get('FACEBOOK_GMA_POST_TOKEN');
-    const pageId = Deno.env.get('FACEBOOK_GMA_PAGE_ID');
-    const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
-    if (!pageToken || !pageId) {
-      return jsonResponse({ error: 'Missing the FACEBOOK_GMA_POST_TOKEN and/or FACEBOOK_GMA_PAGE_ID secret (Supabase > Edge Functions > Secrets).' }, 500);
-    }
-
     const caption = String(body.caption ?? '').trim();
     if (!caption) return jsonResponse({ error: 'Caption is empty.' }, 400);
 
@@ -241,82 +317,87 @@ Deno.serve(async (req) => {
       }
     }
 
-    let bytes: Uint8Array;
     try {
-      bytes = Uint8Array.from(atob(imageBase64), (c) => c.charCodeAt(0));
-    } catch {
-      return jsonResponse({ error: 'image_base64 is not valid base64.' }, 400);
-    }
-
-    const form = new FormData();
-    form.append('source', new Blob([bytes], { type: mediaType }), 'photo');
-    form.append('caption', caption);
-    form.append('access_token', pageToken);
-    if (scheduledAt != null) {
-      form.append('published', 'false');
-      form.append('scheduled_publish_time', String(scheduledAt));
-    }
-
-    try {
-      const res = await fetch(`https://graph.facebook.com/${graphVersion}/${pageId}/photos`, { method: 'POST', body: form });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok || result.error) {
-        return jsonResponse({ error: `Facebook: ${result?.error?.message || `HTTP ${res.status}`}` }, 502);
-      }
-      const postUrl = result.post_id ? `https://www.facebook.com/${result.post_id}` : null;
-
-      // Mark Done on a delivery stop (supabase_delivery_stop_done_post.sql): records the stop as
-      // done and sets its online order to the portal-only "Delivered" status (not sent to Pancake).
-      // Only once Facebook accepted the post, so a failed post leaves the button there to retry.
-      // The post itself already went out, so a failure here is reported but not treated as an error.
-      let stopDoneError: string | null = null;
-      const stopId = String(body.stop_id ?? '').trim();
-      if (stopId) {
-        // Keep a copy of the (watermarked) photo in Supabase too - same bucket/path layout as the
-        // Shipped proof photos (<order or advance no>/<timestamp>_<name>), so it shows in the
-        // order's Photos as "Delivered". A failed upload doesn't block marking the stop done.
-        let photoPath: string | null = null;
-        let photoUrl: string | null = null;
-        // select('*'): AutomatedOrderNo (a draft AO stop) only exists once
-        // supabase_delivery_assign_automated_order_search.sql has been run.
-        const { data: stop } = await supabase.from('DeliveryStops').select('*').eq('StopID', stopId).maybeSingle();
-        const refId = (stop?.OrderID ?? stop?.AdvanceTransactionNo ?? stop?.AutomatedOrderNo) as string | undefined;
-        if (refId) {
-          const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 17);
-          const path = `${refId}/${stamp}_delivered.jpg`;
-          const { error: uploadError } = await supabase.storage.from('online-order-status-photos')
-            .upload(path, bytes, { contentType: mediaType, upsert: false });
-          if (uploadError) {
-            console.error(`Delivered photo upload failed for stop ${stopId}: ${uploadError.message}`);
-          } else {
-            photoPath = path;
-            photoUrl = supabase.storage.from('online-order-status-photos').getPublicUrl(path).data.publicUrl;
-          }
-        }
-
-        const { error } = await supabase.rpc('service_mark_delivery_stop_done', {
-          p_stop_id: stopId,
-          p_username: adminUsername,
-          p_post_id: result.post_id ?? result.id ?? null,
-          p_post_url: postUrl,
-          p_photo_storage_path: photoPath,
-          p_photo_url: photoUrl
-        });
-        if (error) stopDoneError = error.message;
-      }
-
-      return jsonResponse({
-        ok: true,
-        scheduled: scheduledAt != null,
-        photo_id: result.id ?? null,
-        post_id: result.post_id ?? null,
-        post_url: postUrl,
-        stop_done_error: stopDoneError
-      });
+      const posted = await postPhotoToFacebook(bytes!, mediaType, caption, scheduledAt);
+      return jsonResponse({ ok: true, scheduled: scheduledAt != null, photo_id: posted.photoId, post_id: posted.postId, post_url: posted.postUrl });
     } catch (err) {
-      return jsonResponse({ error: `Could not reach Facebook: ${err instanceof Error ? err.message : String(err)}` }, 502);
+      return jsonResponse({ error: errorText(err) }, 502);
     }
   }
 
-  return jsonResponse({ error: "action must be 'caption' or 'post'." }, 400);
+  if (action === 'mark_done') {
+    // Already done (second phone, double tap): leave it - nothing uploaded, nothing changed.
+    const { data: done } = await supabase.from('DeliveryStopCompletions').select('"StopID"').eq('StopID', stopId).maybeSingle();
+    if (done) return jsonResponse({ ok: true, already_done: true });
+
+    // select('*'): AutomatedOrderNo (a draft AO stop) only exists once
+    // supabase_delivery_assign_automated_order_search.sql has been run.
+    const { data: stop } = await supabase.from('DeliveryStops').select('*').eq('StopID', stopId).maybeSingle();
+    const refId = (stop?.OrderID ?? stop?.AdvanceTransactionNo ?? stop?.AutomatedOrderNo) as string | undefined;
+    if (!refId) return jsonResponse({ error: 'Delivery stop not found - it may have been removed or moved.' }, 404);
+
+    // Same bucket/path layout as the Shipped proof photos (<order or advance no>/<timestamp>_<name>),
+    // so it shows in the order's Photos as "Delivered" - and post_stop posts this stored copy.
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 17);
+    const path = `${refId}/${stamp}_delivered.jpg`;
+    const { error: uploadError } = await supabase.storage.from(PHOTO_BUCKET).upload(path, bytes!, { contentType: mediaType, upsert: false });
+    if (uploadError) return jsonResponse({ error: `Could not save the photo: ${uploadError.message}` }, 500);
+    const photoUrl = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
+
+    const { data: newlyDone, error } = await supabase.rpc('service_mark_delivery_stop_done', {
+      p_stop_id: stopId,
+      p_username: adminUsername,
+      p_photo_storage_path: path,
+      p_photo_url: photoUrl
+    });
+    if (error) {
+      // Not recorded - remove the photo so a retry starts clean.
+      await supabase.storage.from(PHOTO_BUCKET).remove([path]);
+      return jsonResponse({ error: `Could not mark the stop done: ${error.message}` }, 500);
+    }
+    return jsonResponse({ ok: true, already_done: newlyDone === false, photo_url: photoUrl });
+  }
+
+  // action === 'post_stop'
+  // Claim first: returns the stored photo only if the stop is Done, not posted yet, and nobody else
+  // is posting it right now. No row = nothing to do, so nothing is sent to Facebook.
+  const { data: claimRows, error: claimError } = await supabase.rpc('service_claim_delivery_stop_post', { p_stop_id: stopId });
+  if (claimError) return jsonResponse({ error: `Could not start the post: ${claimError.message}` }, 500);
+  const claim = (claimRows as Array<{ photo_storage_path: string | null; facebook_post_url: string | null; status: string }> | null)?.[0];
+  if (!claim || claim.status !== 'claimed') {
+    return jsonResponse({
+      ok: false,
+      status: claim?.status ?? 'not_done',
+      post_url: claim?.facebook_post_url ?? null,
+      error: claim?.status === 'posted' ? 'Already posted to Facebook.'
+        : claim?.status === 'in_progress' ? 'This stop is being posted right now.'
+          : 'Mark the stop Done first.'
+    }, 409);
+  }
+
+  const finish = (fields: { postId?: string | null; postUrl?: string | null; caption?: string | null; error?: string | null }) =>
+    supabase.rpc('service_finish_delivery_stop_post', {
+      p_stop_id: stopId,
+      p_post_id: fields.postId ?? null,
+      p_post_url: fields.postUrl ?? null,
+      p_caption: fields.caption ?? null,
+      p_error: fields.error ?? null
+    });
+
+  let caption = '';
+  try {
+    if (!claim.photo_storage_path) throw new Error('No saved photo for this stop.');
+    const { data: blob, error: downloadError } = await supabase.storage.from(PHOTO_BUCKET).download(claim.photo_storage_path);
+    if (downloadError || !blob) throw new Error(`Could not load the saved photo: ${downloadError?.message ?? 'not found'}`);
+    const photoBytes = new Uint8Array(await blob.arrayBuffer());
+    caption = (await writeCaption(supabase, staff, 'delivery_done', '', bytesToBase64(photoBytes), 'image/jpeg')).caption;
+    const posted = await postPhotoToFacebook(photoBytes, 'image/jpeg', caption, null);
+    // Record the post right away - this is what stops a second post.
+    await finish({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption });
+    return jsonResponse({ ok: true, status: 'posted', caption, post_url: posted.postUrl });
+  } catch (err) {
+    // Releases the claim so "Post to Facebook" can be tried again.
+    await finish({ caption: caption || null, error: errorText(err) });
+    return jsonResponse({ ok: false, status: 'failed', caption: caption || null, error: errorText(err) }, 502);
+  }
 });

@@ -489,14 +489,21 @@ async function renderDriverRouteView(dateKey) {
 
 // --- Mark Done -------------------------------------------------------------------------------
 // Per "show a button mark Done ... it will ask for a picture then after taken picture it will
-// proceed on posting": camera photo -> watermark (AI Bot Setup > Facebook Posts defaults) ->
-// "Delivery Done / Setup Done" AI caption -> posted to the GMA Facebook Page straight away, via
-// facebook-page-post (shared helpers in js/facebookPostShared.js). The function records the stop
-// in DeliveryStopCompletions once Facebook accepts the post (supabase_delivery_stop_done_post.sql),
-// so the card then shows "Done" instead of the button, and sets the online order to the portal-only
-// "Delivered" status (not sent to Pancake). No customer details are sent to the AI.
+// proceed on posting": camera photo -> watermark (AI Bot Setup > Facebook Posts defaults), then
+// two steps via facebook-page-post (shared helpers in js/facebookPostShared.js;
+// supabase_delivery_stop_done_post.sql):
+//   1. mark_done - saves the photo and marks the stop Done / its order "Delivered" (portal-only, not
+//      sent to Pancake). No Facebook involved, so a delivery is recorded even if Facebook fails.
+//   2. post_stop - the server writes the "Delivery Done / Setup Done" caption and posts the stored
+//      photo to the GMA Page, at most ONCE per stop (it claims the stop before posting, so a double
+//      tap, a second phone or a retry can't post twice). If it fails, the card shows "Post to
+//      Facebook" to try again later. No customer details are sent to the AI.
+// Nothing here runs on a timer - every Facebook post starts from a tap.
+const STUCK_POST_MINUTES = 10;
 let markDoneStopId = null;
 let markDonePhotoBase64 = null;
+let markDoneStep = null; // 'save' | 'post' - what Try Again repeats
+let markDoneBusy = false;
 let fbPostReady = null; // { settings } once the watermark settings + logo have loaded
 
 function ensureFbPostReady() {
@@ -522,8 +529,22 @@ function showStopDone(row) {
   const el = document.querySelector(`.driver-stop-done[data-done-for="${row.stop_id}"]`);
   if (!el) return;
   const when = row.done_at_utc ? new Date(row.done_at_utc).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
-  el.innerHTML = `<span class="badge badge-success">&#9989; Done</span> <span class="muted" style="font-size:12px;">${escapeHtmlText(row.done_by || '')}${when ? ` &middot; ${when}` : ''}</span>`
-    + (row.facebook_post_url ? ` &middot; <a href="${escapeHtmlText(row.facebook_post_url)}" target="_blank" rel="noopener" style="font-size:12px;">View post</a>` : '');
+  let postHtml;
+  if (row.post_status === 'posted') {
+    postHtml = row.facebook_post_url
+      ? ` &middot; <a href="${escapeHtmlText(row.facebook_post_url)}" target="_blank" rel="noopener" style="font-size:12px;">View post</a>`
+      : ' &middot; <span class="muted" style="font-size:12px;">Posted</span>';
+  } else if (row.post_status === 'in_progress') {
+    const minutes = row.post_claimed_at_utc ? (Date.now() - new Date(row.post_claimed_at_utc).getTime()) / 60000 : 0;
+    // Never retried automatically - a post that may have gone out is checked by a person first.
+    postHtml = minutes > STUCK_POST_MINUTES
+      ? '<div class="error-text" style="font-size:12px; margin-top:4px;">Facebook post stuck - ask a super user to check the Page before posting again.</div>'
+      : ' &middot; <span class="muted" style="font-size:12px;">Posting to Facebook...</span>';
+  } else {
+    postHtml = `${row.post_error ? `<div class="error-text" style="font-size:12px; margin-top:4px;">Not posted: ${escapeHtmlText(row.post_error)}</div>` : ''}`
+      + `<button type="button" class="btn btn-secondary btn-sm driver-post-stop-btn" data-post-stop-id="${row.stop_id}" style="width:100%; margin-top:6px;">&#128228; Post to Facebook</button>`;
+  }
+  el.innerHTML = `<span class="badge badge-success">&#9989; Done</span> <span class="muted" style="font-size:12px;">${escapeHtmlText(row.done_by || '')}${when ? ` &middot; ${when}` : ''}</span>${postHtml}`;
 }
 
 function escapeHtmlText(value) {
@@ -537,14 +558,27 @@ function setMarkDoneState({ status, caption, error, canRetry }) {
   errorEl.textContent = error || '';
   errorEl.classList.toggle('hidden', !error);
   document.getElementById('markDoneRetryBtn').classList.toggle('hidden', !canRetry);
+  document.getElementById('markDoneCloseBtn').disabled = markDoneBusy;
+}
+
+function openMarkDoneModal(previewSrc) {
+  const preview = document.getElementById('markDonePreview');
+  preview.classList.toggle('hidden', !previewSrc);
+  if (previewSrc) preview.src = previewSrc;
+  document.getElementById('markDoneModal').classList.remove('hidden');
+}
+
+// Re-reads this stop's Done / post state onto its card.
+function refreshStopCard(stopId) {
+  return loadStopCompletions([stopId]);
 }
 
 async function onMarkDonePhoto(e) {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
-  if (!file || !markDoneStopId) return;
+  if (!file || !markDoneStopId || markDoneBusy) return;
 
-  document.getElementById('markDoneModal').classList.remove('hidden');
+  openMarkDoneModal(null);
   setMarkDoneState({ status: 'Preparing photo...', caption: '' });
   const objectUrl = URL.createObjectURL(file);
   try {
@@ -552,7 +586,7 @@ async function onMarkDonePhoto(e) {
     const sourceImg = await loadImage(objectUrl, false);
     const dataUrl = renderWatermarkedPhoto(sourceImg, watermarkOptionsFromSettings(settings));
     markDonePhotoBase64 = dataUrl.split(',')[1];
-    document.getElementById('markDonePreview').src = dataUrl;
+    openMarkDoneModal(dataUrl);
   } catch (err) {
     setMarkDoneState({ error: err.message || 'Could not read the photo.' });
     return;
@@ -560,40 +594,72 @@ async function onMarkDonePhoto(e) {
     URL.revokeObjectURL(objectUrl);
   }
 
-  await postStopDone();
+  if (await saveStopDone()) await postStop();
 }
 
-async function postStopDone() {
+// Step 1 - true once the stop is recorded Done (or already was).
+async function saveStopDone() {
   const stopId = markDoneStopId;
+  markDoneStep = 'save';
+  markDoneBusy = true;
+  setMarkDoneState({ status: '💾 Saving delivery...', caption: '' });
   try {
-    setMarkDoneState({ status: '✍️ Writing caption...', caption: '' });
-    const { caption } = await callFacebookPostFunction(currentSession, markDonePhotoBase64, { action: 'caption', context: 'delivery_done' });
-
-    setMarkDoneState({ status: '📤 Posting to Facebook...', caption });
-    const result = await callFacebookPostFunction(currentSession, markDonePhotoBase64, { action: 'post', caption, stop_id: stopId });
-
-    setMarkDoneState({
-      status: '✅ Done! Posted to the GMA Facebook Page.',
-      error: result.stop_done_error ? `Posted, but the stop could not be marked done: ${result.stop_done_error}` : ''
-    });
-    if (!result.stop_done_error) {
-      showStopDone({ stop_id: stopId, done_by: currentSession.displayName || currentSession.username, done_at_utc: new Date().toISOString(), facebook_post_url: result.post_url });
+    const result = await callFacebookPostFunction(currentSession, markDonePhotoBase64, { action: 'mark_done', stop_id: stopId });
+    markDoneBusy = false;
+    await refreshStopCard(stopId);
+    if (result.already_done) {
+      setMarkDoneState({ status: '✅ This stop was already marked done.' });
+      return false;
     }
+    return true;
   } catch (err) {
-    setMarkDoneState({ status: 'Not posted yet.', error: err.message, canRetry: true });
+    markDoneBusy = false;
+    setMarkDoneState({ status: 'Not saved yet - the delivery is not marked done.', error: err.message, canRetry: true });
+    return false;
   }
+}
+
+// Step 2 - post the stored photo once. Safe to call again: the server refuses a stop that is
+// already posted or being posted.
+async function postStop() {
+  const stopId = markDoneStopId;
+  markDoneStep = 'post';
+  markDoneBusy = true;
+  setMarkDoneState({ status: '✅ Delivery saved. 📤 Posting to Facebook...', caption: '' });
+  try {
+    const result = await callFacebookPostFunction(currentSession, '', { action: 'post_stop', stop_id: stopId });
+    markDoneBusy = false;
+    setMarkDoneState({ status: '✅ Done! Saved and posted to the GMA Facebook Page.', caption: result.caption || '' });
+  } catch (err) {
+    markDoneBusy = false;
+    setMarkDoneState({
+      status: '✅ Delivery saved, but the Facebook post did not go out.',
+      error: `${err.message} You can try again now, or later with "Post to Facebook" on the stop.`,
+      canRetry: true
+    });
+  }
+  await refreshStopCard(stopId);
 }
 
 function wireMarkDone() {
   document.getElementById('driverStopCards').addEventListener('click', (e) => {
-    const btn = e.target.closest('.driver-mark-done-btn');
-    if (!btn) return;
-    markDoneStopId = btn.dataset.doneStopId;
-    // Start loading settings/logo while the driver reads the tip and takes the photo.
-    ensureFbPostReady();
-    // Per "while taking picture show a note" - a web page can't draw over the phone's own camera
-    // screen, so the note shows right before it opens; Open Camera is the tap that opens it.
-    document.getElementById('markDoneTipModal').classList.remove('hidden');
+    if (markDoneBusy) return;
+    const doneBtn = e.target.closest('.driver-mark-done-btn');
+    if (doneBtn) {
+      markDoneStopId = doneBtn.dataset.doneStopId;
+      // Start loading settings/logo while the driver reads the tip and takes the photo.
+      ensureFbPostReady();
+      // Per "while taking picture show a note" - a web page can't draw over the phone's own camera
+      // screen, so the note shows right before it opens; Open Camera is the tap that opens it.
+      document.getElementById('markDoneTipModal').classList.remove('hidden');
+      return;
+    }
+    const postBtn = e.target.closest('.driver-post-stop-btn');
+    if (postBtn) {
+      markDoneStopId = postBtn.dataset.postStopId;
+      openMarkDoneModal(null);
+      postStop();
+    }
   });
   document.getElementById('markDoneOpenCameraBtn').addEventListener('click', () => {
     document.getElementById('markDoneTipModal').classList.add('hidden');
@@ -604,11 +670,20 @@ function wireMarkDone() {
     markDoneStopId = null;
   });
   document.getElementById('markDonePhotoInput').addEventListener('change', onMarkDonePhoto);
-  document.getElementById('markDoneRetryBtn').addEventListener('click', postStopDone);
+  document.getElementById('markDoneRetryBtn').addEventListener('click', async () => {
+    if (markDoneBusy) return;
+    if (markDoneStep === 'save') {
+      if (await saveStopDone()) await postStop();
+    } else {
+      await postStop();
+    }
+  });
   document.getElementById('markDoneCloseBtn').addEventListener('click', () => {
+    if (markDoneBusy) return;
     document.getElementById('markDoneModal').classList.add('hidden');
   });
 }
+
 
 async function changeDriverDay(deltaDays) {
   const next = new Date(`${driverDate}T00:00:00`);
