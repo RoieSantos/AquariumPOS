@@ -17,8 +17,9 @@
 //   FACEBOOK_GMA_POST_TOKEN - never-expiring Page token with pages_manage_posts + pages_read_engagement
 //   FACEBOOK_GMA_PAGE_ID    - the RSPetStop GMA Page id
 //
-// Admin-gated: the caller passes admin_username/admin_password, re-verified via
-// is_admin_authorized() on every call - same trust model as chatbot-sandbox-reply.
+// Staff-gated: the caller passes admin_username/admin_password, re-verified via
+// is_staff_authorized() on every call, and must be a Super User or on the Delivery Team
+// (Quick Post is shared with the Delivery Team).
 //
 // Deploy: supabase functions deploy facebook-page-post --project-ref hymcmesqgpliyyeghpgq
 
@@ -113,11 +114,19 @@ Deno.serve(async (req) => {
   if (!ALLOWED_MEDIA_TYPES.includes(mediaType)) return jsonResponse({ error: `Unsupported image type ${mediaType}.` }, 400);
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const { data: authorized, error: authError } = await supabase.rpc('is_admin_authorized', {
+  const { data: authorized, error: authError } = await supabase.rpc('is_staff_authorized', {
     p_username: adminUsername,
     p_password: adminPassword
   });
   if (authError || !authorized) return jsonResponse({ error: 'Not authorized.' }, 401);
+
+  // Who is posting - read from StaffUsers by the username that just passed is_staff_authorized,
+  // never from anything the browser claims (not verify_login, which bumps login counters).
+  // Super users and the Delivery Team may post (Quick Post is shared with the Delivery Team).
+  const { data: staff } = await supabase.from('StaffUsers')
+    .select('"SuperUser", "WarehouseName", "StaffRoles", "ProductionMember", "StoreManager", "SalesUser", "DeliveryTeam"')
+    .eq('Username', adminUsername).maybeSingle();
+  if (!staff?.SuperUser && !staff?.DeliveryTeam) return jsonResponse({ error: 'Not authorized to post.' }, 403);
 
   if (action === 'caption') {
     const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
@@ -129,15 +138,10 @@ Deno.serve(async (req) => {
     // Store Info, the same facts Alice uses) AND the photo. Standing caption directions come from
     // AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql) - optional, the table
     // may not exist yet.
-    // Who is posting - read from StaffUsers by the username that just passed is_admin_authorized,
-    // never from anything the browser claims (not verify_login, which bumps login counters).
-    const [{ data: company }, { data: storeInfo }, { data: postSettings }, { data: staff }] = await Promise.all([
+    const [{ data: company }, { data: storeInfo }, { data: postSettings }] = await Promise.all([
       supabase.from('CompanyInfo').select('*').eq('Id', 1).maybeSingle(),
       supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
-      supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle(),
-      supabase.from('StaffUsers')
-        .select('"WarehouseName", "StaffRoles", "ProductionMember", "StoreManager", "SalesUser", "DeliveryTeam"')
-        .eq('Username', adminUsername).maybeSingle()
+      supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle()
     ]);
     const branchName = (staff?.WarehouseName as string | undefined)?.trim() || null;
     const { data: branch } = branchName
