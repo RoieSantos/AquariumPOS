@@ -68,10 +68,11 @@ Reply with the caption text only - no preamble, no quotes, no options.`;
 // Caption angle by who took the photo (StaffUsers flags/roles), checked in this order. Production
 // staff photograph freshly built tanks, store staff photograph what's on display at their branch,
 // delivery staff photograph orders going out - each reads best framed that way.
-function posterAngle(staff: Record<string, unknown> | null): { label: string; instruction: string } {
+// `openings`, when set, is enforced after generation - the caption must start with one of them.
+function posterAngle(staff: Record<string, unknown> | null): { label: string; instruction: string; openings?: string[] } {
   const roles = (staff?.StaffRoles as string[] | null) ?? [];
   if (staff?.DeliveryTeam) {
-    return { label: 'Delivery', instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. Never give customer names or exact addresses - a city/area is fine only if it is in the staff notes. Mention that we deliver and set up.' };
+    return { label: 'Delivery', openings: ['Delivery Done! ✅', 'Setup Done! ✅'], instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. Never give customer names or exact addresses - a city/area is fine only if it is in the staff notes. Mention that we deliver and set up.' };
   }
   if (roles.includes('Dispatcher')) {
     return { label: 'Dispatch', instruction: 'Taken by our dispatcher as an order is sent out: frame it as an order on its way / ready for delivery. Do NOT mention any customer, name, address, city or destination - only the item. Mention that we deliver.' };
@@ -168,7 +169,6 @@ Deno.serve(async (req) => {
     if (businessFacts) {
       systemPrompt += `\n\nAbout the business (real facts - use the ones that fit this post, e.g. delivery or how to order; never contradict them or invent others):\n${businessFacts}`;
     }
-    systemPrompt += `\n\nAngle for this post: ${angle.instruction}`;
     if (branchName) {
       const branchFacts = [`- Branch: RS Pet Stop ${branch?.Name || branchName}`];
       if (branch?.Address) branchFacts.push(`- Branch address: ${branch.Address}`);
@@ -178,6 +178,8 @@ Deno.serve(async (req) => {
     if (directions) {
       systemPrompt += `\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`;
     }
+    // Last, so neither the example caption nor the standing directions can override it.
+    systemPrompt += `\n\nREQUIRED angle for this post, based on who took the photo (this overrides the example caption and any opening line above):\n${angle.instruction}`;
 
     try {
       const anthropic = new Anthropic({ apiKey: anthropicApiKey });
@@ -189,15 +191,27 @@ Deno.serve(async (req) => {
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: mediaType as 'image/jpeg', data: imageBase64 } },
-            { type: 'text', text: notes ? `Staff notes: ${notes}` : 'No staff notes - describe only what is visible, with no prices.' }
+            {
+              type: 'text',
+              text: [
+                `Photo taken by: ${angle.label} staff.${angle.openings ? ` The caption MUST start with ${angle.openings.map((o) => `"${o}"`).join(' or ')}.` : ''}`,
+                notes ? `Staff notes: ${notes}` : 'No staff notes - describe only what is visible, with no prices.'
+              ].join('\n')
+            }
           ]
         }]
       });
-      const caption = response.content
+      let caption = response.content
         .filter((block) => block.type === 'text')
         .map((block) => (block as { text: string }).text)
         .join('\n')
         .trim();
+      // Safety net: if the model skipped the required opening (e.g. "Delivery Done! ✅"), add it.
+      // Leading emoji/punctuation is ignored, so "✅ Delivery Done!" also counts.
+      const captionStart = caption.replace(/^[^\p{L}]+/u, '').toLowerCase();
+      if (angle.openings && !angle.openings.some((o) => captionStart.startsWith(o.toLowerCase().replace(/[!✅ ]+$/u, '')))) {
+        caption = `${angle.openings[0]}\n${caption}`;
+      }
       return jsonResponse({ ok: true, caption, angle: angle.label, branch: branchName });
     } catch (err) {
       return jsonResponse({ error: `Caption failed: ${err instanceof Error ? err.message : String(err)}` }, 500);
