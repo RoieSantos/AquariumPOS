@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-11
+
+- **Dispatcher ship photo auto-posts to the GMA Facebook Page.** When a Dispatcher fully ships a GMA-branch online order (Mark Shipped / Release All; not a partial release), the proof photo they took is watermarked and posted with the Dispatch caption (the item only, no customer, address or city). Posted at most once per order, and the server re-checks Shipped + GMA. A Facebook failure never undoes Shipped. New `post_ship` action in [facebook-page-post](supabase/functions/facebook-page-post/index.ts), [supabase_online_order_ship_post.sql](sql/supabase_online_order_ship_post.sql), [onlineOrders.js](docs/js/onlineOrders.js) / [proofPhoto.js](docs/js/proofPhoto.js) `v=shippost1`.
+
 ## 2026-10-10
 
 - **Delivery calendar: assign AO- orders even before Confirm Order.** Searching "AO-00039" found nothing, because a draft bot/GMA order isn't in Online Orders until it's confirmed. A draft is now listed as type "Order Form" ("New - not confirmed yet") with its address, phone and lines, and can be assigned: new `DeliveryStops.AutomatedOrderNo`. On Confirm Order, a trigger moves the stop onto Online Order AO-00039. Older Pancake-pushed AOs are findable by AO number too ("112345 · AO-00039"). Re-creates the assign list, create stop, stops list, receipt and push label ([supabase_delivery_assign_automated_order_search.sql](sql/supabase_delivery_assign_automated_order_search.sql), [delivery.js](docs/js/delivery.js) `v=aosearch2`).

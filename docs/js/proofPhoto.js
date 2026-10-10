@@ -51,6 +51,10 @@ function ensureProofPhotoDialog() {
   </div>`);
 }
 
+// The last proof photo saved ({ refId, label, file }) - onlineOrders.js posts a Dispatcher's ship
+// photo to Facebook from it (postShipPhotoToFacebook).
+let lastProofPhoto = null;
+
 // Signed upload, same flow as uploadOrderStatusPhoto in onlineOrders.js. Returns { url, storagePath }
 // or { error }.
 async function uploadProofPhoto(refId, file) {
@@ -146,6 +150,7 @@ function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = 
         p_photo_storage_path: photo.storagePath
       });
       if (error) return fail(`Could not save the photo: ${error.message}`);
+      lastProofPhoto = { refId: String(refId), label, file: upload };
       okBtn.textContent = confirmLabel;
       cancelBtn.disabled = false;
       finish(true);

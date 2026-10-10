@@ -1213,6 +1213,7 @@ function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml
 // the "Take a photo of ... first." sentence.
 async function confirmWithPhoto(opts) {
   const kind = /^Production Done/.test(opts.label || '') ? 'production' : 'release';
+  lastProofPhoto = null; // only a photo taken in THIS dialog may be posted (postShipPhotoToFacebook)
   if (await proofPhotoRequired(kind)) return confirmWithPhotoDialog(opts);
   const { caption, title, message, confirmLabel, tone } = opts;
   return confirmAction({ caption, title, message: message.replace(/Take a photo of [^.]*first\.\s*/, '').trim(), confirmLabel, tone });
@@ -1423,6 +1424,58 @@ async function markOrderShippedWhole(o, btn) {
   if (openCardOrderId === String(o.order_id) && myAssignmentsLocked) closeOrderCard();
   await refreshCurrentOrders();
   if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
+  await postShipPhotoToFacebook(o);
+}
+
+// ---------------------------------------------------------------- Ship photo -> GMA Facebook Page
+// Per "can we apply this auto post to facebook for dispatchers if the location/warehouse is GMA ?":
+// once a Dispatcher's order is fully Shipped (not a partial release), the proof photo they just took
+// is watermarked (AI Bot Setup > Facebook Posts defaults, js/facebookPostShared.js) and posted to the
+// GMA Page by facebook-page-post 'post_ship' with the Dispatch caption (the item only - no customer,
+// address or city). The server re-checks Shipped + GMA branch and posts each order at most ONCE
+// (supabase_online_order_ship_post.sql). Facebook failing never undoes the Shipped status. No photo
+// (Proof Photos switched off in General Setup) -> no post.
+function isGmaBranchOrder(o) {
+  return /gma/i.test(o?.warehouse_name || '');
+}
+
+async function postShipPhotoToFacebook(o) {
+  const photo = lastProofPhoto;
+  lastProofPhoto = null;
+  if (!(currentSession?.staffRoles || []).includes('Dispatcher') || !isGmaBranchOrder(o)) return;
+  if (!photo || photo.refId !== String(o.order_id) || photo.label !== 'Released - Shipped') return;
+
+  let imageBase64;
+  showSendStatusBanner('Shipped! Posting the photo to the GMA Facebook Page...');
+  try {
+    const [settings] = await Promise.all([loadFacebookPostSettings(), logoImg ? null : loadCompanyLogo()]);
+    const objectUrl = URL.createObjectURL(photo.file);
+    try {
+      const img = await loadImage(objectUrl, false);
+      imageBase64 = renderWatermarkedPhoto(img, watermarkOptionsFromSettings(settings)).split(',')[1];
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch (err) {
+    hideSendStatusBanner();
+    alert(`Shipped, but the photo could not be prepared for Facebook: ${err.message}`);
+    return;
+  }
+
+  // Try Again only re-sends this request; the server refuses a second post of the same order.
+  for (;;) {
+    try {
+      await callFacebookPostFunction(currentSession, imageBase64, { action: 'post_ship', order_id: String(o.order_id) });
+      showSendStatusBanner('✅ Posted to the GMA Facebook Page.');
+      setTimeout(hideSendStatusBanner, 3000);
+      return;
+    } catch (err) {
+      hideSendStatusBanner();
+      if (/already posted|being posted|only gma|not shipped/i.test(err.message)) return;
+      if (!confirm(`The order is Shipped, but the Facebook post did not go out:\n${err.message}\n\nTry posting again?`)) return;
+      showSendStatusBanner('Posting the photo to the GMA Facebook Page...');
+    }
+  }
 }
 
 // ---------------------------------------------------------------- Release (partial / full shipping)
@@ -1532,6 +1585,7 @@ async function saveRelease() {
   if (openCardOrderId === orderId) loadOrderCardReleaseHistory(orderId);
   if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
   if (!result.fully_shipped) alert(result.message);
+  else await postShipPhotoToFacebook(o);
 }
 
 function wireReleaseDialog() {

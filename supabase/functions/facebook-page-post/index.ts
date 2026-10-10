@@ -22,8 +22,15 @@
 //       STORED photo and writes the Delivery Done caption itself, so it can be retried any time
 //       from the stop card ("Post to Facebook") even after the app was closed.
 //
-// Facebook is only ever called by 'post' and 'post_stop', once per request, with no automatic
-// retry - and nothing calls this function on a timer; every call is a staff tap.
+//   Dispatcher "Release / Ship" on a GMA-branch online order (online-orders.html,
+//   supabase_online_order_ship_post.sql):
+//   { action: 'post_ship', order_id, image_base64, media_type }
+//       Posts the watermarked ship photo with the Dispatch caption (the item only), ONCE per order:
+//       claims the order first (service_claim_order_ship_post), which also checks it is Shipped and
+//       its branch is GMA. The order is already Shipped before this is called.
+//
+// Facebook is only ever called by 'post', 'post_stop' and 'post_ship', once per request, with no
+// automatic retry - and nothing calls this function on a timer; every call is a staff tap.
 //
 // Uses its own secrets, NOT the Messenger bot's FACEBOOK_PAGE_ACCESS_TOKEN, so a posting token
 // problem can never break Alice:
@@ -32,7 +39,7 @@
 //
 // Staff-gated: the caller passes admin_username/admin_password, re-verified via
 // is_staff_authorized() on every call, and must be a Super User or on the Delivery Team
-// (the Delivery Team uses Mark Done).
+// (the Delivery Team uses Mark Done) - or, for post_ship only, a Dispatcher.
 //
 // Deploy: supabase functions deploy facebook-page-post --project-ref hymcmesqgpliyyeghpgq
 
@@ -90,14 +97,15 @@ type Staff = Record<string, unknown> | null;
 
 const DELIVERY_ANGLE: PostAngle = { label: 'Delivery', openings: ['Delivery Done! ✅', 'Setup Done! ✅'], instruction: 'Taken by our delivery team at the customer\'s place: open with "Delivery Done! ✅" (or "Setup Done! ✅" if the photo shows the tank installed/set up in a home or office), then thank the customer and invite others to order. If the staff notes give a "Delivered to" city, mention it naturally (e.g. "delivered to our customer in Marikina") - the city only. Never give customer names, streets, barangays, subdivisions or house numbers, and never name a place that is not in the notes. Mention that we deliver and set up.' };
 
+const DISPATCH_ANGLE: PostAngle = { label: 'Dispatch', instruction: 'Taken by our dispatcher as an order is sent out: frame it as an order on its way / ready for delivery. Do NOT mention any customer, name, address, city or destination - only the item. Mention that we deliver.' };
+
 // `context: 'delivery_done'` (Mark Done on a delivery stop, delivery.html) always uses the
-// Delivery angle, whoever is logged in.
+// Delivery angle, and `context: 'ship'` (post_ship) the Dispatch angle, whoever is logged in.
 function posterAngle(staff: Staff, context: string): PostAngle {
   const roles = (staff?.StaffRoles as string[] | null) ?? [];
+  if (context === 'ship') return DISPATCH_ANGLE;
   if (context === 'delivery_done' || staff?.DeliveryTeam) return DELIVERY_ANGLE;
-  if (roles.includes('Dispatcher')) {
-    return { label: 'Dispatch', instruction: 'Taken by our dispatcher as an order is sent out: frame it as an order on its way / ready for delivery. Do NOT mention any customer, name, address, city or destination - only the item. Mention that we deliver.' };
-  }
+  if (roles.includes('Dispatcher')) return DISPATCH_ANGLE;
   if (staff?.ProductionMember || roles.some((r) => ['TankMaker', 'StandMaker', 'ProductionManager'].includes(r))) {
     return { label: 'Production', instruction: 'Taken by our production team: frame it as freshly built in our own workshop, made to order in any size.' };
   }
@@ -309,11 +317,13 @@ Deno.serve(async (req) => {
   const imageBase64 = String(body.image_base64 ?? '');
   const mediaType = String(body.media_type ?? 'image/jpeg');
   const stopId = String(body.stop_id ?? '').trim();
+  const orderId = String(body.order_id ?? '').trim();
 
   if (!adminUsername || !adminPassword) return jsonResponse({ error: 'Missing admin_username / admin_password.' }, 400);
-  if (!['caption', 'post', 'mark_done', 'post_stop'].includes(action)) {
-    return jsonResponse({ error: "action must be 'caption', 'post', 'mark_done' or 'post_stop'." }, 400);
+  if (!['caption', 'post', 'mark_done', 'post_stop', 'post_ship'].includes(action)) {
+    return jsonResponse({ error: "action must be 'caption', 'post', 'mark_done', 'post_stop' or 'post_ship'." }, 400);
   }
+  if (action === 'post_ship' && !orderId) return jsonResponse({ error: 'Missing order_id.' }, 400);
   // post_stop uses the photo already stored by mark_done.
   if (action !== 'post_stop') {
     if (!imageBase64) return jsonResponse({ error: 'Missing image_base64.' }, 400);
@@ -333,7 +343,9 @@ Deno.serve(async (req) => {
   const { data: staff } = await supabase.from('StaffUsers')
     .select('"SuperUser", "WarehouseName", "StaffRoles", "ProductionMember", "StoreManager", "SalesUser", "DeliveryTeam"')
     .eq('Username', adminUsername).maybeSingle();
-  if (!staff?.SuperUser && !staff?.DeliveryTeam) return jsonResponse({ error: 'Not authorized to post.' }, 403);
+  const isDispatcher = ((staff?.StaffRoles as string[] | null) ?? []).includes('Dispatcher');
+  const allowed = action === 'post_ship' ? (staff?.SuperUser || isDispatcher) : (staff?.SuperUser || staff?.DeliveryTeam);
+  if (!allowed) return jsonResponse({ error: 'Not authorized to post.' }, 403);
 
   let bytes: Uint8Array | null = null;
   if (imageBase64) {
@@ -404,6 +416,49 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: `Could not mark the stop done: ${error.message}` }, 500);
     }
     return jsonResponse({ ok: true, already_done: newlyDone === false, photo_url: photoUrl });
+  }
+
+  if (action === 'post_ship') {
+    // Claim first - also refuses an order that isn't Shipped or isn't a GMA-branch order.
+    const { data: shipRows, error: shipClaimError } = await supabase.rpc('service_claim_order_ship_post', {
+      p_order_id: orderId,
+      p_username: adminUsername
+    });
+    if (shipClaimError) return jsonResponse({ error: `Could not start the post: ${shipClaimError.message}` }, 500);
+    const shipClaim = (shipRows as Array<{ status: string; facebook_post_url: string | null }> | null)?.[0];
+    if (!shipClaim || shipClaim.status !== 'claimed') {
+      const status = shipClaim?.status ?? 'not_shipped';
+      return jsonResponse({
+        ok: false,
+        status,
+        post_url: shipClaim?.facebook_post_url ?? null,
+        error: status === 'posted' ? 'Already posted to Facebook.'
+          : status === 'in_progress' ? 'This order is being posted right now.'
+            : status === 'not_gma' ? 'Only GMA branch orders are posted.'
+              : 'The order is not Shipped.'
+      }, 409);
+    }
+
+    const finishShip = (fields: { postId?: string | null; postUrl?: string | null; caption?: string | null; error?: string | null }) =>
+      supabase.rpc('service_finish_order_ship_post', {
+        p_order_id: orderId,
+        p_post_id: fields.postId ?? null,
+        p_post_url: fields.postUrl ?? null,
+        p_caption: fields.caption ?? null,
+        p_error: fields.error ?? null
+      });
+
+    let shipCaption = '';
+    try {
+      // No order details go to the AI - the Dispatch caption is about the item in the photo only.
+      shipCaption = (await writeCaption(supabase, staff, 'ship', '', imageBase64, mediaType)).caption;
+      const posted = await postPhotoToFacebook(bytes!, mediaType, shipCaption, null);
+      await finishShip({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption: shipCaption });
+      return jsonResponse({ ok: true, status: 'posted', caption: shipCaption, post_url: posted.postUrl });
+    } catch (err) {
+      await finishShip({ caption: shipCaption || null, error: errorText(err) });
+      return jsonResponse({ ok: false, status: 'failed', caption: shipCaption || null, error: errorText(err) }, 502);
+    }
   }
 
   // action === 'post_stop'
