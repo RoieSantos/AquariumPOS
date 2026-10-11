@@ -22,12 +22,13 @@
 //       STORED photo and writes the Delivery Done caption itself, so it can be retried any time
 //       from the stop card ("Post to Facebook") even after the app was closed.
 //
-//   Dispatcher "Release / Ship" on a GMA-branch online order (online-orders.html,
-//   supabase_online_order_ship_post.sql):
+//   Dispatcher "Release / Ship" on a GMA- or Amaya-branch online order (online-orders.html,
+//   supabase_online_order_ship_post.sql + supabase_online_order_ship_post_amaya.sql):
 //   { action: 'post_ship', order_id, image_base64, media_type }
 //       Posts the watermarked ship photo with the Dispatch caption (the item only), ONCE per order:
 //       claims the order first (service_claim_order_ship_post), which also checks it is Shipped and
-//       its branch is GMA. The order is already Shipped before this is called.
+//       picks the Page by its branch - GMA -> GMA Page, Amaya -> RS Pet Stop Page. The order is
+//       already Shipped before this is called.
 //
 // Facebook is only ever called by 'post', 'post_stop' and 'post_ship', once per request, with no
 // automatic retry - and nothing calls this function on a timer; every call is a staff tap.
@@ -36,6 +37,8 @@
 // problem can never break Alice:
 //   FACEBOOK_GMA_POST_TOKEN - never-expiring Page token with pages_manage_posts + pages_read_engagement
 //   FACEBOOK_GMA_PAGE_ID    - the RSPetStop GMA Page id
+//   FACEBOOK_RSPETSTOP_POST_TOKEN / FACEBOOK_RSPETSTOP_PAGE_ID - the same pair for the RS Pet Stop
+//                             Page (Amaya ship posts only; everything else posts to GMA)
 //
 // Staff-gated: the caller passes admin_username/admin_password, re-verified via
 // is_staff_authorized() on every call, and must be a Super User or on the Delivery Team
@@ -129,8 +132,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 // Store Info, the same facts Alice uses) AND the photo. Standing caption directions come from
 // AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql) - optional, the table may not
 // exist yet. Throws on failure.
+// `branchOverride` (post_ship): the order's branch instead of the poster's own StaffUsers branch.
 async function writeCaption(
-  supabase: SupabaseClient, staff: Staff, context: string, notes: string, imageBase64: string, mediaType: string
+  supabase: SupabaseClient, staff: Staff, context: string, notes: string, imageBase64: string, mediaType: string,
+  branchOverride?: string | null
 ): Promise<{ caption: string; angle: string; branch: string | null }> {
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!anthropicApiKey) throw new Error('Missing the ANTHROPIC_API_KEY secret.');
@@ -141,7 +146,7 @@ async function writeCaption(
     supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
     supabase.from('FacebookPostSettings').select('"CaptionDirections"').eq('Id', 1).maybeSingle()
   ]);
-  const branchName = (staff?.WarehouseName as string | undefined)?.trim() || null;
+  const branchName = branchOverride?.trim() || (staff?.WarehouseName as string | undefined)?.trim() || null;
   const { data: branch } = branchName
     ? await supabase.from('Warehouses').select('"Name", "Address", "ContactNo"').eq('Name', branchName).maybeSingle()
     : { data: null };
@@ -257,16 +262,25 @@ async function deliveryCity(supabase: SupabaseClient, stop: Record<string, unkno
   }
 }
 
+// Which Page to post to: 'gma' (default - Quick Post, Mark Done, GMA ship posts) or 'amaya'
+// (Amaya ship posts -> RS Pet Stop Page). Each has its own secret pair.
+type PostPage = 'gma' | 'amaya';
+const PAGE_SECRETS: Record<PostPage, { token: string; id: string }> = {
+  gma: { token: 'FACEBOOK_GMA_POST_TOKEN', id: 'FACEBOOK_GMA_PAGE_ID' },
+  amaya: { token: 'FACEBOOK_RSPETSTOP_POST_TOKEN', id: 'FACEBOOK_RSPETSTOP_PAGE_ID' }
+};
+
 // One POST /{page-id}/photos - the only place this code publishes to Facebook. No retry. Throws on
 // failure; returns Facebook's ids and the post link.
 async function postPhotoToFacebook(
-  bytes: Uint8Array, mediaType: string, caption: string, scheduledAt: number | null
+  bytes: Uint8Array, mediaType: string, caption: string, scheduledAt: number | null, page: PostPage = 'gma'
 ): Promise<{ photoId: string | null; postId: string | null; postUrl: string | null }> {
-  const pageToken = Deno.env.get('FACEBOOK_GMA_POST_TOKEN');
-  const pageId = Deno.env.get('FACEBOOK_GMA_PAGE_ID');
+  const secrets = PAGE_SECRETS[page];
+  const pageToken = Deno.env.get(secrets.token);
+  const pageId = Deno.env.get(secrets.id);
   const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
   if (!pageToken || !pageId) {
-    throw new Error('Missing the FACEBOOK_GMA_POST_TOKEN and/or FACEBOOK_GMA_PAGE_ID secret (Supabase > Edge Functions > Secrets).');
+    throw new Error(`Missing the ${secrets.token} and/or ${secrets.id} secret (Supabase > Edge Functions > Secrets).`);
   }
 
   const form = new FormData();
@@ -419,13 +433,14 @@ Deno.serve(async (req) => {
   }
 
   if (action === 'post_ship') {
-    // Claim first - also refuses an order that isn't Shipped or isn't a GMA-branch order.
+    // Claim first - also refuses an order that isn't Shipped or isn't a GMA / Amaya order, and
+    // says which Page it goes to.
     const { data: shipRows, error: shipClaimError } = await supabase.rpc('service_claim_order_ship_post', {
       p_order_id: orderId,
       p_username: adminUsername
     });
     if (shipClaimError) return jsonResponse({ error: `Could not start the post: ${shipClaimError.message}` }, 500);
-    const shipClaim = (shipRows as Array<{ status: string; facebook_post_url: string | null }> | null)?.[0];
+    const shipClaim = (shipRows as Array<{ status: string; facebook_post_url: string | null; page?: string | null; warehouse_name?: string | null }> | null)?.[0];
     if (!shipClaim || shipClaim.status !== 'claimed') {
       const status = shipClaim?.status ?? 'not_shipped';
       return jsonResponse({
@@ -434,7 +449,7 @@ Deno.serve(async (req) => {
         post_url: shipClaim?.facebook_post_url ?? null,
         error: status === 'posted' ? 'Already posted to Facebook.'
           : status === 'in_progress' ? 'This order is being posted right now.'
-            : status === 'not_gma' ? 'Only GMA branch orders are posted.'
+            : status === 'not_posting_branch' || status === 'not_gma' ? 'Only GMA and Amaya branch orders are posted.'
               : 'The order is not Shipped.'
       }, 409);
     }
@@ -448,13 +463,16 @@ Deno.serve(async (req) => {
         p_error: fields.error ?? null
       });
 
+    // No page column = the older GMA-only claim function (SQL not run yet) - GMA, as before.
+    const shipPage: PostPage = shipClaim.page === 'amaya' ? 'amaya' : 'gma';
     let shipCaption = '';
     try {
-      // No order details go to the AI - the Dispatch caption is about the item in the photo only.
-      shipCaption = (await writeCaption(supabase, staff, 'ship', '', imageBase64, mediaType)).caption;
-      const posted = await postPhotoToFacebook(bytes!, mediaType, shipCaption, null);
+      // No order details go to the AI - the Dispatch caption is about the item in the photo only
+      // (plus the order's branch name/contact, so an Amaya post names Amaya).
+      shipCaption = (await writeCaption(supabase, staff, 'ship', '', imageBase64, mediaType, shipClaim.warehouse_name)).caption;
+      const posted = await postPhotoToFacebook(bytes!, mediaType, shipCaption, null, shipPage);
       await finishShip({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption: shipCaption });
-      return jsonResponse({ ok: true, status: 'posted', caption: shipCaption, post_url: posted.postUrl });
+      return jsonResponse({ ok: true, status: 'posted', page: shipPage, caption: shipCaption, post_url: posted.postUrl });
     } catch (err) {
       await finishShip({ caption: shipCaption || null, error: errorText(err) });
       return jsonResponse({ ok: false, status: 'failed', caption: shipCaption || null, error: errorText(err) }, 502);

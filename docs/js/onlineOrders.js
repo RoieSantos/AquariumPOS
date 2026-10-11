@@ -276,10 +276,20 @@ function customBadgeHtml(order) {
 // links back to the originating Automated Order request for the full conversation/line detail.
 // Plus an "AI Bot" tag when Vic / website Alice placed it (OnlineOrders.CreatedBy = 'AI Bot', set by
 // admin_confirm_bot_order). No link - the old Automated Orders page it pointed to was removed.
+//
+// The label is the actual Facebook Page the conversation came in on (o.gma_page_id, attachGmaPages
+// below) - one Messenger app now serves several Pages. Same Page IDs as PAGE_LABELS in
+// gmaConversations.js; an unknown/not-yet-loaded Page falls back to the old "GMA Page" label.
+const GMA_PAGE_BADGES = {
+  '1272627559275402': { label: 'GMA Page', cls: 'badge-purple' },
+  '195716644410829': { label: 'RS Pet Stop Page', cls: 'badge-success' }
+};
+
 function gmaBadgeHtml(order) {
   if (!order.is_gma_order) return '';
   const fromBot = order.created_by === 'AI Bot';
-  return `<span class="badge badge-purple" title="Created from a GMA page conversation (${escapeHtml(order.gma_order_no || '')})">GMA Page</span>`
+  const page = GMA_PAGE_BADGES[order.gma_page_id] || GMA_PAGE_BADGES['1272627559275402'];
+  return `<span class="badge ${page.cls}" title="Created from a ${escapeHtml(page.label)} conversation (${escapeHtml(order.gma_order_no || '')})">${escapeHtml(page.label)}</span>`
     + (fromBot ? ' <span class="badge badge-neutral" title="Placed by the AI bot">AI Bot</span>' : '');
 }
 
@@ -1502,26 +1512,32 @@ async function markOrderShippedWhole(o, btn) {
   await postShipPhotoToFacebook(o);
 }
 
-// ---------------------------------------------------------------- Ship photo -> GMA Facebook Page
-// Per "can we apply this auto post to facebook for dispatchers if the location/warehouse is GMA ?":
-// once a Dispatcher's order is fully Shipped (not a partial release), the proof photo they just took
-// is watermarked (AI Bot Setup > Facebook Posts defaults, js/facebookPostShared.js) and posted to the
-// GMA Page by facebook-page-post 'post_ship' with the Dispatch caption (the item only - no customer,
-// address or city). The server re-checks Shipped + GMA branch and posts each order at most ONCE
-// (supabase_online_order_ship_post.sql). Facebook failing never undoes the Shipped status. No photo
-// (Proof Photos switched off in General Setup) -> no post.
-function isGmaBranchOrder(o) {
-  return /gma/i.test(o?.warehouse_name || '');
+// ---------------------------------------------------------------- Ship photo -> branch Facebook Page
+// Per "can we apply this auto post to facebook for dispatchers if the location/warehouse is GMA ?"
+// and "... to RSPetStop Page too? this is for amaya warehouse": once a Dispatcher's order is fully
+// Shipped (not a partial release), the proof photo they just took is watermarked (AI Bot Setup >
+// Facebook Posts defaults, js/facebookPostShared.js) and posted by facebook-page-post 'post_ship'
+// with the Dispatch caption (the item only - no customer, address or city): GMA orders to the GMA
+// Page, Amaya orders to the RS Pet Stop Page. The server re-checks Shipped + branch and posts each
+// order at most ONCE (supabase_online_order_ship_post.sql, supabase_online_order_ship_post_amaya.sql).
+// Facebook failing never undoes the Shipped status. No photo (Proof Photos switched off in General
+// Setup) -> no post.
+function shipPostPageName(o) {
+  const branch = o?.warehouse_name || '';
+  if (/gma/i.test(branch)) return 'GMA Facebook Page';
+  if (/amaya/i.test(branch)) return 'RS Pet Stop Facebook Page';
+  return null;
 }
 
 async function postShipPhotoToFacebook(o) {
   const photo = lastProofPhoto;
   lastProofPhoto = null;
-  if (!(currentSession?.staffRoles || []).includes('Dispatcher') || !isGmaBranchOrder(o)) return;
+  const pageName = shipPostPageName(o);
+  if (!(currentSession?.staffRoles || []).includes('Dispatcher') || !pageName) return;
   if (!photo || photo.refId !== String(o.order_id) || photo.label !== 'Released - Shipped') return;
 
   let imageBase64;
-  showSendStatusBanner('Shipped! Posting the photo to the GMA Facebook Page...');
+  showSendStatusBanner(`Shipped! Posting the photo to the ${pageName}...`);
   try {
     const [settings] = await Promise.all([loadFacebookPostSettings(), logoImg ? null : loadCompanyLogo()]);
     const objectUrl = URL.createObjectURL(photo.file);
@@ -1541,14 +1557,14 @@ async function postShipPhotoToFacebook(o) {
   for (;;) {
     try {
       await callFacebookPostFunction(currentSession, imageBase64, { action: 'post_ship', order_id: String(o.order_id) });
-      showSendStatusBanner('✅ Posted to the GMA Facebook Page.');
+      showSendStatusBanner(`✅ Posted to the ${pageName}.`);
       setTimeout(hideSendStatusBanner, 3000);
       return;
     } catch (err) {
       hideSendStatusBanner();
       if (/already posted|being posted|only gma|not shipped/i.test(err.message)) return;
       if (!confirm(`The order is Shipped, but the Facebook post did not go out:\n${err.message}\n\nTry posting again?`)) return;
-      showSendStatusBanner('Posting the photo to the GMA Facebook Page...');
+      showSendStatusBanner(`Posting the photo to the ${pageName}...`);
     }
   }
 }
@@ -5247,6 +5263,24 @@ async function attachProductionRequests(rows) {
   rows.forEach((o) => { o.production_request = byOrder.get(String(o.order_id)) || null; });
 }
 
+// Facebook Page each conversation-created order came from (gmaBadgeHtml). Quietly keeps the old
+// "GMA Page" label until sql/supabase_online_order_gma_page.sql has been run.
+async function attachGmaPages(rows) {
+  const ids = rows.filter((o) => o.is_gma_order).map((o) => String(o.order_id));
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_list_online_order_gma_pages', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.warn('staff_list_online_order_gma_pages:', error.message);
+    return;
+  }
+  const byOrder = new Map((data || []).map((r) => [String(r.order_id), r.gma_page_id]));
+  rows.forEach((o) => { if (o.is_gma_order) o.gma_page_id = byOrder.get(String(o.order_id)) || null; });
+}
+
 // Dispatcher release progress for the rows on screen (releaseBadgeHtml / Release History) - o.release
 // is set only on orders with at least one release. Quietly none until
 // sql/supabase_online_order_partial_release.sql has been run.
@@ -5346,6 +5380,7 @@ async function loadOrders(search, status) {
   await attachProductionOrders(rows);
   await attachProductionRequests(rows);
   await attachReleaseSummary(rows);
+  await attachGmaPages(rows);
   if (myGeneration !== loadGeneration) return;
 
   // Online Order Staff get the tabbed card view (renderGroupedOrders) instead of the flat table +

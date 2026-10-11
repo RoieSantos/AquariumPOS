@@ -12,7 +12,10 @@
 --
 -- GMA = the order's branch (OnlineOrders.LocationID -> Warehouses.Name) has "GMA" in its name.
 --
--- Run AFTER supabase_online_order_partial_release.sql. Safe to re-run.
+-- Run AFTER supabase_online_order_partial_release.sql. Safe to re-run - UNTIL
+-- supabase_online_order_ship_post_amaya.sql has been run: that file replaces
+-- service_claim_order_ship_post (GMA + Amaya), and re-running this one after it fails with
+-- "cannot change return type of existing function". Run the Amaya file instead.
 -- Needs js/onlineOrders.js ?v=shippost1 and the facebook-page-post Edge Function redeployed.
 
 -- ---------------------------------------------------------------------------

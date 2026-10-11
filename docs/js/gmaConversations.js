@@ -64,6 +64,22 @@ function onConversationSearchInput(term) {
   conversationSearchDebounce = setTimeout(loadConversations, 300);
 }
 
+// Which Facebook Page a conversation came in on - one Messenger app now serves several Pages (see
+// supabase/functions/_shared/page-tokens.ts), all landing in this one inbox. Add a Page here when
+// another one is connected; an unlisted Page still shows as "Page …1234".
+const PAGE_LABELS = {
+  '1272627559275402': { label: 'GMA', cls: 'inbox-badge-page-gma' },
+  '195716644410829': { label: 'RS Pet Stop', cls: 'inbox-badge-page-rspetstop' },
+  website: { label: 'Website', cls: '' }
+};
+
+function pageBadgeHtml(pageId) {
+  if (!pageId) return '';
+  const known = PAGE_LABELS[pageId];
+  const label = known ? known.label : `Page …${String(pageId).slice(-4)}`;
+  return `<span class="inbox-badge inbox-badge-page ${known?.cls || ''}" title="Facebook Page ${escapeHtml(pageId)}">${escapeHtml(label)}</span>`;
+}
+
 function renderConversationList() {
   const listEl = document.getElementById('conversationListEl');
 
@@ -76,6 +92,7 @@ function renderConversationList() {
 
   listEl.innerHTML = conversations.map((c) => {
     const badges = [
+      pageBadgeHtml(c.page_id),
       c.status === 'Escalated' ? '<span class="inbox-badge inbox-badge-escalated">Escalated</span>' : '',
       c.is_paused ? '<span class="inbox-badge inbox-badge-paused">Paused</span>' : ''
     ].join('');
@@ -111,7 +128,7 @@ function renderThreadHeader(conv) {
       : 'AI paused until resumed';
   }
   headerEl.innerHTML = `
-    <span style="font-size:12px; font-weight:600;">${escapeHtml(conv.customer_name || conv.psid)}</span>
+    <span style="font-size:12px; font-weight:600;">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}</span>
     <span class="inbox-thread-viewers" id="threadViewersEl"></span>
     <span class="inbox-header-actions">
       ${pauseNote ? `<span class="inbox-pause-note">${escapeHtml(pauseNote)}</span>` : ''}
@@ -1038,6 +1055,7 @@ function renderConversationOrderCards() {
           <span class="inbox-order-no">${escapeHtml(o.order_no)}</span>
         </div>
         <div class="inbox-order-badges">
+          ${pageBadgeHtml(conversationOrdersConv?.page_id)}
           ${pancakeStatusBadgeHtml(o)}
           ${o.order_no === flaggedOrderNo ? '<span class="badge badge-danger">Payment to confirm</span>' : ''}
           ${o.status === 'New' && o.receipt_confirmed_at_utc ? '<span class="badge badge-success">Customer confirmed - ready for Order ID</span>' : ''}
