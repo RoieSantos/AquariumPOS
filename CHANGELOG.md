@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- Online Orders Ready to Ship / To Ship ([onlineOrders.js](docs/js/onlineOrders.js)): an All-Branch Fabrication user shipping another branch's order (e.g. Amaya staff on a GMA order) now searches the serial picker at the order's branch, not their own. Before, it said "No available serials found". Cache bumped to `fabserials1`.
+
+- Read-only check [supabase_check_online_order_AO-00040_serials.sql](sql/supabase_check_online_order_AO-00040_serials.sql): shows which serials Ready to Ship will ask for on AO-00040, line by line. AO-00040 is a bot/GMA order confirmed into Online Orders, not an advance order. This replaces the wrong advance-order version (deleted), which returned nothing.
+
+- One-off fix [supabase_fix_order_114426_back_to_assigned.sql](sql/supabase_fix_order_114426_back_to_assigned.sql): order 114426 went to To Ship before its Tank Maker marked Production Done. This moves it back to Assigned in Pancake and the portal, with no customer message. It probably came from the POS To Ship button, which doesn't check production yet. That guard is still to do.
+
 - **Delivery route view: tap a stop card for details, and see the balance.** Tapping anywhere on a stop card now opens Order Details; Mark Done and the other buttons keep their own action. Each card and the details popup show "Balance to collect: ₱…", or a green "Fully paid" badge when nothing is owed. This uses the balance the stops list already returns, adjusted for any manual delivery fee. Item prices stay hidden. [delivery.js](docs/js/delivery.js) `v=balance1`, no SQL.
 
 - Read-only check [supabase_check_dispatcher_order_visibility.sql](sql/supabase_check_dispatcher_order_visibility.sql): shows why a To Ship order (114426) is hidden from a Dispatcher. It checks each Dispatcher's role, status and exact warehouse-name match, and whether the live list function still has the Dispatcher rule.

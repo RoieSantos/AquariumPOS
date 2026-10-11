@@ -2996,7 +2996,8 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
   // Only offer serials physically at the staff member's own location - same reasoning as Transfer
   // Orders' identical restriction (searchAvailableSerialsForRow). Staff with no assigned warehouse
   // stay unrestricted, same convention used everywhere else this session field is checked.
-  // Shipping from stock: the order's own branch instead (shipSerialWarehouse, set by handleToShipClick).
+  // Shipping from stock, or All-Branch Fabrication on another branch's order: the order's own branch
+  // instead (shipSerialWarehouse, set by handleToShipClick).
   const serialLocation = shipSerialWarehouse || currentSession?.warehouseName;
   if (serialLocation) {
     query = query.eq('Location', serialLocation);
@@ -3453,7 +3454,13 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   let serialRunningNos = null;
   // Shipping from stock (see stockStatusFor): the serials must be picked no matter which warehouse the
   // manager is logged in at, and they're searched at the ORDER's branch, where the stock was counted.
-  shipSerialWarehouse = fromStock ? (stockStatusFor(findFlatOrder(orderId))?.warehouse_name || null) : null;
+  // All-Branch Fabrication staff working another branch's order (e.g. Amaya staff on a GMA order): per
+  // "allow the GMA serials lookup if my user is ALL-Branch Fabrication" - search at the order's branch too.
+  const shipOrder = findFlatOrder(orderId);
+  const otherBranch = shipOrder?.warehouse_name && currentSession.warehouseName
+    && shipOrder.warehouse_name !== currentSession.warehouseName ? shipOrder.warehouse_name : null;
+  shipSerialWarehouse = fromStock ? (stockStatusFor(shipOrder)?.warehouse_name || null)
+    : (otherBranch && canSeeAllBranchFabrication() ? otherBranch : null);
   if (fromStock) shipFromStockOrderIds.add(String(orderId));
   else shipFromStockOrderIds.delete(String(orderId));
 
