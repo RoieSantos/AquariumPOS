@@ -79,6 +79,15 @@
         <button class="btn btn-success" id="saveAiSettingsBtn" type="button">Save Bot Settings</button>
       </div>
 
+      <div class="form-row" style="margin-top:16px;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="commentAutoReplyEnabledInput" style="width:auto;" />
+          <span>Auto-reply to Facebook post comments</span>
+        </label>
+        <span class="muted" style="font-size:12px; display:block; margin-top:4px;">Every new comment on the Page's posts gets a short, natural public reply. Questions (price, stock, ordering) and complaints also get a private Messenger DM with the real answer - prices are never posted publicly. Saves as soon as you tick/untick it.</span>
+        <div id="commentAutoReplyError" class="error-text hidden"></div>
+      </div>
+
       <div class="section-divider"></div>
 
       <div class="toolbar">
@@ -272,7 +281,7 @@
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
-  <script src="js/aiBotSetup.js?v=fbpost1"></script>
+  <script src="js/aiBotSetup.js?v=fbcomment1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

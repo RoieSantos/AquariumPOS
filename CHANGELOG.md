@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- Read-only check [supabase_check_gma_page_id.sql](sql/supabase_check_gma_page_id.sql): lists the Facebook Page ID(s) the Messenger bot receives messages for, needed to generate the new Page access token for comment auto-reply.
+
+- **Facebook post comments now get auto-replies from Alice.** Every new comment gets a short, human-sounding public reply. Questions (price, stock, ordering) and complaints also get a private Messenger DM with the real answer, and complaints notify staff on Telegram. Prices are never posted publicly. DMs show up in GMA Conversations as a normal thread. New [comments.ts](supabase/functions/facebook-messenger-webhook/comments.ts), wired into [facebook-messenger-webhook/index.ts](supabase/functions/facebook-messenger-webhook/index.ts). `runChatbotTurn` gained an `allowedToolNames` option, so comment DMs only use read-only lookup/quote tools ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)). Log/dedup table plus an on/off switch on AI Bot Setup ([supabase_facebook_comment_auto_reply.sql](sql/supabase_facebook_comment_auto_reply.sql), [ai-bot-setup.html](docs/ai-bot-setup.html), [aiBotSetup.js](docs/js/aiBotSetup.js)).
+
 - **POS header: Production Orders swapped for Online Pay, and the layout fixed** ([MainForm.cs](MainForm.cs)). The management buttons are now one size (120×34, 3px margin), so they fit in 2 rows of 4. Before, only 3 fit per row, so the third row (Aquarium Set / Purchase Order) was cut off. The version label is shortened to "v… (commit)", with full details in the tooltip and window title. It and the title text now stop before the Sync buttons instead of sitting under them. Online Pay is also still reachable from the Online Orders dialog.
 
 - **Aquarium Set button visible again.** The new Online Pay button pushed it off the fixed-size header button panel. Online Pay is now opened from the Online Orders dialog (an "Online Pay" button beside the portal link) instead of its own header button ([MainForm.cs](MainForm.cs)).

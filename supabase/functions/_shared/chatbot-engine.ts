@@ -2784,14 +2784,30 @@ export interface RunChatbotTurnParams {
   simulate?: boolean;
   pageAccessToken?: string;
   graphVersion?: string;
+  // Restricts which tools Claude may call this turn (by name) - omitted = all of TOOLS. Used by the
+  // Facebook comment auto-reply (facebook-messenger-webhook/comments.ts), which has no real PSID
+  // yet when it runs, so it only gets the read-only lookup/quote tools.
+  allowedToolNames?: string[];
 }
+
+// Read-only tools only (catalog lookups + price quotes) - no order/escalation/follow-up side effects.
+export const READ_ONLY_TOOL_NAMES = [
+  'search_items',
+  'list_categories',
+  'list_aquarium_sets',
+  'list_items_in_category',
+  'compute_aquarium_quote',
+  'compute_sticker_quote',
+  'compute_repair_quote'
+];
 
 // The actual Claude tool-use loop, shared verbatim by the real webhook and the sandbox - history
 // loading/saving and any Facebook-specific side effects (sending the final reply, updating
 // ChatbotConversations) stay in each caller, since those differ between the two.
 export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<string> {
-  const { supabase, anthropic, model, psid, pageId, messages, followUpSettings, aiSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion } = params;
+  const { supabase, anthropic, model, psid, pageId, messages, followUpSettings, aiSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion, allowedToolNames } = params;
   let finalText = "Sorry, I'm having trouble responding right now - a team member will follow up with you shortly.";
+  const tools = allowedToolNames ? TOOLS.filter((t) => allowedToolNames.includes(t.name)) : TOOLS;
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await anthropic.messages.create({
@@ -2800,7 +2816,7 @@ export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<stri
       system: systemBlocks as never,
       thinking: { type: 'adaptive' },
       output_config: { effort: 'low' },
-      tools: TOOLS,
+      tools,
       messages
     });
 
@@ -2822,6 +2838,10 @@ export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<stri
     const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const tool of toolUseBlocks) {
+      if (!tools.some((t) => t.name === tool.name)) {
+        toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'That tool is not available here.' });
+        continue;
+      }
       const result = await executeTool({
         supabase,
         psid,

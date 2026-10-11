@@ -39,6 +39,9 @@
 // conversation, and (2) the schedule_follow_up tool, letting the bot itself queue a follow-up the
 // moment it promises a customer a callback.
 //
+// Facebook post comments (the Page's `feed` webhook field - public reply + private-reply DM) are
+// handled in comments.ts; this file only routes entry.changes[] there, in the background.
+//
 // Always acks Facebook with 200 once the request's signature checks out, even if something later
 // fails internally (logged via console.error) - a non-200 makes Facebook redeliver the same event,
 // and a retry storm on a genuinely broken message is worse than silently dropping it. Dedup on
@@ -48,6 +51,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import { DEFAULT_GRAPH_VERSION, buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import { type FacebookFeedChangeValue, handleFeedComment } from './comments.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 20;
@@ -69,6 +73,9 @@ interface FacebookAttachment {
 
 interface FacebookWebhookBody {
   entry?: Array<{
+    id?: string; // the Page id
+    // Page `feed` field events (post comments) - see comments.ts.
+    changes?: Array<{ field?: string; value?: FacebookFeedChangeValue }>;
     messaging?: Array<{
       sender?: { id: string };
       recipient?: { id: string };
@@ -1390,6 +1397,21 @@ async function handlePost(req: Request): Promise<Response> {
     const anthropic = new Anthropic({ apiKey: anthropicApiKey });
 
     for (const entry of body.entry ?? []) {
+      // Post comments (`feed` field): run in the background - comments.ts waits a human-like
+      // 15-40s before replying, far longer than Facebook will wait for this webhook's 200.
+      for (const change of entry.changes ?? []) {
+        if (change.field !== 'feed' || change.value?.item !== 'comment' || !entry.id) continue;
+        const work = handleFeedComment({
+          supabase, anthropic, model, pageAccessToken, graphVersion,
+          storeTimezone: STORE_TIMEZONE,
+          pageId: entry.id,
+          value: change.value,
+          broadcast: (psid) => broadcastGmaEvent(supabase, psid)
+        }).catch((err) => console.error('Error processing post comment:', err instanceof Error ? err.message : err));
+        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
+        else await work;
+      }
+
       // One-line trace of what Facebook sent (no message text) - for checking echo / standby delivery.
       console.log('Webhook entry', JSON.stringify({
         keys: Object.keys(entry),

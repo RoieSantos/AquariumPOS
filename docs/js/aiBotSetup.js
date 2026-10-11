@@ -29,6 +29,30 @@ async function loadAiSettings() {
   document.getElementById('greetingMessageInput').value = (info && info['GreetingMessage']) || '';
   document.getElementById('customDirectionsInput').value = (info && info['CustomDirections']) || '';
   document.getElementById('defaultLocationInput').value = (info && info['DefaultLocation']) || 'GMA';
+  document.getElementById('commentAutoReplyEnabledInput').checked = !info || info['CommentAutoReplyEnabled'] !== false;
+}
+
+// Facebook post comment auto-reply on/off (ChatbotAiSettings.CommentAutoReplyEnabled, see
+// supabase_facebook_comment_auto_reply.sql) - saved immediately on toggle, separate from Save Bot Settings.
+async function saveCommentAutoReply() {
+  const input = document.getElementById('commentAutoReplyEnabledInput');
+  const errorEl = document.getElementById('commentAutoReplyError');
+  errorEl.classList.add('hidden');
+  input.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('admin_set_chatbot_comment_auto_reply', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_enabled: input.checked
+    });
+    if (error) {
+      input.checked = !input.checked;
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+    }
+  } finally {
+    input.disabled = false;
+  }
 }
 
 async function saveAiSettings() {
@@ -291,6 +315,7 @@ async function updateCapabilityGapStatus(id, status) {
 
   document.getElementById('setupContent').classList.remove('hidden');
   document.getElementById('saveAiSettingsBtn').addEventListener('click', saveAiSettings);
+  document.getElementById('commentAutoReplyEnabledInput').addEventListener('change', saveCommentAutoReply);
   document.getElementById('saveStoreInfoBtn').addEventListener('click', saveStoreInfo);
   document.getElementById('saveFollowUpSettingsBtn').addEventListener('click', saveFollowUpSettings);
   document.getElementById('saveFbPostSettingsBtn').addEventListener('click', saveFbPostSettings);
