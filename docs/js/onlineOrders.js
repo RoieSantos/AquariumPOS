@@ -182,7 +182,14 @@ function isOpenFabricationOrder(order) {
 // An order from another branch, shown here only because it needs fabrication (see above).
 function otherBranchBadgeHtml(order) {
   if (!currentSession?.warehouseName || !order.warehouse_name || order.warehouse_name === currentSession.warehouseName) return '';
-  return `<span class="badge badge-neutral" title="From another branch - shown because it needs fabrication (All-Branch Fabrication role).">${escapeHtml(order.warehouse_name)}</span>`;
+  return `<span class="badge badge-neutral" title="From another branch - shown because it needs fabrication or production was requested (All-Branch Fabrication role).">${escapeHtml(order.warehouse_name)}</span>`;
+}
+
+// Once the server does the branch filter (p_branch_scoped), it also returns other branches' orders with a
+// production request / build (supabase_online_order_production_request.sql) - the browser can't tell
+// those apart before attachProductionRequests, so its own filter only runs as the old fallback.
+function branchFilterRows(rows) {
+  return branchScopedUnsupported.has('admin_list_online_orders') ? rows.filter(matchesWarehouseFilter) : rows;
 }
 
 // p_branch_scoped (supabase_online_order_all_branch_fabrication.sql) does the branch filter above
@@ -282,7 +289,19 @@ function gmaBadgeHtml(order) {
 // in sessionStorage (auth.js), which a target="_blank" link (noopener) doesn't carry over, so a new tab
 // landed on the login page.
 function prodOrderBadgeHtml(order) {
-  return (order.production_orders || []).map((p) => `<a class="badge ${p.status === 'Finished' ? 'badge-success' : 'badge-neutral'}" href="production-orders.html?no=${encodeURIComponent(p.production_order_no)}" title="Production Order ${escapeHtml(p.production_order_no)} (${escapeHtml(p.status || '')}) was created for this order - click to open it.">${escapeHtml(p.production_order_no)}</a>`).join(' ');
+  return productionRequestBadgeHtml(order) + (order.production_orders || []).map((p) => `<a class="badge ${p.status === 'Finished' ? 'badge-success' : 'badge-neutral'}" href="production-orders.html?no=${encodeURIComponent(p.production_order_no)}" title="Production Order ${escapeHtml(p.production_order_no)} (${escapeHtml(p.status || '')}) was created for this order - click to open it.">${escapeHtml(p.production_order_no)}</a>`).join(' ');
+}
+
+// Branch staff asked for a build (attachProductionRequests, sql/supabase_online_order_production_request.sql).
+// Only until a Production Order is linked - its own badge takes over then.
+function productionRequestBadgeHtml(order) {
+  const r = order.production_request;
+  if (!r || (order.production_orders || []).length) return '';
+  return `<span class="badge badge-warning" title="Production requested by ${escapeHtml(r.requested_by_name || r.requested_by || '-')} on ${escapeHtml(formatRequestedAt(r.requested_at))} - not enough in stock at ${escapeHtml(order.warehouse_name || 'the branch')}.">Production Requested</span> `;
+}
+
+function formatRequestedAt(ts) {
+  return ts ? new Date(ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : '-';
 }
 
 // Dispatcher partial release (attachReleaseSummary, sql/supabase_online_order_partial_release.sql) -
@@ -873,8 +892,30 @@ function stockStatusFor(o) {
 // 'assigned' too: a stock build moves the order to Assigned (supabase_online_order_stock_build_assigned.sql)
 // and it still needs this check for In Production / Ready to Ship.
 function isStockCheckCandidate(o) {
-  if (!o || !canAssignOrders() || neededProductionRoles(o).length) return false;
+  if (!o || !(canAssignOrders() || canRequestProduction(o)) || neededProductionRoles(o).length) return false;
   return ['confirmed', 'submitted', 'printed', 'assigned'].includes((o.status || '').trim().toLowerCase());
+}
+
+// Request Production (sql/supabase_online_order_production_request.sql): branch staff who can't build
+// themselves ask the Production Manager to. Their own branch's online orders only (server checks too).
+function canRequestProduction(o) {
+  if (!o || o.received_at_shop || canAssignOrders() || myAssignmentsOnly || isOrderMakerOnly(currentSession)) return false;
+  return !currentSession.warehouseName || (o.warehouse_name || '') === currentSession.warehouseName;
+}
+
+// Next step for branch staff on a stock order that's short at their branch.
+function nextStepForRequest(o) {
+  if (!canRequestProduction(o) || neededProductionRoles(o).length) return null;
+  const s = stockStatusFor(o);
+  if (!s || s.has_custom_line || s.set_pending || !s.needs_serial || s.all_available) return null;
+  if (s.production_order_no && ['Open', 'Released'].includes(s.production_order_status)) {
+    return { action: 'none', label: `In Production ${s.production_order_no}`, icon: 'ico-done', disabled: true, title: `Being built on ${s.production_order_no} (${s.production_order_status}). It can ship once its output is posted.\n${stockLinesSummary(s)}` };
+  }
+  const r = o.production_request;
+  if (r) {
+    return { action: 'cancel-request', label: 'Production Requested', icon: 'ico-done', title: `Requested by ${r.requested_by_name || r.requested_by || '-'} on ${formatRequestedAt(r.requested_at)} - waiting for the Production Manager to assign makers. Click to cancel the request.\n${stockLinesSummary(s)}` };
+  }
+  return { action: 'request-prod', label: 'Request Production', icon: 'ico-assign', title: `Not enough in stock at ${s.warehouse_name || 'this branch'} - ask the Production Manager to build the missing units.\n${stockLinesSummary(s)}` };
 }
 
 async function ensureStockStatus(o) {
@@ -936,7 +977,39 @@ function nextStepForStock(o) {
   if (s.production_order_no && ['Open', 'Released'].includes(s.production_order_status)) {
     return { action: 'open-prod', label: `In Production ${s.production_order_no}`, icon: 'ico-done', title: `Being built on ${s.production_order_no} (${s.production_order_status}). It can ship once its output is posted.\n${stockLinesSummary(s)}` };
   }
-  return { action: 'build', label: 'Assign', icon: 'ico-assign', title: `Not enough in stock at ${s.warehouse_name || 'this branch'} - assign makers to build the missing units (creates a Production Order).\n${stockLinesSummary(s)}` };
+  const r = o.production_request;
+  const requested = r ? `\nProduction requested by ${r.requested_by_name || r.requested_by || '-'} on ${formatRequestedAt(r.requested_at)}.` : '';
+  return { action: 'build', label: 'Assign', icon: 'ico-assign', title: `Not enough in stock at ${s.warehouse_name || 'this branch'} - assign makers to build the missing units (creates a Production Order).${requested}\n${stockLinesSummary(s)}` };
+}
+
+// Request Production / cancel it (branch staff - nextStepForRequest). The Production Manager and
+// All-Branch Fabrication users get a push and then see the order from any branch.
+async function handleProductionRequestClick(o, btn) {
+  const cancel = btn.dataset.action === 'cancel-request';
+  const s = stockStatusFor(o);
+  const ok = await confirmAction({
+    caption: cancel ? 'CANCEL PRODUCTION REQUEST' : 'REQUEST PRODUCTION',
+    title: orderLabel(o),
+    messageHtml: cancel
+      ? 'Cancel the production request for this order?\n\nThe Production Manager will no longer see it as requested.'
+      : `Not enough in stock at <b>${escapeHtml(s?.warehouse_name || 'this branch')}</b>:\n${stockLinesHtml(s)}\n\nAsk the Production Manager to build the missing units? They get a notification and assign the makers.`,
+    confirmLabel: cancel ? 'Yes, Cancel Request' : 'Yes, Request Production',
+    tone: cancel ? 'is-undo' : ''
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  const creds = { p_admin_username: currentSession.username, p_admin_password: currentSession.password, p_order_id: String(o.order_id) };
+  const { data, error } = await supabaseClient.rpc(cancel ? 'staff_cancel_online_order_production_request' : 'staff_request_online_order_production', creds);
+  btn.disabled = false;
+  if (error) {
+    alert(error.code === 'PGRST202' ? 'Request Production needs sql/supabase_online_order_production_request.sql to be run first.' : error.message);
+    return;
+  }
+  stockStatusCache.delete(String(o.order_id));
+  await refreshCurrentOrders();
+  refreshOpenOrderCardHeader();
+  if (String(selectedOrderId) === String(o.order_id)) updateOrderActionState();
+  alert(cancel ? `Production request for order ${o.order_id} cancelled.` : (data || 'Production requested.'));
 }
 
 // "Assign" for a stock order with missing units: a Production Order for just the shortfall, with the
@@ -1119,7 +1192,7 @@ function nextStepFor(o) {
       ? { action: 'shipped', label: 'Release Remaining', icon: 'ico-ship', title: 'Partly released - release the rest (or another batch). The last batch marks it Shipped in the portal and Pancake' }
       : { action: 'shipped', label: 'Release / Ship', icon: 'ico-ship', title: 'Release all or some items. Releasing everything marks it Shipped in the portal and Pancake' };
   }
-  if (!canAssignOrders()) return null;
+  if (!canAssignOrders()) return nextStepForRequest(o);
   const status = (o.status || '').trim().toLowerCase();
   const needed = neededProductionRoles(o);
   if (!needed.length) return nextStepForStock(o);
@@ -1286,6 +1359,8 @@ async function handleNextStepClick(orderId, btn) {
     stockStatusCache.delete(String(o.order_id));
   } else if (btn.dataset.action === 'build') {
     await openStockBuildDialog(o);
+  } else if (btn.dataset.action === 'request-prod' || btn.dataset.action === 'cancel-request') {
+    await handleProductionRequestClick(o, btn);
   } else if (btn.dataset.action === 'stock-assigned') {
     const s = stockStatusFor(o);
     const ok = await confirmAction({
@@ -5153,6 +5228,25 @@ async function attachProductionOrders(rows) {
   rows.forEach((o) => { o.production_orders = byOrder.get(String(o.order_id)) || []; });
 }
 
+// Production requests on the rows on screen (productionRequestBadgeHtml / Request Production button).
+// Quietly none until sql/supabase_online_order_production_request.sql has been run.
+async function attachProductionRequests(rows) {
+  rows.forEach((o) => { o.production_request = null; });
+  const ids = rows.map((o) => String(o.order_id));
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_list_online_order_production_requests', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.warn('staff_list_online_order_production_requests:', error.message);
+    return;
+  }
+  const byOrder = new Map((data || []).map((r) => [String(r.order_id), r]));
+  rows.forEach((o) => { o.production_request = byOrder.get(String(o.order_id)) || null; });
+}
+
 // Dispatcher release progress for the rows on screen (releaseBadgeHtml / Release History) - o.release
 // is set only on orders with at least one release. Quietly none until
 // sql/supabase_online_order_partial_release.sql has been run.
@@ -5240,7 +5334,7 @@ async function loadOrders(search, status) {
   // post-filter like outstanding-only, applied AFTER the server already paged the unfiltered
   // result - so a page can show fewer than pageSize rows, and the pagination bar's total
   // reflects the pre-filter total.
-  let rows = myAssignmentsOnly ? (data || []) : (data || []).filter(matchesWarehouseFilter);
+  let rows = myAssignmentsOnly ? (data || []) : branchFilterRows(data || []);
   if (myAssignmentsOnly) setMyAssignmentsCount(data?.[0]?.total_count || 0);
   if (outstandingOnly) {
     rows = rows.filter((o) => Number(o.balance) > 0);
@@ -5250,6 +5344,7 @@ async function loadOrders(search, status) {
   await attachProductionDone(rows);
   await attachPosNotes(rows);
   await attachProductionOrders(rows);
+  await attachProductionRequests(rows);
   await attachReleaseSummary(rows);
   if (myGeneration !== loadGeneration) return;
 
@@ -5396,7 +5491,7 @@ async function exportOrdersToExcel() {
         return;
       }
 
-      let rows = (data || []).filter(matchesWarehouseFilter);
+      let rows = branchFilterRows(data || []);
       if (outstandingOnly) {
         rows = rows.filter((o) => Number(o.balance) > 0);
       }

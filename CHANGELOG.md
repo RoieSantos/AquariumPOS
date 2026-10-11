@@ -4,6 +4,14 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- Read-only check [supabase_check_order_stock_request.sql](sql/supabase_check_order_stock_request.sql): per order line, whether it counts as a stock item and how many serials its branch has. Shows why an order does or doesn't get Request Production / Assign (build).
+
+- **Fix: Online Orders list error "Could not choose the best candidate function".** Re-running the old All-Branch Fabrication file re-created a 13-arg `admin_list_online_orders` next to the live one, and reverted the status counts (no Delivered count). [supabase_fix_online_orders_list_overload.sql](sql/supabase_fix_online_orders_list_overload.sql) drops the stale overload and restores the newest `admin_get_online_order_status_summary`.
+
+- Read-only check [supabase_check_comment_auto_reply.sql](sql/supabase_check_comment_auto_reply.sql): shows whether the comment auto-reply switch is on, plus the last 10 comments the webhook received with their status and any error.
+
+- **Online Orders: Request Production.** Branch staff can now ask for a build when a stock order is short on stock at their branch. The order gets a "Production Requested" badge, and Production Managers and All-Branch Fabrication users get a push. All-Branch Fabrication users now see other branches' open orders that have a production request or a linked Production Order. The Production Manager still assigns the makers with the existing Assign (build missing units). The request can be cancelled until a build is linked ([supabase_online_order_production_request.sql](sql/supabase_online_order_production_request.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html) cache v=prodrequest1).
+
 - Read-only check [supabase_check_gma_page_id.sql](sql/supabase_check_gma_page_id.sql): lists the Facebook Page ID(s) the Messenger bot receives messages for, needed to generate the new Page access token for comment auto-reply.
 
 - **Facebook post comments now get auto-replies from Alice.** Every new comment gets a short, human-sounding public reply. Questions (price, stock, ordering) and complaints also get a private Messenger DM with the real answer, and complaints notify staff on Telegram. Prices are never posted publicly. DMs show up in GMA Conversations as a normal thread. New [comments.ts](supabase/functions/facebook-messenger-webhook/comments.ts), wired into [facebook-messenger-webhook/index.ts](supabase/functions/facebook-messenger-webhook/index.ts). `runChatbotTurn` gained an `allowedToolNames` option, so comment DMs only use read-only lookup/quote tools ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)). Log/dedup table plus an on/off switch on AI Bot Setup ([supabase_facebook_comment_auto_reply.sql](sql/supabase_facebook_comment_auto_reply.sql), [ai-bot-setup.html](docs/ai-bot-setup.html), [aiBotSetup.js](docs/js/aiBotSetup.js)).
