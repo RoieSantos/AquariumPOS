@@ -118,7 +118,7 @@ async function callSendApi(
   pageAccessToken: string,
   graphVersion: string,
   payloadExtra: Record<string, unknown>
-): Promise<{ ok: boolean; bodyText: string; bodyJson: { error?: { message?: string; code?: number; error_subcode?: number } } | null }> {
+): Promise<{ ok: boolean; bodyText: string; bodyJson: { message_id?: string; error?: { message?: string; code?: number; error_subcode?: number } } | null }> {
   const res = await fetch(`https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -155,16 +155,16 @@ async function sendWithFallback(
   pageAccessToken: string,
   graphVersion: string,
   forceHumanAgent = false
-): Promise<{ ok: true } | { ok: false; friendlyError: string }> {
+): Promise<{ ok: true; mid: string | null } | { ok: false; friendlyError: string }> {
   if (forceHumanAgent) {
     const forced = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' });
-    if (forced.ok) return { ok: true };
+    if (forced.ok) return { ok: true, mid: forced.bodyJson?.message_id ?? null };
     const e = forced.bodyJson?.error;
     return { ok: false, friendlyError: `HUMAN_AGENT send rejected (code ${e?.code ?? '?'}, subcode ${e?.error_subcode ?? '?'}): ${e?.message || forced.bodyText}` };
   }
 
   const first = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'RESPONSE' });
-  if (first.ok) return { ok: true };
+  if (first.ok) return { ok: true, mid: first.bodyJson?.message_id ?? null };
 
   const firstCode = first.bodyJson?.error?.code;
   const firstSubcode = first.bodyJson?.error?.error_subcode;
@@ -175,7 +175,7 @@ async function sendWithFallback(
   }
 
   const tagged = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' });
-  if (tagged.ok) return { ok: true };
+  if (tagged.ok) return { ok: true, mid: tagged.bodyJson?.message_id ?? null };
 
   if (tagged.bodyJson?.error?.error_subcode === 2018276) {
     return {
@@ -186,6 +186,88 @@ async function sendWithFallback(
   }
 
   return { ok: false, friendlyError: `Facebook rejected the message: ${tagged.bodyJson?.error?.message || tagged.bodyText}` };
+}
+
+// Staff reaction on a customer's message (GMA Conversations' hover emoji picker). Sends Messenger's
+// sender_action 'react' / 'unreact' with the message's Facebook mid. Meta's docs only clearly cover
+// this for Instagram, so whether a Facebook Page may do it is being tested - Facebook's raw error is
+// returned as-is so staff can see exactly why it was refused. StaffReaction is only saved when
+// Facebook accepted it.
+const REACTION_EMOJI: Record<string, string> = { love: '❤️', like: '👍', smile: '😆', wow: '😮', sad: '😢', angry: '😠' };
+let acceptedReactionForm: number | null = null;
+
+// Supabase's Edge runtime global - lets the other-tabs broadcast finish after the response is sent.
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+async function handleReact(
+  supabase: ReturnType<typeof createClient>,
+  adminUsername: string,
+  adminPassword: string,
+  psid: string,
+  react: { messageId: number; reaction: string | null },
+  pageAccessToken: string,
+  graphVersion: string
+): Promise<Response> {
+  const { data: authorized } = await supabase.rpc('is_conversations_authorized', { p_username: adminUsername, p_password: adminPassword });
+  if (!authorized) return jsonResponse({ error: 'Not authorized.' }, 403);
+  if (react.reaction && !REACTION_EMOJI[react.reaction]) return jsonResponse({ error: 'Unknown reaction.' }, 400);
+
+  const { data: row } = await supabase
+    .from('ChatbotMessages')
+    .select('FacebookMessageId, Role')
+    .eq('Id', react.messageId)
+    .eq('Psid', psid)
+    .maybeSingle();
+  // Extra photos of one message are saved as "<mid>#2", "#3" - the real Facebook mid is the part before '#'.
+  const mid = String(row?.FacebookMessageId ?? '').split('#')[0];
+  if (!row || row.Role !== 'user' || !mid || mid.startsWith('comment:')) {
+    return jsonResponse({ error: 'This message has no Facebook message id to react to.' }, 400);
+  }
+
+  // Facebook answered the name form ("love") with "(#100) The reaction provided is invalid", so the
+  // request shape is right but the value format isn't - try the emoji itself (with and without the
+  // U+FE0F variation selector) before the name. The log line shows which form was accepted.
+  const send = (payload: Record<string, unknown>, action: string) =>
+    fetch(`https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: psid }, sender_action: action, payload })
+    });
+  let res!: Response;
+  let bodyText = '';
+  if (react.reaction) {
+    const emoji = REACTION_EMOJI[react.reaction];
+    const forms = [(e: string) => e, (e: string) => e.replace(/️/g, ''), () => react.reaction as string];
+    // Once a form has worked, try it first (kept while this function instance stays warm).
+    const order = acceptedReactionForm === null ? [0, 1, 2] : [acceptedReactionForm, ...[0, 1, 2].filter((i) => i !== acceptedReactionForm)];
+    const tried = new Set<string>();
+    for (const i of order) {
+      const value = forms[i](emoji);
+      if (tried.has(value)) continue;
+      tried.add(value);
+      res = await send({ message_id: mid, reaction: value }, 'react');
+      bodyText = await res.text();
+      console.log('Staff reaction', JSON.stringify({ tried: value, form: i, status: res.status, body: bodyText.slice(0, 300) }));
+      if (res.ok) acceptedReactionForm = i;
+      if (res.ok || !/reaction provided is invalid/i.test(bodyText)) break;
+    }
+  } else {
+    res = await send({ message_id: mid }, 'unreact');
+    bodyText = await res.text();
+    console.log('Staff unreact', JSON.stringify({ status: res.status, body: bodyText.slice(0, 300) }));
+  }
+  if (!res.ok) {
+    let fbMessage = bodyText;
+    try { fbMessage = JSON.parse(bodyText)?.error?.message || bodyText; } catch { /* raw text */ }
+    return jsonResponse({ ok: false, error: `Facebook refused the reaction: ${fbMessage}` }, 502);
+  }
+
+  await supabase.from('ChatbotMessages').update({ StaffReaction: react.reaction ? REACTION_EMOJI[react.reaction] : null }).eq('Id', react.messageId);
+  // The reacting tab already shows it - other tabs don't need to hold up this response.
+  const broadcast = broadcastGmaEvent(supabase, psid);
+  if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(broadcast);
+  else await broadcast;
+  return jsonResponse({ ok: true });
 }
 
 Deno.serve(async (req) => {
@@ -211,6 +293,7 @@ Deno.serve(async (req) => {
   let images: { url: string; path: string | null; kind: 'image' | 'video' }[];
   let isLike: boolean;
   let forceHumanAgent: boolean;
+  let react: { messageId: number; reaction: string | null } | null = null;
   try {
     const body = await req.json();
     adminUsername = String(body.admin_username ?? '');
@@ -219,6 +302,12 @@ Deno.serve(async (req) => {
     message = String(body.message ?? '').trim();
     isLike = body.like === true;
     forceHumanAgent = body.force_human_agent === true;
+    // { react: { message_id, reaction } } - react to a customer's message (reaction null = remove).
+    if (body.react && typeof body.react === 'object') {
+      const id = Number(body.react.message_id);
+      if (!Number.isFinite(id)) throw new Error('bad react');
+      react = { messageId: id, reaction: typeof body.react.reaction === 'string' && body.react.reaction ? body.react.reaction : null };
+    }
     // images (array of {url, path, type}) is the current shape - path is the Storage object path
     // for a one-off ad-hoc attachment (see supabase_chatbot_staff_attachment_upload.sql), so it can
     // be recorded as ChatbotMessages.AttachmentPath and picked up by the existing 60-day cleanup
@@ -245,7 +334,7 @@ Deno.serve(async (req) => {
         .filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
         .map((u) => ({ url: u.trim(), path: null, kind: 'image' as const }));
     }
-    if (!adminUsername || !adminPassword || !psid || (!message && images.length === 0 && !isLike)) {
+    if (!adminUsername || !adminPassword || !psid || (!message && images.length === 0 && !isLike && !react)) {
       throw new Error('missing field');
     }
   } catch {
@@ -261,6 +350,8 @@ Deno.serve(async (req) => {
   if (!pageAccessToken) {
     return jsonResponse({ error: `No Facebook token configured for this conversation's Page (${conv?.PageId ?? 'unknown'}).` }, 500);
   }
+
+  if (react) return await handleReact(supabase, adminUsername, adminPassword, psid, react, pageAccessToken, graphVersion);
 
   // One item per photo/video (logged + sent as its own message/bubble), then the text last, if
   // present - see the file header comment for why this can't be combined into a single Send API
@@ -305,8 +396,13 @@ Deno.serve(async (req) => {
       // DeliveryStatus can't be known by admin_send_chatbot_message itself (it runs before this Send
       // API attempt), so it's set here directly - this is the one place chatbot-staff-reply touches
       // ChatbotMessages outside the RPC, and only for this operational field.
+      // FacebookMessageId too, so a customer's reaction to this message can be matched
+      // (facebook-messenger-webhook's handleReaction).
       if (messageId) {
-        await supabase.from('ChatbotMessages').update({ DeliveryStatus: sendResult.ok ? 'Sent' : 'Failed' }).eq('Id', messageId);
+        await supabase.from('ChatbotMessages').update({
+          DeliveryStatus: sendResult.ok ? 'Sent' : 'Failed',
+          ...(sendResult.ok && sendResult.mid ? { FacebookMessageId: sendResult.mid } : {})
+        }).eq('Id', messageId);
       }
 
       if (!sendResult.ok && !friendlyError) {

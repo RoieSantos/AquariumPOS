@@ -85,6 +85,7 @@ interface FacebookWebhookBody {
       recipient?: { id: string };
       message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[] };
       read?: { watermark: number };
+      reaction?: { mid?: string; action?: string; emoji?: string; reaction?: string };
     }>;
     // Events for conversations another app (e.g. the Business Suite / Page inbox) is in control of -
     // same shape as messaging. Echoes of replies typed in the Meta app can arrive here.
@@ -137,8 +138,9 @@ function handleGet(req: Request): Response {
 }
 
 // Returns whether Facebook actually accepted the message, so callers can record DeliveryStatus
-// ('Sent'/'Failed') on the ChatbotMessages row - see processMessage below.
-async function sendMessengerReply(psid: string, text: string, pageAccessToken: string, graphVersion: string): Promise<boolean> {
+// ('Sent'/'Failed') on the ChatbotMessages row - see processMessage below - plus Facebook's message
+// id, saved as FacebookMessageId (sentMessageFields) so a customer's reaction to it can be matched.
+async function sendMessengerReply(psid: string, text: string, pageAccessToken: string, graphVersion: string): Promise<{ ok: boolean; mid: string | null }> {
   const url = `https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`;
   const res = await fetch(url, {
     method: 'POST',
@@ -149,9 +151,45 @@ async function sendMessengerReply(psid: string, text: string, pageAccessToken: s
   });
   if (!res.ok) {
     console.error(`Messenger Send API failed (${res.status}): ${await res.text()}`);
-    return false;
+    return { ok: false, mid: null };
   }
-  return true;
+  const body = await res.json().catch(() => null);
+  return { ok: true, mid: typeof body?.message_id === 'string' ? body.message_id : null };
+}
+
+// ChatbotMessages fields to write once a send finished.
+function sentMessageFields(sent: { ok: boolean; mid: string | null }): Record<string, unknown> {
+  return { DeliveryStatus: sent.ok ? 'Sent' : 'Failed', ...(sent.mid ? { FacebookMessageId: sent.mid } : {}) };
+}
+
+// Messenger `message_reactions` webhook field (tick it under Webhooks for each Page). A customer's
+// reaction lands on the bot/staff message they reacted to (matched by its Facebook mid, saved since
+// sentMessageFields); a reaction the Page itself made (sender = the Page, e.g. staff reacting in the
+// Meta app) lands on the customer's message as StaffReaction. 'unreact' clears it.
+async function handleReaction(
+  supabase: SupabaseClient,
+  pageId: string | undefined,
+  senderId: string | undefined,
+  recipientId: string | undefined,
+  reaction: { mid?: string; action?: string; emoji?: string; reaction?: string }
+): Promise<void> {
+  if (!reaction.mid || !senderId) return;
+  const byPage = !!pageId && senderId === pageId;
+  const psid = byPage ? recipientId : senderId;
+  if (!psid) return;
+  const value = reaction.action === 'unreact' ? null : (reaction.emoji || reaction.reaction || '👍');
+  const { data, error } = await supabase
+    .from('ChatbotMessages')
+    .update(byPage ? { StaffReaction: value } : { CustomerReaction: value })
+    .eq('Psid', psid)
+    .eq('FacebookMessageId', reaction.mid)
+    .select('Id');
+  if (error) {
+    console.error('Failed to record reaction:', error.message);
+    return;
+  }
+  console.log('Reaction', JSON.stringify({ byPage, action: reaction.action, emoji: reaction.emoji, matched: data?.length ?? 0 }));
+  if (data?.length) await broadcastGmaEvent(supabase, psid);
 }
 
 // Marks every one of our own messages up to the customer's read watermark as seen - fired from a
@@ -645,7 +683,7 @@ async function sendAckMessage(
   await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
   const delivered = await sendMessengerReply(psid, ack, pageAccessToken, graphVersion);
   if (ackRow?.Id) {
-    await supabase.from('ChatbotMessages').update({ DeliveryStatus: delivered ? 'Sent' : 'Failed' }).eq('Id', ackRow.Id);
+    await supabase.from('ChatbotMessages').update(sentMessageFields(delivered)).eq('Id', ackRow.Id);
     await broadcastGmaEvent(supabase, psid);
   }
 }
@@ -1244,7 +1282,7 @@ async function generateAndSendAiReply(
   await new Promise((resolve) => setTimeout(resolve, REPLY_DELAY_MS));
   const replyDelivered = await sendMessengerReply(psid, finalText, pageAccessToken, graphVersion);
   if (replyRow?.Id) {
-    await supabase.from('ChatbotMessages').update({ DeliveryStatus: replyDelivered ? 'Sent' : 'Failed' }).eq('Id', replyRow.Id);
+    await supabase.from('ChatbotMessages').update(sentMessageFields(replyDelivered)).eq('Id', replyRow.Id);
     await broadcastGmaEvent(supabase, psid);
   }
 }
@@ -1442,6 +1480,14 @@ async function handlePost(req: Request): Promise<Response> {
       }
 
       for (const evt of entry.messaging ?? []) {
+        if (evt.reaction) {
+          try {
+            await handleReaction(supabase, entry.id, evt.sender?.id, evt.recipient?.id, evt.reaction);
+          } catch (err) {
+            console.error('Error processing reaction:', err instanceof Error ? err.message : err);
+          }
+          continue;
+        }
         if (evt.read) {
           // Read receipt (requires the message_reads field checked under Messenger > Settings >
           // Webhooks) - not a message, handled separately and doesn't go through processMessage.

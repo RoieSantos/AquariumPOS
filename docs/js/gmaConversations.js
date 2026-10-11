@@ -92,6 +92,7 @@ function renderConversationList() {
 
   listEl.innerHTML = conversations.map((c) => {
     const badges = [
+      c.pinned_at_utc ? `<span class="inbox-pin-icon" title="${escapeHtml(pinnedTitle(c))}">📌</span>` : '',
       pageBadgeHtml(c.page_id),
       c.status === 'Escalated' ? '<span class="inbox-badge inbox-badge-escalated">Escalated</span>' : '',
       c.is_paused ? '<span class="inbox-badge inbox-badge-paused">Paused</span>' : ''
@@ -132,15 +133,52 @@ function renderThreadHeader(conv) {
     <span class="inbox-thread-viewers" id="threadViewersEl"></span>
     <span class="inbox-header-actions">
       ${pauseNote ? `<span class="inbox-pause-note">${escapeHtml(pauseNote)}</span>` : ''}
+      <button class="btn btn-secondary btn-sm inbox-pin-btn${conv.pinned_at_utc ? ' pinned' : ''}" id="togglePinBtn" type="button" title="${escapeHtml(conv.pinned_at_utc ? pinnedTitle(conv) + ' - click to unpin' : 'Pin to the top of the list for everyone')}">
+        📌 ${conv.pinned_at_utc ? 'Unpin' : 'Pin'}
+      </button>
       <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button">
         ${conv.is_paused ? '▶ Resume AI' : '⏸ Pause AI'}
       </button>
     </span>
   `;
   document.getElementById('togglePauseBtn').addEventListener('click', () => togglePause(conv));
+  document.getElementById('togglePinBtn').addEventListener('click', () => togglePin(conv));
   renderThreadViewers();
 
   document.getElementById('replyRowEl').classList.remove('hidden');
+}
+
+// Pin to top (supabase_gma_conversation_pin.sql) - shared by the team, newest pin first. Other open
+// GMA tabs re-sort via the 'conversation_pinned' broadcast.
+function pinnedTitle(c) {
+  const when = c.pinned_at_utc ? new Date(c.pinned_at_utc).toLocaleString() : '';
+  return `Pinned${c.pinned_by ? ` by ${c.pinned_by}` : ''}${when ? ` · ${when}` : ''}`;
+}
+
+async function togglePin(conv) {
+  const btn = document.getElementById('togglePinBtn');
+  btn.disabled = true;
+  const nextPinned = !conv.pinned_at_utc;
+
+  const { error } = await supabaseClient.rpc('admin_set_chatbot_conversation_pinned', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: conv.psid,
+    p_is_pinned: nextPinned
+  });
+
+  if (error) {
+    alert(error.code === 'PGRST202'
+      ? 'Pinning needs sql/supabase_gma_conversation_pin.sql to be run first.'
+      : `Could not update pin: ${error.message}`);
+    btn.disabled = false;
+    return;
+  }
+
+  gmaInboxChannel?.send({ type: 'broadcast', event: 'conversation_pinned', payload: { psid: conv.psid } });
+  await loadConversations();
+  const fresh = conversations.find((c) => c.psid === conv.psid);
+  if (fresh && conv.psid === selectedPsid) renderThreadHeader(fresh);
 }
 
 async function togglePause(conv) {
@@ -325,7 +363,7 @@ function renderMessages(serverRows, opts = {}) {
 
   const seenByHtml = seenByLineHtml(rows);
   const signature = selectedPsid + '#' + rows.map((m) =>
-    [m.message_id ?? m.temp_id, m.delivery_status, m.seen_at_utc, m.detected_payment_amount, m.detected_payment_applied_at_utc, m.pending].join('|')
+    [m.message_id ?? m.temp_id, m.delivery_status, m.seen_at_utc, m.detected_payment_amount, m.detected_payment_applied_at_utc, m.pending, m.customer_reaction, m.staff_reaction].join('|')
   ).join(';') + '#' + seenByHtml;
   if (signature === lastThreadSignature) {
     if (opts.forceBottom) {
@@ -423,6 +461,14 @@ function renderMessages(serverRows, opts = {}) {
       bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${mediaHtml}${extraHtml}${textHtml}${paymentHtml}</div>`;
     }
 
+    // Reactions (supabase_chatbot_message_reactions.sql): the customer's on our messages, staff's on
+    // the customer's. Customer messages get a hover "react" button (openReactPicker).
+    const reactions = run.flatMap((r) => [r.customer_reaction, r.staff_reaction]).filter(Boolean);
+    const reactionsHtml = reactions.length ? `<div class="inbox-msg-reactions" title="Reactions">${reactions.map(escapeHtml).join('')}</div>` : '';
+    const canReact = m.role === 'user' && !isPending && m.message_id;
+    const reactBtnHtml = canReact ? `<button type="button" class="inbox-react-btn" data-react-id="${m.message_id}" data-current="${escapeHtml(m.staff_reaction || '')}" title="React">☺</button>` : '';
+    bubbleHtml = `<div class="inbox-msg-bubble-wrap${reactions.length ? ' has-reactions' : ''}">${bubbleHtml}${reactionsHtml}${reactBtnHtml}</div>`;
+
     parts.push(`
       <div class="inbox-msg-row ${rowClass}${isGroupStart ? ' inbox-msg-group-start' : ''}${isPending ? ' inbox-msg-row-pending' : ''}">
         ${sender ? `<span class="inbox-msg-sender">${escapeHtml(sender)}</span>` : ''}
@@ -449,10 +495,90 @@ function renderMessages(serverRows, opts = {}) {
   messagesEl.querySelectorAll('.inbox-msg-retry-btn').forEach((btn) => {
     btn.addEventListener('click', () => retryPendingSend(btn.dataset.sendId));
   });
+  messagesEl.querySelectorAll('.inbox-react-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openReactPicker(btn);
+    });
+  });
 
   threadStickToBottom = stick;
   if (stick) scrollThreadToBottom();
   else messagesEl.scrollTop = prevScrollTop;
+}
+
+// Staff reaction picker for a customer's message. Sends through chatbot-staff-reply's react mode;
+// Facebook may refuse Page reactions on Messenger (only documented for Instagram) - its exact reason
+// is shown if so. Picking the reaction already set removes it.
+const REACTION_CHOICES = [['love', '❤️'], ['like', '👍'], ['smile', '😆'], ['wow', '😮'], ['sad', '😢'], ['angry', '😠']];
+
+function closeReactPicker() {
+  document.getElementById('inboxReactPicker')?.remove();
+}
+
+function openReactPicker(btn) {
+  closeReactPicker();
+  const messageId = Number(btn.dataset.reactId);
+  const current = btn.dataset.current || '';
+  const picker = document.createElement('div');
+  picker.id = 'inboxReactPicker';
+  picker.className = 'inbox-react-picker';
+  picker.innerHTML = REACTION_CHOICES
+    .map(([name, emoji]) => `<button type="button" data-reaction="${name}" class="${emoji === current ? 'active' : ''}" title="${emoji === current ? 'Remove reaction' : name}">${emoji}</button>`)
+    .join('');
+  picker.addEventListener('click', (e) => {
+    const choice = e.target.closest('[data-reaction]');
+    if (!choice) return;
+    const emoji = REACTION_CHOICES.find(([n]) => n === choice.dataset.reaction)?.[1];
+    closeReactPicker();
+    reactToMessage(messageId, emoji === current ? null : choice.dataset.reaction);
+  });
+  document.body.appendChild(picker);
+  const rect = btn.getBoundingClientRect();
+  picker.style.top = `${Math.max(8, rect.top - picker.offsetHeight - 6)}px`;
+  picker.style.left = `${Math.min(window.innerWidth - picker.offsetWidth - 8, Math.max(8, rect.left - picker.offsetWidth / 2))}px`;
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#inboxReactPicker')) closeReactPicker();
+});
+
+// Shown instantly (like Messenger), then sent in the background; put back if Facebook refuses.
+function setCachedStaffReaction(psid, messageId, emoji) {
+  const row = (messageCache.get(psid) || []).find((m) => m.message_id === messageId);
+  if (!row) return undefined;
+  const previous = row.staff_reaction ?? null;
+  row.staff_reaction = emoji;
+  if (psid === selectedPsid) renderThread();
+  return previous;
+}
+
+async function reactToMessage(messageId, reaction) {
+  const psid = selectedPsid;
+  const emoji = reaction ? REACTION_CHOICES.find(([n]) => n === reaction)?.[1] ?? null : null;
+  const previous = setCachedStaffReaction(psid, messageId, emoji);
+  let result = {};
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        psid,
+        react: { message_id: messageId, reaction }
+      })
+    });
+    result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok === false) throw new Error(result.error || `HTTP ${response.status}`);
+  } catch (err) {
+    if (previous !== undefined) setCachedStaffReaction(psid, messageId, previous);
+    alert(`Could not react: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 // Reads what Claude's vision pass detected on a payment screenshot and hands it to the
@@ -4139,6 +4265,13 @@ function setupRealtimeInbox() {
     // Another staff member opened a conversation - its bold/unread state and "Seen by" changed.
     .on('broadcast', { event: 'conversation_read' }, ({ payload }) => {
       handleConversationReadEvent(payload);
+    })
+    // Another staff member pinned/unpinned a conversation - re-sort the list.
+    .on('broadcast', { event: 'conversation_pinned' }, ({ payload }) => {
+      loadConversations().then(() => {
+        const conv = conversations.find((c) => c.psid === selectedPsid);
+        if (conv && payload?.psid === selectedPsid) renderThreadHeader(conv);
+      });
     })
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') trackPresence();

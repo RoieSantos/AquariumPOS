@@ -1081,6 +1081,16 @@
       background: #fff4e0;
       color: #8a5a00;
     }
+    /* Pinned conversation (togglePin in gmaConversations.js) */
+    .inbox-pin-icon {
+      font-size: 11px;
+      margin-left: 6px;
+    }
+    .inbox-pin-btn.pinned {
+      background: #fff4e0;
+      border-color: #f0c36d;
+      color: #8a5a00;
+    }
     /* Which Facebook Page a conversation came in on (pageBadgeHtml in gmaConversations.js) */
     .inbox-badge-page {
       background: #eef2f7;
@@ -1369,6 +1379,69 @@
     .inbox-msg-row.inbox-msg-group-start {
       margin-top: 10px;
     }
+    /* Reactions (renderMessages / openReactPicker in gmaConversations.js) - Messenger-style pill
+       hanging off the bubble's bottom corner, and a hover "react" button beside customer messages. */
+    .inbox-msg-bubble-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      max-width: 100%;
+    }
+    .inbox-msg-bubble-wrap.has-reactions { margin-bottom: 12px; }
+    .inbox-msg-reactions {
+      position: absolute;
+      bottom: -12px;
+      right: 4px;
+      background: #fff;
+      border: 1px solid #e3e7ee;
+      border-radius: 10px;
+      padding: 0 4px;
+      font-size: 12px;
+      line-height: 18px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    }
+    .inbox-msg-row-user .inbox-msg-reactions { right: auto; left: 4px; }
+    .inbox-msg-row-user .inbox-msg-bubble-wrap.has-reactions .inbox-msg-reactions { left: auto; right: 26px; }
+    .inbox-react-btn {
+      flex: none;
+      border: none;
+      background: none;
+      color: #8a96a8;
+      font-size: 16px;
+      line-height: 1;
+      padding: 2px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+    .inbox-msg-row:hover .inbox-react-btn,
+    .inbox-react-btn:focus-visible { opacity: 1; }
+    .inbox-react-btn:hover { color: #1d4f91; }
+    @media (hover: none) { .inbox-react-btn { opacity: 0.6; } }
+    .inbox-react-picker {
+      position: fixed;
+      z-index: 1000;
+      display: flex;
+      gap: 2px;
+      background: #fff;
+      border: 1px solid #e3e7ee;
+      border-radius: 20px;
+      padding: 4px 6px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+    }
+    .inbox-react-picker button {
+      border: none;
+      background: none;
+      font-size: 20px;
+      line-height: 1;
+      padding: 4px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    .inbox-react-picker button:hover { transform: scale(1.25); }
+    .inbox-react-picker button.active { background: #e7f0fd; }
     .inbox-empty-state {
       padding: 30px 16px;
       text-align: center;
@@ -2945,7 +3018,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=pagebadge1"></script>
+  <script src="js/gmaConversations.js?v=pin1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
