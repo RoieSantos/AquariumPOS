@@ -86,6 +86,10 @@ returns text
 language plpgsql
 security definer
 set search_path = public, extensions
+-- The push below is a synchronous HTTP call to send-web-push (up to 8s); the anon role's default
+-- statement_timeout (~3s) cancelled the whole request when it was slow - per "its timeout when I request
+-- Production". Same fix as the other HTTP-calling RPCs (supabase_gma_conversation_order_statement_timeout.sql).
+set statement_timeout = '30000'
 as $$
 declare
   v_order record;

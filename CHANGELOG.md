@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- **Comment auto-reply: tags the commenter, and DMs everyone.** The public reply now starts with an @mention of the commenter. Every genuine comment also gets a private DM, not just questions and complaints: a real answer for questions, a friendly thank-you plus an opening otherwise. Still one DM per person per post ([comments.ts](supabase/functions/facebook-messenger-webhook/comments.ts), [ai-bot-setup.html](docs/ai-bot-setup.html)). Alice is also taught Filipino comment shorthand: "hm"/"magkano" = how much, "pm po" = message me, "avail?"/"mine". She had read "hm cabinet" as "hmm" and gave no price DM.
+
+- **Fix: Request Production timed out.** `staff_request_online_order_production` now sets its own 30s `statement_timeout`. The push to Production Managers is a synchronous HTTP call, and the anon role's ~3s default cancelled the request ([supabase_online_order_production_request.sql](sql/supabase_online_order_production_request.sql), re-run).
+
 - Read-only check [supabase_check_order_stock_request.sql](sql/supabase_check_order_stock_request.sql): per order line, whether it counts as a stock item and how many serials its branch has. Shows why an order does or doesn't get Request Production / Assign (build).
 
 - **Fix: Online Orders list error "Could not choose the best candidate function".** Re-running the old All-Branch Fabrication file re-created a 13-arg `admin_list_online_orders` next to the live one, and reverted the status counts (no Delivered count). [supabase_fix_online_orders_list_overload.sql](sql/supabase_fix_online_orders_list_overload.sql) drops the stale overload and restores the newest `admin_get_online_order_status_summary`.

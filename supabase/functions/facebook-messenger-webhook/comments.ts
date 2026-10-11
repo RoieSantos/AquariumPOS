@@ -1,10 +1,11 @@
 // Facebook Page post COMMENT auto-reply - the `feed` webhook field's half of
 // facebook-messenger-webhook (index.ts only handles Messenger events itself and hands every
 // entry.changes[] item here). Per direct request: every new comment on the Page's posts gets a
-// short, human-sounding PUBLIC reply under it, and comments that need a real answer (price,
-// availability, how to order, a complaint) also get a PRIVATE reply - a Messenger DM tied to the
-// comment (Graph API "private replies": recipient = { comment_id }, ONE message per comment, within
-// 7 days, and nothing more until the customer answers it).
+// short, human-sounding PUBLIC reply under it (tagging the commenter), plus a PRIVATE reply - a
+// Messenger DM tied to the comment, one per person per post: a real answer for a question, a
+// friendly thank-you + opening for anything else. Spam/abusive comments get neither. (Graph API
+// "private replies": recipient = { comment_id }, ONE message per comment, within 7 days, and
+// nothing more until the customer answers it.)
 //
 // Prices/stock/order details are never posted publicly - only in the DM. The DM is written by the
 // same Alice persona (buildSystemPrompt) but limited to READ_ONLY_TOOL_NAMES, since there's no real
@@ -60,10 +61,13 @@ interface HandleCommentParams {
 
 const COMMENT_MODE_RULES = [
   'FACEBOOK COMMENT MODE - this turn is NOT a Messenger chat. Someone commented on one of our Facebook Page posts, and you are writing what the Page posts back. Everything above about the store, products, prices and tone still applies, with these rules on top:',
-  '- PUBLIC REPLY (posted under their comment, visible to everyone): sound like a real person from the store, not a bot - short (one or two sentences), warm, casual, in the SAME language/mix the commenter used (English, Tagalog or Taglish). Use their first name naturally when it fits. One emoji at most, and not every time. Vary your wording - never a canned template. Do not start with "Hi [name]! Thank you for your comment".',
-  '- NEVER put a price, stock count, order detail, phone number or other personal detail in the PUBLIC reply. If they asked about price/availability/ordering/delivery/location details, or have a complaint, the public reply just says (in their language) that you sent them a message, e.g. "Sent you a PM po!" / "Check your inbox, Maria 😊" - and you write the DM.',
-  '- Compliments, emojis, tags of friends, "nice!", etc. get a short friendly public reply only - no DM.',
-  '- DM (a private Messenger message, only when the comment needs a real answer or is a complaint): answer it properly like a normal Messenger reply - look up real prices/stock with your tools, never guess. Mention you\'re following up on their comment. It is the ONLY message you can send until they reply, so make it complete and end with a question that invites them to continue. Do not promise to place orders or call them - you can\'t from here.',
+  '- PUBLIC REPLY (posted under their comment, visible to everyone): sound like a real person from the store, not a bot - short (one or two sentences), warm, casual, in the SAME language/mix the commenter used (English, Tagalog or Taglish). The reply is automatically prefixed with a tag/mention of the commenter, so do NOT start with their name or a greeting like "Hi [name]!" - just continue naturally after the tag. One emoji at most, and not every time. Vary your wording - never a canned template.',
+  '- Filipino comment shorthand: "hm", "hm po", "hmp", "hm magkano", "how much", "magkano", "price?", "pr?" all mean "HOW MUCH" - a price question about whatever follows or the item in the post (e.g. "hm cabinet" = "how much is the cabinet?"), never "hmm". "pm", "pm po", "pm me", "pa-pm" = they want details by private message. "avail?", "available pa?", "meron pa?" = stock question. "sold?", "mine", "pa-reserve" = they want to buy it.',
+  '- NEVER put a price, stock count, order detail, phone number or other personal detail in the PUBLIC reply. If they asked about price/availability/ordering/delivery/location details, or have a complaint, the public reply just says (in their language) that you sent them a message, e.g. "Sent you a PM po!" / "Check your inbox 😊".',
+  '- DM (a private Messenger message) - write one for EVERY genuine comment, not just questions:',
+  '  - Question (price, stock, ordering, delivery, location...): answer it properly like a normal Messenger reply - look up real prices/stock with your tools, never guess.',
+  '  - Compliment, emoji, "nice!", tagging a friend, etc.: a short, friendly thank-you that mentions what they commented on, and an easy opening, e.g. asking if they\'re planning a setup or looking for anything - not a sales pitch.',
+  '  - Always mention you\'re reaching out about their comment. It is the ONLY message you can send until they reply, so make it complete and end with a question that invites them to continue. Do not promise to place orders or call them - you can\'t from here.',
   '- Complaints / angry comments: public reply is calm and apologetic and moves it to PM (never argue publicly); write a DM, and set escalate_reason so staff are notified.',
   '- Spam, scams, abusive or meaningless comments: public_reply null, dm null.',
   '- If they ask whether the Page is a bot, answer honestly that it\'s an automated assistant.',
@@ -242,7 +246,9 @@ export async function handleFeedComment(params: HandleCommentParams): Promise<vo
   const errors: string[] = [];
 
   if (plan.public_reply) {
-    const sent = await graphPost(`${commentId}/comments`, { message: plan.public_reply }, pageAccessToken, graphVersion);
+    // @[id] is Facebook's mention syntax - tags the commenter so their name shows as a link at the
+    // start of the reply (the reply being threaded under their comment already notifies them).
+    const sent = await graphPost(`${commentId}/comments`, { message: `@[${fromId}] ${plan.public_reply}` }, pageAccessToken, graphVersion);
     update.PublicReplyText = plan.public_reply;
     update.PublicReplyCommentId = sent.ok ? String(sent.data?.id ?? '') || null : null;
     if (!sent.ok) errors.push(`Public reply failed - ${sent.error}`);
