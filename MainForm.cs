@@ -1186,7 +1186,10 @@ INSERT INTO CardProcessingFeeLog (
 
                 try { await OnlinefunctionsEvents.SyncWarehousesToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
                 try { await OnlinefunctionsEvents.SyncItemsToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
-                try { await OnlinefunctionsEvents.SyncOnlineOrdersToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+                // Online orders are no longer pushed up from here - the portal owns them and syncs from Pancake
+                // itself. This push re-sent every local order on every tick (slow) and could overwrite the
+                // portal's newer data with the POS's stale copy. Online orders moved to the portal; see
+                // OnlineOrdersButton_Click.
                 try { await OnlinefunctionsEvents.SyncAdvanceOrdersToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
 
                 // Customers (incl. FbID/PSID) - pull the latest from Pancake into dbo.OnlineCustomers
@@ -1475,7 +1478,18 @@ INSERT INTO CardProcessingFeeLog (
             };
             onlineOrdersButton.Click += OnlineOrdersButton_Click;
 
-            
+            // Online Pay (OnlinePayForm): pay one online order looked up live from the portal.
+            var onlinePayButton = new Button
+            {
+                Text = "Online Pay",
+                Size = new Size(140, 35),
+                BackColor = Color.SeaGreen,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 9, FontStyle.Bold),
+                Margin = new Padding(6)
+            };
+            onlinePayButton.Click += OnlinePayButton_Click;
+
 
             var advanceOrdersButton = new Button
             {
@@ -1715,6 +1729,7 @@ INSERT INTO CardProcessingFeeLog (
             // rightButtonsPanel.Controls.Add(glassPricingButton);
             rightButtonsPanel.Controls.Add(productionOrdersButton);
             rightButtonsPanel.Controls.Add(onlineOrdersButton);
+            rightButtonsPanel.Controls.Add(onlinePayButton);
             rightButtonsPanel.Controls.Add(transactionListButton);
             rightButtonsPanel.Controls.Add(advanceOrdersButton);
             // SalesPerson button added beside Advance Orders
@@ -3925,16 +3940,53 @@ ORDER BY i.[Description], i.[Name], i.Code";
                 // Best-effort persistence only; keep the in-memory selection.
             }
         }
+        // Online Orders moved to the RSPetStop Portal - per "dont hide the online orders once the user clicked it
+        // show a link to our portal". The old OnlineOrdersForm (and the Pancake -> local order sync it ran
+        // while open) is no longer opened; store payments go through Online Pay (OnlinePayForm).
+        private const string PortalOnlineOrdersUrl = "https://rspetstop.com/online-orders.html";
+
         private void OnlineOrdersButton_Click(object? sender, EventArgs e)
+        {
+            using var dlg = new Form
+            {
+                Text = "Online Orders",
+                StartPosition = FormStartPosition.CenterParent,
+                ClientSize = new Size(480, 200),
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false,
+                Font = new Font("Arial", 10)
+            };
+            var message = new Label
+            {
+                Location = new Point(20, 20),
+                Size = new Size(440, 60),
+                Font = new Font("Arial", 11, FontStyle.Bold),
+                Text = "Online orders are now migrated to RSPetStop Portal, please use portal link instead."
+            };
+            var link = new LinkLabel { Location = new Point(20, 88), AutoSize = true, Font = new Font("Arial", 11), Text = PortalOnlineOrdersUrl };
+            link.LinkClicked += (s, args) =>
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(PortalOnlineOrdersUrl) { UseShellExecute = true }); }
+                catch (Exception ex) { MessageBox.Show(dlg, $"Could not open the browser: {ex.Message}\n\nGo to {PortalOnlineOrdersUrl}", "Online Orders", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+            var hint = new Label { Location = new Point(20, 118), Size = new Size(440, 22), ForeColor = Color.DimGray, Text = "To take a payment for an online order, use Online Pay." };
+            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(360, 150), Size = new Size(100, 36) };
+            dlg.Controls.AddRange(new Control[] { message, link, hint, ok });
+            dlg.AcceptButton = ok;
+            dlg.ShowDialog(this);
+        }
+
+        private void OnlinePayButton_Click(object? sender, EventArgs e)
         {
             try
             {
-                var f = new OnlineOrdersForm();
+                using var f = new OnlinePayForm(this);
                 f.ShowDialog(this);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to open Online Orders: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Failed to open Online Pay: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -21362,6 +21414,14 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
             {
                 MessageBox.Show($"Print error: {ex.Message}", "Print Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        // Prints a receipt that's already built (OnlinePayForm builds its own from the live portal order -
+        // nothing is staged into salesListView).
+        public void PrintTextReceipt(string content)
+        {
+            receiptContent = content ?? string.Empty;
+            printDocument.Print();
         }
 
         public void PrintReceiptDirect(string receiptNo)

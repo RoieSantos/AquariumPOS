@@ -212,6 +212,13 @@ namespace AquariumPOS
         public static string StickerPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_sticker_pricing";
         public static string AquariumExtraPricingRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/public_get_aquarium_extra_pricing";
 
+        // Online Pay (OnlinePayForm, sql/supabase_pos_online_pay.sql) - one online order looked up live
+        // from the portal and paid at the store, instead of the POS keeping its own copy of online orders.
+        // Both RPCs check PosApiKey (Vault secret POS_API_KEY) because the publishable apikey is public.
+        public static string OnlinePayLookupRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_get_online_order_for_payment";
+        public static string OnlinePayRecordRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_record_online_order_payment";
+        public static string PosApiKey { get; } = "pos_6385f793ed5792e50fa8dc35b19a23e51f28ae1c2d4cb149";
+
         /// <summary>
         /// Optional: Page ID and Conversation IDs to receive admin notifications via the Public API.
         /// If not configured (empty array or empty strings), admin notifications will be skipped.
