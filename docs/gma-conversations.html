@@ -1733,6 +1733,29 @@
       opacity: 0.6;
       cursor: default;
     }
+    /* "Advise reply" - asks AI (chatbot-suggest-reply) for a draft that lands in the reply box. */
+    .inbox-advise-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid #c9d9f5;
+      border-radius: 8px;
+      background: #f0f6ff;
+      color: #1877f2;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .inbox-advise-btn:hover {
+      background: #e2eeff;
+    }
+    .inbox-advise-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
     /* Custom dark tooltip (matches Meta's own hover tooltip) rather than the plain browser
        default - shown above the icon, with a small downward-pointing arrow. */
     .inbox-icon-btn[data-tooltip]::after,
@@ -2680,6 +2703,12 @@
                   <path d="M6.3 9.5h.01M9.5 9.5h.01M12.7 9.5h.01" stroke-linecap="round" />
                 </svg>
               </button>
+              <button type="button" class="inbox-advise-btn" id="adviseReplyBtn" title="AI drafts the best reply for you to check and send. Type a note first (e.g. &quot;decline the discount politely&quot;) to guide it.">
+                <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor" aria-hidden="true">
+                  <path d="M8 2.5 9.4 6.6 13.5 8 9.4 9.4 8 13.5 6.6 9.4 2.5 8l4.1-1.4L8 2.5Zm6.5 8 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
+                </svg>
+                <span id="adviseReplyLabel">Advise reply</span>
+              </button>
               <button type="button" class="inbox-icon-btn inbox-like-btn" id="likeBtn" data-tooltip="Send a like">
                 <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6">
                   <path d="M6.5 8.5v9H3.8a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6.5Zm0 0 3.2-6.1a1.8 1.8 0 0 1 3.36 1.14L12 7h3.2a2 2 0 0 1 1.94 2.5l-1.8 6.2A2 2 0 0 1 13.4 17.2H9A2.5 2.5 0 0 1 6.5 14.7V8.5Z" stroke-linejoin="round" stroke-linecap="round" />
@@ -2903,7 +2932,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=invfix2"></script>
+  <script src="js/gmaConversations.js?v=advise1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

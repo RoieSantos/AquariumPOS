@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- **GMA Conversations: "Advise reply" button.** It's in the reply toolbar. AI reads the conversation and puts the best next reply in the reply box for staff to edit and send with Enter; nothing is sent automatically. Anything typed first is used as guidance. It uses Alice's rules and real price lookups (read-only tools, no orders or escalations). New Edge Function [chatbot-suggest-reply](supabase/functions/chatbot-suggest-reply/index.ts), plus [gma-conversations.html](docs/gma-conversations.html) and [gmaConversations.js](docs/js/gmaConversations.js).
+
 - **Comment auto-reply: tags the commenter, and DMs everyone.** The public reply now starts with an @mention of the commenter. Every genuine comment also gets a private DM, not just questions and complaints: a real answer for questions, a friendly thank-you plus an opening otherwise. Still one DM per person per post ([comments.ts](supabase/functions/facebook-messenger-webhook/comments.ts), [ai-bot-setup.html](docs/ai-bot-setup.html)). Alice is also taught Filipino comment shorthand: "hm"/"magkano" = how much, "pm po" = message me, "avail?"/"mine". She had read "hm cabinet" as "hmm" and gave no price DM.
 
 - **Fix: Request Production timed out.** `staff_request_online_order_production` now sets its own 30s `statement_timeout`. The push to Production Managers is a synchronous HTTP call, and the anon role's ~3s default cancelled the request ([supabase_online_order_production_request.sql](sql/supabase_online_order_production_request.sql), re-run).

@@ -2709,6 +2709,55 @@ async function submitNewOrder() {
   }
 }
 
+// "Advise reply": asks AI (supabase/functions/chatbot-suggest-reply) for the best next reply based
+// on the conversation and puts it in the reply box - nothing is sent until staff press Enter.
+// Whatever staff already typed is sent along as guidance ("decline the discount politely") and is
+// replaced by the draft. Ignores the result if staff switched conversations while waiting.
+async function adviseReply() {
+  const psid = selectedPsid;
+  if (!psid) return;
+  const btn = document.getElementById('adviseReplyBtn');
+  const label = document.getElementById('adviseReplyLabel');
+  const input = document.getElementById('replyInput');
+  const errorEl = document.getElementById('replyErrorEl');
+  errorEl.classList.add('hidden');
+
+  btn.disabled = true;
+  label.textContent = 'Thinking...';
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-suggest-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        psid,
+        instruction: input.value.trim()
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (psid !== selectedPsid) return;
+    if (!response.ok || !result.suggestion) {
+      errorEl.textContent = result.error || 'Could not get a suggestion right now - try again.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    input.value = result.suggestion;
+    autoResizeReplyInput();
+    input.focus();
+  } catch (err) {
+    errorEl.textContent = err instanceof Error ? err.message : 'Could not reach the AI.';
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Advise reply';
+  }
+}
+
 // Core send path shared by Enter-to-send in the textarea, a quick-reply/product-list pick, an
 // ad-hoc attachment, and the Like button below - all are "staff sends this to the customer right
 // now", just with a different source/payload. `images` accepts plain URL strings (Quick Reply/
@@ -4379,6 +4428,7 @@ function setupThreadInteractions() {
   document.getElementById('cancelBulkImportBtn').addEventListener('click', () => toggleBulkImportPanel(false));
   document.getElementById('runBulkImportBtn').addEventListener('click', runBulkImport);
   document.getElementById('likeBtn').addEventListener('click', sendLike);
+  document.getElementById('adviseReplyBtn').addEventListener('click', adviseReply);
   document.getElementById('replyInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
