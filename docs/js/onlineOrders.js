@@ -1246,11 +1246,15 @@ function updateNextStepButton(btnId, o) {
 // confirm button only becomes tappable after a moment so a double-tap on the original button can't
 // land on it. Resolves true only on the confirm button; Cancel, Escape or tapping outside -> false.
 // messageHtml (already escaped) instead of message when part of it needs formatting, e.g. bold SKUs.
-function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml, confirmLabel, tone = '' }) {
+// altLabel adds a middle button that resolves 'alt' (e.g. To Ship without messaging the customer).
+function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml, confirmLabel, altLabel = '', tone = '' }) {
   const dialog = document.getElementById('confirmActionDialog');
   const panel = dialog.querySelector('.oo-confirm-dialog');
   const okBtn = document.getElementById('confirmActionOkBtn');
+  const altBtn = document.getElementById('confirmActionAltBtn');
   const cancelBtn = document.getElementById('confirmActionCancelBtn');
+  altBtn.textContent = altLabel;
+  altBtn.classList.toggle('hidden', !altLabel);
   document.getElementById('confirmActionCaption').textContent = caption;
   document.getElementById('confirmActionTitle').textContent = title;
   if (messageHtml != null) document.getElementById('confirmActionMessage').innerHTML = messageHtml;
@@ -1263,26 +1267,30 @@ function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml
     const finish = (answer) => {
       dialog.classList.add('hidden');
       okBtn.removeEventListener('click', onOk);
+      altBtn.removeEventListener('click', onAlt);
       cancelBtn.removeEventListener('click', onCancel);
       dialog.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey, true);
       resolve(answer);
     };
     const onOk = () => finish(true);
+    const onAlt = () => finish('alt');
     const onCancel = () => finish(false);
     const onBackdrop = (e) => { if (e.target === dialog) finish(false); };
     const onKey = (e) => {
       if (e.key === 'Escape') { e.stopImmediatePropagation(); finish(false); }
     };
     okBtn.addEventListener('click', onOk);
+    altBtn.addEventListener('click', onAlt);
     cancelBtn.addEventListener('click', onCancel);
     dialog.addEventListener('click', onBackdrop);
     document.addEventListener('keydown', onKey, true);
 
     okBtn.disabled = true;
+    altBtn.disabled = true;
     dialog.classList.remove('hidden');
     cancelBtn.focus();
-    setTimeout(() => { okBtn.disabled = false; }, 700);
+    setTimeout(() => { okBtn.disabled = false; altBtn.disabled = false; }, 700);
   });
 }
 
@@ -2057,7 +2065,8 @@ function orderCardHtml(o) {
   const status = o.status || '';
   // Mirrors the desktop app's IsPrintedStatusForRow gate on MarkRowAsToShipAsync (OnlineOrdersForm.cs)
   // and admin_update_online_order_status' matching server-side check.
-  const showToShipBtn = isPrintedOrder(o) || (isPortalOnlyOrder(o) && canToShipOrder(o));
+  // Custom orders still in production get no To Ship button at all (toShipProductionBlock).
+  const showToShipBtn = !toShipProductionBlock(o) && (isPrintedOrder(o) || (isPortalOnlyOrder(o) && canToShipOrder(o)));
 
   return `
     <div class="order-card" data-order-id="${o.order_id}">
@@ -3506,6 +3515,11 @@ async function handleAssignProductionMemberChange(event) {
 // resolved once at init) - a regular store's To Ship never needed this, same as the desktop.
 // Cancelling the serial picker aborts the whole To Ship action (nothing sent, nothing changed).
 async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, fromStock = false, linesRefreshed = false } = {}) {
+  const productionBlock = toShipProductionBlock(findFlatOrder(orderId));
+  if (productionBlock) {
+    alert(`Order ${orderId} can't go To Ship yet.\n\n${productionBlock}`);
+    return;
+  }
   // Store Managers can To Ship their own branch's orders even while the general button is off - per
   // "can we allow the store manager to-ship the order". They always pick serials at their own store,
   // and a non-production store can't create new ones (same as the desktop's To Ship).
@@ -3590,7 +3604,18 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   // Per direct request, staff can snap a photo of the packed order on their phone and have it go
   // out with the ready notification - only prompted when notifying, since a photo is pointless
   // otherwise. Cancelling the camera/file picker just sends the text-only message.
-  const notifyCustomer = window.confirm('Order complete? Do you want to update the customer?');
+  // Three choices (was the browser's OK/Cancel, where Cancel still moved the order to To Ship and only
+  // skipped the message): message + To Ship / To Ship only / Cancel = nothing changes.
+  const choice = await confirmAction({
+    caption: 'TO SHIP',
+    title: shipOrder ? orderLabel(shipOrder) : `Order ${orderId}`,
+    message: 'Order complete? Move it to To Ship.\n\nDo you also want to update the customer?',
+    confirmLabel: 'To Ship + Message Customer',
+    altLabel: 'To Ship Only',
+    tone: 'is-ship'
+  });
+  if (!choice) return; // Cancel - status not changed
+  const notifyCustomer = choice === true;
 
   if (!notifyCustomer) {
     applyStatusChange(orderId, 'To Ship', false, null, null, serialRunningNos, toShipBtn);
@@ -3951,7 +3976,27 @@ function isPrintedOrder(o) {
 function isStoreManagerShipper() {
   return !!currentSession?.isStoreManager && !currentSession?.isSuperUser;
 }
+// Per "if its a custom and need assignment we wont move to the next phase until assign and production
+// done" (hard stop, no override): an order with Tank / Stand Maker work can't go To Ship until every
+// part is Production Done. Returns why it's blocked, or null. The server checks the same
+// (supabase_online_order_to_ship_production_gate.sql).
+function toShipProductionBlock(o) {
+  const needed = neededProductionRoles(o);
+  if (!needed.length || isProductionDone(o)) return null;
+  const done = needed.filter((role) => o.production_done?.[role]).length;
+  const assigned = needed.every((role) => o[`assigned_${MAKER_ROLES[role].field}`]);
+  return assigned
+    ? `Still in production (${done}/${needed.length} parts done) - it can go To Ship once every maker marks Production Done.`
+    : `Assign the ${needed.map((role) => MAKER_ROLES[role].label).join(' / ')} first - it can go To Ship once production is done.`;
+}
+
+function setToShipButtonState(btn, o) {
+  btn.disabled = !canToShipOrder(o);
+  btn.title = toShipProductionBlock(o) || '';
+}
+
 function canToShipOrder(o) {
+  if (toShipProductionBlock(o)) return false;
   if (isPrintedOrder(o)) return true;
   if (isPortalOnlyOrder(o) && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase())) return true;
   return isStoreManagerShipper() && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase());
@@ -3960,7 +4005,7 @@ function canToShipOrder(o) {
 function updateOrderActionState() {
   const o = findFlatOrder(selectedOrderId);
   ['openOrderBtn', 'listSendPhotoBtn', 'listSendMessageBtn'].forEach((id) => { document.getElementById(id).disabled = !o; });
-  document.getElementById('listToShipBtn').disabled = !canToShipOrder(o);
+  setToShipButtonState(document.getElementById('listToShipBtn'), o);
   document.getElementById('listAssignBtn').disabled = !o;
   updateProductionDoneButton('listProductionDoneBtn', o);
   updateSendBackButton('listSendBackBtn', o);
@@ -4402,7 +4447,7 @@ function fillOrderCardHeader(o) {
   document.getElementById('orderCardDeliverySummary').textContent =
     o.for_delivery ? `For delivery${o.estimated_delivery_date ? ' · ' + o.estimated_delivery_date : ''}` : 'Pickup';
 
-  document.getElementById('cardToShipBtn').disabled = !canToShipOrder(o);
+  setToShipButtonState(document.getElementById('cardToShipBtn'), o);
   updateProductionDoneButton('cardProductionDoneBtn', o);
   fillMakerFocusSummary(o);
   updateSendBackButton('cardSendBackBtn', o);
