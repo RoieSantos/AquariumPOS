@@ -1081,6 +1081,52 @@
       background: #fff4e0;
       color: #8a5a00;
     }
+    /* Incoming call banner (renderCallBanner in gmaConversations.js) */
+    .inbox-call-banner {
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1100;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: min(440px, calc(100vw - 32px));
+    }
+    .inbox-call-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: #15803d;
+      color: #fff;
+      border-radius: 12px;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+    }
+    .inbox-call-icon {
+      font-size: 18px;
+      animation: inbox-call-ring 1s ease-in-out infinite;
+    }
+    @keyframes inbox-call-ring {
+      0%, 100% { transform: rotate(0); }
+      20% { transform: rotate(-15deg); }
+      40% { transform: rotate(15deg); }
+      60% { transform: rotate(-10deg); }
+    }
+    @media (prefers-reduced-motion: reduce) { .inbox-call-icon { animation: none; } }
+    .inbox-call-item > span:nth-child(2) { flex: 1; }
+    .inbox-call-dismiss {
+      border: none;
+      background: none;
+      color: #fff;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.8;
+    }
+    .inbox-call-dismiss:hover { opacity: 1; }
     /* Pinned conversation (togglePin in gmaConversations.js) */
     .inbox-pin-icon {
       font-size: 11px;
@@ -3018,7 +3064,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=pin1"></script>
+  <script src="js/gmaConversations.js?v=calls1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

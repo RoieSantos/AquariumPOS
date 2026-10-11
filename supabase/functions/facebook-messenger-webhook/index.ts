@@ -56,6 +56,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import { DEFAULT_GRAPH_VERSION, buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
 import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
 import { type FacebookFeedChangeValue, handleFeedComment } from './comments.ts';
+import { type FacebookCallEvent, handleCallEvent } from './calls.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 20;
@@ -80,6 +81,8 @@ interface FacebookWebhookBody {
     id?: string; // the Page id
     // Page `feed` field events (post comments) - see comments.ts.
     changes?: Array<{ field?: string; value?: FacebookFeedChangeValue }>;
+    // `calls` field events (Messenger calling) - see calls.ts.
+    calls?: FacebookCallEvent[];
     messaging?: Array<{
       sender?: { id: string };
       recipient?: { id: string };
@@ -836,7 +839,9 @@ async function attemptAutoCreateOrderFromPayment(
 // rather than holding a channel open across invocations (this function runs fresh per request).
 // Best-effort: never lets a broadcast failure affect the real work (message already saved either
 // way) - a missed live-update just means staff sees it on their next manual Refresh instead.
-async function broadcastGmaEvent(supabase: SupabaseClient, psid: string): Promise<void> {
+// event/extra: 'new_message' by default; calls.ts sends 'call_ringing' / 'call_ended' with call details.
+async function broadcastGmaEvent(supabase: SupabaseClient, psid: string, event = 'new_message', extra: Record<string, unknown> = {}): Promise<void> {
+  const payload = { psid, ...extra };
   // Fast path: Realtime's REST broadcast endpoint - one plain HTTP call, no websocket handshake/
   // subscribe wait (the old path below took up to a few seconds per call). Falls back to the
   // subscribe-and-send path if the endpoint ever rejects it, so live updates never silently stop.
@@ -847,7 +852,7 @@ async function broadcastGmaEvent(supabase: SupabaseClient, psid: string): Promis
       const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ messages: [{ topic: 'gma-inbox', event: 'new_message', payload: { psid }, private: false }] })
+        body: JSON.stringify({ messages: [{ topic: 'gma-inbox', event, payload, private: false }] })
       });
       if (res.ok) return;
       console.error('REST broadcast failed, falling back to channel send:', res.status, await res.text());
@@ -869,7 +874,7 @@ async function broadcastGmaEvent(supabase: SupabaseClient, psid: string): Promis
       channel.subscribe((status: string) => {
         if (status === 'SUBSCRIBED' && !settled) {
           clearTimeout(timer);
-          channel.send({ type: 'broadcast', event: 'new_message', payload: { psid } }).finally(finish);
+          channel.send({ type: 'broadcast', event, payload }).finally(finish);
         }
       });
     });
@@ -1459,6 +1464,29 @@ async function handlePost(req: Request): Promise<Response> {
         }).catch((err) => console.error('Error processing post comment:', err instanceof Error ? err.message : err));
         if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
         else await work;
+      }
+
+      // Calls to the Page (notify only - staff answer in Business Suite). Quick DB writes, so inline.
+      // Docs show entry.calls[]; entry.changes[field=calls] also accepted in case it arrives that way.
+      const callEvents = [
+        ...(entry.calls ?? []),
+        ...(entry.changes ?? []).filter((c) => c.field === 'calls' && c.value).map((c) => c.value as unknown as FacebookCallEvent)
+      ];
+      for (const call of callEvents) {
+        if (!entry.id) continue;
+        try {
+          await handleCallEvent({
+            supabase,
+            pageId: entry.id,
+            call,
+            fetchName: async (psid) =>
+              (await fetchFacebookProfileName(psid, pageAccessToken, graphVersion)) ||
+              (await fetchConversationParticipantName(psid, entry.id as string, pageAccessToken, graphVersion)),
+            broadcast: (psid, event, extra) => broadcastGmaEvent(supabase, psid, event, extra)
+          });
+        } catch (err) {
+          console.error('Error processing call event:', err instanceof Error ? err.message : err);
+        }
       }
 
       // One-line trace of what Facebook sent (no message text) - for checking echo / standby delivery.

@@ -4266,6 +4266,14 @@ function setupRealtimeInbox() {
     .on('broadcast', { event: 'conversation_read' }, ({ payload }) => {
       handleConversationReadEvent(payload);
     })
+    // A customer is calling a Page / the call ended (facebook-messenger-webhook calls.ts).
+    .on('broadcast', { event: 'call_ringing' }, ({ payload }) => {
+      addRingingCall(payload);
+    })
+    .on('broadcast', { event: 'call_ended' }, ({ payload }) => {
+      removeRingingCall(payload?.call_id);
+      handleGmaInboxEvent(payload);
+    })
     // Another staff member pinned/unpinned a conversation - re-sort the list.
     .on('broadcast', { event: 'conversation_pinned' }, ({ payload }) => {
       loadConversations().then(() => {
@@ -4274,7 +4282,10 @@ function setupRealtimeInbox() {
       });
     })
     .subscribe((status) => {
-      if (status === 'SUBSCRIBED') trackPresence();
+      if (status === 'SUBSCRIBED') {
+        trackPresence();
+        loadRingingCalls();
+      }
     });
 
   // A hidden/minimized tab isn't "reading" - it drops off the viewers until it's visible again.
@@ -4283,6 +4294,72 @@ function setupRealtimeInbox() {
 
 // ---------------------------------------------------------------------------
 // Who's viewing - per "show an icon on the conversation if my staff is on that conversation". Supabase
+// "📞 Juan is calling the RS Pet Stop Page…" banner (sql/supabase_chatbot_calls.sql). Notify only -
+// staff answer in Meta Business Suite / the Facebook app; clicking the banner opens the caller's
+// conversation so their history/orders are on screen while they pick up. A call whose 'call_ended'
+// never arrives drops off after CALL_BANNER_MAX_MS.
+const CALL_BANNER_MAX_MS = 90 * 1000;
+const ringingCalls = new Map(); // call_id -> { psid, page_id, customer_name, timer }
+
+function addRingingCall(call) {
+  if (!call?.call_id || !call.psid || ringingCalls.has(call.call_id)) return;
+  const startedMs = call.started_at_utc ? new Date(call.started_at_utc).getTime() : Date.now();
+  const remaining = Math.max(5000, CALL_BANNER_MAX_MS - (Date.now() - startedMs));
+  const timer = setTimeout(() => removeRingingCall(call.call_id), remaining);
+  ringingCalls.set(call.call_id, { psid: call.psid, page_id: call.page_id, customer_name: call.customer_name, timer });
+  renderCallBanner();
+}
+
+function removeRingingCall(callId) {
+  const call = ringingCalls.get(callId);
+  if (!call) return;
+  clearTimeout(call.timer);
+  ringingCalls.delete(callId);
+  renderCallBanner();
+}
+
+function renderCallBanner() {
+  let el = document.getElementById('inboxCallBanner');
+  if (!ringingCalls.size) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'inboxCallBanner';
+    el.className = 'inbox-call-banner';
+    el.addEventListener('click', async (e) => {
+      const item = e.target.closest('[data-call-id]');
+      if (!item) return;
+      if (e.target.closest('.inbox-call-dismiss')) {
+        removeRingingCall(item.dataset.callId);
+        return;
+      }
+      const psid = item.dataset.psid;
+      if (!conversations.some((c) => c.psid === psid)) await loadConversations();
+      openConversation(psid);
+    });
+    document.body.appendChild(el);
+  }
+  el.innerHTML = [...ringingCalls.entries()].map(([callId, c]) => {
+    const page = PAGE_LABELS[c.page_id]?.label;
+    return `<div class="inbox-call-item" data-call-id="${escapeHtml(callId)}" data-psid="${escapeHtml(c.psid)}" title="Answer in Meta Business Suite or the Facebook app - click to open this customer's conversation">
+      <span class="inbox-call-icon">📞</span>
+      <span><b>${escapeHtml(c.customer_name || 'A customer')}</b> is calling${page ? ` the ${escapeHtml(page)} Page` : ''}…</span>
+      <button type="button" class="inbox-call-dismiss" title="Hide">&times;</button>
+    </div>`;
+  }).join('');
+}
+
+async function loadRingingCalls() {
+  const { data, error } = await supabaseClient.rpc('admin_list_ringing_chatbot_calls', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (error) return; // sql/supabase_chatbot_calls.sql not run yet - live broadcasts still work
+  (data || []).forEach(addRingingCall);
+}
+
 // Realtime Presence on the same 'gma-inbox' channel (no table/SQL): every open Conversations tab
 // announces which conversation it has open (none while the tab is hidden), and Realtime drops a tab by
 // itself when it closes or loses connection. Shown as initials badges on the conversation list and a
