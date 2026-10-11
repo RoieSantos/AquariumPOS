@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- **POS header: Production Orders swapped for Online Pay, and the layout fixed** ([MainForm.cs](MainForm.cs)). The management buttons are now one size (120×34, 3px margin), so they fit in 2 rows of 4. Before, only 3 fit per row, so the third row (Aquarium Set / Purchase Order) was cut off. The version label is shortened to "v… (commit)", with full details in the tooltip and window title. It and the title text now stop before the Sync buttons instead of sitting under them. Online Pay is also still reachable from the Online Orders dialog.
+
+- **Aquarium Set button visible again.** The new Online Pay button pushed it off the fixed-size header button panel. Online Pay is now opened from the Online Orders dialog (an "Online Pay" button beside the portal link) instead of its own header button ([MainForm.cs](MainForm.cs)).
+
 - **Online Pay: orders on the portal but not in Pancake can now be paid.** Pancake's blank amounts were parsed as 0, so these orders were refused with "more than the balance in Pancake (0.00)". When Pancake says it has no such order, the payment now goes straight onto the portal order's Amount Paid / Balance, and the lookup no longer warns about it. A new `RecordedIn` column logs where each store payment went ([supabase_pos_online_pay.sql](sql/supabase_pos_online_pay.sql), re-run).
 
 - Read-only check [supabase_check_online_pay_balance.sql](sql/supabase_check_online_pay_balance.sql): Online Pay refused a payment with "more than the balance in Pancake (0.00)" while its screen showed a balance. It shows the portal's amounts next to Pancake's raw payment fields and what Online Pay parsed from them.

@@ -1395,13 +1395,16 @@ INSERT INTO CardProcessingFeeLog (
 
             // Build version (stamped at compile time, see GenerateBuildInfo in AquariumPOS.csproj)
             // so we can tell at a glance whether this POS is running the latest build.
+            // Short form here (full version / commit / build time in the tooltip and the window title); its
+            // width is capped in PositionHeaderHeaderButtons so the Sync buttons never sit on top of it.
             var versionLabel = new Label
             {
-                Text = AppVersionText,
+                Text = $"v{BuildInfo.Version} ({BuildInfo.Commit}{(BuildInfo.Dirty ? "*" : "")})",
                 ForeColor = BuildInfo.Dirty ? Color.DarkOrange : Color.DimGray,
                 Font = new Font("Arial", 8, FontStyle.Regular),
                 Location = new Point(120, 12),
-                AutoSize = true
+                Size = new Size(240, 16),
+                AutoEllipsis = true
             };
             new ToolTip().SetToolTip(versionLabel,
                 $"Version: {BuildInfo.Version}\nCommit: {BuildInfo.Commit}{(BuildInfo.Dirty ? " (uncommitted changes)" : "")}\nBuilt: {BuildInfo.BuildTime}");
@@ -1428,7 +1431,7 @@ INSERT INTO CardProcessingFeeLog (
                 Width = 520,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = true,
-                Padding = new Padding(8, 10, 8, 8),
+                Padding = new Padding(8, 8, 8, 4),
                 AutoSize = false,
                 BackColor = Color.Transparent
             };
@@ -1477,18 +1480,6 @@ INSERT INTO CardProcessingFeeLog (
                 Margin = new Padding(6)
             };
             onlineOrdersButton.Click += OnlineOrdersButton_Click;
-
-            // Online Pay (OnlinePayForm): pay one online order looked up live from the portal.
-            var onlinePayButton = new Button
-            {
-                Text = "Online Pay",
-                Size = new Size(140, 35),
-                BackColor = Color.SeaGreen,
-                ForeColor = Color.White,
-                Font = new Font("Arial", 9, FontStyle.Bold),
-                Margin = new Padding(6)
-            };
-            onlinePayButton.Click += OnlinePayButton_Click;
 
 
             var advanceOrdersButton = new Button
@@ -1637,20 +1628,16 @@ INSERT INTO CardProcessingFeeLog (
             };
             categoryMgmtButton.Click += CategoryMgmtButton_Click;
 
-            var productionOrdersButton = new Button
+            // Online Pay took Production Orders' place in the header (production is run on the portal now):
+            // pay one online order looked up live from the portal (OnlinePayForm).
+            var onlinePayButton = new Button
             {
-                Text = "Production Orders",
-                Size = new Size(140, 35),
-                BackColor = Color.DarkSlateGray,
+                Text = "Online Pay",
+                BackColor = Color.SeaGreen,
                 ForeColor = Color.White,
-                Font = new Font("Arial", 9, FontStyle.Bold),
-                Margin = new Padding(6)
+                Font = new Font("Arial", 9, FontStyle.Bold)
             };
-            productionOrdersButton.Click += (s, e) =>
-            {
-                var prodOrdersForm = new ProductionOrdersForm();
-                prodOrdersForm.ShowDialog(this);
-            };
+            onlinePayButton.Click += (s, e) => OpenOnlinePay();
 
             var headerSyncButton = new Button
             {
@@ -1715,6 +1702,13 @@ INSERT INTO CardProcessingFeeLog (
                 headerDeliveryTrackingButton.Location = new Point(syncColumnX, y + headerSyncButton.Height + spacing);
                 headerCustomersButton.Location = new Point(syncColumnX + headerSyncButton.Width + spacing, y + headerSyncButton.Height + spacing);
 
+                // Left-side text ends before the Sync buttons (on a narrow screen it's cut with "..." instead
+                // of the buttons covering it).
+                int leftTextWidth = Math.Max(40, syncColumnX - 8 - titleLabel.Left);
+                versionLabel.Width = Math.Min(240, leftTextWidth);
+                titleLabel.Width = Math.Min(400, leftTextWidth);
+                subtitleLabel.Width = Math.Min(400, leftTextWidth);
+
                 // Ensure these header action buttons are above the rightButtonsPanel so they remain visible
                 headerSyncButton.BringToFront();
                 headerCustomerSyncButton.BringToFront();
@@ -1727,9 +1721,8 @@ INSERT INTO CardProcessingFeeLog (
             // Add buttons to the right-side panel in a logical order
             // Note: Item Management and Categories moved under Settings dialog
             // rightButtonsPanel.Controls.Add(glassPricingButton);
-            rightButtonsPanel.Controls.Add(productionOrdersButton);
-            rightButtonsPanel.Controls.Add(onlineOrdersButton);
             rightButtonsPanel.Controls.Add(onlinePayButton);
+            rightButtonsPanel.Controls.Add(onlineOrdersButton);
             rightButtonsPanel.Controls.Add(transactionListButton);
             rightButtonsPanel.Controls.Add(advanceOrdersButton);
             // SalesPerson button added beside Advance Orders
@@ -1738,6 +1731,14 @@ INSERT INTO CardProcessingFeeLog (
             // Purchase Order button added beside SalesPerson
             rightButtonsPanel.Controls.Add(purchaseOrderButton);
             // rightButtonsPanel.Controls.Add(tenderTypesButton);
+
+            // One size for all of them: 2 rows of 4 fit the 100px header exactly. With mixed sizes and 6px
+            // margins only 3 fit per row, so the third row (Aquarium Set / Purchase Order) was cut off.
+            foreach (Control c in rightButtonsPanel.Controls)
+            {
+                c.Size = new Size(120, 34);
+                c.Margin = new Padding(3);
+            }
 
             // Create back button for checkout mode (initially hidden)
             // backButton = new Button
@@ -1757,7 +1758,7 @@ INSERT INTO CardProcessingFeeLog (
 
             // Store original header buttons for later restoration (moved some into Settings)
             originalHeaderButtons.AddRange(new Button[] {
-                showItemsButton, transactionListButton, advanceOrdersButton, transPaymentEntryButton, categoryMgmtButton, productionOrdersButton
+                showItemsButton, transactionListButton, advanceOrdersButton, transPaymentEntryButton, categoryMgmtButton
             });
 
             // Add controls: left logo/title and right-side grouped management buttons
@@ -3942,7 +3943,9 @@ ORDER BY i.[Description], i.[Name], i.Code";
         }
         // Online Orders moved to the RSPetStop Portal - per "dont hide the online orders once the user clicked it
         // show a link to our portal". The old OnlineOrdersForm (and the Pancake -> local order sync it ran
-        // while open) is no longer opened; store payments go through Online Pay (OnlinePayForm).
+        // while open) is no longer opened; store payments go through Online Pay (OnlinePayForm), opened from
+        // this dialog - not its own button, since the header's button panel is fixed-size and an extra
+        // button pushed Aquarium Set out of view.
         private const string PortalOnlineOrdersUrl = "https://rspetstop.com/online-orders.html";
 
         private void OnlineOrdersButton_Click(object? sender, EventArgs e)
@@ -3970,14 +3973,16 @@ ORDER BY i.[Description], i.[Name], i.Code";
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(PortalOnlineOrdersUrl) { UseShellExecute = true }); }
                 catch (Exception ex) { MessageBox.Show(dlg, $"Could not open the browser: {ex.Message}\n\nGo to {PortalOnlineOrdersUrl}", "Online Orders", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             };
-            var hint = new Label { Location = new Point(20, 118), Size = new Size(440, 22), ForeColor = Color.DimGray, Text = "To take a payment for an online order, use Online Pay." };
+            var hint = new Label { Location = new Point(20, 118), Size = new Size(440, 22), ForeColor = Color.DimGray, Text = "Customer paying for an online order at the store? Use Online Pay." };
+            var pay = new Button { Text = "Online Pay", DialogResult = DialogResult.Yes, Location = new Point(20, 150), Size = new Size(140, 36), BackColor = Color.SeaGreen, ForeColor = Color.White, Font = new Font("Arial", 10, FontStyle.Bold) };
             var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(360, 150), Size = new Size(100, 36) };
-            dlg.Controls.AddRange(new Control[] { message, link, hint, ok });
+            dlg.Controls.AddRange(new Control[] { message, link, hint, pay, ok });
             dlg.AcceptButton = ok;
-            dlg.ShowDialog(this);
+            if (dlg.ShowDialog(this) == DialogResult.Yes)
+                OpenOnlinePay();
         }
 
-        private void OnlinePayButton_Click(object? sender, EventArgs e)
+        private void OpenOnlinePay()
         {
             try
             {
