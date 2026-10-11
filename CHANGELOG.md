@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-11
 
+- Production Shelf Map is now open view-only to Sales Users (menu link + "View only" badge; no Edit / New Shelf / Auto Order / last-order cards; save/delete were already manager-only server-side) ([auth.js](docs/js/auth.js), [nav.js](docs/js/nav.js)). Cache bumped to `salesshelf1` on every page.
+- Production Shelf Map: new **Stock list** view (default for Sales) - one card per product with Available / Low stock (1-2) / Out of stock, Black/Clear split, "+ N being built", and filter chips. Floor map racks now match the cards: green/amber/red left stripe and number, status pill, "+ N being built" ([productionShelfMap.js](docs/js/productionShelfMap.js), [production-shelf-map.html](docs/production-shelf-map.html)).
 - Online Orders Ready to Ship / To Ship ([onlineOrders.js](docs/js/onlineOrders.js)): an All-Branch Fabrication user shipping another branch's order (e.g. Amaya staff on a GMA order) now searches the serial picker at the order's branch, not their own. Before, it said "No available serials found". Cache bumped to `fabserials1`.
 
 - Read-only check [supabase_check_online_order_AO-00040_serials.sql](sql/supabase_check_online_order_AO-00040_serials.sql): shows which serials Ready to Ship will ask for on AO-00040, line by line. AO-00040 is a bot/GMA order confirmed into Online Orders, not an advance order. This replaces the wrong advance-order version (deleted), which returned nothing.

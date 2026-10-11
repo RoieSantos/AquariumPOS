@@ -2,7 +2,13 @@
 // also a Production Manager (or Tank / Stand Maker) can open the Production pages (see
 // canOpenProductionPage in js/auth.js).
 function compactProductionLinks(session, activeLabel) {
-  if (!(session?.isProductionManager || session?.isOrderMaker)) return '';
+  if (!(session?.isProductionManager || session?.isOrderMaker)) {
+    // Sales Users get the Shelf Map view-only (canOpenProductionPage in js/auth.js).
+    return session?.isSalesUser
+      ? `
+          <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>`
+      : '';
+  }
   return `
           <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>${session.isProductionManager ? `
           <a class="topnav-link${activeLabel === 'Finished Production Orders' ? ' active' : ''}" href="production-orders.html?view=finished">Finished</a>` : ''}
@@ -204,6 +210,9 @@ function renderTopNav(activeLabel) {
       production.push({ href: 'production-orders.html?view=finished', label: 'Finished Production Orders' });
     }
     // Where each built unit is stored, by serial (supabase_production_shelf_map.sql).
+    production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
+  } else if (session?.isSalesUser) {
+    // View-only stock availability for Sales Users (canOpenProductionPage in js/auth.js).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
   }
   // Every maker's open assignments, grouped by maker (supabase_maker_assignments_view.sql) - Super

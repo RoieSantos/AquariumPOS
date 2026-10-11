@@ -144,6 +144,54 @@
     :root[data-theme="dark"] .psm-editbar { background: rgba(17, 26, 44, .85); }
     :root[data-theme="dark"] .size-summary tbody tr:hover, :root[data-theme="dark"] .item-hit:hover { background: rgba(91, 155, 232, .12); }
     :root[data-theme="dark"] .colour-chip.colour-black i { background: #000; box-shadow: 0 0 0 1px #8a9bbd; }
+    /* Stock list view (js/productionShelfMap.js renderStock) - one card per product, status at a glance */
+    .psm-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .view-only-badge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: rgba(29, 79, 145, .12); color: #1d4f91; }
+    .view-toggle { display: inline-flex; border: 1px solid var(--panel-border, #c9d3e0); border-radius: 8px; overflow: hidden; height: 34px; }
+    .view-toggle button { border: 0; background: var(--panel-bg, #fff); color: inherit; padding: 0 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .view-toggle button + button { border-left: 1px solid var(--panel-border, #c9d3e0); }
+    .view-toggle button.active { background: #1d4f91; color: #fff; }
+    .stock-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .stock-filter { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--panel-border, #c9d3e0); border-radius: 999px; background: var(--panel-bg, #fff); color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+    .stock-filter b { font-size: 14px; }
+    .stock-filter::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--st-color, #9aa4b2); }
+    .stock-filter.active { border-color: var(--st-color, #1d4f91); box-shadow: 0 0 0 2px var(--st-color, #1d4f91) inset; }
+    .stock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+    .stock-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--panel-border, #e0e6ee); border-left: 6px solid var(--st-color); border-radius: 10px; background: var(--panel-bg, #fff); cursor: pointer; min-width: 0; }
+    .stock-card:hover, .stock-card:focus-visible { box-shadow: 0 2px 10px rgba(20, 40, 80, .15); outline: none; }
+    .stock-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .stock-name { font-size: 16px; font-weight: 700; line-height: 1.25; }
+    .stock-pill { flex: 0 0 auto; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--st-color); background: var(--st-bg); white-space: nowrap; }
+    .stock-sub { font-size: 12px; color: var(--text-muted, #666); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stock-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .stock-count { font-size: 34px; font-weight: 800; line-height: 1; color: var(--st-color); }
+    .stock-unit { font-size: 13px; color: var(--text-muted, #666); margin-right: 4px; }
+    .stock-coming { font-size: 12px; font-weight: 600; color: #1d4f91; }
+    .st-ok { --st-color: #1f8a4c; --st-bg: rgba(31, 138, 76, .12); }
+    .st-low { --st-color: #b7701a; --st-bg: rgba(217, 138, 0, .15); }
+    .st-out { --st-color: #c0392b; --st-bg: rgba(192, 57, 43, .12); }
+    .st-all { --st-color: #1d4f91; }
+    /* Floor map racks look like the Stock list cards: status stripe on the left, coloured number, pill */
+    .pspot.st-ok .pspot-count { color: #1f8a4c; }
+    .pspot.st-low .pspot-count { color: #b7701a; }
+    .pspot.st-out .pspot-count { color: #c0392b; }
+    .pspot.st-ok, .pspot.st-low, .pspot.st-out { border-left: 6px solid var(--st-color); border-radius: 10px; }
+    .pspot-count { font-weight: 800; }
+    .pspot-tagrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+    .pspot-tagrow .pspot-tag { align-self: center; }
+    .pspot-tagrow .stock-pill { font-size: 11px; padding: 1px 8px; }
+    .floor-plan .pspot-tagrow .stock-pill { font-size: 12px; }
+    .floor-plan .pspot.compact .pspot-tagrow { justify-content: center; }
+    :root[data-theme="dark"] .st-ok { --st-color: #4cc38a; --st-bg: rgba(76, 195, 138, .16); }
+    :root[data-theme="dark"] .st-low { --st-color: #f0b44c; --st-bg: rgba(240, 180, 76, .16); }
+    :root[data-theme="dark"] .st-out { --st-color: #ff7b6b; --st-bg: rgba(255, 123, 107, .16); }
+    :root[data-theme="dark"] .st-all { --st-color: #5b9be8; }
+    :root[data-theme="dark"] .pspot.st-ok .pspot-count { color: #4cc38a; }
+    :root[data-theme="dark"] .pspot.st-low .pspot-count { color: #f0b44c; }
+    :root[data-theme="dark"] .pspot.st-out .pspot-count { color: #ff7b6b; }
+    :root[data-theme="dark"] .stock-coming { color: #8fbcf2; }
+    :root[data-theme="dark"] .view-only-badge { background: rgba(91, 155, 232, .18); color: #cfe2ff; }
+    :root[data-theme="dark"] .view-toggle button.active { background: #2f6cc0; }
   </style>
 </head>
 <body>
@@ -151,15 +199,23 @@
 
   <!-- Full window width (the floor plan fits itself to it) - see .page.page-full below -->
   <div class="page page-full">
-    <h1>Production Shelf Map</h1>
-    <p class="muted">Each rack shows how many serials of its aquarium (e.g. 75g) are in stock at this location - always live, nothing to put away. Tap a rack to see the serials. Racks are linked to an aquarium in Edit Layout.</p>
+    <div class="psm-title">
+      <h1>Production Shelf Map</h1>
+      <span class="view-only-badge hidden" id="viewOnlyBadge">View only</span>
+    </div>
+    <p class="muted" id="pageIntro">Each rack shows how many serials of its aquarium (e.g. 75g) are in stock at this location - always live, nothing to put away. Tap a rack to see the serials. Racks are linked to an aquarium in Edit Layout.</p>
 
     <!-- Filters on the left, actions on the right (not the site-wide .toolbar's space-between, which
          scatters every control across a full-width page). -->
     <div class="psm-toolbar">
       <div class="psm-group">
+        <!-- Stock list (one card per product, Available / Low / Out) or the drawn floor map -->
+        <span class="view-toggle" role="group" aria-label="View">
+          <button type="button" data-view="stock">Stock list</button>
+          <button type="button" data-view="map">Floor map</button>
+        </span>
         <label class="psm-field"><span>Location</span><select id="locationSelect"></select></label>
-        <label class="psm-field"><span>Shelf</span><select id="shelfSelect"></select></label>
+        <label class="psm-field" id="shelfField"><span>Shelf</span><select id="shelfSelect"></select></label>
         <input type="search" id="findInput" class="psm-find" placeholder="Find size, serial or item..." autocomplete="off" />
         <span class="muted psm-find-result" id="findResult"></span>
       </div>
@@ -198,8 +254,10 @@
     <p class="muted hidden" id="floorEditHint" style="font-size:12px; margin:4px 0 0;">Drag a rack to move it, drag its bottom-right corner to resize, tap it to rename or rotate. Save when done.</p>
 
     <div class="shelf-legend muted" id="legend">
-      <span><i class="shelf-dot" style="background:#c9d3e0"></i>In stock</span>
-      <span><i class="shelf-dot" style="background:#d98a00"></i>At or over the rack's capacity</span>
+      <span><i class="shelf-dot" style="background:#1f8a4c"></i>Available</span>
+      <span><i class="shelf-dot" style="background:#b7701a"></i>Low stock (1-2 left)</span>
+      <span><i class="shelf-dot" style="background:#c0392b"></i>Out of stock</span>
+      <span><i class="shelf-dot" style="background:#d98a00"></i>Orange border = at or over the rack's capacity</span>
       <span><i class="shelf-dot" style="background:#999"></i>None in stock (dashed)</span>
       <span><i class="shelf-dot" style="background:#e0e6ee"></i>No aquarium linked (dotted)</span>
     </div>
@@ -283,9 +341,9 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=noqpdel1"></script>
-  <script src="js/nav.js?v=noqpdel1"></script>
-  <script src="js/productionShelfMap.js?v=23"></script>
+  <script src="js/auth.js?v=salesshelf1"></script>
+  <script src="js/nav.js?v=salesshelf1"></script>
+  <script src="js/productionShelfMap.js?v=25"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

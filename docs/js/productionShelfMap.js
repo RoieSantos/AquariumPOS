@@ -13,6 +13,15 @@
 //           plan units, scaled to the screen). Edit Layout lets you drag, resize and rotate spots.
 let currentSession = null;
 let canEditLayout = false;
+// Per "my sales user can see this but they cannot edit" - a Sales User (no production role) gets the
+// page read only: no Edit / New Shelf / Auto Order, no last-production-order cards.
+let viewOnly = false;
+// 'stock' = one card per product with Available / Low / Out (renderStock), 'map' = the drawn racks.
+// Remembered per browser; a view-only user starts on the stock list.
+const VIEW_KEY = 'prod-shelf-view';
+let viewMode = 'map';
+let stockFilter = 'all';
+let locationOpenLines = []; // still to build on Open / Released production orders at currentLocation
 let shelves = [];
 let currentShelfId = null;
 let currentLocation = null;
@@ -208,6 +217,23 @@ function spotSerials(spot) {
   return units.filter((s) => unitFitsSpot(s, spot));
 }
 
+// Stock status for sales at a glance: out (0), low (1-2 left, unless that already fills the rack),
+// or available.
+const LOW_STOCK = 2;
+const STATUS_LABEL = { ok: 'Available', low: 'Low stock', out: 'Out of stock' };
+function stockStatus(count, capacity) {
+  if (!count) return 'out';
+  if (count <= LOW_STOCK && !(capacity && count >= capacity)) return 'low';
+  return 'ok';
+}
+
+// Units of the spot's aquarium still to be built on Open / Released production orders here.
+function spotOnOrder(spot) {
+  if (!spot?.item_code) return 0;
+  return locationOpenLines.filter((l) => openLineFitsSpot(l, spot))
+    .reduce((n, l) => n + Number(l.open_qty || 0), 0);
+}
+
 function spotCountLabel(spot) {
   return spot.count_source === 'ledger' ? 'on hand (Item Ledger)' : 'serial(s) in stock';
 }
@@ -250,7 +276,8 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
     full ? 'full' : '',
     match ? 'match' : '',
     !editing && findTerm && !match ? 'dim' : '',
-    compact ? 'compact' : ''
+    compact ? 'compact' : '',
+    count !== null ? `st-${stockStatus(count, spot.capacity)}` : ''
   ].filter(Boolean).join(' ');
   const tooltip = [
     spotName(spot, fallbackName) + (tag ? ` - ${tag}` : ''),
@@ -264,12 +291,17 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
     ? (editing ? '' : '<span class="pspot-count muted" title="Link an aquarium in Edit Layout to count it">–</span>')
     : `<span class="pspot-count">${count}${spot.capacity ? `<small> / ${spot.capacity}</small>` : ''}</span>`;
   const shortTag = spotShortTag(spot);
+  // Same status pill / "being built" as the Stock list cards (stockCardHtml); a compact rack keeps
+  // just the coloured stripe and number.
+  const status = count !== null ? stockStatus(count, spot.capacity) : null;
+  const onOrder = count !== null && !compact ? spotOnOrder(spot) : 0;
+  const pillHtml = status && !compact ? `<span class="stock-pill">${STATUS_LABEL[status]}</span>` : '';
   return `<div class="${cls}" ${attrs} ${spot.id ? `data-spot-id="${spot.id}"` : ''} style="${style}" title="${escapeHtml(tooltip)}" role="button" tabindex="0">
     <div class="pspot-head">
       <span class="pspot-label">${escapeHtml(spotName(spot, fallbackName))}</span>
       ${countHtml}
     </div>
-    ${shortTag ? `<span class="pspot-tag">${escapeHtml(shortTag)}</span>` : ''}
+    ${shortTag || pillHtml || onOrder ? `<span class="pspot-tagrow">${shortTag ? `<span class="pspot-tag">${escapeHtml(shortTag)}</span>` : ''}${pillHtml}${onOrder ? `<span class="stock-coming">+ ${onOrder} being built</span>` : ''}</span>` : ''}
     ${count ? `<span class="pspot-colours">${colourChipsHtml(serials)}</span>` : ''}
     ${!compact && spot.item_code ? `<span class="pspot-sub pspot-clamp">${escapeHtml(spot.item_code)}${spot.variant_name ? ' · ' + escapeHtml(spot.variant_name) : ''}${spotOnlyColour(spot) ? ` · <b>${escapeHtml(spotOnlyColour(spot))} only</b>` : ''}</span>` : ''}
     ${!compact && shared.length ? `<span class="pspot-sub">shared with ${escapeHtml(shared.join(', '))}</span>` : ''}
@@ -286,9 +318,80 @@ function renderShelf() {
     renderFindResult(0);
     return;
   }
-  document.getElementById('zoomControls').classList.toggle('hidden', currentLayout() !== 'floor');
-  if (currentLayout() === 'floor') renderFloor(body);
+  const stock = viewMode === 'stock' && !draft;
+  document.getElementById('zoomControls').classList.toggle('hidden', stock || currentLayout() !== 'floor');
+  document.getElementById('shelfField').classList.toggle('hidden', stock);
+  document.getElementById('legend').classList.toggle('hidden', stock);
+  document.querySelectorAll('.view-toggle [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === (stock ? 'stock' : 'map')));
+  if (stock) renderStock(body);
+  else if (currentLayout() === 'floor') renderFloor(body);
   else renderGrid(body);
+}
+
+function setViewMode(mode) {
+  viewMode = mode === 'stock' ? 'stock' : 'map';
+  try { localStorage.setItem(VIEW_KEY, viewMode); } catch (err) { /* not remembered */ }
+  renderShelf();
+}
+
+// Every product linked to a rack anywhere at this location, once (racks linked to the same aquarium
+// share its count), with its stock, status and what's still being built.
+function stockProducts() {
+  const groups = new Map();
+  shelves.filter((sh) => sh.warehouse_id === currentLocation).forEach((sh) => {
+    (sh.spots || []).forEach((sp) => {
+      if (!sp.item_code) return;
+      const key = `${sp.item_code}|${sp.variant_id || ''}`;
+      const g = groups.get(key) || { spot: sp, capacity: 0 };
+      g.capacity += Number(sp.capacity) || 0;
+      groups.set(key, g);
+    });
+  });
+  return Array.from(groups.values()).map((g) => {
+    const sp = g.spot;
+    // The rack's own label reads best ("Standard 2.5g 3mm glass"); a short code like "B4" doesn't.
+    const title = (sp.label && sp.label.length > 4 ? sp.label : '') || spotTagText(sp) || sp.item_code;
+    const units = spotSerials(sp);
+    return { ...g, title, units, count: units.length, onOrder: spotOnOrder(sp), status: stockStatus(units.length, g.capacity) };
+  });
+}
+
+function stockCardHtml(p) {
+  const only = spotOnlyColour(p.spot);
+  const sub = [p.spot.item_code, p.spot.item_name && p.spot.item_name !== p.title ? p.spot.item_name : ''].filter(Boolean).join(' · ');
+  return `<div class="stock-card st-${p.status}" data-spot-id="${p.spot.id}" role="button" tabindex="0" title="Tap to see the serial numbers">
+    <div class="stock-card-head">
+      <span class="stock-name">${escapeHtml(p.title)}</span>
+      <span class="stock-pill">${STATUS_LABEL[p.status]}</span>
+    </div>
+    ${sub || only ? `<div class="stock-sub">${escapeHtml(sub)}${only ? ` · <b>${escapeHtml(only)} only</b>` : ''}</div>` : ''}
+    <div class="stock-main">
+      <span class="stock-count">${p.count}</span><span class="stock-unit">in stock</span>
+      ${p.count ? `<span class="pspot-colours">${colourChipsHtml(p.units)}</span>` : ''}
+    </div>
+    ${p.onOrder ? `<div class="stock-coming">+ ${p.onOrder} being built</div>` : ''}
+  </div>`;
+}
+
+function renderStock(body) {
+  body.classList.remove('floor-mode');
+  const products = stockProducts();
+  const findEl = document.getElementById('findResult');
+  if (!products.length) {
+    body.innerHTML = '<p class="muted">No racks at this location are linked to a product yet.</p>';
+    findEl.textContent = '';
+    return;
+  }
+  const counts = { all: products.length, ok: 0, low: 0, out: 0 };
+  products.forEach((p) => { counts[p.status] += 1; });
+  const shown = products
+    .filter((p) => (stockFilter === 'all' || p.status === stockFilter) && (!findTerm || spotMatches(p.spot, findTerm)))
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
+  const chip = (key, label) => `<button type="button" class="stock-filter st-${key}${stockFilter === key ? ' active' : ''}" data-filter="${key}">${label} <b>${counts[key]}</b></button>`;
+  body.innerHTML = `
+    <div class="stock-filters">${chip('all', 'All')}${chip('ok', 'Available')}${chip('low', 'Low stock')}${chip('out', 'Out of stock')}</div>
+    ${shown.length ? `<div class="stock-grid">${shown.map(stockCardHtml).join('')}</div>` : '<p class="muted">Nothing matches.</p>'}`;
+  findEl.textContent = findTerm ? `${shown.length} product(s)` : '';
 }
 
 function renderGrid(body) {
@@ -392,12 +495,15 @@ function renderShelfSelect() {
 
 async function loadLocationSerials() {
   locationLedgerUnits = [];
-  if (!currentLocation) { locationSerials = []; return; }
+  if (!currentLocation) { locationSerials = []; locationOpenLines = []; return; }
   const usesLedger = shelves.some((sh) => sh.warehouse_id === currentLocation && (sh.spots || []).some((sp) => sp.count_source === 'ledger'));
-  const [serialRes, ledgerRes] = await Promise.all([
+  const [serialRes, ledgerRes, openRes] = await Promise.all([
     rpc('staff_list_production_location_serials', { p_warehouse_id: currentLocation }),
-    usesLedger ? rpc('staff_list_production_location_ledger_qty', { p_warehouse_id: currentLocation }) : Promise.resolve({ data: [] })
+    usesLedger ? rpc('staff_list_production_location_ledger_qty', { p_warehouse_id: currentLocation }) : Promise.resolve({ data: [] }),
+    // "+ N being built" on the stock list - quietly left out if it can't be read.
+    rpc('staff_list_production_open_qty', { p_warehouse_id: currentLocation })
   ]);
+  locationOpenLines = openRes.error ? [] : (openRes.data || []);
   locationSerials = serialRes.error ? [] : (serialRes.data || []);
   if (serialRes.error) showError(serialRes.error.message);
   if (ledgerRes.error) showError(`Item Ledger counts: ${ledgerRes.error.message}`);
@@ -455,8 +561,9 @@ function openSpotModal(spotId) {
     spot.notes || ''
   ].filter(Boolean).join(' · ');
   const stockEl = document.getElementById('spotModalStock');
+  const onOrder = spotOnOrder(spot);
   stockEl.innerHTML = serials
-    ? `<b>${serials.length}</b> ${spotCountLabel(spot)} at ${escapeHtml(spot.shelf.warehouse_name || 'this location')}${shared.length ? ` - same aquarium as ${escapeHtml(shared.join(', '))}, so the count is shared` : ''}.
+    ? `<b>${serials.length}</b> ${spotCountLabel(spot)} at ${escapeHtml(spot.shelf.warehouse_name || 'this location')}${shared.length ? ` - same aquarium as ${escapeHtml(shared.join(', '))}, so the count is shared` : ''}.${onOrder ? ` <b>${onOrder}</b> more being built.` : ''}
        ${serials.length ? `<div class="pspot-colours" style="margin-top:6px;">${colourChipsHtml(serials)}</div>` : ''}`
     : `No aquarium is linked to this rack${canEditLayout ? ' - Edit Layout, tap the rack and pick one under "Aquarium on this rack" to count it' : ''}.`;
   // Grouped by version (Black / Clear / ...), each with its count. A ledger-counted rack has no serial
@@ -490,7 +597,7 @@ function closeSpotModal() {
 
 async function loadLastOrders() {
   const box = document.getElementById('lastOrders');
-  if (!currentLocation) { box.classList.add('hidden'); return; }
+  if (!currentLocation || viewOnly) { box.classList.add('hidden'); return; }
   const location = currentLocation;
   const { data, error } = await rpc('staff_get_last_production_orders', { p_warehouse_id: location });
   if (location !== currentLocation) return; // switched location while loading
@@ -782,6 +889,7 @@ function refreshEditBar() {
 
 function startEdit(newShelf) {
   const shelf = currentShelf();
+  viewMode = 'map'; // layout is edited on the map
   if (newShelf) {
     draft = { id: null, name: '', warehouse_id: currentLocation || '', layout: 'floor', spots: [] };
   } else if (shelf.layout === 'floor') {
@@ -1031,6 +1139,15 @@ function wireFloorDrag() {
   currentSession = session;
   renderTopNav('Production Shelf Map');
   canEditLayout = !!(session.isSuperUser || session.isProductionManager);
+  viewOnly = !(canEditLayout || session.isOrderMaker);
+  let savedView = null;
+  try { savedView = localStorage.getItem(VIEW_KEY); } catch (err) { /* default view */ }
+  viewMode = savedView === 'stock' || savedView === 'map' ? savedView : (viewOnly ? 'stock' : 'map');
+  if (viewOnly) {
+    document.getElementById('viewOnlyBadge').classList.remove('hidden');
+    document.getElementById('pageIntro').textContent = 'Live stock of every product at this location. Green = available, amber = low (1-2 left), red = out of stock. Tap a product to see its serial numbers.';
+  }
+  document.querySelectorAll('.view-toggle [data-view]').forEach((b) => b.addEventListener('click', () => setViewMode(b.dataset.view)));
   setEditing(false);
 
   document.getElementById('locationSelect').addEventListener('change', async (e) => {
@@ -1102,7 +1219,7 @@ function wireFloorDrag() {
   // Rack taps: view mode lists its aquarium's serials; grid layout editing opens the spot's settings;
   // floor-plan editing is handled by wireFloorDrag.
   const onSpot = (target) => {
-    const spotEl = target.closest('.pspot');
+    const spotEl = target.closest('.pspot, .stock-card');
     if (!spotEl) return;
     if (draft) {
       if (draft.layout === 'grid') openCellModal({ r: Number(spotEl.dataset.r), c: Number(spotEl.dataset.c) });
@@ -1112,6 +1229,12 @@ function wireFloorDrag() {
     if (spotId) openSpotModal(spotId);
   };
   document.getElementById('shelfBody').addEventListener('click', (e) => {
+    const filterBtn = e.target.closest('[data-filter]');
+    if (filterBtn) {
+      stockFilter = filterBtn.dataset.filter;
+      renderShelf();
+      return;
+    }
     const addCell = e.target.closest('[data-addcell]');
     const delRow = e.target.closest('[data-delrow]');
     if (draft && addCell) {
@@ -1131,7 +1254,7 @@ function wireFloorDrag() {
     onSpot(e.target);
   });
   document.getElementById('shelfBody').addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('pspot')) {
+    if ((e.key === 'Enter' || e.key === ' ') && (e.target.classList.contains('pspot') || e.target.classList.contains('stock-card'))) {
       e.preventDefault();
       if (draft && draft.layout === 'floor') openCellModal({ i: Number(e.target.dataset.i) });
       else onSpot(e.target);

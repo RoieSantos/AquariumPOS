@@ -171,6 +171,10 @@ const ORDER_MAKER_ALLOWED_PAGES = ['online-orders.html', 'production-orders.html
 // allowlist. The RPCs behind them re-check the role (supabase_production_orders.sql).
 const PRODUCTION_PAGES = ['production-orders.html', 'production-shelf-map.html'];
 function canOpenProductionPage(session, page) {
+  // Per "my sales user can see this but they cannot edit" - the Shelf Map (stock availability) is
+  // view-only for a Sales User; saving / deleting shelves and Auto Production Order re-check
+  // _production_is_manager server-side.
+  if (page === 'production-shelf-map.html' && session?.isSalesUser) return true;
   return PRODUCTION_PAGES.includes(page) && !!(session?.isSuperUser || session?.isProductionManager || session?.isOrderMaker);
 }
 
