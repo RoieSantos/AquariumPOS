@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Conversations - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
   <script src="js/theme.js?v=auto1"></script>
@@ -982,9 +982,70 @@
       color: var(--text-main, #1b355e);
     }
     .inbox-conv-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       padding: 10px 12px;
       border-bottom: 1px solid var(--panel-border);
       cursor: pointer;
+    }
+    .inbox-conv-body {
+      flex: 1;
+      min-width: 0;
+    }
+    /* Initials avatar (conversationAvatarHtml in gmaConversations.js) + a corner dot in the Page's color. */
+    .inbox-conv-avatar {
+      position: relative;
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .inbox-conv-avatar-page {
+      position: absolute;
+      right: -1px;
+      bottom: -1px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      box-sizing: border-box;
+    }
+    .inbox-conv-avatar-page.inbox-badge-page-gma { background: #1877f2; }
+    .inbox-conv-avatar-page.inbox-badge-page-rspetstop { background: #16a34a; }
+    /* Phone-only pieces (shown by the max-width:800px block at the end of this sheet). */
+    .inbox-mobile-list-title,
+    .inbox-mobile-back,
+    .inbox-mobile-info-btn,
+    .inbox-mobile-panel-bar,
+    .inbox-thread-sub,
+    .inbox-conv-avatar.inbox-thread-avatar,
+    .inbox-icon-btn.inbox-composer-expand {
+      display: none;
+    }
+    .inbox-thread-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .inbox-thread-name {
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .inbox-react-copy {
+      font-size: 13px !important;
+      font-weight: 600;
+      color: #1d4f91;
+      border-left: 1px solid #e3e7ee !important;
+      border-radius: 0 !important;
+      padding: 4px 8px !important;
     }
     .inbox-conv-item:hover {
       background: #f4f7fb;
@@ -1861,6 +1922,18 @@
     .inbox-like-btn:hover {
       background: #166fe0;
     }
+    /* Send arrow takes the like button's place once something is typed/attached (updateComposerState). */
+    .inbox-send-btn {
+      display: none;
+      border-radius: 8px;
+      background: #1877f2;
+      color: #fff;
+    }
+    .inbox-send-btn:hover {
+      background: #166fe0;
+    }
+    .inbox-reply-row.has-content .inbox-like-btn { display: none; }
+    .inbox-reply-row.has-content .inbox-send-btn { display: flex; }
     .inbox-like-btn:disabled {
       opacity: 0.6;
       cursor: default;
@@ -2709,6 +2782,322 @@
     :root[data-theme="dark"] .page th {
       background: #f3f6fb;
     }
+
+    /* ===== Phone layout - per "make it the same experience as the Meta Messenger app". One full-screen
+       view at a time, switched by body[data-inbox-view] (setMobileView in gmaConversations.js):
+       list = Chats, chat = the conversation (top nav hidden, back arrow), info = customer/orders panel.
+       Sized to the visible area (--inbox-vh, which shrinks when the keyboard opens) so the composer
+       sits right on top of the keyboard. Kept last in the sheet so it overrides everything above. ===== */
+    @media (max-width: 800px) {
+      html, body {
+        height: var(--inbox-vh, 100dvh);
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        padding-top: env(safe-area-inset-top);
+        background: #fff;
+      }
+      :root[data-theme="dark"] body { background: #fff; }
+      #topnav { flex-shrink: 0; }
+      body[data-inbox-view="chat"] #topnav,
+      body[data-inbox-view="info"] #topnav,
+      body[data-inbox-view="chat"] #chatWidgetRoot,
+      body[data-inbox-view="info"] #chatWidgetRoot {
+        display: none;
+      }
+      .page {
+        flex: 1;
+        min-height: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #inboxContent {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .inbox-grid {
+        flex: 1;
+        min-height: 0;
+        display: block;
+      }
+      .inbox-list-wrap,
+      .inbox-thread-card,
+      .inbox-customer-card,
+      .inbox-customer-card.is-create-mode {
+        height: 100%;
+        max-height: none;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+      }
+      .inbox-thread-card,
+      .inbox-customer-card { display: none; }
+      body[data-inbox-view="chat"] .inbox-list-wrap,
+      body[data-inbox-view="info"] .inbox-list-wrap { display: none; }
+      body[data-inbox-view="chat"] .inbox-thread-card {
+        display: flex;
+        flex-direction: column;
+      }
+      body[data-inbox-view="info"] .inbox-customer-card { display: block; }
+
+      /* --- Chats list --- */
+      .inbox-list-search {
+        border-bottom: none;
+        padding: 12px 16px 6px;
+      }
+      .inbox-mobile-list-title {
+        display: block;
+        font-size: 26px;
+        font-weight: 800;
+        color: #050505;
+        margin-bottom: 10px;
+      }
+      .inbox-list-search input#conversationSearchInput {
+        border: none;
+        background: #f0f2f5;
+        border-radius: 20px;
+        padding: 10px 16px;
+        font-size: 16px; /* 16px+ stops iOS zooming in on focus */
+      }
+      .inbox-list-card {
+        overscroll-behavior: contain;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      .inbox-conv-item {
+        gap: 12px;
+        padding: 8px 16px;
+        border-bottom: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .inbox-conv-item:hover,
+      .inbox-conv-item.active { background: transparent; }
+      .inbox-conv-item:active { background: #f0f2f5; }
+      .inbox-conv-item .inbox-conv-avatar {
+        width: 56px;
+        height: 56px;
+        font-size: 19px;
+      }
+      .inbox-conv-item .inbox-conv-avatar-page {
+        width: 17px;
+        height: 17px;
+        border-width: 3px;
+      }
+      .inbox-conv-psid { font-size: 16px; font-weight: 500; color: #050505; }
+      .inbox-conv-preview { font-size: 14px; color: #65676b; }
+      .inbox-conv-time { font-size: 13px; }
+      .inbox-unread-dot { width: 12px; height: 12px; }
+      .inbox-conv-unread .inbox-conv-psid,
+      .inbox-conv-unread .inbox-conv-preview { color: #050505; }
+
+      /* --- Conversation header --- */
+      .inbox-thread-header {
+        flex-shrink: 0;
+        flex-wrap: nowrap;
+        gap: 4px;
+        padding: 6px 6px 6px 2px;
+        border-bottom: none;
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+      }
+      .inbox-mobile-back,
+      .inbox-mobile-info-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        border: none;
+        border-radius: 50%;
+        background: transparent;
+        color: #0084ff;
+        cursor: pointer;
+        padding: 0;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .inbox-mobile-back:active,
+      .inbox-mobile-info-btn:active { background: #f0f2f5; }
+      .inbox-thread-title {
+        flex: 1;
+        gap: 10px;
+      }
+      .inbox-conv-avatar.inbox-thread-avatar {
+        display: flex;
+        width: 38px;
+        height: 38px;
+        font-size: 14px;
+      }
+      .inbox-thread-title-text {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .inbox-thread-name {
+        font-size: 16px;
+        font-weight: 700;
+        color: #050505;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .inbox-thread-sub {
+        display: block;
+        font-size: 12px;
+        color: #65676b;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .inbox-thread-viewers { flex: 0 0 auto; }
+      .inbox-viewers-label,
+      .inbox-pause-note,
+      .inbox-hdr-btn-label { display: none; }
+      .inbox-header-actions { gap: 0; flex-shrink: 0; }
+      .inbox-header-actions .btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: transparent;
+        box-shadow: none;
+        font-size: 17px;
+        color: #0084ff;
+      }
+      .inbox-header-actions .inbox-pin-btn.pinned { background: #fff4e0; }
+      .inbox-header-actions #togglePauseBtn.btn-success { background: #e6f6ec; color: #15803d; }
+
+      /* --- Messages --- */
+      .inbox-thread-messages {
+        flex: 1;
+        min-height: 0;
+        max-height: none;
+        padding: 12px 10px;
+        overscroll-behavior: contain;
+      }
+      .inbox-msg-row { max-width: 80%; }
+      .inbox-msg {
+        font-size: 15px;
+        padding: 8px 12px;
+        border-radius: 18px;
+      }
+      .inbox-react-btn { display: none; }
+      .inbox-msg-row-user .inbox-msg-bubble-wrap.has-reactions .inbox-msg-reactions { right: 4px; }
+      /* Hold-to-react (see setupThreadInteractions) - stop the OS text-selection/callout taking over. */
+      .inbox-msg-row-user .inbox-msg-bubble-wrap {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+      }
+      .inbox-react-picker button { font-size: 26px; padding: 6px; }
+
+      /* --- Composer: [tools] (  Aa  ) [like/send], like the Messenger app --- */
+      .inbox-reply-row {
+        flex-shrink: 0;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 2px;
+        padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+        border-top: none;
+      }
+      .inbox-reply-pending-attachment { flex-basis: 100%; }
+      .inbox-reply-toolbar { display: contents; }
+      .inbox-reply-toolbar > * { order: 1; }
+      .inbox-reply-row textarea#replyInput {
+        order: 2;
+        flex: 1 1 0;
+        min-width: 0;
+        width: auto;
+        min-height: 38px;
+        margin: 0 4px;
+        padding: 9px 14px;
+        line-height: 20px;
+        font-size: 16px; /* 16px+ stops iOS zooming in on focus */
+        background: #f0f2f5;
+        border-radius: 20px;
+        max-height: 140px;
+      }
+      .inbox-reply-toolbar > .inbox-like-btn,
+      .inbox-reply-toolbar > .inbox-send-btn { order: 3; }
+      .inbox-icon-btn {
+        width: 36px;
+        height: 38px;
+        color: #0084ff;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .inbox-icon-btn svg { width: 22px; height: 22px; }
+      .inbox-like-btn,
+      .inbox-send-btn,
+      .inbox-like-btn:hover,
+      .inbox-send-btn:hover {
+        background: transparent;
+        color: #0084ff;
+      }
+      .inbox-like-btn svg { width: 26px; height: 26px; }
+      .inbox-advise-btn {
+        width: 36px;
+        height: 38px;
+        padding: 0;
+        justify-content: center;
+        border: none;
+        background: transparent;
+        color: #0084ff;
+      }
+      .inbox-advise-btn svg { width: 20px; height: 20px; }
+      #adviseReplyLabel { display: none; }
+      /* Hover tooltips get stuck on touch screens. */
+      .inbox-icon-btn[data-tooltip]::before,
+      .inbox-icon-btn[data-tooltip]::after { display: none; }
+      /* While typing, the tools fold behind one ">" (composerExpandBtn) to give the text box room. */
+      .inbox-reply-row.is-typing .inbox-reply-toolbar > .inbox-icon-btn:not(.inbox-like-btn):not(.inbox-send-btn):not(.inbox-composer-expand),
+      .inbox-reply-row.is-typing .inbox-advise-btn { display: none; }
+      .inbox-reply-row.is-typing .inbox-composer-expand { display: flex; }
+      /* Quick replies / product list / media library open full-width above the composer. */
+      .inbox-quick-replies-panel,
+      .inbox-product-lookup-panel,
+      .inbox-media-library-panel {
+        left: 6px;
+        right: 6px;
+        width: auto;
+        max-width: none;
+        max-height: calc(var(--inbox-vh, 100dvh) * 0.6);
+        border-radius: 14px;
+      }
+      .inbox-product-lookup-search input { font-size: 16px; }
+
+      /* --- Customer & orders screen --- */
+      body[data-inbox-view="info"] .inbox-customer-card {
+        padding: 0 14px calc(12px + env(safe-area-inset-bottom));
+        overscroll-behavior: contain;
+      }
+      .inbox-mobile-panel-bar {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        position: sticky;
+        top: 0;
+        z-index: 25;
+        margin: 0 -14px 12px;
+        padding: 6px 14px 6px 2px;
+        background: #fff;
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+        font-size: 17px;
+        font-weight: 700;
+        color: #050505;
+      }
+
+      .inbox-call-banner { top: calc(12px + env(safe-area-inset-top)); }
+    }
   </style>
 </head>
 <body>
@@ -2729,6 +3118,7 @@
       <div class="inbox-grid">
         <div class="inbox-list-wrap">
           <div class="inbox-list-search">
+            <div class="inbox-mobile-list-title">Chats</div>
             <input type="text" id="conversationSearchInput" placeholder="Search conversations..." />
             <label class="inbox-auto-resume hidden" id="autoResumeWrap" title="After a staff reply (here or in the Meta app) the AI pauses. If no staff reply follows within this time, the AI turns back on and answers any customer left waiting.">
               <span>AI back on after staff is quiet for</span>
@@ -2807,8 +3197,11 @@
               <div class="inbox-reply-pending-thumbs" id="pendingAttachmentList"></div>
               <span id="pendingAttachmentLabel">Attached - will send with this reply</span>
             </div>
-            <textarea id="replyInput" rows="2" placeholder="Type a reply to send on Messenger..."></textarea>
+            <textarea id="replyInput" rows="1" placeholder="Type a reply to send on Messenger..."></textarea>
             <div class="inbox-reply-toolbar">
+              <button type="button" class="inbox-icon-btn inbox-composer-expand" id="composerExpandBtn" aria-label="Show tools">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </button>
               <input type="file" id="attachmentFileInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime" multiple class="hidden" />
               <button type="button" class="inbox-icon-btn" id="toggleAttachmentBtn" data-tooltip="Attach photo">
                 <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -2845,6 +3238,9 @@
                 <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6">
                   <path d="M6.5 8.5v9H3.8a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6.5Zm0 0 3.2-6.1a1.8 1.8 0 0 1 3.36 1.14L12 7h3.2a2 2 0 0 1 1.94 2.5l-1.8 6.2A2 2 0 0 1 13.4 17.2H9A2.5 2.5 0 0 1 6.5 14.7V8.5Z" stroke-linejoin="round" stroke-linecap="round" />
                 </svg>
+              </button>
+              <button type="button" class="inbox-icon-btn inbox-send-btn" id="sendReplyBtn" data-tooltip="Send" aria-label="Send">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6l-.01 6.53L15 12 3.39 13.87z" /></svg>
               </button>
             </div>
           </div>
@@ -3064,7 +3460,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=calls1"></script>
+  <script src="js/gmaConversations.js?v=mobile1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

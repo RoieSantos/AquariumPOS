@@ -14,6 +14,51 @@ let conversations = [];
 let selectedPsid = null;
 let conversationSearchTerm = '';
 
+// Phone layout (<=800px, see the matching @media block in gma-conversations.html) works like the
+// Messenger app: one full-screen view at a time - 'list' (chats) -> 'chat' (thread + composer) ->
+// 'info' (customer/orders panel). Each step forward pushes a history entry so the phone's own Back
+// button/gesture steps back through them instead of leaving the page. Ignored by the desktop CSS.
+const MOBILE_INBOX_QUERY = window.matchMedia('(max-width: 800px)');
+let mobileView = 'list';
+
+function isMobileInbox() {
+  return MOBILE_INBOX_QUERY.matches;
+}
+
+function setMobileView(view) {
+  const leavingChat = mobileView !== 'list' && view === 'list';
+  mobileView = view;
+  document.body.dataset.inboxView = view;
+  if (view !== 'chat') closeReactPicker();
+  // Back on the chat list = no longer looking at that conversation, so it shouldn't count as
+  // "viewing" (presence) or get new messages auto-marked read (markOpenConversationReadIfVisible).
+  if (leavingChat && isMobileInbox() && selectedPsid) {
+    selectedPsid = null;
+    trackPresence();
+    renderConversationList();
+  }
+}
+
+function showMobileView(view) {
+  if (!isMobileInbox() || view === mobileView) return;
+  // Info -> Chat (e.g. a call banner opening another conversation) = step back, not a new entry.
+  if (mobileView === 'info' && view === 'chat' && history.state?.inboxView === 'info') {
+    history.back();
+    return;
+  }
+  history.pushState({ inboxView: view }, '');
+  setMobileView(view);
+}
+
+function mobileBack() {
+  if (history.state?.inboxView) history.back();
+  else setMobileView(mobileView === 'info' ? 'chat' : 'list');
+}
+
+window.addEventListener('popstate', (e) => {
+  setMobileView(e.state?.inboxView || 'list');
+});
+
 function escapeHtml(value) {
   return (value ?? '').toString()
     .replace(/&/g, '&amp;')
@@ -80,6 +125,16 @@ function pageBadgeHtml(pageId) {
   return `<span class="inbox-badge inbox-badge-page ${known?.cls || ''}" title="Facebook Page ${escapeHtml(pageId)}">${escapeHtml(label)}</span>`;
 }
 
+const MOBILE_BACK_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+// Messenger-style round initials avatar (we have no profile photos) - same name always gets the same
+// color, via viewerColor's hash. The small corner dot is the Page's color (GMA blue / RS green).
+function conversationAvatarHtml(c, extraClass = '') {
+  const name = c.customer_name || '';
+  const pageCls = PAGE_LABELS[c.page_id]?.cls || '';
+  return `<span class="inbox-conv-avatar ${extraClass}" style="background:${viewerColor(name || c.psid)}">${escapeHtml(viewerInitials(name || '?'))}${pageCls ? `<span class="inbox-conv-avatar-page ${pageCls}"></span>` : ''}</span>`;
+}
+
 function renderConversationList() {
   const listEl = document.getElementById('conversationListEl');
 
@@ -104,11 +159,14 @@ function renderConversationList() {
 
     return `
       <div class="inbox-conv-item${c.psid === selectedPsid ? ' active' : ''}${unread ? ' inbox-conv-unread' : ''}" data-psid="${escapeHtml(c.psid)}">
-        <div class="inbox-conv-top">
-          <span class="inbox-conv-psid">${escapeHtml(c.customer_name || c.psid)}${badges}</span>
-          <span class="inbox-conv-time">${viewerBadgesHtml(c.psid)}${formatRelativeTime(c.last_message_at_utc)}${unread ? '<span class="inbox-unread-dot" title="Unread"></span>' : ''}</span>
+        ${conversationAvatarHtml(c)}
+        <div class="inbox-conv-body">
+          <div class="inbox-conv-top">
+            <span class="inbox-conv-psid">${escapeHtml(c.customer_name || c.psid)}${badges}</span>
+            <span class="inbox-conv-time">${viewerBadgesHtml(c.psid)}${formatRelativeTime(c.last_message_at_utc)}${unread ? '<span class="inbox-unread-dot" title="Unread"></span>' : ''}</span>
+          </div>
+          <div class="inbox-conv-preview">${escapeHtml(c.last_message_preview || '(no messages)')}</div>
         </div>
-        <div class="inbox-conv-preview">${escapeHtml(c.last_message_preview || '(no messages)')}</div>
       </div>
     `;
   }).join('');
@@ -128,21 +186,35 @@ function renderThreadHeader(conv) {
       ? `AI back at ${formatMessageTime(conv.auto_resume_at_utc)} if no staff reply`
       : 'AI paused until resumed';
   }
+  // Back arrow, avatar and the info (i) button only show on the phone layout (see the max-width:800px
+  // CSS) - on desktop the list and customer panel are already on screen beside the thread.
   headerEl.innerHTML = `
-    <span style="font-size:12px; font-weight:600;">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}</span>
+    <button type="button" class="inbox-mobile-back" id="threadBackBtn" aria-label="Back to chats">${MOBILE_BACK_ICON}</button>
+    <span class="inbox-thread-title">
+      ${conversationAvatarHtml(conv, 'inbox-thread-avatar')}
+      <span class="inbox-thread-title-text">
+        <span class="inbox-thread-name">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}</span>
+        ${pauseNote ? `<span class="inbox-thread-sub">${escapeHtml(pauseNote)}</span>` : ''}
+      </span>
+    </span>
     <span class="inbox-thread-viewers" id="threadViewersEl"></span>
     <span class="inbox-header-actions">
       ${pauseNote ? `<span class="inbox-pause-note">${escapeHtml(pauseNote)}</span>` : ''}
       <button class="btn btn-secondary btn-sm inbox-pin-btn${conv.pinned_at_utc ? ' pinned' : ''}" id="togglePinBtn" type="button" title="${escapeHtml(conv.pinned_at_utc ? pinnedTitle(conv) + ' - click to unpin' : 'Pin to the top of the list for everyone')}">
-        📌 ${conv.pinned_at_utc ? 'Unpin' : 'Pin'}
+        📌<span class="inbox-hdr-btn-label"> ${conv.pinned_at_utc ? 'Unpin' : 'Pin'}</span>
       </button>
-      <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button">
-        ${conv.is_paused ? '▶ Resume AI' : '⏸ Pause AI'}
+      <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button" title="${conv.is_paused ? 'Resume AI' : 'Pause AI'}">
+        ${conv.is_paused ? '▶' : '⏸'}<span class="inbox-hdr-btn-label"> ${conv.is_paused ? 'Resume AI' : 'Pause AI'}</span>
+      </button>
+      <button type="button" class="inbox-mobile-info-btn" id="threadInfoBtn" aria-label="Customer info and orders">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-6h2v6Zm0-8h-2V7h2v2Z"/></svg>
       </button>
     </span>
   `;
   document.getElementById('togglePauseBtn').addEventListener('click', () => togglePause(conv));
   document.getElementById('togglePinBtn').addEventListener('click', () => togglePin(conv));
+  document.getElementById('threadBackBtn').addEventListener('click', mobileBack);
+  document.getElementById('threadInfoBtn').addEventListener('click', () => showMobileView('info'));
   renderThreadViewers();
 
   document.getElementById('replyRowEl').classList.remove('hidden');
@@ -490,6 +562,7 @@ function renderMessages(serverRows, opts = {}) {
         btn.dataset.reference || null,
         btn.dataset.messageId ? Number(btn.dataset.messageId) : null
       );
+      showMobileView('info'); // phone: the Add Payment form is on the customer screen
     });
   });
   messagesEl.querySelectorAll('.inbox-msg-retry-btn').forEach((btn) => {
@@ -516,8 +589,13 @@ function closeReactPicker() {
   document.getElementById('inboxReactPicker')?.remove();
 }
 
-function openReactPicker(btn) {
+let reactPickerOpenedAt = 0;
+
+// opts.anchor - element to float above (defaults to the ☺ button); opts.copyText - long-press on a
+// phone also offers Copy, since holding the bubble no longer selects its text.
+function openReactPicker(btn, opts = {}) {
   closeReactPicker();
+  reactPickerOpenedAt = Date.now();
   const messageId = Number(btn.dataset.reactId);
   const current = btn.dataset.current || '';
   const picker = document.createElement('div');
@@ -525,8 +603,14 @@ function openReactPicker(btn) {
   picker.className = 'inbox-react-picker';
   picker.innerHTML = REACTION_CHOICES
     .map(([name, emoji]) => `<button type="button" data-reaction="${name}" class="${emoji === current ? 'active' : ''}" title="${emoji === current ? 'Remove reaction' : name}">${emoji}</button>`)
-    .join('');
+    .join('') +
+    (opts.copyText ? '<button type="button" class="inbox-react-copy" data-copy>Copy</button>' : '');
   picker.addEventListener('click', (e) => {
+    if (e.target.closest('[data-copy]')) {
+      navigator.clipboard?.writeText(opts.copyText).catch(() => {});
+      closeReactPicker();
+      return;
+    }
     const choice = e.target.closest('[data-reaction]');
     if (!choice) return;
     const emoji = REACTION_CHOICES.find(([n]) => n === choice.dataset.reaction)?.[1];
@@ -534,12 +618,16 @@ function openReactPicker(btn) {
     reactToMessage(messageId, emoji === current ? null : choice.dataset.reaction);
   });
   document.body.appendChild(picker);
-  const rect = btn.getBoundingClientRect();
+  const anchor = opts.anchor || btn;
+  const rect = anchor.getBoundingClientRect();
+  const left = opts.anchor ? rect.left : rect.left - picker.offsetWidth / 2;
   picker.style.top = `${Math.max(8, rect.top - picker.offsetHeight - 6)}px`;
-  picker.style.left = `${Math.min(window.innerWidth - picker.offsetWidth - 8, Math.max(8, rect.left - picker.offsetWidth / 2))}px`;
+  picker.style.left = `${Math.min(window.innerWidth - picker.offsetWidth - 8, Math.max(8, left))}px`;
 }
 
 document.addEventListener('click', (e) => {
+  // The tap that ends a long-press can arrive as a click right after the picker opens - ignore it.
+  if (Date.now() - reactPickerOpenedAt < 600) return;
   if (!e.target.closest('#inboxReactPicker')) closeReactPicker();
 });
 
@@ -739,6 +827,7 @@ async function openConversation(psid) {
   const conv = conversations.find((c) => c.psid === psid);
   if (!conv) return;
   renderThreadHeader(conv);
+  showMobileView('chat');
   document.getElementById('replyErrorEl').classList.add('hidden');
   document.getElementById('replyInput').value = '';
   autoResizeReplyInput();
@@ -860,6 +949,10 @@ function renderCustomerPanel(conv) {
   panelEl.classList.toggle('is-create-mode', activeCustomerTab === 'create');
 
   panelEl.innerHTML = `
+    <div class="inbox-mobile-panel-bar">
+      <button type="button" class="inbox-mobile-back" data-mobile-back aria-label="Back to chat">${MOBILE_BACK_ICON}</button>
+      <span>Customer &amp; orders</span>
+    </div>
     <div class="inbox-customer-header">
       <div class="inbox-customer-avatar">${escapeHtml(customerInitials(name))}</div>
       <div class="inbox-customer-header-name">
@@ -880,6 +973,7 @@ function renderCustomerPanel(conv) {
     <div id="panelTabBody"></div>
   `;
 
+  panelEl.querySelector('[data-mobile-back]').addEventListener('click', mobileBack);
   panelEl.querySelectorAll('.panel-tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       activeCustomerTab = btn.dataset.tab;
@@ -3056,10 +3150,34 @@ const REPLY_INPUT_MAX_HEIGHT = 220;
 
 function autoResizeReplyInput() {
   const input = document.getElementById('replyInput');
+  // First - folding the phone tool icons away changes the box's width, which changes its height.
+  updateComposerState();
+  const maxHeight = isMobileInbox() ? 140 : REPLY_INPUT_MAX_HEIGHT; // phone: keep the thread visible
   input.style.height = 'auto';
-  const newHeight = Math.min(input.scrollHeight, REPLY_INPUT_MAX_HEIGHT);
+  const newHeight = Math.min(input.scrollHeight, maxHeight);
   input.style.height = newHeight + 'px';
-  input.style.overflowY = input.scrollHeight > REPLY_INPUT_MAX_HEIGHT ? 'auto' : 'hidden';
+  input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+}
+
+// Messenger composer behaviour: the like button turns into a Send arrow as soon as there's
+// something to send, and on the phone layout the extra tool icons fold away behind a single ">"
+// while typing so the text box gets the room (tap ">" to bring them back).
+let composerToolsExpanded = false;
+
+function updateComposerState() {
+  const row = document.getElementById('replyRowEl');
+  if (!row) return;
+  const hasText = document.getElementById('replyInput').value.trim().length > 0;
+  const hasContent = hasText || pendingReplyImageUrls.length > 0;
+  if (!hasText) composerToolsExpanded = false;
+  row.classList.toggle('has-content', hasContent);
+  row.classList.toggle('is-typing', hasText && !composerToolsExpanded);
+}
+
+// Phones: Enter adds a new line (tap the Send arrow instead), like the Messenger app. A keyboard on
+// desktop keeps Enter = send.
+function enterKeySends() {
+  return !window.matchMedia('(pointer: coarse)').matches;
 }
 
 function setPendingReplyImages(images) {
@@ -3074,6 +3192,7 @@ function setPendingReplyImages(images) {
       : 'Attached - will send with this reply';
   }
 
+  updateComposerState();
   if (pendingReplyImageUrls.length === 0) {
     wrap.classList.toggle('hidden', attachmentUploadsInFlight === 0);
     listEl.innerHTML = '';
@@ -3113,7 +3232,8 @@ async function sendReply() {
   input.value = '';
   autoResizeReplyInput();
   setPendingReplyImages([]);
-  input.focus();
+  // Keep the phone keyboard up only if it already was (tapping Send keeps focus anyway).
+  if (!isMobileInbox() || document.activeElement === input) input.focus();
   sendMessageToCustomer(message, images);
 }
 
@@ -4544,10 +4664,39 @@ function setupThreadInteractions() {
   messagesEl.addEventListener('click', (e) => {
     const img = e.target.closest('[data-lightbox-src]');
     if (img) openLightbox(img.dataset.lightboxSrc);
+    // Phone: the tool panels cover the thread, so tapping the conversation closes them.
+    if (isMobileInbox()) {
+      toggleQuickRepliesPanel(false);
+      toggleProductLookupPanel(false);
+      toggleMediaLibraryPanel(false);
+    }
   });
   messagesEl.addEventListener('scroll', () => {
     threadStickToBottom = threadIsNearBottom(messagesEl);
   });
+  // Touch: press and hold a customer's message to react, like the Messenger app (the hover ☺ button
+  // is hidden on the phone layout). Cancelled if the finger moves (scrolling).
+  let longPressTimer = null;
+  const cancelLongPress = () => { clearTimeout(longPressTimer); longPressTimer = null; };
+  messagesEl.addEventListener('touchstart', (e) => {
+    const wrap = e.target.closest('.inbox-msg-row-user .inbox-msg-bubble-wrap');
+    const btn = wrap?.querySelector('.inbox-react-btn');
+    if (!btn || e.target.closest('a, button, video, audio')) return;
+    cancelLongPress();
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      navigator.vibrate?.(15);
+      const bubble = wrap.querySelector('.inbox-msg, .inbox-msg-media, .inbox-msg-emoji') || btn;
+      const text = wrap.querySelector('.inbox-msg')?.innerText.trim() || '';
+      openReactPicker(btn, { anchor: bubble, copyText: text });
+    }, 450);
+  }, { passive: true });
+  ['touchmove', 'touchend', 'touchcancel'].forEach((type) => messagesEl.addEventListener(type, cancelLongPress, { passive: true }));
+  // Stop Android's own long-press menu/text selection from fighting the reaction picker.
+  messagesEl.addEventListener('contextmenu', (e) => {
+    if (isMobileInbox() && e.target.closest('.inbox-msg-row-user .inbox-msg-bubble-wrap')) e.preventDefault();
+  });
+
   // 'load' doesn't bubble - capture catches every <img>/<video> as it finishes.
   const keepPinned = () => { if (threadStickToBottom) scrollThreadToBottom(); };
   messagesEl.addEventListener('load', keepPinned, true);
@@ -4595,6 +4744,23 @@ function setupThreadInteractions() {
   });
 }
 
+// Phone layout sizes the inbox to the VISIBLE area (--inbox-vh), which shrinks when the on-screen
+// keyboard opens - so the composer rides up on top of the keyboard and the newest messages stay in
+// view, like Messenger, instead of the keyboard covering the reply box (iOS doesn't resize the
+// layout for the keyboard on its own).
+function setupMobileViewportHeight() {
+  const vv = window.visualViewport;
+  const apply = () => {
+    const h = vv ? vv.height : window.innerHeight;
+    document.documentElement.style.setProperty('--inbox-vh', `${Math.round(h)}px`);
+    if (isMobileInbox() && vv && vv.offsetTop) window.scrollTo(0, 0);
+    if (isMobileInbox() && threadStickToBottom && mobileView === 'chat') scrollThreadToBottom();
+  };
+  apply();
+  (vv || window).addEventListener('resize', apply);
+  MOBILE_INBOX_QUERY.addEventListener?.('change', apply);
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -4614,6 +4780,11 @@ function setupThreadInteractions() {
   }
 
   document.getElementById('inboxContent').classList.remove('hidden');
+  // A reload keeps the old history entry's view, but nothing is open yet - start on the chat list.
+  if (history.state?.inboxView) history.replaceState(null, '');
+  setMobileView('list');
+  setupMobileViewportHeight();
+  if (isMobileInbox()) document.getElementById('replyInput').placeholder = 'Aa';
   document.getElementById('conversationSearchInput').addEventListener('input', (e) => onConversationSearchInput(e.target.value));
   document.getElementById('toggleQuickRepliesBtn').addEventListener('click', () => toggleQuickRepliesPanel());
   document.getElementById('toggleAttachmentBtn').addEventListener('click', () => document.getElementById('attachmentFileInput').click());
@@ -4656,9 +4827,16 @@ function setupThreadInteractions() {
   document.getElementById('cancelBulkImportBtn').addEventListener('click', () => toggleBulkImportPanel(false));
   document.getElementById('runBulkImportBtn').addEventListener('click', runBulkImport);
   document.getElementById('likeBtn').addEventListener('click', sendLike);
+  const sendBtn = document.getElementById('sendReplyBtn');
+  sendBtn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the phone keyboard open
+  sendBtn.addEventListener('click', sendReply);
+  document.getElementById('composerExpandBtn').addEventListener('click', () => {
+    composerToolsExpanded = true;
+    autoResizeReplyInput();
+  });
   document.getElementById('adviseReplyBtn').addEventListener('click', adviseReply);
   document.getElementById('replyInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && enterKeySends()) {
       e.preventDefault();
       sendReply();
     }
