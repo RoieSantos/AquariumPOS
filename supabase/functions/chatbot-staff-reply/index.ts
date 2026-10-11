@@ -45,6 +45,7 @@
 // Deploy: supabase functions deploy chatbot-staff-reply --project-ref hymcmesqgpliyyeghpgq
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
 
 const DEFAULT_GRAPH_VERSION = 'v21.0';
 
@@ -197,10 +198,9 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  const pageAccessToken = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
   const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
 
-  if (!supabaseUrl || !serviceRoleKey || !pageAccessToken) {
+  if (!supabaseUrl || !serviceRoleKey || !hasAnyPageAccessToken()) {
     return jsonResponse({ error: 'chatbot-staff-reply is missing one or more required secrets.' }, 500);
   }
 
@@ -253,6 +253,14 @@ Deno.serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+  // Send with the token of the Page this conversation belongs to (multi-Page support, see
+  // _shared/page-tokens.ts) - unmapped/unknown Pages fall back to FACEBOOK_PAGE_ACCESS_TOKEN.
+  const { data: conv } = await supabase.from('ChatbotConversations').select('PageId').eq('Psid', psid).maybeSingle();
+  const pageAccessToken = getPageAccessToken((conv?.PageId as string | null) ?? null);
+  if (!pageAccessToken) {
+    return jsonResponse({ error: `No Facebook token configured for this conversation's Page (${conv?.PageId ?? 'unknown'}).` }, 500);
+  }
 
   // One item per photo/video (logged + sent as its own message/bubble), then the text last, if
   // present - see the file header comment for why this can't be combined into a single Send API

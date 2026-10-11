@@ -17,6 +17,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
+import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_GRAPH_VERSION = 'v21.0';
@@ -183,7 +184,6 @@ async function dispatchDueFollowUps(
   model: string,
   aiSettings: Record<string, unknown> | null,
   followUpSettings: Record<string, unknown> | null,
-  pageAccessToken: string,
   graphVersion: string
 ): Promise<{ sent: number; skipped: number }> {
   const { data: dueRows } = await supabase
@@ -200,9 +200,16 @@ async function dispatchDueFollowUps(
   for (const followUp of (dueRows ?? []) as FollowUpRow[]) {
     const { data: convo } = await supabase
       .from('ChatbotConversations')
-      .select('LastCustomerMessageAtUtc')
+      .select('LastCustomerMessageAtUtc, PageId')
       .eq('Psid', followUp.Psid)
       .maybeSingle();
+    // Multi-Page: send with this conversation's own Page token (_shared/page-tokens.ts).
+    const pageAccessToken = getPageAccessToken((convo?.PageId as string | null) ?? null);
+    if (!pageAccessToken) {
+      await supabase.from('ChatbotFollowUps').update({ Status: 'Skipped', SkipReason: `No Facebook token configured for page ${convo?.PageId ?? 'unknown'}.` }).eq('Id', followUp.Id);
+      skipped++;
+      continue;
+    }
 
     // Facebook only allows free-form messages within 24h of the customer's last message to the
     // page - outside that window a message tag (which this bot isn't approved for) is required.
@@ -255,14 +262,13 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Use POST (invoked by pg_cron).' }, 405);
   }
 
-  const pageAccessToken = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   const model = Deno.env.get('CLAUDE_MODEL') || DEFAULT_MODEL;
   const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
 
-  if (!pageAccessToken || !anthropicApiKey || !supabaseUrl || !serviceRoleKey) {
+  if (!hasAnyPageAccessToken() || !anthropicApiKey || !supabaseUrl || !serviceRoleKey) {
     console.error('chatbot-followup-dispatcher is missing one or more required secrets.');
     return jsonResponse({ error: 'Missing required secrets.' }, 500);
   }
@@ -285,7 +291,7 @@ Deno.serve(async (req) => {
     const { data: aiSettings } = await supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle();
     const effectiveModel = (aiSettings?.AiModel as string | undefined)?.trim() || model;
 
-    const { sent, skipped } = await dispatchDueFollowUps(supabase, anthropic, effectiveModel, aiSettings, followUpSettings, pageAccessToken, graphVersion);
+    const { sent, skipped } = await dispatchDueFollowUps(supabase, anthropic, effectiveModel, aiSettings, followUpSettings, graphVersion);
 
     return jsonResponse({ ok: true, sent, skipped });
   } catch (err) {

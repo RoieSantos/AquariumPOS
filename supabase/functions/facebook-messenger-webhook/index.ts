@@ -13,6 +13,9 @@
 //
 // Secrets (set via `supabase secrets set NAME=value --project-ref hymcmesqgpliyyeghpgq`):
 //   FACEBOOK_PAGE_ACCESS_TOKEN   - Messenger > Settings > Access Tokens, for the NEW page
+//   FACEBOOK_PAGE_TOKENS         - optional JSON {"<pageId>":"<token>"} for extra Pages on the same
+//                                   app; each event/reply uses its own Page's token (see
+//                                   _shared/page-tokens.ts), anything unmapped uses the one above
 //   FACEBOOK_APP_SECRET          - App Settings > Basic - used ONLY to verify X-Hub-Signature-256,
 //                                   never sent anywhere
 //   FACEBOOK_VERIFY_TOKEN        - any random string you choose, used only for the GET handshake
@@ -51,6 +54,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import { DEFAULT_GRAPH_VERSION, buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
 import { type FacebookFeedChangeValue, handleFeedComment } from './comments.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
@@ -1310,7 +1314,6 @@ async function handleAutoResume(
   supabase: SupabaseClient,
   anthropic: Anthropic,
   model: string,
-  pageAccessToken: string,
   graphVersion: string
 ): Promise<void> {
   const { data: claimed, error } = await supabase
@@ -1339,6 +1342,8 @@ async function handleAutoResume(
     // Send API - they're just switched back on; Alice answers the visitor's next message.
     if (!last || last.Role !== 'user' || !conv.PageId || conv.PageId === 'website') continue;
     if (Date.now() - Date.parse(last.CreatedAtUtc) > 23 * 60 * 60 * 1000) continue;
+    const pageAccessToken = getPageAccessToken(conv.PageId);
+    if (!pageAccessToken) continue;
 
     try {
       await generateAndSendAiReply(supabase, anthropic, model, pageAccessToken, graphVersion, conv.Psid, conv.PageId, conv.CustomerName ?? null, null);
@@ -1354,14 +1359,13 @@ declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | unde
 
 async function handlePost(req: Request): Promise<Response> {
   const appSecret = Deno.env.get('FACEBOOK_APP_SECRET');
-  const pageAccessToken = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   const model = Deno.env.get('CLAUDE_MODEL') || DEFAULT_MODEL;
   const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
 
-  if (!appSecret || !pageAccessToken || !anthropicApiKey || !supabaseUrl || !serviceRoleKey) {
+  if (!appSecret || !hasAnyPageAccessToken() || !anthropicApiKey || !supabaseUrl || !serviceRoleKey) {
     console.error('facebook-messenger-webhook is missing one or more required secrets.');
     // Still ack Facebook - a misconfigured server is nothing a retry will fix.
     return jsonResponse({ received: true });
@@ -1370,7 +1374,7 @@ async function handlePost(req: Request): Promise<Response> {
   // Internal cron task, not a Facebook event - no signature. Safe to expose: it only ever acts on
   // conversations whose auto-resume timer has already run out, exactly what the cron would do.
   if (new URL(req.url).searchParams.get('task') === 'auto-resume') {
-    const work = handleAutoResume(createClient(supabaseUrl, serviceRoleKey), new Anthropic({ apiKey: anthropicApiKey }), model, pageAccessToken, graphVersion)
+    const work = handleAutoResume(createClient(supabaseUrl, serviceRoleKey), new Anthropic({ apiKey: anthropicApiKey }), model, graphVersion)
       .catch((err) => console.error('Auto-resume task failed:', err instanceof Error ? err.message : err));
     if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
     else await work;
@@ -1397,6 +1401,13 @@ async function handlePost(req: Request): Promise<Response> {
     const anthropic = new Anthropic({ apiKey: anthropicApiKey });
 
     for (const entry of body.entry ?? []) {
+      // entry.id is the Page this event belongs to - reply with THAT Page's token.
+      const pageAccessToken = getPageAccessToken(entry.id);
+      if (!pageAccessToken) {
+        console.error('No page access token for page', entry.id, '- add it to FACEBOOK_PAGE_TOKENS.');
+        continue;
+      }
+
       // Post comments (`feed` field): run in the background - comments.ts waits a human-like
       // 15-40s before replying, far longer than Facebook will wait for this webhook's 200.
       for (const change of entry.changes ?? []) {
