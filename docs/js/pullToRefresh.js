@@ -24,6 +24,7 @@
   let iconEl = null;
   let labelEl = null;
   let refreshFn = null;
+  let canStartFn = null;
   let touchStartY = null;
   let currentPull = 0;
   let refreshing = false;
@@ -81,7 +82,10 @@
     if (refreshing || event.touches.length !== 1) return;
     // Only arm the gesture when the page is already scrolled to the very top - otherwise this
     // would fire mid-scroll on an ordinary upward-then-down swipe anywhere on a long list.
-    if ((window.scrollY || document.documentElement.scrollTop || 0) > 0) return;
+    // Pages that scroll inside their own panels (window never scrolls) pass opts.canStart instead.
+    if (canStartFn) {
+      if (!canStartFn(event)) return;
+    } else if ((window.scrollY || document.documentElement.scrollTop || 0) > 0) return;
     touchStartY = event.touches[0].clientY;
     tracking = true;
   }
@@ -119,8 +123,10 @@
     }
   }
 
-  window.initPullToRefresh = function initPullToRefresh(fn) {
+  // opts.canStart(touchstartEvent) -> bool: optional, replaces the "window scrolled to top" check.
+  window.initPullToRefresh = function initPullToRefresh(fn, opts) {
     refreshFn = fn;
+    canStartFn = opts?.canStart || null;
     ensureIndicator();
     document.addEventListener('touchstart', handleTouchStart, { passive: true });
     document.addEventListener('touchmove', handleTouchMove, { passive: false });

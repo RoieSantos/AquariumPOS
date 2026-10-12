@@ -5232,6 +5232,24 @@ async function handleGmaInboxEvent(payload) {
 
 // Messenger-feel wiring for the thread: click a photo to zoom, keep pinned to the newest message
 // while photos finish loading (only if staff hadn't scrolled up), paste / drag-and-drop to attach.
+// Phone: swipe down to refresh (js/pullToRefresh.js) - the window never scrolls here, so it only arms
+// when the finger starts on the chat list / open thread while that panel is scrolled to its very top.
+function setupPullToRefresh() {
+  if (!window.initPullToRefresh) return;
+  initPullToRefresh(async () => {
+    const tasks = [loadConversations()];
+    if (mobileView === 'chat' && selectedPsid) tasks.push(loadMessages(selectedPsid));
+    await Promise.all(tasks);
+  }, {
+    canStart: (e) => {
+      const selector = { list: '#conversationListEl', chat: '#threadMessagesEl' }[mobileView];
+      if (!selector || !isMobileInbox() || lightboxIsOpen()) return false;
+      const scroller = e.target.closest?.(selector);
+      return !!scroller && scroller.scrollTop <= 0;
+    }
+  });
+}
+
 function setupThreadInteractions() {
   const messagesEl = document.getElementById('threadMessagesEl');
   messagesEl.addEventListener('click', (e) => {
@@ -5622,6 +5640,7 @@ function initDeliveryCalendar() {
   setupThreadInteractions();
   setupAutoResumeSetting();
   setupRealtimeInbox();
+  setupPullToRefresh();
   document.getElementById('conversationTagFilter').addEventListener('change', (e) => onConversationTagFilterChange(e.target.value));
   document.getElementById('conversationReadFilter').addEventListener('click', onConversationReadFilterClick);
   renderMoodFilter();
