@@ -85,7 +85,9 @@ async function loadConversations() {
     p_admin_password: currentSession.password,
     p_page: 1,
     p_page_size: 100,
-    p_search: conversationSearchTerm.trim() || null
+    p_search: conversationSearchTerm.trim() || null,
+    // Only sent when filtering, so the list still loads before supabase_gma_conversation_tags.sql is run.
+    ...(conversationTagFilter ? { p_tag_id: conversationTagFilter } : {})
   });
 
   if (error) {
@@ -107,6 +109,233 @@ function onConversationSearchInput(term) {
   conversationSearchTerm = term;
   clearTimeout(conversationSearchDebounce);
   conversationSearchDebounce = setTimeout(loadConversations, 300);
+}
+
+// Customer tags (supabase_gma_conversation_tags.sql): customizable name + color, shared by the team.
+// Shown as chips in the list and thread header; picked/managed from the header's 🏷 menu
+// (openTagMenu); the list can be filtered to one tag.
+let allTags = []; // [{ tag_id, name, color, conversation_count }]
+let conversationTagFilter = null; // tag_id or null
+const TAG_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#7c3aed', '#db2777', '#64748b'];
+
+async function loadTags() {
+  const { data, error } = await supabaseClient.rpc('admin_list_chatbot_tags', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  allTags = error ? [] : (data || []); // error = SQL not run yet - tags just stay hidden
+  renderTagFilter();
+}
+
+function renderTagFilter() {
+  const select = document.getElementById('conversationTagFilter');
+  if (!select) return;
+  if (conversationTagFilter && !allTags.some((t) => t.tag_id === conversationTagFilter)) conversationTagFilter = null;
+  select.classList.toggle('hidden', allTags.length === 0);
+  select.innerHTML = '<option value="">All tags</option>' + allTags
+    .map((t) => `<option value="${t.tag_id}"${t.tag_id === conversationTagFilter ? ' selected' : ''}>${escapeHtml(t.name)} (${Number(t.conversation_count) || 0})</option>`)
+    .join('');
+}
+
+function tagChipsHtml(tags) {
+  return (Array.isArray(tags) ? tags : [])
+    .map((t) => `<span class="inbox-tag-chip" style="background:${escapeHtml(t.color || '#64748b')}">${escapeHtml(t.name)}</span>`)
+    .join('');
+}
+
+// Tags menu - a popover under the header's 🏷 button: tick tags on/off for this conversation, and
+// add / rename / recolor / delete tags (affects every conversation). editingTagId: null = list,
+// 'new' = add form, a tag_id = that tag's edit form.
+let tagMenuEditing = null;
+
+function closeTagMenu() {
+  document.getElementById('inboxTagMenu')?.remove();
+  tagMenuEditing = null;
+}
+
+function openTagMenu() {
+  if (document.getElementById('inboxTagMenu')) {
+    closeTagMenu();
+    return;
+  }
+  const menu = document.createElement('div');
+  menu.id = 'inboxTagMenu';
+  menu.className = 'inbox-tag-menu';
+  document.body.appendChild(menu);
+  menu.addEventListener('click', onTagMenuClick);
+  menu.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.matches('input[type="text"]')) {
+      e.preventDefault();
+      menu.querySelector('[data-tag-save]')?.click();
+    } else if (e.key === 'Escape') {
+      closeTagMenu();
+    }
+  });
+  renderTagMenu();
+}
+
+function tagColorSwatchesHtml(selected) {
+  return `<div class="inbox-tag-colors">${TAG_COLORS.map((c) =>
+    `<button type="button" class="inbox-tag-color${c === selected ? ' active' : ''}" data-tag-color="${c}" style="background:${c}" aria-label="Color ${c}"></button>`).join('')}</div>`;
+}
+
+function renderTagMenu() {
+  const menu = document.getElementById('inboxTagMenu');
+  const conv = conversations.find((c) => c.psid === selectedPsid);
+  if (!menu || !conv) return closeTagMenu();
+  const onIds = new Set((conv.tags || []).map((t) => t.id));
+
+  if (tagMenuEditing !== null) {
+    const tag = tagMenuEditing === 'new' ? null : allTags.find((t) => t.tag_id === tagMenuEditing);
+    const color = menu.dataset.pickedColor || tag?.color || TAG_COLORS[0];
+    menu.dataset.pickedColor = color;
+    menu.innerHTML = `
+      <div class="inbox-tag-menu-title">${tag ? 'Edit tag' : 'New tag'}</div>
+      <input type="text" class="inbox-tag-name-input" maxlength="40" placeholder="Tag name (e.g. Urgent)" value="${escapeHtml(tag?.name || '')}" />
+      ${tagColorSwatchesHtml(color)}
+      <div class="inbox-tag-menu-error error-text hidden"></div>
+      <div class="inbox-tag-menu-actions">
+        ${tag ? `<button type="button" class="btn btn-danger btn-sm" data-tag-delete="${tag.tag_id}">Delete</button>` : ''}
+        <span style="flex:1"></span>
+        <button type="button" class="btn btn-secondary btn-sm" data-tag-cancel>Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" data-tag-save>${tag ? 'Save' : 'Add'}</button>
+      </div>`;
+    menu.querySelector('.inbox-tag-name-input').focus();
+  } else {
+    delete menu.dataset.pickedColor;
+    menu.innerHTML = `
+      <div class="inbox-tag-menu-title">Tags</div>
+      <div class="inbox-tag-menu-list">
+        ${allTags.length ? allTags.map((t) => `
+          <div class="inbox-tag-menu-row">
+            <label>
+              <input type="checkbox" data-tag-toggle="${t.tag_id}"${onIds.has(t.tag_id) ? ' checked' : ''} />
+              <span class="inbox-tag-chip" style="background:${escapeHtml(t.color)}">${escapeHtml(t.name)}</span>
+            </label>
+            <button type="button" class="inbox-tag-edit-btn" data-tag-edit="${t.tag_id}" title="Rename / recolor / delete">✎</button>
+          </div>`).join('') : '<div class="muted" style="padding:4px 2px;">No tags yet.</div>'}
+      </div>
+      <div class="inbox-tag-menu-error error-text hidden"></div>
+      <button type="button" class="inbox-tag-new-btn" data-tag-new>+ New tag</button>`;
+  }
+
+  const btn = document.getElementById('tagMenuBtn');
+  if (btn) {
+    const rect = btn.getBoundingClientRect();
+    menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 6)}px`;
+    menu.style.left = `${Math.min(window.innerWidth - menu.offsetWidth - 8, Math.max(8, rect.right - menu.offsetWidth))}px`;
+  }
+}
+
+function showTagMenuError(message) {
+  const el = document.querySelector('#inboxTagMenu .inbox-tag-menu-error');
+  if (!el) return alert(message);
+  el.textContent = message;
+  el.classList.remove('hidden');
+}
+
+async function onTagMenuClick(e) {
+  e.stopPropagation();
+  const t = e.target;
+  const menu = document.getElementById('inboxTagMenu');
+  const auth = { p_admin_username: currentSession.username, p_admin_password: currentSession.password };
+
+  const toggle = t.closest('[data-tag-toggle]');
+  if (toggle) {
+    const conv = conversations.find((c) => c.psid === selectedPsid);
+    if (!conv) return;
+    const tagId = Number(toggle.dataset.tagToggle);
+    const on = toggle.checked;
+    toggle.disabled = true;
+    const { error } = await supabaseClient.rpc('admin_set_chatbot_conversation_tag', { ...auth, p_psid: conv.psid, p_tag_id: tagId, p_is_tagged: on });
+    toggle.disabled = false;
+    if (error) {
+      toggle.checked = !on;
+      return showTagMenuError(`Could not update tag: ${error.message}`);
+    }
+    const tag = allTags.find((x) => x.tag_id === tagId);
+    const others = (conv.tags || []).filter((x) => x.id !== tagId);
+    conv.tags = on && tag ? [...others, { id: tag.tag_id, name: tag.name, color: tag.color }].sort((a, b) => a.name.localeCompare(b.name)) : others;
+    if (tag) tag.conversation_count = Math.max(0, (Number(tag.conversation_count) || 0) + (on ? 1 : -1));
+    renderTagFilter();
+    renderConversationList();
+    renderThreadHeaderTags(conv);
+    gmaInboxChannel?.send({ type: 'broadcast', event: 'conversation_tagged', payload: { psid: conv.psid } });
+    return;
+  }
+
+  if (t.closest('[data-tag-new]')) {
+    tagMenuEditing = 'new';
+    return renderTagMenu();
+  }
+  const edit = t.closest('[data-tag-edit]');
+  if (edit) {
+    tagMenuEditing = Number(edit.dataset.tagEdit);
+    return renderTagMenu();
+  }
+  if (t.closest('[data-tag-cancel]')) {
+    tagMenuEditing = null;
+    return renderTagMenu();
+  }
+  const swatch = t.closest('[data-tag-color]');
+  if (swatch) {
+    menu.dataset.pickedColor = swatch.dataset.tagColor;
+    menu.querySelectorAll('[data-tag-color]').forEach((b) => b.classList.toggle('active', b === swatch));
+    return;
+  }
+
+  const save = t.closest('[data-tag-save]');
+  const del = t.closest('[data-tag-delete]');
+  if (!save && !del) return;
+  let error;
+  if (save) {
+    const name = menu.querySelector('.inbox-tag-name-input').value.trim();
+    if (!name) return showTagMenuError('Type a tag name.');
+    save.disabled = true;
+    ({ error } = await supabaseClient.rpc('admin_save_chatbot_tag', {
+      ...auth,
+      p_tag_id: tagMenuEditing === 'new' ? null : tagMenuEditing,
+      p_name: name,
+      p_color: menu.dataset.pickedColor || TAG_COLORS[0]
+    }));
+    save.disabled = false;
+  } else {
+    const tag = allTags.find((x) => x.tag_id === Number(del.dataset.tagDelete));
+    const used = Number(tag?.conversation_count) || 0;
+    if (!confirm(`Delete the tag "${tag?.name}"?${used ? ` It will be removed from ${used} conversation${used === 1 ? '' : 's'}.` : ''}`)) return;
+    ({ error } = await supabaseClient.rpc('admin_delete_chatbot_tag', { ...auth, p_tag_id: Number(del.dataset.tagDelete) }));
+  }
+  if (error) {
+    return showTagMenuError(error.code === 'PGRST202' ? 'Tags need sql/supabase_gma_conversation_tags.sql to be run first.' : error.message);
+  }
+  tagMenuEditing = null;
+  await refreshAfterTagChange();
+  renderTagMenu();
+  gmaInboxChannel?.send({ type: 'broadcast', event: 'tags_changed', payload: {} });
+}
+
+// A tag was added/renamed/recolored/deleted (here or in another tab) - names/colors on every
+// conversation may have changed, so reload both lists.
+async function refreshAfterTagChange() {
+  await loadTags();
+  await loadConversations();
+  const conv = conversations.find((c) => c.psid === selectedPsid);
+  if (conv) renderThreadHeaderTags(conv);
+}
+
+function onConversationTagFilterChange(value) {
+  conversationTagFilter = value ? Number(value) : null;
+  loadConversations();
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#inboxTagMenu, #tagMenuBtn')) closeTagMenu();
+});
+
+function renderThreadHeaderTags(conv) {
+  const el = document.getElementById('threadTagsEl');
+  if (el) el.innerHTML = tagChipsHtml(conv.tags);
+  document.getElementById('tagMenuBtn')?.classList.toggle('tagged', (conv.tags || []).length > 0);
 }
 
 // Which Facebook Page a conversation came in on - one Messenger app now serves several Pages (see
@@ -217,6 +446,7 @@ function renderConversationList() {
             <span class="inbox-conv-time">${viewerBadgesHtml(c.psid)}${formatRelativeTime(c.last_message_at_utc)}${unread ? '<span class="inbox-unread-dot" title="Unread"></span>' : ''}</span>
           </div>
           <div class="inbox-conv-preview">${escapeHtml(c.last_message_preview || '(no messages)')}</div>
+          ${c.tags?.length ? `<div class="inbox-conv-tags">${tagChipsHtml(c.tags)}</div>` : ''}
         </div>
       </div>
     `;
@@ -245,13 +475,16 @@ function renderThreadHeader(conv) {
     <span class="inbox-thread-title">
       ${conversationAvatarHtml(conv, 'inbox-thread-avatar')}
       <span class="inbox-thread-title-text">
-        <span class="inbox-thread-name">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}</span>
+        <span class="inbox-thread-name">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}<span class="inbox-thread-tags" id="threadTagsEl">${tagChipsHtml(conv.tags)}</span></span>
         ${pauseNote ? `<span class="inbox-thread-sub">${escapeHtml(pauseNote)}</span>` : ''}
       </span>
     </span>
     <span class="inbox-thread-viewers" id="threadViewersEl"></span>
     <span class="inbox-header-actions">
       ${pauseNote ? `<span class="inbox-pause-note">${escapeHtml(pauseNote)}</span>` : ''}
+      <button class="btn btn-secondary btn-sm inbox-tag-btn${conv.tags?.length ? ' tagged' : ''}" id="tagMenuBtn" type="button" title="Tag this customer (Urgent, Issue, ...)">
+        🏷<span class="inbox-hdr-btn-label"> Tags</span>
+      </button>
       <button class="btn btn-secondary btn-sm inbox-pin-btn${conv.pinned_at_utc ? ' pinned' : ''}" id="togglePinBtn" type="button" title="${escapeHtml(conv.pinned_at_utc ? pinnedTitle(conv) + ' - click to unpin' : 'Pin to the top of the list for everyone')}">
         📌<span class="inbox-hdr-btn-label"> ${conv.pinned_at_utc ? 'Unpin' : 'Pin'}</span>
       </button>
@@ -265,6 +498,7 @@ function renderThreadHeader(conv) {
   `;
   document.getElementById('togglePauseBtn').addEventListener('click', () => togglePause(conv));
   document.getElementById('togglePinBtn').addEventListener('click', () => togglePin(conv));
+  document.getElementById('tagMenuBtn').addEventListener('click', openTagMenu);
   document.getElementById('threadBackBtn').addEventListener('click', mobileBack);
   document.getElementById('threadInfoBtn').addEventListener('click', () => showMobileView('info'));
   renderThreadViewers();
@@ -968,6 +1202,7 @@ async function openConversation(psid) {
   autoResizeReplyInput();
   setPendingReplyImages([]);
   clearReplyTo();
+  closeTagMenu();
   toggleQuickRepliesPanel(false);
   toggleProductLookupPanel(false);
   toggleMediaLibraryPanel(false);
@@ -4554,6 +4789,20 @@ function setupRealtimeInbox() {
         if (conv && payload?.psid === selectedPsid) renderThreadHeader(conv);
       });
     })
+    // Another staff member tagged/untagged a conversation, or edited the tag list.
+    .on('broadcast', { event: 'conversation_tagged' }, ({ payload }) => {
+      loadTags();
+      loadConversations().then(() => {
+        const conv = conversations.find((c) => c.psid === selectedPsid);
+        if (conv && payload?.psid === selectedPsid) {
+          renderThreadHeaderTags(conv);
+          if (tagMenuEditing === null) renderTagMenu();
+        }
+      });
+    })
+    .on('broadcast', { event: 'tags_changed' }, () => {
+      refreshAfterTagChange().then(() => { if (tagMenuEditing === null) renderTagMenu(); });
+    })
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
         trackPresence();
@@ -5005,5 +5254,7 @@ function setupMobileViewportHeight() {
   setupThreadInteractions();
   setupAutoResumeSetting();
   setupRealtimeInbox();
+  document.getElementById('conversationTagFilter').addEventListener('change', (e) => onConversationTagFilterChange(e.target.value));
+  loadTags();
   await loadConversations();
 })();

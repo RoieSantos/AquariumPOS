@@ -1988,7 +1988,10 @@ function isWalkinListLayout() {
   return !!document.querySelector('.oo-grid.oo-walkin');
 }
 
-function posFieldCellsHtml(o) {
+// part: 'all' (Online list: Receipt / Customer / Description / Items / Cashier, hidden by css),
+// 'desc' (Walk-in: Description + Items, shown beside Status) or 'rest' (Walk-in: Receipt / Customer
+// / Cashier, after Print Note) - see WALKIN_LIST_LAYOUT.
+function posFieldCellsHtml(o, part = 'all') {
   const rows = o?.pos_note ? parsePosDescription(o.pos_note) : [];
   const val = (label) => rows.find((r) => r.label === label)?.value || '';
   const items = val('Details').split(/\s*\|\|\s*/).filter(Boolean);
@@ -1996,11 +1999,13 @@ function posFieldCellsHtml(o) {
   const extra = rows
     .filter((r) => !['Receipt', 'Customer', 'Description', 'Details', 'Cashier'].includes(r.label))
     .map((r) => (r.label ? `${r.label}: ${r.value}` : r.value));
-  return `<td>${escapeHtml(val('Receipt'))}</td>`
-    + `<td>${escapeHtml(val('Customer'))}</td>`
-    + `<td>${escapeHtml(val('Description'))}</td>`
-    + `<td class="oo-pos-items-cell"${items.length ? ` title="${escapeHtml(items.join('\n'))}"` : ''}>${items.map((d) => `<div class="oo-pos-item">${escapeHtml(d)}</div>`).join('')}</td>`
-    + `<td>${escapeHtml(val('Cashier'))}${extra.length ? `<div class="muted">${escapeHtml(extra.join(' · '))}</div>` : ''}</td>`;
+  const receipt = `<td>${escapeHtml(val('Receipt'))}</td>` + `<td>${escapeHtml(val('Customer'))}</td>`;
+  const desc = `<td>${escapeHtml(val('Description'))}</td>`
+    + `<td class="oo-pos-items-cell"${items.length ? ` title="${escapeHtml(items.join('\n'))}"` : ''}>${items.map((d) => `<div class="oo-pos-item">${escapeHtml(d)}</div>`).join('')}</td>`;
+  const cashier = `<td>${escapeHtml(val('Cashier'))}${extra.length ? `<div class="muted">${escapeHtml(extra.join(' · '))}</div>` : ''}</td>`;
+  if (part === 'desc') return desc;
+  if (part === 'rest') return receipt + cashier;
+  return receipt + desc + cashier;
 }
 
 // List note cell: the print note and the POS description (posNoteListHtml), both when both exist.
@@ -2027,6 +2032,9 @@ function dispatchDateHtml(value) {
 // Order ID drills into the Online Order document (openOrderCard) the way a BC "No." field does.
 // Assignments are edited on that document, not in the list.
 function orderRowsHtml(orders) {
+  // Walk-in list: no Confirmed By / Confirmed Date / Created By, and POS Description + Items sit
+  // beside Status (WALKIN_LIST_LAYOUT reorders the header the same way).
+  const walkin = isWalkinListLayout();
   return orders
     .map((o) => `
       <tr data-order-id="${escapeHtml(o.order_id)}" class="${String(o.order_id) === String(selectedOrderId) ? 'selected' : ''}">
@@ -2036,16 +2044,17 @@ function orderRowsHtml(orders) {
         <td>${escapeHtml(o.customer_name)}</td>
         <td>${escapeHtml(o.warehouse_name || o.location_id)}</td>
         <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}</td>
+        ${walkin ? posFieldCellsHtml(o, 'desc') : `
         <td>${escapeHtml(o.confirmed_by)}</td>
         <td>${dispatchDateHtml(o.confirmed_at_utc)}</td>
-        <td>${escapeHtml(o.created_by)}</td>
+        <td>${escapeHtml(o.created_by)}</td>`}
         <td>${makerCellHtml(o, 'tank', o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}</td>
         <td>${makerCellHtml(o, 'stand', o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}</td>
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
         <td>${otherBranchBadgeHtml(o)} ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${prodOrderBadgeHtml(o)}</td>
         <td>${noteCellHtml(o)}</td>
-        ${posFieldCellsHtml(o)}
+        ${posFieldCellsHtml(o, walkin ? 'rest' : 'all')}
         ${hidePrices() ? '' : `<td class="num">${o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : ''}</td>`}
         <td>${o.for_delivery ? 'Yes' : 'No'}</td>
         <td>${o.estimated_delivery_date || ''}</td>
@@ -5855,9 +5864,18 @@ if (new URLSearchParams(window.location.search).get('scope') === 'walkin') {
   const headerCells = [...walkinGrid.tHead.rows[0].cells];
   const tagsHeader = headerCells.find((th) => th.textContent.trim() === 'Flags');
   if (tagsHeader) tagsHeader.textContent = 'Tags';
+  // Per "hide Confirmed by / Confirmed date / Created by and move the POS Items and POS Description
+  // beside the Status field": those three headers are taken out and the two POS ones moved after
+  // Status - orderRowsHtml builds walk-in rows in the same order. The original order is kept so
+  // init() can put it back for accounts that don't get the walk-in layout.
+  walkinGrid._onlineHeaderCells = headerCells;
+  const byCaption = (caption) => headerCells.find((th) => th.textContent.trim() === caption);
+  ['Confirmed By', 'Confirmed Date', 'Created By'].forEach((caption) => byCaption(caption)?.remove());
+  const statusHeader = byCaption('Status');
+  if (statusHeader) statusHeader.after(...['POS Description', 'POS Items'].map(byCaption).filter(Boolean));
   // The POS description has its own columns here (posFieldCellsHtml) - "Print Note" stays as is.
-  // v4: five POS columns were added after Print Note, so older saved widths no longer line up.
-  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v5';
+  // v6: columns removed/moved, so older saved widths no longer line up.
+  walkinGrid.dataset.resizeKey = 'online-orders-walkin-v6';
 }
 
 // ---------------------------------------------------------------- Advance Orders tab
@@ -6837,7 +6855,12 @@ async function initAdvanceOrdersView() {
   // are locked to their own scope. Walk-ins never go through the maker flow, so a maker who can
   // see the switch gets the whole walk-in list rather than their (online-only) assignments.
   const showScopeTabs = !session.isOnlineOrderStaff && !myAssignmentsLocked;
-  if (!showScopeTabs) document.querySelector('.oo-grid').classList.remove('oo-walkin'); // see WALKIN_LIST_LAYOUT
+  if (!showScopeTabs) {
+    // see WALKIN_LIST_LAYOUT - back to the full online header, in its original column order.
+    const grid = document.querySelector('.oo-grid');
+    grid.classList.remove('oo-walkin');
+    if (grid._onlineHeaderCells) grid.tHead.rows[0].append(...grid._onlineHeaderCells);
+  }
   document.getElementById('orderScopeTabs').classList.toggle('hidden', !showScopeTabs);
   document.getElementById('scopeTabOnline').classList.toggle('active', currentScope !== 'walkin');
   document.getElementById('scopeTabWalkin').classList.toggle('active', currentScope === 'walkin');

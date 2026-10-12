@@ -1197,6 +1197,86 @@
       opacity: 0.8;
     }
     .inbox-call-dismiss:hover { opacity: 1; }
+    /* Customer tags (openTagMenu / tagChipsHtml in gmaConversations.js) - colored chips in the list
+       and thread header, the 🏷 popover, and the tag filter under the search box. */
+    .inbox-tag-chip {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 15px;
+      padding: 0 7px;
+      border-radius: 10px;
+      color: #fff;
+      white-space: nowrap;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: middle;
+    }
+    .inbox-conv-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+    .inbox-thread-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
+    .inbox-thread-tags:empty { display: none; }
+    .inbox-tag-btn.tagged { background: #eef2ff; border-color: #a5b4fc; color: #3730a3; }
+    .inbox-tag-filter {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 6px;
+      padding: 6px 8px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fff;
+    }
+    .inbox-tag-menu {
+      position: fixed;
+      z-index: 1000;
+      width: 250px;
+      max-width: calc(100vw - 16px);
+      box-sizing: border-box;
+      padding: 10px;
+      background: #fff;
+      border: 1px solid #e3e7ee;
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      font-size: 13px;
+    }
+    .inbox-tag-menu-title { font-weight: 700; margin-bottom: 6px; }
+    .inbox-tag-menu-list { max-height: 260px; overflow-y: auto; }
+    .inbox-tag-menu-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+    .inbox-tag-menu-row label { flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; }
+    .inbox-tag-menu-row .inbox-tag-chip { font-size: 11px; line-height: 18px; max-width: 170px; }
+    .inbox-tag-edit-btn,
+    .inbox-tag-new-btn {
+      border: none;
+      background: none;
+      color: #61738f;
+      cursor: pointer;
+      padding: 2px 4px;
+      font-size: 13px;
+    }
+    .inbox-tag-edit-btn:hover,
+    .inbox-tag-new-btn:hover { color: #1d4f91; }
+    .inbox-tag-new-btn { margin-top: 6px; padding-left: 0; font-weight: 600; color: #1d4f91; }
+    .inbox-tag-name-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .inbox-tag-colors { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .inbox-tag-color {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      padding: 0;
+    }
+    .inbox-tag-color.active { border-color: #fff; box-shadow: 0 0 0 2px #1b355e; }
+    .inbox-tag-menu-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+    .inbox-tag-menu-error { font-size: 12px; margin: 4px 0; }
     /* Pinned conversation (togglePin in gmaConversations.js) */
     .inbox-pin-icon {
       font-size: 11px;
@@ -3204,6 +3284,7 @@
           <div class="inbox-list-search">
             <div class="inbox-mobile-list-title">Chats</div>
             <input type="text" id="conversationSearchInput" placeholder="Search conversations..." />
+            <select id="conversationTagFilter" class="inbox-tag-filter hidden" aria-label="Filter by tag"></select>
             <label class="inbox-auto-resume hidden" id="autoResumeWrap" title="After a staff reply (here or in the Meta app) the AI pauses. If no staff reply follows within this time, the AI turns back on and answers any customer left waiting.">
               <span>AI back on after staff is quiet for</span>
               <select id="autoResumeMinutesSelect">
@@ -3551,7 +3632,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=replyto1"></script>
+  <script src="js/gmaConversations.js?v=tags1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

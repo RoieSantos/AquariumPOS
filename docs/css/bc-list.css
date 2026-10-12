@@ -311,12 +311,13 @@
   text-decoration: none;
 }
 
-/* Walk-in Orders list: hide Dispatcher (12) and For Delivery, Est. Delivery Date (22-23) -
+/* Walk-in Orders list: hide Dispatcher (11) and For Delivery, Est. Delivery Date (19-20) -
    walk-ins are picked up at the shop - so the Tags column sits closer to view. Tank / Stand
-   Maker (10-11) stay: walk-ins can be assigned to makers. Column numbers match online-orders.html's
-   25-column header (Warehouse is column 5; Confirmed Date is 8; Dispatch Date is 24 and stays visible; the walk-in tab is never shown to accounts that hide
-   the Delivery Fee column). */
-.bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(12), :nth-child(22), :nth-child(23)) {
+   Maker (9-10) stay: walk-ins can be assigned to makers. Column numbers match the walk-in layout's
+   22-column header (js/onlineOrders.js WALKIN_LIST_LAYOUT: Confirmed By / Confirmed Date / Created By
+   left out, POS Description + Items at 7-8 beside Status; Dispatch Date is 21 and stays visible; the
+   walk-in tab is never shown to accounts that hide the Delivery Fee column). */
+.bc-ile .oo-grid.oo-walkin :is(th, td):is(:nth-child(11), :nth-child(19), :nth-child(20)) {
   display: none;
 }
 /* POS Receipt / Customer / Description / Items / Cashier (16-20) are Walk-in list columns only -
