@@ -1522,6 +1522,39 @@ function canEditCardDeliveryFee(o) {
   return isOpenPortalOrder(o) && Boolean(o.for_delivery);
 }
 
+// Warehouse on the card - per "can you also allow the confirmed order edit the warehouse". Portal (AO-)
+// orders while still Confirmed (before makers / stock / serials are tied to the branch); the server
+// re-checks. Branch = Amaya / GMA, like the order's original Location.
+function canEditCardBranch(o) {
+  if (!o || myAssignmentsLocked || o.received_at_shop) return false;
+  return String(o.order_id || '').startsWith('AO-') && (o.status || '').trim().toLowerCase() === 'confirmed';
+}
+
+async function saveCardBranch() {
+  const orderId = openCardOrderId;
+  const o = findFlatOrder(orderId);
+  if (!o) return;
+  const branch = document.getElementById('ocBranchSelect').value;
+  if (!confirm(`Move order ${orderId} to the ${branch} warehouse?`)) return;
+  const btn = document.getElementById('ocBranchSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const { error } = await supabaseClient.rpc('admin_set_portal_order_branch', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId),
+    p_location: branch
+  });
+  btn.disabled = false;
+  btn.textContent = 'Save';
+  if (error) {
+    alert(error.message);
+    return;
+  }
+  delete document.getElementById('ocBranchEdit').dataset.orderId;
+  await refreshCurrentOrders();
+}
+
 // A portal order (AO-, made by Confirm Order) that's still open, on an account that sees prices - its
 // delivery fee and payments can still be changed from the card (the server re-checks).
 function isOpenPortalOrder(o) {
@@ -4564,6 +4597,15 @@ function fillOrderCardHeader(o) {
     document.getElementById('ocWalkinPhone').value = o.walkin_customer_phone || '';
   }
   setCardText('ocWarehouse', o.warehouse_name || o.location_id);
+  // Confirmed portal (AO-) orders: the warehouse is a branch picker instead (admin_set_portal_order_branch).
+  const branchEditable = canEditCardBranch(o);
+  const branchEdit = document.getElementById('ocBranchEdit');
+  document.getElementById('ocWarehouse').classList.toggle('hidden', branchEditable);
+  branchEdit.classList.toggle('hidden', !branchEditable);
+  if (branchEditable && branchEdit.dataset.orderId !== String(o.order_id)) {
+    branchEdit.dataset.orderId = String(o.order_id);
+    document.getElementById('ocBranchSelect').value = /gma/i.test(o.warehouse_name || '') ? 'GMA' : 'Amaya';
+  }
   setCardText('ocConfirmedBy', o.confirmed_by);
   setCardText('ocConfirmedAt', o.confirmed_at_utc ? new Date(o.confirmed_at_utc).toLocaleString() : '');
   setCardText('ocCreatedBy', o.created_by);
@@ -5373,6 +5415,7 @@ function wireOrderCard() {
   document.getElementById('cardDeleteOrderBtn').addEventListener('click', (e) => openCardOrderId && deleteOnlineOrder(openCardOrderId, e.currentTarget));
   document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
   document.getElementById('ocDeliveryFeeSaveBtn').addEventListener('click', saveCardDeliveryFee);
+  document.getElementById('ocBranchSaveBtn').addEventListener('click', saveCardBranch);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
@@ -6789,14 +6832,14 @@ function fitAdvanceGridToViewport() {
 // Per "in the orders (online / advance / walk-in) can you have a button there linking to the Item
 // Ledger entries" - opens item-ledger-entries.html in a new tab. With a row selected it uses the
 // ledger's ?search= deep link (matches Document No., all dates): sales post there under the online
-// order id (supabase_item_ledger_sales.sql), so an advance order uses its Online Order ID. Super
-// Users only, same as the ledger page itself (nav.js).
+// order id (supabase_item_ledger_sales.sql); an advance order posts under ADV-<TransactionNo>
+// (supabase_item_ledger_advance_orders.sql). Super Users only, same as the ledger page itself (nav.js).
 function wireItemLedgerButton(session) {
   const btn = document.getElementById('itemLedgerBtn');
   btn.classList.toggle('hidden', !session?.isSuperUser);
   btn.addEventListener('click', () => {
     const docNo = new URLSearchParams(window.location.search).get('scope') === 'advance'
-      ? (selectedAdvanceNo ? advanceRowsByNo.get(selectedAdvanceNo)?.online_order_id : '')
+      ? (selectedAdvanceNo ? 'ADV-' + selectedAdvanceNo : '')
       : selectedOrderId;
     const url = 'item-ledger-entries.html' + (docNo ? `?search=${encodeURIComponent(docNo)}` : '');
     // No 'noopener': a noopener tab starts with empty sessionStorage, which is where the portal

@@ -24967,25 +24967,11 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                     string advanceReceiptToSync = currentReceiptNo;
                     if (!string.IsNullOrWhiteSpace(advanceReceiptToSync))
                     {
-                        try
-                        {
-                            var resp = OnlinefunctionsEvents.SyncAdvanceOrderToCloud(advanceReceiptToSync);
-                            System.Diagnostics.Debug.WriteLine($"SyncAdvanceOrderToCloud(create) response for {advanceReceiptToSync}: {resp}");
-                        }
-                        catch (Exception syncEx)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"SyncAdvanceOrderToCloud(create) failed for {advanceReceiptToSync}: {syncEx.Message}");
-                            MessageBox.Show(
-                                $"Advance order was saved locally, but cloud sync failed.\n\nReceipt: {advanceReceiptToSync}\nError: {syncEx.Message}",
-                                "Cloud Sync Warning",
-                                MessageBoxButtons.OK,
-                                MessageBoxIcon.Warning);
-                        }
-
-                        // Portal (Supabase) push - independent of the Pancake push above, so a
-                        // Pancake failure doesn't also block this, and vice versa. Silent/best-effort
-                        // like the auto-sync elsewhere; the masterDataSyncTimer's 5-minute bulk sync
-                        // is the safety net if this fails.
+                        // Advance orders are no longer pushed to Pancake - the portal owns them and
+                        // posts their stock to the Item Ledger at Ready to Ship
+                        // (supabase_item_ledger_advance_orders.sql). Portal (Supabase) push only.
+                        // Silent/best-effort like the auto-sync elsewhere; the masterDataSyncTimer's
+                        // 5-minute bulk sync is the safety net if this fails.
                         try
                         {
                             var portalResp = OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabase(advanceReceiptToSync);

@@ -137,6 +137,8 @@ namespace AquariumPOS
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
             resendToPancakeButton.Click += async (s, e) => await ResendToPancakeButton_ClickAsync();
+            // Advance orders are portal-only now (no Pancake order) - kept but hidden.
+            resendToPancakeButton.Visible = false;
 
             resendToPortalButton = new Button
             {
@@ -694,16 +696,7 @@ namespace AquariumPOS
                     {
                         _ = System.Threading.Tasks.Task.Run(() =>
                         {
-                            try
-                            {
-                                var resp = OnlinefunctionsEvents.SyncAdvanceOrderToCloud(receiptNo);
-                                System.Diagnostics.Debug.WriteLine($"SyncAdvanceOrderToCloud(update) response for {receiptNo}: {resp}");
-                            }
-                            catch (Exception exSync)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"SyncAdvanceOrderToCloud(update) failed for {receiptNo}: {exSync.Message}");
-                            }
-
+                            // Portal only - advance orders are no longer pushed to Pancake.
                             try
                             {
                                 var portalResp = OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabase(receiptNo);

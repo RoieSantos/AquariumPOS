@@ -427,7 +427,17 @@
               <div class="bc-doc-field"><label>Status</label><div class="bc-doc-value" id="ocStatus"></div></div>
             </div>
             <div>
-              <div class="bc-doc-field"><label>Warehouse</label><div class="bc-doc-value" id="ocWarehouse"></div></div>
+              <div class="bc-doc-field"><label for="ocBranchSelect">Warehouse</label>
+                <div class="bc-doc-value">
+                  <span id="ocWarehouse"></span>
+                  <!-- Confirmed portal (AO-) orders - js/onlineOrders.js saveCardBranch,
+                       sql/supabase_online_order_portal_branch.sql. -->
+                  <span class="oc-walkin-customer hidden" id="ocBranchEdit">
+                    <select id="ocBranchSelect"><option value="Amaya">Amaya</option><option value="GMA">GMA</option></select>
+                    <button type="button" class="bc-cmd" id="ocBranchSaveBtn">Save</button>
+                  </span>
+                </div>
+              </div>
               <div class="bc-doc-field"><label>Confirmed By</label><div class="bc-doc-value" id="ocConfirmedBy"></div></div>
               <div class="bc-doc-field"><label>Confirmed Date</label><div class="bc-doc-value" id="ocConfirmedAt"></div></div>
               <div class="bc-doc-field"><label>Created By</label><div class="bc-doc-value" id="ocCreatedBy"></div></div>
@@ -1114,7 +1124,7 @@
   <script src="js/proofPhoto.js?v=shippost1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/onlineOrders.js?v=pay1"></script>
+  <script src="js/onlineOrders.js?v=adv-ile1-branch1"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>

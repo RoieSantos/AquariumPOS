@@ -80,10 +80,11 @@ function toDateKey(date) {
   return `${y}-${m}-${d}`;
 }
 
-// Store has no delivery truck out on Mondays - mirrored server-side in
-// admin_create_delivery_stop / admin_move_delivery_stop (supabase_delivery_tables.sql) so this
-// stays enforced even if a request bypasses this UI.
-const NO_DELIVERY_DAY_OF_WEEK = 1; // Date.getDay(): 0 = Sunday ... 1 = Monday
+// Day of the week with no delivery (Date.getDay(): 0 = Sunday ... 1 = Monday), or -1 for none. Was 1
+// (no truck on Mondays) - now -1 per "can you allow now schedule in calendar even if monday"; the
+// server-side Monday checks were taken out too (sql/supabase_delivery_allow_monday.sql). Set back to 1
+// (and re-run the older delivery SQL) to block Mondays again.
+const NO_DELIVERY_DAY_OF_WEEK = -1;
 
 function isBlockedDeliveryDateKey(dateKey) {
   if (!dateKey) return false;
