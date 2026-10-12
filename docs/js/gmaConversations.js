@@ -955,7 +955,8 @@ function renderMessages(serverRows, opts = {}) {
     // the customer's. Customer messages get a hover "react" button (openReactPicker).
     const reactions = run.flatMap((r) => [r.customer_reaction, r.staff_reaction]).filter(Boolean);
     const reactionsHtml = reactions.length ? `<div class="inbox-msg-reactions" title="Reactions">${reactions.map(escapeHtml).join('')}</div>` : '';
-    const canReact = m.role === 'user' && !isPending && m.message_id;
+    // Map pins come from pin-location.html, not Messenger - no Facebook message to react to.
+    const canReact = m.role === 'user' && !isPending && m.message_id && !parsePinnedLocation(m.content);
     const reactBtnHtml = canReact ? `<button type="button" class="inbox-react-btn" data-react-id="${m.message_id}" data-current="${escapeHtml(m.staff_reaction || '')}" title="React">☺</button>` : '';
     // Hover "Reply" on any saved message (startReplyTo) - the next typed send quotes it in Messenger.
     const replyBtnHtml = !isPending && m.message_id ? `<button type="button" class="inbox-reply-to-btn" data-reply-id="${m.message_id}" title="Reply">↩</button>` : '';
@@ -5546,7 +5547,9 @@ async function loadBookingOrders() {
     p_psid: conv.psid,
     p_page_id: conv.page_id
   });
-  dcalBookingOrders = error ? [] : (data || []).filter((o) => !/cancel/i.test(o.status || ''));
+  // Only orders that can still be delivered (newest first, as listed) - not cancelled / completed / pickup.
+  dcalBookingOrders = error ? [] : (data || []).filter((o) =>
+    !/cancel|complete/i.test(o.status || '') && (o.fulfillment_type || 'Delivery') !== 'Pickup');
   if (dcalSelectedKey) renderDeliveryCalendarDay(dcalSelectedKey);
 }
 
@@ -5673,24 +5676,37 @@ function renderDeliveryCalendarDay(key) {
   el.classList.remove('hidden');
   document.getElementById('dcalOfferBtn')?.addEventListener('click', () => offerDeliveryDate(date));
   document.getElementById('dcalBookBtn')?.addEventListener('click', () => bookDeliveryFromPin(key));
+  document.getElementById('dcalBookOrder')?.addEventListener('change', (e) => {
+    document.getElementById('dcalBookFee').innerHTML = dcalBookFeeHtml(dcalBookingOrders.find((o) => o.order_no === e.target.value));
+  });
 }
 
 function dcalBookingFormHtml() {
   if (!dcalBookingOrders.length) {
-    return '<div class="dcal-book"><div class="dcal-day-meta">No open orders in this conversation yet - create the order first, then book its delivery here.</div></div>';
+    return '<div class="dcal-book"><div class="dcal-day-meta">No open delivery orders in this conversation yet - create the order first, then book its delivery here.</div></div>';
   }
+  // Just the orders - the fee isn't a choice: it's worked out from the picked order's own branch (dcalBookFeeHtml).
   const options = dcalBookingOrders.map((o) => {
     const total = o.estimated_total != null ? ` · ₱${Number(o.estimated_total).toLocaleString('en-PH', { maximumFractionDigits: 2 })}` : '';
-    const fee = bookingFeeFor(o, dcalBookingQuotes);
-    const feeText = fee != null ? ` · delivery ₱${fee.toLocaleString('en-PH')} from ${o.location === 'Amaya' ? 'Amaya' : 'GMA'}` : '';
-    return `<option value="${escapeHtml(o.order_no)}">${escapeHtml(o.order_no)}${o.customer_name ? ` · ${escapeHtml(o.customer_name)}` : ''}${total}${feeText}</option>`;
+    return `<option value="${escapeHtml(o.order_no)}">${escapeHtml(o.order_no)}${o.customer_name ? ` · ${escapeHtml(o.customer_name)}` : ''}${total}</option>`;
   }).join('');
   return `
     <div class="dcal-book">
       <select id="dcalBookOrder" aria-label="Order to deliver">${options}</select>
       <button type="button" class="btn btn-primary btn-sm" id="dcalBookBtn">Book this date</button>
+      <div class="dcal-day-meta" id="dcalBookFee">${dcalBookFeeHtml(dcalBookingOrders[0])}</div>
       <div class="dcal-msg hidden" id="dcalBookMsg"></div>
     </div>`;
+}
+
+// The delivery fee that will be saved for this order: to the pin, from the branch tagged on the order.
+function dcalBookFeeHtml(order) {
+  const branch = order?.location === 'Amaya' ? 'Amaya' : 'GMA';
+  if (!dcalBookingQuotes) return `Delivery fee from ${branch}: calculating...`;
+  const fee = bookingFeeFor(order, dcalBookingQuotes);
+  return fee != null
+    ? `Delivery fee: <strong>₱${fee.toLocaleString('en-PH')}</strong> from ${branch} (the order's branch) - saved on the order and the calendar when you book.`
+    : `Delivery fee from ${branch} couldn't be calculated - the order's fee will be left as it is.`;
 }
 
 // Books the chosen order on this date with the customer's pin as the stop's map location

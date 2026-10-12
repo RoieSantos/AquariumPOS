@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-12
 
+- **Booking calendar: the fee is picked automatically from the order's branch.** The order dropdown now lists only the orders (no per-order fees). It hides cancelled, completed and pickup orders. One line under it shows the fee that will be saved: measured to the pin from the branch tagged on the selected order, updating when you pick another order ([gmaConversations.js](docs/js/gmaConversations.js) `v=pinsafe3`).
+- **GMA Conversations: no react button on 📍 pin messages.** They come from the map page, not Messenger, so there's no Facebook message to react to; it only produced an error. Found in a review of today's changes ([gmaConversations.js](docs/js/gmaConversations.js)).
 - **Map pin: link safety + Lalamove.**
   - **Shared links can't leak data.** A forwarded link no longer shows the customer's name or the location they pinned before; it opens a blank map. A link now expires 48 hours after it's sent, and 24 hours after the first pin (enough to fix a mistake).
   - **Re-pins can't move a booked delivery.** A re-pin on an order that's already booked waits until the customer confirms in Messenger (Vic asks, then `schedule_delivery_date` with `confirm_new_pin`) or staff book it with 📅. Staff get a Telegram message.
