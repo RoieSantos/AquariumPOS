@@ -1217,6 +1217,19 @@
     .inbox-thread-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
     .inbox-thread-tags:empty { display: none; }
     .inbox-tag-btn.tagged { background: #eef2ff; border-color: #a5b4fc; color: #3730a3; }
+    /* All / Unread / Read pills (conversationReadFilter in gmaConversations.js) */
+    .inbox-read-filter { display: flex; gap: 6px; margin-top: 6px; }
+    .inbox-read-filter button {
+      border: none;
+      background: #f0f2f5;
+      color: #050505;
+      border-radius: 16px;
+      padding: 5px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .inbox-read-filter button.active { background: #e7f3ff; color: #1877f2; }
     .inbox-tag-filter {
       width: 100%;
       box-sizing: border-box;
@@ -3284,6 +3297,11 @@
           <div class="inbox-list-search">
             <div class="inbox-mobile-list-title">Chats</div>
             <input type="text" id="conversationSearchInput" placeholder="Search conversations..." />
+            <div class="inbox-read-filter" id="conversationReadFilter" role="tablist" aria-label="Show">
+              <button type="button" class="active" data-read-filter="">All</button>
+              <button type="button" data-read-filter="unread">Unread</button>
+              <button type="button" data-read-filter="read">Read</button>
+            </div>
             <select id="conversationTagFilter" class="inbox-tag-filter hidden" aria-label="Filter by tag"></select>
             <label class="inbox-auto-resume hidden" id="autoResumeWrap" title="After a staff reply (here or in the Meta app) the AI pauses. If no staff reply follows within this time, the AI turns back on and answers any customer left waiting.">
               <span>AI back on after staff is quiet for</span>
@@ -3632,7 +3650,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=tags1"></script>
+  <script src="js/gmaConversations.js?v=unread3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

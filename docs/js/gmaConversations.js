@@ -87,15 +87,26 @@ async function loadConversations() {
     p_page_size: 100,
     p_search: conversationSearchTerm.trim() || null,
     // Only sent when filtering, so the list still loads before supabase_gma_conversation_tags.sql is run.
-    ...(conversationTagFilter ? { p_tag_id: conversationTagFilter } : {})
+    ...(conversationTagFilter ? { p_tag_id: conversationTagFilter } : {}),
+    // Same for the All / Unread / Read pills (supabase_gma_conversation_mark_unread.sql).
+    ...(conversationReadFilter ? { p_read_filter: conversationReadFilter } : {})
   });
 
   if (error) {
-    listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(error.message)}</div>`;
+    const message = error.code === 'PGRST202' && conversationReadFilter
+      ? 'The Unread / Read filter needs sql/supabase_gma_conversation_mark_unread.sql to be run first. Click "All" to see the list.'
+      : error.message;
+    listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(message)}</div>`;
     return;
   }
 
+  const previousSelected = conversations.find((c) => c.psid === selectedPsid);
   conversations = data || [];
+  // Unread view: opening a conversation marks it read, so the next reload would drop it - keep the
+  // one that's open in the list until staff move on (like Messenger's Unread tab).
+  if (conversationReadFilter && previousSelected && !conversations.some((c) => c.psid === selectedPsid)) {
+    conversations.unshift(previousSelected);
+  }
   renderConversationList();
 }
 
@@ -328,6 +339,20 @@ function onConversationTagFilterChange(value) {
   loadConversations();
 }
 
+// All / Unread / Read pills above the list - filtered server-side so it isn't limited to the 100
+// conversations already loaded.
+let conversationReadFilter = null; // null | 'unread' | 'read'
+
+function onConversationReadFilterClick(e) {
+  const btn = e.target.closest('[data-read-filter]');
+  if (!btn) return;
+  conversationReadFilter = btn.dataset.readFilter || null;
+  document.querySelectorAll('#conversationReadFilter [data-read-filter]').forEach((b) => {
+    b.classList.toggle('active', b === btn);
+  });
+  loadConversations();
+}
+
 document.addEventListener('click', (e) => {
   if (!e.target.closest('#inboxTagMenu, #tagMenuBtn')) closeTagMenu();
 });
@@ -488,6 +513,9 @@ function renderThreadHeader(conv) {
       <button class="btn btn-secondary btn-sm inbox-pin-btn${conv.pinned_at_utc ? ' pinned' : ''}" id="togglePinBtn" type="button" title="${escapeHtml(conv.pinned_at_utc ? pinnedTitle(conv) + ' - click to unpin' : 'Pin to the top of the list for everyone')}">
         📌<span class="inbox-hdr-btn-label"> ${conv.pinned_at_utc ? 'Unpin' : 'Pin'}</span>
       </button>
+      <button class="btn btn-secondary btn-sm" id="markUnreadBtn" type="button" title="Mark as unread for everyone and close it - goes bold again until someone opens it">
+        ✉<span class="inbox-hdr-btn-label"> Unread</span>
+      </button>
       <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button" title="${conv.is_paused ? 'Resume AI' : 'Pause AI'}">
         ${conv.is_paused ? '▶' : '⏸'}<span class="inbox-hdr-btn-label"> ${conv.is_paused ? 'Resume AI' : 'Pause AI'}</span>
       </button>
@@ -498,6 +526,7 @@ function renderThreadHeader(conv) {
   `;
   document.getElementById('togglePauseBtn').addEventListener('click', () => togglePause(conv));
   document.getElementById('togglePinBtn').addEventListener('click', () => togglePin(conv));
+  document.getElementById('markUnreadBtn').addEventListener('click', () => markConversationUnread(conv));
   document.getElementById('tagMenuBtn').addEventListener('click', openTagMenu);
   document.getElementById('threadBackBtn').addEventListener('click', mobileBack);
   document.getElementById('threadInfoBtn').addEventListener('click', () => showMobileView('info'));
@@ -4774,6 +4803,10 @@ function setupRealtimeInbox() {
     .on('broadcast', { event: 'conversation_read' }, ({ payload }) => {
       handleConversationReadEvent(payload);
     })
+    // Another staff member marked a conversation unread - bold it here too.
+    .on('broadcast', { event: 'conversation_unread' }, ({ payload }) => {
+      handleConversationUnreadEvent(payload);
+    })
     // A customer is calling a Page / the call ended (facebook-messenger-webhook calls.ts).
     .on('broadcast', { event: 'call_ringing' }, ({ payload }) => {
       addRingingCall(payload);
@@ -4999,11 +5032,61 @@ function seenByLineHtml(rows) {
 async function handleConversationReadEvent(payload) {
   if (!payload?.psid) return;
   const conv = conversations.find((c) => c.psid === payload.psid);
-  if (conv && conv.is_unread) {
+  if (conversationReadFilter) {
+    loadConversations(); // it joins/leaves the filtered list
+  } else if (conv && conv.is_unread) {
     conv.is_unread = false;
     renderConversationList();
   }
   if (payload.psid === selectedPsid) await loadSeenBy(payload.psid);
+}
+
+// "Mark as unread" (supabase_gma_conversation_mark_unread.sql) - shared like the rest of unread: bold
+// for the whole team until someone opens it again. The thread is closed afterwards, otherwise being
+// open would keep it read (markOpenConversationReadIfVisible) and the list never shows it bold.
+async function markConversationUnread(conv) {
+  const btn = document.getElementById('markUnreadBtn');
+  btn.disabled = true;
+  const { error } = await supabaseClient.rpc('admin_mark_chatbot_conversation_unread', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: conv.psid
+  });
+  if (error) {
+    alert(error.code === 'PGRST202'
+      ? 'Mark as unread needs sql/supabase_gma_conversation_mark_unread.sql to be run first.'
+      : `Could not mark as unread: ${error.message}`);
+    btn.disabled = false;
+    return;
+  }
+  conv.is_unread = true;
+  gmaInboxChannel?.send({ type: 'broadcast', event: 'conversation_unread', payload: { psid: conv.psid } });
+  closeOpenConversation();
+  if (conversationReadFilter) loadConversations(); // e.g. leaves the Read view
+}
+
+function closeOpenConversation() {
+  if (isMobileInbox() && mobileView !== 'list') {
+    mobileBack(); // setMobileView('list') clears selectedPsid + presence and redraws the list
+    return;
+  }
+  selectedPsid = null;
+  trackPresence();
+  closeTagMenu();
+  document.getElementById('threadHeaderEl').innerHTML = '<span class="muted">Select a conversation to view its messages.</span>';
+  document.getElementById('threadMessagesEl').innerHTML = '';
+  document.getElementById('replyRowEl').classList.add('hidden');
+  document.getElementById('replyErrorEl').classList.add('hidden');
+  document.getElementById('customerPanelEl').innerHTML = '<div class="inbox-empty-state">Select a conversation to look up orders.</div>';
+  renderConversationList();
+}
+
+function handleConversationUnreadEvent(payload) {
+  if (conversationReadFilter) { loadConversations(); return; } // it joins/leaves the filtered list
+  const conv = conversations.find((c) => c.psid === payload?.psid);
+  if (!conv || conv.is_unread) return;
+  conv.is_unread = true;
+  renderConversationList();
 }
 
 // A message landing in the conversation already open (and on screen) has been seen - mark it read
@@ -5255,6 +5338,7 @@ function setupMobileViewportHeight() {
   setupAutoResumeSetting();
   setupRealtimeInbox();
   document.getElementById('conversationTagFilter').addEventListener('change', (e) => onConversationTagFilterChange(e.target.value));
+  document.getElementById('conversationReadFilter').addEventListener('click', onConversationReadFilterClick);
   loadTags();
   await loadConversations();
 })();
