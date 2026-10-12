@@ -30,6 +30,107 @@ async function loadAiSettings() {
   document.getElementById('customDirectionsInput').value = (info && info['CustomDirections']) || '';
   document.getElementById('defaultLocationInput').value = (info && info['DefaultLocation']) || 'GMA';
   document.getElementById('commentAutoReplyEnabledInput').checked = !info || info['CommentAutoReplyEnabled'] !== false;
+  renderBotSchedule(info);
+}
+
+// Messenger bot schedule hours (ChatbotAiSettings.BotScheduleEnabled / BotSchedule, see
+// supabase_chatbot_bot_schedule.sql). Days are index 0 = Sunday, matching
+// supabase/functions/_shared/bot-schedule.ts, which the webhook and follow-up dispatcher use.
+const BOT_SCHEDULE_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function renderBotSchedule(info) {
+  const schedule = Array.isArray(info && info['BotSchedule']) && info['BotSchedule'].length === 7
+    ? info['BotSchedule']
+    : BOT_SCHEDULE_DAYS.map(() => ({ on: true, start: '20:00', end: '08:00' }));
+  document.getElementById('botScheduleEnabledInput').checked = !!(info && info['BotScheduleEnabled']);
+
+  const container = document.getElementById('botScheduleDays');
+  container.innerHTML = '';
+  BOT_SCHEDULE_DAYS.forEach((name, i) => {
+    const day = schedule[i] || {};
+    const label = document.createElement('label');
+    label.style.cssText = 'display:flex; align-items:center; gap:6px; margin:0;';
+    label.innerHTML = `<input type="checkbox" data-day-on="${i}" style="width:auto;" /> <span>${name}</span>`;
+    label.querySelector('input').checked = day.on !== false;
+
+    const start = document.createElement('input');
+    start.type = 'time';
+    start.dataset.dayStart = i;
+    start.value = day.start || '20:00';
+
+    const end = document.createElement('input');
+    end.type = 'time';
+    end.dataset.dayEnd = i;
+    end.value = day.end || '08:00';
+
+    container.append(label, start, end);
+  });
+  updateBotScheduleNow();
+}
+
+function readBotSchedule() {
+  return BOT_SCHEDULE_DAYS.map((_, i) => ({
+    on: document.querySelector(`[data-day-on="${i}"]`).checked,
+    start: document.querySelector(`[data-day-start="${i}"]`).value,
+    end: document.querySelector(`[data-day-end="${i}"]`).value
+  }));
+}
+
+// Same rules as _shared/bot-schedule.ts, so the "right now" line matches what the bot will do.
+function isWithinSchedule(enabled, schedule, now = new Date()) {
+  if (!enabled) return true;
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+  const get = (type) => (parts.find((p) => p.type === type) || {}).value || '';
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
+  const minute = Number(get('hour')) * 60 + Number(get('minute'));
+  const toMin = (s) => (/^\d{2}:\d{2}$/.test(s || '') ? Number(s.slice(0, 2)) * 60 + Number(s.slice(3)) : null);
+  const today = schedule[day];
+  const yesterday = schedule[(day + 6) % 7];
+  const ts = toMin(today.start), te = toMin(today.end);
+  if (today.on && ts !== null && te !== null && (te > ts ? minute >= ts && minute < te : minute >= ts)) return true;
+  const ys = toMin(yesterday.start), ye = toMin(yesterday.end);
+  return !!(yesterday.on && ys !== null && ye !== null && ye <= ys && minute < ye);
+}
+
+function updateBotScheduleNow() {
+  const on = isWithinSchedule(document.getElementById('botScheduleEnabledInput').checked, readBotSchedule());
+  document.getElementById('botScheduleNow').textContent = on
+    ? 'With these settings, the bot is answering right now.'
+    : 'With these settings, the bot is OFF right now - staff answer from Conversations.';
+}
+
+async function saveBotSchedule() {
+  const errorEl = document.getElementById('botScheduleError');
+  const savedEl = document.getElementById('botScheduleSaved');
+  const saveBtn = document.getElementById('saveBotScheduleBtn');
+  errorEl.classList.add('hidden');
+  savedEl.classList.add('hidden');
+
+  const schedule = readBotSchedule();
+  const missing = schedule.findIndex((d) => d.on && (!d.start || !d.end));
+  if (missing >= 0) {
+    errorEl.textContent = `${BOT_SCHEDULE_DAYS[missing]} needs a start and end time.`;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('admin_set_chatbot_bot_schedule', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_enabled: document.getElementById('botScheduleEnabledInput').checked,
+      p_schedule: schedule
+    });
+    if (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    savedEl.classList.remove('hidden');
+  } finally {
+    saveBtn.disabled = false;
+  }
 }
 
 // Facebook post comment auto-reply on/off (ChatbotAiSettings.CommentAutoReplyEnabled, see
@@ -316,6 +417,10 @@ async function updateCapabilityGapStatus(id, status) {
   document.getElementById('setupContent').classList.remove('hidden');
   document.getElementById('saveAiSettingsBtn').addEventListener('click', saveAiSettings);
   document.getElementById('commentAutoReplyEnabledInput').addEventListener('change', saveCommentAutoReply);
+  document.getElementById('saveBotScheduleBtn').addEventListener('click', saveBotSchedule);
+  document.getElementById('botScheduleEnabledInput').addEventListener('change', updateBotScheduleNow);
+  document.getElementById('botScheduleDays').addEventListener('input', updateBotScheduleNow);
+  document.getElementById('botScheduleDays').addEventListener('change', updateBotScheduleNow);
   document.getElementById('saveStoreInfoBtn').addEventListener('click', saveStoreInfo);
   document.getElementById('saveFollowUpSettingsBtn').addEventListener('click', saveFollowUpSettings);
   document.getElementById('saveFbPostSettingsBtn').addEventListener('click', saveFbPostSettings);

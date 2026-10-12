@@ -88,6 +88,21 @@
         <div id="commentAutoReplyError" class="error-text hidden"></div>
       </div>
 
+      <div class="form-row" style="margin-top:16px;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="botScheduleEnabledInput" style="width:auto;" />
+          <span>Messenger bot schedule hours</span>
+        </label>
+        <span class="muted" style="font-size:12px; display:block; margin-top:4px;">When ticked, the bot only answers Messenger inside these hours (Philippine time). Outside them it stays silent: messages still show in Conversations for staff to answer, and follow-ups wait until hours start. An end time at or before the start runs past midnight. Unticked = the bot always answers. The website widget isn't affected.</span>
+        <div id="botScheduleDays" style="display:grid; grid-template-columns:auto auto auto; gap:6px 10px; align-items:center; justify-content:start; margin-top:8px;"></div>
+        <div id="botScheduleNow" class="muted" style="font-size:12px; margin-top:6px;"></div>
+        <div id="botScheduleError" class="error-text hidden"></div>
+        <div id="botScheduleSaved" class="success-text hidden">Schedule saved.</div>
+        <div style="margin-top:8px;">
+          <button class="btn btn-success" id="saveBotScheduleBtn" type="button">Save Schedule</button>
+        </div>
+      </div>
+
       <div class="section-divider"></div>
 
       <div class="toolbar">
@@ -281,7 +296,7 @@
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
-  <script src="js/aiBotSetup.js?v=fbcomment1"></script>
+  <script src="js/aiBotSetup.js?v=botschedule2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

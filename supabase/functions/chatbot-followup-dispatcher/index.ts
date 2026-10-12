@@ -18,6 +18,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
+import { isWithinBotSchedule } from '../_shared/bot-schedule.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_GRAPH_VERSION = 'v21.0';
@@ -290,6 +291,12 @@ Deno.serve(async (req) => {
 
     const { data: aiSettings } = await supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle();
     const effectiveModel = (aiSettings?.AiModel as string | undefined)?.trim() || model;
+
+    // Off the bot's schedule hours (supabase_chatbot_bot_schedule.sql): due follow-ups stay Pending
+    // and go out on the first run once hours start (if still inside Messenger's 24h window).
+    if (!isWithinBotSchedule(aiSettings, 'Asia/Manila')) {
+      return jsonResponse({ ok: true, note: 'Outside bot schedule hours - follow-ups held.' });
+    }
 
     const { sent, skipped } = await dispatchDueFollowUps(supabase, anthropic, effectiveModel, aiSettings, followUpSettings, graphVersion);
 

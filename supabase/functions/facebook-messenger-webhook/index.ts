@@ -55,6 +55,7 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import { DEFAULT_GRAPH_VERSION, buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
 import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
+import { isWithinBotSchedule } from '../_shared/bot-schedule.ts';
 import { type FacebookFeedChangeValue, handleFeedComment } from './comments.ts';
 import { type FacebookCallEvent, handleCallEvent } from './calls.ts';
 
@@ -1001,6 +1002,11 @@ async function processMessage(
     await broadcastGmaEvent(supabase, psid);
   }
 
+  // Schedule hours (AI Bot Setup, supabase_chatbot_bot_schedule.sql): outside them the bot stays
+  // silent - the message is already saved/broadcast above, so staff answer it from Conversations.
+  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('BotScheduleEnabled, BotSchedule').eq('Id', 1).maybeSingle();
+  if (!isWithinBotSchedule(scheduleSettings, STORE_TIMEZONE)) return;
+
   // Reply to a pending "is this payment for your existing order, or a new one?" question (asked
   // below whenever a payment screenshot arrives and this conversation already has a prior order -
   // per direct instruction, rather than silently assuming it belongs to that order). Checked before
@@ -1371,8 +1377,13 @@ async function handleAutoResume(
     return;
   }
 
+  // Off schedule hours: still switch the bot back on, but don't answer the waiting customer now.
+  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('BotScheduleEnabled, BotSchedule').eq('Id', 1).maybeSingle();
+  const inSchedule = isWithinBotSchedule(scheduleSettings, STORE_TIMEZONE);
+
   for (const conv of (claimed ?? []) as Array<{ Psid: string; PageId: string | null; CustomerName: string | null }>) {
     await broadcastGmaEvent(supabase, conv.Psid);
+    if (!inSchedule) continue;
 
     const { data: last } = await supabase
       .from('ChatbotMessages')

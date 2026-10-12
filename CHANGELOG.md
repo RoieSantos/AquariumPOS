@@ -2,6 +2,12 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-12
+
+- **Messenger bot (Vic) schedule hours.** AI Bot Setup has a new weekly schedule (per-day on/off + start/end, Manila time; overnight windows OK). Outside it Vic stays silent, so messages land in Conversations for staff. Held follow-ups go out once hours start, and an expired auto-resume doesn't reply off-hours. New [supabase_chatbot_bot_schedule.sql](sql/supabase_chatbot_bot_schedule.sql) and [bot-schedule.ts](supabase/functions/_shared/bot-schedule.ts). Used by [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) + [chatbot-followup-dispatcher](supabase/functions/chatbot-followup-dispatcher/index.ts). Page: [ai-bot-setup.html](docs/ai-bot-setup.html), [aiBotSetup.js](docs/js/aiBotSetup.js) `v=botschedule1`. Website widget is unchanged.
+- Bot schedule now starts as the **night shift**: the SQL's first run turns it on at 8 PM → 8 AM every day, when no staff is on. The page's defaults match (`v=botschedule2`).
+- Deployed `facebook-messenger-webhook` (v105, with `--no-verify-jwt` kept) and `chatbot-followup-dispatcher` (v4).
+
 ## 2026-10-11
 
 - **GMA Conversations: Messenger-app style on phones.** On screens up to 800px wide, there is one full-screen view at a time: Chats list (big avatars, pill search) → conversation (top nav hidden; back arrow, avatar, Pin / Pause / ⓘ icons) → ⓘ Customer & orders. The phone's Back button steps back through these. The composer is tools + an "Aa" pill + like, and like turns into a Send arrow; while typing, the tools fold behind ">". Enter adds a new line on touch screens. The layout follows the keyboard and the notch safe areas. Hold a customer message to react or Copy. Desktop also gets list avatars and the Send arrow ([gma-conversations.html](docs/gma-conversations.html), [gmaConversations.js](docs/js/gmaConversations.js) cache v=mobile1).
