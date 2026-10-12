@@ -862,6 +862,13 @@
     .dcal-day-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
     .dcal-day-title { font-weight: 700; flex: 1; }
     .dcal-day-meta { font-size: 12px; color: var(--muted-text); margin-bottom: 6px; }
+    /* Booking mode - opened from a pinned-location message (gmaConversations.js openDeliveryCalendar(pin)). */
+    .dcal-booking { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; background: color-mix(in srgb, var(--primary) 8%, transparent); border: 1px solid var(--panel-border); font-size: 13px; }
+    .dcal-booking .dcal-day-meta { margin: 4px 0 0; }
+    .inbox-pin-fee { margin: 4px 0 6px; font-size: 13px; }
+    .dcal-book { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 10px; }
+    .dcal-book select { flex: 1 1 220px; min-width: 0; font-size: 16px; padding: 6px 8px; }
+    .dcal-book .dcal-msg { flex-basis: 100%; margin-top: 0; color: var(--danger, #b42318); }
     .dcal-stop { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--panel-border); font-size: 13px; }
     .dcal-stop-main { min-width: 0; }
     .dcal-stop-addr { font-size: 12px; color: var(--muted-text); overflow-wrap: anywhere; }
@@ -3553,6 +3560,7 @@
         <button type="button" class="btn btn-secondary btn-sm" id="dcalNextBtn" aria-label="Next month">&rsaquo;</button>
         <button type="button" class="btn btn-secondary btn-sm" id="dcalTodayBtn">Today</button>
       </div>
+      <div class="dcal-booking hidden" id="dcalBookingBanner"></div>
       <div class="dcal-legend">
         <span><i class="dcal-dot is-open"></i>Open</span>
         <span><i class="dcal-dot is-light"></i>1-2 stops</span>
@@ -3767,7 +3775,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=pinloc1"></script>
+  <script src="js/gmaConversations.js?v=pinfee1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

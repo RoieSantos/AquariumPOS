@@ -932,7 +932,16 @@ function renderMessages(serverRows, opts = {}) {
             : `<button type="button" class="btn btn-secondary btn-sm inbox-use-payment-btn" data-message-id="${m.message_id}" data-amount="${Number(m.detected_payment_amount)}" data-method="${escapeHtml(m.detected_payment_method || '')}" data-reference="${escapeHtml(m.detected_payment_reference || '')}">Use in Add Payment</button>`) +
           '</div>'
         : '';
-      bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${mediaHtml}${extraHtml}${textHtml}${paymentHtml}</div>`;
+      // A pin sent from pin-location.html - offer to book it on the Delivery Calendar (bookDeliveryFromPin).
+      const pin = m.role === 'user' ? parsePinnedLocation(m.content) : null;
+      const pinHtml = pin
+        ? '<div class="inbox-payment-detected">' +
+          '<div class="inbox-payment-detected-title">Pinned delivery location</div>' +
+          `<div class="inbox-pin-fee" data-pin-key="${pin.lat},${pin.lng}">Delivery fee: calculating...</div>` +
+          `<button type="button" class="btn btn-secondary btn-sm inbox-pin-book-btn" data-message-id="${m.message_id}">📅 Schedule delivery with this pin</button>` +
+          '</div>'
+        : '';
+      bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${mediaHtml}${extraHtml}${textHtml}${paymentHtml}${pinHtml}</div>`;
     }
 
     // Reactions (supabase_chatbot_message_reactions.sql): the customer's on our messages, staff's on
@@ -977,6 +986,17 @@ function renderMessages(serverRows, opts = {}) {
         btn.dataset.messageId ? Number(btn.dataset.messageId) : null
       );
       showMobileView('info'); // phone: the Add Payment form is on the customer screen
+    });
+  });
+  messagesEl.querySelectorAll('.inbox-pin-fee').forEach((el) => {
+    const [lat, lng] = el.dataset.pinKey.split(',').map(Number);
+    getPinFees(lat, lng).then((quotes) => { el.innerHTML = pinFeesHtml(quotes); });
+  });
+  messagesEl.querySelectorAll('.inbox-pin-book-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const msg = (messageCache.get(selectedPsid) || []).find((r) => String(r.message_id) === btn.dataset.messageId);
+      const pin = msg ? parsePinnedLocation(msg.content) : null;
+      if (pin) openDeliveryCalendar(pin);
     });
   });
   messagesEl.querySelectorAll('.inbox-msg-retry-btn').forEach((btn) => {
@@ -5378,6 +5398,76 @@ let dcalGeneration = 0;
 let dcalStopsByDate = {};
 let dcalVendorsByDate = {};
 let dcalRouteByDow = null;            // day_of_week -> route row (loaded once)
+// Booking mode (opened from a 📍 message's "Schedule delivery" button): the pin being booked, and this
+// conversation's orders to pick from. Null = the plain read-only calendar.
+let dcalBookingPin = null;            // { lat, lng, address, notes }
+let dcalBookingOrders = [];
+let dcalBookingQuotes = null;         // per-branch delivery fees to the pin (getPinFees)
+
+// Reads a "📍 My delivery location" message (sql/supabase_gma_location_pin.sql builds it): header line,
+// optional address, optional "Landmark / notes:" line, then the Google Maps ?q=lat,lng link.
+function parsePinnedLocation(content) {
+  const text = String(content || '');
+  if (!text.startsWith('📍 My delivery location')) return null;
+  const match = text.match(/maps\?q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const lines = text.split('\n').slice(1).map((l) => l.trim()).filter(Boolean);
+  const notesLine = lines.find((l) => l.startsWith('Landmark / notes:'));
+  const address = lines.filter((l) => l !== notesLine && !l.startsWith('http')).join(', ');
+  return {
+    lat: Number(match[1]),
+    lng: Number(match[2]),
+    address,
+    notes: notesLine ? notesLine.replace('Landmark / notes:', '').trim() : ''
+  };
+}
+
+// Delivery fee to a pin, per branch - delivery-fee-from-pin Edge Function (the bot's official formula,
+// measured to the exact pin). Cached per pin for the page's lifetime: the thread re-renders often.
+const pinFeeCache = new Map();
+
+function getPinFees(lat, lng) {
+  const key = `${lat},${lng}`;
+  if (!pinFeeCache.has(key)) {
+    pinFeeCache.set(key, (async () => {
+      try {
+        const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-fee-from-pin`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+            'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+          },
+          body: JSON.stringify({ admin_username: currentSession.username, admin_password: currentSession.password, latitude: lat, longitude: lng })
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !body?.quotes) throw new Error(body?.error || `Request failed (${response.status}).`);
+        return body.quotes;
+      } catch (err) {
+        pinFeeCache.delete(key); // let a later render retry
+        return { error: err.message };
+      }
+    })());
+  }
+  return pinFeeCache.get(key);
+}
+
+function pinFeeLabel(q) {
+  return q && !q.error && q.estimatedFee != null
+    ? `₱${Number(q.estimatedFee).toLocaleString('en-PH')} <span class="muted">(${q.distanceKm} km)</span>`
+    : `<span class="muted" title="${escapeHtml(q?.error || '')}">n/a</span>`;
+}
+
+function pinFeesHtml(quotes) {
+  if (!quotes || quotes.error) return `<span class="muted">Delivery fee unavailable${quotes?.error ? `: ${escapeHtml(quotes.error)}` : ''}</span>`;
+  return `Delivery fee: GMA ${pinFeeLabel(quotes.GMA)} &middot; Amaya ${pinFeeLabel(quotes.Amaya)}`;
+}
+
+// The selected booking order's branch fee (orders are GMA or Amaya; anything else defaults to GMA).
+function bookingFeeFor(order, quotes) {
+  const q = quotes?.[order?.location === 'Amaya' ? 'Amaya' : 'GMA'];
+  return q && !q.error && q.estimatedFee != null ? Number(q.estimatedFee) : null;
+}
 
 function dcalKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -5387,13 +5477,48 @@ function dcalTodayKey() {
   return dcalKey(new Date());
 }
 
-function openDeliveryCalendar() {
+function openDeliveryCalendar(pin = null) {
   const now = new Date();
   dcalMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   dcalSelectedKey = null;
+  dcalBookingPin = pin;
+  dcalBookingOrders = [];
+  dcalBookingQuotes = null;
   document.getElementById('dcalDay').classList.add('hidden');
+  const banner = document.getElementById('dcalBookingBanner');
+  banner.classList.toggle('hidden', !pin);
+  banner.innerHTML = pin
+    ? `<strong>Booking a delivery for this pin:</strong> ${escapeHtml(pin.address || `${pin.lat}, ${pin.lng}`)}` +
+      `${pin.notes ? ` &middot; Landmark: ${escapeHtml(pin.notes)}` : ''}` +
+      ` &middot; <a href="https://www.google.com/maps?q=${pin.lat},${pin.lng}" target="_blank" rel="noopener">View pin &#8599;</a>` +
+      '<div class="dcal-day-meta" id="dcalBookingFee">Delivery fee: calculating...</div>' +
+      '<div class="dcal-day-meta">Pick a day below, then choose the order and Book - the fee for the order\'s branch is saved on the order and the calendar.</div>'
+    : '';
   document.getElementById('deliveryCalendarModal').classList.remove('hidden');
   loadDeliveryCalendar();
+  if (pin) {
+    loadBookingOrders();
+    getPinFees(pin.lat, pin.lng).then((quotes) => {
+      if (dcalBookingPin !== pin) return;
+      dcalBookingQuotes = quotes;
+      document.getElementById('dcalBookingFee').innerHTML = pinFeesHtml(quotes);
+      if (dcalSelectedKey) renderDeliveryCalendarDay(dcalSelectedKey); // order options show each one's fee
+    });
+  }
+}
+
+// This conversation's GMA orders, for the booking mode's order picker.
+async function loadBookingOrders() {
+  const conv = conversations.find((c) => c.psid === selectedPsid);
+  if (!conv) return;
+  const { data, error } = await supabaseClient.rpc('admin_list_automated_orders_by_gma_conversation', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: conv.psid,
+    p_page_id: conv.page_id
+  });
+  dcalBookingOrders = error ? [] : (data || []).filter((o) => !/cancel/i.test(o.status || ''));
+  if (dcalSelectedKey) renderDeliveryCalendarDay(dcalSelectedKey);
 }
 
 function closeDeliveryCalendar() {
@@ -5504,9 +5629,10 @@ function renderDeliveryCalendarDay(key) {
     <div class="dcal-day-head">
       <div class="dcal-day-title">${date.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
         &middot; ${stops.length ? `${stops.length} stop${stops.length === 1 ? '' : 's'} booked` : 'no stops booked yet'}</div>
-      ${isPast ? '' : '<button type="button" class="btn btn-primary btn-sm" id="dcalOfferBtn">Offer this date</button>'}
+      ${isPast || dcalBookingPin ? '' : '<button type="button" class="btn btn-primary btn-sm" id="dcalOfferBtn">Offer this date</button>'}
     </div>
     ${meta.length ? `<div class="dcal-day-meta">${meta.join(' &middot; ')}</div>` : ''}
+    ${dcalBookingPin && !isPast ? dcalBookingFormHtml() : ''}
     ${stops.map((s) => `
       <div class="dcal-stop">
         <div class="dcal-stop-main">
@@ -5517,6 +5643,85 @@ function renderDeliveryCalendarDay(key) {
       </div>`).join('')}`;
   el.classList.remove('hidden');
   document.getElementById('dcalOfferBtn')?.addEventListener('click', () => offerDeliveryDate(date));
+  document.getElementById('dcalBookBtn')?.addEventListener('click', () => bookDeliveryFromPin(key));
+}
+
+function dcalBookingFormHtml() {
+  if (!dcalBookingOrders.length) {
+    return '<div class="dcal-book"><div class="dcal-day-meta">No open orders in this conversation yet - create the order first, then book its delivery here.</div></div>';
+  }
+  const options = dcalBookingOrders.map((o) => {
+    const total = o.estimated_total != null ? ` · ₱${Number(o.estimated_total).toLocaleString('en-PH', { maximumFractionDigits: 2 })}` : '';
+    const fee = bookingFeeFor(o, dcalBookingQuotes);
+    const feeText = fee != null ? ` · delivery ₱${fee.toLocaleString('en-PH')} from ${o.location === 'Amaya' ? 'Amaya' : 'GMA'}` : '';
+    return `<option value="${escapeHtml(o.order_no)}">${escapeHtml(o.order_no)}${o.customer_name ? ` · ${escapeHtml(o.customer_name)}` : ''}${total}${feeText}</option>`;
+  }).join('');
+  return `
+    <div class="dcal-book">
+      <select id="dcalBookOrder" aria-label="Order to deliver">${options}</select>
+      <button type="button" class="btn btn-primary btn-sm" id="dcalBookBtn">Book this date</button>
+      <div class="dcal-msg hidden" id="dcalBookMsg"></div>
+    </div>`;
+}
+
+// Books the chosen order on this date with the customer's pin as the stop's map location
+// (sql/supabase_gma_pin_delivery_booking.sql), then puts a confirmation in the reply box for staff to send.
+async function bookDeliveryFromPin(key) {
+  const pin = dcalBookingPin;
+  const orderNo = document.getElementById('dcalBookOrder')?.value;
+  const msgEl = document.getElementById('dcalBookMsg');
+  const btn = document.getElementById('dcalBookBtn');
+  if (!pin || !orderNo) return;
+  const date = new Date(`${key}T00:00:00`);
+  const dateLabel = date.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  btn.disabled = true;
+  btn.textContent = 'Getting fee...';
+  const quotes = await getPinFees(pin.lat, pin.lng);
+  btn.disabled = false;
+  btn.textContent = 'Book this date';
+  const order = dcalBookingOrders.find((o) => o.order_no === orderNo);
+  const fee = bookingFeeFor(order, quotes);
+  const feeText = fee != null ? `₱${fee.toLocaleString('en-PH')}` : null;
+  if (!confirm(`Book delivery of order ${orderNo} on ${dateLabel} at the customer's pinned location?\n\n`
+    + (feeText ? `Delivery fee ${feeText} will be saved on the order and the calendar.` : 'The delivery fee could not be calculated - the order\'s fee will be left as it is.'))) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Booking...';
+  const { data: result, error } = await supabaseClient.rpc('admin_book_delivery_from_pin', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo,
+    p_delivery_date: key,
+    p_latitude: pin.lat,
+    p_longitude: pin.lng,
+    p_address: pin.address || null,
+    p_notes: pin.notes || null,
+    p_delivery_fee: fee
+  });
+  btn.disabled = false;
+  btn.textContent = 'Book this date';
+  if (error) {
+    msgEl.textContent = error.code === 'PGRST202' ? 'Run sql/supabase_gma_pin_delivery_booking.sql first.' : `Could not book: ${error.message}`;
+    msgEl.classList.remove('hidden');
+    return;
+  }
+  // Fee couldn't go on the order (Pancake order, cancelled...) - say so; the booking itself went through.
+  const feeNote = result?.[0]?.fee_note;
+  if (feeNote && feeNote.startsWith('Booked, but')) alert(feeNote);
+  // Order card(s) in the customer panel show the new fee / total.
+  const conv = conversations.find((c) => c.psid === selectedPsid);
+  if (conv && conversationOrdersConv?.psid === conv.psid) loadConversationOrders(conv);
+
+  const input = document.getElementById('replyInput');
+  const line = `✅ Your delivery is ${result?.[0]?.moved ? 'now ' : ''}scheduled for ${dateLabel} (Order ${orderNo}).`
+    + (feeText && !(feeNote || '').startsWith('Booked, but') ? ` Delivery fee: ${feeText}.` : '')
+    + ' We\'ll deliver to the location you pinned.';
+  input.value = input.value.trim() ? `${input.value.trimEnd()}\n${line}` : line;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  autoResizeReplyInput();
+  closeDeliveryCalendar();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 // Puts the date into the reply box (after anything already typed) for staff to check and send.
@@ -5561,7 +5766,7 @@ async function insertLocationPinLink() {
 }
 
 function initDeliveryCalendar() {
-  document.getElementById('openDeliveryCalendarBtn')?.addEventListener('click', openDeliveryCalendar);
+  document.getElementById('openDeliveryCalendarBtn')?.addEventListener('click', () => openDeliveryCalendar());
   document.getElementById('closeDeliveryCalendarBtn').addEventListener('click', closeDeliveryCalendar);
   document.getElementById('dcalPrevBtn').addEventListener('click', () => shiftDeliveryCalendar(-1));
   document.getElementById('dcalNextBtn').addEventListener('click', () => shiftDeliveryCalendar(1));

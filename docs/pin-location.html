@@ -155,7 +155,12 @@
 
     function reverseGeocode(lat, lng) {
       geocoder.geocode({ location: { lat, lng } }, (results, status) => {
-        if (status === 'OK' && results?.[0]) el('addressInput').value = results[0].formatted_address;
+        if (status !== 'OK' || !results?.length) return;
+        // Google often puts a plus code ("9RCH+42J, Tanza, Cavite") first for spots without a street
+        // address - skip those for the first result with a real street / barangay / town name.
+        const best = results.find((r) => !r.types?.includes('plus_code') && !/^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b/.test(r.formatted_address))
+          || results[0];
+        el('addressInput').value = best.formatted_address;
       });
     }
 

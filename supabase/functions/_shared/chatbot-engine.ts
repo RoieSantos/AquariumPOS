@@ -1026,7 +1026,9 @@ export const TOOLS: Anthropic.Tool[] = [
       type: 'object',
       properties: {
         origin_location: { type: 'string', enum: ['Amaya', 'GMA'], description: 'Which store branch delivers the order.' },
-        destination_address: { type: 'string', description: 'The customer\'s full delivery address.' }
+        destination_address: { type: 'string', description: 'The customer\'s full delivery address.' },
+        destination_latitude: { type: 'number', description: 'Optional - only when the customer sent a "📍 My delivery location" message: the latitude from its google.com/maps?q=LAT,LNG link. The fee is then measured to that exact pin.' },
+        destination_longitude: { type: 'number', description: 'Optional - the longitude from that same link (pass both or neither).' }
       },
       required: ['origin_location', 'destination_address']
     }
@@ -1419,7 +1421,11 @@ export function buildSystemPrompt(
   );
   lines.push(
     '',
-    'PINNED LOCATIONS: when you need a delivery customer\'s exact location (see create_location_pin_link), send them our map link to pin it instead of only asking them to describe it. A customer message starting with "📍 My delivery location" is the exact spot they pinned on that map page (sent by you or by staff). Treat its address (and landmark notes) as their delivery address - use it for delivery quotes and orders, and don\'t ask for the address again. If it has no address line, ask them to type their full address, and keep the Google Maps link for our driver.',
+    'CUSTOMER PRIVACY (strict): only ever discuss the orders, deliveries and details of the customer you are talking to. Never reveal another customer\'s name, phone, address, order, payment or delivery date, and never describe our delivery schedule - who else is on a day, the stop list, route order, how many stops, or where the truck is going. About a delivery day, say only whether it is available for THEM. If an order tool answers verified:false, follow its message: ask for the mobile number used on the order, save it with save_customer_info, and try once more - if it still isn\'t theirs, say you can\'t find that order on their account, without confirming it exists or saying anything about it.'
+  );
+  lines.push(
+    '',
+    'PINNED LOCATIONS: when you need a delivery customer\'s exact location (see create_location_pin_link), send them our map link to pin it instead of only asking them to describe it. A customer message starting with "📍 My delivery location" is the exact spot they pinned on that map page (sent by you or by staff). Treat its address (and landmark notes) as their delivery address - use it for delivery quotes and orders, and don\'t ask for the address again. For compute_delivery_quote, also pass the LAT,LNG from its google.com/maps?q=LAT,LNG link as destination_latitude / destination_longitude, so the fee is measured to their exact pin. If it has no address line, ask them to type their full address, and keep the Google Maps link for our driver.',
     '',
     'REVIEW REQUEST (after the customer receives their order):',
     '- When the customer says they already RECEIVED their products / order (delivered, picked up, or set up) AND sounds satisfied (e.g. "received na po, salamat", "ang ganda po", "ok na po, thank you", a happy emoji or thumbs-up after receiving), first reply to what they said, then send the review request below.',
@@ -1985,7 +1991,12 @@ export async function computeRepairQuote(supabase: SupabaseClient, input: Record
 export async function computeDeliveryQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const location = String(input.origin_location ?? '').trim();
   const destinationAddress = String(input.destination_address ?? '').trim();
-  if (!location || !destinationAddress) {
+  // A customer's map pin (pin-location.html) - measured to the exact spot instead of geocoding the text.
+  const destLat = Number(input.destination_latitude);
+  const destLng = Number(input.destination_longitude);
+  const hasPin = input.destination_latitude != null && input.destination_longitude != null
+    && Number.isFinite(destLat) && Number.isFinite(destLng);
+  if (!location || (!destinationAddress && !hasPin)) {
     return { error: 'Need both a branch (Amaya or GMA) and a delivery address.' };
   }
 
@@ -2019,7 +2030,9 @@ export async function computeDeliveryQuote(supabase: SupabaseClient, input: Reco
       },
       body: JSON.stringify({
         origin: { location: { latLng: { latitude: origin.latitude, longitude: origin.longitude } } },
-        destination: { address: destinationAddress },
+        destination: hasPin
+          ? { location: { latLng: { latitude: destLat, longitude: destLng } } }
+          : { address: destinationAddress },
         travelMode: 'DRIVE',
         extraComputations: ['TOLLS']
       })
@@ -2293,6 +2306,50 @@ export async function sendMessengerImage(psid: string, imageUrl: string, pageAcc
   return true;
 }
 
+// --- Order privacy --------------------------------------------------------------------------------
+// Per "dont let the customer see [other customers' data]": the order tools (get_order_status, the delivery
+// scheduling tools) only answer about orders that belong to THIS chat - otherwise anyone could type
+// another order number (they count up: AO-00012, AO-00013...) and read that customer's name, address,
+// items and delivery date, or book a delivery on it. An order belongs to the chat when it was created
+// from it (AutomatedOrders.GmaPsid), or its mobile number matches the one saved for this chat
+// (ChatbotConversations.CustomerPhone - Vic asks for it and saves it with save_customer_info).
+// Staff channels (Portal Chat, Telegram) and the sandbox stay unrestricted.
+const STAFF_PSID_PREFIXES = ['portal-chat:', 'telegram:'];
+
+export const ORDER_NOT_VERIFIED_RESULT = JSON.stringify({
+  verified: false,
+  message: 'This order is not linked to this chat, so its details can\'t be shared yet. Ask the customer for the mobile number used on the order, save it with save_customer_info, then call this tool again. If it still doesn\'t match, say you can\'t find that order on their account and ask them to message from the account that placed it or wait for staff - never reveal anything about the order (not even its name or status).'
+});
+
+function phoneKey(phone: unknown): string {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : '';
+}
+
+// orderIds: what the customer typed plus anything it resolved to (e.g. a POS receipt no. -> OrderID).
+export async function orderBelongsToChat(supabase: SupabaseClient, psid: string, orderIds: string[], simulate = false): Promise<boolean> {
+  if (simulate || STAFF_PSID_PREFIXES.some((p) => psid.startsWith(p))) return true;
+  const ids = [...new Set(orderIds.map((id) => String(id ?? '').trim()).filter(Boolean))];
+  if (!ids.length) return false;
+
+  const [byNo, byReceipt, online, conv] = await Promise.all([
+    supabase.from('AutomatedOrders').select('GmaPsid, CustomerPhone, PancakeReceiptNo').in('OrderNo', ids),
+    supabase.from('AutomatedOrders').select('GmaPsid, CustomerPhone, PancakeReceiptNo').in('PancakeReceiptNo', ids),
+    supabase.from('OnlineOrders').select('OrderID, CustomerPhone, WalkinCustomerPhone').in('OrderID', ids),
+    supabase.from('ChatbotConversations').select('CustomerPhone').eq('Psid', psid).maybeSingle()
+  ]);
+  const automated = [...(byNo.data ?? []), ...(byReceipt.data ?? [])] as Array<Record<string, unknown>>;
+  if (automated.some((a) => a.GmaPsid === psid)) return true;
+
+  const chatPhone = phoneKey(conv.data?.CustomerPhone);
+  if (!chatPhone) return false;
+  const orderPhones = [
+    ...automated.map((a) => a.CustomerPhone),
+    ...((online.data ?? []) as Array<Record<string, unknown>>).flatMap((o) => [o.CustomerPhone, o.WalkinCustomerPhone])
+  ].map(phoneKey).filter(Boolean);
+  return orderPhones.includes(chatPhone);
+}
+
 // Logs a photo the bot sent (send_item_image, the review guide) as its own ChatbotMessages row, so
 // GMA Conversations shows it in the thread - our own app's Messenger echoes are ignored by the
 // webhook, so without this the photo was sent to the customer but never appeared in the inbox.
@@ -2367,6 +2424,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       });
       if (automatedError) return `Lookup failed: ${automatedError.message}`;
       if (automatedData && automatedData.length > 0) {
+        if (!(await orderBelongsToChat(supabase, psid, [orderNo], simulate))) return ORDER_NOT_VERIFIED_RESULT;
         // Portal-rendered receipt, NOT Pancake's own order link - per direct decision, the bot
         // never shares Pancake's link with customers (see supabase_automated_order_portal_receipt.sql).
         const receiptUrl = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`;
@@ -2386,6 +2444,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         // everything below uses the resolved OrderID, not what the customer typed.
         const order = onlineData[0];
         const orderId = String(order.order_id);
+        if (!(await orderBelongsToChat(supabase, psid, [orderNo, orderId], simulate))) return ORDER_NOT_VERIFIED_RESULT;
         const isWalkIn = order.order_type === 'Walk-in Order';
         const { data: lineData, error: lineError } = await supabase.rpc('public_get_online_order_lines', { p_order_id: orderId });
         if (lineError) return `Lookup failed: ${lineError.message}`;
@@ -2764,6 +2823,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
     case 'get_delivery_scheduling_options': {
       const orderNo = String(input.order_no ?? '').trim();
       if (!orderNo) return 'No order number provided.';
+      if (!(await orderBelongsToChat(supabase, psid, [orderNo], simulate))) return ORDER_NOT_VERIFIED_RESULT;
       const { data, error } = await supabase.rpc('public_get_delivery_scheduling_options', { p_order_id: orderNo });
       if (error) return `Lookup failed: ${error.message}`;
       if (!data || data.length === 0) return 'No order found with that number.';
@@ -2805,6 +2865,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
     case 'get_delivery_schedule_status': {
       const orderNo = String(input.order_no ?? '').trim();
       if (!orderNo) return 'No order number provided.';
+      if (!(await orderBelongsToChat(supabase, psid, [orderNo], simulate))) return ORDER_NOT_VERIFIED_RESULT;
       const { data, error } = await supabase.rpc('public_get_delivery_schedule_status', { p_order_id: orderNo });
       if (error) return `Lookup failed: ${error.message}`;
       if (!data || data.length === 0 || !data[0].found) return 'No order found with that number.';
@@ -2818,6 +2879,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       if (simulate) {
         return `SANDBOX MODE - no real delivery was booked. If this were live, Order ${orderNo} would be scheduled for delivery on ${deliveryDate}, and staff would be notified via Telegram.`;
       }
+      if (!(await orderBelongsToChat(supabase, psid, [orderNo], simulate))) return ORDER_NOT_VERIFIED_RESULT;
 
       const { data, error } = await supabase.rpc('public_schedule_online_order_delivery', {
         p_order_id: orderNo,
