@@ -512,7 +512,7 @@ function driverBalanceHtml(balance) {
 //   1. mark_done - saves the photo and marks the stop Done / its order "Delivered" (portal-only, not
 //      sent to Pancake). No Facebook involved, so a delivery is recorded even if Facebook fails.
 //   2. post_stop - the server writes the "Delivery Done / Setup Done" caption and posts the stored
-//      photo to the GMA Page, at most ONCE per stop (it claims the stop before posting, so a double
+//      photo to the GMA and Amaya Pages, at most ONCE per stop per Page (it claims the stop before posting, so a double
 //      tap, a second phone or a retry can't post twice). If it fails, the card shows "Post to
 //      Facebook" to try again later. No customer details are sent to the AI.
 // Nothing here runs on a timer - every Facebook post starts from a tap.
@@ -547,10 +547,13 @@ function showStopDone(row) {
   if (!el) return;
   const when = row.done_at_utc ? new Date(row.done_at_utc).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
   let postHtml;
+  // One link per Page posted (GMA, and Amaya once supabase_delivery_stop_post_amaya.sql is run).
+  const postLinks = [['GMA post', row.facebook_post_url], ['Amaya post', row.amaya_post_url]]
+    .filter(([, url]) => url)
+    .map(([label, url]) => ` &middot; <a href="${escapeHtmlText(url)}" target="_blank" rel="noopener" style="font-size:12px;">${label}</a>`)
+    .join('');
   if (row.post_status === 'posted') {
-    postHtml = row.facebook_post_url
-      ? ` &middot; <a href="${escapeHtmlText(row.facebook_post_url)}" target="_blank" rel="noopener" style="font-size:12px;">View post</a>`
-      : ' &middot; <span class="muted" style="font-size:12px;">Posted</span>';
+    postHtml = postLinks || ' &middot; <span class="muted" style="font-size:12px;">Posted</span>';
   } else if (row.post_status === 'in_progress') {
     const minutes = row.post_claimed_at_utc ? (Date.now() - new Date(row.post_claimed_at_utc).getTime()) / 60000 : 0;
     // Never retried automatically - a post that may have gone out is checked by a person first.
@@ -558,7 +561,9 @@ function showStopDone(row) {
       ? '<div class="error-text" style="font-size:12px; margin-top:4px;">Facebook post stuck - ask a super user to check the Page before posting again.</div>'
       : ' &middot; <span class="muted" style="font-size:12px;">Posting to Facebook...</span>';
   } else {
-    postHtml = `${row.post_error ? `<div class="error-text" style="font-size:12px; margin-top:4px;">Not posted: ${escapeHtmlText(row.post_error)}</div>` : ''}`
+    // A Page that already went out still shows its link; Post to Facebook only posts the other one.
+    postHtml = postLinks
+      + `${row.post_error ? `<div class="error-text" style="font-size:12px; margin-top:4px;">Not posted: ${escapeHtmlText(row.post_error)}</div>` : ''}`
       + `<button type="button" class="btn btn-secondary btn-sm driver-post-stop-btn" data-post-stop-id="${row.stop_id}" style="width:100%; margin-top:6px;">&#128228; Post to Facebook</button>`;
   }
   el.innerHTML = `<span class="badge badge-success">&#9989; Done</span> <span class="muted" style="font-size:12px;">${escapeHtmlText(row.done_by || '')}${when ? ` &middot; ${when}` : ''}</span>${postHtml}`;
@@ -646,7 +651,12 @@ async function postStop() {
   try {
     const result = await callFacebookPostFunction(currentSession, '', { action: 'post_stop', stop_id: stopId });
     markDoneBusy = false;
-    setMarkDoneState({ status: '✅ Done! Saved and posted to the GMA Facebook Page.', caption: result.caption || '' });
+    setMarkDoneState({
+      status: result.status === 'already_posted'
+        ? '✅ Done! Already posted to the Facebook Pages.'
+        : '✅ Done! Saved and posted to the GMA and Amaya Facebook Pages.',
+      caption: result.caption || ''
+    });
   } catch (err) {
     markDoneBusy = false;
     setMarkDoneState({
@@ -682,6 +692,13 @@ function wireMarkDone() {
     document.getElementById('markDoneTipModal').classList.add('hidden');
     document.getElementById('markDonePhotoInput').click();
   });
+  // Per "add an option there to upload a photo choice" - an existing photo from the gallery instead
+  // of the camera; same watermark / save / post flow (onMarkDonePhoto).
+  document.getElementById('markDoneChooseGalleryBtn').addEventListener('click', () => {
+    document.getElementById('markDoneTipModal').classList.add('hidden');
+    document.getElementById('markDoneGalleryInput').click();
+  });
+  document.getElementById('markDoneGalleryInput').addEventListener('change', onMarkDonePhoto);
   document.getElementById('markDoneTipCancelBtn').addEventListener('click', () => {
     document.getElementById('markDoneTipModal').classList.add('hidden');
     markDoneStopId = null;

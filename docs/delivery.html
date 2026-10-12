@@ -265,12 +265,15 @@
 
   <!-- Mark Done: camera photo -> watermark + AI caption -> Facebook post (js/delivery.js markStopDone) -->
   <input type="file" id="markDonePhotoInput" accept="image/*" capture="environment" class="hidden" />
+  <!-- Same flow, but picks an existing photo from the phone's gallery (no capture = file picker). -->
+  <input type="file" id="markDoneGalleryInput" accept="image/*" class="hidden" />
   <div id="markDoneTipModal" class="modal-backdrop hidden">
     <div class="modal-panel driver-detail-panel" style="text-align:center;">
       <div style="font-size:40px;">&#128248;</div>
       <h2 style="margin:6px 0;">Grab a better image</h2>
-      <p style="margin:0 0 14px;">This will automatically post to our Facebook Page. Take a clear, bright photo of the finished setup - no customer faces or house numbers.</p>
-      <button class="btn btn-success" id="markDoneOpenCameraBtn" type="button" style="width:100%; padding:14px; font-size:16px;">Open Camera</button>
+      <p style="margin:0 0 14px;">This will automatically post to our GMA and Amaya Facebook Pages. Take a clear, bright photo of the finished setup - no customer faces or house numbers.</p>
+      <button class="btn btn-success" id="markDoneOpenCameraBtn" type="button" style="width:100%; padding:14px; font-size:16px;">&#128247; Open Camera</button>
+      <button class="btn btn-primary" id="markDoneChooseGalleryBtn" type="button" style="width:100%; padding:12px; font-size:15px; margin-top:8px;">&#128444;&#65039; Choose from Gallery</button>
       <button class="btn btn-secondary" id="markDoneTipCancelBtn" type="button" style="width:100%; margin-top:8px;">Cancel</button>
     </div>
   </div>
@@ -297,7 +300,7 @@
   <script src="js/pushNotifications.js?v=3"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/delivery.js?v=monday1"></script>
+  <script src="js/delivery.js?v=amayapost1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -17,10 +17,12 @@
 //       Saves the watermarked photo to the online-order-status-photos bucket and marks the stop
 //       Done / its order Delivered. No Facebook call. Already-done stops are left as they are.
 //   { action: 'post_stop', stop_id }
-//       Posts a Done stop to Facebook ONCE: claims the stop first (service_claim_delivery_stop_post),
-//       so a double tap, a second phone or a retry can never post the same stop twice. Uses the
-//       STORED photo and writes the Delivery Done caption itself, so it can be retried any time
-//       from the stop card ("Post to Facebook") even after the app was closed.
+//       Posts a Done stop to BOTH Pages - GMA and RS Pet Stop (Amaya) - ONCE each: claims each Page
+//       first (service_claim_delivery_stop_post_page, supabase_delivery_stop_post_amaya.sql), so a
+//       double tap, a second phone or a retry can never post the same stop to a Page twice - a retry
+//       only posts the Page that failed. Uses the STORED photo and writes each Page's Delivery Done
+//       caption itself (naming that Page's branch), so it can be retried any time from the stop card
+//       ("Post to Facebook") even after the app was closed.
 //
 //   Dispatcher "Release / Ship" on a GMA- or Amaya-branch online order (online-orders.html,
 //   supabase_online_order_ship_post.sql + supabase_online_order_ship_post_amaya.sql):
@@ -38,7 +40,7 @@
 //   FACEBOOK_GMA_POST_TOKEN - never-expiring Page token with pages_manage_posts + pages_read_engagement
 //   FACEBOOK_GMA_PAGE_ID    - the RSPetStop GMA Page id
 //   FACEBOOK_RSPETSTOP_POST_TOKEN / FACEBOOK_RSPETSTOP_PAGE_ID - the same pair for the RS Pet Stop
-//                             Page (Amaya ship posts only; everything else posts to GMA)
+//                             Page (Amaya ship posts + every delivery Done post; the rest go to GMA)
 //
 // Staff-gated: the caller passes admin_username/admin_password, re-verified via
 // is_staff_authorized() on every call, and must be a Super User or on the Delivery Team
@@ -480,48 +482,98 @@ Deno.serve(async (req) => {
   }
 
   // action === 'post_stop'
-  // Claim first: returns the stored photo only if the stop is Done, not posted yet, and nobody else
-  // is posting it right now. No row = nothing to do, so nothing is sent to Facebook.
-  const { data: claimRows, error: claimError } = await supabase.rpc('service_claim_delivery_stop_post', { p_stop_id: stopId });
-  if (claimError) return jsonResponse({ error: `Could not start the post: ${claimError.message}` }, 500);
-  const claim = (claimRows as Array<{ photo_storage_path: string | null; facebook_post_url: string | null; status: string }> | null)?.[0];
-  if (!claim || claim.status !== 'claimed') {
+  // Posted to BOTH Pages - GMA and RS Pet Stop (Amaya) - per "can we post to Amaya and Gma both?"
+  // (supabase_delivery_stop_post_amaya.sql). Each Page is claimed separately before anything is sent:
+  // a Page already posted (or being posted right now) is skipped, so a retry only posts the Page(s)
+  // that didn't go out, never one twice. Uses the photo stored by mark_done.
+  const photoForPost = { bytes: null as Uint8Array | null, path: '' };
+  const { data: stopRow } = await supabase.from('DeliveryStops').select('*').eq('StopID', stopId).maybeSingle();
+  // City only (deliveryCity) - the caption writer never sees the full address.
+  const city = stopRow ? await deliveryCity(supabase, stopRow) : null;
+
+  const results: Array<{ page: PostPage; status: string; post_url?: string | null; caption?: string | null; error?: string }> = [];
+  for (const page of ['gma', 'amaya'] as PostPage[]) {
+    let { data: claimRows, error: claimError } = await supabase.rpc('service_claim_delivery_stop_post_page', { p_stop_id: stopId, p_page: page });
+    // Before supabase_delivery_stop_post_amaya.sql is run: GMA only, with the older claim function.
+    const pageFnMissing = Boolean(claimError && /service_claim_delivery_stop_post_page/i.test(claimError.message));
+    if (pageFnMissing) {
+      if (page === 'amaya') break;
+      ({ data: claimRows, error: claimError } = await supabase.rpc('service_claim_delivery_stop_post', { p_stop_id: stopId }));
+    }
+    if (claimError) {
+      results.push({ page, status: 'failed', error: `Could not start the post: ${claimError.message}` });
+      continue;
+    }
+    const claim = (claimRows as Array<{ photo_storage_path: string | null; facebook_post_url: string | null; status: string }> | null)?.[0];
+    if (!claim || claim.status === 'not_done') {
+      return jsonResponse({ ok: false, status: 'not_done', error: 'Mark the stop Done first.' }, 409);
+    }
+    if (claim.status !== 'claimed') {
+      results.push({ page, status: claim.status, post_url: claim.facebook_post_url });
+      continue;
+    }
+
+    const finish = (fields: { postId?: string | null; postUrl?: string | null; caption?: string | null; error?: string | null }) =>
+      pageFnMissing
+        ? supabase.rpc('service_finish_delivery_stop_post', {
+          p_stop_id: stopId, p_post_id: fields.postId ?? null, p_post_url: fields.postUrl ?? null,
+          p_caption: fields.caption ?? null, p_error: fields.error ?? null
+        })
+        : supabase.rpc('service_finish_delivery_stop_post_page', {
+          p_stop_id: stopId, p_page: page, p_post_id: fields.postId ?? null, p_post_url: fields.postUrl ?? null,
+          p_caption: fields.caption ?? null, p_error: fields.error ?? null
+        });
+
+    let caption = '';
+    try {
+      if (!claim.photo_storage_path) throw new Error('No saved photo for this stop.');
+      if (!photoForPost.bytes || photoForPost.path !== claim.photo_storage_path) {
+        const { data: blob, error: downloadError } = await supabase.storage.from(PHOTO_BUCKET).download(claim.photo_storage_path);
+        if (downloadError || !blob) throw new Error(`Could not load the saved photo: ${downloadError?.message ?? 'not found'}`);
+        photoForPost.bytes = new Uint8Array(await blob.arrayBuffer());
+        photoForPost.path = claim.photo_storage_path;
+      }
+      // Each Page's caption names its own branch (same as the Amaya ship posts).
+      const { data: branchRow } = await supabase.from('Warehouses').select('"Name"')
+        .ilike('Name', page === 'amaya' ? '%Amaya%' : '%GMA%').order('Name').limit(1).maybeSingle();
+      caption = (await writeCaption(supabase, staff, 'delivery_done', city ? `Delivered to: ${city}` : '',
+        bytesToBase64(photoForPost.bytes), 'image/jpeg', (branchRow?.Name as string | undefined) ?? null)).caption;
+      const posted = await postPhotoToFacebook(photoForPost.bytes, 'image/jpeg', caption, null, page);
+      // Record the post right away - this is what stops a second post to this Page.
+      await finish({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption });
+      results.push({ page, status: 'posted', post_url: posted.postUrl, caption });
+    } catch (err) {
+      // Releases this Page's claim so "Post to Facebook" can try it again.
+      await finish({ caption: caption || null, error: errorText(err) });
+      results.push({ page, status: 'failed', caption: caption || null, error: errorText(err) });
+    }
+  }
+
+  const pageLabel = (p: PostPage) => (p === 'amaya' ? 'Amaya' : 'GMA');
+  const failed = results.filter((r) => r.status === 'failed');
+  const busy = results.filter((r) => r.status === 'in_progress');
+  const newCaption = results.find((r) => r.status === 'posted' && r.caption)?.caption ?? '';
+  const urls = Object.fromEntries(results.map((r) => [r.page, r.post_url ?? null]));
+  if (failed.length || busy.length) {
     return jsonResponse({
       ok: false,
-      status: claim?.status ?? 'not_done',
-      post_url: claim?.facebook_post_url ?? null,
-      error: claim?.status === 'posted' ? 'Already posted to Facebook.'
-        : claim?.status === 'in_progress' ? 'This stop is being posted right now.'
-          : 'Mark the stop Done first.'
-    }, 409);
+      status: failed.length ? 'failed' : 'in_progress',
+      results,
+      caption: newCaption || null,
+      post_url: urls.gma ?? null,
+      amaya_post_url: urls.amaya ?? null,
+      error: [
+        ...failed.map((r) => `${pageLabel(r.page)} Page: ${r.error}`),
+        ...busy.map((r) => `${pageLabel(r.page)} Page is being posted right now.`)
+      ].join(' ')
+    }, failed.length ? 502 : 409);
   }
-
-  const finish = (fields: { postId?: string | null; postUrl?: string | null; caption?: string | null; error?: string | null }) =>
-    supabase.rpc('service_finish_delivery_stop_post', {
-      p_stop_id: stopId,
-      p_post_id: fields.postId ?? null,
-      p_post_url: fields.postUrl ?? null,
-      p_caption: fields.caption ?? null,
-      p_error: fields.error ?? null
-    });
-
-  let caption = '';
-  try {
-    if (!claim.photo_storage_path) throw new Error('No saved photo for this stop.');
-    const { data: blob, error: downloadError } = await supabase.storage.from(PHOTO_BUCKET).download(claim.photo_storage_path);
-    if (downloadError || !blob) throw new Error(`Could not load the saved photo: ${downloadError?.message ?? 'not found'}`);
-    const photoBytes = new Uint8Array(await blob.arrayBuffer());
-    // City only (deliveryCity) - the caption writer never sees the full address.
-    const { data: stop } = await supabase.from('DeliveryStops').select('*').eq('StopID', stopId).maybeSingle();
-    const city = stop ? await deliveryCity(supabase, stop) : null;
-    caption = (await writeCaption(supabase, staff, 'delivery_done', city ? `Delivered to: ${city}` : '', bytesToBase64(photoBytes), 'image/jpeg')).caption;
-    const posted = await postPhotoToFacebook(photoBytes, 'image/jpeg', caption, null);
-    // Record the post right away - this is what stops a second post.
-    await finish({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption });
-    return jsonResponse({ ok: true, status: 'posted', caption, post_url: posted.postUrl });
-  } catch (err) {
-    // Releases the claim so "Post to Facebook" can be tried again.
-    await finish({ caption: caption || null, error: errorText(err) });
-    return jsonResponse({ ok: false, status: 'failed', caption: caption || null, error: errorText(err) }, 502);
-  }
+  return jsonResponse({
+    ok: true,
+    status: results.every((r) => r.status === 'posted') ? 'posted' : 'already_posted',
+    results,
+    caption: newCaption,
+    post_url: urls.gma ?? null,
+    amaya_post_url: urls.amaya ?? null
+  });
 });
