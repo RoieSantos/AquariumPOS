@@ -5816,6 +5816,7 @@ async function insertLocationPinLink() {
 // pin in this chat, from both branches; "Put in reply" drops the price into the reply box.
 let dqPin = null; // the chat's latest "📍 My delivery location", if any
 let dqPsid = null; // the chat the window was last opened for
+let dqSeq = 0;      // newest quote request - an older one finishing later is ignored
 
 const DQ_VEHICLE_LABELS = { MOTORCYCLE: 'Motorcycle', SEDAN: 'Sedan', MPV: 'MPV', TRUCK330: 'Small truck (L300)', '2000KG_ALUMINUM': '2-ton truck' };
 
@@ -5834,9 +5835,13 @@ function openDeliveryQuote() {
   document.getElementById('dqResults').innerHTML = '';
   document.getElementById('deliveryQuoteModal').classList.remove('hidden');
   addressEl.focus();
+  // Quote straight away when there's already something to quote (a pin, or an address from before).
+  if (dqPin || addressEl.value.trim().length >= 5) runDeliveryQuote();
 }
 
 function closeDeliveryQuote() {
+  clearTimeout(dqTypingTimer);
+  dqSeq++; // a quote still loading shouldn't land after the window is closed
   document.getElementById('deliveryQuoteModal').classList.add('hidden');
 }
 
@@ -5847,9 +5852,13 @@ async function runDeliveryQuote() {
   const vehicle = method === 'lalamove' ? document.getElementById('dqVehicle').value : null;
   const resultsEl = document.getElementById('dqResults');
   if (!usePin && address.length < 5) {
-    resultsEl.innerHTML = '<div class="dq-note">Type the full address first (street, barangay, city).</div>';
+    dqSeq++; // drop any quote still loading for the old address
+    document.getElementById('dqQuoteBtn').disabled = false;
+    resultsEl.innerHTML = '<div class="dq-note">Type the full address (street, barangay, city) - the quote updates as you type.</div>';
     return;
   }
+  // Auto re-quotes can overlap (a field changed while one was still loading) - only the newest one shows.
+  const seq = ++dqSeq;
   const btn = document.getElementById('dqQuoteBtn');
   btn.disabled = true;
   resultsEl.innerHTML = `<div class="dq-note">${vehicle ? 'Asking Lalamove...' : 'Calculating...'}</div>`;
@@ -5871,13 +5880,14 @@ async function runDeliveryQuote() {
       })
     });
     const body = await response.json().catch(() => null);
+    if (seq !== dqSeq) return; // a newer quote is on its way
     if (!response.ok || !body?.quotes) throw new Error(body?.error || `Request failed (${response.status}).`);
     quotes = body.quotes;
   } catch (err) {
-    resultsEl.innerHTML = `<div class="dq-note error-text">Could not get a quote: ${escapeHtml(err.message)}</div>`;
+    if (seq === dqSeq) resultsEl.innerHTML = `<div class="dq-note error-text">Could not get a quote: ${escapeHtml(err.message)}</div>`;
     return;
   } finally {
-    btn.disabled = false;
+    if (seq === dqSeq) btn.disabled = false;
   }
 
   const place = usePin ? 'your pinned location' : address;
@@ -5910,16 +5920,30 @@ async function runDeliveryQuote() {
   }));
 }
 
+// Per "auto validate the delivery quote when a field is changed": method / vehicle / pin re-quote right
+// away; the address re-quotes once typing pauses (so Google isn't called on every keystroke).
+const DQ_TYPING_PAUSE_MS = 900;
+let dqTypingTimer = null;
+
 function initDeliveryQuote() {
   document.getElementById('openDeliveryQuoteBtn')?.addEventListener('click', openDeliveryQuote);
   document.getElementById('closeDeliveryQuoteBtn').addEventListener('click', closeDeliveryQuote);
   document.getElementById('dqQuoteBtn').addEventListener('click', runDeliveryQuote);
   document.getElementById('dqMethod').addEventListener('change', (e) => {
     document.getElementById('dqVehicle').classList.toggle('hidden', e.target.value !== 'lalamove');
+    runDeliveryQuote();
   });
+  document.getElementById('dqVehicle').addEventListener('change', runDeliveryQuote);
   document.getElementById('dqUsePin').addEventListener('change', (e) => {
     // Unticked = quote the typed address instead (e.g. the customer gave a different place).
     document.getElementById('dqAddress').placeholder = e.target.checked ? 'Using the pinned location' : 'Full address: house no., street, barangay, city';
+    runDeliveryQuote();
+  });
+  document.getElementById('dqAddress').addEventListener('input', () => {
+    clearTimeout(dqTypingTimer);
+    // With the pin ticked the address is just a label - nothing to re-quote.
+    if (dqPin && document.getElementById('dqUsePin').checked) return;
+    dqTypingTimer = setTimeout(runDeliveryQuote, DQ_TYPING_PAUSE_MS);
   });
 }
 

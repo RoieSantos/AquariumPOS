@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-12
 
+- **Delivery quote window updates by itself.** It quotes as soon as it opens (when there's a pin or an address). It re-quotes right away when the method, vehicle or "use pin" changes, and once typing pauses in the address box. Overlapping quotes can't show stale prices. The button is now "Refresh" ([gmaConversations.js](docs/js/gmaConversations.js) `v=dquote2`).
 - **GMA Conversations: 🚚 Delivery quote window.** It's a new composer button. Type an address, or tick "use the customer's pinned location", then pick our own truck or Lalamove (with vehicle size). It shows the fee from both branches with distance and toll; **Put in reply** drops a ready sentence into the reply box. It uses the same formula Vic quotes. [delivery-fee-from-pin](supabase/functions/delivery-fee-from-pin/index.ts) now also accepts a typed `address`. [gmaConversations.js](docs/js/gmaConversations.js) `v=dquote1`.
 - **Fix: "Book this date" failed with "canceling statement due to statement timeout".**
   - **Cause:** every write to a delivery stop sends the delivery team a web push as a live HTTP call (`trg_notify_delivery_stop_changed`). The booking wrote to the stop twice (create, then pin and fee), so it waited on two calls and ran past the request's time limit.
