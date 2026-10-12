@@ -145,7 +145,6 @@
         <!-- online-pill / walkin-pill: the Walk-in tab swaps Confirmed / Printed / To Ship for its portal-only
              stages To Assign / Completed (js/onlineOrders.js, sql/supabase_walkin_order_portal_status.sql). -->
         <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Confirmed">Confirmed <span class="status-summary-count" id="statusCountConfirmed">-</span></button>
-        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Printed">Printed <span class="status-summary-count" id="statusCountPrinted">-</span></button>
         <button type="button" class="bc-tab status-summary-pill walkin-pill hidden" data-status="To Assign" title="Walk-ins that need a Tank / Stand Maker">To Assign <span class="status-summary-count" id="statusCountToAssign">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Assigned">Assigned <span class="status-summary-count" id="statusCountAssigned">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Production Done" title="Every part marked done by the makers">Production Done <span class="status-summary-count" id="statusCountProductionDone">-</span></button>
@@ -173,7 +172,7 @@
           <div class="bc-pane-body">
             <div class="bc-fp-field">
               <label for="statusFilterInput">Status</label>
-              <input type="text" id="statusFilterInput" placeholder="e.g. Printed" autocomplete="off" />
+              <input type="text" id="statusFilterInput" placeholder="e.g. Confirmed" autocomplete="off" />
             </div>
             <p class="bc-fp-hint">Or pick a status tab above - click it again to clear.</p>
             <!-- Field filters (js/onlineOrders.js ORDER_FILTER_FIELDS, sql/supabase_online_order_list_field_filters.sql) -->
@@ -351,7 +350,6 @@
       <div id="groupedOrdersView" class="hidden">
         <div class="grouped-tabs" id="groupedTabs">
           <button type="button" class="grouped-tab-btn active" data-status="Confirmed">Confirmed<span class="grouped-tab-count" id="groupCountConfirmed">0</span></button>
-          <button type="button" class="grouped-tab-btn" data-status="Printed">Printed<span class="grouped-tab-count" id="groupCountPrinted">0</span></button>
           <button type="button" class="grouped-tab-btn" data-status="Assigned">Assigned<span class="grouped-tab-count" id="groupCountAssigned">0</span></button>
           <button type="button" class="grouped-tab-btn" data-status="To Ship">To Ship<span class="grouped-tab-count" id="groupCountToShip">0</span></button>
         </div>
@@ -1124,7 +1122,7 @@
   <script src="js/proofPhoto.js?v=shippost1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/onlineOrders.js?v=adv-ile1-branch1"></script>
+  <script src="js/onlineOrders.js?v=noprinted1"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>

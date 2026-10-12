@@ -594,7 +594,6 @@ async function loadStatusSummary(session) {
   });
 
   setStatValue('statConfirmed', countsByLabel['Confirmed']);
-  setStatValue('statPrinted', countsByLabel['Printed']);
   setStatValue('statToShip', countsByLabel['To Ship']);
   setStatValue('statShipped', countsByLabel['Shipped']);
   setStatValue('statCancelled', countsByLabel['Cancelled']);

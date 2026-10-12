@@ -47,7 +47,9 @@ let currentConfirmedBy = null;
 // Narrowed to Confirmed only - per "for online order staff .. can you only show confirmed orders". The
 // Printed / Assigned / To Ship tabs are hidden for them (init below). NOTE: the page sends this list, so
 // it's a page-level limit; admin_list_online_orders doesn't force it per account.
-const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed'];
+// + 'Printed': no Printed tab any more - a Printed order not yet fully assigned reads as Confirmed
+// (orderDisplayStatus), so it's fetched too and lands on the Confirmed tab.
+const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed', 'Printed'];
 let hidePriceColumns = false;
 
 // Per "if an order has been assigned to the user.. can you show it to their access?" - the My
@@ -66,7 +68,6 @@ let myAssignmentsLocked = false;
 // - see the isOnlineOrderStaff branch in loadOrders/init below.
 const GROUP_COUNT_IDS = {
   'Confirmed': 'groupCountConfirmed',
-  'Printed': 'groupCountPrinted',
   'Assigned': 'groupCountAssigned',
   'To Ship': 'groupCountToShip'
 };
@@ -75,7 +76,7 @@ const GROUP_COUNT_IDS = {
 // SCOPE above, which stays the real Status values sent server-side (p_status_in). 'Assigned' is
 // never a real Status value (see orderDisplayStatus below) - the server-side fetch already covers
 // it by asking for 'Printed', which orderDisplayStatus then splits client-side.
-const GROUP_TAB_STATUSES = ['Confirmed', 'Printed', 'Assigned', 'To Ship'];
+const GROUP_TAB_STATUSES = ['Confirmed', 'Assigned', 'To Ship'];
 
 // 'Assigned' isn't a real OnlineOrders.Status value - Status must keep mirroring Pancake (see
 // supabase_online_order_production_assignment.sql's header comment), so this is a derived
@@ -97,6 +98,10 @@ function orderDisplayStatus(o) {
     const standOk = !o.has_stand_line || !!o.assigned_stand_maker;
     if (tankOk && standOk) return 'Assigned';
   }
+  // Per "remove the printed status on the orders" - no Printed stage on screen any more: a Printed
+  // order not (fully) assigned yet still reads as Confirmed (Confirmed > Assigned > To Ship). Pancake's
+  // own Status stays 'Printed' (To Ship is still allowed from it - isPrintedOrder).
+  if (status.toLowerCase() === 'printed') return 'Confirmed';
   return status;
 }
 
@@ -211,7 +216,6 @@ async function rpcBranchScoped(fnName, params) {
 
 const STATUS_SUMMARY_ELEMENT_IDS = {
   'Confirmed': 'statusCountConfirmed',
-  'Printed': 'statusCountPrinted',
   'Assigned': 'statusCountAssigned',
   // Every part marked done, waiting for the POS Production Done (supabase_online_order_production_done_tab.sql).
   'Production Done': 'statusCountProductionDone',
@@ -5809,7 +5813,7 @@ async function exportOrdersToExcel() {
         o.order_id,
         o.order_date,
         formatTime12(o.order_time),
-        o.status,
+        orderDisplayStatus(o),
         o.customer_name,
         o.location_id,
         o.warehouse_name,
@@ -6969,7 +6973,7 @@ async function initAdvanceOrdersView() {
   // 3-status list for this role regardless of what this string says. The status filter box and
   // status-summary pills are disabled rather than hidden so it's still visible/obvious why
   // nothing else shows up.
-  const statusParam = session.isOnlineOrderStaff ? ONLINE_ORDER_STAFF_STATUS_SCOPE.join(', ') : (urlParams.get('status') || '');
+  const statusParam = session.isOnlineOrderStaff ? 'Confirmed' : (urlParams.get('status') || '');
 
   if (statusParam) {
     document.getElementById('statusFilterInput').value = statusParam;

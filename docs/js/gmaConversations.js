@@ -1392,8 +1392,10 @@ function pancakeStatusBadgeHtml(o) {
   if (!live || live === 'loading') return '<span class="badge badge-neutral">Checking Pancake...</span>';
   if (live.error) return `<span class="badge badge-danger" title="${escapeHtml(live.error)}">Pancake error</span>`;
 
-  const cls = ONLINE_ORDER_STATUS_BADGE_CLASS[live.status] || (live.status === 'New' ? 'badge-primary' : 'badge-neutral');
-  return `<span class="badge ${cls}">${escapeHtml(live.status || 'Unknown')}</span>`;
+  // No Printed stage on screen any more (same as Online Orders' orderDisplayStatus) - shows as Confirmed.
+  const status = live.status === 'Printed' ? 'Confirmed' : live.status;
+  const cls = ONLINE_ORDER_STATUS_BADGE_CLASS[status] || (status === 'New' ? 'badge-primary' : 'badge-neutral');
+  return `<span class="badge ${cls}">${escapeHtml(status || 'Unknown')}</span>`;
 }
 
 function orderStatusBadgeHtml(status) {
