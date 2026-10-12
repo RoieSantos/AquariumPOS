@@ -402,8 +402,18 @@ async function refreshPortalSession(session) {
 // (those already get their own dedicated dashboard.html landing block, unaffected by this - they
 // still land on dashboard.html, which then shows that block). Land everyone else on My Payslips
 // instead, since that's the one thing built specifically for a plain employee login.
+function conversationsAppLaunched() {
+  try {
+    return sessionStorage.getItem('portalAppConversations') === '1';
+  } catch {
+    return false;
+  }
+}
+
 function getDefaultLandingPage(session) {
   if (!session) return 'dashboard.html';
+  // Opened from the home-screen "Conversations" app (conversations-manifest.json) - go back there.
+  if ((session.isSuperUser || session.isConversationsStaff) && conversationsAppLaunched()) return 'gma-conversations.html';
   if (isOrderMakerOnly(session)) return 'online-orders.html';
   // Per "some store manager can dispatch too.. we can open straight my assignments" - a Store
   // Manager who is also a Dispatcher lands on Online Orders, which opens on My Assignments for them

@@ -6,12 +6,23 @@
   <title>Conversations - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
   <script src="js/theme.js?v=auto1"></script>
-  <link rel="manifest" href="manifest.json" />
+  <!-- Own manifest, not the portal's manifest.json - Add to Home Screen from here installs a separate
+       "Conversations" app that opens straight on this page (the portal one always opens dashboard.html). -->
+  <link rel="manifest" href="conversations-manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <meta name="apple-mobile-web-app-title" content="Conversations" />
+  <script>
+    // Launched from the Conversations app (its start_url) - remember it for this app window only, so
+    // logging in again (the session ends when the app is closed) lands back here, not the Dashboard.
+    // See getDefaultLandingPage in js/auth.js. sessionStorage, not localStorage: on Android the portal
+    // app and Chrome share localStorage with this app, and they must keep landing on the Dashboard.
+    try {
+      if (new URLSearchParams(location.search).get('app') === 'conversations') sessionStorage.setItem('portalAppConversations', '1');
+    } catch {}
+  </script>
   <style>
     /* This page benefits from more width than the portal's default 1200px cap - the three-column
        inbox (list/thread/customer panel) gets cramped otherwise, especially the Create Order tab's
@@ -3745,7 +3756,7 @@ Message: ..."></textarea>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=salesshelf1"></script>
+  <script src="js/auth.js?v=convapp1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
