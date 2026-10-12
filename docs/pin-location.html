@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>RS Pet Stop - Pin Your Delivery Location</title>
+  <!-- Public, no-login page opened from the link staff send from GMA Conversations (📍 button) - see
+       sql/supabase_gma_location_pin.sql. The customer drops a pin where they live; it's posted back into
+       their conversation as a message with a Google Maps link. -->
+  <style>
+    :root {
+      --page-bg: #f4f7fb;
+      --panel-bg: #ffffff;
+      --panel-border: #d7e0ef;
+      --text-main: #1b355e;
+      --text-muted: #61738f;
+      --primary: #1d4f91;
+      --danger: #b42318;
+      --success: #15803d;
+      --shadow: 0 8px 24px rgba(21, 52, 94, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--page-bg);
+      color: var(--text-main);
+    }
+    .page { max-width: 720px; margin: 0 auto; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+    h1 { margin: 0 0 4px; font-size: 19px; color: var(--primary); }
+    .subtitle { margin: 0 0 14px; font-size: 14px; color: var(--text-muted); line-height: 1.45; }
+    .card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .search-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    input[type="text"], textarea {
+      width: 100%;
+      font: inherit;
+      font-size: 16px; /* stops iOS zooming in on focus */
+      color: var(--text-main);
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    textarea { resize: vertical; min-height: 64px; }
+    button {
+      font: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      border: 1px solid var(--panel-border);
+      background: #fff;
+      color: var(--primary);
+      white-space: nowrap;
+    }
+    button.primary { background: var(--primary); border-color: var(--primary); color: #fff; width: 100%; padding: 13px; font-size: 16px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .locate-btn { width: 100%; margin-bottom: 10px; }
+    #map { width: 100%; height: 52vh; min-height: 300px; border-radius: 8px; border: 1px solid var(--panel-border); }
+    .hint { font-size: 13px; color: var(--text-muted); margin: 8px 0 0; line-height: 1.4; }
+    label { display: block; font-size: 14px; font-weight: 600; margin: 12px 0 6px; }
+    .message { font-size: 14px; margin: 10px 0 0; line-height: 1.4; }
+    .message.error { color: var(--danger); }
+    .done { text-align: center; padding: 28px 14px; }
+    .done .big { font-size: 44px; margin-bottom: 8px; }
+    .done h2 { margin: 0 0 8px; color: var(--success); font-size: 20px; }
+    .done p { margin: 0 0 6px; color: var(--text-muted); line-height: 1.45; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>📍 Pin your delivery location</h1>
+    <p class="subtitle" id="subtitle">Drop the pin on your exact location so our delivery team can find you.</p>
+
+    <div class="card hidden" id="statusCard"></div>
+
+    <div id="formArea" class="hidden">
+      <div class="card">
+        <button type="button" class="locate-btn" id="locateBtn">📡 Use my current location</button>
+        <div class="search-row">
+          <input type="text" id="searchInput" placeholder="Or search: barangay, street, subdivision..." autocomplete="off">
+          <button type="button" id="searchBtn">Search</button>
+        </div>
+        <div id="map"></div>
+        <p class="hint">Tap the map or drag the red pin to your exact house / gate.</p>
+      </div>
+
+      <div class="card">
+        <label for="addressInput">Address</label>
+        <textarea id="addressInput" placeholder="Fills in from the pin - edit it if needed (house no., street, barangay, city)"></textarea>
+        <label for="notesInput">Landmark / notes for the driver (optional)</label>
+        <textarea id="notesInput" placeholder="e.g. blue gate beside the sari-sari store"></textarea>
+        <p class="message error hidden" id="formError"></p>
+        <p class="hint">&nbsp;</p>
+        <button type="button" class="primary" id="submitBtn" disabled>Send my location</button>
+      </div>
+    </div>
+
+    <div class="card done hidden" id="doneCard">
+      <div class="big">✅</div>
+      <h2>Thank you! We got your location.</h2>
+      <p>It has been sent to our team in Messenger.</p>
+      <p>You can close this page now and go back to the chat. 🐠</p>
+      <p class="hint"><a href="#" id="changePinLink">Pinned the wrong spot? Change it</a></p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script>
+    // Default view before a pin is set: Cavite, between the GMA and Amaya branches.
+    const DEFAULT_CENTER = { lat: 14.33, lng: 120.93 };
+    const token = new URLSearchParams(location.search).get('t') || '';
+
+    let map = null;
+    let marker = null;
+    let geocoder = null;
+    let pinned = null; // { lat, lng } once the customer sets a pin
+
+    const el = (id) => document.getElementById(id);
+
+    function showStatus(text) {
+      el('statusCard').textContent = text;
+      el('statusCard').classList.remove('hidden');
+      el('formArea').classList.add('hidden');
+    }
+
+    function showFormError(text) {
+      el('formError').textContent = text || '';
+      el('formError').classList.toggle('hidden', !text);
+    }
+
+    // Same loader as track-driver.html; the key lives in PortalSettings (public_get_google_maps_api_key).
+    function loadGoogleMapsScript(apiKey) {
+      return new Promise((resolve, reject) => {
+        if (!apiKey) { reject(new Error('Google Maps is not configured yet.')); return; }
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}`;
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed to load the map.'));
+        document.head.appendChild(script);
+      });
+    }
+
+    function reverseGeocode(lat, lng) {
+      geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        if (status === 'OK' && results?.[0]) el('addressInput').value = results[0].formatted_address;
+      });
+    }
+
+    // Moves the pin (creating it the first time) and fills in the address from it.
+    function setPin(lat, lng, { zoom = false, fillAddress = true } = {}) {
+      pinned = { lat, lng };
+      const position = { lat, lng };
+      if (!marker) {
+        marker = new google.maps.Marker({ map, position, draggable: true });
+        marker.addListener('dragend', () => {
+          const p = marker.getPosition();
+          setPin(p.lat(), p.lng());
+        });
+      } else {
+        marker.setPosition(position);
+      }
+      map.panTo(position);
+      if (zoom) map.setZoom(17);
+      if (fillAddress) reverseGeocode(lat, lng);
+      el('submitBtn').disabled = false;
+      showFormError('');
+    }
+
+    function useMyLocation() {
+      if (!navigator.geolocation) {
+        showFormError('Your phone/browser can\'t share its location - please search or tap the map instead.');
+        return;
+      }
+      const btn = el('locateBtn');
+      btn.disabled = true;
+      btn.textContent = 'Finding you...';
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          btn.disabled = false;
+          btn.textContent = '📡 Use my current location';
+          setPin(pos.coords.latitude, pos.coords.longitude, { zoom: true });
+        },
+        () => {
+          btn.disabled = false;
+          btn.textContent = '📡 Use my current location';
+          showFormError('Couldn\'t get your location (location permission may be off). Please search or tap the map instead.');
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    }
+
+    function searchAddress() {
+      const query = el('searchInput').value.trim();
+      if (!query) return;
+      geocoder.geocode({ address: query, componentRestrictions: { country: 'PH' } }, (results, status) => {
+        if (status !== 'OK' || !results?.[0]) {
+          showFormError('Place not found - try adding the barangay and city, or tap the map instead.');
+          return;
+        }
+        const loc = results[0].geometry.location;
+        setPin(loc.lat(), loc.lng(), { zoom: true });
+        el('addressInput').value = results[0].formatted_address;
+      });
+    }
+
+    async function submitPin() {
+      if (!pinned) {
+        showFormError('Please set your pin on the map first.');
+        return;
+      }
+      const btn = el('submitBtn');
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      showFormError('');
+      const { data: psid, error } = await supabaseClient.rpc('public_submit_location_request', {
+        p_token: token,
+        p_latitude: pinned.lat,
+        p_longitude: pinned.lng,
+        p_address: el('addressInput').value,
+        p_notes: el('notesInput').value
+      });
+      btn.textContent = 'Send my location';
+      if (error) {
+        btn.disabled = false;
+        showFormError(error.message || 'Sending failed - please try again.');
+        return;
+      }
+      // Ping any open GMA Conversations inbox so the message shows up right away (same event the
+      // Messenger webhook sends). Best-effort - the inbox also picks it up on its next refresh.
+      try {
+        await supabaseClient.channel('gma-inbox').send({ type: 'broadcast', event: 'new_message', payload: { psid } });
+      } catch {}
+      el('formArea').classList.add('hidden');
+      el('doneCard').classList.remove('hidden');
+      window.scrollTo(0, 0);
+    }
+
+    (async function init() {
+      if (!/^[0-9a-f-]{36}$/i.test(token)) {
+        showStatus('This link is incomplete. Please open the full link we sent you in Messenger.');
+        return;
+      }
+
+      const { data: rows, error } = await supabaseClient.rpc('public_get_location_request', { p_token: token });
+      const req = rows?.[0];
+      if (error || !req) {
+        showStatus('We couldn\'t open this link right now. Please try again in a moment.');
+        return;
+      }
+      if (req.status === 'not_found') { showStatus('This link is not valid. Please ask us in Messenger for a new one.'); return; }
+      if (req.status === 'expired') { showStatus('This link has expired. Please ask us in Messenger for a new one.'); return; }
+      if (req.status === 'limit') { showStatus('This link was already used several times. Please message us in Messenger if your location changed.'); return; }
+      if (req.customer_name) el('subtitle').textContent = `Hi ${req.customer_name}! Drop the pin on your exact location so our delivery team can find you.`;
+
+      el('formArea').classList.remove('hidden');
+      try {
+        const { data: apiKey, error: keyError } = await supabaseClient.rpc('public_get_google_maps_api_key');
+        if (keyError) throw keyError;
+        await loadGoogleMapsScript(apiKey);
+      } catch (err) {
+        showStatus('The map couldn\'t load right now. Please try again later, or send us your full address in Messenger.');
+        return;
+      }
+
+      geocoder = new google.maps.Geocoder();
+      map = new google.maps.Map(el('map'), {
+        center: DEFAULT_CENTER,
+        zoom: 11,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+        gestureHandling: 'greedy'
+      });
+      map.addListener('click', (e) => setPin(e.latLng.lat(), e.latLng.lng()));
+
+      // Re-opening the link after sending: start from the pin they already sent.
+      if (req.latitude != null && req.longitude != null) {
+        setPin(req.latitude, req.longitude, { zoom: true, fillAddress: false });
+        el('addressInput').value = req.address || '';
+        el('notesInput').value = req.notes || '';
+      }
+
+      el('locateBtn').addEventListener('click', useMyLocation);
+      el('searchBtn').addEventListener('click', searchAddress);
+      el('searchInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); searchAddress(); }
+      });
+      el('submitBtn').addEventListener('click', submitPin);
+      el('changePinLink').addEventListener('click', (e) => {
+        e.preventDefault();
+        el('doneCard').classList.add('hidden');
+        el('formArea').classList.remove('hidden');
+      });
+    })();
+  </script>
+</body>
+</html>

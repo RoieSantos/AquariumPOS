@@ -5531,6 +5531,35 @@ function offerDeliveryDate(date) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+// 📍 button: a one-time "pin your delivery location" map link for this conversation
+// (sql/supabase_gma_location_pin.sql, docs/pin-location.html), put into the reply box for staff to send.
+// The customer's pin comes back into this thread as their own message with a Google Maps link.
+async function insertLocationPinLink() {
+  if (!selectedPsid) return;
+  const btn = document.getElementById('sendLocationPinBtn');
+  btn.disabled = true;
+  const { data: token, error } = await supabaseClient.rpc('admin_create_location_request', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: selectedPsid
+  });
+  btn.disabled = false;
+  if (error || !token) {
+    alert(error?.code === 'PGRST202'
+      ? 'Run sql/supabase_gma_location_pin.sql first.'
+      : `Couldn't create the map link: ${error?.message || 'unknown error'}`);
+    return;
+  }
+  const link = `https://rspetstop.com/pin-location.html?t=${token}`;
+  const text = `To help our delivery team find you, please pin your exact location on the map here 📍\n${link}`;
+  const input = document.getElementById('replyInput');
+  input.value = input.value.trim() ? `${input.value.trimEnd()}\n${text}` : text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  autoResizeReplyInput();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function initDeliveryCalendar() {
   document.getElementById('openDeliveryCalendarBtn')?.addEventListener('click', openDeliveryCalendar);
   document.getElementById('closeDeliveryCalendarBtn').addEventListener('click', closeDeliveryCalendar);
@@ -5581,6 +5610,7 @@ function initDeliveryCalendar() {
   document.getElementById('attachmentFileInput').addEventListener('change', onAttachmentFileChange);
   document.getElementById('toggleProductLookupBtn').addEventListener('click', () => toggleProductLookupPanel());
   initDeliveryCalendar();
+  document.getElementById('sendLocationPinBtn').addEventListener('click', insertLocationPinLink);
   document.getElementById('productLookupSearchInput').addEventListener('input', (e) => onProductLookupSearchInput(e.target.value));
   document.getElementById('sendProductListBtn').addEventListener('click', sendProductList);
   document.getElementById('toggleMediaLibraryBtn').addEventListener('click', () => toggleMediaLibraryPanel());

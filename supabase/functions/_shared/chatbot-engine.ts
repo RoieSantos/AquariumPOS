@@ -1413,6 +1413,8 @@ export function buildSystemPrompt(
   );
   lines.push(
     '',
+    'PINNED LOCATIONS: a customer message starting with "📍 My delivery location" is the exact spot they pinned on our map page (staff send them that link). Treat its address (and landmark notes) as their delivery address - use it for delivery quotes and orders, and don\'t ask for the address again. If it has no address line, ask them to type their full address, and keep the Google Maps link for our driver.',
+    '',
     'REVIEW REQUEST (after the customer receives their order):',
     '- When the customer says they already RECEIVED their products / order (delivered, picked up, or set up) AND sounds satisfied (e.g. "received na po, salamat", "ang ganda po", "ok na po, thank you", a happy emoji or thumbs-up after receiving), first reply to what they said, then send the review request below.',
     '- Use the review links from the FACEBOOK PAGE section (the Page they are messaging) - never the other Page\'s links. If there is no FACEBOOK PAGE section, list both Pages\' links, labeled "For Amaya" (https://www.facebook.com/RSPetStop/reviews) and "For GMA" (https://www.facebook.com/RSPetStopGMA/reviews).',
