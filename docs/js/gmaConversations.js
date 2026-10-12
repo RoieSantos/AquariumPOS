@@ -5335,6 +5335,202 @@ function setupMobileViewportHeight() {
   MOBILE_INBOX_QUERY.addEventListener?.('change', apply);
 }
 
+
+// ---------------------------------------------------------------------------
+// Delivery calendar - per "in the conversations chatbox.. can we add a new button there a delivery calendar
+// so the user can see the calendar availability of delivery". Read-only month view of how booked each
+// delivery day is, from the same data as docs/delivery.html: admin_list_delivery_stops (booked stops),
+// staff_get_delivery_route_schedule (weekly fixed route) and staff_list_delivery_date_vendors (per-date
+// vendor stops). There's no truck capacity on file, so "availability" = how many stops are already
+// booked, shaded by DCAL_BUSY_LEVELS. Clicking a day shows its stops; "Offer this date" puts the date into
+// the reply box for staff to send.
+
+const DCAL_BUSY_LEVELS = [
+  { max: 0, cls: 'is-open' },
+  { max: 2, cls: 'is-light' },
+  { max: 4, cls: 'is-busy' },
+  { max: Infinity, cls: 'is-full' }
+];
+
+let dcalMonth = null;                 // Date - first day of the month shown
+let dcalSelectedKey = null;
+let dcalGeneration = 0;
+let dcalStopsByDate = {};
+let dcalVendorsByDate = {};
+let dcalRouteByDow = null;            // day_of_week -> route row (loaded once)
+
+function dcalKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function dcalTodayKey() {
+  return dcalKey(new Date());
+}
+
+function openDeliveryCalendar() {
+  const now = new Date();
+  dcalMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  dcalSelectedKey = null;
+  document.getElementById('dcalDay').classList.add('hidden');
+  document.getElementById('deliveryCalendarModal').classList.remove('hidden');
+  loadDeliveryCalendar();
+}
+
+function closeDeliveryCalendar() {
+  document.getElementById('deliveryCalendarModal').classList.add('hidden');
+}
+
+function shiftDeliveryCalendar(months) {
+  dcalMonth = new Date(dcalMonth.getFullYear(), dcalMonth.getMonth() + months, 1);
+  dcalSelectedKey = null;
+  document.getElementById('dcalDay').classList.add('hidden');
+  loadDeliveryCalendar();
+}
+
+async function loadDeliveryCalendar() {
+  const myGeneration = ++dcalGeneration;
+  const start = dcalKey(dcalMonth);
+  const end = dcalKey(new Date(dcalMonth.getFullYear(), dcalMonth.getMonth() + 1, 0));
+  document.getElementById('dcalMonthLabel').textContent = dcalMonth.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+  const msgEl = document.getElementById('dcalMsg');
+  msgEl.textContent = 'Loading...';
+  msgEl.classList.remove('hidden');
+
+  const auth = { p_admin_username: currentSession.username, p_admin_password: currentSession.password };
+  const [stopsRes, vendorsRes, routesRes] = await Promise.all([
+    supabaseClient.rpc('admin_list_delivery_stops', { ...auth, p_start_date: start, p_end_date: end }),
+    supabaseClient.rpc('staff_list_delivery_date_vendors', { ...auth, p_start_date: start, p_end_date: end }),
+    dcalRouteByDow ? Promise.resolve({ data: null, error: null }) : supabaseClient.rpc('staff_get_delivery_route_schedule', auth)
+  ]);
+  if (myGeneration !== dcalGeneration) return;
+
+  if (stopsRes.error) {
+    msgEl.textContent = `Could not load the delivery calendar: ${stopsRes.error.message}`;
+    document.getElementById('dcalGrid').innerHTML = '';
+    return;
+  }
+  dcalStopsByDate = {};
+  (stopsRes.data || []).forEach((s) => {
+    if (!dcalStopsByDate[s.delivery_date]) dcalStopsByDate[s.delivery_date] = [];
+    dcalStopsByDate[s.delivery_date].push(s);
+  });
+  Object.values(dcalStopsByDate).forEach((list) => list.sort((a, b) => (a.stop_sequence ?? 999) - (b.stop_sequence ?? 999)));
+  dcalVendorsByDate = {};
+  (vendorsRes.data || []).forEach((v) => {
+    if (!dcalVendorsByDate[v.delivery_date]) dcalVendorsByDate[v.delivery_date] = [];
+    dcalVendorsByDate[v.delivery_date].push(v.vendor_name || v.vendor_code);
+  });
+  if (!dcalRouteByDow) {
+    dcalRouteByDow = {};
+    (routesRes.data || []).forEach((r) => { dcalRouteByDow[r.day_of_week] = r; });
+  }
+
+  msgEl.classList.add('hidden');
+  renderDeliveryCalendar();
+  if (dcalSelectedKey) renderDeliveryCalendarDay(dcalSelectedKey);
+}
+
+// Weekly fixed-route vendors + this date's own vendor tags, deduped (same idea as delivery.js getDayVendorCodes).
+function dcalDayVendors(key, dow) {
+  const weekly = dcalRouteByDow?.[dow]?.vendor_names || [];
+  return [...new Set([...weekly, ...(dcalVendorsByDate[key] || [])])];
+}
+
+function renderDeliveryCalendar() {
+  const year = dcalMonth.getFullYear();
+  const month = dcalMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayKey = dcalTodayKey();
+  let html = '<span class="dcal-cell is-blank"></span>'.repeat(dcalMonth.getDay());
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, month, day);
+    const key = dcalKey(date);
+    const stops = dcalStopsByDate[key] || [];
+    const route = dcalRouteByDow?.[date.getDay()];
+    const vendors = dcalDayVendors(key, date.getDay());
+    const level = DCAL_BUSY_LEVELS.find((l) => stops.length <= l.max);
+    const classes = ['dcal-cell', level.cls];
+    if (key < todayKey) classes.push('is-past');
+    if (key === todayKey) classes.push('is-today');
+    if (key === dcalSelectedKey) classes.push('is-selected');
+    html += `
+      <button type="button" class="${classes.join(' ')}" data-dcal-date="${key}">
+        <span class="dcal-num">${day}</span>
+        <span class="dcal-count">${stops.length ? `${stops.length} stop${stops.length === 1 ? '' : 's'}` : 'Open'}</span>
+        ${route?.route_name ? `<span class="dcal-tag" title="Fixed route">${escapeHtml(route.route_name)}</span>` : ''}
+        ${vendors.length ? `<span class="dcal-tag" title="${escapeHtml(vendors.join(', '))}">${vendors.length} vendor</span>` : ''}
+      </button>`;
+  }
+  document.getElementById('dcalGrid').innerHTML = html;
+}
+
+function renderDeliveryCalendarDay(key) {
+  dcalSelectedKey = key;
+  document.querySelectorAll('#dcalGrid .dcal-cell').forEach((c) => c.classList.toggle('is-selected', c.dataset.dcalDate === key));
+  const date = new Date(`${key}T00:00:00`);
+  const stops = dcalStopsByDate[key] || [];
+  const route = dcalRouteByDow?.[date.getDay()];
+  const vendors = dcalDayVendors(key, date.getDay());
+  const isPast = key < dcalTodayKey();
+  const meta = [
+    route?.route_name ? `Fixed route: ${escapeHtml(route.route_name)}` : '',
+    route?.warehouse_names?.length ? `Warehouses: ${escapeHtml(route.warehouse_names.join(', '))}` : '',
+    vendors.length ? `Vendor stops: ${escapeHtml(vendors.join(', '))}` : ''
+  ].filter(Boolean);
+
+  const el = document.getElementById('dcalDay');
+  el.innerHTML = `
+    <div class="dcal-day-head">
+      <div class="dcal-day-title">${date.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+        &middot; ${stops.length ? `${stops.length} stop${stops.length === 1 ? '' : 's'} booked` : 'no stops booked yet'}</div>
+      ${isPast ? '' : '<button type="button" class="btn btn-primary btn-sm" id="dcalOfferBtn">Offer this date</button>'}
+    </div>
+    ${meta.length ? `<div class="dcal-day-meta">${meta.join(' &middot; ')}</div>` : ''}
+    ${stops.map((s) => `
+      <div class="dcal-stop">
+        <div class="dcal-stop-main">
+          <div>${escapeHtml(s.customer_name || '(no name)')}${s.order_id ? ` <span class="dcal-stop-status">#${escapeHtml(s.order_id)}</span>` : ''}</div>
+          <div class="dcal-stop-addr">${escapeHtml(s.shipping_address || '')}</div>
+        </div>
+        <div class="dcal-stop-status">${escapeHtml([s.truck_name, s.status].filter(Boolean).join(' · '))}</div>
+      </div>`).join('')}`;
+  el.classList.remove('hidden');
+  document.getElementById('dcalOfferBtn')?.addEventListener('click', () => offerDeliveryDate(date));
+}
+
+// Puts the date into the reply box (after anything already typed) for staff to check and send.
+function offerDeliveryDate(date) {
+  const input = document.getElementById('replyInput');
+  const line = `Available delivery date: ${date.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`;
+  input.value = input.value.trim() ? `${input.value.trimEnd()}\n${line}` : line;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  autoResizeReplyInput();
+  closeDeliveryCalendar();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function initDeliveryCalendar() {
+  document.getElementById('openDeliveryCalendarBtn')?.addEventListener('click', openDeliveryCalendar);
+  document.getElementById('closeDeliveryCalendarBtn').addEventListener('click', closeDeliveryCalendar);
+  document.getElementById('dcalPrevBtn').addEventListener('click', () => shiftDeliveryCalendar(-1));
+  document.getElementById('dcalNextBtn').addEventListener('click', () => shiftDeliveryCalendar(1));
+  document.getElementById('dcalTodayBtn').addEventListener('click', () => {
+    const now = new Date();
+    dcalMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    dcalSelectedKey = dcalTodayKey();
+    loadDeliveryCalendar();
+  });
+  document.getElementById('dcalGrid').addEventListener('click', (event) => {
+    const cell = event.target.closest('[data-dcal-date]');
+    if (cell) renderDeliveryCalendarDay(cell.dataset.dcalDate);
+  });
+  document.getElementById('deliveryCalendarModal').addEventListener('click', (event) => {
+    if (event.target.id === 'deliveryCalendarModal') closeDeliveryCalendar();
+  });
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -5364,6 +5560,7 @@ function setupMobileViewportHeight() {
   document.getElementById('toggleAttachmentBtn').addEventListener('click', () => document.getElementById('attachmentFileInput').click());
   document.getElementById('attachmentFileInput').addEventListener('change', onAttachmentFileChange);
   document.getElementById('toggleProductLookupBtn').addEventListener('click', () => toggleProductLookupPanel());
+  initDeliveryCalendar();
   document.getElementById('productLookupSearchInput').addEventListener('input', (e) => onProductLookupSearchInput(e.target.value));
   document.getElementById('sendProductListBtn').addEventListener('click', sendProductList);
   document.getElementById('toggleMediaLibraryBtn').addEventListener('click', () => toggleMediaLibraryPanel());

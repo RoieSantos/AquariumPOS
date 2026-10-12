@@ -10,6 +10,10 @@
 --   * Purchase Receipt  - QtyReceived on open AND posted PO lines.
 --   * Transfer Shipment - Qty Shipped on open AND posted transfer lines (out of the From warehouse).
 --   * Transfer Receipt  - Qty Received on lines the portal shipped (into the To warehouse).
+--   * Advance Order     - AdvanceOrders/Lines at To Ship since the cutover (same rule as
+--                         _ile_reconcile_advance_order, supabase_item_ledger_advance_orders.sql). Plus section
+--                         "3b": advance-order lines NOT deducted yet (not Ready to Ship in the portal) - a paid
+--                         order the customer already took is stock that left with no ledger entry.
 -- Plus orders / expenses whose last posting attempt ERRORED, and sold lines that could not be tied to a
 -- stocked item at all (those are silently skipped by the posting - a real item here = stock never taken out).
 --
@@ -37,7 +41,7 @@
 
 with
 params as (
-  select 'P-012'::text as item_search   -- '' = all items
+  select 'A2000'::text as item_search   -- '' = all items
 ),
 picked as (
   select i."Code"::text as item_code
@@ -222,16 +226,65 @@ tr_cmp as (
   where coalesce(x.qty, 0) <> coalesce(l.qty, 0)
 ),
 
+-- ---------------------------------------------------------------- Advance Orders (portal, at To Ship)
+adv as (
+  select a."TransactionNo"::text as no, ('ADV-' || a."TransactionNo")::text as doc_no, a."Date" as doc_date,
+         a."Warehouse"::text as wh_name,
+         (select w."ID"::text from public."Warehouses" w
+           where lower(trim(w."Name")) = lower(trim(coalesce(a."Warehouse", ''))) limit 1) as wh,
+         p."ToShipAtUtc" as to_ship, coalesce(a."FullyPaid", false) as fully_paid,
+         exists (select 1 from public."ItemLedgerEntries" e
+                  where e."DocumentType" = 'Sales Order'
+                    and e."DocumentNo" = nullif(trim(coalesce(a."OnlineOrderID", '')), '')) as via_pancake,
+         st.start_utc
+  from public."AdvanceOrders" a
+  cross join st
+  left join public."AdvanceOrderProduction" p on p."TransactionNo" = a."TransactionNo"
+),
+adv_lines as (
+  select a.doc_no, r.item_code, r.variant_id, li.quantity as qty, li.description
+  from adv a
+  cross join lateral public._advance_order_line_items(a.no) li
+  cross join lateral public._ile_try_resolve_stock_key(li.item_code, li.variation_id) r
+  where li.item_code is not null and li.reason not like 'no - SET%' and li.quantity > 0
+),
+adv_exp as (
+  select l.doc_no, l.item_code, l.variant_id, a.wh, -sum(l.qty) as qty
+  from adv_lines l
+  join adv a on a.doc_no = l.doc_no
+  where a.to_ship >= a.start_utc and not a.via_pancake
+  group by l.doc_no, l.item_code, l.variant_id, a.wh
+),
+adv_led as (
+  select e."DocumentNo"::text as doc_no, e."ItemCode"::text as item_code, e."VariantId"::text as variant_id,
+         e."WarehouseId"::text as wh, sum(e."Quantity") as qty
+  from public."ItemLedgerEntries" e
+  where e."DocumentType" = 'Advance Order'
+  group by 1, 2, 3, 4
+),
+adv_cmp as (
+  select 'Advance Order'::text, coalesce(x.doc_no, l.doc_no),
+         coalesce(x.item_code, l.item_code), coalesce(x.variant_id, l.variant_id),
+         coalesce(x.wh, l.wh), coalesce(x.qty, 0), coalesce(l.qty, 0)
+  from adv_exp x
+  full join adv_led l
+    on l.doc_no = x.doc_no and l.item_code = x.item_code
+   and l.variant_id is not distinct from x.variant_id and l.wh is not distinct from x.wh
+  where coalesce(x.qty, 0) <> coalesce(l.qty, 0)
+),
+
 -- ---------------------------------------------------------------- All mismatches
 mism as (
   select * from so_cmp
   union all select * from ex_cmp
   union all select * from po_cmp
   union all select * from tr_cmp
+  union all select * from adv_cmp
 ),
 doc_dates as (
   select 'Sales Order'::text as document_type, doc_no, doc_date from so
   union all select 'POS Expense', doc_no, doc_date from ex
+  union all select 'Advance Order', doc_no, doc_date from adv
   union all select distinct 'Purchase Receipt', doc_no, doc_date from po_lines
   union all select distinct 'Transfer Shipment', doc_no, doc_date from tr_lines
   union all select distinct 'Transfer Receipt', doc_no, doc_date from tr_lines
@@ -253,6 +306,8 @@ detail as (
       when m.document_type = 'Sales Order' and not o.counts and o.doc_no is not null then 'Order is ' || coalesce(o.status, '?') || ' / before cutover but ledger still has it'
       when m.document_type = 'Sales Order' and o.doc_no is null then 'Order no longer exists but ledger still has it'
       when m.document_type = 'POS Expense' and m.wh is null then 'Expense warehouse "' || coalesce(e.wh_name, '') || '" not found in Warehouses'
+      when m.document_type = 'Advance Order' and m.wh is null then 'Advance order warehouse "' || coalesce(ad.wh_name, '') || '" not found in Warehouses'
+      when m.document_type = 'Advance Order' and m.ledger_qty = 0 then 'Ready to Ship since cutover, never posted - run supabase_item_ledger_advance_orders.sql'
       when m.ledger_qty = 0 then 'Nothing in the ledger for this - never posted'
       when m.expected_qty = 0 then 'In the ledger but not on the document'
       else 'Ledger quantity differs from the document'
@@ -262,6 +317,7 @@ detail as (
     on d.document_type = m.document_type and d.doc_no = m.doc_no
   left join so o on m.document_type = 'Sales Order' and o.doc_no = m.doc_no
   left join ex e on m.document_type = 'POS Expense' and e.doc_no = m.doc_no
+  left join adv ad on m.document_type = 'Advance Order' and ad.doc_no = m.doc_no
 ),
 
 -- ---------------------------------------------------------------- Posting errors
@@ -298,6 +354,23 @@ unmatched as (
     and not exists (
       select 1 from public._ile_try_resolve_stock_key(coalesce(v."ItemCode", l."ItemCode"), nullif(trim(coalesce(l."VariationId", '')), ''))
     )
+),
+
+-- ---------------------------------------------------------------- Advance-order lines not deducted yet
+-- Not a mismatch by the rule (stock leaves at Ready to Ship), but a paid order the customer already took
+-- without Ready to Ship in the portal is stock that left the shelf with no ledger entry. Orders that went
+-- To Ship before the cutover (already out of the counted stock) or out through Pancake are left out.
+adv_pending as (
+  select '3b. Advance order line not deducted yet'::text as section, 'Advance Order'::text as document_type,
+         a.doc_no as document_no, a.doc_date, l.item_code, l.variant_id, a.wh as warehouse_id,
+         -l.qty as expected_qty, 0::numeric as ledger_qty, null::numeric as missing_qty,
+         left(case when a.fully_paid
+                then 'PAID IN FULL but never Ready to Ship in the portal - if the customer already has it, it was never taken out of stock'
+                else 'Open - deducts at Ready to Ship' end
+              || ' | ' || coalesce(l.description, ''), 300) as note
+  from adv a
+  join adv_lines l on l.doc_no = a.doc_no
+  where a.to_ship is null and not a.via_pancake
 ),
 
 -- ---------------------------------------------------------------- Per-item totals of the mismatches
@@ -345,6 +418,7 @@ from (
   select * from detail
   union all select * from errs
   union all select * from unmatched
+  union all select * from adv_pending
   union all select * from totals
   union all select * from balance
   union all select * from history

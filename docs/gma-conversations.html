@@ -824,6 +824,41 @@
     .variant-picker-panel {
       max-width: 480px;
     }
+    /* Delivery calendar (openDeliveryCalendar in gmaConversations.js) */
+    .dcal-panel { max-width: 640px; }
+    .dcal-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .dcal-month { flex: 1; text-align: center; font-weight: 700; font-size: 15px; }
+    .dcal-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 8px; font-size: 12px; color: var(--muted-text); }
+    .dcal-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .dcal-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+    .dcal-dot.is-open, .dcal-cell.is-open { background: rgba(16, 124, 16, 0.10); }
+    .dcal-dot.is-light, .dcal-cell.is-light { background: rgba(15, 108, 189, 0.10); }
+    .dcal-dot.is-busy, .dcal-cell.is-busy { background: rgba(202, 128, 0, 0.16); }
+    .dcal-dot.is-full, .dcal-cell.is-full { background: rgba(197, 15, 31, 0.14); }
+    .dcal-weekdays, .dcal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+    .dcal-weekdays span { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted-text); padding: 2px 0; }
+    .dcal-cell { min-height: 64px; padding: 5px 6px; border: 1px solid var(--panel-border); border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; font: inherit; text-align: left; color: var(--text-main); }
+    .dcal-cell:hover { border-color: var(--primary); }
+    .dcal-cell.is-blank { visibility: hidden; }
+    .dcal-cell.is-past { opacity: 0.45; }
+    .dcal-cell.is-today { box-shadow: inset 0 0 0 2px var(--primary); }
+    .dcal-cell.is-selected { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
+    .dcal-num { font-weight: 700; font-size: 13px; }
+    .dcal-count { font-size: 11px; font-weight: 600; }
+    .dcal-tag { font-size: 10.5px; color: var(--muted-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dcal-msg { margin-top: 10px; font-size: 13px; color: var(--muted-text); }
+    .dcal-day { margin-top: 12px; border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 12px; }
+    .dcal-day-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+    .dcal-day-title { font-weight: 700; flex: 1; }
+    .dcal-day-meta { font-size: 12px; color: var(--muted-text); margin-bottom: 6px; }
+    .dcal-stop { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--panel-border); font-size: 13px; }
+    .dcal-stop-main { min-width: 0; }
+    .dcal-stop-addr { font-size: 12px; color: var(--muted-text); overflow-wrap: anywhere; }
+    .dcal-stop-status { font-size: 12px; color: var(--muted-text); white-space: nowrap; }
+    @media (max-width: 640px) {
+      .dcal-cell { min-height: 52px; padding: 4px; }
+      .dcal-tag { display: none; }
+    }
     .variant-picker-product-name {
       font-weight: 600;
       margin-bottom: 8px;
@@ -3445,6 +3480,13 @@
                   <path d="M6.3 9.5h.01M9.5 9.5h.01M12.7 9.5h.01" stroke-linecap="round" />
                 </svg>
               </button>
+              <button type="button" class="inbox-icon-btn" id="openDeliveryCalendarBtn" data-tooltip="Delivery calendar">
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="2.5" y="4" width="15" height="13.5" rx="2" stroke-linejoin="round" />
+                  <path d="M2.5 8h15M6.5 2.5v3M13.5 2.5v3" stroke-linecap="round" />
+                  <path d="M6 11.5h2M9.5 11.5h2M13 11.5h1M6 14.5h2M9.5 14.5h2" stroke-linecap="round" />
+                </svg>
+              </button>
               <button type="button" class="inbox-advise-btn" id="adviseReplyBtn" title="AI drafts the best reply for you to check and send. Type a note first (e.g. &quot;decline the discount politely&quot;) to guide it.">
                 <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor" aria-hidden="true">
                   <path d="M8 2.5 9.4 6.6 13.5 8 9.4 9.4 8 13.5 6.6 9.4 2.5 8l4.1-1.4L8 2.5Zm6.5 8 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
@@ -3477,6 +3519,35 @@
        see public_search_items' has_variants flag), addProductToOrder opens this instead of adding
        the generic parent product straight away, so staff pick the SPECIFIC variant that actually
        syncs to Pancake (supabase_gma_conversation_order_line_variant_selection.sql). -->
+  <!-- Delivery calendar (js/gmaConversations.js openDeliveryCalendar) - read-only look at how booked each
+       delivery day is (the same stops / fixed routes / vendor stops as docs/delivery.html), so staff can
+       offer a customer a date while chatting. "Offer this date" puts the date into the reply box. -->
+  <div class="modal-backdrop hidden" id="deliveryCalendarModal">
+    <div class="modal-panel dcal-panel">
+      <div class="toolbar">
+        <h2>Delivery Calendar</h2>
+        <a class="btn btn-secondary btn-sm" href="delivery.html" target="_blank" rel="noopener" style="margin-left:auto;">Open Delivery page &#8599;</a>
+        <button class="btn btn-secondary btn-sm" id="closeDeliveryCalendarBtn" type="button">Close</button>
+      </div>
+      <div class="dcal-nav">
+        <button type="button" class="btn btn-secondary btn-sm" id="dcalPrevBtn" aria-label="Previous month">&lsaquo;</button>
+        <div class="dcal-month" id="dcalMonthLabel"></div>
+        <button type="button" class="btn btn-secondary btn-sm" id="dcalNextBtn" aria-label="Next month">&rsaquo;</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="dcalTodayBtn">Today</button>
+      </div>
+      <div class="dcal-legend">
+        <span><i class="dcal-dot is-open"></i>Open</span>
+        <span><i class="dcal-dot is-light"></i>1-2 stops</span>
+        <span><i class="dcal-dot is-busy"></i>3-4 stops</span>
+        <span><i class="dcal-dot is-full"></i>5+ stops</span>
+      </div>
+      <div class="dcal-weekdays"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+      <div class="dcal-grid" id="dcalGrid"></div>
+      <div class="dcal-msg hidden" id="dcalMsg"></div>
+      <div class="dcal-day hidden" id="dcalDay"></div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="variantPickerModal">
     <div class="modal-panel variant-picker-panel">
       <div class="toolbar">
@@ -3677,7 +3748,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=delivfee1"></script>
+  <script src="js/gmaConversations.js?v=dcal1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
