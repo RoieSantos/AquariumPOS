@@ -1107,6 +1107,12 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'create_location_pin_link',
+    description:
+      'Creates a one-time link to our map page where the customer pins their exact delivery location (phone GPS, search, or tapping the map) and adds a landmark - the pin then comes back into this conversation as their "📍 My delivery location" message. Use it when a delivery is being arranged and you need their location: they ask how to send their location/pin, their address is vague or incomplete (no street/barangay, "near the church"), or a driver will need to find them. Don\'t use it if they already sent a "📍 My delivery location" message (unless they say it\'s wrong), and don\'t send it for pickup-only orders. Put the returned link in your reply exactly as given, with a short line asking them to pin their location there.',
+    input_schema: { type: 'object', properties: {} }
+  },
+  {
     name: 'get_driver_location',
     description:
       'TEST TOOL - checks whether a delivery driver is currently out and tracking, and returns a live-updating tracking link plus how long ago their GPS last updated. Call this immediately whenever a customer asks where the driver is - never ask for an order number first, this tool has nothing to do with orders yet (it is not matched to any specific customer/order - it just reports whichever driver is currently tracking, for testing that GPS reporting works end-to-end). Share the liveTrackingUrl link (a page that keeps updating as the driver moves - tell the customer that) and minutesSinceUpdate directly in your reply; mapsUrl is a fallback snapshot pin only, mention it as an alternative, not the main link. Optionally pass destination_address (ask the customer for their delivery address first, only if they want an ETA) to also estimate driving distance/time from the driver\'s current position to that address. Never state an ETA without calling this tool first.',
@@ -1413,7 +1419,7 @@ export function buildSystemPrompt(
   );
   lines.push(
     '',
-    'PINNED LOCATIONS: a customer message starting with "📍 My delivery location" is the exact spot they pinned on our map page (staff send them that link). Treat its address (and landmark notes) as their delivery address - use it for delivery quotes and orders, and don\'t ask for the address again. If it has no address line, ask them to type their full address, and keep the Google Maps link for our driver.',
+    'PINNED LOCATIONS: when you need a delivery customer\'s exact location (see create_location_pin_link), send them our map link to pin it instead of only asking them to describe it. A customer message starting with "📍 My delivery location" is the exact spot they pinned on that map page (sent by you or by staff). Treat its address (and landmark notes) as their delivery address - use it for delivery quotes and orders, and don\'t ask for the address again. If it has no address line, ask them to type their full address, and keep the Google Maps link for our driver.',
     '',
     'REVIEW REQUEST (after the customer receives their order):',
     '- When the customer says they already RECEIVED their products / order (delivered, picked up, or set up) AND sounds satisfied (e.g. "received na po, salamat", "ang ganda po", "ok na po, thank you", a happy emoji or thumbs-up after receiving), first reply to what they said, then send the review request below.',
@@ -2449,6 +2455,22 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const sent = await sendMessengerImage(psid, imageUrl, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION);
       if (sent) await logBotImage(supabase, psid, imageUrl);
       return sent ? 'Photo sent to the customer.' : 'Sending the photo failed - let the customer know and continue without it.';
+    }
+    case 'create_location_pin_link': {
+      // Same one-time link as GMA Conversations' 📍 button (sql/supabase_gma_location_pin.sql, docs/pin-location.html).
+      if (simulate) {
+        return 'SANDBOX MODE - no real link was created. If this were live, the customer would get a link like: https://rspetstop.com/pin-location.html?t=<one-time-code>';
+      }
+      const { data: row, error } = await supabase
+        .from('ChatbotLocationRequests')
+        .insert({ Psid: psid, RequestedBy: 'AI Bot' })
+        .select('Token')
+        .single();
+      if (error || !row?.Token) {
+        console.error('create_location_pin_link failed:', error?.message);
+        return 'The map link could not be created right now - ask the customer to type their full address (house no., street, barangay, city) and a landmark instead.';
+      }
+      return JSON.stringify({ link: `https://rspetstop.com/pin-location.html?t=${row.Token}` });
     }
     case 'compute_aquarium_quote':
       return JSON.stringify(await computeAquariumQuote(supabase, input));
