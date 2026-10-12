@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-12
 
+- **Delivery quote window: mini map.** It shows the customer's spot (pin or typed address), both branches (G / A markers), and the driving route from each in its branch color. Google Maps loads only the first time the window is used, with the same key as the other map pages. The map isn't redrawn when only the method or vehicle changes, so there are no extra Google calls. If the map can't load, the price still shows ([gmaConversations.js](docs/js/gmaConversations.js) `v=dquote3`).
 - **Delivery quote window updates by itself.** It quotes as soon as it opens (when there's a pin or an address). It re-quotes right away when the method, vehicle or "use pin" changes, and once typing pauses in the address box. Overlapping quotes can't show stale prices. The button is now "Refresh" ([gmaConversations.js](docs/js/gmaConversations.js) `v=dquote2`).
 - **GMA Conversations: 🚚 Delivery quote window.** It's a new composer button. Type an address, or tick "use the customer's pinned location", then pick our own truck or Lalamove (with vehicle size). It shows the fee from both branches with distance and toll; **Put in reply** drops a ready sentence into the reply box. It uses the same formula Vic quotes. [delivery-fee-from-pin](supabase/functions/delivery-fee-from-pin/index.ts) now also accepts a typed `address`. [gmaConversations.js](docs/js/gmaConversations.js) `v=dquote1`.
 - **Fix: "Book this date" failed with "canceling statement due to statement timeout".**

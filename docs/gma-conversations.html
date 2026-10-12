@@ -877,6 +877,11 @@
     .dq-row select { font-size: 15px; padding: 6px 8px; }
     .dq-result { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--panel-border); font-size: 14px; }
     .dq-note { font-size: 12px; color: var(--muted-text); }
+    .dq-map { width: 100%; height: 220px; border-radius: 8px; border: 1px solid var(--panel-border); margin: 4px 0 6px; }
+    .dq-map-legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted-text); margin-bottom: 4px; }
+    .dq-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+    .dq-dot-gma { background: #1d4f91; }
+    .dq-dot-amaya { background: #15803d; }
     .inbox-pin-fee { margin: 4px 0 6px; font-size: 13px; }
     .dcal-book { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 10px; }
     .dcal-book select { flex: 1 1 220px; min-width: 0; font-size: 16px; padding: 6px 8px; }
@@ -3619,6 +3624,8 @@
         </select>
         <button class="btn btn-primary btn-sm" id="dqQuoteBtn" type="button">Refresh</button>
       </div>
+      <div class="dq-map hidden" id="dqMap" aria-label="Delivery route map"></div>
+      <div class="dq-map-legend hidden" id="dqMapLegend"><span><i class="dq-dot dq-dot-gma"></i>From GMA</span><span><i class="dq-dot dq-dot-amaya"></i>From Amaya</span><span>📍 Customer</span></div>
       <div class="dq-results" id="dqResults"></div>
     </div>
   </div>
@@ -3824,7 +3831,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=dquote2"></script>
+  <script src="js/gmaConversations.js?v=dquote3"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -5853,6 +5853,7 @@ async function runDeliveryQuote() {
   const resultsEl = document.getElementById('dqResults');
   if (!usePin && address.length < 5) {
     dqSeq++; // drop any quote still loading for the old address
+    hideDqMap();
     document.getElementById('dqQuoteBtn').disabled = false;
     resultsEl.innerHTML = '<div class="dq-note">Type the full address (street, barangay, city) - the quote updates as you type.</div>';
     return;
@@ -5862,6 +5863,7 @@ async function runDeliveryQuote() {
   const btn = document.getElementById('dqQuoteBtn');
   btn.disabled = true;
   resultsEl.innerHTML = `<div class="dq-note">${vehicle ? 'Asking Lalamove...' : 'Calculating...'}</div>`;
+  renderDeliveryQuoteMap(seq, usePin, address); // in parallel with the price - no need to wait for it
   let quotes;
   try {
     const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-fee-from-pin`, {
@@ -5918,6 +5920,115 @@ async function runDeliveryQuote() {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   }));
+}
+
+// Mini map in the Delivery Quote window - per "show a mini map too on the delivery quote": the customer's spot,
+// both branches (public_get_warehouse_location - the same branch points the fee is measured from) and the
+// driving route from each. Google Maps is only loaded the first time it's needed (key from PortalSettings,
+// public_get_google_maps_api_key - same as track-driver.html / pin-location.html). Best-effort: if the map
+// can't load, the quote itself still shows.
+const DQ_BRANCH_COLORS = { GMA: '#1d4f91', Amaya: '#15803d' };
+let dqMapsReady = null;
+let dqMap = null;
+let dqMapOverlays = [];
+let dqBranchPoints = null;
+let dqMapKey = null; // the destination the map currently shows
+
+function loadGoogleMapsForQuote() {
+  if (window.google?.maps) return Promise.resolve();
+  if (!dqMapsReady) {
+    dqMapsReady = (async () => {
+      const { data: apiKey, error } = await supabaseClient.rpc('public_get_google_maps_api_key');
+      if (error || !apiKey) throw new Error('Google Maps is not configured.');
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}`;
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Google Maps failed to load.'));
+        document.head.appendChild(script);
+      });
+    })().catch((err) => { dqMapsReady = null; throw err; });
+  }
+  return dqMapsReady;
+}
+
+async function getBranchPoints() {
+  if (!dqBranchPoints) {
+    const rows = await Promise.all(['GMA', 'Amaya'].map((b) => supabaseClient.rpc('public_get_warehouse_location', { p_location: b })));
+    dqBranchPoints = {};
+    ['GMA', 'Amaya'].forEach((b, i) => {
+      const r = rows[i].data?.[0];
+      if (r?.latitude != null) dqBranchPoints[b] = { lat: Number(r.latitude), lng: Number(r.longitude) };
+    });
+  }
+  return dqBranchPoints;
+}
+
+function hideDqMap() {
+  document.getElementById('dqMap').classList.add('hidden');
+  document.getElementById('dqMapLegend').classList.add('hidden');
+}
+
+// seq: the quote this map belongs to - a newer quote replaces it.
+async function renderDeliveryQuoteMap(seq, usePin, address) {
+  // Same destination as the map already shows (e.g. only the vehicle / method changed) - keep it, no new
+  // geocode / route requests.
+  const destKey = usePin ? `pin:${dqPin.lat},${dqPin.lng}` : `addr:${address.toLowerCase()}`;
+  if (destKey === dqMapKey && dqMap && !document.getElementById('dqMap').classList.contains('hidden')) return;
+  // dqMapKey is only set once a map has fully drawn (below), so an interrupted draw is never "kept".
+  try {
+    await loadGoogleMapsForQuote();
+    const branches = await getBranchPoints();
+    let dest = usePin ? { lat: dqPin.lat, lng: dqPin.lng } : null;
+    if (!dest) {
+      const result = await new Promise((resolve) => new google.maps.Geocoder().geocode(
+        { address, componentRestrictions: { country: 'PH' } },
+        (results, status) => resolve(status === 'OK' ? results?.[0] : null)));
+      if (!result) throw new Error('Address not found on the map.');
+      dest = { lat: result.geometry.location.lat(), lng: result.geometry.location.lng() };
+    }
+    if (seq !== dqSeq) return;
+
+    const mapEl = document.getElementById('dqMap');
+    mapEl.classList.remove('hidden');
+    document.getElementById('dqMapLegend').classList.remove('hidden');
+    if (!dqMap) {
+      dqMap = new google.maps.Map(mapEl, { center: dest, zoom: 12, mapTypeControl: false, streetViewControl: false, fullscreenControl: false });
+    }
+    dqMapOverlays.forEach((o) => o.setMap(null));
+    dqMapOverlays = [];
+
+    const bounds = new google.maps.LatLngBounds();
+    dqMapOverlays.push(new google.maps.Marker({ map: dqMap, position: dest, title: 'Customer' }));
+    bounds.extend(dest);
+    const directions = new google.maps.DirectionsService();
+    await Promise.all(Object.entries(branches).map(async ([name, point]) => {
+      dqMapOverlays.push(new google.maps.Marker({
+        map: dqMap, position: point, title: `${name} branch`,
+        label: { text: name === 'GMA' ? 'G' : 'A', color: '#fff', fontWeight: '700' },
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 11, fillColor: DQ_BRANCH_COLORS[name], fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 }
+      }));
+      bounds.extend(point);
+      try {
+        const route = await directions.route({ origin: point, destination: dest, travelMode: google.maps.TravelMode.DRIVING });
+        if (seq !== dqSeq) return;
+        const renderer = new google.maps.DirectionsRenderer({
+          map: dqMap, directions: route, suppressMarkers: true, preserveViewport: true,
+          polylineOptions: { strokeColor: DQ_BRANCH_COLORS[name], strokeOpacity: 0.8, strokeWeight: 4 }
+        });
+        dqMapOverlays.push(renderer);
+      } catch {
+        // No route drawn for this branch - its marker still shows.
+      }
+    }));
+    if (seq !== dqSeq) return;
+    google.maps.event.trigger(dqMap, 'resize');
+    dqMap.fitBounds(bounds, 30);
+    dqMapKey = destKey;
+  } catch {
+    if (seq === dqSeq) { hideDqMap(); dqMapKey = null; }
+  }
 }
 
 // Per "auto validate the delivery quote when a field is changed": method / vehicle / pin re-quote right
