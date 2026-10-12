@@ -23,7 +23,7 @@ const ACCESS_FLAGS = [
   ['is_sales_user', 'p_is_sales_user', 'cardSalesUser', 'Sales User', 'Counts toward sales targets'],
   ['is_serial_admin', 'p_is_serial_admin', 'cardSerialAdmin', 'Serial Admin', 'Can edit serial locations in Serial Tracker'],
   ['is_delivery_team', 'p_is_delivery_team', 'cardDeliveryTeam', 'Delivery Team', 'Locked to the Delivery calendar only'],
-  ['is_online_order_staff', 'p_is_online_order_staff', 'cardOnlineOrderStaff', 'Online Order Staff', 'Locked to Online Orders - Printed orders only, can mark To Ship and photo-notify customers'],
+  ['is_online_order_staff', 'p_is_online_order_staff', 'cardOnlineOrderStaff', 'Online Order Staff', 'Locked to Online Orders - Confirmed orders only: Ready to Ship stock orders (pick serials), photo-notify customers; no custom orders, no assigning makers'],
   ['is_production_member', 'p_is_production_member', 'cardProductionMember', 'Production Member', 'Can be assigned custom orders to build in Online Orders'],
   ['is_payroll_officer', 'p_is_payroll_officer', 'cardPayrollOfficer', 'Payroll Officer', 'Can access Payroll / Payroll Setup / Payroll Ledger'],
   ['is_store_manager', 'p_is_store_manager', 'cardStoreManager', 'Store Manager', 'Locked to Delivery, Payslips, Serial Tracker, Inventory Summary, Stock On Hand, Transfer Orders, Calculators, Online Orders'],

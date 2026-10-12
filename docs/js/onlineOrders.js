@@ -44,7 +44,10 @@ let currentConfirmedBy = null;
 // on the Online Order Lines drill-down (js/onlineOrderLines.js).
 // 'Assigned' is now a real status too (supabase_online_order_assigned_status.sql), so it's fetched
 // alongside Printed.
-const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed', 'Printed', 'Assigned', 'To Ship'];
+// Narrowed to Confirmed only - per "for online order staff .. can you only show confirmed orders". The
+// Printed / Assigned / To Ship tabs are hidden for them (init below). NOTE: the page sends this list, so
+// it's a page-level limit; admin_list_online_orders doesn't force it per account.
+const ONLINE_ORDER_STAFF_STATUS_SCOPE = ['Confirmed'];
 let hidePriceColumns = false;
 
 // Per "if an order has been assigned to the user.. can you show it to their access?" - the My
@@ -928,6 +931,25 @@ function nextStepForRequest(o) {
   return { action: 'request-prod', label: 'Request Production', icon: 'ico-assign', title: `Not enough in stock at ${s.warehouse_name || 'this branch'} - ask the Production Manager to build the missing units.\n${stockLinesSummary(s)}` };
 }
 
+// One stock-status call for a whole card list (Online Order Staff), so every card can show its Ready to
+// Ship / Request Production button straight away instead of one lookup per order.
+async function prefetchStockStatus(rows) {
+  const ids = rows.filter(isStockCheckCandidate).map((o) => String(o.order_id));
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_get_online_order_stock_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.warn('staff_get_online_order_stock_status:', error.message);
+    return;
+  }
+  const byId = new Map((data || []).map((r) => [String(r.order_id), r]));
+  // Only orders the check actually returned - a missing one stays unknown (no button), never "no serials".
+  ids.forEach((id) => { if (byId.has(id)) stockStatusCache.set(id, byId.get(id)); });
+}
+
 async function ensureStockStatus(o) {
   if (!isStockCheckCandidate(o)) return;
   const key = String(o.order_id);
@@ -1194,6 +1216,28 @@ function nextStepForWalkin(o) {
   }
 }
 
+// Online Order Staff - per "Confirmed orders they can Ready-to Ship but the serial step need still. If an
+// order is custom they cannot Ready-to ship". Stock orders get Ready to Ship (serial picker, then
+// admin_ship_online_order_from_stock, supabase_online_order_staff_ready_to_ship.sql) or Assemble for a
+// SET; a custom order (Tank / Stand Maker work) shows why it can't ship; short stock -> Request Production.
+function nextStepForOnlineOrderStaff(o) {
+  const block = toShipProductionBlock(o);
+  if (block) return { action: 'none', label: 'Custom - needs production', icon: 'ico-done', disabled: true, title: block };
+  const stock = nextStepForStock(o);
+  if (stock && ['ship-stock', 'set-assemble'].includes(stock.action)) return stock;
+  // No serial-tracked items at all (accessories / normal items) - per "can we allow the online staff
+  // orders to to-ship products no need serials?". The server re-checks there really are none.
+  if (isNoSerialStockOrder(stockStatusFor(o))) {
+    return { action: 'ship-stock', label: 'Ready to Ship', icon: 'ico-ship', title: 'No serial-tracked items - move it to To Ship.' };
+  }
+  return nextStepForRequest(o);
+}
+
+// Stock check says: nothing serial-tracked, nothing custom, no SET still to assemble.
+function isNoSerialStockOrder(s) {
+  return !!s && !s.needs_serial && !s.has_custom_line && !s.set_pending;
+}
+
 function nextStepFor(o) {
   if (!o) return null;
   if (o.walkin_stage) return nextStepForWalkin(o);
@@ -1202,6 +1246,7 @@ function nextStepFor(o) {
       ? { action: 'shipped', label: 'Release Remaining', icon: 'ico-ship', title: 'Partly released - release the rest (or another batch). The last batch marks it Shipped in the portal and Pancake' }
       : { action: 'shipped', label: 'Release / Ship', icon: 'ico-ship', title: 'Release all or some items. Releasing everything marks it Shipped in the portal and Pancake' };
   }
+  if (currentSession?.isOnlineOrderStaff && !canAssignOrders()) return nextStepForOnlineOrderStaff(o);
   if (!canAssignOrders()) return nextStepForRequest(o);
   const status = (o.status || '').trim().toLowerCase();
   const needed = neededProductionRoles(o);
@@ -1358,7 +1403,8 @@ async function handleNextStepClick(orderId, btn) {
     await ensureStockStatus(o);
     const s = stockStatusFor(o);
     // Assembled SET with no production part: nothing to count.
-    const setUnchecked = !!s?.has_set_line && !s.set_pending && !s.needs_serial;
+    // Same for an order with no serial-tracked items at all (Online Order Staff, nextStepForOnlineOrderStaff).
+    const setUnchecked = (!!s?.has_set_line && !s.set_pending && !s.needs_serial) || isNoSerialStockOrder(s);
     if (!s?.all_available && !setUnchecked) {
       alert(s ? `Not everything is in stock at ${s.warehouse_name || 'this branch'} any more:\n${stockLinesSummary(s)}` : 'Could not check the stock for this order - try again.');
       return;
@@ -1367,7 +1413,7 @@ async function handleNextStepClick(orderId, btn) {
       caption: 'READY TO SHIP - FROM STOCK',
       title: orderLabel(o),
       messageHtml: setUnchecked
-        ? 'This SET order is assembled and has no serial-tracked parts. Move it to To Ship in the portal and Pancake?'
+        ? (s?.has_set_line ? 'This SET order is assembled and has no serial-tracked parts.' : 'This order has no serial-tracked items - nothing to pick.') + ' Move it to To Ship in the portal and Pancake?'
         : `Everything is in stock at ${escapeHtml(s?.warehouse_name || 'this branch')}:\n${stockLinesHtml(s)}\n\nPick the serial(s) and move this order to To Ship in the portal and Pancake?`,
       confirmLabel: 'Yes, Ready to Ship',
       tone: 'is-ship'
@@ -1910,13 +1956,21 @@ function makerSelectHtml(order, role, currentUsername) {
   // Assigning Tank Maker / Stand Maker / Dispatcher is the Production Manager's call (or a Super
   // User's) - supabase_production_manager_role.sql enforces the same server-side. Everyone else
   // sees who's assigned, read-only.
-  const locked = !(currentSession?.isSuperUser || currentSession?.isProductionManager);
+  const locked = !canAssignOrders();
   return `
     <select class="assign-maker-select" data-order-id="${escapeHtml(order.order_id)}" data-role="${role}" title="${locked ? label + ' - assigned by the Production Manager' : label}" style="max-width:150px;" ${locked ? 'disabled' : ''}>
       <option value="" ${!currentUsername ? 'selected' : ''}>&mdash; ${label} &mdash;</option>
       ${options}
     </select>
   `;
+}
+
+// Read-only "Tank: Juan · Stand: Pedro" for staff who can't assign (Online Order Staff cards).
+function assignedNamesText(order) {
+  const parts = [];
+  if (order.has_aquarium_line) parts.push(`Tank: ${order.assigned_tank_maker ? escapeHtml(order.assigned_tank_maker_name || order.assigned_tank_maker) : '-'}`);
+  if (order.has_stand_line) parts.push(`Stand: ${order.assigned_stand_maker ? escapeHtml(order.assigned_stand_maker_name || order.assigned_stand_maker) : '-'}`);
+  return parts.length ? parts.join(' &middot; ') : '<span class="muted">-</span>';
 }
 
 function assignSelectHtml(order) {
@@ -2075,7 +2129,14 @@ function orderCardHtml(o) {
   // Mirrors the desktop app's IsPrintedStatusForRow gate on MarkRowAsToShipAsync (OnlineOrdersForm.cs)
   // and admin_update_online_order_status' matching server-side check.
   // Custom orders still in production get no To Ship button at all (toShipProductionBlock).
-  const showToShipBtn = !toShipProductionBlock(o) && (isPrintedOrder(o) || (isPortalOnlyOrder(o) && canToShipOrder(o)));
+  // Online Order Staff's next step (Ready to Ship / Assemble / Request Production / "Custom - needs
+  // production") - see nextStepForOnlineOrderStaff. Stock status is prefetched for every card in loadOrders.
+  const step = currentSession?.isOnlineOrderStaff ? nextStepFor(o) : null;
+  const showToShipBtn = !toShipProductionBlock(o) && step?.action !== 'ship-stock'
+    && (isPrintedOrder(o) || (isPortalOnlyOrder(o) && canToShipOrder(o)));
+  const stepBtn = step
+    ? `<button type="button" class="btn ${step.action === 'ship-stock' && !step.disabled ? 'btn-primary' : 'btn-secondary'} btn-sm status-next-step-btn" data-action="${escapeHtml(step.action)}" title="${escapeHtml(step.title || '')}"${step.disabled ? ' disabled' : ''}>${escapeHtml(step.label)}</button>`
+    : '';
 
   return `
     <div class="order-card" data-order-id="${o.order_id}">
@@ -2091,14 +2152,16 @@ function orderCardHtml(o) {
         <span class="order-card-label">Confirmed By</span><span>${o.confirmed_by || '-'}</span>
         ${o.confirmed_at_utc ? `<span class="order-card-label">Confirmed Date</span><span>${escapeHtml(new Date(o.confirmed_at_utc).toLocaleString())}</span>` : ''}
         ${o.note_print ? `<span class="order-card-label">Print Note</span><span>${o.note_print}</span>` : ''}
-        <span class="order-card-label">Assigned To</span><span>${assignSelectHtml(o)}</span>
+        <span class="order-card-label">Assigned To</span><span>${canAssignOrders() ? assignSelectHtml(o) : assignedNamesText(o)}</span>
       </div>
       <div class="order-card-actions">
         <a class="btn btn-secondary btn-sm" href="online-order-lines.html?order=${encodeURIComponent(o.order_id)}">View Order Lines</a>
         <button type="button" class="btn btn-secondary btn-sm status-send-photo-btn">Send Photo</button>
         <button type="button" class="btn btn-secondary btn-sm status-send-message-btn">TO-SHIP</button>
         ${showToShipBtn ? '<button type="button" class="btn btn-primary status-to-ship-btn">To Ship</button>' : ''}
+        ${stepBtn}
       </div>
+      ${step?.disabled && step.title ? `<div class="muted" style="font-size:12px; margin-top:4px;">${escapeHtml(step.title)}</div>` : ''}
     </div>
   `;
 }
@@ -3049,6 +3112,8 @@ let shipNewSerialSeq = 0;
 // False for a Store Manager's To Ship at a non-production store (set by handleToShipClick): no
 // "+ New serial" - only production creates serials - and a short line can ship without one.
 let shipAllowsNewSerials = true;
+// Online Order Staff Ready to Ship: every unit needs a real in-stock serial - no "+ New serial", no "ship anyway".
+let shipRequiresAllSerials = false;
 function addNewSerialPlaceholder(picker) {
   const selected = getSelectedSerialsForShipPicker(picker);
   const required = Math.max(0, parseFloat(picker.dataset.required) || 0);
@@ -3278,6 +3343,12 @@ function wireShipSerialModalButtons() {
       }
     });
 
+    if (incompleteLabels.length > 0 && shipRequiresAllSerials) {
+      errorEl.textContent = `Pick an in-stock serial for every unit: ${incompleteLabels.join(', ')}.`;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
     // Non-production store: ship what's on hand, the rest stays without a serial (desktop does the same).
     if (incompleteLabels.length > 0 && !shipAllowsNewSerials) {
       if (!window.confirm(`This store doesn't have a serial for every unit:\n${incompleteLabels.join('\n')}\n\nShip anyway? Those units will stay without a serial (only production can create serials).`)) return;
@@ -3304,7 +3375,8 @@ function handleOrderTableClick(event) {
   const toShipBtn = event.target.closest('.status-to-ship-btn');
   const sendPhotoBtn = event.target.closest('.status-send-photo-btn');
   const sendMessageBtn = event.target.closest('.status-send-message-btn');
-  if (!toShipBtn && !sendPhotoBtn && !sendMessageBtn) return;
+  const nextStepBtn = event.target.closest('.status-next-step-btn');
+  if (!toShipBtn && !sendPhotoBtn && !sendMessageBtn && !nextStepBtn) return;
 
   // Generic [data-order-id] (not tr[data-order-id]) - matches both the flat table's <tr> rows and
   // the grouped view's <div class="order-card"> cards (see orderCardHtml above), since the same
@@ -3318,6 +3390,10 @@ function handleOrderTableClick(event) {
   }
   if (sendPhotoBtn) {
     handleSendPhotoClick(row.dataset.orderId, sendPhotoBtn);
+    return;
+  }
+  if (nextStepBtn) {
+    handleNextStepClick(row.dataset.orderId, nextStepBtn);
     return;
   }
   handleToShipClick(row.dataset.orderId, toShipBtn);
@@ -3547,7 +3623,9 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
       return;
     }
   }
-  shipAllowsNewSerials = !(storeManagerShip && !currentSessionIsProductionWarehouse);
+  // Online Order Staff (not a Production Manager): in-stock serials only, one for every unit.
+  shipRequiresAllSerials = !!currentSession.isOnlineOrderStaff && !canAssignOrders();
+  shipAllowsNewSerials = !(storeManagerShip && !currentSessionIsProductionWarehouse) && !shipRequiresAllSerials;
 
   // Ready to Ship (the Production Manager's next-step button on a Production Done order) runs this
   // real flow even while the general To Ship button is still switched off - see nextStepFor.
@@ -4026,7 +4104,11 @@ function updateOrderActionState() {
 // ---------------------------------------------------------------- Assign popup
 
 // Assigning is the Production Manager's call (or a Super User's) - see supabase_production_manager_role.sql.
+// Online Order Staff never assign makers - per "dont allow them to assign to makers" - even if the
+// account is also a Production Manager (admin_assign_online_order_maker refuses them too,
+// supabase_online_order_staff_no_assign.sql). A Super User still can.
 function canAssignOrders() {
+  if (currentSession?.isOnlineOrderStaff && !currentSession?.isSuperUser) return false;
   return !!(currentSession?.isSuperUser || currentSession?.isProductionManager);
 }
 
@@ -5442,6 +5524,11 @@ async function loadOrders(search, status) {
   // #flatOrdersView/shows #groupedOrdersView and bumps currentPageSize to the server's 200-row
   // cap so this single fetch covers their whole Confirmed/Printed/To Ship queue.
   if (grouped) {
+    // findFlatOrder (Ready to Ship / To Ship handlers) looks orders up here, cards included.
+    lastFlatRows = rows;
+    stockStatusCache.clear();
+    await prefetchStockStatus(rows);
+    if (myGeneration !== loadGeneration) return;
     renderGroupedOrders(rows, (data || []).length, data?.[0]?.total_count || 0);
     return;
   }
@@ -6780,7 +6867,7 @@ async function initAdvanceOrdersView() {
     document.getElementById('deliveryFeeHeader').classList.add('hidden');
     const statusInput = document.getElementById('statusFilterInput');
     statusInput.disabled = true;
-    statusInput.title = 'Your account only shows Confirmed, Printed, and To Ship orders.';
+    statusInput.title = 'Your account only shows Confirmed orders.';
     document.getElementById('statusSummaryBar').classList.add('hidden');
 
     // Per "i want to show the online order per category: Confirmed / Printed / To-Ship" - swap
@@ -6796,6 +6883,10 @@ async function initAdvanceOrdersView() {
     ['openOrderBtn', 'listSendPhotoBtn', 'listSendMessageBtn', 'listToShipBtn', 'listAssignBtn'].forEach((id) => document.getElementById(id).classList.add('hidden'));
     document.querySelectorAll('#orderCmdbar .bc-cmd-sep').forEach((sep) => sep.classList.add('hidden'));
     currentPageSize = 200;
+    // Confirmed only (ONLINE_ORDER_STAFF_STATUS_SCOPE) - the other status tabs would always be empty.
+    document.querySelectorAll('#groupedTabs .grouped-tab-btn').forEach((btn) => {
+      btn.classList.toggle('hidden', !ONLINE_ORDER_STAFF_STATUS_SCOPE.includes(btn.dataset.status));
+    });
     wireGroupedTabs();
   }
   if (session.isOrderMaker && !session.isOnlineOrderStaff) {

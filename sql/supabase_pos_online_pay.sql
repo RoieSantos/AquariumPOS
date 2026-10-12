@@ -551,7 +551,7 @@ begin
       'bank', (select coalesce(jsonb_object_agg(k, coalesce((v_state -> 'bank' ->> k)::numeric, 0)), '{}'::jsonb)
                from jsonb_object_keys(v_bank_add) k));
     v_target := jsonb_build_object(
-      'cash', case when v_cash_add > 0 then (v_state ->> 'cash')::numeric + v_cash_add end,
+      'cash', case when v_cash_add > 0 then round((v_state ->> 'cash')::numeric + v_cash_add, 0) end,
       'bank', (select coalesce(jsonb_object_agg(k, coalesce((v_state -> 'bank' ->> k)::numeric, 0) + (v_bank_add ->> k)::numeric), '{}'::jsonb)
                from jsonb_object_keys(v_bank_add) k));
 
@@ -565,9 +565,11 @@ begin
   if not v_skip_put then
     -- Full bank_payments + cash every time (an update without them can wipe them), with absolute
     -- amounts, so a retried PUT writes the same totals instead of adding again. Same PUT the old POS PAY used.
+    -- Pancake's `cash` must be a whole number: 1930.00 is rejected ("[cash]: is invalid", HTTP 422), so it
+    -- goes as a bigint, rounded to the peso like the old POS PAY (Math.Round(cash, 0)).
     v_put := jsonb_build_object(
       'bank_payments', coalesce(v_state -> 'bank', '{}'::jsonb) || coalesce(v_target -> 'bank', '{}'::jsonb),
-      'cash', coalesce((v_target ->> 'cash')::numeric, (v_state ->> 'cash')::numeric, 0));
+      'cash', round(coalesce((v_target ->> 'cash')::numeric, (v_state ->> 'cash')::numeric, 0), 0)::bigint);
     v_url := 'https://pos.pages.fm/api/v1/shops/1328301944/orders/' || v_id || '?api_key=' || public._pancake_api_key();
     begin
       perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '8000');
