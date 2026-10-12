@@ -2901,3 +2901,96 @@ a.bc-cue:hover {
 .oo-photo-pick-item input { position: absolute; top: 6px; left: 6px; width: 18px; height: 18px; margin: 0; }
 .oo-photo-pick-item img { width: 100%; height: 120px; object-fit: cover; display: block; }
 .oo-photo-pick-meta { display: flex; flex-direction: column; padding: 4px 6px; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+
+/* Online Orders "New" order dialog (js/onlineNewOrders.js) - details grid, wrapping item rows, totals
+   block, and the Edit-mode form. Scoped to #newOrderDialog: overrides .bc-assign-dialog's large fields and
+   the list grid's one-line (nowrap) cells, which pushed long item names out of the dialog. */
+#newOrderDialog .no-section-title { margin: 16px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+#newOrderDialog #newOrderInfo .no-section-title { margin-top: 4px; }
+
+#newOrderDialog .no-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; padding: 12px 14px; border: 1px solid var(--bc-line); border-radius: 6px; background: var(--bc-surface-alt, rgba(0, 0, 0, 0.02)); }
+#newOrderDialog .no-info-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#newOrderDialog .no-info-label { font-size: 11px; font-weight: 600; color: var(--text-muted); }
+#newOrderDialog .no-info-value { font-size: 13.5px; color: var(--text-main); overflow-wrap: anywhere; }
+#newOrderDialog .no-edit-wide { grid-column: 1 / -1; }
+
+#newOrderDialog .no-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+#newOrderDialog .no-edit-grid .bc-field { grid-template-columns: 1fr; gap: 4px; margin-bottom: 0; }
+#newOrderDialog .no-edit-grid .bc-field > label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+#newOrderDialog .no-edit-grid input,
+#newOrderDialog .no-edit-grid select { width: 100%; box-sizing: border-box; height: 34px; padding: 4px 10px; font-size: 13.5px; border-radius: 4px; }
+
+#newOrderDialog .no-edit-search { position: relative; margin-bottom: 8px; }
+#newOrderDialog .no-edit-search input { width: 100%; box-sizing: border-box; height: 34px; padding: 4px 10px; font-size: 13.5px; border-radius: 4px; }
+#newOrderDialog .no-edit-results { position: absolute; z-index: 20; top: 100%; left: 0; right: 0; margin-top: 2px; max-height: 260px; overflow-y: auto; background: var(--bc-surface, #fff); border: 1px solid var(--bc-line-strong); border-radius: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14); }
+#newOrderDialog .no-edit-result { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; font-size: 13px; cursor: pointer; }
+#newOrderDialog .no-edit-result:hover { background: var(--bc-row-hover, rgba(15, 108, 189, 0.08)); }
+#newOrderDialog .no-edit-result.is-msg { cursor: default; color: var(--text-muted); }
+#newOrderDialog .no-edit-sub { color: var(--text-muted); font-size: 12px; }
+
+/* Items table: fixed columns, the item name wraps. */
+#newOrderDialog .no-lines-wrap { overflow: visible; max-height: none; min-height: 0; border: 1px solid var(--bc-line); border-radius: 6px; }
+#newOrderDialog table.no-lines { table-layout: fixed; width: 100%; border-collapse: collapse; }
+#newOrderDialog .no-lines .no-col-qty { width: 72px; }
+#newOrderDialog .no-lines .no-col-price { width: 112px; }
+#newOrderDialog .no-lines .no-col-amount { width: 112px; }
+#newOrderDialog .no-lines th,
+#newOrderDialog .no-lines td { white-space: normal; height: auto; padding: 9px 12px; vertical-align: top; line-height: 1.4; }
+#newOrderDialog .no-lines thead th { position: static; font-size: 12px; background: var(--bc-surface-alt, rgba(0, 0, 0, 0.03)); }
+#newOrderDialog .no-lines tbody tr:hover td { background: transparent; }
+#newOrderDialog .no-line-name { font-weight: 600; overflow-wrap: anywhere; }
+#newOrderDialog .no-line-note { margin-top: 3px; font-size: 12px; color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+#newOrderDialog .no-lines input.no-edit-qty,
+#newOrderDialog .no-lines input.no-edit-price { width: 100%; box-sizing: border-box; height: 30px; margin: 0; text-align: right; border-radius: 4px; }
+#newOrderDialog .no-lines textarea.no-edit-note { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; min-height: 30px; padding: 5px 8px; font: inherit; font-size: 12.5px; border-radius: 4px; resize: vertical; }
+#newOrderDialog .no-edit-remove { margin-top: 5px; padding: 0; border: 0; background: none; color: var(--danger, #c50f1f); font-size: 12px; cursor: pointer; }
+#newOrderDialog .no-edit-remove:hover { text-decoration: underline; }
+
+/* Totals */
+#newOrderDialog .no-lines tfoot td { border: 0; height: auto; padding: 4px 12px; font-size: 13px; color: var(--text-muted); }
+#newOrderDialog .no-lines tfoot tr.no-foot-first td { padding-top: 12px; }
+#newOrderDialog .no-lines tfoot tr.no-foot-total td { padding-top: 8px; font-size: 15px; font-weight: 700; color: var(--text-main); }
+#newOrderDialog .no-lines tfoot tr.no-foot-balance td { padding-bottom: 12px; font-weight: 600; color: var(--text-main); }
+#newOrderDialog .no-lines tfoot tr.no-foot-balance.is-due td:last-child { color: var(--danger, #c50f1f); }
+#newOrderDialog .no-lines tfoot tr.no-foot-balance.is-over td:last-child { color: var(--warning, #b25e00); }
+
+@media (max-width: 640px) {
+  #newOrderDialog .no-info-grid,
+  #newOrderDialog .no-edit-grid { grid-template-columns: 1fr; }
+  #newOrderDialog .no-lines .no-col-qty { width: 56px; }
+  #newOrderDialog .no-lines .no-col-price,
+  #newOrderDialog .no-lines .no-col-amount { width: 88px; }
+  #newOrderDialog .no-lines th,
+  #newOrderDialog .no-lines td { padding: 8px 6px; }
+}
+
+/* Portal order (AO-) payments editor - js/onlineNewOrders.js renderAoPayments. Used in the New order dialog
+   and the order card's Payment tab (#ocAoPaymentsBlock). */
+.ao-pay { border: 1px solid var(--bc-line); border-radius: 6px; overflow: hidden; }
+.ao-pay-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 9px 12px; border-bottom: 1px solid var(--bc-line); font-size: 13px; }
+.ao-pay-row.is-editing { display: block; background: var(--bc-surface-alt, rgba(0, 0, 0, 0.02)); }
+.ao-pay-method-label { font-weight: 600; overflow-wrap: anywhere; }
+.ao-pay-sub { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.ao-pay-amount-label { font-weight: 600; text-align: right; white-space: nowrap; }
+.ao-pay-actions { display: flex; gap: 10px; }
+.ao-pay-link { border: 0; background: none; padding: 0; font-size: 12px; color: var(--bc-link, #0f6cbd); cursor: pointer; }
+.ao-pay-link:hover { text-decoration: underline; }
+.ao-pay-link.is-danger { color: var(--danger, #c50f1f); }
+.ao-pay-msg { padding: 10px 12px; font-size: 13px; color: var(--text-muted); border-bottom: 1px solid var(--bc-line); }
+.ao-pay-add { display: block; width: 100%; padding: 9px 12px; border: 0; background: none; text-align: left; font-size: 13px; font-weight: 600; color: var(--bc-link, #0f6cbd); cursor: pointer; }
+.ao-pay-add:hover { background: var(--bc-row-hover, rgba(15, 108, 189, 0.08)); }
+.ao-pay-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ao-pay .ao-pay-form input,
+.ao-pay .ao-pay-form select { height: 32px; margin: 0; padding: 3px 8px; font-size: 13px; border: 1px solid var(--bc-line-strong); border-radius: 4px; box-sizing: border-box; background: var(--bc-input-bg, #fff); color: var(--text-main); }
+.ao-pay .ao-pay-form .ao-pay-amount { width: 120px; text-align: right; }
+.ao-pay .ao-pay-form .ao-pay-method { width: 140px; }
+.ao-pay .ao-pay-form .ao-pay-ref { flex: 1 1 160px; min-width: 0; }
+.ao-pay .ao-pay-form .bc-btn { height: 32px; font-size: 13px; padding: 0 14px; }
+.oc-ao-payments { padding: 4px 16px 14px; }
+.oc-ao-payments-head { margin: 4px 0 8px; font-size: 12px; font-weight: 700; color: var(--text-muted); }
+@media (max-width: 640px) {
+  .ao-pay-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .ao-pay-actions { grid-column: 1 / -1; }
+  .ao-pay .ao-pay-form .ao-pay-amount,
+  .ao-pay .ao-pay-form .ao-pay-method { flex: 1 1 120px; width: auto; }
+}

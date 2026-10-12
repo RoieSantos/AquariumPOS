@@ -1515,6 +1515,64 @@ async function saveWalkinCustomer() {
   await refreshCurrentOrders();
 }
 
+// Delivery Fee on the order card - per "can we allow delivery fee to edit even if the status is confirmed".
+// Portal orders only (AO- numbers, made by Confirm Order - a Pancake order's fee comes from Pancake), for
+// delivery, while still open. The server checks all of it again (Source = 'Portal').
+function canEditCardDeliveryFee(o) {
+  return isOpenPortalOrder(o) && Boolean(o.for_delivery);
+}
+
+// A portal order (AO-, made by Confirm Order) that's still open, on an account that sees prices - its
+// delivery fee and payments can still be changed from the card (the server re-checks).
+function isOpenPortalOrder(o) {
+  if (!o || hidePrices() || myAssignmentsLocked) return false;
+  if (!String(o.order_id || '').startsWith('AO-')) return false;
+  return !['shipped', 'delivered', 'completed', 'cancelled', 'canceled', 'returned', 'returning']
+    .includes((o.status || '').trim().toLowerCase());
+}
+
+// Payment tab: the AO order's payments with Edit / Delete / Add (renderAoPayments, js/onlineNewOrders.js) -
+// per "can we also let the user to modify the payment in the order even though its new and confirmed".
+function renderOrderCardAoPayments(o) {
+  const show = isOpenPortalOrder(o) && typeof renderAoPayments === 'function';
+  document.getElementById('ocAoPaymentsBlock').classList.toggle('hidden', !show);
+  if (!show) return;
+  const orderId = String(o.order_id);
+  renderAoPayments(document.getElementById('ocAoPayments'), orderId, async () => {
+    await refreshCurrentOrders();
+    if (openCardOrderId === orderId) loadOrderCardPaymentMethods(orderId);
+  });
+}
+
+async function saveCardDeliveryFee() {
+  const orderId = openCardOrderId;
+  if (!orderId) return;
+  const raw = document.getElementById('ocDeliveryFeeInput').value.trim();
+  const fee = raw === '' ? 0 : parseFloat(raw);
+  if (!(fee >= 0)) {
+    alert('Enter a delivery fee of 0 or more.');
+    return;
+  }
+  const btn = document.getElementById('ocDeliveryFeeSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const { error } = await supabaseClient.rpc('admin_set_portal_order_delivery_fee', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId),
+    p_delivery_fee: fee
+  });
+  btn.disabled = false;
+  btn.textContent = 'Save';
+  if (error) {
+    alert(error.message);
+    return;
+  }
+  // Let the refresh re-prefill the box with the saved value.
+  delete document.getElementById('ocDeliveryFeeEdit').dataset.orderId;
+  await refreshCurrentOrders();
+}
+
 // Shared by the next-step button (list / card) and the Dispatcher's phone card. Per "in the dispatcher..
 // can they do partial release only": opens the Release dialog (openReleaseDialog) - all or some lines.
 // Orders with no lines on file fall back to the plain whole-order Mark Shipped below.
@@ -4520,6 +4578,15 @@ function fillOrderCardHeader(o) {
   setCardText('ocDeliveryFee', o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '');
   setCardText('ocPrintNote', o.note_print);
   document.getElementById('ocDeliveryFeeRow').classList.toggle('hidden', hidePrices());
+  // Open portal (AO-) delivery orders: the fee is an input instead (admin_set_portal_order_delivery_fee).
+  const feeEditable = canEditCardDeliveryFee(o);
+  const feeEdit = document.getElementById('ocDeliveryFeeEdit');
+  document.getElementById('ocDeliveryFee').classList.toggle('hidden', feeEditable);
+  feeEdit.classList.toggle('hidden', !feeEditable);
+  if (feeEditable && feeEdit.dataset.orderId !== String(o.order_id)) {
+    feeEdit.dataset.orderId = String(o.order_id);
+    document.getElementById('ocDeliveryFeeInput').value = o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '';
+  }
 
   // Payment FastTab - same Pancake-synced amounts as the Excel export's Money To Collect /
   // Amount Paid / Discount / Balance columns.
@@ -5148,6 +5215,7 @@ function openOrderCard(orderId) {
   document.getElementById('orderCardModal').classList.remove('hidden');
   loadOrderCardLines(openCardOrderId);
   if (!hidePrices()) loadOrderCardPaymentMethods(openCardOrderId);
+  renderOrderCardAoPayments(o);
   loadOrderCardReworkHistory(openCardOrderId);
   loadOrderCardReleaseHistory(openCardOrderId);
 }
@@ -5304,6 +5372,7 @@ function wireOrderCard() {
   document.getElementById('cardPrintSerialsBtn').addEventListener('click', (e) => openCardOrderId && printOrderSerialLabels(openCardOrderId, e.currentTarget));
   document.getElementById('cardDeleteOrderBtn').addEventListener('click', (e) => openCardOrderId && deleteOnlineOrder(openCardOrderId, e.currentTarget));
   document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
+  document.getElementById('ocDeliveryFeeSaveBtn').addEventListener('click', saveCardDeliveryFee);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;
     // Only when no dialog launched from the card is open on top of it.
