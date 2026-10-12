@@ -1720,6 +1720,7 @@ function orderAddressHtml(o) {
   if (o.customer_email) rows.push(`<div><span>Email</span><span>${escapeHtml(o.customer_email)}</span></div>`);
   if (o.fulfillment_type === 'Delivery') {
     rows.push(`<div><span>Address</span><span>${escapeHtml(o.delivery_address || '(not provided)')}</span></div>`);
+    rows.push(`<div><span>Delivery Fee</span><span>${Number(o.delivery_fee || 0) > 0 ? Number(o.delivery_fee).toFixed(2) : 'None'}</span></div>`);
   } else if (o.location) {
     rows.push(`<div><span>Pickup at</span><span>${escapeHtml(o.location)}</span></div>`);
   }
@@ -2271,6 +2272,10 @@ function renderCreateOrderTab(conv) {
           <label>Delivery Address</label>
           <input type="text" id="newOrderDeliveryAddress">
         </div>
+        <div class="form-row hidden" id="newOrderDeliveryFeeRow">
+          <label>Delivery Fee</label>
+          <input type="number" min="0" step="0.01" id="newOrderDeliveryFee" placeholder="0.00">
+        </div>
       </div>
       <div class="form-row" style="margin-bottom:0;">
         <label>Notes (optional)</label>
@@ -2369,6 +2374,8 @@ function renderCreateOrderTab(conv) {
       document.getElementById('newOrderFulfillment').value = 'Delivery';
       document.getElementById('newOrderDeliveryAddressRow').classList.remove('hidden');
       document.getElementById('newOrderDeliveryAddress').value = editingOrder.delivery_address || '';
+      document.getElementById('newOrderDeliveryFeeRow').classList.remove('hidden');
+      document.getElementById('newOrderDeliveryFee').value = Number(editingOrder.delivery_fee || 0) > 0 ? Number(editingOrder.delivery_fee).toFixed(2) : '';
     }
   } else {
     // Prefilled from their Facebook profile name (ChatbotConversations.CustomerName - see
@@ -2395,8 +2402,11 @@ function renderCreateOrderTab(conv) {
       document.querySelectorAll('#newOrderFulfillmentToggle .fulfillment-toggle-btn').forEach((b) => b.classList.toggle('active', b === btn));
       document.getElementById('newOrderFulfillment').value = btn.dataset.value;
       document.getElementById('newOrderDeliveryAddressRow').classList.toggle('hidden', btn.dataset.value !== 'Delivery');
+      document.getElementById('newOrderDeliveryFeeRow').classList.toggle('hidden', btn.dataset.value !== 'Delivery');
+      updateOrderTotal();
     });
   });
+  document.getElementById('newOrderDeliveryFee').addEventListener('input', updateOrderTotal);
 
   const phoneInput = document.getElementById('newOrderCustomerPhone');
   phoneInput.addEventListener('input', () => {
@@ -2644,7 +2654,7 @@ function renderNewOrderLines() {
 
   if (newOrderLines.length === 0) {
     bodyEl.innerHTML = '<div class="order-lines-empty">No items added yet - search a product or build a custom item above.</div>';
-    totalEl.textContent = '0.00';
+    updateOrderTotal();
     return;
   }
 
@@ -2753,8 +2763,15 @@ function updateLineField(index, field, rawValue) {
 function updateOrderTotal() {
   const totalEl = document.getElementById('newOrderTotalEl');
   if (!totalEl) return;
-  const total = newOrderLines.reduce((sum, line) => sum + (line.price * line.quantity), 0);
+  const total = newOrderLines.reduce((sum, line) => sum + (line.price * line.quantity), 0) + newOrderDeliveryFee();
   totalEl.textContent = total.toFixed(2);
+}
+
+// Delivery Fee box (Delivery only - Pickup always counts/saves 0, same as the server).
+function newOrderDeliveryFee() {
+  if (document.getElementById('newOrderFulfillment')?.value !== 'Delivery') return 0;
+  const fee = parseFloat(document.getElementById('newOrderDeliveryFee')?.value);
+  return fee > 0 ? fee : 0;
 }
 
 // Full build sheet helpers for custom line notes - per "do better details on the note if the order is
@@ -3353,7 +3370,8 @@ async function submitNewOrder() {
     p_delivery_address: fulfillment === 'Delivery' ? document.getElementById('newOrderDeliveryAddress').value.trim() : null,
     p_notes: document.getElementById('newOrderNotes').value.trim() || null,
     p_location: document.getElementById('newOrderLocation').value,
-    p_lines: newOrderLines
+    p_lines: newOrderLines,
+    p_delivery_fee: newOrderDeliveryFee()
   };
 
   // admin_update_automated_order (edit) and admin_create_gma_conversation_order (new) return
