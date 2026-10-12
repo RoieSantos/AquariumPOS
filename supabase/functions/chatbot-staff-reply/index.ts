@@ -42,6 +42,13 @@
 // message (so it renders as a normal bubble in the GMA thread, same as if staff had typed the emoji)
 // even though what the customer actually receives is the real animated Messenger sticker.
 //
+// Reply-to support (GMA Conversations' "Reply" on a bubble, supabase_chatbot_message_reply_to.sql):
+// the caller passes `reply_to_message_id` (a ChatbotMessages.Id in this conversation); its Facebook
+// mid is sent as the Send API's `reply_to: { mid }` on the FIRST item, so the customer sees it as a
+// quoted reply in Messenger, and saved as that row's ReplyToMid. If Facebook refuses the reply_to
+// itself, the item is resent as a plain message (never lost over a quote) and `replyNotQuoted` is
+// returned so staff knows it went out without the quote.
+//
 // Deploy: supabase functions deploy chatbot-staff-reply --project-ref hymcmesqgpliyyeghpgq
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -294,6 +301,7 @@ Deno.serve(async (req) => {
   let isLike: boolean;
   let forceHumanAgent: boolean;
   let react: { messageId: number; reaction: string | null } | null = null;
+  let replyToMessageId: number | null = null;
   try {
     const body = await req.json();
     adminUsername = String(body.admin_username ?? '');
@@ -302,6 +310,9 @@ Deno.serve(async (req) => {
     message = String(body.message ?? '').trim();
     isLike = body.like === true;
     forceHumanAgent = body.force_human_agent === true;
+    if (body.reply_to_message_id != null && Number.isFinite(Number(body.reply_to_message_id))) {
+      replyToMessageId = Number(body.reply_to_message_id);
+    }
     // { react: { message_id, reaction } } - react to a customer's message (reaction null = remove).
     if (body.react && typeof body.react === 'object') {
       const id = Number(body.react.message_id);
@@ -364,9 +375,25 @@ Deno.serve(async (req) => {
         ...(message ? [{ message, attachmentUrl: null, attachmentPath: null, attachmentKind: 'image' as const, isLike: false }] : [])
       ];
 
+  // Quoted reply: the Facebook mid of the message staff is replying to (extra photos of one message
+  // are saved as "<mid>#2", "#3" - the real mid is the part before '#'). A message with no mid (old
+  // row, comment, failed send) just goes out as a normal message.
+  let replyToMid: string | null = null;
+  if (replyToMessageId !== null && !isLike) {
+    const { data: target } = await supabase
+      .from('ChatbotMessages')
+      .select('FacebookMessageId')
+      .eq('Id', replyToMessageId)
+      .eq('Psid', psid)
+      .maybeSingle();
+    const mid = String(target?.FacebookMessageId ?? '').split('#')[0];
+    if (mid && !mid.startsWith('comment:')) replyToMid = mid;
+  }
+  let replyNotQuoted = false;
+
   let friendlyError: string | null = null;
 
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     const { data: messageId, error: dbError } = await supabase.rpc('admin_send_chatbot_message', {
       p_admin_username: adminUsername,
       p_admin_password: adminPassword,
@@ -387,11 +414,24 @@ Deno.serve(async (req) => {
     }
 
     try {
-      const sendResult = item.isLike
-        ? await sendWithFallback(psid, { attachment: { type: 'image', payload: { sticker_id: LIKE_STICKER_ID } } }, pageAccessToken, graphVersion)
+      const messageBody: Record<string, unknown> = item.isLike
+        ? { attachment: { type: 'image', payload: { sticker_id: LIKE_STICKER_ID } } }
         : item.attachmentUrl
-          ? await sendWithFallback(psid, { attachment: { type: item.attachmentKind, payload: { url: item.attachmentUrl, is_reusable: true } } }, pageAccessToken, graphVersion)
-          : await sendWithFallback(psid, { text: item.message }, pageAccessToken, graphVersion, forceHumanAgent);
+          ? { attachment: { type: item.attachmentKind, payload: { url: item.attachmentUrl, is_reusable: true } } }
+          : { text: item.message };
+      const useForce = !item.isLike && !item.attachmentUrl && forceHumanAgent;
+      const quoteMid = index === 0 ? replyToMid : null;
+
+      let sendResult = await sendWithFallback(psid, quoteMid ? { ...messageBody, reply_to: { mid: quoteMid } } : messageBody, pageAccessToken, graphVersion, useForce);
+      let quoted = !!quoteMid && sendResult.ok;
+      if (quoteMid && !sendResult.ok) {
+        // Facebook may refuse the reply_to itself (message too old/deleted, or not supported for
+        // this Page) - the message matters more than the quote, so it's resent plain.
+        console.log('reply_to send refused, retrying without quote:', sendResult.friendlyError);
+        sendResult = await sendWithFallback(psid, messageBody, pageAccessToken, graphVersion, useForce);
+        if (sendResult.ok) replyNotQuoted = true;
+        quoted = false;
+      }
 
       // DeliveryStatus can't be known by admin_send_chatbot_message itself (it runs before this Send
       // API attempt), so it's set here directly - this is the one place chatbot-staff-reply touches
@@ -401,7 +441,8 @@ Deno.serve(async (req) => {
       if (messageId) {
         await supabase.from('ChatbotMessages').update({
           DeliveryStatus: sendResult.ok ? 'Sent' : 'Failed',
-          ...(sendResult.ok && sendResult.mid ? { FacebookMessageId: sendResult.mid } : {})
+          ...(sendResult.ok && sendResult.mid ? { FacebookMessageId: sendResult.mid } : {}),
+          ...(quoted ? { ReplyToMid: quoteMid } : {})
         }).eq('Id', messageId);
       }
 
@@ -432,5 +473,5 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, loggedOnly: true, error: friendlyError }, 502);
   }
 
-  return jsonResponse({ ok: true });
+  return jsonResponse({ ok: true, ...(replyNotQuoted ? { replyNotQuoted: true } : {}) });
 });

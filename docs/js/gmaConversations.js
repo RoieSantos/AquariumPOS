@@ -336,6 +336,23 @@ function messageSenderLabel(m) {
   return null;
 }
 
+// Quoted replies (supabase_chatbot_message_reply_to.sql): who the quoted message is from, and a
+// one-line preview of it - used by the quote above a bubble and the composer's "Replying to" bar.
+function replyAuthorLabel(role) {
+  if (role === 'user') return conversations.find((c) => c.psid === selectedPsid)?.customer_name || 'Customer';
+  if (role === 'assistant') return 'AI Bot';
+  if (role === 'staff') return 'Staff';
+  return 'a message';
+}
+
+function replySnippet(content, attachmentType) {
+  const text = String(content || '').trim();
+  if (text && !MEDIA_PLACEHOLDER_TEXT.has(text)) return text.length > 90 ? `${text.slice(0, 90)}…` : text;
+  if (attachmentType === 'video') return 'Video';
+  if (attachmentType === 'image') return 'Photo';
+  return text || 'Message';
+}
+
 // Centered "September 14, 2026" divider whenever the day changes between consecutive messages -
 // per direct request to see the date of the conversation, not just relative/bare timestamps.
 function formatDateDivider(iso) {
@@ -487,7 +504,7 @@ function renderMessages(serverRows, opts = {}) {
 
   const seenByHtml = seenByLineHtml(rows);
   const signature = selectedPsid + '#' + rows.map((m) =>
-    [m.message_id ?? m.temp_id, m.delivery_status, m.seen_at_utc, m.detected_payment_amount, m.detected_payment_applied_at_utc, m.pending, m.customer_reaction, m.staff_reaction].join('|')
+    [m.message_id ?? m.temp_id, m.delivery_status, m.seen_at_utc, m.detected_payment_amount, m.detected_payment_applied_at_utc, m.pending, m.customer_reaction, m.staff_reaction, m.reply_to_mid, m.reply_to_message_id].join('|')
   ).join(';') + '#' + seenByHtml;
   if (signature === lastThreadSignature) {
     if (opts.forceBottom) {
@@ -591,11 +608,23 @@ function renderMessages(serverRows, opts = {}) {
     const reactionsHtml = reactions.length ? `<div class="inbox-msg-reactions" title="Reactions">${reactions.map(escapeHtml).join('')}</div>` : '';
     const canReact = m.role === 'user' && !isPending && m.message_id;
     const reactBtnHtml = canReact ? `<button type="button" class="inbox-react-btn" data-react-id="${m.message_id}" data-current="${escapeHtml(m.staff_reaction || '')}" title="React">☺</button>` : '';
-    bubbleHtml = `<div class="inbox-msg-bubble-wrap${reactions.length ? ' has-reactions' : ''}">${bubbleHtml}${reactionsHtml}${reactBtnHtml}</div>`;
+    // Hover "Reply" on any saved message (startReplyTo) - the next typed send quotes it in Messenger.
+    const replyBtnHtml = !isPending && m.message_id ? `<button type="button" class="inbox-reply-to-btn" data-reply-id="${m.message_id}" title="Reply">↩</button>` : '';
+    bubbleHtml = `<div class="inbox-msg-bubble-wrap${reactions.length ? ' has-reactions' : ''}">${bubbleHtml}${reactionsHtml}${reactBtnHtml}${replyBtnHtml}</div>`;
+
+    // The message this one replies to, drawn above the bubble like Messenger; click jumps to it.
+    const quoteFound = !!m.reply_to_message_id;
+    const quoteHtml = m.reply_to_mid
+      ? `<div class="inbox-msg-quote"${quoteFound ? ` data-jump-id="${m.reply_to_message_id}" title="Show original message"` : ''}>` +
+        `<span class="inbox-msg-quote-label">↩ Replied to ${escapeHtml(quoteFound ? replyAuthorLabel(m.reply_to_role) : 'a message')}</span>` +
+        `<span class="inbox-msg-quote-text">${escapeHtml(quoteFound ? replySnippet(m.reply_to_content, m.reply_to_attachment_type) : 'Original message not loaded')}</span>` +
+        '</div>'
+      : '';
 
     parts.push(`
-      <div class="inbox-msg-row ${rowClass}${isGroupStart ? ' inbox-msg-group-start' : ''}${isPending ? ' inbox-msg-row-pending' : ''}">
+      <div class="inbox-msg-row ${rowClass}${isGroupStart ? ' inbox-msg-group-start' : ''}${isPending ? ' inbox-msg-row-pending' : ''}"${m.message_id ? ` data-msg-id="${m.message_id}"` : ''}>
         ${sender ? `<span class="inbox-msg-sender">${escapeHtml(sender)}</span>` : ''}
+        ${quoteHtml}
         ${bubbleHtml}
         ${isGroupEnd || isPending ? `<div class="inbox-msg-meta">${escapeHtml(timeLabel)}${statusLabel}</div>` : ''}
       </div>
@@ -626,6 +655,15 @@ function renderMessages(serverRows, opts = {}) {
       openReactPicker(btn);
     });
   });
+  messagesEl.querySelectorAll('.inbox-reply-to-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startReplyTo(Number(btn.dataset.replyId));
+    });
+  });
+  messagesEl.querySelectorAll('.inbox-msg-quote[data-jump-id]').forEach((el) => {
+    el.addEventListener('click', () => jumpToMessage(el.dataset.jumpId));
+  });
 
   threadStickToBottom = stick;
   if (stick) scrollThreadToBottom();
@@ -644,20 +682,28 @@ function closeReactPicker() {
 let reactPickerOpenedAt = 0;
 
 // opts.anchor - element to float above (defaults to the ☺ button); opts.copyText - long-press on a
-// phone also offers Copy, since holding the bubble no longer selects its text.
+// phone also offers Copy, since holding the bubble no longer selects its text; opts.replyId - and
+// Reply (the hover ↩ button is hidden on the phone layout). btn is null for our own messages (no
+// reactions, just Reply/Copy).
 function openReactPicker(btn, opts = {}) {
   closeReactPicker();
   reactPickerOpenedAt = Date.now();
-  const messageId = Number(btn.dataset.reactId);
-  const current = btn.dataset.current || '';
+  const messageId = btn ? Number(btn.dataset.reactId) : null;
+  const current = btn?.dataset.current || '';
   const picker = document.createElement('div');
   picker.id = 'inboxReactPicker';
   picker.className = 'inbox-react-picker';
-  picker.innerHTML = REACTION_CHOICES
+  picker.innerHTML = (btn ? REACTION_CHOICES
     .map(([name, emoji]) => `<button type="button" data-reaction="${name}" class="${emoji === current ? 'active' : ''}" title="${emoji === current ? 'Remove reaction' : name}">${emoji}</button>`)
-    .join('') +
+    .join('') : '') +
+    (opts.replyId ? '<button type="button" class="inbox-react-copy" data-reply>Reply</button>' : '') +
     (opts.copyText ? '<button type="button" class="inbox-react-copy" data-copy>Copy</button>' : '');
   picker.addEventListener('click', (e) => {
+    if (e.target.closest('[data-reply]')) {
+      closeReactPicker();
+      startReplyTo(Number(opts.replyId));
+      return;
+    }
     if (e.target.closest('[data-copy]')) {
       navigator.clipboard?.writeText(opts.copyText).catch(() => {});
       closeReactPicker();
@@ -671,6 +717,7 @@ function openReactPicker(btn, opts = {}) {
   });
   document.body.appendChild(picker);
   const anchor = opts.anchor || btn;
+  if (!anchor) return;
   const rect = anchor.getBoundingClientRect();
   const left = opts.anchor ? rect.left : rect.left - picker.offsetWidth / 2;
   picker.style.top = `${Math.max(8, rect.top - picker.offsetHeight - 6)}px`;
@@ -682,6 +729,42 @@ document.addEventListener('click', (e) => {
   if (Date.now() - reactPickerOpenedAt < 600) return;
   if (!e.target.closest('#inboxReactPicker')) closeReactPicker();
 });
+
+// "Reply" to one specific message: held here until the next typed send (sendReply), which passes it
+// as reply_to_message_id so chatbot-staff-reply sends it as a Messenger quoted reply. Cleared on
+// send, on the composer's ×, on Escape, or when switching conversation.
+let replyingTo = null; // { psid, messageId, role, content, attachmentType }
+
+function startReplyTo(messageId) {
+  const m = (messageCache.get(selectedPsid) || []).find((r) => r.message_id === messageId);
+  if (!m) return;
+  replyingTo = { psid: selectedPsid, messageId, role: m.role, content: m.content, attachmentType: m.attachment_type };
+  renderReplyingTo();
+  document.getElementById('replyInput').focus();
+}
+
+function clearReplyTo() {
+  replyingTo = null;
+  renderReplyingTo();
+}
+
+function renderReplyingTo() {
+  const el = document.getElementById('replyingToEl');
+  if (!el) return;
+  el.classList.toggle('hidden', !replyingTo);
+  if (!replyingTo) return;
+  document.getElementById('replyingToLabel').textContent = `Replying to ${replyAuthorLabel(replyingTo.role)}`;
+  document.getElementById('replyingToText').textContent = replySnippet(replyingTo.content, replyingTo.attachmentType);
+}
+
+function jumpToMessage(messageId) {
+  const row = document.querySelector(`#threadMessagesEl [data-msg-id="${Number(messageId)}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.remove('inbox-msg-row-flash');
+  void row.offsetWidth; // restart the highlight animation on a repeat click
+  row.classList.add('inbox-msg-row-flash');
+}
 
 // Shown instantly (like Messenger), then sent in the background; put back if Facebook refuses.
 function setCachedStaffReaction(psid, messageId, emoji) {
@@ -884,6 +967,7 @@ async function openConversation(psid) {
   document.getElementById('replyInput').value = '';
   autoResizeReplyInput();
   setPendingReplyImages([]);
+  clearReplyTo();
   toggleQuickRepliesPanel(false);
   toggleProductLookupPanel(false);
   toggleMediaLibraryPanel(false);
@@ -3063,9 +3147,10 @@ async function adviseReply() {
 // once delivered (callers that care, like Product List, can still await it).
 let sendQueue = Promise.resolve();
 let sendBatchSeq = 0;
-const sendRequests = new Map(); // send_id -> { psid, message, images, like } (for Retry)
+const sendRequests = new Map(); // send_id -> { psid, message, images, like, replyTo } (for Retry)
 
-function sendMessageToCustomer(message, images, like) {
+// replyTo - a replyingTo snapshot (startReplyTo): the first item goes out as a quoted reply to it.
+function sendMessageToCustomer(message, images, like, replyTo = null) {
   const errorEl = document.getElementById('replyErrorEl');
   errorEl.classList.add('hidden');
   const normalized = normalizePendingImages(images);
@@ -3088,8 +3173,18 @@ function sendMessageToCustomer(message, images, like) {
         ...normalized.map((img, i) => ({ ...base, temp_id: `${sendId}-${i}`, content: '', attachment_type: img.type, attachment_url: img.url })),
         ...(message ? [{ ...base, temp_id: `${sendId}-text`, content: message }] : [])
       ];
+  const quote = like ? null : replyTo;
+  if (quote && items.length) {
+    Object.assign(items[0], {
+      reply_to_mid: 'pending',
+      reply_to_message_id: quote.messageId,
+      reply_to_role: quote.role,
+      reply_to_content: quote.content,
+      reply_to_attachment_type: quote.attachmentType
+    });
+  }
   pendingOutgoing.push(...items);
-  sendRequests.set(sendId, { psid, message, images: normalized, like: !!like });
+  sendRequests.set(sendId, { psid, message, images: normalized, like: !!like, replyTo: quote });
   if (psid === selectedPsid) renderThread({ forceBottom: true });
 
   const run = sendQueue.then(() => deliverPendingSend(sendId));
@@ -3118,7 +3213,8 @@ async function deliverPendingSend(sendId) {
         psid: req.psid,
         message: req.message,
         images: req.images,
-        like: req.like
+        like: req.like,
+        reply_to_message_id: req.replyTo?.messageId ?? null
       })
     });
     result = await response.json().catch(() => ({}));
@@ -3137,6 +3233,9 @@ async function deliverPendingSend(sendId) {
   // and the conversation auto-paused. Either way the real rows replace the placeholders now.
   if (!response.ok && req.psid === selectedPsid) {
     errorEl.textContent = result.error || `Send failed (${response.status}).`;
+    errorEl.classList.remove('hidden');
+  } else if (result.replyNotQuoted && req.psid === selectedPsid) {
+    errorEl.textContent = "Sent, but Facebook didn't accept it as a reply to that message - it went out as a normal message.";
     errorEl.classList.remove('hidden');
   }
   sendRequests.delete(sendId);
@@ -3171,7 +3270,7 @@ function retryPendingSend(sendId) {
   if (!req) return;
   pendingOutgoing = pendingOutgoing.filter((p) => p.send_id !== sendId);
   sendRequests.delete(sendId);
-  sendMessageToCustomer(req.message, req.images, req.like);
+  sendMessageToCustomer(req.message, req.images, req.like, req.replyTo);
 }
 
 // Set when a quick reply/product photo (or an ad-hoc attachment) is loaded into the textbox (see
@@ -3281,12 +3380,14 @@ async function sendReply() {
   const images = pendingReplyImageUrls;
   if (!message && images.length === 0) return;
 
+  const replyTo = replyingTo && replyingTo.psid === selectedPsid ? replyingTo : null;
   input.value = '';
   autoResizeReplyInput();
   setPendingReplyImages([]);
+  clearReplyTo();
   // Keep the phone keyboard up only if it already was (tapping Send keeps focus anyway).
   if (!isMobileInbox() || document.activeElement === input) input.focus();
-  sendMessageToCustomer(message, images);
+  sendMessageToCustomer(message, images, false, replyTo);
 }
 
 // The button that replaced Send in the toolbar - per direct request, matches Messenger's own
@@ -4726,27 +4827,28 @@ function setupThreadInteractions() {
   messagesEl.addEventListener('scroll', () => {
     threadStickToBottom = threadIsNearBottom(messagesEl);
   });
-  // Touch: press and hold a customer's message to react, like the Messenger app (the hover ☺ button
-  // is hidden on the phone layout). Cancelled if the finger moves (scrolling).
+  // Touch: press and hold a message to react (customer's) / reply / copy, like the Messenger app (the
+  // hover ☺ and ↩ buttons are hidden on the phone layout). Cancelled if the finger moves (scrolling).
   let longPressTimer = null;
   const cancelLongPress = () => { clearTimeout(longPressTimer); longPressTimer = null; };
   messagesEl.addEventListener('touchstart', (e) => {
-    const wrap = e.target.closest('.inbox-msg-row-user .inbox-msg-bubble-wrap');
-    const btn = wrap?.querySelector('.inbox-react-btn');
-    if (!btn || e.target.closest('a, button, video, audio')) return;
+    const wrap = e.target.closest('.inbox-msg-bubble-wrap');
+    const btn = wrap?.querySelector('.inbox-react-btn') || null;
+    const replyBtn = wrap?.querySelector('.inbox-reply-to-btn');
+    if ((!btn && !replyBtn) || e.target.closest('a, button, video, audio')) return;
     cancelLongPress();
     longPressTimer = setTimeout(() => {
       longPressTimer = null;
       navigator.vibrate?.(15);
-      const bubble = wrap.querySelector('.inbox-msg, .inbox-msg-media, .inbox-msg-emoji') || btn;
+      const bubble = wrap.querySelector('.inbox-msg, .inbox-msg-media, .inbox-msg-emoji') || btn || replyBtn;
       const text = wrap.querySelector('.inbox-msg')?.innerText.trim() || '';
-      openReactPicker(btn, { anchor: bubble, copyText: text });
+      openReactPicker(btn, { anchor: bubble, copyText: text, replyId: replyBtn?.dataset.replyId });
     }, 450);
   }, { passive: true });
   ['touchmove', 'touchend', 'touchcancel'].forEach((type) => messagesEl.addEventListener(type, cancelLongPress, { passive: true }));
   // Stop Android's own long-press menu/text selection from fighting the reaction picker.
   messagesEl.addEventListener('contextmenu', (e) => {
-    if (isMobileInbox() && e.target.closest('.inbox-msg-row-user .inbox-msg-bubble-wrap')) e.preventDefault();
+    if (isMobileInbox() && e.target.closest('.inbox-msg-bubble-wrap')) e.preventDefault();
   });
 
   // 'load' doesn't bubble - capture catches every <img>/<video> as it finishes.
@@ -4887,7 +4989,12 @@ function setupMobileViewportHeight() {
     autoResizeReplyInput();
   });
   document.getElementById('adviseReplyBtn').addEventListener('click', adviseReply);
+  document.getElementById('replyingToCloseBtn').addEventListener('click', clearReplyTo);
   document.getElementById('replyInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && replyingTo) {
+      clearReplyTo();
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey && enterKeySends()) {
       e.preventDefault();
       sendReply();

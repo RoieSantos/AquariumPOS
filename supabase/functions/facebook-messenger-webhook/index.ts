@@ -87,7 +87,7 @@ interface FacebookWebhookBody {
     messaging?: Array<{
       sender?: { id: string };
       recipient?: { id: string };
-      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[] };
+      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[]; reply_to?: { mid?: string } };
       read?: { watermark: number };
       reaction?: { mid?: string; action?: string; emoji?: string; reaction?: string };
     }>;
@@ -96,7 +96,7 @@ interface FacebookWebhookBody {
     standby?: Array<{
       sender?: { id: string };
       recipient?: { id: string };
-      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[] };
+      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[]; reply_to?: { mid?: string } };
       read?: { watermark: number };
     }>;
   }>;
@@ -430,7 +430,9 @@ function attachmentLabel(a: FacebookAttachment, link: string | null): string {
 // attachments. The first row carries the real Facebook mid (ChatbotMessages.FacebookMessageId's
 // unique index = redelivery guard -> 'duplicate'); extra rows use "<mid>#2", "#3", ... A link preview
 // whose link is already in the text is skipped; a location pin / shared link with no text gets its link
-// written into Content (see attachmentLabel).
+// written into Content (see attachmentLabel). replyToMid (message.reply_to.mid - the customer swiped
+// to reply to a specific message) is saved on the first row only, as ChatbotMessages.ReplyToMid, so
+// GMA Conversations can draw the quoted message above it (supabase_chatbot_message_reply_to.sql).
 async function recordMessageWithAttachments(
   supabase: SupabaseClient,
   psid: string,
@@ -438,7 +440,8 @@ async function recordMessageWithAttachments(
   mid: string,
   text: string,
   attachments: FacebookAttachment[] | undefined,
-  extra: Record<string, unknown> | null
+  extra: Record<string, unknown> | null,
+  replyToMid: string | null = null
 ): Promise<{ parts: RecordedPart[] } | 'duplicate' | 'empty'> {
   // A shared-link preview whose link is already in the message text adds nothing - skipped, as before.
   // One with NO text (or a different link) is kept, so the link isn't lost.
@@ -470,8 +473,14 @@ async function recordMessageWithAttachments(
     if (!text) return 'empty';
     rows.push({ Psid: psid, Role: role, Content: text, FacebookMessageId: mid, AttachmentPath: null, AttachmentUrl: null, AttachmentType: null, ...(extra ?? {}) });
   }
+  if (replyToMid) (rows[0] as Record<string, unknown>).ReplyToMid = replyToMid;
 
-  const { data: firstRow, error: firstErr } = await supabase.from('ChatbotMessages').insert(rows[0]).select('Id').maybeSingle();
+  let { data: firstRow, error: firstErr } = await supabase.from('ChatbotMessages').insert(rows[0]).select('Id').maybeSingle();
+  if (firstErr && replyToMid && /ReplyToMid/i.test(firstErr.message)) {
+    // ReplyToMid column not added yet (supabase_chatbot_message_reply_to.sql) - keep the message, drop the quote.
+    delete (rows[0] as Record<string, unknown>).ReplyToMid;
+    ({ data: firstRow, error: firstErr } = await supabase.from('ChatbotMessages').insert(rows[0]).select('Id').maybeSingle());
+  }
   if (firstErr) {
     if (firstErr.code === '23505') return 'duplicate';
     console.error('Failed to record chatbot message:', firstErr.message);
@@ -908,7 +917,8 @@ async function processMessage(
   psid: string,
   text: string | undefined,
   mid: string,
-  attachments: FacebookAttachment[] | undefined
+  attachments: FacebookAttachment[] | undefined,
+  replyToMid: string | null = null
 ): Promise<void> {
   // Insert-if-missing only - LastMessageAtUtc/Status are updated below, never overwritten here.
   await supabase.from('ChatbotConversations').upsert({ Psid: psid, PageId: pageId }, { onConflict: 'Psid', ignoreDuplicates: true });
@@ -924,7 +934,7 @@ async function processMessage(
   // Recorded + broadcast BEFORE the payment-screenshot vision pass, so the photos show up in the GMA
   // inbox right away (Messenger speed) instead of waiting several seconds on Claude - the detected
   // payment fields are filled in on the same rows just after, with a second broadcast.
-  const recorded = await recordMessageWithAttachments(supabase, psid, 'user', mid, trimmedText, attachments, null);
+  const recorded = await recordMessageWithAttachments(supabase, psid, 'user', mid, trimmedText, attachments, null, replyToMid);
   if (recorded === 'duplicate' || recorded === 'empty') return; // redelivery, or nothing to record
   const hasAttachments = recorded.parts.length > 0;
 
@@ -1328,7 +1338,7 @@ async function processEcho(
   graphVersion: string,
   pageId: string | undefined,
   psid: string | undefined,
-  message: { mid: string; text?: string; app_id?: number | string; attachments?: FacebookAttachment[] }
+  message: { mid: string; text?: string; app_id?: number | string; attachments?: FacebookAttachment[]; reply_to?: { mid?: string } }
 ): Promise<void> {
   if (!pageId || !psid || !message?.mid) return;
 
@@ -1344,7 +1354,8 @@ async function processEcho(
   // Same multi-photo / video handling as a customer's message (one row per attachment).
   const recorded = await recordMessageWithAttachments(
     supabase, psid, 'staff', message.mid, message.text?.trim() || '', message.attachments,
-    { SentByUsername: 'Meta app', DeliveryStatus: 'Sent' }
+    { SentByUsername: 'Meta app', DeliveryStatus: 'Sent' },
+    message.reply_to?.mid || null
   );
   if (recorded === 'duplicate' || recorded === 'empty') return; // redelivered echo / nothing to record
   console.log('Echo recorded as Meta app staff message', message.mid);
@@ -1557,7 +1568,7 @@ async function handlePost(req: Request): Promise<Response> {
         if ((!text && !(attachments && attachments.length > 0)) || !psid || !pageId || !mid) continue;
 
         try {
-          await processMessage(supabase, anthropic, model, pageAccessToken, graphVersion, pageId, psid, text, mid, attachments);
+          await processMessage(supabase, anthropic, model, pageAccessToken, graphVersion, pageId, psid, text, mid, attachments, evt.message?.reply_to?.mid || null);
         } catch (err) {
           console.error('Error processing Messenger event:', err instanceof Error ? err.message : err);
         }
