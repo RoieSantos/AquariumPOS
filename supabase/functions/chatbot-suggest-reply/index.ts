@@ -15,7 +15,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
-import { READ_ONLY_TOOL_NAMES, buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import { READ_ONLY_TOOL_NAMES, buildCurrentTimeLine, buildFacebookPageLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 30;
@@ -111,7 +111,8 @@ Deno.serve(async (req) => {
     { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
     { type: 'text' as const, text: ADVISE_MODE_RULES },
     { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
-    { type: 'text' as const, text: customerName ? `The customer's name is ${customerName}.` : 'The customer\'s name is not known.' }
+    { type: 'text' as const, text: customerName ? `The customer's name is ${customerName}.` : 'The customer\'s name is not known.' },
+    ...(conv.PageId ? [{ type: 'text' as const, text: buildFacebookPageLine(conv.PageId as string) }] : [])
   ];
 
   const model = (aiSettings?.AiModel as string | undefined)?.trim() || Deno.env.get('CLAUDE_MODEL') || DEFAULT_MODEL;

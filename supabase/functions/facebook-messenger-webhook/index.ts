@@ -56,7 +56,10 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
-import { DEFAULT_GRAPH_VERSION, buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import {
+  DEFAULT_GRAPH_VERSION, REVIEW_GUIDE_IMAGE_URL, buildCurrentTimeLine, buildFacebookPageLine, buildSystemPrompt,
+  containsReviewLink, logBotImage, runChatbotTurn, sendMessengerImage
+} from '../_shared/chatbot-engine.ts';
 import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
 import { isWithinBotSchedule } from '../_shared/bot-schedule.ts';
 import { type FacebookFeedChangeValue, handleFeedComment } from './comments.ts';
@@ -1280,7 +1283,9 @@ async function generateAndSendAiReply(
   const systemBlocks = [
     { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
     { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
-    { type: 'text' as const, text: buildCustomerNameLine(customerName) }
+    { type: 'text' as const, text: buildCustomerNameLine(customerName) },
+    // Which Page (GMA / Amaya) - e.g. the review request must send that Page's review link.
+    ...(pageId ? [{ type: 'text' as const, text: buildFacebookPageLine(pageId) }] : [])
   ];
 
   // AiSettings.AiModel (portal-editable, see ai-bot-setup.html) overrides the env/default model
@@ -1314,6 +1319,13 @@ async function generateAndSendAiReply(
   if (replyRow?.Id) {
     await supabase.from('ChatbotMessages').update(sentMessageFields(replyDelivered)).eq('Id', replyRow.Id);
     await broadcastGmaEvent(supabase, psid);
+  }
+  // Review request (REVIEW REQUEST rule) - follow it with the "where to find Reviews" screenshot.
+  if (replyDelivered.ok && containsReviewLink(finalText)) {
+    if (await sendMessengerImage(psid, REVIEW_GUIDE_IMAGE_URL, pageAccessToken, graphVersion)) {
+      await logBotImage(supabase, psid, REVIEW_GUIDE_IMAGE_URL);
+      await broadcastGmaEvent(supabase, psid);
+    }
   }
 }
 

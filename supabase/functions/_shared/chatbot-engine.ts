@@ -1241,6 +1241,31 @@ export function buildCurrentTimeLine(timeZone: string): string {
   return `CURRENT DATE/TIME (${timeZone}): ${formatted}. Use this for anything relative - "today", "right now", "is it too late to order" - and to judge whether the store is currently open against the hours in STORE INFO. Never guess or use a different timezone.`;
 }
 
+// Facebook review links per Page - the review request (REVIEW REQUEST rule below) must send the link
+// of the Page the customer is messaging. The m. link is the mobile version of the same page.
+const PAGE_REVIEW_LINKS: Record<'Amaya' | 'GMA', string[]> = {
+  Amaya: ['https://www.facebook.com/RSPetStop/reviews', 'https://m.facebook.com/RSPetStop/reviews'],
+  GMA: ['https://www.facebook.com/RSPetStopGMA/reviews', 'https://m.facebook.com/RSPetStopGMA/reviews']
+};
+
+// Screenshot showing where the Reviews link is on a Page (docs/icons/facebook-review-guide.jpg).
+// Messenger sends it as its own photo right after any bot reply carrying a review link - done in
+// code (facebook-messenger-webhook), not as a tool, so it always follows the text and never goes alone.
+export const REVIEW_GUIDE_IMAGE_URL = 'https://rspetstop.com/icons/facebook-review-guide.jpg';
+
+export function containsReviewLink(text: string): boolean {
+  return Object.values(PAGE_REVIEW_LINKS).flat().some((url) => text.includes(url));
+}
+
+// Which Page a Messenger conversation is on, by its PageId: the Amaya (RS Pet Stop) Page is the
+// FACEBOOK_RSPETSTOP_PAGE_ID secret (same one facebook-page-post uses); any other Page is GMA, the
+// bot's original Page (see _shared/page-tokens.ts). Its own uncached block - it differs per conversation.
+export function buildFacebookPageLine(pageId: string | null | undefined): string {
+  if (!pageId) return '';
+  const page = pageId === Deno.env.get('FACEBOOK_RSPETSTOP_PAGE_ID')?.trim() ? 'Amaya' : 'GMA';
+  return `FACEBOOK PAGE: this conversation is on our RS Pet Stop ${page} Facebook Page. REVIEW LINKS for this Page (use only these in a review request): ${PAGE_REVIEW_LINKS[page].map((url) => `👉 ${url}`).join('  ')}`;
+}
+
 export function buildSystemPrompt(
   storeInfo: Record<string, unknown> | null,
   companyInfo: Record<string, unknown> | null,
@@ -1385,6 +1410,17 @@ export function buildSystemPrompt(
     '- GMA branch - pin location: "RSPetStop GMA"',
     '- Tell the customer to search that exact pin name in Google Maps or Waze to find the branch. Only give the pin name of the branch they ask about (or both if they haven\'t said which); do not invent street addresses or link URLs.',
     '- If they want a tap-to-open directions link instead, you may share these exact Google Maps links (the same "Get directions" buttons on our homepage) - never alter them or make up any other link: Amaya - https://www.google.com/maps/search/?api=1&query=RSPetStop+Amaya ; GMA - https://www.google.com/maps/search/?api=1&query=RSPetStop+GMA'
+  );
+  lines.push(
+    '',
+    'REVIEW REQUEST (after the customer receives their order):',
+    '- When the customer says they already RECEIVED their products / order (delivered, picked up, or set up) AND sounds satisfied (e.g. "received na po, salamat", "ang ganda po", "ok na po, thank you", a happy emoji or thumbs-up after receiving), first reply to what they said, then send the review request below.',
+    '- Use the review links from the FACEBOOK PAGE section (the Page they are messaging) - never the other Page\'s links. If there is no FACEBOOK PAGE section, list both Pages\' links, labeled "For Amaya" (https://www.facebook.com/RSPetStop/reviews) and "For GMA" (https://www.facebook.com/RSPetStopGMA/reviews).',
+    '- Do NOT send it if they are unhappy or report any problem (leak, crack, damage, missing/wrong item, late) - handle that first (escalate_to_staff when needed). Never send it before they have received anything.',
+    '- Send it at most ONCE per conversation: if a review request already appears earlier in this conversation, don\'t send it again.',
+    '- On Messenger, a screenshot showing where the Reviews link is on our Page is sent automatically right after your message - so keep the "(please find the image for reference 🙂)" line there, but leave it out where there\'s no FACEBOOK PAGE section (no image is sent there).',
+    '- Keep this wording (use "Sir" or "Ma\'am" when you know which, otherwise "Sir/Ma\'am"), with the links on their own lines:',
+    '"Hello Sir/Ma\'am,\nThank you so much for choosing our services! If you\'re satisfied with your experience, we\'d greatly appreciate it if you could take a moment to leave a rating or share a comment. 💬 You can drop your review here:\n👉 <review link>\n👉 <mobile review link>\n\n(please find the image for reference 🙂)\n\nYour feedback means a lot to us and helps us improve further - so if there\'s anything we can do better, please don\'t hesitate to let us know po. 🙏\nWe truly value your trust and support, and we hope to serve you again soon.\nHappy Fishkeeping!\n🐠 #RSPetStop"'
   );
   if (companyInfo) {
     lines.push('', 'COMPANY INFO:');
@@ -2249,6 +2285,16 @@ export async function sendMessengerImage(psid: string, imageUrl: string, pageAcc
   return true;
 }
 
+// Logs a photo the bot sent (send_item_image, the review guide) as its own ChatbotMessages row, so
+// GMA Conversations shows it in the thread - our own app's Messenger echoes are ignored by the
+// webhook, so without this the photo was sent to the customer but never appeared in the inbox.
+export async function logBotImage(supabase: SupabaseClient, psid: string, imageUrl: string): Promise<void> {
+  const { error } = await supabase.from('ChatbotMessages').insert({
+    Psid: psid, Role: 'assistant', Content: '[Photo]', AttachmentUrl: imageUrl, AttachmentType: 'image', DeliveryStatus: 'Sent'
+  });
+  if (error) console.error('Could not log bot photo:', error.message);
+}
+
 export interface ExecuteToolParams {
   supabase: SupabaseClient;
   psid: string;
@@ -2399,6 +2445,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
 
       if (!pageAccessToken) return 'Photo sending is not configured right now.';
       const sent = await sendMessengerImage(psid, imageUrl, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION);
+      if (sent) await logBotImage(supabase, psid, imageUrl);
       return sent ? 'Photo sent to the customer.' : 'Sending the photo failed - let the customer know and continue without it.';
     }
     case 'compute_aquarium_quote':
