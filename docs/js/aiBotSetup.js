@@ -9,6 +9,8 @@
 //     supabase/functions/chatbot-followup-dispatcher (the pg_cron-triggered function that actually
 //     detects and sends follow-ups - see supabase_chatbot_followups.sql) and by the webhook's
 //     schedule_follow_up tool.
+//   - Customer mood (ChatbotAiSettings.Mood*, supabase_chatbot_mood_settings.sql) - on/off, model and
+//     wait time for the Conversations mood emoji, read by the webhook's mood.ts.
 //   - Facebook Posts (public.FacebookPostSettings, see supabase_facebook_post_settings.sql) -
 //     standing AI caption directions + default watermark for facebook-post-test.html.
 // Same trust model as General Setup: super user status alone is enough, reusing session.password
@@ -31,6 +33,47 @@ async function loadAiSettings() {
   document.getElementById('defaultLocationInput').value = (info && info['DefaultLocation']) || 'GMA';
   document.getElementById('commentAutoReplyEnabledInput').checked = !info || info['CommentAutoReplyEnabled'] !== false;
   renderBotSchedule(info);
+  renderMoodSettings(info);
+}
+
+// Customer mood for Conversations (ChatbotAiSettings.MoodEnabled / MoodModel / MoodDelaySeconds, see
+// supabase_chatbot_mood_settings.sql) - read by facebook-messenger-webhook's mood.ts. Defaults match
+// the webhook's own fallbacks (on, Haiku 5.5, 30s) for before the SQL is run.
+function renderMoodSettings(info) {
+  document.getElementById('moodEnabledInput').checked = !info || info['MoodEnabled'] !== false;
+  document.getElementById('moodModelInput').value = (info && info['MoodModel']) || 'claude-haiku-5-5';
+  const delay = String((info && info['MoodDelaySeconds']) || 30);
+  const delaySelect = document.getElementById('moodDelayInput');
+  if (![...delaySelect.options].some((o) => o.value === delay)) delaySelect.add(new Option(`${delay} seconds`, delay));
+  delaySelect.value = delay;
+}
+
+async function saveMoodSettings() {
+  const errorEl = document.getElementById('moodSettingsError');
+  const savedEl = document.getElementById('moodSettingsSaved');
+  const saveBtn = document.getElementById('saveMoodSettingsBtn');
+  errorEl.classList.add('hidden');
+  savedEl.classList.add('hidden');
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabaseClient.rpc('admin_set_chatbot_mood_settings', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_enabled: document.getElementById('moodEnabledInput').checked,
+      p_model: document.getElementById('moodModelInput').value,
+      p_delay_seconds: Number(document.getElementById('moodDelayInput').value)
+    });
+    if (error) {
+      errorEl.textContent = error.code === 'PGRST202'
+        ? 'Mood settings need sql/supabase_chatbot_mood_settings.sql to be run first.'
+        : error.message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    savedEl.classList.remove('hidden');
+  } finally {
+    saveBtn.disabled = false;
+  }
 }
 
 // Messenger bot schedule hours (ChatbotAiSettings.BotScheduleEnabled / BotSchedule, see
@@ -418,6 +461,7 @@ async function updateCapabilityGapStatus(id, status) {
   document.getElementById('saveAiSettingsBtn').addEventListener('click', saveAiSettings);
   document.getElementById('commentAutoReplyEnabledInput').addEventListener('change', saveCommentAutoReply);
   document.getElementById('saveBotScheduleBtn').addEventListener('click', saveBotSchedule);
+  document.getElementById('saveMoodSettingsBtn').addEventListener('click', saveMoodSettings);
   document.getElementById('botScheduleEnabledInput').addEventListener('change', updateBotScheduleNow);
   document.getElementById('botScheduleDays').addEventListener('input', updateBotScheduleNow);
   document.getElementById('botScheduleDays').addEventListener('change', updateBotScheduleNow);

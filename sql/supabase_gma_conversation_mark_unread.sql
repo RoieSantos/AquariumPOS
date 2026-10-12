@@ -83,6 +83,7 @@ grant execute on function public.admin_mark_chatbot_conversation_read(text, text
 drop function if exists public.admin_list_chatbot_conversations(text, text, int, int, text);
 drop function if exists public.admin_list_chatbot_conversations(text, text, int, int, text, int);
 drop function if exists public.admin_list_chatbot_conversations(text, text, int, int, text, int, text);
+drop function if exists public.admin_list_chatbot_conversations(text, text, int, int, text, int, text, text); -- mood file's version, if this file is re-run after it
 
 create or replace function public.admin_list_chatbot_conversations(
   p_admin_username text,

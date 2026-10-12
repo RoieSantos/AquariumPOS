@@ -89,13 +89,18 @@ async function loadConversations() {
     // Only sent when filtering, so the list still loads before supabase_gma_conversation_tags.sql is run.
     ...(conversationTagFilter ? { p_tag_id: conversationTagFilter } : {}),
     // Same for the All / Unread / Read pills (supabase_gma_conversation_mark_unread.sql).
-    ...(conversationReadFilter ? { p_read_filter: conversationReadFilter } : {})
+    ...(conversationReadFilter ? { p_read_filter: conversationReadFilter } : {}),
+    // And the mood filter (supabase_gma_conversation_mood.sql).
+    ...(conversationMoodFilter ? { p_mood: conversationMoodFilter } : {})
   });
 
   if (error) {
-    const message = error.code === 'PGRST202' && conversationReadFilter
-      ? 'The Unread / Read filter needs sql/supabase_gma_conversation_mark_unread.sql to be run first. Click "All" to see the list.'
-      : error.message;
+    let message = error.message;
+    if (error.code === 'PGRST202' && conversationMoodFilter) {
+      message = 'The mood filter needs sql/supabase_gma_conversation_mood.sql to be run first. Pick "All moods" to see the list.';
+    } else if (error.code === 'PGRST202' && conversationReadFilter) {
+      message = 'The Unread / Read filter needs sql/supabase_gma_conversation_mark_unread.sql to be run first. Click "All" to see the list.';
+    }
     listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(message)}</div>`;
     return;
   }
@@ -106,6 +111,12 @@ async function loadConversations() {
   // one that's open in the list until staff move on (like Messenger's Unread tab).
   if (conversationReadFilter && previousSelected && !conversations.some((c) => c.psid === selectedPsid)) {
     conversations.unshift(previousSelected);
+  }
+  // The open conversation's mood may have just been updated (mood.ts broadcasts after saving it).
+  const selectedNow = conversations.find((c) => c.psid === selectedPsid);
+  if (selectedNow && previousSelected && (selectedNow.customer_mood !== previousSelected.customer_mood
+    || selectedNow.customer_mood_reason !== previousSelected.customer_mood_reason)) {
+    renderThreadMood(selectedNow);
   }
   renderConversationList();
 }
@@ -146,6 +157,63 @@ function renderTagFilter() {
   select.innerHTML = '<option value="">All tags</option>' + allTags
     .map((t) => `<option value="${t.tag_id}"${t.tag_id === conversationTagFilter ? ' selected' : ''}>${escapeHtml(t.name)} (${Number(t.conversation_count) || 0})</option>`)
     .join('');
+}
+
+// Customer mood (supabase_gma_conversation_mood.sql) - the webhook's mood.ts reads the customer's
+// latest messages with a cheap AI model ~30s after they stop typing. A hint for staff, not a fact.
+const MOODS = {
+  angry: { emoji: '😠', label: 'Angry' },
+  impatient: { emoji: '⏰', label: 'Impatient' },
+  sad: { emoji: '😟', label: 'Sad' },
+  unsure: { emoji: '🤔', label: 'Unsure' },
+  neutral: { emoji: '😐', label: 'Neutral' },
+  happy: { emoji: '😊', label: 'Happy' },
+  excited: { emoji: '🤩', label: 'Excited' },
+  ready_to_buy: { emoji: '🛒', label: 'Ready to buy' }
+};
+let conversationMoodFilter = null; // a MOODS key or null
+
+function moodTitle(c) {
+  const mood = MOODS[c.customer_mood];
+  if (!mood) return '';
+  const when = c.customer_mood_at_utc ? ` · ${formatRelativeTime(c.customer_mood_at_utc)}` : '';
+  return `Customer seems ${mood.label.toLowerCase()}${c.customer_mood_reason ? `: ${c.customer_mood_reason}` : ''}${when} (AI guess)`;
+}
+
+function moodBadgeHtml(c) {
+  const mood = MOODS[c.customer_mood];
+  if (!mood) return '';
+  return `<span class="inbox-mood inbox-mood-${escapeHtml(c.customer_mood)}" title="${escapeHtml(moodTitle(c))}">${mood.emoji}</span>`;
+}
+
+// Thread header: emoji + label; click shows the reason underneath (no hover on a phone).
+function threadMoodHtml(c) {
+  const mood = MOODS[c.customer_mood];
+  if (!mood) return '';
+  return `<button type="button" class="inbox-thread-mood inbox-mood-${escapeHtml(c.customer_mood)}" title="${escapeHtml(moodTitle(c))}">${mood.emoji}<span class="inbox-thread-mood-label"> ${escapeHtml(mood.label)}</span></button>`
+    + (c.customer_mood_reason ? `<span class="inbox-thread-mood-reason hidden">${escapeHtml(c.customer_mood_reason)}</span>` : '');
+}
+
+function renderThreadMood(conv) {
+  const el = document.getElementById('threadMoodEl');
+  if (!el) return;
+  el.innerHTML = threadMoodHtml(conv);
+  el.querySelector('.inbox-thread-mood')?.addEventListener('click', () => {
+    el.querySelector('.inbox-thread-mood-reason')?.classList.toggle('hidden');
+  });
+}
+
+function renderMoodFilter() {
+  const select = document.getElementById('conversationMoodFilter');
+  if (!select) return;
+  select.innerHTML = '<option value="">All moods</option>' + Object.entries(MOODS)
+    .map(([key, m]) => `<option value="${key}"${key === conversationMoodFilter ? ' selected' : ''}>${m.emoji} ${escapeHtml(m.label)}</option>`)
+    .join('');
+}
+
+function onConversationMoodFilterChange(value) {
+  conversationMoodFilter = value || null;
+  loadConversations();
 }
 
 function tagChipsHtml(tags) {
@@ -452,6 +520,7 @@ function renderConversationList() {
 
   listEl.innerHTML = conversations.map((c) => {
     const badges = [
+      moodBadgeHtml(c),
       c.pinned_at_utc ? `<span class="inbox-pin-icon" title="${escapeHtml(pinnedTitle(c))}">📌</span>` : '',
       pageBadgeHtml(c.page_id),
       c.status === 'Escalated' ? '<span class="inbox-badge inbox-badge-escalated">Escalated</span>' : '',
@@ -500,7 +569,7 @@ function renderThreadHeader(conv) {
     <span class="inbox-thread-title">
       ${conversationAvatarHtml(conv, 'inbox-thread-avatar')}
       <span class="inbox-thread-title-text">
-        <span class="inbox-thread-name">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}<span class="inbox-thread-tags" id="threadTagsEl">${tagChipsHtml(conv.tags)}</span></span>
+        <span class="inbox-thread-name">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}<span class="inbox-thread-mood-wrap" id="threadMoodEl"></span><span class="inbox-thread-tags" id="threadTagsEl">${tagChipsHtml(conv.tags)}</span></span>
         ${pauseNote ? `<span class="inbox-thread-sub">${escapeHtml(pauseNote)}</span>` : ''}
       </span>
     </span>
@@ -530,6 +599,7 @@ function renderThreadHeader(conv) {
   document.getElementById('tagMenuBtn').addEventListener('click', openTagMenu);
   document.getElementById('threadBackBtn').addEventListener('click', mobileBack);
   document.getElementById('threadInfoBtn').addEventListener('click', () => showMobileView('info'));
+  renderThreadMood(conv);
   renderThreadViewers();
 
   document.getElementById('replyRowEl').classList.remove('hidden');
@@ -5339,6 +5409,8 @@ function setupMobileViewportHeight() {
   setupRealtimeInbox();
   document.getElementById('conversationTagFilter').addEventListener('change', (e) => onConversationTagFilterChange(e.target.value));
   document.getElementById('conversationReadFilter').addEventListener('click', onConversationReadFilterClick);
+  renderMoodFilter();
+  document.getElementById('conversationMoodFilter').addEventListener('change', (e) => onConversationMoodFilterChange(e.target.value));
   loadTags();
   await loadConversations();
 })();

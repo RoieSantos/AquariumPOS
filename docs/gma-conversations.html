@@ -1217,6 +1217,32 @@
     .inbox-thread-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
     .inbox-thread-tags:empty { display: none; }
     .inbox-tag-btn.tagged { background: #eef2ff; border-color: #a5b4fc; color: #3730a3; }
+    /* Customer mood emoji (MOODS in gmaConversations.js, set by the webhook's mood.ts) */
+    .inbox-mood { margin-left: 4px; font-size: 14px; line-height: 1; cursor: help; }
+    .inbox-thread-mood-wrap:empty { display: none; }
+    .inbox-thread-mood {
+      margin-left: 6px;
+      padding: 1px 8px;
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      background: #f8fafc;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .inbox-mood-angry.inbox-thread-mood, .inbox-mood-impatient.inbox-thread-mood { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+    .inbox-mood-sad.inbox-thread-mood, .inbox-mood-unsure.inbox-thread-mood { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+    .inbox-mood-happy.inbox-thread-mood, .inbox-mood-excited.inbox-thread-mood, .inbox-mood-ready_to_buy.inbox-thread-mood { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+    .inbox-thread-mood-reason {
+      display: block;
+      margin-top: 2px;
+      font-size: 12px;
+      font-weight: 400;
+      color: #64748b;
+    }
+    .inbox-thread-mood-reason.hidden { display: none; }
     /* All / Unread / Read pills (conversationReadFilter in gmaConversations.js) */
     .inbox-read-filter { display: flex; gap: 6px; margin-top: 6px; }
     .inbox-read-filter button {
@@ -3132,7 +3158,7 @@
       .inbox-thread-viewers { flex: 0 0 auto; }
       .inbox-viewers-label,
       .inbox-pause-note,
-      .inbox-hdr-btn-label { display: none; }
+      .inbox-hdr-btn-label, .inbox-thread-mood-label { display: none; }
       .inbox-header-actions { gap: 0; flex-shrink: 0; }
       .inbox-header-actions .btn {
         display: flex;
@@ -3303,6 +3329,7 @@
               <button type="button" data-read-filter="read">Read</button>
             </div>
             <select id="conversationTagFilter" class="inbox-tag-filter hidden" aria-label="Filter by tag"></select>
+            <select id="conversationMoodFilter" class="inbox-tag-filter" aria-label="Filter by customer mood"></select>
             <label class="inbox-auto-resume hidden" id="autoResumeWrap" title="After a staff reply (here or in the Meta app) the AI pauses. If no staff reply follows within this time, the AI turns back on and answers any customer left waiting.">
               <span>AI back on after staff is quiet for</span>
               <select id="autoResumeMinutesSelect">
@@ -3650,7 +3677,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=unread3"></script>
+  <script src="js/gmaConversations.js?v=mood1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

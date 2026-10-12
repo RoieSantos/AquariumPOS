@@ -22,6 +22,9 @@
 //   ANTHROPIC_API_KEY            - Claude API key
 //   CLAUDE_MODEL                 - optional, defaults to claude-sonnet-5 below - override to swap
 //                                   models (e.g. claude-haiku-4-5) without a redeploy
+//   MOOD_MODEL                   - optional fallback model for the inbox's customer-mood check (mood.ts) -
+//                                   AI Bot Setup > Customer mood wins once supabase_chatbot_mood_settings.sql is run;
+//                                   defaults to claude-haiku-5-5 - e.g. claude-sonnet-5-5 for more nuance
 //   FACEBOOK_GRAPH_API_VERSION   - optional, defaults to v21.0 below
 // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are auto-injected by Supabase for every Edge Function.
 // Deploy: supabase functions deploy facebook-messenger-webhook --project-ref hymcmesqgpliyyeghpgq
@@ -58,6 +61,7 @@ import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-token
 import { isWithinBotSchedule } from '../_shared/bot-schedule.ts';
 import { type FacebookFeedChangeValue, handleFeedComment } from './comments.ts';
 import { type FacebookCallEvent, handleCallEvent } from './calls.ts';
+import { runMoodCheck } from './mood.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 20;
@@ -950,6 +954,11 @@ async function processMessage(
     .eq('Psid', psid);
 
   await broadcastGmaEvent(supabase, psid);
+
+  // Customer mood for the inbox (mood.ts) - background, waits out a burst of messages first.
+  const moodWork = runMoodCheck({ supabase, anthropic, psid, receivedAtIso, broadcast: (p) => broadcastGmaEvent(supabase, p) })
+    .catch((err) => console.error('Mood check task failed:', err instanceof Error ? err.message : err));
+  if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(moodWork);
 
   const storedImages = recorded.parts.filter((p) => p.kind === 'image' && p.stored?.base64);
   if (storedImages.length > 0) {

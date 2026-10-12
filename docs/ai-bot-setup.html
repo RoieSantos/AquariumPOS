@@ -103,6 +103,34 @@
         </div>
       </div>
 
+      <div class="form-row" style="margin-top:16px;">
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="moodEnabledInput" style="width:auto;" />
+          <span>Customer mood (Conversations)</span>
+        </label>
+        <span class="muted" style="font-size:12px; display:block; margin-top:4px;">When ticked, AI reads each Messenger customer's latest messages and shows their mood as an emoji in Conversations (😠 Angry, ⏰ Impatient, 😟 Sad, 🤔 Unsure, 😐 Neutral, 😊 Happy, 🤩 Excited, 🛒 Ready to buy). Staff-only: customers never see it, and the bot's replies don't change. Unticked = no checks and no AI cost; moods already shown stay.</span>
+        <div style="display:grid; grid-template-columns:auto auto; gap:6px 10px; align-items:center; justify-content:start; margin-top:8px;">
+          <label for="moodModelInput" style="margin:0;">AI model</label>
+          <select id="moodModelInput">
+            <option value="claude-haiku-5-5">Claude Haiku 5.5 - cheap (about ₱0.01-0.02 per message)</option>
+            <option value="claude-sonnet-5-5">Claude Sonnet 5.5 - more accurate on subtle moods (about ₱0.25-0.35 per message)</option>
+          </select>
+          <label for="moodDelayInput" style="margin:0;">Wait after customer stops typing</label>
+          <select id="moodDelayInput">
+            <option value="15">15 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+          </select>
+        </div>
+        <span class="muted" style="font-size:12px; display:block; margin-top:4px;">A longer wait means a burst of messages ("hi" / "magkano po" / "yung 3ft") costs one check instead of several, but the emoji shows up later.</span>
+        <div id="moodSettingsError" class="error-text hidden"></div>
+        <div id="moodSettingsSaved" class="success-text hidden">Mood settings saved.</div>
+        <div style="margin-top:8px;">
+          <button class="btn btn-success" id="saveMoodSettingsBtn" type="button">Save Mood Settings</button>
+        </div>
+      </div>
+
       <div class="section-divider"></div>
 
       <div class="toolbar">
@@ -296,7 +324,7 @@
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
-  <script src="js/aiBotSetup.js?v=botschedule2"></script>
+  <script src="js/aiBotSetup.js?v=mood1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
