@@ -5810,6 +5810,119 @@ async function insertLocationPinLink() {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+// Delivery quote window - per "add a button there delivery quote.. a small delivery quote window that will
+// help the staff quote price of delivery". Same official formula as Vic (delivery-fee-from-pin Edge
+// Function -> computeDeliveryQuote / computeLalamoveQuote), to a typed address or the customer's latest
+// pin in this chat, from both branches; "Put in reply" drops the price into the reply box.
+let dqPin = null; // the chat's latest "📍 My delivery location", if any
+let dqPsid = null; // the chat the window was last opened for
+
+const DQ_VEHICLE_LABELS = { MOTORCYCLE: 'Motorcycle', SEDAN: 'Sedan', MPV: 'MPV', TRUCK330: 'Small truck (L300)', '2000KG_ALUMINUM': '2-ton truck' };
+
+function openDeliveryQuote() {
+  const rows = messageCache.get(selectedPsid) || [];
+  dqPin = null;
+  for (let i = rows.length - 1; i >= 0 && !dqPin; i--) {
+    if (rows[i].role === 'user') dqPin = parsePinnedLocation(rows[i].content);
+  }
+  document.getElementById('dqPinRow').classList.toggle('hidden', !dqPin);
+  document.getElementById('dqUsePin').checked = !!dqPin;
+  // Keep what staff typed while it's the same chat; a different chat starts fresh (its pin's address, if any).
+  const addressEl = document.getElementById('dqAddress');
+  if (dqPsid !== selectedPsid) addressEl.value = dqPin?.address || '';
+  dqPsid = selectedPsid;
+  document.getElementById('dqResults').innerHTML = '';
+  document.getElementById('deliveryQuoteModal').classList.remove('hidden');
+  addressEl.focus();
+}
+
+function closeDeliveryQuote() {
+  document.getElementById('deliveryQuoteModal').classList.add('hidden');
+}
+
+async function runDeliveryQuote() {
+  const usePin = !!dqPin && document.getElementById('dqUsePin').checked;
+  const address = document.getElementById('dqAddress').value.trim();
+  const method = document.getElementById('dqMethod').value;
+  const vehicle = method === 'lalamove' ? document.getElementById('dqVehicle').value : null;
+  const resultsEl = document.getElementById('dqResults');
+  if (!usePin && address.length < 5) {
+    resultsEl.innerHTML = '<div class="dq-note">Type the full address first (street, barangay, city).</div>';
+    return;
+  }
+  const btn = document.getElementById('dqQuoteBtn');
+  btn.disabled = true;
+  resultsEl.innerHTML = `<div class="dq-note">${vehicle ? 'Asking Lalamove...' : 'Calculating...'}</div>`;
+  let quotes;
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-fee-from-pin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        address,
+        ...(usePin ? { latitude: dqPin.lat, longitude: dqPin.lng } : {}),
+        ...(vehicle ? { vehicle_type: vehicle } : {})
+      })
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body?.quotes) throw new Error(body?.error || `Request failed (${response.status}).`);
+    quotes = body.quotes;
+  } catch (err) {
+    resultsEl.innerHTML = `<div class="dq-note error-text">Could not get a quote: ${escapeHtml(err.message)}</div>`;
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+
+  const place = usePin ? 'your pinned location' : address;
+  resultsEl.innerHTML = ['GMA', 'Amaya'].map((branch) => {
+    const q = quotes[branch];
+    const amount = q && !q.error ? (q.estimatedFee ?? q.total) : null;
+    if (amount == null) {
+      return `<div class="dq-result"><span><strong>${branch}</strong> &middot; <span class="muted">${escapeHtml(q?.error || 'n/a')}</span></span></div>`;
+    }
+    const peso = `₱${Number(amount).toLocaleString('en-PH')}`;
+    const line = vehicle
+      ? `Lalamove (${DQ_VEHICLE_LABELS[vehicle]}) from our ${branch} branch to ${place}: ${q.approximate ? 'approx. ' : ''}${peso} - Lalamove's live rate, may change slightly at booking.`
+      : `Delivery fee from our ${branch} branch to ${place}: ${peso}.`;
+    return `
+      <div class="dq-result">
+        <span><strong>${branch}</strong> &middot; ${q.approximate ? 'approx. ' : ''}${peso} <span class="muted">(${q.distanceKm} km${q.tollAmount ? ` incl. ₱${Number(q.tollAmount).toLocaleString('en-PH')} toll` : ''})</span></span>
+        <button type="button" class="btn btn-secondary btn-sm dq-insert-btn" data-line="${escapeHtml(line)}">Put in reply</button>
+      </div>`;
+  }).join('') + (Object.values(quotes).some((q) => q?.approximate)
+    ? '<div class="dq-note">Approximate - the address only matched the barangay / area. Ask for the pin for an exact price.</div>'
+    : '');
+  resultsEl.querySelectorAll('.dq-insert-btn').forEach((b) => b.addEventListener('click', () => {
+    const input = document.getElementById('replyInput');
+    input.value = input.value.trim() ? `${input.value.trimEnd()}\n${b.dataset.line}` : b.dataset.line;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    autoResizeReplyInput();
+    closeDeliveryQuote();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }));
+}
+
+function initDeliveryQuote() {
+  document.getElementById('openDeliveryQuoteBtn')?.addEventListener('click', openDeliveryQuote);
+  document.getElementById('closeDeliveryQuoteBtn').addEventListener('click', closeDeliveryQuote);
+  document.getElementById('dqQuoteBtn').addEventListener('click', runDeliveryQuote);
+  document.getElementById('dqMethod').addEventListener('change', (e) => {
+    document.getElementById('dqVehicle').classList.toggle('hidden', e.target.value !== 'lalamove');
+  });
+  document.getElementById('dqUsePin').addEventListener('change', (e) => {
+    // Unticked = quote the typed address instead (e.g. the customer gave a different place).
+    document.getElementById('dqAddress').placeholder = e.target.checked ? 'Using the pinned location' : 'Full address: house no., street, barangay, city';
+  });
+}
+
 function initDeliveryCalendar() {
   document.getElementById('openDeliveryCalendarBtn')?.addEventListener('click', () => openDeliveryCalendar());
   document.getElementById('closeDeliveryCalendarBtn').addEventListener('click', closeDeliveryCalendar);
@@ -5860,6 +5973,7 @@ function initDeliveryCalendar() {
   document.getElementById('attachmentFileInput').addEventListener('change', onAttachmentFileChange);
   document.getElementById('toggleProductLookupBtn').addEventListener('click', () => toggleProductLookupPanel());
   initDeliveryCalendar();
+  initDeliveryQuote();
   document.getElementById('sendLocationPinBtn').addEventListener('click', insertLocationPinLink);
   document.getElementById('productLookupSearchInput').addEventListener('input', (e) => onProductLookupSearchInput(e.target.value));
   document.getElementById('sendProductListBtn').addEventListener('click', sendProductList);

@@ -1454,6 +1454,19 @@ async function handlePinSubmitted(
   const { data: psid } = await supabase.rpc('service_claim_pin_bot_notify', { p_token: token });
   if (!psid) return;
 
+  // A new pin for an order that's already booked is held until the customer confirms it - tell staff
+  // (sent from here, not from the pin's database call, so a slow Telegram can't make that call time out).
+  const { data: req } = await supabase
+    .from('ChatbotLocationRequests')
+    .select('AppliedOrderNo, NeedsConfirmation, Latitude, Longitude')
+    .eq('Token', token)
+    .maybeSingle();
+  if (req?.NeedsConfirmation && req.AppliedOrderNo) {
+    await supabase.rpc('_telegram_send_message', {
+      p_text: `📍 New pin for an already-booked delivery: order ${req.AppliedOrderNo}. NOT applied yet - waiting for the customer to confirm in Messenger (or book it with 📅 in GMA Conversations). New pin: https://www.google.com/maps?q=${req.Latitude},${req.Longitude}`
+    });
+  }
+
   const { data: conv } = await supabase
     .from('ChatbotConversations')
     .select('PageId, CustomerName, IsPaused, AutoResumeAtUtc')

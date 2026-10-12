@@ -109,21 +109,36 @@ begin
 
   select "RouteName" into v_route from public."DeliveryRouteSchedule" where "DayOfWeek" = extract(dow from p_delivery_date);
 
+  -- The stop, in ONE write: every insert/update of a stop fires trg_notify_delivery_stop_changed, which
+  -- sends the delivery team a web push as a live HTTP call (_trigger_web_push) - two writes meant two
+  -- calls and ran past the request's time limit ("canceling statement due to statement timeout").
   if v_stop_id is not null then
+    -- Move the order's upcoming, not-done stop (new date and/or pin + fee) - never a second stop.
     v_moved := true;
     if v_old_date <> p_delivery_date then
       select "TruckID" into v_truck_id from public."DeliveryStops" where "StopID" = v_stop_id;
       select coalesce(max("StopSequence") + 1, 0) into v_seq
       from public."DeliveryStops" where "DeliveryDate" = p_delivery_date and "TruckID" = v_truck_id and "StopID" <> v_stop_id;
-      begin
-        update public."DeliveryStops"
-           set "DeliveryDate" = p_delivery_date, "StopSequence" = v_seq, "RouteName" = v_route
-         where "StopID" = v_stop_id;
-      exception when unique_violation then
-        raise exception 'This order is already scheduled for that date.';
-      end;
     end if;
+    begin
+      update public."DeliveryStops"
+         set "DeliveryDate" = p_delivery_date,
+             "StopSequence" = case when v_old_date <> p_delivery_date then v_seq else "StopSequence" end,
+             "RouteName" = case when v_old_date <> p_delivery_date then v_route else "RouteName" end,
+             "Notes" = case when v_notes is not null then 'Landmark: ' || v_notes else "Notes" end,
+             "Latitude" = case when v_has_pin then p_latitude else "Latitude" end,
+             "Longitude" = case when v_has_pin then p_longitude else "Longitude" end,
+             "GeocodeStatus" = case when v_has_pin then 'ok' else "GeocodeStatus" end,
+             "GeocodedAddress" = case when v_has_pin then coalesce(v_address, round(p_latitude, 6) || ',' || round(p_longitude, 6)) else "GeocodedAddress" end,
+             "GeocodedAtUtc" = case when v_has_pin then now() else "GeocodedAtUtc" end,
+             "ManualAddress" = coalesce(v_address, "ManualAddress"),
+             "ManualDeliveryFee" = coalesce(v_fee, "ManualDeliveryFee")
+       where "StopID" = v_stop_id;
+    exception when unique_violation then
+      raise exception 'This order is already scheduled for that date.';
+    end;
   else
+    -- New stop (same truck / sequence / route rules as the Delivery page), pin + fee included.
     select "TruckID" into v_truck_id from public."DeliveryTrucks" where "IsActive" is true order by "CreatedAtUtc" limit 1;
     if v_truck_id is null then
       raise exception 'No active delivery truck is configured.';
@@ -131,10 +146,21 @@ begin
     select coalesce(max("StopSequence") + 1, 0) into v_seq
     from public."DeliveryStops" where "DeliveryDate" = p_delivery_date and "TruckID" = v_truck_id;
     begin
-      insert into public."DeliveryStops" ("OrderID", "AutomatedOrderNo", "TruckID", "DeliveryDate", "StopSequence", "Notes", "CreatedBy", "RouteName")
-      values (case when v_has_online then v_online."OrderID" end,
-              case when not v_has_online then v_ao."OrderNo" end,
-              v_truck_id, p_delivery_date, v_seq, null, p_actor, v_route)
+      insert into public."DeliveryStops" (
+        "OrderID", "AutomatedOrderNo", "TruckID", "DeliveryDate", "StopSequence", "Notes", "CreatedBy", "RouteName",
+        "Latitude", "Longitude", "GeocodeStatus", "GeocodedAddress", "GeocodedAtUtc", "ManualAddress", "ManualDeliveryFee")
+      values (
+        case when v_has_online then v_online."OrderID" end,
+        case when not v_has_online then v_ao."OrderNo" end,
+        v_truck_id, p_delivery_date, v_seq,
+        case when v_notes is not null then 'Landmark: ' || v_notes end,
+        p_actor, v_route,
+        case when v_has_pin then p_latitude end,
+        case when v_has_pin then p_longitude end,
+        case when v_has_pin then 'ok' end,
+        case when v_has_pin then coalesce(v_address, round(p_latitude, 6) || ',' || round(p_longitude, 6)) end,
+        case when v_has_pin then now() end,
+        v_address, v_fee)
       returning "StopID" into v_stop_id;
     exception when unique_violation then
       raise exception 'This order is already scheduled for that date.';
@@ -143,18 +169,6 @@ begin
       update public."OnlineOrders" set "ForDelivery" = true where "OrderID" = v_online."OrderID";
     end if;
   end if;
-
-  -- Pin, landmark and fee on the stop (what the Delivery page / calendar plot and show).
-  update public."DeliveryStops"
-     set "Notes" = case when v_notes is not null then 'Landmark: ' || v_notes else "Notes" end,
-         "Latitude" = case when v_has_pin then p_latitude else "Latitude" end,
-         "Longitude" = case when v_has_pin then p_longitude else "Longitude" end,
-         "GeocodeStatus" = case when v_has_pin then 'ok' else "GeocodeStatus" end,
-         "GeocodedAddress" = case when v_has_pin then coalesce(v_address, round(p_latitude, 6) || ',' || round(p_longitude, 6)) else "GeocodedAddress" end,
-         "GeocodedAtUtc" = case when v_has_pin then now() else "GeocodedAtUtc" end,
-         "ManualAddress" = coalesce(v_address, "ManualAddress"),
-         "ManualDeliveryFee" = coalesce(v_fee, "ManualDeliveryFee")
-   where "StopID" = v_stop_id;
 
   -- Pin on the order. Booking WITH a pending re-pin (staff 📅 on it, or the customer confirmed it) settles it.
   if v_has_pin then
@@ -322,15 +336,8 @@ begin
   limit 1;
 
   if v_stop_date is not null then
-    begin
-      perform public._telegram_send_message(
-        '📍 New pin for an already-booked delivery: order ' || v_ao."OrderNo"
-        || coalesce(' (' || v_ao."CustomerName" || ')', '') || ', delivery ' || to_char(v_stop_date, 'Dy Mon DD')
-        || '. NOT applied yet - waiting for the customer to confirm in Messenger (or book it with 📅 in GMA Conversations). New pin: https://www.google.com/maps?q='
-        || round(p_latitude, 6) || ',' || round(p_longitude, 6));
-    exception when others then
-      null; -- a Telegram hiccup must never lose the customer's pin
-    end;
+    -- Staff hear about it from facebook-messenger-webhook's pin-submitted task (Telegram), NOT from here: a
+    -- live HTTP call inside this anon request could run past its time limit and lose the customer's pin.
     return query select v_ao."OrderNo"::text, true;
     return;
   end if;

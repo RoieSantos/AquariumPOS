@@ -3,7 +3,7 @@
 // (computeDeliveryQuote in _shared/chatbot-engine.ts: base fee + rate per km + toll, Google Routes API),
 // measured to the exact pin rather than a typed address, so staff and Vic always quote the same number.
 //
-// POST { admin_username, admin_password, latitude, longitude, branches?: ['GMA', 'Amaya'], vehicle_type? }
+// POST { admin_username, admin_password, latitude + longitude (a pin) OR address (typed), branches?: ['GMA', 'Amaya'], vehicle_type? }
 //  -> { quotes: { GMA: { estimatedFee, distanceKm, ... } | { error }, Amaya: ... } }
 // With vehicle_type (MOTORCYCLE / SEDAN / MPV / TRUCK330 / 2000KG_ALUMINUM): a live Lalamove quote to the
 // pin instead (computeLalamoveQuote -> { total, distanceKm, ... }).
@@ -39,10 +39,13 @@ Deno.serve(async (req) => {
   } catch {
     return jsonResponse({ error: 'Body must be JSON.' }, 400);
   }
+  // Either a pin (latitude + longitude) or a typed address (the Delivery quote window).
   const latitude = Number(body.latitude);
   const longitude = Number(body.longitude);
-  if (!body.admin_username || !body.admin_password || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    return jsonResponse({ error: 'Body must be { admin_username, admin_password, latitude, longitude, branches? }.' }, 400);
+  const hasPin = body.latitude != null && body.longitude != null && Number.isFinite(latitude) && Number.isFinite(longitude);
+  const address = typeof body.address === 'string' ? body.address.trim().slice(0, 500) : '';
+  if (!body.admin_username || !body.admin_password || (!hasPin && address.length < 5)) {
+    return jsonResponse({ error: 'Body must be { admin_username, admin_password, latitude + longitude or address, branches?, vehicle_type? }.' }, 400);
   }
   const branches = Array.isArray(body.branches)
     ? BRANCHES.filter((b) => (body.branches as unknown[]).includes(b))
@@ -55,10 +58,13 @@ Deno.serve(async (req) => {
   });
   if (authError || authorized !== true) return jsonResponse({ error: 'Not authorized.' }, 403);
 
-  // vehicle_type set = a live Lalamove quote to the pin for that vehicle instead of our own truck's fee.
+  // vehicle_type set = a live Lalamove quote for that vehicle instead of our own truck's fee.
   const vehicleType = typeof body.vehicle_type === 'string' && LALAMOVE_VEHICLES.includes(body.vehicle_type) ? body.vehicle_type : null;
+  const destination = hasPin
+    ? { destination_address: address, destination_latitude: latitude, destination_longitude: longitude }
+    : { destination_address: address };
   const results = await Promise.all(branches.map((branch) => vehicleType
-    ? computeLalamoveQuote(supabase, { origin_location: branch, vehicle_type: vehicleType, destination_latitude: latitude, destination_longitude: longitude })
-    : computeDeliveryQuote(supabase, { origin_location: branch, destination_latitude: latitude, destination_longitude: longitude })));
+    ? computeLalamoveQuote(supabase, { origin_location: branch, vehicle_type: vehicleType, ...destination })
+    : computeDeliveryQuote(supabase, { origin_location: branch, ...destination })));
   return jsonResponse({ quotes: Object.fromEntries(branches.map((b, i) => [b, results[i]])) });
 });

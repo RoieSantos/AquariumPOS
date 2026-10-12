@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-12
 
+- **GMA Conversations: 🚚 Delivery quote window.** It's a new composer button. Type an address, or tick "use the customer's pinned location", then pick our own truck or Lalamove (with vehicle size). It shows the fee from both branches with distance and toll; **Put in reply** drops a ready sentence into the reply box. It uses the same formula Vic quotes. [delivery-fee-from-pin](supabase/functions/delivery-fee-from-pin/index.ts) now also accepts a typed `address`. [gmaConversations.js](docs/js/gmaConversations.js) `v=dquote1`.
+- **Fix: "Book this date" failed with "canceling statement due to statement timeout".**
+  - **Cause:** every write to a delivery stop sends the delivery team a web push as a live HTTP call (`trg_notify_delivery_stop_changed`). The booking wrote to the stop twice (create, then pin and fee), so it waited on two calls and ran past the request's time limit.
+  - **Fix:** `_book_delivery_stop_core` now creates or moves the stop with its pin and fee in one write, so one notification goes out, the same as a normal Delivery-page booking.
+  - **Same issue on re-pins:** the "new pin on a booked order" Telegram message moved out of the customer's pin-submit database call into the webhook's pin task.
+  - **Files:** [supabase_gma_pin_delivery_booking.sql](sql/supabase_gma_pin_delivery_booking.sql), [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts).
 - **Booking calendar: the fee is picked automatically from the order's branch.** The order dropdown now lists only the orders (no per-order fees). It hides cancelled, completed and pickup orders. One line under it shows the fee that will be saved: measured to the pin from the branch tagged on the selected order, updating when you pick another order ([gmaConversations.js](docs/js/gmaConversations.js) `v=pinsafe3`).
 - **GMA Conversations: no react button on 📍 pin messages.** They come from the map page, not Messenger, so there's no Facebook message to react to; it only produced an error. Found in a review of today's changes ([gmaConversations.js](docs/js/gmaConversations.js)).
 - **Map pin: link safety + Lalamove.**
