@@ -1046,7 +1046,9 @@ export const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           enum: ['MOTORCYCLE', 'SEDAN', 'MPV', 'TRUCK330', '2000KG_ALUMINUM'],
           description: 'The Lalamove vehicle class that fits what is being delivered - see this tool\'s own description for how to pick one.'
-        }
+        },
+        destination_latitude: { type: 'number', description: 'Optional - only when the customer sent a "📍 My delivery location" message: the latitude from its google.com/maps?q=LAT,LNG link. The quote is then to that exact pin (never approximate).' },
+        destination_longitude: { type: 'number', description: 'Optional - the longitude from that same link (pass both or neither).' }
       },
       required: ['origin_location', 'destination_address', 'vehicle_type']
     }
@@ -1197,7 +1199,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_delivery_scheduling_options',
     description:
-      'Checks whether an Online Order is eligible to have its delivery date self-scheduled, and if so, returns the delivery fee (deliveryFeeIsEstimate tells you whether it\'s the order\'s actual recorded fee or a fresh distance-based estimate) plus the next several available candidateDates. ONLY call this after the customer has said they want the STORE\'S OWN TRUCK to deliver (not a courier they are arranging themselves like Lalamove, and not pickup) - if they have not said that yet, ask first. Never call schedule_delivery_date without calling this first and getting the customer to confirm the fee AND pick one of the returned dates.',
+      'Checks whether an order is eligible to have its delivery date self-scheduled, and if so, returns the delivery fee plus the next several available candidateDates. Works for orders created in this chat (AO-xxxxx, even before staff confirm them) and Online Orders. For an order created in this chat the result also says deliveryFeeMeasuredTo ("pin" = measured to the exact spot the customer pinned on our map, "address" = from their typed address; null fee = not known yet - send create_location_pin_link) and currentlyScheduledFor (already booked on that date - booking a new date moves it, no duplicate). For other Online Orders, deliveryFeeIsEstimate tells you whether it\'s the order\'s recorded fee or a fresh estimate. ONLY call this after the customer has said they want the STORE\'S OWN TRUCK to deliver (not a courier they are arranging themselves like Lalamove, and not pickup) - if they have not said that yet, ask first. Never call schedule_delivery_date without calling this first and getting the customer to confirm the fee AND pick one of the returned dates.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1221,12 +1223,13 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'schedule_delivery_date',
     description:
-      'Books a specific delivery date for an Online Order, using the store\'s own truck. Only call this AFTER get_delivery_scheduling_options returned that order as eligible, AND after you have told the customer the delivery fee and the candidate dates and they have explicitly confirmed both the fee and one specific date. Never guess a date - only pass one of the candidate_date values get_delivery_scheduling_options actually returned.',
+      'Books a specific delivery date for an order, using the store\'s own truck. Only call this AFTER get_delivery_scheduling_options returned that order as eligible, AND after you have told the customer the delivery fee and the candidate dates and they have explicitly confirmed both the fee and one specific date. Never guess a date - only pass one of the candidateDates get_delivery_scheduling_options actually returned (or, to refresh an existing booking after the customer re-pinned their location, its currentlyScheduledFor date). For an order created in this chat it saves the customer\'s pinned location and the delivery fee on the order and the delivery schedule, and moves an existing booking instead of adding a second one; staff are notified automatically.',
     input_schema: {
       type: 'object',
       properties: {
         order_no: { type: 'string', description: 'The Online Order number.' },
-        delivery_date: { type: 'string', description: 'The confirmed delivery date, in YYYY-MM-DD format, from the candidate dates offered.' }
+        delivery_date: { type: 'string', description: 'The confirmed delivery date, in YYYY-MM-DD format, from the candidate dates offered.' },
+        confirm_new_pin: { type: 'boolean', description: 'Only true right after the customer clearly confirmed (e.g. replied YES) that their new "📍 My delivery location (updated)" pin should replace the location of their existing booking - see pendingLocationUpdate from get_delivery_scheduling_options. Never set it without that explicit confirmation.' }
       },
       required: ['order_no', 'delivery_date']
     }
@@ -1424,6 +1427,12 @@ export function buildSystemPrompt(
     'CUSTOMER PRIVACY (strict): only ever discuss the orders, deliveries and details of the customer you are talking to. Never reveal another customer\'s name, phone, address, order, payment or delivery date, and never describe our delivery schedule - who else is on a day, the stop list, route order, how many stops, or where the truck is going. About a delivery day, say only whether it is available for THEM. If an order tool answers verified:false, follow its message: ask for the mobile number used on the order, save it with save_customer_info, and try once more - if it still isn\'t theirs, say you can\'t find that order on their account, without confirming it exists or saying anything about it.'
   );
   lines.push(
+    '',
+    'DELIVERY FLOW WITH MAP PINS (store\'s own truck):',
+    '- Right after create_order succeeds for a delivery order, if the customer hasn\'t sent a "📍 My delivery location" message yet in this chat, also call create_location_pin_link and add the link to your receipt reply, asking them to pin their exact location so we can give the exact delivery fee and schedule it.',
+    '- When their latest message is a "📍 My delivery location" pin, first check HOW it will be delivered. If they said they\'ll book their own Lalamove: call compute_lalamove_quote with the pin\'s LAT,LNG (destination_latitude / destination_longitude) and the right vehicle, give that quote, and remind them staff will arrange the Lalamove booking - do NOT offer our truck dates or call the scheduling tools. If it isn\'t clear yet, ask whether they want our own truck or their own Lalamove before quoting.',
+    '- Our own truck, and they have an order from this chat: call get_delivery_scheduling_options for it. Not booked yet (currentlyScheduledFor null) -> thank them, give the delivery fee (say it\'s measured to the spot they pinned) and offer the candidateDates, and ask which date works. Already booked and pendingLocationUpdate is set -> DON\'T change anything yet: ask them to confirm, e.g. "Did you change your delivery location? Reply YES to update your delivery on <date> to the new pin" (mention the new fee if it differs); only after they clearly say yes, call schedule_delivery_date with that same currentlyScheduledFor date and confirm_new_pin: true, then confirm the update and the fee. If they say no, tell them we\'ll keep the original location. No order yet -> thank them, say it\'s saved for their delivery, and continue helping them order.',
+    '- When they pick one of the offered dates (and have accepted the fee), call schedule_delivery_date right away and confirm the date, order number and delivery fee. Staff are notified automatically - no need to escalate.',
     '',
     'PINNED LOCATIONS: when you need a delivery customer\'s exact location (see create_location_pin_link), send them our map link to pin it instead of only asking them to describe it. A customer message starting with "📍 My delivery location" is the exact spot they pinned on that map page (sent by you or by staff). Treat its address (and landmark notes) as their delivery address - use it for delivery quotes and orders, and don\'t ask for the address again. For compute_delivery_quote, also pass the LAT,LNG from its google.com/maps?q=LAT,LNG link as destination_latitude / destination_longitude, so the fee is measured to their exact pin. If it has no address line, ask them to type their full address, and keep the Google Maps link for our driver.',
     '',
@@ -2132,7 +2141,12 @@ export async function computeLalamoveQuote(supabase: SupabaseClient, input: Reco
   const location = String(input.origin_location ?? '').trim();
   const destinationAddress = String(input.destination_address ?? '').trim();
   const vehicleType = String(input.vehicle_type ?? '').trim();
-  if (!location || !destinationAddress || !vehicleType) {
+  // A customer's map pin (pin-location.html) - quoted to the exact spot, no geocoding.
+  const pinLat = Number(input.destination_latitude);
+  const pinLng = Number(input.destination_longitude);
+  const hasPin = input.destination_latitude != null && input.destination_longitude != null
+    && Number.isFinite(pinLat) && Number.isFinite(pinLng);
+  if (!location || (!destinationAddress && !hasPin) || !vehicleType) {
     return { error: 'Need a branch (Amaya or GMA), a delivery address, and a vehicle type.' };
   }
 
@@ -2151,7 +2165,9 @@ export async function computeLalamoveQuote(supabase: SupabaseClient, input: Reco
 
   let destLatLng: { lat: number; lng: number; approximate: boolean } | null;
   try {
-    destLatLng = await geocodeAddressWithFallback(destinationAddress, routesApiKey);
+    destLatLng = hasPin
+      ? { lat: pinLat, lng: pinLng, approximate: false }
+      : await geocodeAddressWithFallback(destinationAddress, routesApiKey);
   } catch (err) {
     if (err instanceof Error && err.message === 'GEOCODE_SERVICE_ERROR') {
       return {
@@ -2175,7 +2191,7 @@ export async function computeLalamoveQuote(supabase: SupabaseClient, input: Reco
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceRoleKey}`, 'apikey': serviceRoleKey },
       body: JSON.stringify({
         origin: { lat: origin.latitude, lng: origin.longitude, address: origin.address },
-        destination: { lat: destLatLng.lat, lng: destLatLng.lng, address: destinationAddress },
+        destination: { lat: destLatLng.lat, lng: destLatLng.lng, address: destinationAddress || `${destLatLng.lat},${destLatLng.lng}` },
         serviceType: vehicleType
       })
     });
@@ -2348,6 +2364,93 @@ export async function orderBelongsToChat(supabase: SupabaseClient, psid: string,
     ...((online.data ?? []) as Array<Record<string, unknown>>).flatMap((o) => [o.CustomerPhone, o.WalkinCustomerPhone])
   ].map(phoneKey).filter(Boolean);
   return orderPhones.includes(chatPhone);
+}
+
+// --- Pinned-location deliveries for GMA orders (sql/supabase_gma_pin_delivery_booking.sql) -----------
+// A GMA order (AutomatedOrders - created by Vic or staff from a chat, draft or confirmed) carries the
+// customer's map pin once they send one (DeliveryLatitude/Longitude). get_delivery_scheduling_options /
+// schedule_delivery_date quote its fee from that pin and book through service_book_delivery_from_pin
+// (moves an existing stop instead of adding a second one; fee goes on the stop and the order).
+interface GmaOrderRow {
+  OrderNo: string;
+  Status: string | null;
+  FulfillmentType: string | null;
+  Location: string | null;
+  DeliveryAddress: string | null;
+  DeliveryFee: number | null;
+  DeliveryLatitude: number | null;
+  DeliveryLongitude: number | null;
+  DeliveryLandmark: string | null;
+  PancakeReceiptNo: string | null;
+}
+
+async function findGmaOrder(supabase: SupabaseClient, orderNo: string): Promise<GmaOrderRow | null> {
+  const cols = 'OrderNo, Status, FulfillmentType, Location, DeliveryAddress, DeliveryFee, DeliveryLatitude, DeliveryLongitude, DeliveryLandmark, PancakeReceiptNo';
+  const { data: byNo } = await supabase.from('AutomatedOrders').select(cols).eq('OrderNo', orderNo).maybeSingle();
+  if (byNo) return byNo as GmaOrderRow;
+  const { data: byReceipt } = await supabase.from('AutomatedOrders').select(cols).eq('PancakeReceiptNo', orderNo).limit(1).maybeSingle();
+  return (byReceipt as GmaOrderRow) ?? null;
+}
+
+function manilaToday(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+}
+
+// Same rule as public_get_delivery_scheduling_options: the next 5 days from 2 days out, no Mondays.
+function nextDeliveryDates(count = 5): string[] {
+  const dates: string[] = [];
+  const d = new Date(`${manilaToday()}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 2);
+  while (dates.length < count) {
+    if (d.getUTCDay() !== 1) dates.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+// Fee for a GMA order from its branch: to the customer's pin when there is one, else to its typed address.
+// pinOverride: a not-yet-confirmed new pin (pendingPinFor), to quote what the fee WOULD become.
+async function gmaOrderDeliveryFee(
+  supabase: SupabaseClient,
+  order: GmaOrderRow,
+  pinOverride: { lat: number; lng: number } | null = null
+): Promise<{ fee: number; measuredTo: 'pin' | 'address'; distanceKm: unknown } | null> {
+  const lat = pinOverride?.lat ?? order.DeliveryLatitude;
+  const lng = pinOverride?.lng ?? order.DeliveryLongitude;
+  const hasPin = lat != null && lng != null;
+  if (!hasPin && !order.DeliveryAddress) return null;
+  const quote = await computeDeliveryQuote(supabase, {
+    origin_location: order.Location === 'Amaya' ? 'Amaya' : 'GMA',
+    destination_address: order.DeliveryAddress ?? '',
+    ...(hasPin ? { destination_latitude: Number(lat), destination_longitude: Number(lng) } : {})
+  });
+  return quote.ok ? { fee: Number(quote.estimatedFee), measuredTo: hasPin ? 'pin' : 'address', distanceKm: quote.distanceKm } : null;
+}
+
+// A re-pin sent after the order was already booked waits here (ChatbotLocationRequests.NeedsConfirmation)
+// until the customer confirms it in this chat - a forwarded link can't move a booked delivery on its own.
+async function pendingPinFor(supabase: SupabaseClient, psid: string, orderNo: string) {
+  const { data } = await supabase
+    .from('ChatbotLocationRequests')
+    .select('Token, Latitude, Longitude, Address, Notes')
+    .eq('Psid', psid)
+    .eq('AppliedOrderNo', orderNo)
+    .eq('NeedsConfirmation', true)
+    .order('SubmittedAtUtc', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data as { Token: string; Latitude: number; Longitude: number; Address: string | null; Notes: string | null } | null;
+}
+
+async function upcomingStopDate(supabase: SupabaseClient, order: GmaOrderRow): Promise<string | null> {
+  const ids = [order.OrderNo, order.PancakeReceiptNo].filter(Boolean) as string[];
+  const [{ data: byAo }, { data: byOnline }] = await Promise.all([
+    supabase.from('DeliveryStops').select('DeliveryDate').eq('AutomatedOrderNo', order.OrderNo).gte('DeliveryDate', manilaToday()).order('DeliveryDate').limit(1),
+    order.PancakeReceiptNo
+      ? supabase.from('DeliveryStops').select('DeliveryDate').in('OrderID', ids).gte('DeliveryDate', manilaToday()).order('DeliveryDate').limit(1)
+      : Promise.resolve({ data: [] })
+  ]);
+  return (byAo?.[0]?.DeliveryDate ?? byOnline?.[0]?.DeliveryDate ?? null) as string | null;
 }
 
 // Logs a photo the bot sent (send_item_image, the review guide) as its own ChatbotMessages row, so
@@ -2824,6 +2927,39 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const orderNo = String(input.order_no ?? '').trim();
       if (!orderNo) return 'No order number provided.';
       if (!(await orderBelongsToChat(supabase, psid, [orderNo], simulate))) return ORDER_NOT_VERIFIED_RESULT;
+
+      // GMA order (from a chat - draft or confirmed): fee from the customer's pin, works before confirmation.
+      const gmaOrder = await findGmaOrder(supabase, orderNo);
+      if (gmaOrder) {
+        if (['Completed', 'Cancelled'].includes(gmaOrder.Status ?? '')) {
+          return JSON.stringify({ eligible: false, reason: `This order is ${gmaOrder.Status}.`, orderNo: gmaOrder.OrderNo });
+        }
+        if (gmaOrder.FulfillmentType === 'Pickup') {
+          return JSON.stringify({ eligible: false, reason: 'This is a pickup order - confirm with the customer before switching it to delivery (staff can change it).', orderNo: gmaOrder.OrderNo });
+        }
+        const [feeInfo, scheduledFor, pending] = await Promise.all([
+          gmaOrderDeliveryFee(supabase, gmaOrder),
+          upcomingStopDate(supabase, gmaOrder),
+          pendingPinFor(supabase, psid, gmaOrder.OrderNo)
+        ]);
+        const pendingFee = pending ? await gmaOrderDeliveryFee(supabase, gmaOrder, { lat: pending.Latitude, lng: pending.Longitude }) : null;
+        return JSON.stringify({
+          // A new pin sent after booking, not applied until the customer confirms (confirm_new_pin).
+          pendingLocationUpdate: pending
+            ? { address: pending.Address, landmark: pending.Notes, newDeliveryFee: pendingFee?.fee ?? null }
+            : null,
+          eligible: true,
+          orderNo: gmaOrder.OrderNo,
+          branch: gmaOrder.Location === 'Amaya' ? 'Amaya' : 'GMA',
+          deliveryFee: feeInfo?.fee ?? null,
+          deliveryFeeMeasuredTo: feeInfo?.measuredTo ?? null,
+          distanceKm: feeInfo?.distanceKm ?? null,
+          hasPinnedLocation: gmaOrder.DeliveryLatitude != null,
+          currentlyScheduledFor: scheduledFor,
+          candidateDates: nextDeliveryDates()
+        });
+      }
+
       const { data, error } = await supabase.rpc('public_get_delivery_scheduling_options', { p_order_id: orderNo });
       if (error) return `Lookup failed: ${error.message}`;
       if (!data || data.length === 0) return 'No order found with that number.';
@@ -2880,6 +3016,52 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         return `SANDBOX MODE - no real delivery was booked. If this were live, Order ${orderNo} would be scheduled for delivery on ${deliveryDate}, and staff would be notified via Telegram.`;
       }
       if (!(await orderBelongsToChat(supabase, psid, [orderNo], simulate))) return ORDER_NOT_VERIFIED_RESULT;
+
+      // GMA order: book with the customer's pin + its fee (moves an existing stop - same date = just
+      // refreshes the pin and fee, e.g. after a re-pin).
+      const gmaOrder = await findGmaOrder(supabase, orderNo);
+      if (gmaOrder) {
+        // confirm_new_pin: the customer confirmed a re-pin sent after booking - book with THAT pin.
+        const pending = input.confirm_new_pin === true ? await pendingPinFor(supabase, psid, gmaOrder.OrderNo) : null;
+        if (input.confirm_new_pin === true && !pending) {
+          return 'There is no new pinned location waiting for confirmation on this order - nothing was changed.';
+        }
+        const pin = pending
+          ? { lat: pending.Latitude, lng: pending.Longitude, address: pending.Address, notes: pending.Notes }
+          : gmaOrder.DeliveryLatitude != null && gmaOrder.DeliveryLongitude != null
+            ? { lat: gmaOrder.DeliveryLatitude, lng: gmaOrder.DeliveryLongitude, address: gmaOrder.DeliveryAddress, notes: gmaOrder.DeliveryLandmark }
+            : null;
+        const feeInfo = await gmaOrderDeliveryFee(supabase, gmaOrder, pin ? { lat: Number(pin.lat), lng: Number(pin.lng) } : null);
+        const hasPin = !!pin;
+        const { data: booked, error: bookError } = await supabase.rpc('service_book_delivery_from_pin', {
+          p_order_no: gmaOrder.OrderNo,
+          p_delivery_date: deliveryDate,
+          p_latitude: pin?.lat ?? null,
+          p_longitude: pin?.lng ?? null,
+          p_address: pin?.address ?? null,
+          p_notes: pin?.notes ?? null,
+          p_delivery_fee: feeInfo?.fee ?? null
+        });
+        if (bookError) return `Could not schedule that date: ${bookError.message}`;
+        const row = booked?.[0] ?? {};
+        if (pending) {
+          await supabase.from('ChatbotLocationRequests').update({ NeedsConfirmation: false }).eq('Token', pending.Token);
+        }
+        await supabase.rpc('_telegram_send_message', {
+          p_text: `Customer ${row.moved ? 're' : 'self-'}scheduled a delivery via the Messenger AI assistant: Order ${gmaOrder.OrderNo} for ${deliveryDate}`
+            + (feeInfo ? `, delivery fee ₱${feeInfo.fee} (measured to their ${feeInfo.measuredTo})` : '')
+            + (hasPin ? `. ${pending ? 'Customer confirmed their NEW pin: ' : 'Pin: '}https://www.google.com/maps?q=${pin!.lat},${pin!.lng}` : '. No map pin yet.')
+            + (row.fee_note?.startsWith('Booked, but') ? ` NOTE: ${row.fee_note}` : '')
+        });
+        return JSON.stringify({
+          ok: true,
+          orderNo: gmaOrder.OrderNo,
+          deliveryDate,
+          rescheduled: !!row.moved,
+          deliveryFee: row.fee_note?.startsWith('Booked, but') ? null : (feeInfo?.fee ?? null),
+          note: row.fee_note ?? null
+        });
+      }
 
       const { data, error } = await supabase.rpc('public_schedule_online_order_delivery', {
         p_order_id: orderNo,

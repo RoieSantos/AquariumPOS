@@ -938,6 +938,13 @@ function renderMessages(serverRows, opts = {}) {
         ? '<div class="inbox-payment-detected">' +
           '<div class="inbox-payment-detected-title">Pinned delivery location</div>' +
           `<div class="inbox-pin-fee" data-pin-key="${pin.lat},${pin.lng}">Delivery fee: calculating...</div>` +
+          // Customer arranging their own Lalamove: a live quote to the pin for the chosen vehicle.
+          `<div class="inbox-pin-lalamove" data-pin-key="${pin.lat},${pin.lng}">` +
+          '<select class="inbox-pin-lala-vehicle" aria-label="Lalamove vehicle">' +
+          '<option value="MOTORCYCLE">Motorcycle</option><option value="SEDAN">Sedan</option><option value="MPV" selected>MPV</option>' +
+          '<option value="TRUCK330">Small truck (L300)</option><option value="2000KG_ALUMINUM">2-ton truck</option></select>' +
+          '<button type="button" class="btn btn-secondary btn-sm inbox-pin-lala-btn">Lalamove price</button>' +
+          '<span class="inbox-pin-lala-result"></span></div>' +
           `<button type="button" class="btn btn-secondary btn-sm inbox-pin-book-btn" data-message-id="${m.message_id}">📅 Schedule delivery with this pin</button>` +
           '</div>'
         : '';
@@ -991,6 +998,19 @@ function renderMessages(serverRows, opts = {}) {
   messagesEl.querySelectorAll('.inbox-pin-fee').forEach((el) => {
     const [lat, lng] = el.dataset.pinKey.split(',').map(Number);
     getPinFees(lat, lng).then((quotes) => { el.innerHTML = pinFeesHtml(quotes); });
+  });
+  messagesEl.querySelectorAll('.inbox-pin-lala-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const box = btn.closest('.inbox-pin-lalamove');
+      const [lat, lng] = box.dataset.pinKey.split(',').map(Number);
+      const vehicle = box.querySelector('.inbox-pin-lala-vehicle').value;
+      const resultEl = box.querySelector('.inbox-pin-lala-result');
+      btn.disabled = true;
+      resultEl.textContent = 'Asking Lalamove...';
+      const quotes = await getPinFees(lat, lng, vehicle);
+      btn.disabled = false;
+      resultEl.innerHTML = pinFeesHtml(quotes, 'Lalamove');
+    });
   });
   messagesEl.querySelectorAll('.inbox-pin-book-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -5426,8 +5446,9 @@ function parsePinnedLocation(content) {
 // measured to the exact pin). Cached per pin for the page's lifetime: the thread re-renders often.
 const pinFeeCache = new Map();
 
-function getPinFees(lat, lng) {
-  const key = `${lat},${lng}`;
+// vehicleType set = a live Lalamove quote for that vehicle instead of our own truck's fee.
+function getPinFees(lat, lng, vehicleType = null) {
+  const key = `${lat},${lng},${vehicleType || 'truck'}`;
   if (!pinFeeCache.has(key)) {
     pinFeeCache.set(key, (async () => {
       try {
@@ -5438,7 +5459,13 @@ function getPinFees(lat, lng) {
             'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
             'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
           },
-          body: JSON.stringify({ admin_username: currentSession.username, admin_password: currentSession.password, latitude: lat, longitude: lng })
+          body: JSON.stringify({
+            admin_username: currentSession.username,
+            admin_password: currentSession.password,
+            latitude: lat,
+            longitude: lng,
+            ...(vehicleType ? { vehicle_type: vehicleType } : {})
+          })
         });
         const body = await response.json().catch(() => null);
         if (!response.ok || !body?.quotes) throw new Error(body?.error || `Request failed (${response.status}).`);
@@ -5453,14 +5480,16 @@ function getPinFees(lat, lng) {
 }
 
 function pinFeeLabel(q) {
-  return q && !q.error && q.estimatedFee != null
-    ? `₱${Number(q.estimatedFee).toLocaleString('en-PH')} <span class="muted">(${q.distanceKm} km)</span>`
+  // Own truck: estimatedFee; Lalamove: total.
+  const amount = q && !q.error ? (q.estimatedFee ?? q.total) : null;
+  return amount != null
+    ? `₱${Number(amount).toLocaleString('en-PH')} <span class="muted">(${q.distanceKm} km)</span>`
     : `<span class="muted" title="${escapeHtml(q?.error || '')}">n/a</span>`;
 }
 
-function pinFeesHtml(quotes) {
-  if (!quotes || quotes.error) return `<span class="muted">Delivery fee unavailable${quotes?.error ? `: ${escapeHtml(quotes.error)}` : ''}</span>`;
-  return `Delivery fee: GMA ${pinFeeLabel(quotes.GMA)} &middot; Amaya ${pinFeeLabel(quotes.Amaya)}`;
+function pinFeesHtml(quotes, label = 'Delivery fee') {
+  if (!quotes || quotes.error) return `<span class="muted">${label} unavailable${quotes?.error ? `: ${escapeHtml(quotes.error)}` : ''}</span>`;
+  return `${label}: GMA ${pinFeeLabel(quotes.GMA)} &middot; Amaya ${pinFeeLabel(quotes.Amaya)}`;
 }
 
 // The selected booking order's branch fee (orders are GMA or Amaya; anything else defaults to GMA).

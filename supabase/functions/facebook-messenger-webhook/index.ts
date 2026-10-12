@@ -1439,6 +1439,43 @@ async function handleAutoResume(
   }
 }
 
+// A customer's map pin was just saved (sql/supabase_gma_pin_delivery_booking.sql: it's already in the chat
+// and on their open order) - answer it like a new customer message: same pause / schedule rules as
+// processMessage, then the normal AI turn (the DELIVERY FLOW WITH MAP PINS rule: fee + dates, or confirm
+// the updated location of an existing booking).
+async function handlePinSubmitted(
+  supabase: SupabaseClient,
+  anthropic: Anthropic,
+  model: string,
+  graphVersion: string,
+  token: string
+): Promise<void> {
+  if (!/^[0-9a-f-]{36}$/i.test(token)) return;
+  const { data: psid } = await supabase.rpc('service_claim_pin_bot_notify', { p_token: token });
+  if (!psid) return;
+
+  const { data: conv } = await supabase
+    .from('ChatbotConversations')
+    .select('PageId, CustomerName, IsPaused, AutoResumeAtUtc')
+    .eq('Psid', psid)
+    .maybeSingle();
+  // Website-widget chats can't be messaged via the Send API.
+  if (!conv?.PageId || conv.PageId === 'website') return;
+  if (conv.IsPaused) {
+    // Staff paused / are handling this chat - they answer the pin (its fee + Schedule button are in the inbox).
+    const resumeAt = conv.AutoResumeAtUtc ? Date.parse(conv.AutoResumeAtUtc) : NaN;
+    if (!(resumeAt <= Date.now())) return;
+    await supabase.from('ChatbotConversations').update({ IsPaused: false, AutoResumeAtUtc: null }).eq('Psid', psid);
+    await broadcastGmaEvent(supabase, psid);
+  }
+  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('BotScheduleEnabled, BotSchedule').eq('Id', 1).maybeSingle();
+  if (!isWithinBotSchedule(scheduleSettings, STORE_TIMEZONE)) return;
+
+  const pageAccessToken = getPageAccessToken(conv.PageId);
+  if (!pageAccessToken) return;
+  await generateAndSendAiReply(supabase, anthropic, model, pageAccessToken, graphVersion, psid, conv.PageId, conv.CustomerName ?? null, null);
+}
+
 // Supabase's Edge runtime global - lets the auto-resume task keep running after the cron's HTTP
 // call gets its quick response.
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
@@ -1462,6 +1499,18 @@ async function handlePost(req: Request): Promise<Response> {
   if (new URL(req.url).searchParams.get('task') === 'auto-resume') {
     const work = handleAutoResume(createClient(supabaseUrl, serviceRoleKey), new Anthropic({ apiKey: anthropicApiKey }), model, graphVersion)
       .catch((err) => console.error('Auto-resume task failed:', err instanceof Error ? err.message : err));
+    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
+    else await work;
+    return jsonResponse({ ok: true });
+  }
+
+  // A customer just sent their map pin (docs/pin-location.html calls this right after submitting) - wake
+  // Vic so he replies with the fee + dates. No signature: service_claim_pin_bot_notify only answers once
+  // per submitted pin, within 5 minutes of it, so this can't be used to make the bot talk otherwise.
+  const pinToken = new URL(req.url).searchParams.get('task') === 'pin-submitted' ? new URL(req.url).searchParams.get('token') : null;
+  if (pinToken !== null) {
+    const work = handlePinSubmitted(createClient(supabaseUrl, serviceRoleKey), new Anthropic({ apiKey: anthropicApiKey }), model, graphVersion, pinToken)
+      .catch((err) => console.error('Pin-submitted task failed:', err instanceof Error ? err.message : err));
     if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
     else await work;
     return jsonResponse({ ok: true });
