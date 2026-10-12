@@ -1007,6 +1007,15 @@
       align-items: center;
       justify-content: center;
     }
+    /* Facebook profile picture over the initials (profilePics in gmaConversations.js) - removed on load error. */
+    .inbox-conv-avatar-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+    }
     .inbox-conv-avatar-page {
       position: absolute;
       right: -1px;
@@ -3460,7 +3469,7 @@ Message: ..."></textarea>
   <script src="js/auth.js?v=salesshelf1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/gmaConversations.js?v=mobile1"></script>
+  <script src="js/gmaConversations.js?v=profilepic1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -127,12 +127,63 @@ function pageBadgeHtml(pageId) {
 
 const MOBILE_BACK_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-// Messenger-style round initials avatar (we have no profile photos) - same name always gets the same
-// color, via viewerColor's hash. The small corner dot is the Page's color (GMA blue / RS green).
+// Messenger-style round initials avatar - same name always gets the same color, via viewerColor's
+// hash. The small corner dot is the Page's color (GMA blue / RS green). The customer's Facebook
+// profile picture is laid over it once known (profilePics below); if it can't load, the initials show.
 function conversationAvatarHtml(c, extraClass = '') {
   const name = c.customer_name || '';
   const pageCls = PAGE_LABELS[c.page_id]?.cls || '';
-  return `<span class="inbox-conv-avatar ${extraClass}" style="background:${viewerColor(name || c.psid)}">${escapeHtml(viewerInitials(name || '?'))}${pageCls ? `<span class="inbox-conv-avatar-page ${pageCls}"></span>` : ''}</span>`;
+  return `<span class="inbox-conv-avatar ${extraClass}" data-avatar-psid="${escapeHtml(c.psid)}" style="background:${viewerColor(name || c.psid)}">${profilePicImgHtml(c.psid)}${escapeHtml(viewerInitials(name || '?'))}${pageCls ? `<span class="inbox-conv-avatar-page ${pageCls}"></span>` : ''}</span>`;
+}
+
+// Customer profile pictures, straight from Facebook (chatbot-profile-pics Edge Function) - nothing is
+// saved; the URL lives only in this Map for the open tab. null = no picture (website visitor, or
+// Facebook refused - needs Meta's Business Asset User Profile Access), so it isn't asked again.
+const profilePics = new Map();
+const profilePicsInFlight = new Set();
+
+function profilePicImgHtml(psid) {
+  const url = profilePics.get(psid);
+  return url ? `<img class="inbox-conv-avatar-img" src="${escapeHtml(url)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
+}
+
+function applyProfilePics() {
+  document.querySelectorAll('.inbox-conv-avatar[data-avatar-psid]').forEach((el) => {
+    if (el.querySelector('.inbox-conv-avatar-img')) return;
+    const html = profilePicImgHtml(el.dataset.avatarPsid);
+    if (html) el.insertAdjacentHTML('afterbegin', html);
+  });
+}
+
+async function ensureProfilePics(list) {
+  const psids = list
+    .filter((c) => c.psid && c.page_id !== 'website' && !profilePics.has(c.psid) && !profilePicsInFlight.has(c.psid))
+    .map((c) => c.psid);
+  if (psids.length === 0) return;
+  psids.forEach((p) => profilePicsInFlight.add(p));
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-profile-pics`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ admin_username: currentSession.username, admin_password: currentSession.password, psids })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    psids.forEach((p) => profilePics.set(p, result.pictures?.[p] || null));
+    const errors = Object.values(result.errors || {});
+    if (errors.length > 0) console.warn(`Profile pictures: Facebook refused ${errors.length} of ${psids.length} -`, errors[0]);
+    applyProfilePics();
+  } catch (err) {
+    // Marked "no picture" for this tab so every live re-render doesn't retry; a page reload does.
+    psids.forEach((p) => profilePics.set(p, null));
+    console.warn('Profile pictures unavailable:', err instanceof Error ? err.message : err);
+  } finally {
+    psids.forEach((p) => profilePicsInFlight.delete(p));
+  }
 }
 
 function renderConversationList() {
@@ -174,6 +225,7 @@ function renderConversationList() {
   listEl.querySelectorAll('.inbox-conv-item').forEach((el) => {
     el.addEventListener('click', () => openConversation(el.dataset.psid));
   });
+  ensureProfilePics(conversations);
 }
 
 function renderThreadHeader(conv) {
