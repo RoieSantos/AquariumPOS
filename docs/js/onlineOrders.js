@@ -4850,6 +4850,7 @@ function money(value) {
 // signed upload URL minted server-side (supabase_online_order_line_attachments.sql).
 const CARD_ATTACHMENTS_BUCKET = 'online-order-line-attachments';
 const CARD_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const CARD_MAX_VIDEO_BYTES = 25 * 1024 * 1024; // after compressing - bucket limit, supabase_online_order_line_attachment_videos.sql
 let cardLines = [];
 let cardAttachmentsByLineId = {};
 let cardPendingUploadLineId = null;
@@ -4871,9 +4872,12 @@ function cardAttachmentCellHtml(lineId) {
   if (!lineId) return '<span class="muted">No line ID</span>';
   const chips = (cardAttachmentsByLineId[lineId] || []).map((a) => {
     const label = escapeHtml(a.file_name || 'attachment');
+    // Videos play in place (#t=0.1 so phones show the first frame instead of a blank box).
     const link = isImageFileName(a.file_name)
       ? `<a href="${escapeHtml(a.public_url)}" target="_blank" rel="noopener" title="${label}"><img src="${escapeHtml(a.public_url)}" class="attachment-thumb" alt="${label}" /></a>`
-      : `<a href="${escapeHtml(a.public_url)}" target="_blank" rel="noopener" class="attachment-file-chip">&#128206; ${label}</a>`;
+      : isVideoFileName(a.file_name)
+        ? `<video class="attachment-video" src="${escapeHtml(a.public_url)}#t=0.1" controls playsinline preload="metadata" title="${label}"></video>`
+        : `<a href="${escapeHtml(a.public_url)}" target="_blank" rel="noopener" class="attachment-file-chip">&#128206; ${label}</a>`;
     return `<span class="attachment-chip">${link}<button type="button" class="attachment-remove-btn" data-attachment-id="${escapeHtml(a.attachment_id)}" title="Remove attachment">&times;</button></span>`;
   }).join('');
   return `<div class="attachment-cell">${chips}<button type="button" class="bc-link card-attach-btn" data-line-id="${escapeHtml(lineId)}">+ Attach</button></div>`;
@@ -5243,13 +5247,33 @@ async function loadOrderCardAttachments(orderId, rerender = true) {
 }
 
 async function uploadOrderCardAttachment(orderId, lineId, file, triggerEl) {
-  if (file.size > CARD_MAX_ATTACHMENT_BYTES) {
-    alert('That file is too large - max 10 MB.');
-    return;
-  }
   if (triggerEl) { triggerEl.disabled = true; triggerEl.textContent = 'Uploading...'; }
 
   try {
+    // Videos are shrunk first (js/videoCompress.js, supabase_online_order_line_attachment_videos.sql);
+    // the original goes up only when the browser can't compress it and it already fits.
+    if (isVideoFile(file)) {
+      if (triggerEl) triggerEl.textContent = 'Compressing video...';
+      let small = null;
+      try {
+        small = await compressVideoFile(file, (p) => {
+          if (triggerEl) triggerEl.textContent = `Compressing video ${Math.round(p * 100)}%...`;
+        });
+      } catch (err) {
+        alert(err.message);
+        return;
+      }
+      if (small && small.size < file.size) file = small;
+      if (file.size > CARD_MAX_VIDEO_BYTES) {
+        alert(`That video is still ${(file.size / 1048576).toFixed(1)} MB after compressing - max 25 MB. Please record a shorter clip.`);
+        return;
+      }
+      if (triggerEl) triggerEl.textContent = 'Uploading...';
+    } else if (file.size > CARD_MAX_ATTACHMENT_BYTES) {
+      alert('That file is too large - max 10 MB.');
+      return;
+    }
+
     const { data: uploadRows, error: signError } = await supabaseClient.rpc('admin_create_online_order_line_attachment_upload', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
