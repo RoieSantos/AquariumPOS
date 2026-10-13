@@ -930,8 +930,10 @@ function setupDashboardGroups() {
   const session = await requireAuth();
   if (!session) return;
   renderTopNav('Dashboard');
-  await applyAppBackground();
+  // Not awaited - the background photo is cosmetic and shouldn't hold up the dashboard's data.
+  applyAppBackground();
   wireThemeToggle();
+  const loaders = [];
 
   const displayName = session.displayName || session.username;
   if (displayName) {
@@ -997,17 +999,23 @@ function setupDashboardGroups() {
     document.getElementById('userSetupCard').classList.remove('hidden');
     document.getElementById('financeCardGrid').classList.remove('hidden');
     setupDashboardGroups();
-    await loadFinancialSummary(session);
-    await loadExpenseSummary(session);
-    await loadDailyByWarehouse(session);
-    await loadDailyByTender(session);
-    await loadDailyAdvanceOrders(session);
-    await loadPurchaseSummary(session);
-    await loadPayrollSummary(session);
-    renderProfitCard();
-    await loadSpendingRanking(session);
-    await loadProductionSummary(session);
-    await loadMakerAssignmentSummary(session);
+    // Fired in parallel rather than one await after another - each RPC is a full round trip, so
+    // ~12 sequential calls made the dashboard several seconds slower on staff/mobile connections.
+    // Only real dependencies: by-tender reads dailyByWarehouseRows, and the profit card needs the
+    // four monthlyTotals (sales/expense/purchase/payroll) filled in first.
+    loaders.push(
+      Promise.all([
+        loadFinancialSummary(session),
+        loadExpenseSummary(session),
+        loadPurchaseSummary(session),
+        loadPayrollSummary(session)
+      ]).then(renderProfitCard),
+      loadDailyByWarehouse(session).then(() => loadDailyByTender(session)),
+      loadDailyAdvanceOrders(session),
+      loadSpendingRanking(session),
+      loadProductionSummary(session),
+      loadMakerAssignmentSummary(session)
+    );
   }
 
   // Per "if the user is a sales user show the dashboard sales by confirmation" - Sales Users
@@ -1017,7 +1025,7 @@ function setupDashboardGroups() {
   // just widening this frontend gate.
   if (session.isSuperUser || session.isSalesUser) {
     document.getElementById('salesByStaffSection').classList.remove('hidden');
-    await loadSalesByStaff(session);
+    loaders.push(loadSalesByStaff(session));
   }
 
   // Per "show Total Walk-in sales on the dashboard for the user that is not sales user and not
@@ -1025,11 +1033,12 @@ function setupDashboardGroups() {
   // super-user finance grid (Amount to Receive/Total Sales/Expense stay hidden from them).
   if (!session.isSuperUser && !session.isSalesUser) {
     document.getElementById('walkInOnlyCard').classList.remove('hidden');
-    await loadFinancialSummary(session);
+    loaders.push(loadFinancialSummary(session));
   }
 
-  await loadStatusSummary(session);
+  loaders.push(loadStatusSummary(session));
   if (!isSalesOnlyUser) {
-    await loadNotifications(session);
+    loaders.push(loadNotifications(session));
   }
+  await Promise.all(loaders);
 })();

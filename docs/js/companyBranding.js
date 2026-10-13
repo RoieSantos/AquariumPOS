@@ -35,7 +35,8 @@ async function applyAppBackground() {
   const info = await fetchCompanyInfo();
   if (!info || !info['BackgroundImageUrl']) return;
 
-  document.body.style.backgroundImage = `url(${info['BackgroundImageUrl']})`;
+  // Painted by body.app-has-photo-bg::before (css/styles.css), not body's own background.
+  document.body.style.setProperty('--app-bg-image', `url("${info['BackgroundImageUrl']}")`);
   document.body.classList.add('app-has-photo-bg');
 }
 

@@ -208,14 +208,39 @@ async function saveProofPhotoSettings() {
   loadSettings();
 }
 
+// The background shows full-bleed behind the Login page and Dashboard on every visit, so an
+// unshrunk photo (the first one was a 3 MB PNG) made those pages crawl on staff/mobile
+// connections. At most 1920px on the long side, re-encoded as JPEG - same idea as compressImage in
+// defectItems.js. Not used for the logo, which may rely on PNG transparency.
+function compressBackgroundImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1920 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => {
+        if (!blob) return reject(new Error('Could not process the image.'));
+        resolve(new File([blob], (file.name || 'background').replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.8);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a readable image.')); };
+    img.src = url;
+  });
+}
+
 // Shared upload flow for both the logo and the Login page background image - only the RPC name,
 // which CompanyInfo field the result overrides, and which UI elements to update differ.
-async function uploadCompanyAsset({ fileInputId, uploadBtnId, uploadBtnLabel, rpcName, overrideKey, assetLabel }) {
+async function uploadCompanyAsset({ fileInputId, uploadBtnId, uploadBtnLabel, rpcName, overrideKey, assetLabel, compress }) {
   const errorEl = document.getElementById('logoError');
   errorEl.classList.add('hidden');
 
   const fileInput = document.getElementById(fileInputId);
-  const file = fileInput.files && fileInput.files[0];
+  let file = fileInput.files && fileInput.files[0];
   if (!file) {
     errorEl.textContent = 'Choose an image file first.';
     errorEl.classList.remove('hidden');
@@ -232,6 +257,8 @@ async function uploadCompanyAsset({ fileInputId, uploadBtnId, uploadBtnLabel, rp
   uploadBtn.textContent = 'Uploading...';
 
   try {
+    if (compress) file = await compress(file);
+
     const { data: uploadRows, error: signError } = await supabaseClient.rpc(rpcName, {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -281,7 +308,8 @@ function handleUploadBackground() {
     uploadBtnLabel: 'Upload Background',
     rpcName: 'admin_create_portal_background_upload',
     overrideKey: 'backgroundUrl',
-    assetLabel: 'background image'
+    assetLabel: 'background image',
+    compress: compressBackgroundImage
   });
 }
 

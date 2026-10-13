@@ -374,6 +374,28 @@ async function loadShelves(keepId) {
   renderShelf();
 }
 
+// Mirrors staff_set_shelf_cell_count + staff_get_shelf_maps' shelf_total (sum of CurrentQty for
+// the item across every shelf at the same warehouse) after a count is saved.
+function applyLocalCount(cellId, qty) {
+  let target = null;
+  let warehouseId = null;
+  shelves.forEach((s) => (s.cells || []).forEach((c) => {
+    if (c.id === cellId) { target = c; warehouseId = s.warehouse_id; }
+  }));
+  if (!target) return;
+  target.current_qty = qty;
+  target.counted_at = new Date().toISOString();
+  target.counted_by = currentSession.username;
+  if (!target.item_code) return;
+
+  const sameItem = shelves.filter((s) => (s.warehouse_id ?? null) === (warehouseId ?? null))
+    .flatMap((s) => s.cells || [])
+    .filter((c) => c.item_code === target.item_code);
+  const counted = sameItem.filter((c) => c.current_qty != null);
+  const total = counted.length ? counted.reduce((n, c) => n + Number(c.current_qty), 0) : null;
+  sameItem.forEach((c) => { c.shelf_total = total; });
+}
+
 function setEditing(on) {
   document.getElementById('editBar').classList.toggle('hidden', !on);
   // Layout editing: Super User or Store Manager; everyone else views + updates counts.
@@ -568,24 +590,32 @@ function moveCell(delta) {
     renderShelfSelect();
     renderShelf();
   });
-  // Live count entry in view mode - saved the moment the number is committed (blur/Enter), then
-  // the map reloads so every spot's colour/shelf total is recomputed against the ledger.
+  // Live count entry in view mode - saved the moment the number is committed (blur/Enter). The
+  // count only changes this cell and its item's shelf_total, both recomputed here from the shelves
+  // already loaded, rather than re-fetching every shelf after each entry (an extra round trip per
+  // count on a phone). Refresh still pulls the server's figures.
   document.getElementById('shelfBody').addEventListener('change', async (e) => {
     if (!e.target.classList.contains('cell-count')) return;
     const raw = e.target.value;
+    const cellId = Number(e.target.dataset.cellid);
+    const qty = raw === '' ? null : Number(raw);
     e.target.disabled = true;
     const { error } = await supabaseClient.rpc('staff_set_shelf_cell_count', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
-      p_cell_id: Number(e.target.dataset.cellid),
-      p_qty: raw === '' ? null : Number(raw)
+      p_cell_id: cellId,
+      p_qty: qty
     });
     if (error) {
       e.target.disabled = false;
       window.alert('Failed to save count: ' + error.message);
       return;
     }
-    await loadShelves(currentShelfId);
+    applyLocalCount(cellId, qty);
+    // Keep the cursor in whichever count box was tapped next - the re-render replaces the inputs.
+    const nextId = document.activeElement?.classList.contains('cell-count') ? document.activeElement.dataset.cellid : null;
+    renderShelf();
+    if (nextId) document.querySelector(`.cell-count[data-cellid="${nextId}"]`)?.focus();
   });
   document.getElementById('refreshBtn').addEventListener('click', () => loadShelves());
   document.getElementById('replenishBtn').addEventListener('click', createReplenishmentTransfer);

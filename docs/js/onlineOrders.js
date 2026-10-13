@@ -7122,8 +7122,13 @@ async function initAdvanceOrdersView() {
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
   if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);
-  currentSessionIsProductionWarehouse = await resolveIsProductionWarehouse(session);
-  await loadProductionMembers();
+  // Fetched together (one round trip instead of two), but still before the list: the list cards'
+  // maker dropdowns read productionMembers, and To Ship's serial rules read
+  // currentSessionIsProductionWarehouse (defaults to true), so neither may be clickable early.
+  await Promise.all([
+    resolveIsProductionWarehouse(session).then((isProduction) => { currentSessionIsProductionWarehouse = isProduction; }),
+    loadProductionMembers()
+  ]);
 
   // Supports deep-linking from the Dashboard's status cards, e.g. online-orders.html?status=Shipped,
   // from the Dashboard's finance cards, e.g. ?period=month|today|prevmonth, ?scope=walkin,

@@ -99,19 +99,17 @@ body {
    the Login page's version, since this page's cards/text are designed for a light background -
    the photo shows through faintly as texture rather than replacing the theme. .page/#topnav get
    position+z-index below so they still paint above the fixed overlay (a position:fixed element
-   with an explicit z-index otherwise paints above non-positioned in-flow content). */
-body.app-has-photo-bg {
-  background-size: cover;
-  background-position: center;
-  background-attachment: fixed;
-  background-repeat: no-repeat;
-}
-
+   with an explicit z-index otherwise paints above non-positioned in-flow content).
+   The photo sits on the fixed ::before layer (--app-bg-image) instead of using
+   background-attachment: fixed on body, which makes phones repaint the whole photo on every scroll
+   frame - a fixed layer is just moved by the GPU. */
 body.app-has-photo-bg::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: rgba(244, 247, 251, 0.8);
+  background:
+    linear-gradient(rgba(244, 247, 251, 0.8), rgba(244, 247, 251, 0.8)),
+    var(--app-bg-image) center / cover no-repeat;
   z-index: 0;
 }
 
