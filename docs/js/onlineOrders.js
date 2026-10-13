@@ -1634,11 +1634,70 @@ async function markOrderShipped(orderId, btn) {
   await markOrderShippedWhole(o, btn);
 }
 
+// Balance guard - per "is it possible to put a guard there checking if the order has a balance?": a
+// Dispatcher can't ship (Mark Shipped / the last release) while the order still has a balance; a Super
+// User / Production Manager can, after a warning (COD, credit customers). Partial releases aren't checked.
+// The server enforces the same (_online_order_ship_balance_block,
+// supabase_online_order_mark_shipped_any_dispatcher.sql + supabase_online_order_partial_release.sql).
+function shipBalanceDue(o) {
+  const b = Number(o?.balance) || 0;
+  return b > 0.009 ? b : 0;
+}
+
+function canShipWithBalance() {
+  return !!(currentSession?.isSuperUser || currentSession?.isProductionManager);
+}
+
+function pesoText(n) {
+  return '₱' + Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Prefix for a manager's ship confirmation when there is still money to collect.
+function shipBalanceWarning(o) {
+  const due = shipBalanceDue(o);
+  return due ? `⚠ This order still has a balance of ${pesoText(due)}.\n\n` : '';
+}
+
+// Per "put a link for the order if they have a conversations": the GMA Conversations thread of a
+// conversation-created order (gma-conversations.html?psid=..., opened in a new tab), for staff who can
+// open that page - never a Dispatcher ("no need to show conversations to the dispatcher"), unless they're
+// also a Super User. Pancake-page orders have no portal conversation - null.
+function canOpenConversations() {
+  if (currentSession?.isSuperUser) return true;
+  if ((currentSession?.staffRoles || []).includes('Dispatcher')) return false;
+  return !!currentSession?.isConversationsStaff;
+}
+
+async function conversationLinkFor(o) {
+  if (!o?.is_gma_order || !canOpenConversations()) return null;
+  const psid = await getGmaPsid(String(o.order_id));
+  if (!psid) return null;
+  const params = new URLSearchParams({ psid });
+  if (o.customer_name) params.set('name', o.customer_name);
+  return `gma-conversations.html?${params}`;
+}
+
+function shipBalanceText(due) {
+  return `This order still has a balance of ${pesoText(due)}. Double-check the payment with the team first before shipping out.`;
+}
+
 async function markOrderShippedWhole(o, btn) {
+  const due = shipBalanceDue(o);
+  if (due && !canShipWithBalance()) {
+    const link = await conversationLinkFor(o);
+    const ok = await confirmAction({
+      caption: 'BALANCE DUE',
+      title: orderLabel(o),
+      message: shipBalanceText(due) + (link ? '\n\nOpen the customer\'s conversation to check what they sent.' : ''),
+      confirmLabel: link ? 'View Conversation' : 'OK'
+    });
+    if (ok && link) window.open(link, '_blank');
+    return;
+  }
   const ok = await confirmWithPhoto({
     caption: 'MARK SHIPPED',
     title: orderLabel(o),
-    message: `Has this order been shipped / handed to the customer?\n\nTake a photo of what is leaving first. It changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+    message: `${shipBalanceWarning(o)}Has this order been shipped / handed to the customer?\n\nTake a photo of what is leaving first. It changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
     confirmLabel: 'Yes, Mark Shipped',
     tone: 'is-ship',
     refId: o.order_id,
@@ -1725,9 +1784,18 @@ async function postShipPhotoToFacebook(o) {
 // admin_release_online_order_lines re-checks the remaining quantities server-side; the batch that
 // releases the last unit marks the order Shipped in the portal and Pancake.
 let releaseOrderId = null;
+let releaseConversationLink = null; // conversationLinkFor - shown in the balance note
 
 function openReleaseDialog(o, lines) {
   releaseOrderId = String(o.order_id);
+  releaseConversationLink = null;
+  if (shipBalanceDue(o)) {
+    conversationLinkFor(o).then((link) => {
+      if (releaseOrderId !== String(o.order_id)) return;
+      releaseConversationLink = link;
+      updateReleaseDialogState();
+    });
+  }
   document.getElementById('releaseTitle').textContent = orderLabel(o);
   document.getElementById('releaseLines').innerHTML = lines.map((l) => {
     const left = Number(l.remaining_qty) || 0;
@@ -1769,9 +1837,19 @@ function updateReleaseDialogState() {
   const all = sel.length > 0 && sel.every((s) => s.quantity >= s.left);
   const any = sel.some((s) => s.quantity > 0);
   document.getElementById('releaseAll').checked = all;
+  // Balance guard (see shipBalanceDue): a Dispatcher may release part of it, not the last of it.
+  const due = shipBalanceDue(findFlatOrder(releaseOrderId));
+  const blocked = all && due > 0 && !canShipWithBalance();
+  const note = document.getElementById('releaseBalanceNote');
+  note.classList.toggle('hidden', !due);
+  const noteText = !due ? ''
+    : canShipWithBalance() ? `Balance ${pesoText(due)} is still due. Releasing everything ships the order anyway.`
+    : `${shipBalanceText(due)} You can still release some items now.`;
+  note.innerHTML = escapeHtml(noteText)
+    + (due && releaseConversationLink ? ` <a href="${escapeHtml(releaseConversationLink)}" target="_blank" rel="noopener">View conversation &rsaquo;</a>` : '');
   const btn = document.getElementById('saveReleaseBtn');
-  btn.textContent = all ? 'Release All - Mark Shipped' : 'Release Selected (Partial)';
-  btn.disabled = !any;
+  btn.textContent = blocked ? 'Release All - Balance Due' : all ? 'Release All - Mark Shipped' : 'Release Selected (Partial)';
+  btn.disabled = !any || blocked;
 }
 
 async function saveRelease() {
@@ -1790,7 +1868,7 @@ async function saveRelease() {
     ? {
       caption: 'RELEASE ALL - MARK SHIPPED',
       title: orderLabel(o),
-      message: `Release everything that is left?\n\nTake a photo of what is leaving first. The order changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+      message: `${shipBalanceWarning(o)}Release everything that is left?\n\nTake a photo of what is leaving first. The order changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
       confirmLabel: 'Yes, Mark Shipped',
       tone: 'is-ship',
       refId: o.order_id,
@@ -4578,6 +4656,69 @@ async function ensureLastEditor(o) {
   if (String(openCardOrderId) === String(o.order_id)) setCardText('ocLastUpdated', lastUpdatedText(o));
 }
 
+// Conversation FactBox - per "can you just show the conversation at the right side of the online order
+// card instead?": the customer's GMA Conversations thread, read-only, at the top of the card's right
+// column (widened while it shows). Same rules as conversationLinkFor: conversation-created orders only,
+// never a Dispatcher. admin_get_chatbot_conversation_messages only reads - it doesn't mark the thread
+// read, so viewing it here doesn't hide anything from the Conversations team. "Open ›" goes to the
+// full thread. The psid is looked up once per order.
+const cardConversationPsids = new Map(); // order_id -> Promise<psid | null>
+const CONV_PLACEHOLDER_TEXT = new Set(['[Photo]', '[Video]', '[Voice message]', '[File]']);
+
+async function loadOrderCardConversation(o) {
+  const part = document.getElementById('orderCardConversationPart');
+  const thread = document.getElementById('orderCardConversationThread');
+  const split = part.closest('.oc-split');
+  const id = String(o.order_id);
+  part.classList.add('hidden');
+  split.classList.remove('has-conv');
+  if (!o.is_gma_order || !canOpenConversations() || isMakerFocus()) return;
+  if (!cardConversationPsids.has(id)) cardConversationPsids.set(id, getGmaPsid(id).catch(() => null));
+  const psid = await cardConversationPsids.get(id);
+  if (!psid || openCardOrderId !== id) return;
+
+  const params = new URLSearchParams({ psid });
+  if (o.customer_name) params.set('name', o.customer_name);
+  document.getElementById('orderCardConversationOpen').href = `gma-conversations.html?${params}`;
+  thread.innerHTML = '<p class="oc-fact-empty muted">Loading messages...</p>';
+  part.classList.remove('hidden');
+  split.classList.add('has-conv');
+
+  const { data, error } = await supabaseClient.rpc('admin_get_chatbot_conversation_messages', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: psid,
+    p_limit: 100
+  });
+  if (openCardOrderId !== id) return;
+  if (error) {
+    thread.innerHTML = `<p class="oc-fact-empty error-text">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  const rows = data || [];
+  thread.innerHTML = rows.length ? rows.map(cardConversationMessageHtml).join('') : '<p class="oc-fact-empty muted">No messages yet.</p>';
+  const toBottom = () => { thread.scrollTop = thread.scrollHeight; };
+  toBottom();
+  thread.querySelectorAll('img').forEach((img) => img.addEventListener('load', toBottom, { once: true }));
+}
+
+function cardConversationMessageHtml(m) {
+  const mine = m.role !== 'user';
+  const who = !mine ? '' : m.role === 'assistant' ? 'Bot' : (m.sent_by_username || 'Staff');
+  const time = m.created_at_utc
+    ? new Date(m.created_at_utc).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
+  const url = m.attachment_url ? escapeHtml(m.attachment_url) : '';
+  const media = !url ? ''
+    : m.attachment_type === 'image' ? `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="Photo" loading="lazy" /></a>`
+    : `<a href="${url}" target="_blank" rel="noopener">${m.attachment_type === 'video' ? '▶ Video' : m.attachment_type === 'audio' ? '🔊 Voice message' : '📎 File'}</a>`;
+  const text = m.content && !(url && CONV_PLACEHOLDER_TEXT.has(m.content)) ? `<div class="oc-conv-text">${escapeHtml(m.content)}</div>` : '';
+  const pay = m.detected_payment_amount == null ? ''
+    : `<div class="oc-conv-pay">💳 Payment ${pesoText(m.detected_payment_amount)}${m.detected_payment_method ? ' · ' + escapeHtml(m.detected_payment_method) : ''} · ${m.detected_payment_applied_at_utc ? 'confirmed' : 'unconfirmed'}</div>`;
+  return `<div class="oc-conv-msg ${mine ? 'is-out' : 'is-in'}"><div class="oc-conv-bubble">${media}${text}${pay}</div>`
+    + `<div class="oc-conv-meta">${escapeHtml([who, time].filter(Boolean).join(' · '))}</div></div>`;
+}
+
 function fillOrderCardHeader(o) {
   const displayStatus = listDisplayStatus(o);
   document.getElementById('orderCardTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
@@ -5266,6 +5407,7 @@ function openOrderCard(orderId) {
   renderOrderCardAoPayments(o);
   loadOrderCardReworkHistory(openCardOrderId);
   loadOrderCardReleaseHistory(openCardOrderId);
+  loadOrderCardConversation(o);
 }
 
 // Payment FastTab's "Paid Via": which method(s) the Amount Paid came in through (Cash, GCASH, BDO...),

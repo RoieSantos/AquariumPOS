@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=pay1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=convpane1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -589,6 +589,13 @@
              (public."OnlineOrderStatusPhotos", kept 30 days) - order-level, separate from the per-line
              attachments. Filled by js/onlineOrders.js loadOrderCardStatusPhotos. -->
         <div class="oc-factbox-col">
+        <!-- Conversation FactBox: the customer's GMA Conversations thread, read-only (does not mark it
+             read). Conversation-created orders only, never for Dispatchers. Filled by js/onlineOrders.js
+             loadOrderCardConversation. -->
+        <aside class="oc-factbox oc-conv-part hidden" id="orderCardConversationPart" aria-label="Conversation">
+          <div class="oc-fact-title">Conversation <a id="orderCardConversationOpen" class="oc-conv-open" target="_blank" rel="noopener">Open &rsaquo;</a></div>
+          <div class="oc-conv-thread" id="orderCardConversationThread"></div>
+        </aside>
         <aside class="oc-factbox" id="orderCardPhotosPart" aria-label="Photos">
           <div class="oc-fact-title">Photos <span class="muted" id="orderCardPhotosCount"></span></div>
           <div class="oc-fact-body">
@@ -849,6 +856,7 @@
       </div>
       <div class="bc-dialog-body">
         <p class="bc-lede">Tick what is leaving now. Items not ticked stay pending and the order stays in To Ship until everything is released.</p>
+        <p id="releaseBalanceNote" class="oo-rl-balance hidden"></p>
         <label class="oo-rl-all"><input type="checkbox" id="releaseAll" /> <span>Release everything left</span></label>
         <div id="releaseLines" class="oo-rl-lines"></div>
         <div class="bc-field oo-sb-reason">
@@ -1122,7 +1130,7 @@
   <script src="js/proofPhoto.js?v=shippost1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/onlineOrders.js?v=advsales1"></script>
+  <script src="js/onlineOrders.js?v=convpane1"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>

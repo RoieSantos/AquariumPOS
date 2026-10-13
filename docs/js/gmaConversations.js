@@ -6178,4 +6178,22 @@ function initDeliveryCalendar() {
   document.getElementById('conversationMoodFilter').addEventListener('change', (e) => onConversationMoodFilterChange(e.target.value));
   loadTags();
   await loadConversations();
+  await openConversationFromUrl();
 })();
+
+// gma-conversations.html?psid=...&name=... - the "View conversation" link on Online Orders (onlineOrders.js
+// conversationLinkFor). Opens that customer's thread; if it isn't among the 100 latest, searches their
+// name first. The params are then dropped so a reload starts on the plain list.
+async function openConversationFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const psid = params.get('psid');
+  if (!psid) return;
+  history.replaceState(history.state, '', location.pathname);
+  const name = (params.get('name') || '').trim();
+  if (!conversations.some((c) => c.psid === psid) && name) {
+    conversationSearchTerm = name;
+    document.getElementById('conversationSearchInput').value = name;
+    await loadConversations();
+  }
+  if (conversations.some((c) => c.psid === psid)) await openConversation(psid);
+}

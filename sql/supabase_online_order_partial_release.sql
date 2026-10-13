@@ -17,6 +17,10 @@
 --   staff_list_online_order_release_summary(order_ids[])  - per order: released / ordered units, batches
 --   staff_get_online_order_release_history(order_id)      - every released line, newest batch first
 --
+-- Balance guard: the batch that would ship the order is refused for a Dispatcher while the order still has
+-- a balance (_online_order_ship_balance_block, from supabase_online_order_mark_shipped_any_dispatcher.sql).
+-- Partial batches are not checked; a Super User / Production Manager can always ship.
+--
 -- Run AFTER supabase_online_order_mark_shipped_any_dispatcher.sql. Safe to re-run. New table + functions
 -- only - no OnlineOrders lock.
 
@@ -114,6 +118,7 @@ declare
   v_remaining numeric;
   v_picked int;
   v_req jsonb;
+  v_block text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     return query select false, 'Not authorized.'::text, false, null::int;
@@ -169,6 +174,24 @@ begin
       return;
     end if;
 
+    -- What would still be left after this batch (0 = this batch ships the order).
+    select coalesce(sum(greatest(x.ordered_qty - x.released_qty - coalesce(q.quantity, 0), 0)), 0) into v_remaining
+    from public._online_order_release_lines(p_order_id) x
+    left join jsonb_to_recordset(v_req) as q(line_id text, quantity numeric) on q.line_id = x.line_id;
+  else
+    v_remaining := 0;
+  end if;
+
+  -- Balance guard - only on the batch that ships the order, and not for a Production Manager.
+  if v_remaining = 0 and not coalesce(v_is_manager, false) then
+    v_block := public._online_order_ship_balance_block(p_order_id);
+    if v_block is not null then
+      return query select false, (v_block || case when v_line_count > 0 then ' A partial release is still allowed.' else '' end)::text, false, null::int;
+      return;
+    end if;
+  end if;
+
+  if v_line_count > 0 then
     select coalesce(max("BatchNo"), 0) + 1 into v_batch
     from public."OnlineOrderLineReleases" where "OrderID" = p_order_id;
 

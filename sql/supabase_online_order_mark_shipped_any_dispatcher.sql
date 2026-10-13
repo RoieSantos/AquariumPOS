@@ -7,9 +7,15 @@
 -- user (or a Production Manager / Super User) can mark a To Ship order Shipped; a Dispatcher is recorded as
 -- its Dispatcher, and every shipment is logged in OnlineOrderShipments.
 --
+-- Balance guard - per "is it possible to put a guard there checking if the order has a balance?": a
+-- Dispatcher can't mark an order Shipped while its "Balance" (MoneyToCollect - AmountPaid) is above zero;
+-- a Super User / Production Manager still can (COD, credit customers - the page warns them first).
+-- _online_order_ship_balance_block is shared with admin_release_online_order_lines
+-- (supabase_online_order_partial_release.sql), where only the batch that ships the order is checked.
+--
 -- Run on its own - safe to run any time after supabase_online_order_mark_shipped.sql. Unlike re-running
 -- supabase_online_order_dispatcher_on_ship.sql, it does NOT touch the order list or maker rules.
--- New table (if missing) + one function - no OnlineOrders lock.
+-- New table (if missing) + two functions - no OnlineOrders lock.
 
 create table if not exists public."OnlineOrderShipments" (
   "OrderID" text primary key,
@@ -20,6 +26,23 @@ create table if not exists public."OnlineOrderShipments" (
 
 alter table public."OnlineOrderShipments" enable row level security;
 revoke all on public."OnlineOrderShipments" from anon, authenticated;
+
+-- The reason an order can't be shipped by a Dispatcher yet, or null when it has no balance left.
+create or replace function public._online_order_ship_balance_block(p_order_id text)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select format('This order still has a balance of ₱%s. Double-check the payment with the team first before shipping out.',
+                to_char(o."Balance", 'FM999,999,990.00'))::text
+  from public."OnlineOrders" o
+  where o."OrderID" = p_order_id
+    and coalesce(o."Balance", 0) > 0.009;
+$$;
+
+revoke execute on function public._online_order_ship_balance_block(text) from public, anon, authenticated;
 
 drop function if exists public.admin_mark_online_order_shipped(text, text, text);
 
@@ -38,6 +61,7 @@ declare
   v_status text;
   v_is_manager boolean;
   v_is_dispatcher boolean;
+  v_block text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password) then
     return query select false, 'Not authorized.'::text;
@@ -63,6 +87,14 @@ begin
   if lower(trim(coalesce(v_status, ''))) not in ('to ship', 'packing', 'packed') then
     return query select false, format('Only a To Ship order can be marked shipped - this one is %s.', v_status)::text;
     return;
+  end if;
+
+  if not coalesce(v_is_manager, false) then
+    v_block := public._online_order_ship_balance_block(p_order_id);
+    if v_block is not null then
+      return query select false, v_block;
+      return;
+    end if;
   end if;
 
   -- Raises (and rolls everything back) if Pancake rejects it.
