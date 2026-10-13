@@ -7,7 +7,7 @@
 // One fixed <canvas class="app-sky-bg"> behind .page / #topnav (css/styles.css). Clouds are
 // pre-rendered to tiling offscreen canvases (rebuilt on resize / theme change) so each frame is cheap.
 // Light theme is a pale twilight version so dark page text stays readable.
-// Capped at ~30 fps, paused while the tab is hidden, a still frame for "reduce motion" users.
+// Drawn once as a still picture (no animation loop) - see "still frame only" at the bottom.
 (function () {
   if (document.querySelector('.app-sky-bg')) return;
   const canvas = document.createElement('canvas');
@@ -17,7 +17,6 @@
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const TAU = Math.PI * 2;
   const rand = (a, b) => a + Math.random() * (b - a);
   const smooth = (a, b, x) => {
@@ -403,51 +402,43 @@
     drawCometHead(pal, t); // glow over the near clouds, as if lighting them
   }
 
-  // ---------------------------------------------------------------- loop
-  resize();
-  build();
-  let last = performance.now();
-  let lastDraw = 0;
-  let raf = 0;
-
-  function frame(now) {
-    raf = requestAnimationFrame(frame);
-    if (now - lastDraw < 33) return;
-    const dt = Math.min(0.1, (now - last) / 1000);
-    last = now;
-    lastDraw = now;
-    update(dt);
-    draw(now / 1000);
-  }
+  // ---------------------------------------------------------------- still frame only
+  // Per "even desktop is slow.. image only no animation": the sky is drawn ONCE as a still picture
+  // (what reduce-motion users always got) instead of redrawing ~30x a second, which was competing
+  // with page loading/rendering on staff phones and PCs. update() / the meteor code stay unused.
+  // Drawn once the page is idle so the first paint isn't held up - the canvas's CSS gradient
+  // (.app-sky-bg in css/styles.css) shows the same base colours until then.
+  let drawnTheme = '';
+  let drawnW = 0;
+  let drawnH = 0;
 
   function still() {
+    resize();
+    build(); // clouds and stars are laid out for the viewport size
     draw(0);
+    drawnTheme = palette().key;
+    drawnW = W;
+    drawnH = H;
   }
 
+  const whenIdle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(fn, 300));
+  if (document.readyState === 'complete') whenIdle(still);
+  else window.addEventListener('load', () => whenIdle(still), { once: true });
+
+  // Only for a real size change - a phone's address bar sliding in/out on scroll also fires
+  // 'resize' (height only, by ~50-100px) and re-laying out the clouds each time made scrolling janky.
   let resizeTimer = 0;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      resize();
-      build(); // clouds and stars are laid out for the viewport size
-      if (reduceMotion) still();
-    }, 150);
+      if (!drawnTheme) return; // first draw not done yet - it'll use the new size anyway
+      if (window.innerWidth === drawnW && Math.abs(window.innerHeight - drawnH) < 150) return;
+      still();
+    }, 250);
   });
 
-  // Redraw the still frame when the theme toggles (animated mode picks it up on the next frame)
-  if (reduceMotion) {
-    new MutationObserver(still).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    still();
-    return;
-  }
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      cancelAnimationFrame(raf);
-    } else {
-      last = performance.now();
-      raf = requestAnimationFrame(frame);
-    }
-  });
-  raf = requestAnimationFrame(frame);
+  // Redraw only when the theme really flips - theme.js re-applies it every minute in Auto mode.
+  new MutationObserver(() => {
+    if (drawnTheme && palette().key !== drawnTheme) still();
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 })();
