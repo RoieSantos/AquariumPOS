@@ -110,10 +110,14 @@ async function loadGoogleMapsApiKey() {
   googleMapsApiKey = data || null;
 }
 
+// init() fetches the Maps key + company logo (driver marker icons) in the background rather than
+// before the calendar - anything that draws a map comes through here, so it waits for both first.
+let mapAssetsReady = Promise.resolve();
+
 function loadGoogleMapsScript() {
   if (googleMapsReadyPromise) return googleMapsReadyPromise;
 
-  googleMapsReadyPromise = new Promise((resolve, reject) => {
+  googleMapsReadyPromise = mapAssetsReady.then(() => new Promise((resolve, reject) => {
     if (!googleMapsApiKey) {
       reject(new Error('Google Maps API key is not configured - set it in General Setup.'));
       return;
@@ -125,7 +129,7 @@ function loadGoogleMapsScript() {
     script.onload = () => resolve();
     script.onerror = () => reject(new Error('Failed to load the Google Maps script.'));
     document.head.appendChild(script);
-  });
+  }));
 
   return googleMapsReadyPromise;
 }
@@ -2140,13 +2144,9 @@ function wireToolbarAndModal() {
 
   document.getElementById('setupContent').classList.remove('hidden');
 
-  await loadGoogleMapsApiKey();
-  await loadCompanyLogoUrl();
+  mapAssetsReady = Promise.all([loadGoogleMapsApiKey(), loadCompanyLogoUrl()]);
   subscribeToDriverLocations();
   startDriverMarkerStaleCheck();
-  await loadWarehouseLookup();
-  await loadVendorLookup();
-  await loadAndRenderRouteSchedule();
 
   // Route-change push notifications (supabase_delivery_route_change_push.sql) open
   // delivery.html?date=YYYY-MM-DD - start on that day instead of today.
@@ -2154,6 +2154,16 @@ function wireToolbarAndModal() {
   const today = /^\d{4}-\d{2}-\d{2}$/.test(dateParam || '') ? new Date(`${dateParam}T00:00:00`) : new Date();
   currentYear = today.getFullYear();
   currentMonth = today.getMonth();
+
+  // Lookups + this month's stops fetched in parallel (previously 5 round trips one after another
+  // before the calendar appeared); both views below draw only once all of them are in.
+  await Promise.all([
+    loadWarehouseLookup(),
+    loadVendorLookup(),
+    loadAndRenderRouteSchedule(),
+    loadMonthStops(currentYear, currentMonth),
+    loadMonthDateVendors(currentYear, currentMonth)
+  ]);
 
   // Delivery Team / Dispatchers get asked to turn on route-change notifications (js/pushNotifications.js).
   maybeShowPushLoginPrompt(session).catch(() => {});
@@ -2170,7 +2180,6 @@ function wireToolbarAndModal() {
     document.getElementById('calendarView').classList.add('hidden');
     wireDriverRouteNav();
     wireMarkDone();
-    await Promise.all([loadMonthStops(currentYear, currentMonth), loadMonthDateVendors(currentYear, currentMonth)]);
     await renderDriverRouteView(toDateKey(today));
 
     // Reload the day when the driver comes back to the app (e.g. after a route-change
@@ -2185,5 +2194,8 @@ function wireToolbarAndModal() {
   }
 
   wireToolbarAndModal();
-  await renderMonth(currentYear, currentMonth);
+  // Month data was already fetched above - just draw it (renderMonth would fetch it again).
+  document.getElementById('calendarMonthLabel').textContent = new Date(currentYear, currentMonth, 1)
+    .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  renderCalendarGrid(currentYear, currentMonth);
 })();

@@ -394,12 +394,14 @@ function listDisplayStatus(o) {
 // Open "send back for rework" notes (supabase_online_order_production_rework.sql) - one per part,
 // until that part is marked done again.
 async function attachRework(rows, ids) {
-  await attachReworkCounts(rows, ids);
-  const { data, error } = await supabaseClient.rpc('staff_get_online_order_rework', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_order_ids: ids
-  });
+  const [, { data, error }] = await Promise.all([
+    attachReworkCounts(rows, ids),
+    supabaseClient.rpc('staff_get_online_order_rework', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_ids: ids
+    })
+  ]);
   if (error) {
     console.error('staff_get_online_order_rework failed:', error);
     return;
@@ -490,12 +492,14 @@ async function attachProductionDone(rows) {
   const ids = rows.filter((o) => neededProductionRoles(o).length).map((o) => String(o.order_id));
   rows.forEach((o) => { o.production_done = {}; o.rework = {}; });
   if (!ids.length) return;
-  await attachRework(rows, ids);
-  const { data, error } = await supabaseClient.rpc('staff_get_online_order_production_done', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_order_ids: ids
-  });
+  const [, { data, error }] = await Promise.all([
+    attachRework(rows, ids),
+    supabaseClient.rpc('staff_get_online_order_production_done', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_ids: ids
+    })
+  ]);
   if (error) {
     console.error('staff_get_online_order_production_done failed:', error);
     return;
@@ -5794,13 +5798,17 @@ async function loadOrders(search, status) {
     rows = rows.filter((o) => Number(o.balance) > 0);
   }
 
-  await attachDispatchers(rows);
-  await attachProductionDone(rows);
-  await attachPosNotes(rows);
-  await attachProductionOrders(rows);
-  await attachProductionRequests(rows);
-  await attachReleaseSummary(rows);
-  await attachGmaPages(rows);
+  // In parallel - each only reads the list's own fields and writes its own, and one-after-another
+  // they were ~10 round trips between the list arriving and the table drawing.
+  await Promise.all([
+    attachDispatchers(rows),
+    attachProductionDone(rows),
+    attachPosNotes(rows),
+    attachProductionOrders(rows),
+    attachProductionRequests(rows),
+    attachReleaseSummary(rows),
+    attachGmaPages(rows)
+  ]);
   if (myGeneration !== loadGeneration) return;
 
   // Online Order Staff get the tabbed card view (renderGroupedOrders) instead of the flat table +

@@ -13,12 +13,15 @@ function formatDate(value) {
   return d.toLocaleDateString();
 }
 
-// Only what's still left to ship (Qty To Transfer minus whatever's already gone out) - not the
-// original full requested Qty To Transfer. Showing the full original amount on a reprint after a
-// partial shipment would tell production to prepare items that already shipped, which is exactly
-// the confusion this print exists to avoid. Lines with nothing left to ship are dropped entirely.
+// The line's saved "Qty To Ship" (what the Manage modal filled from stock or someone typed) - i.e.
+// only what's actually going out on this shipment, so production assembles just that. Capped at
+// what's still unshipped. A line whose Qty To Ship was never saved (null - e.g. ledger posting off
+// and nobody typed one) falls back to the full unshipped balance. Lines at 0 are dropped entirely.
 function lineRemainingToShip(l) {
-  return Math.max(0, (Number(l['Qty To Transfer']) || 0) - (Number(l['Qty Shipped']) || 0));
+  const remaining = Math.max(0, (Number(l['Qty To Transfer']) || 0) - (Number(l['Qty Shipped']) || 0));
+  const toShip = l['Qty To Ship'];
+  if (toShip === null || toShip === undefined || toShip === '') return remaining;
+  return Math.min(remaining, Math.max(0, Number(toShip) || 0));
 }
 
 // Assemble-to-Order lines: the exploded BOM (components x quantity still to ship) printed right under
@@ -26,14 +29,16 @@ function lineRemainingToShip(l) {
 // (supabase_assemble_to_order.sql) - empty if that isn't set up, in which case nothing extra prints.
 let bomByLineNo = new Map();
 
-function bomRowsHtml(lineNo) {
+// Component totals are scaled to this print's Qty To Ship (the RPC's total_required is based on the
+// full unshipped balance).
+function bomRowsHtml(lineNo, qty) {
   const components = bomByLineNo.get(String(lineNo));
   if (!components || components.length === 0) return '';
   return `
     <tr>
       <td colspan="4">
         <strong>Assemble to order - build list:</strong>
-        ${components.map((c) => `<div>&#8627; ${c.component_code} - ${c.component_name}: ${Number(c.total_required)} (${Number(c.qty_per)} per)</div>`).join('')}
+        ${components.map((c) => `<div>&#8627; ${c.component_code} - ${c.component_name}: ${Number(c.qty_per) * qty} (${Number(c.qty_per)} per)</div>`).join('')}
       </td>
     </tr>`;
 }
@@ -45,7 +50,7 @@ function renderLines(lines) {
     .filter((l) => l.qty > 0);
 
   if (toShip.length === 0) {
-    body.innerHTML = '<tr><td colspan="4" class="muted">Nothing left to ship on this order.</td></tr>';
+    body.innerHTML = '<tr><td colspan="4" class="muted">No lines have a Qty To Ship on this order.</td></tr>';
     return;
   }
 
@@ -56,7 +61,7 @@ function renderLines(lines) {
         <td>${l['Variant Name'] || ''}</td>
         <td>${l['Description'] || ''}</td>
         <td>${qty}</td>
-      </tr>${bomRowsHtml(l['Line No.'])}
+      </tr>${bomRowsHtml(l['Line No.'], qty)}
     `)
     .join('');
 }
