@@ -8568,6 +8568,31 @@ END", conn, tx);
                 if (itemsArray.ValueKind != JsonValueKind.Array)
                     return;
 
+                // Pancake exposes a product's category as a "categories" array of {id, name} objects
+                // (occasionally a single object) - returns the first non-blank name, or "".
+                static string FirstCategoryName(JsonElement node, Func<JsonElement, string[], string> getString)
+                {
+                    if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty("categories", out var cats))
+                        return string.Empty;
+
+                    if (cats.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var c in cats.EnumerateArray())
+                        {
+                            if (c.ValueKind != JsonValueKind.Object) continue;
+                            var cn = getString(c, new[] { "name", "Name", "title", "Title" }).Trim();
+                            if (!string.IsNullOrWhiteSpace(cn))
+                                return cn;
+                        }
+                    }
+                    else if (cats.ValueKind == JsonValueKind.Object)
+                    {
+                        return getString(cats, new[] { "name", "Name", "title", "Title" }).Trim();
+                    }
+
+                    return string.Empty;
+                }
+
                 static void AddMapping(
                     JsonElement source,
                     JsonElement? parentProduct,
@@ -8616,29 +8641,12 @@ END", conn, tx);
                         if (string.IsNullOrWhiteSpace(images))
                             images = ExtractFirstImageReference(product).Trim();
 
-                        if (string.IsNullOrWhiteSpace(categoryName) && product.TryGetProperty("categories", out var cats))
-                        {
-                            if (cats.ValueKind == JsonValueKind.Array)
-                            {
-                                foreach (var c in cats.EnumerateArray())
-                                {
-                                    if (c.ValueKind != JsonValueKind.Object) continue;
-                                    var cn = getString(c, new[] { "name", "Name", "title", "Title" }).Trim();
-                                    if (!string.IsNullOrWhiteSpace(cn))
-                                    {
-                                        categoryName = cn;
-                                        break;
-                                    }
-                                }
-                            }
-                            else if (cats.ValueKind == JsonValueKind.Object)
-                            {
-                                var cn = getString(cats, new[] { "name", "Name", "title", "Title" }).Trim();
-                                if (!string.IsNullOrWhiteSpace(cn))
-                                    categoryName = cn;
-                            }
-                        }
+                        if (string.IsNullOrWhiteSpace(categoryName))
+                            categoryName = FirstCategoryName(product, getString);
                     }
+
+                    if (string.IsNullOrWhiteSpace(categoryName))
+                        categoryName = FirstCategoryName(source, getString);
 
                     try
                     {
@@ -8662,6 +8670,13 @@ END", conn, tx);
 
                             if (string.IsNullOrWhiteSpace(noteProduct))
                                 noteProduct = getString(prod, new[] { "note_product", "NoteProduct", "description", "Description" }).Trim();
+
+                            // /products/variations rows carry the category one level down at
+                            // product.categories[] (same shape supabase_pancake_manual_sync.sql reads via
+                            // try_extract_first_category(product -> 'product')) - previously never read
+                            // here, so CategoryCode came through blank and existing items kept their old one.
+                            if (string.IsNullOrWhiteSpace(categoryName))
+                                categoryName = FirstCategoryName(prod, getString);
                         }
                     }
                     catch { }
