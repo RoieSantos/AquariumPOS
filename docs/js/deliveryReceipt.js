@@ -144,16 +144,41 @@ function deliveryReceiptBlockHtml(info, header, lines, copyLabel) {
         </div>
         <div class="delivery-receipt-section">
           <ul class="delivery-receipt-terms">
-            <li>Our team completes Delivery / Installation strictly according to the client's approved specifications. By signing, the client confirms that all items have been inspected, tested, and accepted in proper working condition, and expresses satisfaction with the setup upon turnover.</li>
-            <li>Our team guarantees leak coverage for 10 days, subject to no external force or impact. Any valid concerns will be resolved swiftly and professionally.</li>
+            <li>Our team completes Delivery / Installation strictly according to the client's approved specifications.</li>
+            <li>Our team guarantees leak coverage for 10 days from the delivery date written below, subject to no external force or impact. Any valid concerns will be resolved swiftly and professionally.</li>
+            <li>Leak coverage is limited to repair or replacement of the aquarium only. RSPetStop is not liable for damage to property, furniture, or flooring.</li>
+            <li>Leak coverage is void if the aquarium or stand is moved after installation, placed on an uneven surface or a stand not supplied by RSPetStop, overfilled, or if the plumbing is modified or equipment is added by anyone other than our team.</li>
+            <li>Livestock and plants are not covered once the setup has been turned over.</li>
+            <li>Visible silicone lines, small bubbles in the silicone, and slight natural ripples in the glass are normal characteristics of aquarium glass and are not considered defects or damage.</li>
+            <li>Photos of the completed setup are taken at turnover as reference.</li>
             <li>The receiving party has received and agreed to sign this form.</li>
-            <li>The form are prepared in two copies, each party keeps one copy, and they have equal legal validity.</li>
+            <li>This form is prepared in two copies; each party keeps one copy, and both have equal legal validity.</li>
           </ul>
+        </div>
+        <!-- Final-acceptance checklist the customer ticks by hand before signing - per "make the
+             delivery receipt stronger", so a signed copy is explicit, itemised proof the setup was
+             accepted as-is at turnover. -->
+        <div class="delivery-receipt-section delivery-receipt-acceptance">
+          <div class="delivery-receipt-acceptance-title">FINAL ACCEPTANCE</div>
+          <p class="delivery-receipt-acceptance-warning">If any of the items below is not to your satisfaction, please do NOT sign this document - notify our delivery team and they will bring the products back to our shop.</p>
+          <div class="delivery-receipt-acceptance-lead">By signing this document, you confirm the following for all items:</div>
+          <ul class="delivery-receipt-checklist">
+            <li><span class="delivery-receipt-checkbox"></span>Inspected</li>
+            <li><span class="delivery-receipt-checkbox"></span>Leak tested</li>
+            <li><span class="delivery-receipt-checkbox"></span>Built to your satisfaction</li>
+            <li><span class="delivery-receipt-checkbox"></span>Working as the team left it</li>
+            <li><span class="delivery-receipt-checkbox"></span>No visible issue</li>
+            <li><span class="delivery-receipt-checkbox"></span>No visible damage</li>
+            <li class="delivery-receipt-checklist-wide"><span class="delivery-receipt-checkbox"></span>Built based on the written specs and requirements</li>
+            <li class="delivery-receipt-checklist-wide"><span class="delivery-receipt-checkbox"></span>Floor has been checked, and the stand / aquarium is aligned and level</li>
+          </ul>
+          <p><strong>This signed document serves as the final acceptance for both parties. After signing, the 10-day leak coverage applies; any other concern raised after this confirmed acceptance is subject to approval, and charges will apply.</strong></p>
         </div>
         <div class="delivery-receipt-section delivery-receipt-signature-row">
           <div class="delivery-receipt-signature-left">
             <div>Delivery Date ________________________</div>
             <div>Delivery By :</div>
+            <div>Received by (if not the customer) ________________________</div>
           </div>
           <div class="delivery-receipt-signature-right">Customer : ${escapeHtml(header.customer_name)}</div>
         </div>

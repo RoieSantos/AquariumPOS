@@ -2851,6 +2851,60 @@ body.hide-price-columns .price-col {
   margin-bottom: 8px;
 }
 
+/* Final-acceptance checklist on the Delivery Receipt (js/deliveryReceipt.js) - empty boxes the
+   customer ticks by pen before signing, laid out 2 per row to keep the receipt on one page. */
+.delivery-receipt-acceptance {
+  font-size: 12px;
+}
+
+.delivery-receipt-acceptance p {
+  margin: 6px 0 0;
+}
+
+.delivery-receipt-acceptance .delivery-receipt-acceptance-warning {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--danger);
+  margin: 0 0 8px;
+}
+
+.delivery-receipt-acceptance-lead {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.delivery-receipt-acceptance-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.delivery-receipt-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 24px;
+}
+
+.delivery-receipt-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.delivery-receipt-checklist .delivery-receipt-checklist-wide {
+  grid-column: 1 / -1;
+}
+
+.delivery-receipt-checkbox {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #000;
+}
+
 .delivery-receipt-signature-row {
   display: flex;
   justify-content: space-between;
