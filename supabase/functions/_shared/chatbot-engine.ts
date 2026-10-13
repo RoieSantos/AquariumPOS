@@ -2332,6 +2332,11 @@ export async function sendMessengerImage(psid: string, imageUrl: string, pageAcc
 // Staff channels (Portal Chat, Telegram) and the sandbox stay unrestricted.
 const STAFF_PSID_PREFIXES = ['portal-chat:', 'telegram:'];
 
+// The bot's name as the order's creator / Sales Staff on invoices and receipts: website Alice, else Vic.
+function botStaffName(psid: string): string {
+  return psid.startsWith('web:') ? 'Alice' : 'Vic';
+}
+
 export const ORDER_NOT_VERIFIED_RESULT = JSON.stringify({
   verified: false,
   message: 'This order is not linked to this chat, so its details can\'t be shared yet. Ask the customer for the mobile number used on the order, save it with save_customer_info, then call this tool again. If it still doesn\'t match, say you can\'t find that order on their account and ask them to message from the account that placed it or wait for staff - never reveal anything about the order (not even its name or status).'
@@ -2625,7 +2630,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       }
       const { data: row, error } = await supabase
         .from('ChatbotLocationRequests')
-        .insert({ Psid: psid, RequestedBy: 'AI Bot' })
+        .insert({ Psid: psid, RequestedBy: botStaffName(psid) })
         .select('Token')
         .single();
       if (error || !row?.Token) {
@@ -2865,7 +2870,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         Location: location,
         GmaPsid: psid,
         GmaPageId: pageId,
-        UpdatedBy: 'AI Bot',
+        UpdatedBy: botStaffName(psid),
         // Bot orders never go to Pancake - staff review it and click "Confirm Order", which creates
         // the Online Orders entry directly (admin_confirm_bot_order, sql/supabase_bot_orders_portal_confirm.sql).
         // Not 'Pending': cron_process_pending_automated_orders pushes every Pending row to Pancake.

@@ -294,10 +294,12 @@ const GMA_PAGE_BADGES = {
 
 function gmaBadgeHtml(order) {
   if (!order.is_gma_order) return '';
-  const fromBot = order.created_by === 'AI Bot';
+  // 'AI Bot' = older orders from before the bot was saved by name (supabase_bot_staff_name_vic.sql).
+  const botName = order.created_by === 'AI Bot' ? 'Vic' : order.created_by;
+  const fromBot = botName === 'Vic' || botName === 'Alice';
   const page = GMA_PAGE_BADGES[order.gma_page_id] || GMA_PAGE_BADGES['1272627559275402'];
   return `<span class="badge ${page.cls}" title="Created from a ${escapeHtml(page.label)} conversation (${escapeHtml(order.gma_order_no || '')})">${escapeHtml(page.label)}</span>`
-    + (fromBot ? ' <span class="badge badge-neutral" title="Placed by the AI bot">AI Bot</span>' : '');
+    + (fromBot ? ` <span class="badge badge-neutral" title="Placed by the AI bot">${escapeHtml(botName)}</span>` : '');
 }
 
 // Production Order(s) built for this order (ProductionOrders.SourceOnlineOrderId - attachProductionOrders,

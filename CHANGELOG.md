@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-13
+
+- **Bot orders show "Vic" as Sales Staff, not "AI Bot".** New bot orders save "Vic" (Messenger) or "Alice" (website) ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts) `botStaffName`), so invoices and receipts show the name; [supabase_bot_staff_name_vic.sql](sql/supabase_bot_staff_name_vic.sql) renames existing orders. The Online Orders tag and the GMA Conversations sender label also say Vic. `v=vicname1`.
+
 ## 2026-10-12
 
 - **Delivery quote window: mini map.** It shows the customer's spot (pin or typed address), both branches (G / A markers), and the driving route from each in its branch color. Google Maps loads only the first time the window is used, with the same key as the other map pages. The map isn't redrawn when only the method or vehicle changes, so there are no extra Google calls. If the map can't load, the price still shows ([gmaConversations.js](docs/js/gmaConversations.js) `v=dquote3`).

@@ -665,7 +665,7 @@ async function togglePause(conv) {
 
 function messageSenderLabel(m) {
   if (m.role === 'staff') return m.sent_by_username ? `Staff (${m.sent_by_username})` : 'Staff';
-  if (m.role === 'assistant') return 'AI Bot';
+  if (m.role === 'assistant') return 'Vic';
   return null;
 }
 
@@ -673,7 +673,7 @@ function messageSenderLabel(m) {
 // one-line preview of it - used by the quote above a bubble and the composer's "Replying to" bar.
 function replyAuthorLabel(role) {
   if (role === 'user') return conversations.find((c) => c.psid === selectedPsid)?.customer_name || 'Customer';
-  if (role === 'assistant') return 'AI Bot';
+  if (role === 'assistant') return 'Vic';
   if (role === 'staff') return 'Staff';
   return 'a message';
 }
