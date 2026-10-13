@@ -84,6 +84,16 @@ interface FacebookAttachment {
   payload?: { url?: string; title?: string; coordinates?: { lat?: number; long?: number } };
 }
 
+// Click-to-Messenger ad tap (or m.me link) - on the first message after it, on a postback, or as a
+// messaging_referrals event on its own. See recordReferral.
+interface FacebookReferral {
+  source?: string;
+  type?: string;
+  ref?: string;
+  ad_id?: string;
+  ads_context_data?: { ad_title?: string; photo_url?: string; video_url?: string; post_id?: string; product_id?: string };
+}
+
 interface FacebookWebhookBody {
   entry?: Array<{
     id?: string; // the Page id
@@ -94,8 +104,10 @@ interface FacebookWebhookBody {
     messaging?: Array<{
       sender?: { id: string };
       recipient?: { id: string };
-      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[]; reply_to?: { mid?: string } };
+      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[]; reply_to?: { mid?: string }; referral?: FacebookReferral };
       read?: { watermark: number };
+      referral?: FacebookReferral;
+      postback?: { referral?: FacebookReferral };
       reaction?: { mid?: string; action?: string; emoji?: string; reaction?: string };
     }>;
     // Events for conversations another app (e.g. the Business Suite / Page inbox) is in control of -
@@ -103,8 +115,10 @@ interface FacebookWebhookBody {
     standby?: Array<{
       sender?: { id: string };
       recipient?: { id: string };
-      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[]; reply_to?: { mid?: string } };
+      message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number | string; attachments?: FacebookAttachment[]; reply_to?: { mid?: string }; referral?: FacebookReferral };
       read?: { watermark: number };
+      referral?: FacebookReferral;
+      postback?: { referral?: FacebookReferral };
     }>;
   }>;
 }
@@ -1493,6 +1507,41 @@ async function handlePinSubmitted(
 // call gets its quick response.
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
 
+// Saves a Click-to-Messenger ad tap (sql/supabase_chatbot_ad_referrals.sql) so GMA Conversations can
+// show "📣 From ad" on the conversation and the ad above the message it came with. Runs before the
+// message itself is processed (that can take a while - AI turn), keyed by its mid, so a Facebook
+// redelivery is a no-op. Never blocks the message: any failure is only logged.
+async function recordReferral(
+  supabase: SupabaseClient,
+  pageId: string | undefined,
+  psid: string | undefined,
+  referral: FacebookReferral | undefined,
+  mid: string | undefined
+): Promise<void> {
+  if (!referral || !psid || psid === pageId) return;
+  try {
+    console.log('Referral', JSON.stringify({ psid, pageId, mid: mid ?? null, ...referral }));
+    const ctx = referral.ads_context_data ?? {};
+    const { error } = await supabase.from('ChatbotAdReferrals').insert({
+      Psid: psid,
+      PageId: pageId ?? null,
+      Source: referral.source ?? null,
+      Type: referral.type ?? null,
+      AdId: referral.ad_id ?? null,
+      AdTitle: ctx.ad_title ?? null,
+      PhotoUrl: ctx.photo_url ?? null,
+      VideoUrl: ctx.video_url ?? null,
+      PostId: ctx.post_id ?? null,
+      Ref: referral.ref ?? null,
+      Mid: mid ?? null,
+      Raw: referral
+    });
+    if (error && error.code !== '23505') console.error('Failed to record referral:', error.message);
+  } catch (err) {
+    console.error('Error recording referral:', err instanceof Error ? err.message : err);
+  }
+}
+
 async function handlePost(req: Request): Promise<Response> {
   const appSecret = Deno.env.get('FACEBOOK_APP_SECRET');
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
@@ -1605,6 +1654,8 @@ async function handlePost(req: Request): Promise<Response> {
       // Standby: only echoes are used (a staff reply typed in the Meta app while its inbox is in
       // control). Customer messages in standby are left alone - the bot isn't in control there.
       for (const evt of entry.standby ?? []) {
+        // An ad tap is recorded even while the Meta inbox is in control - staff still want to see it.
+        await recordReferral(supabase, evt.recipient?.id ?? entry.id, evt.sender?.id, evt.referral ?? evt.message?.referral ?? evt.postback?.referral, evt.message?.mid);
         if (!evt.message?.is_echo) continue;
         try {
           await processEcho(supabase, pageAccessToken, graphVersion, evt.sender?.id, evt.recipient?.id, evt.message);
@@ -1614,6 +1665,9 @@ async function handlePost(req: Request): Promise<Response> {
       }
 
       for (const evt of entry.messaging ?? []) {
+        if (!evt.message?.is_echo) {
+          await recordReferral(supabase, evt.recipient?.id ?? entry.id, evt.sender?.id, evt.referral ?? evt.message?.referral ?? evt.postback?.referral, evt.message?.mid);
+        }
         if (evt.reaction) {
           try {
             await handleReaction(supabase, entry.id, evt.sender?.id, evt.recipient?.id, evt.reaction);

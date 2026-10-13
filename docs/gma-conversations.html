@@ -1362,6 +1362,24 @@
       overflow: auto;
     }
     .inbox-comment-post-photo { display: block; max-width: 100%; max-height: 220px; border-radius: 8px; margin-bottom: 6px; object-fit: contain; }
+    /* Click-to-Messenger ad (adReferralCardHtml / adListBadgeHtml in gmaConversations.js) */
+    .inbox-badge.inbox-badge-ad { background: #fff4e5; color: #b45309; }
+    .inbox-ad-card {
+      align-self: center;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      max-width: min(90%, 420px);
+      margin: 10px 0 4px;
+      padding: 8px 10px;
+      border: 1px solid #fcd9a8;
+      border-radius: 10px;
+      background: #fffaf2;
+      font-size: 12px;
+    }
+    .inbox-ad-card-photo { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; flex: none; }
+    .inbox-ad-card-label { font-weight: 700; color: #b45309; }
+    .inbox-ad-card-title { color: #1c1e21; margin: 2px 0; }
     .inbox-comment-post-text { white-space: pre-wrap; }
     .inbox-comment-post-label { font-size: 11px; font-weight: 700; color: #65676b; margin-bottom: 4px; white-space: normal; }
     .inbox-comment-photo { display: block; max-width: 160px; max-height: 160px; border-radius: 8px; margin-bottom: 4px; }
@@ -3890,7 +3908,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=comments2"></script>
+  <script src="js/gmaConversations.js?v=ads1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

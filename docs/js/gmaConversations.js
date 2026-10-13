@@ -119,6 +119,7 @@ async function loadConversations() {
     renderThreadMood(selectedNow);
   }
   renderConversationList();
+  loadConversationAds(); // not awaited - the "📣 Ad" badges fill in after
 }
 
 // Per direct request: "same way we search from meta too" - matches customer name (the primary
@@ -514,6 +515,101 @@ async function ensureProfilePics(list) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Click-to-Messenger ads (sql/supabase_chatbot_ad_referrals.sql, saved by facebook-messenger-webhook
+// recordReferral): a "📣 Ad" badge on the conversation, and the ad drawn above the message the customer
+// sent after tapping it. Only taps from when the webhook started saving them are known.
+const conversationAds = new Map(); // psid -> latest ad { ad_title, ad_id, referred_at_utc }
+const adsCheckedAt = new Map(); // psid -> last_message_at_utc when last checked
+let adRpcMissing = false;
+const adReferralsByPsid = new Map(); // psid -> [ad referral rows]
+
+async function loadConversationAds() {
+  if (adRpcMissing) return;
+  const psids = conversations.filter((c) => adsCheckedAt.get(c.psid) !== c.last_message_at_utc).map((c) => c.psid);
+  if (!psids.length) return;
+  const stamps = new Map(conversations.map((c) => [c.psid, c.last_message_at_utc]));
+  const { data, error } = await supabaseClient.rpc('admin_list_chatbot_conversation_ads', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psids: psids
+  });
+  if (error) {
+    if (error.code === 'PGRST202') adRpcMissing = true; // SQL not run yet - no badges
+    return;
+  }
+  psids.forEach((p) => adsCheckedAt.set(p, stamps.get(p)));
+  let changed = false;
+  (data || []).forEach((a) => {
+    const prev = conversationAds.get(a.psid);
+    if (!prev || prev.referred_at_utc !== a.referred_at_utc) changed = true;
+    conversationAds.set(a.psid, a);
+  });
+  if (changed) {
+    renderConversationList();
+    const conv = conversations.find((c) => c.psid === selectedPsid);
+    if (conv) renderThreadHeader(conv);
+  }
+}
+
+async function loadAdReferrals(psid) {
+  if (adRpcMissing) return;
+  const { data, error } = await supabaseClient.rpc('admin_list_chatbot_ad_referrals', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: psid
+  });
+  if (error) {
+    if (error.code === 'PGRST202') adRpcMissing = true;
+    return;
+  }
+  const rows = data || [];
+  const before = (adReferralsByPsid.get(psid) || []).map((a) => a.id).join(',');
+  adReferralsByPsid.set(psid, rows);
+  if (rows.length && !conversationAds.has(psid)) {
+    const latest = rows[rows.length - 1];
+    conversationAds.set(psid, { psid, ad_title: latest.ad_title, ad_id: latest.ad_id, referred_at_utc: latest.referred_at_utc });
+  }
+  if (psid === selectedPsid && before !== rows.map((a) => a.id).join(',') && messageCache.has(psid)) {
+    renderMessages(messageCache.get(psid));
+  }
+}
+
+function adTitleText(ad) {
+  return ad?.ad_title || (ad?.ad_id ? `Ad ${ad.ad_id}` : 'a Facebook ad');
+}
+
+function adListBadgeHtml(psid) {
+  const ad = conversationAds.get(psid);
+  if (!ad) return '';
+  return `<span class="inbox-badge inbox-badge-ad" title="${escapeHtml(`Came from ${adTitleText(ad)} · ${new Date(ad.referred_at_utc).toLocaleString()}`)}">📣 Ad</span>`;
+}
+
+// Which row each ad tap is drawn above: the message it came with, else the first message after it.
+function adReferralAnchors(rows) {
+  const map = new Map();
+  (adReferralsByPsid.get(selectedPsid) || []).forEach((ad) => {
+    let idx = ad.message_id ? rows.findIndex((r) => r.message_id === ad.message_id) : -1;
+    if (idx < 0) idx = rows.findIndex((r) => r.created_at_utc && new Date(r.created_at_utc) >= new Date(ad.referred_at_utc));
+    if (idx < 0) idx = rows.length - 1;
+    map.set(idx, [...(map.get(idx) || []), ad]);
+  });
+  return map;
+}
+
+function adReferralCardHtml(ad) {
+  const thumb = ad.photo_url ? `<img class="inbox-ad-card-photo" src="${escapeHtml(ad.photo_url)}" alt="">` : '';
+  const link = ad.post_id ? `<a href="https://www.facebook.com/${encodeURIComponent(ad.post_id)}" target="_blank" rel="noopener">View ad post ↗</a>` : '';
+  return `<div class="inbox-ad-card">
+    ${thumb}
+    <div class="inbox-ad-card-body">
+      <div class="inbox-ad-card-label">📣 Came from an ad · ${escapeHtml(formatMessageTime(ad.referred_at_utc))}</div>
+      <div class="inbox-ad-card-title">${escapeHtml(adTitleText(ad))}</div>
+      ${link}
+    </div>
+  </div>`;
+}
+
 function renderConversationList() {
   const listEl = document.getElementById('conversationListEl');
   if (inboxListMode === 'comments') return renderCommentList(listEl);
@@ -531,6 +627,7 @@ function renderConversationList() {
       moodBadgeHtml(c),
       c.pinned_at_utc ? `<span class="inbox-pin-icon" title="${escapeHtml(pinnedTitle(c))}">📌</span>` : '',
       pageBadgeHtml(c.page_id),
+      adListBadgeHtml(c.psid),
       c.status === 'Escalated' ? '<span class="inbox-badge inbox-badge-escalated">Escalated</span>' : '',
       c.is_paused ? '<span class="inbox-badge inbox-badge-paused">Paused</span>' : ''
     ].join('');
@@ -577,7 +674,7 @@ function renderThreadHeader(conv) {
     <span class="inbox-thread-title">
       ${conversationAvatarHtml(conv, 'inbox-thread-avatar')}
       <span class="inbox-thread-title-text">
-        <span class="inbox-thread-name">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}<span class="inbox-thread-mood-wrap" id="threadMoodEl"></span><span class="inbox-thread-tags" id="threadTagsEl">${tagChipsHtml(conv.tags)}</span></span>
+        <span class="inbox-thread-name">${escapeHtml(conv.customer_name || conv.psid)}${pageBadgeHtml(conv.page_id)}${adListBadgeHtml(conv.psid)}<span class="inbox-thread-mood-wrap" id="threadMoodEl"></span><span class="inbox-thread-tags" id="threadTagsEl">${tagChipsHtml(conv.tags)}</span></span>
         ${pauseNote ? `<span class="inbox-thread-sub">${escapeHtml(pauseNote)}</span>` : ''}
       </span>
     </span>
@@ -846,7 +943,7 @@ function renderMessages(serverRows, opts = {}) {
   const seenByHtml = seenByLineHtml(rows);
   const signature = selectedPsid + '#' + rows.map((m) =>
     [m.message_id ?? m.temp_id, m.delivery_status, m.seen_at_utc, m.detected_payment_amount, m.detected_payment_applied_at_utc, m.pending, m.customer_reaction, m.staff_reaction, m.reply_to_mid, m.reply_to_message_id].join('|')
-  ).join(';') + '#' + seenByHtml;
+  ).join(';') + '#' + seenByHtml + '#ads' + (adReferralsByPsid.get(selectedPsid) || []).map((a) => a.id).join(',');
   if (signature === lastThreadSignature) {
     if (opts.forceBottom) {
       threadStickToBottom = true;
@@ -866,6 +963,7 @@ function renderMessages(serverRows, opts = {}) {
 
   let lastDateKey = null;
   const parts = [];
+  const adsByRowIndex = adReferralAnchors(rows);
 
   let i = 0;
   while (i < rows.length) {
@@ -886,6 +984,8 @@ function renderMessages(serverRows, opts = {}) {
         run.push(n);
       }
     }
+    // "📣 From ad" card above the message the customer sent after tapping the ad.
+    for (let k = i; k < i + run.length; k++) (adsByRowIndex.get(k) || []).forEach((ad) => parts.push(adReferralCardHtml(ad)));
     const last = run[run.length - 1];
     const prev = rows[i - 1];
     const next = rows[i + run.length];
@@ -1372,6 +1472,7 @@ async function openConversation(psid) {
   activeDetectedPaymentMessageId = null;
   renderCustomerPanel(conv);
   markConversationRead(psid); // not awaited - marks read + loads "Seen by" alongside the messages
+  loadAdReferrals(psid); // not awaited - draws the "📣 From ad" card when it lands
   await loadMessages(psid, { forceBottom: true });
   if (selectedPsid !== psid) return; // staff already moved on to another conversation
 
@@ -5641,7 +5742,8 @@ async function handleGmaInboxEvent(payload) {
   const isOpenThread = payload?.psid && payload.psid === selectedPsid;
   await Promise.all([
     loadConversations(),
-    isOpenThread ? loadMessages(selectedPsid) : Promise.resolve()
+    isOpenThread ? loadMessages(selectedPsid) : Promise.resolve(),
+    isOpenThread ? loadAdReferrals(selectedPsid) : Promise.resolve()
   ]);
 
   if (isOpenThread) {
