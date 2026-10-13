@@ -1565,7 +1565,8 @@ async function handlePost(req: Request): Promise<Response> {
           storeTimezone: STORE_TIMEZONE,
           pageId: entry.id,
           value: change.value,
-          broadcast: (psid) => broadcastGmaEvent(supabase, psid)
+          broadcast: (psid) => broadcastGmaEvent(supabase, psid),
+          broadcastComments: () => broadcastGmaEvent(supabase, '', 'comments_changed')
         }).catch((err) => console.error('Error processing post comment:', err instanceof Error ? err.message : err));
         if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
         else await work;

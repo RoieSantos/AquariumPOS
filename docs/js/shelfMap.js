@@ -194,6 +194,8 @@ async function createReplenishmentTransfer() {
       });
     }
 
+    delete pendingByWarehouse[toId];
+    renderShelf();
     loadLastReplenishment(currentShelf());
     if (window.confirm(`Transfer order ${docNo} created (${lines.length} line${lines.length === 1 ? '' : 's'}). Open it now?`)) {
       window.location.href = 'transfer-orders.html?doc=' + encodeURIComponent(docNo);
@@ -203,6 +205,66 @@ async function createReplenishmentTransfer() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ---------------------------------------------------------------- pending transfer orders
+// Per location: what open transfer orders INTO it still have to be received, per item -
+// Qty To Transfer minus the running Qty Received, over every TO that isn't Received/Cancelled
+// (same "open" rule as transferOrders.js). Cached per warehouse; Refresh clears it.
+// pendingByWarehouse[warehouseId] = Map(itemCode -> { qty, inTransit, docs: [{ no, status, qty }] })
+let pendingByWarehouse = {};
+const pendingLoading = new Set();
+
+async function loadPendingTransfers(warehouseId) {
+  if (!warehouseId || pendingByWarehouse[warehouseId] || pendingLoading.has(warehouseId)) return;
+  pendingLoading.add(warehouseId);
+  try {
+    const { data: headers, error } = await supabaseClient.from('Transfer_Header')
+      .select('"No.", "Status"')
+      .eq('"To Warehouse ID"', warehouseId)
+      .not('"Status"', 'in', '("Received","Cancelled")');
+    if (error) throw error;
+    const byItem = new Map();
+    const statusByDoc = new Map((headers || []).map((h) => [h['No.'], h['Status'] || 'Requested']));
+    if (statusByDoc.size > 0) {
+      const { data: lines, error: lineError } = await supabaseClient.from('Transfer_Line')
+        .select('"Document No.", "Item No.", "Qty To Transfer", "Qty Shipped", "Qty Received"')
+        .in('"Document No."', Array.from(statusByDoc.keys()));
+      if (lineError) throw lineError;
+      (lines || []).forEach((l) => {
+        const code = l['Item No.'];
+        const received = Number(l['Qty Received']) || 0;
+        const qty = Math.max(0, (Number(l['Qty To Transfer']) || 0) - received);
+        if (!code || qty <= 0) return;
+        const entry = byItem.get(code) || { qty: 0, inTransit: 0, docs: [] };
+        entry.qty += qty;
+        entry.inTransit += Math.max(0, (Number(l['Qty Shipped']) || 0) - received);
+        entry.docs.push({ no: l['Document No.'], status: statusByDoc.get(l['Document No.']), qty });
+        byItem.set(code, entry);
+      });
+    }
+    pendingByWarehouse[warehouseId] = byItem;
+    // Only redraw if the user is still looking at this location (and not laying out a shelf).
+    const shelf = currentShelf();
+    if (!draft && shelf && shelf.warehouse_id === warehouseId) renderShelf();
+  } catch (err) {
+    console.error('Loading pending transfer orders failed:', err);
+  } finally {
+    pendingLoading.delete(warehouseId);
+  }
+}
+
+function pendingHtml(cell, warehouseId) {
+  if (!cell.item_code || !warehouseId) return '';
+  const p = (pendingByWarehouse[warehouseId] || new Map()).get(cell.item_code);
+  if (!p) return '';
+  const title = p.docs.map((d) => `${d.no} (${d.status}): ${formatQty(d.qty)}`).join('\n');
+  const href = 'transfer-orders.html?doc=' + encodeURIComponent(p.docs[0].no);
+  return `<div class="cell-stat cell-stat-pending">
+    <span class="cell-stat-label">Pending TO</span>
+    <a class="cell-pending" href="${href}" title="${escapeHtml(title)}" onclick="event.stopPropagation()">${escapeHtml(formatQty(p.qty))}</a>
+    ${p.inTransit > 0 ? `<span class="cell-stat-label">${escapeHtml(formatQty(p.inTransit))} in transit</span>` : ''}
+  </div>`;
 }
 
 function countedLabel(cell) {
@@ -219,6 +281,9 @@ function renderShelf() {
     body.innerHTML = '<p class="muted">This shelf has no spots yet.' + (editing ? ' Use "+ Row" to add one.' : '') + '</p>';
     return;
   }
+
+  const warehouseId = editing ? null : (currentShelf() || {}).warehouse_id;
+  if (warehouseId) loadPendingTransfers(warehouseId);
 
   body.innerHTML = rows.map((row, r) => {
     const cellsHtml = row.map((cell, c) => {
@@ -243,6 +308,7 @@ function renderShelf() {
             <span class="cell-stat-label">Stock on hand</span>
             <span class="cell-onhand">${escapeHtml(st.onHand)}</span>
           </div>` : ''}
+          ${pendingHtml(cell, warehouseId)}
         </div>
         ${st.sub ? `<span class="cell-sub">${escapeHtml(st.sub)}</span>` : ''}
         ${itemLink}
@@ -617,7 +683,7 @@ function moveCell(delta) {
     renderShelf();
     if (nextId) document.querySelector(`.cell-count[data-cellid="${nextId}"]`)?.focus();
   });
-  document.getElementById('refreshBtn').addEventListener('click', () => loadShelves());
+  document.getElementById('refreshBtn').addEventListener('click', () => { pendingByWarehouse = {}; loadShelves(); });
   document.getElementById('replenishBtn').addEventListener('click', createReplenishmentTransfer);
   document.getElementById('editBtn').addEventListener('click', () => { if (currentShelf()) startEdit(false); });
   document.getElementById('newShelfBtn').addEventListener('click', () => startEdit(true));

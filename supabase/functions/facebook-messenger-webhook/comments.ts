@@ -12,6 +12,9 @@
 // PSID until Facebook accepts the private reply. Once it's sent, the comment + DM are logged as a
 // normal ChatbotConversations/ChatbotMessages thread under the PSID Facebook hands back, so the GMA
 // Conversations inbox shows it and Alice has the context when the customer replies in Messenger.
+// Every comment is also recorded in FacebookPostComments (even with auto-reply off, as 'Received'),
+// plus the Page's own replies ('PageReply'), for GMA Conversations' Comments tab
+// (sql/supabase_gma_comments_calls_inbox.sql).
 //
 // Requires on the Meta app: the Page subscribed to the `feed` webhook field, and a Page token
 // (FACEBOOK_PAGE_ACCESS_TOKEN) carrying pages_read_engagement, pages_read_user_content,
@@ -57,6 +60,8 @@ interface HandleCommentParams {
   pageId: string;
   value: FacebookFeedChangeValue;
   broadcast: (psid: string) => Promise<void>;
+  // Tells open GMA Conversations tabs to reload their Comments tab.
+  broadcastComments: () => Promise<void>;
 }
 
 const COMMENT_MODE_RULES = [
@@ -122,36 +127,70 @@ function parsePlan(text: string): CommentReplyPlan | null {
 }
 
 export async function handleFeedComment(params: HandleCommentParams): Promise<void> {
-  const { supabase, anthropic, model, pageAccessToken, graphVersion, storeTimezone, pageId, value, broadcast } = params;
+  const { supabase, anthropic, model, pageAccessToken, graphVersion, storeTimezone, pageId, value, broadcast, broadcastComments } = params;
 
-  // Only brand-new comments from someone other than the Page itself - the Page's own replies (ours
-  // or staff's) come back through this same webhook, and replying to those would loop forever.
   if (value.item !== 'comment' || value.verb !== 'add') return;
   const commentId = value.comment_id;
   const fromId = value.from?.id;
-  if (!commentId || !fromId || fromId === pageId) return;
+  if (!commentId || !fromId) return;
   const commentText = value.message?.trim() || '';
-  if (!commentText && !value.photo) return;
-
-  const { data: aiSettings } = await supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle();
-  if (aiSettings && aiSettings.CommentAutoReplyEnabled === false) return;
-
   const postId = value.post_id ?? null;
   const parentId = value.parent_id && value.parent_id !== postId ? value.parent_id : null;
   const fromName = value.from?.name?.trim() || null;
 
-  // Claim the comment - the unique CommentId makes a Facebook redelivery a no-op.
+  // The Page's own comments (Alice's / staff's replies, from GMA Conversations or Business Suite) come
+  // back through this same webhook. Never reply to those - that would loop forever - just keep them as
+  // 'PageReply' rows so the GMA Comments tab shows the whole exchange. A reply sent from GMA
+  // Conversations is already saved (with who sent it), so the upsert leaves that row alone.
+  if (fromId === pageId) {
+    if (parentId) {
+      await supabase.from('FacebookPostComments').upsert(
+        { CommentId: commentId, PageId: pageId, PostId: postId, ParentId: parentId, FromId: fromId, FromName: fromName, Message: commentText || null, Status: 'PageReply' },
+        { onConflict: 'CommentId', ignoreDuplicates: true }
+      );
+      await broadcastComments();
+    }
+    return;
+  }
+
+  const { data: aiSettings } = await supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle();
+  const autoReplyOn = !(aiSettings && aiSettings.CommentAutoReplyEnabled === false);
+
+  // Claim the comment - the unique CommentId makes a Facebook redelivery a no-op. Recorded even with
+  // auto-reply off ('Received'), so every comment shows in GMA Conversations' Comments tab.
   const { data: claimed } = await supabase
     .from('FacebookPostComments')
     .upsert(
-      { CommentId: commentId, PageId: pageId, PostId: postId, ParentId: parentId, FromId: fromId, FromName: fromName, Message: commentText || null, PhotoUrl: value.photo ?? null, Status: 'Processing' },
+      { CommentId: commentId, PageId: pageId, PostId: postId, ParentId: parentId, FromId: fromId, FromName: fromName, Message: commentText || null, PhotoUrl: value.photo ?? null, Status: autoReplyOn ? 'Processing' : 'Received' },
       { onConflict: 'CommentId', ignoreDuplicates: true }
     )
     .select('CommentId');
   if (!claimed || claimed.length === 0) return;
 
-  const finish = (update: Record<string, unknown>) =>
-    supabase.from('FacebookPostComments').update({ ...update, RepliedAtUtc: new Date().toISOString() }).eq('CommentId', commentId);
+  const [post, parent] = await Promise.all([
+    postId ? graphGet(postId, 'message,permalink_url,full_picture', pageAccessToken, graphVersion) : Promise.resolve(null),
+    parentId ? graphGet(parentId, 'message,from', pageAccessToken, graphVersion) : Promise.resolve(null)
+  ]);
+  const postMessage = typeof post?.message === 'string' && post.message.trim() ? post.message.trim() : null;
+  const postPermalink = typeof post?.permalink_url === 'string' ? post.permalink_url : null;
+  const postPicture = typeof post?.full_picture === 'string' ? post.full_picture : null;
+  if (postMessage || postPermalink || postPicture) {
+    await supabase.from('FacebookPostComments').update({ PostMessage: postMessage, PostPermalink: postPermalink }).eq('CommentId', commentId);
+    // Separate, so a database without supabase_gma_comments_post_picture.sql still saves the caption.
+    if (postPicture) await supabase.from('FacebookPostComments').update({ PostPicture: postPicture }).eq('CommentId', commentId);
+  }
+  await broadcastComments();
+
+  if (!autoReplyOn) return;
+  if (!commentText && !value.photo) {
+    await supabase.from('FacebookPostComments').update({ Status: 'Skipped', Error: 'Empty comment.' }).eq('CommentId', commentId);
+    return;
+  }
+
+  const finish = async (update: Record<string, unknown>) => {
+    await supabase.from('FacebookPostComments').update({ ...update, RepliedAtUtc: new Date().toISOString() }).eq('CommentId', commentId);
+    await broadcastComments();
+  };
 
   const windowStart = new Date(Date.now() - PER_PERSON_WINDOW_MINUTES * 60 * 1000).toISOString();
   const { count: recentReplies } = await supabase
@@ -175,11 +214,6 @@ export async function handleFeedComment(params: HandleCommentParams): Promise<vo
       .eq('DmStatus', 'Sent')
     : { count: 0 };
   const dmAllowed = (priorDms ?? 0) === 0;
-
-  const [post, parent] = await Promise.all([
-    postId ? graphGet(postId, 'message', pageAccessToken, graphVersion) : Promise.resolve(null),
-    parentId ? graphGet(parentId, 'message,from', pageAccessToken, graphVersion) : Promise.resolve(null)
-  ]);
 
   const [{ data: storeInfo }, { data: companyInfo }, { data: followUpSettings }] = await Promise.all([
     supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),

@@ -686,7 +686,7 @@ async function fetchLalamoveQuote(origin, destination, serviceType) {
 // per "From Store to Location 1 to location 2 ... the price will adjust accordingly", the whole
 // multi-stop route is priced as one trip via getMultiStopRoute, same as the original single-To
 // path just generalized to N legs instead of always exactly 1.
-async function runInHouseQuote(from, stops) {
+async function runInHouseQuote(from, stops, seq) {
   if (deliveryBaseFee == null || deliveryRatePerKm == null) {
     throw new Error('Delivery pricing isn\'t configured yet - set DELIVERY_BASE_FEE and DELIVERY_RATE_PER_KM in General Setup.');
   }
@@ -699,6 +699,7 @@ async function runInHouseQuote(from, stops) {
     getMultiStopRoute(origin, stops.map((s) => ({ lat: s.lat, lng: s.lng }))),
     resolveTollFee(origin, destination, intermediateStops)
   ]);
+  if (seq !== quoteSeq) return; // a newer quote (e.g. after switching Delivery Method) owns the result card
 
   const route = routeResult.routes[0];
   const distanceMeters = sumRouteLegs(route, 'distance');
@@ -741,13 +742,14 @@ let lastBookedOrder = null; // {orderId, ...} from a successful bookLalamoveDeli
 // in-house formula. Reuses the same stat-card slots as the in-house path with different meanings
 // (Drive Time/Toll Road don't map cleanly onto what Lalamove's quotation response returns), rather
 // than adding separate result markup for each mode.
-async function runLalamoveQuote(from, to) {
+async function runLalamoveQuote(from, to, seq) {
   const serviceType = document.getElementById('lalamoveVehicleTypeSelect').value || undefined;
   const quote = await fetchLalamoveQuote(
     { lat: from.lat, lng: from.lng, address: from.label },
     { lat: to.lat, lng: to.lng, address: to.label },
     serviceType
   );
+  if (seq !== quoteSeq) return; // a newer quote (e.g. after switching Delivery Method) owns the result card
   lastLalamoveQuote = quote;
 
   const distanceKm = quote.distanceMeters != null ? quote.distanceMeters / 1000 : null;
@@ -912,6 +914,8 @@ async function cancelBookedOrder() {
   }
 }
 
+let quoteSeq = 0; // newest getQuote() call - an older one finishing later is ignored
+
 async function getQuote() {
   const errorEl = document.getElementById('quoteError');
   const resultEl = document.getElementById('quoteResult');
@@ -919,10 +923,15 @@ async function getQuote() {
 
   // Per "make sure that we change every field the price will be auto populated" - nearly every
   // pricing-relevant field now triggers its own getQuote() call (see wireForm below), so a quick
-  // run of edits (e.g. picking a From warehouse then immediately blurring To) can otherwise fire
-  // overlapping calls. Skip a new call while one is already in flight rather than letting them
-  // race - the button is re-enabled in the finally block below once the in-flight one finishes.
-  if (getQuoteBtn.disabled) return;
+  // run of edits can fire overlapping calls. Newest wins: this used to skip a new call while one
+  // was in flight, which dropped a Delivery Method switch made mid-quote - the old method's price
+  // then landed under the new method's toggle. Now every call runs and only the latest one
+  // writes the result card (same pattern as the Conversations quote window's dqSeq).
+  const seq = ++quoteSeq;
+  // Any older call is now superseded and won't re-enable the button itself - reset it here so a
+  // validation early-return below doesn't leave it stuck on "Getting Quote...".
+  getQuoteBtn.disabled = false;
+  getQuoteBtn.textContent = 'Get Quote';
 
   errorEl.classList.add('hidden');
   resultEl.classList.add('hidden');
@@ -959,27 +968,32 @@ async function getQuote() {
 
   try {
     const from = await resolveFromLocation();
-    await setFromMarker(from);
-
     const stops = [];
     for (const input of stopInputs) {
       stops.push(await resolveToStop(input));
     }
+    if (seq !== quoteSeq) return;
+    await setFromMarker(from);
     await setToMarkers(stops);
 
     if (method === 'lalamove') {
-      await runLalamoveQuote(from, stops[0]);
+      await runLalamoveQuote(from, stops[0], seq);
+      if (seq !== quoteSeq) return;
       clearRoutePolyline();
     } else {
-      await runInHouseQuote(from, stops);
+      await runInHouseQuote(from, stops, seq);
+      if (seq !== quoteSeq) return;
     }
     resultEl.classList.remove('hidden');
   } catch (err) {
+    if (seq !== quoteSeq) return;
     errorEl.textContent = err.message;
     errorEl.classList.remove('hidden');
   } finally {
-    getQuoteBtn.disabled = false;
-    getQuoteBtn.textContent = 'Get Quote';
+    if (seq === quoteSeq) {
+      getQuoteBtn.disabled = false;
+      getQuoteBtn.textContent = 'Get Quote';
+    }
   }
 }
 

@@ -76,7 +76,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 // already refreshes locally on a successful send) - same channel/pattern as facebook-messenger-
 // webhook's broadcastGmaEvent, duplicated here rather than shared since these are two independent
 // Edge Functions. See that file's comment for why Broadcast (not postgres_changes).
-async function broadcastGmaEvent(supabase: ReturnType<typeof createClient>, psid: string): Promise<void> {
+async function broadcastGmaEvent(supabase: ReturnType<typeof createClient>, psid: string, event = 'new_message'): Promise<void> {
   // Fast path: Realtime's REST broadcast endpoint - one plain HTTP call, no websocket handshake/
   // subscribe wait (the old path below took up to a few seconds per call). Falls back to the
   // subscribe-and-send path if the endpoint ever rejects it, so live updates never silently stop.
@@ -87,7 +87,7 @@ async function broadcastGmaEvent(supabase: ReturnType<typeof createClient>, psid
       const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ messages: [{ topic: 'gma-inbox', event: 'new_message', payload: { psid }, private: false }] })
+        body: JSON.stringify({ messages: [{ topic: 'gma-inbox', event, payload: { psid }, private: false }] })
       });
       if (res.ok) return;
       console.error('REST broadcast failed, falling back to channel send:', res.status, await res.text());
@@ -109,7 +109,7 @@ async function broadcastGmaEvent(supabase: ReturnType<typeof createClient>, psid
       channel.subscribe((status: string) => {
         if (status === 'SUBSCRIBED' && !settled) {
           clearTimeout(timer);
-          channel.send({ type: 'broadcast', event: 'new_message', payload: { psid } }).finally(finish);
+          channel.send({ type: 'broadcast', event, payload: { psid } }).finally(finish);
         }
       });
     });
@@ -277,6 +277,148 @@ async function handleReact(
   return jsonResponse({ ok: true });
 }
 
+// GMA Conversations' Comments tab (sql/supabase_gma_comments_calls_inbox.sql): staff answer a Facebook
+// post comment - body `comment_reply: { comment_id, message, private }`.
+//   public  - a reply under the comment, saved as a 'PageReply' row with RepliedBy (the webhook's echo
+//             of it is then a no-op, see facebook-messenger-webhook/comments.ts).
+//   private - a Messenger "private reply" tied to the comment. Facebook allows ONE per comment, within
+//             7 days, so it's refused here once a DM went out (Alice's or staff's). Once sent, the comment
+//             and the message are logged as a normal conversation under the PSID Facebook returns.
+async function handleCommentReply(
+  supabase: ReturnType<typeof createClient>,
+  adminUsername: string,
+  adminPassword: string,
+  reply: Record<string, unknown>,
+  graphVersion: string
+): Promise<Response> {
+  const { data: authorized } = await supabase.rpc('is_conversations_authorized', { p_username: adminUsername, p_password: adminPassword });
+  if (!authorized) return jsonResponse({ error: 'Not authorized.' }, 403);
+
+  const commentId = String(reply.comment_id ?? '').trim();
+  const message = String(reply.message ?? '').trim();
+  const isPrivate = reply.private === true;
+  if (!commentId || !message) return jsonResponse({ error: 'comment_id and message are required.' }, 400);
+
+  const { data: comment } = await supabase
+    .from('FacebookPostComments')
+    .select('PageId, PostId, FromName, Message, PhotoUrl, PostMessage, DmStatus, Status')
+    .eq('CommentId', commentId)
+    .maybeSingle();
+  if (!comment || comment.Status === 'PageReply') return jsonResponse({ error: 'Comment not found.' }, 404);
+  const pageId = String(comment.PageId);
+  const pageAccessToken = getPageAccessToken(pageId);
+  if (!pageAccessToken) return jsonResponse({ error: `No Facebook token configured for Page ${pageId}.` }, 500);
+  if (isPrivate && comment.DmStatus === 'Sent') {
+    return jsonResponse({ error: 'A private message was already sent for this comment - Facebook allows only one. Continue in their Messenger conversation once they reply.' }, 409);
+  }
+
+  const res = await fetch(
+    `https://graph.facebook.com/${graphVersion}/${isPrivate ? `${pageId}/messages` : `${commentId}/comments`}?access_token=${pageAccessToken}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(isPrivate ? { recipient: { comment_id: commentId }, message: { text: message } } : { message })
+    }
+  );
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    return jsonResponse({ ok: false, error: `Facebook refused the ${isPrivate ? 'private message' : 'reply'}: ${data?.error?.message || res.status}` }, 502);
+  }
+
+  let psid: string | null = null;
+  if (!isPrivate) {
+    const replyId = String(data?.id ?? '');
+    if (replyId) {
+      await supabase.from('FacebookPostComments').upsert(
+        { CommentId: replyId, PageId: pageId, PostId: comment.PostId, ParentId: commentId, FromId: pageId, Message: message, Status: 'PageReply', RepliedBy: adminUsername },
+        { onConflict: 'CommentId' }
+      );
+    }
+  } else {
+    psid = data?.recipient_id ? String(data.recipient_id) : null;
+    await supabase.from('FacebookPostComments')
+      .update({ DmText: message, DmStatus: 'Sent', RepliedBy: adminUsername, ...(psid ? { Psid: psid } : {}) })
+      .eq('CommentId', commentId);
+    if (psid) {
+      await supabase.from('ChatbotConversations').upsert({ Psid: psid, PageId: pageId }, { onConflict: 'Psid', ignoreDuplicates: true });
+      if (comment.FromName) {
+        await supabase.from('ChatbotConversations').update({ CustomerName: comment.FromName }).eq('Psid', psid).is('CustomerName', null);
+      }
+      const postSnippet = comment.PostMessage ? ` (post: "${String(comment.PostMessage).slice(0, 120)}")` : '';
+      await supabase.from('ChatbotMessages').insert({
+        Psid: psid,
+        Role: 'user',
+        Content: `[Commented on our Facebook post${postSnippet}] ${comment.Message || ''}${comment.PhotoUrl ? ' [Photo]' : ''}`.trim(),
+        FacebookMessageId: `comment:${commentId}`
+      });
+      await supabase.from('ChatbotMessages').insert({
+        Psid: psid,
+        Role: 'staff',
+        Content: message,
+        SentByUsername: adminUsername,
+        DeliveryStatus: 'Sent',
+        ...(data?.message_id ? { FacebookMessageId: String(data.message_id) } : {})
+      });
+      await supabase.from('ChatbotConversations').update({ LastMessageAtUtc: new Date().toISOString() }).eq('Psid', psid);
+    }
+  }
+
+  const broadcasts = Promise.all([
+    broadcastGmaEvent(supabase, '', 'comments_changed'),
+    ...(psid ? [broadcastGmaEvent(supabase, psid)] : [])
+  ]);
+  if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(broadcasts);
+  else await broadcasts;
+  return jsonResponse({ ok: true, psid });
+}
+
+// Comments tab: the post a comment was made on (caption, main photo, link), fetched from Facebook when
+// it isn't saved yet - comments from before comments.ts saved posts, or a lookup that failed then.
+// Saved on every comment of that post (sql/supabase_gma_comments_post_picture.sql). Facebook's own
+// error is returned as-is, so a missing Page permission (pages_read_engagement) is visible to staff.
+async function handlePostInfo(
+  supabase: ReturnType<typeof createClient>,
+  adminUsername: string,
+  adminPassword: string,
+  commentId: string,
+  graphVersion: string
+): Promise<Response> {
+  const { data: authorized } = await supabase.rpc('is_conversations_authorized', { p_username: adminUsername, p_password: adminPassword });
+  if (!authorized) return jsonResponse({ error: 'Not authorized.' }, 403);
+
+  const { data: comment } = await supabase.from('FacebookPostComments').select('PageId, PostId').eq('CommentId', commentId).maybeSingle();
+  if (!comment) return jsonResponse({ error: 'Comment not found.' }, 404);
+  const pageId = String(comment.PageId);
+  const pageAccessToken = getPageAccessToken(pageId);
+  if (!pageAccessToken) return jsonResponse({ error: `No Facebook token configured for Page ${pageId}.` }, 500);
+
+  // The webhook's post_id is "<pageId>_<postId>"; without it, ask the comment which post it's on.
+  let postId = comment.PostId ? String(comment.PostId) : '';
+  const get = async (path: string, fields: string) => {
+    const res = await fetch(`https://graph.facebook.com/${graphVersion}/${path}?fields=${fields}&access_token=${pageAccessToken}`);
+    const data = await res.json().catch(() => null);
+    return { ok: res.ok, data, error: data?.error?.message || `HTTP ${res.status}` };
+  };
+  if (!postId) {
+    const c = await get(commentId, 'parent_id,object{id}');
+    postId = c.ok ? String(c.data?.object?.id ?? '') : '';
+    if (!postId) return jsonResponse({ ok: false, error: `Facebook: ${c.ok ? 'no post id on this comment' : c.error}` }, 502);
+  }
+
+  const post = await get(postId, 'message,permalink_url,full_picture');
+  if (!post.ok) return jsonResponse({ ok: false, error: `Facebook: ${post.error}` }, 502);
+  const info = {
+    post_message: typeof post.data?.message === 'string' && post.data.message.trim() ? post.data.message.trim() : null,
+    post_permalink: typeof post.data?.permalink_url === 'string' ? post.data.permalink_url : null,
+    post_picture: typeof post.data?.full_picture === 'string' ? post.data.full_picture : null
+  };
+  const match = comment.PostId ? { col: 'PostId', val: postId } : { col: 'CommentId', val: commentId };
+  await supabase.from('FacebookPostComments')
+    .update({ PostMessage: info.post_message, PostPermalink: info.post_permalink, PostPicture: info.post_picture, ...(comment.PostId ? {} : { PostId: postId }) })
+    .eq(match.col, match.val);
+  return jsonResponse({ ok: true, ...info });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS });
@@ -293,6 +435,31 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'chatbot-staff-reply is missing one or more required secrets.' }, 500);
   }
 
+  let body: Record<string, any>;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: 'Body must be JSON.' }, 400);
+  }
+  if (body?.post_info && typeof body.post_info === 'object') {
+    return await handlePostInfo(
+      createClient(supabaseUrl, serviceRoleKey),
+      String(body.admin_username ?? ''),
+      String(body.admin_password ?? ''),
+      String(body.post_info.comment_id ?? ''),
+      graphVersion
+    );
+  }
+  if (body?.comment_reply && typeof body.comment_reply === 'object') {
+    return await handleCommentReply(
+      createClient(supabaseUrl, serviceRoleKey),
+      String(body.admin_username ?? ''),
+      String(body.admin_password ?? ''),
+      body.comment_reply,
+      graphVersion
+    );
+  }
+
   let adminUsername: string;
   let adminPassword: string;
   let psid: string;
@@ -303,7 +470,6 @@ Deno.serve(async (req) => {
   let react: { messageId: number; reaction: string | null } | null = null;
   let replyToMessageId: number | null = null;
   try {
-    const body = await req.json();
     adminUsername = String(body.admin_username ?? '');
     adminPassword = String(body.admin_password ?? '');
     psid = String(body.psid ?? '');

@@ -3347,6 +3347,7 @@ let deliveryEstimateToMarker = null;
 let deliveryEstimateMethod = 'inhouse';
 let deliveryEstimateVehicleTypes = []; // [{key, description}] from delivery-lalamove-vehicle-types
 let deliveryEstimateVehicleTypesLoaded = false;
+let deliveryEstimateSeq = 0; // newest runDeliveryEstimate() call - an older one finishing later is ignored
 
 // Lazy-loaded once, the first time the customer opens this mode - avoids the extra round trip/
 // Google Maps script load for anyone who never touches it, same "only pay for what's used" reasoning
@@ -3727,7 +3728,7 @@ async function fetchDeliveryEstimateLalamoveQuote(origin, destination, serviceTy
 // In-house pricing path (base fee + rate/km + toll) - split out of runDeliveryEstimate so it can
 // sit alongside runDeliveryEstimateLalamove below, same split as deliveryQuote.js's
 // runInHouseQuote/runLalamoveQuote.
-async function runDeliveryEstimateInHouse(from, to) {
+async function runDeliveryEstimateInHouse(from, to, seq) {
   if (deliveryEstimateBaseFee == null || deliveryEstimateRatePerKm == null) {
     throw new Error('Delivery pricing isn\'t configured yet - please contact us directly for a delivery quote.');
   }
@@ -3739,6 +3740,7 @@ async function runDeliveryEstimateInHouse(from, to) {
     getDeliveryEstimateDrivingDistance(origin, destination),
     resolveDeliveryEstimateTollFee(origin, destination)
   ]);
+  if (seq !== deliveryEstimateSeq) return; // superseded, e.g. by a method switch mid-estimate
 
   const distanceKm = distanceMeters / 1000;
   const price = deliveryEstimateBaseFee + deliveryEstimateRatePerKm * distanceKm + toll.amount;
@@ -3760,13 +3762,14 @@ async function runDeliveryEstimateInHouse(from, to) {
 // Lalamove pricing path - calls their real Quotation API (via the signing proxy) instead of the
 // in-house formula. Quote-only: unlike deliveryQuote.js, there is no Book Delivery here - this
 // mode never asks for sender/recipient contact details, so nothing here is bookable as-is.
-async function runDeliveryEstimateLalamove(from, to) {
+async function runDeliveryEstimateLalamove(from, to, seq) {
   const serviceType = document.getElementById('deliveryEstimateVehicleTypeSelect').value || undefined;
   const quote = await fetchDeliveryEstimateLalamoveQuote(
     { lat: from.lat, lng: from.lng, address: from.label },
     { lat: to.lat, lng: to.lng, address: to.label },
     serviceType
   );
+  if (seq !== deliveryEstimateSeq) return; // superseded, e.g. by a method switch mid-estimate
 
   const distanceKm = quote.distanceMeters != null ? quote.distanceMeters / 1000 : null;
 
@@ -3785,16 +3788,24 @@ async function runDeliveryEstimate() {
   const loadingEl = document.getElementById('deliveryEstimateLoading');
   const resultEl = document.getElementById('deliveryEstimateResult');
   const getBtn = document.getElementById('deliveryEstimateGetBtn');
+  // Switching RSPetStop Delivery <-> Lalamove re-runs this while the previous estimate may still be
+  // loading - without this, whichever request finished LAST won, so a slow Lalamove quote could land
+  // under the RSPetStop Delivery toggle (or vice versa). Newest call wins; older ones are ignored.
+  const seq = ++deliveryEstimateSeq;
   errorEl.classList.add('hidden');
   resultEl.classList.add('hidden');
 
   const originKey = document.getElementById('deliveryEstimateOriginSelect').value;
   if (!originKey) {
+    getBtn.disabled = false;
+    loadingEl.classList.add('hidden');
     errorEl.textContent = 'Pick which branch you\'re ordering from.';
     errorEl.classList.remove('hidden');
     return;
   }
 
+  // Read once up front so the whole run prices one method, even if the toggle changes mid-await.
+  const method = deliveryEstimateMethod;
   getBtn.disabled = true;
   loadingEl.classList.remove('hidden');
 
@@ -3805,22 +3816,27 @@ async function runDeliveryEstimate() {
       resolveDeliveryEstimateOrigin(originKey),
       resolveDeliveryEstimateDestination()
     ]);
+    if (seq !== deliveryEstimateSeq) return;
 
-    if (deliveryEstimateMethod === 'lalamove') {
-      await runDeliveryEstimateLalamove(from, to);
+    if (method === 'lalamove') {
+      await runDeliveryEstimateLalamove(from, to, seq);
     } else {
-      await runDeliveryEstimateInHouse(from, to);
+      await runDeliveryEstimateInHouse(from, to, seq);
     }
+    if (seq !== deliveryEstimateSeq) return;
 
     resultEl.classList.remove('hidden');
     await setDeliveryEstimateFromMarker(from);
     await setDeliveryEstimateToMarker(to);
   } catch (err) {
+    if (seq !== deliveryEstimateSeq) return;
     errorEl.textContent = err.message;
     errorEl.classList.remove('hidden');
   } finally {
-    getBtn.disabled = false;
-    loadingEl.classList.add('hidden');
+    if (seq === deliveryEstimateSeq) {
+      getBtn.disabled = false;
+      loadingEl.classList.add('hidden');
+    }
   }
 }
 

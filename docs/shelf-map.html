@@ -27,6 +27,9 @@
     .shelf-cell.ok .cell-onhand { color: #2e9e5b; }
     .shelf-cell.diff .cell-onhand { color: #d98a00; }
     .shelf-cell.empty .cell-onhand { color: #d64545; }
+    /* Pending TO: still to be received on open transfer orders into this location (shelfMap.js pendingHtml). */
+    .shelf-cell .cell-pending { font-size: 22px; font-weight: 800; line-height: 1.1; padding: 2px 0; color: #1d6fd1; text-decoration: none; }
+    .shelf-cell .cell-pending:hover { text-decoration: underline; }
     .shelf-cell .cell-sub { font-size: 11px; color: var(--text-muted, #666); }
     .shelf-cell.ok { border-color: #2e9e5b; }
     .shelf-cell.diff { border-color: #d98a00; }
@@ -52,7 +55,7 @@
   <!-- Full window width so more shelf spots fit side by side - see .page.page-full below -->
   <div class="page page-full">
     <h1>Shelf Map</h1>
-    <p class="muted">Each box is a spot on the shelf. "Min. Shelf Count" is the minimum count for that shelf spot - type a new number to update it. "Stock on hand" is the item's quantity at the location from the Item Ledger (always current), coloured by the legend below.</p>
+    <p class="muted">Each box is a spot on the shelf. "Min. Shelf Count" is the minimum count for that shelf spot - type a new number to update it. "Stock on hand" is the item's quantity at the location from the Item Ledger (always current), coloured by the legend below. "Pending TO" is what open transfer orders into this location still have to be received (hover for the TO numbers, click to open).</p>
 
     <div class="toolbar">
       <label for="locationSelect" class="muted" style="margin:0;">Location</label>
@@ -81,6 +84,7 @@
       <span><i class="shelf-dot" style="background:#2e9e5b"></i>Stock on hand is more than half of the Min. Shelf Count</span>
       <span><i class="shelf-dot" style="background:#d98a00"></i>Stock on hand is half or less of the Min. Shelf Count</span>
       <span><i class="shelf-dot" style="background:#d64545"></i>Out of stock</span>
+      <span><i class="shelf-dot" style="background:#1d6fd1"></i>Pending TO - still to be received</span>
       <span><i class="shelf-dot" style="background:#999"></i>Not linked to an item (dashed)</span>
     </div>
 
@@ -116,9 +120,9 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=salesshelf1"></script>
+  <script src="js/auth.js?v=tabsync1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
-  <script src="js/shelfMap.js?v=localcount1"></script>
+  <script src="js/shelfMap.js?v=pendingto1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

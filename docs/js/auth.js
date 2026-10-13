@@ -27,6 +27,44 @@ function setPortalSession(session) {
   sessionStorage.setItem(PORTAL_SESSION_KEY, JSON.stringify(session));
 }
 
+// sessionStorage is per-tab, so a link opened in a new tab (Ctrl/middle-click, "Open in new tab",
+// target="_blank") used to land on the login page. A tab with no session now asks any other open
+// portal tab for its session over a BroadcastChannel (same origin only) and adopts it - so staff
+// stay logged in across tabs, while closing every portal tab still logs them out.
+const PORTAL_SESSION_CHANNEL = 'portal_session_sync';
+let portalSessionChannel = null;
+try {
+  portalSessionChannel = new BroadcastChannel(PORTAL_SESSION_CHANNEL);
+  portalSessionChannel.addEventListener('message', (e) => {
+    const msg = e.data || {};
+    if (msg.type !== 'request') return;
+    const session = getPortalSession();
+    if (session) portalSessionChannel.postMessage({ type: 'session', requestId: msg.requestId, session });
+  });
+} catch {
+  portalSessionChannel = null; // BroadcastChannel unsupported - fall back to per-tab login
+}
+
+function requestSessionFromOtherTabs(timeoutMs = 500) {
+  if (!portalSessionChannel) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const requestId = Math.random().toString(36).slice(2);
+    const onMessage = (e) => {
+      const msg = e.data || {};
+      if (msg.type !== 'session' || msg.requestId !== requestId || !msg.session) return;
+      cleanup();
+      resolve(msg.session);
+    };
+    const timer = setTimeout(() => { cleanup(); resolve(null); }, timeoutMs);
+    function cleanup() {
+      clearTimeout(timer);
+      portalSessionChannel.removeEventListener('message', onMessage);
+    }
+    portalSessionChannel.addEventListener('message', onMessage);
+    portalSessionChannel.postMessage({ type: 'request', requestId });
+  });
+}
+
 /**
  * Verifies username/password against the StaffUsers table via the
  * verify_login() Postgres function (password hashing/checking happens
@@ -209,7 +247,11 @@ function currentPageFileName() {
 }
 
 async function requireAuth() {
-  const session = getPortalSession();
+  let session = getPortalSession();
+  if (!session) {
+    session = await requestSessionFromOtherTabs();
+    if (session) setPortalSession(session);
+  }
   if (!session) {
     window.location.href = 'staff-login.html';
     return null;

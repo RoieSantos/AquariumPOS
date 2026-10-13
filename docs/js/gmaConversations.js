@@ -412,12 +412,18 @@ function onConversationTagFilterChange(value) {
 let conversationReadFilter = null; // null | 'unread' | 'read'
 
 function onConversationReadFilterClick(e) {
-  const btn = e.target.closest('[data-read-filter]');
+  const btn = e.target.closest('[data-read-filter], [data-list-mode]');
   if (!btn) return;
-  conversationReadFilter = btn.dataset.readFilter || null;
-  document.querySelectorAll('#conversationReadFilter [data-read-filter]').forEach((b) => {
+  document.querySelectorAll('#conversationReadFilter button').forEach((b) => {
     b.classList.toggle('active', b === btn);
   });
+  // Comments / Calls tabs - see setInboxListMode.
+  if (btn.dataset.listMode) {
+    setInboxListMode(btn.dataset.listMode);
+    return;
+  }
+  conversationReadFilter = btn.dataset.readFilter || null;
+  if (inboxListMode !== 'chats') setInboxListMode('chats');
   loadConversations();
 }
 
@@ -510,6 +516,8 @@ async function ensureProfilePics(list) {
 
 function renderConversationList() {
   const listEl = document.getElementById('conversationListEl');
+  if (inboxListMode === 'comments') return renderCommentList(listEl);
+  if (inboxListMode === 'calls') return renderCallList(listEl);
 
   if (conversations.length === 0) {
     listEl.innerHTML = conversationSearchTerm.trim()
@@ -1329,6 +1337,8 @@ function lightboxIsOpen() {
 }
 
 async function openConversation(psid) {
+  selectedCommentId = null;
+  if (inboxListMode !== 'chats') activateChatsMode();
   selectedPsid = psid;
   trackPresence();
   renderConversationList();
@@ -4941,10 +4951,16 @@ function setupRealtimeInbox() {
     // A customer is calling a Page / the call ended (facebook-messenger-webhook calls.ts).
     .on('broadcast', { event: 'call_ringing' }, ({ payload }) => {
       addRingingCall(payload);
+      loadInboxCalls();
     })
     .on('broadcast', { event: 'call_ended' }, ({ payload }) => {
       removeRingingCall(payload?.call_id);
       handleGmaInboxEvent(payload);
+      loadInboxCalls();
+    })
+    // A post comment arrived / was answered (comments.ts, chatbot-staff-reply comment_reply).
+    .on('broadcast', { event: 'comments_changed' }, () => {
+      loadPostComments();
     })
     // Another staff member pinned/unpinned a conversation - re-sort the list.
     .on('broadcast', { event: 'conversation_pinned' }, ({ payload }) => {
@@ -5044,6 +5060,368 @@ async function loadRingingCalls() {
   });
   if (error) return; // sql/supabase_chatbot_calls.sql not run yet - live broadcasts still work
   (data || []).forEach(addRingingCall);
+}
+
+// ---------------------------------------------------------------------------
+// Comments / Calls tabs (pills beside All / Unread / Read - sql/supabase_gma_comments_calls_inbox.sql).
+// Comments: every comment on the Pages' posts (facebook-messenger-webhook comments.ts records them all,
+// even with auto-reply off). A commenter has no Messenger PSID until a private reply goes out, so a
+// comment opens in the thread pane on its own: the post, the comment, the Page's replies, and a box to
+// reply publicly or send the ONE private message Facebook allows per comment (chatbot-staff-reply's
+// comment_reply mode). Calls: every Messenger call (calls.ts); click = that customer's conversation.
+let inboxListMode = 'chats'; // 'chats' | 'comments' | 'calls'
+let postComments = [];
+let postCommentsError = null;
+let selectedCommentId = null;
+let inboxCalls = [];
+let inboxCallsError = null;
+
+const COMMENT_STATUS_LABEL = {
+  Received: ['Needs reply', 'inbox-badge-escalated'],
+  Processing: ['Alice replying…', 'inbox-badge-paused'],
+  Replied: ['Alice replied', ''],
+  Skipped: ['No reply (spam/empty)', 'inbox-badge-paused'],
+  Failed: ['Reply failed', 'inbox-badge-escalated']
+};
+
+function commentAnswered(c) {
+  return !!(c.public_reply_text || c.dm_status === 'Sent' || c.page_replies?.length);
+}
+
+function commentStatusBadgeHtml(c) {
+  if (c.page_replies?.some((r) => r.replied_by)) return '<span class="inbox-badge">Staff replied</span>';
+  if (c.status === 'Received' && commentAnswered(c)) return '<span class="inbox-badge">Page replied</span>';
+  const [label, cls] = COMMENT_STATUS_LABEL[c.status] || [c.status, ''];
+  return `<span class="inbox-badge ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function commentNeedsReply(c) {
+  return !commentAnswered(c) && c.status !== 'Skipped' && c.status !== 'Processing';
+}
+
+function commentLink(c) {
+  return c.post_permalink || `https://www.facebook.com/${encodeURIComponent(c.comment_id)}`;
+}
+
+async function loadPostComments() {
+  const { data, error } = await supabaseClient.rpc('admin_list_facebook_post_comments', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_limit: 150
+  });
+  postCommentsError = error
+    ? (error.code === 'PGRST202' ? 'The Comments tab needs sql/supabase_gma_comments_calls_inbox.sql to be run first.' : error.message)
+    : null;
+  postComments = data || [];
+  updateListModeCounts();
+  if (inboxListMode === 'comments') {
+    renderConversationList();
+    if (selectedCommentId) renderCommentThread(false);
+  }
+}
+
+async function loadInboxCalls() {
+  const { data, error } = await supabaseClient.rpc('admin_list_chatbot_calls', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_limit: 150
+  });
+  inboxCallsError = error
+    ? (error.code === 'PGRST202' ? 'The Calls tab needs sql/supabase_gma_comments_calls_inbox.sql to be run first.' : error.message)
+    : null;
+  inboxCalls = data || [];
+  updateListModeCounts();
+  if (inboxListMode === 'calls') renderConversationList();
+}
+
+// Small counts on the pills: comments nobody has answered yet, and missed calls in the last day.
+function updateListModeCounts() {
+  const set = (mode, n) => {
+    const el = document.querySelector(`#conversationReadFilter [data-list-mode="${mode}"] .inbox-mode-count`);
+    if (el) el.textContent = n ? String(n) : '';
+  };
+  set('comments', postComments.filter(commentNeedsReply).length);
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  set('calls', inboxCalls.filter((k) => k.status === 'Missed' && new Date(k.started_at_utc).getTime() > dayAgo).length);
+}
+
+function setInboxListMode(mode) {
+  if (mode === inboxListMode) return;
+  const commentWasOpen = !!selectedCommentId;
+  inboxListMode = mode;
+  document.body.dataset.inboxListMode = mode;
+  if (mode !== 'comments') selectedCommentId = null;
+  if (commentWasOpen && !selectedCommentId) clearThreadPane();
+  if (mode === 'comments') loadPostComments();
+  if (mode === 'calls') loadInboxCalls();
+  if (mode !== 'chats' && !selectedCommentId && !selectedPsid) clearThreadPane();
+  renderConversationList();
+}
+
+function clearThreadPane(message = 'Select a conversation to view its messages.') {
+  document.getElementById('threadHeaderEl').innerHTML = `<span class="muted">${escapeHtml(message)}</span>`;
+  document.getElementById('threadMessagesEl').innerHTML = '';
+  document.getElementById('replyRowEl').classList.add('hidden');
+  const customerPanel = document.getElementById('customerPanelEl');
+  customerPanel.classList.remove('is-create-mode');
+  customerPanel.innerHTML = '<div class="inbox-empty-state">Select a conversation to look up orders.</div>';
+}
+
+function renderCommentList(listEl) {
+  if (postCommentsError) {
+    listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(postCommentsError)}</div>`;
+    return;
+  }
+  if (!postComments.length) {
+    listEl.innerHTML = '<div class="inbox-empty-state">No post comments yet. New comments on the Pages\' posts show here.</div>';
+    return;
+  }
+  listEl.innerHTML = postComments.map((c) => {
+    const unanswered = commentNeedsReply(c);
+    return `
+      <div class="inbox-conv-item${c.comment_id === selectedCommentId ? ' active' : ''}${unanswered ? ' inbox-conv-unread' : ''}" data-comment-id="${escapeHtml(c.comment_id)}">
+        ${conversationAvatarHtml({ psid: `comment:${c.from_id}`, customer_name: c.from_name, page_id: c.page_id })}
+        <div class="inbox-conv-body">
+          <div class="inbox-conv-top">
+            <span class="inbox-conv-psid">${escapeHtml(c.from_name || 'Facebook user')}${pageBadgeHtml(c.page_id)}${commentStatusBadgeHtml(c)}</span>
+            <span class="inbox-conv-time">${formatRelativeTime(c.received_at_utc)}${unanswered ? '<span class="inbox-unread-dot" title="Not answered yet"></span>' : ''}</span>
+          </div>
+          <div class="inbox-conv-preview">💬 ${escapeHtml(c.message || (c.photo_url ? '[Photo/sticker]' : '(no text)'))}</div>
+          ${c.post_message ? `<div class="inbox-conv-preview inbox-comment-post-line">on: ${escapeHtml(c.post_message.slice(0, 80))}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+  listEl.querySelectorAll('[data-comment-id]').forEach((el) => {
+    el.addEventListener('click', () => openComment(el.dataset.commentId));
+  });
+}
+
+function callStatusText(k) {
+  if (k.status === 'Answered') return `📞 Voice call · ${formatCallDuration(k.duration_seconds || 0)}`;
+  if (k.status === 'Missed') return '📞 Missed call';
+  if (k.status === 'Ringing') return '📞 Ringing now…';
+  return '📞 Call (no end event received)';
+}
+
+function formatCallDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m ? `${m} min${s ? ` ${s} s` : ''}` : `${s} s`;
+}
+
+function renderCallList(listEl) {
+  if (inboxCallsError) {
+    listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(inboxCallsError)}</div>`;
+    return;
+  }
+  if (!inboxCalls.length) {
+    listEl.innerHTML = '<div class="inbox-empty-state">No calls recorded yet. Messenger calls to the Pages show here once Facebook sends them (the Page needs the "calls" webhook field ticked in the Meta app).</div>';
+    return;
+  }
+  listEl.innerHTML = inboxCalls.map((k) => `
+    <div class="inbox-conv-item${k.status === 'Missed' ? ' inbox-conv-unread' : ''}" data-call-psid="${escapeHtml(k.psid)}" data-call-name="${escapeHtml(k.customer_name || '')}">
+      ${conversationAvatarHtml({ psid: k.psid, customer_name: k.customer_name, page_id: k.page_id })}
+      <div class="inbox-conv-body">
+        <div class="inbox-conv-top">
+          <span class="inbox-conv-psid">${escapeHtml(k.customer_name || k.psid)}${pageBadgeHtml(k.page_id)}</span>
+          <span class="inbox-conv-time">${formatRelativeTime(k.started_at_utc)}</span>
+        </div>
+        <div class="inbox-conv-preview${k.status === 'Missed' ? ' inbox-call-missed' : ''}">${escapeHtml(callStatusText(k))} · ${escapeHtml(new Date(k.started_at_utc).toLocaleString())}</div>
+      </div>
+    </div>`).join('');
+  listEl.querySelectorAll('[data-call-psid]').forEach((el) => {
+    el.addEventListener('click', () => openConversationByPsid(el.dataset.callPsid, el.dataset.callName));
+  });
+  ensureProfilePics(inboxCalls.map((k) => ({ psid: k.psid })));
+}
+
+// Comments/Calls -> the "All" chats list (e.g. a call banner or "Open Messenger chat" click).
+function activateChatsMode() {
+  document.querySelectorAll('#conversationReadFilter button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.readFilter === '');
+  });
+  const filterWasOn = !!conversationReadFilter;
+  conversationReadFilter = null;
+  setInboxListMode('chats');
+  if (filterWasOn) loadConversations();
+}
+
+// Back to Chats, then open that customer's thread (searching by name if it isn't in the latest 100).
+async function openConversationByPsid(psid, name) {
+  activateChatsMode();
+  if (!conversations.some((c) => c.psid === psid)) {
+    await loadConversations();
+    if (!conversations.some((c) => c.psid === psid) && name) {
+      conversationSearchTerm = name;
+      document.getElementById('conversationSearchInput').value = name;
+      await loadConversations();
+    }
+  }
+  if (conversations.some((c) => c.psid === psid)) await openConversation(psid);
+}
+
+function openComment(commentId) {
+  selectedCommentId = commentId;
+  selectedPsid = null;
+  trackPresence();
+  renderConversationList();
+  renderCommentThread(true);
+  showMobileView('chat');
+}
+
+function renderCommentThread(resetComposer) {
+  const c = postComments.find((x) => x.comment_id === selectedCommentId);
+  if (!c) return;
+  const draft = resetComposer ? '' : (document.getElementById('commentReplyInput')?.value || '');
+
+  document.getElementById('replyRowEl').classList.add('hidden');
+  document.getElementById('threadHeaderEl').innerHTML = `
+    <button type="button" class="inbox-mobile-back" id="threadBackBtn" aria-label="Back to comments">${MOBILE_BACK_ICON}</button>
+    <span class="inbox-thread-title">
+      <span class="inbox-thread-title-text">
+        <span class="inbox-thread-name">💬 ${escapeHtml(c.from_name || 'Facebook user')}${pageBadgeHtml(c.page_id)}</span>
+        <span class="inbox-thread-sub">Comment on a Page post · ${escapeHtml(new Date(c.received_at_utc).toLocaleString())}</span>
+      </span>
+    </span>
+    <span class="inbox-header-actions">
+      <a class="btn btn-secondary btn-sm" href="${escapeHtml(commentLink(c))}" target="_blank" rel="noopener">View on Facebook ↗</a>
+      ${c.psid ? '<button class="btn btn-secondary btn-sm" id="commentOpenChatBtn" type="button">Open Messenger chat</button>' : ''}
+    </span>`;
+  document.getElementById('threadBackBtn').addEventListener('click', mobileBack);
+  document.getElementById('commentOpenChatBtn')?.addEventListener('click', () => openConversationByPsid(c.psid, c.from_name));
+
+  const pageRow = (text, sender, cls = 'staff') => `
+    <div class="inbox-msg-row inbox-msg-row-${cls} inbox-msg-group-start">
+      <span class="inbox-msg-sender">${escapeHtml(sender)}</span>
+      <div class="inbox-msg inbox-msg-${cls}">${messageTextHtml(text)}</div>
+    </div>`;
+  const parts = [];
+  const postFetch = postInfoFetches.get(c.comment_id);
+  const postMissing = !c.post_message && !c.post_picture;
+  let postBody = '';
+  if (c.post_picture) postBody += `<a href="${escapeHtml(commentLink(c))}" target="_blank" rel="noopener"><img class="inbox-comment-post-photo" src="${escapeHtml(c.post_picture)}" alt="Post photo"></a>`;
+  if (c.post_message) postBody += `<div class="inbox-comment-post-text">${messageTextHtml(c.post_message)}</div>`;
+  if (postMissing) {
+    postBody += postFetch?.error
+      ? `<div class="error-text">Couldn't load the post: ${escapeHtml(postFetch.error)}</div>`
+      : postFetch?.done
+        ? '<div class="muted">This post has no caption or photo.</div>'
+        : '<div class="muted">Loading the post from Facebook…</div>';
+  }
+  parts.push(`<div class="inbox-comment-post">
+    <div class="inbox-comment-post-label">Our post</div>
+    ${postBody}
+  </div>`);
+  parts.push(`
+    <div class="inbox-msg-row inbox-msg-row-user inbox-msg-group-start">
+      <span class="inbox-msg-sender">${escapeHtml(c.from_name || 'Facebook user')} commented</span>
+      <div class="inbox-msg inbox-msg-user">${c.photo_url ? `<img class="inbox-comment-photo" src="${escapeHtml(c.photo_url)}" alt="">` : ''}${messageTextHtml(c.message || (c.photo_url ? '' : '(no text)'))}</div>
+    </div>`);
+  if (c.public_reply_text) parts.push(pageRow(c.public_reply_text, 'Alice · public reply', 'assistant'));
+  (c.page_replies || []).forEach((r) => {
+    parts.push(pageRow(r.message || '', `${r.replied_by || 'Page'} · public reply`));
+  });
+  if (c.dm_text) parts.push(pageRow(c.dm_text, `Private message · ${c.dm_status || ''}`, 'assistant'));
+  if (c.error) parts.push(`<div class="inbox-comment-note error-text">${escapeHtml(c.error)}</div>`);
+
+  const dmSent = c.dm_status === 'Sent';
+  parts.push(`
+    <div class="inbox-comment-composer">
+      <textarea id="commentReplyInput" rows="2" placeholder="Write a reply…">${escapeHtml(draft)}</textarea>
+      <div class="inbox-comment-composer-actions">
+        <button class="btn btn-primary btn-sm" id="commentReplyPublicBtn" type="button" title="Posts under their comment - everyone can see it. Don't put prices here.">Reply publicly</button>
+        <button class="btn btn-secondary btn-sm" id="commentReplyPrivateBtn" type="button" ${dmSent ? 'disabled' : ''}
+          title="${dmSent ? 'Facebook allows only one private message per comment - already sent. Continue in their Messenger chat once they reply.' : 'Sends a Messenger message tied to this comment (one per comment, within 7 days). It then appears as a normal chat.'}">Send private message</button>
+      </div>
+      <div class="inbox-comment-note error-text hidden" id="commentReplyErrorEl"></div>
+    </div>`);
+
+  const messagesEl = document.getElementById('threadMessagesEl');
+  messagesEl.innerHTML = `<div class="inbox-comment-thread">${parts.join('')}</div>`;
+  document.getElementById('commentReplyPublicBtn').addEventListener('click', () => sendCommentReply(c, false));
+  if (postMissing && !postFetch) fetchPostInfo(c);
+  document.getElementById('commentReplyPrivateBtn').addEventListener('click', () => sendCommentReply(c, true));
+  const customerPanel = document.getElementById('customerPanelEl');
+  customerPanel?.classList.remove('is-create-mode');
+  if (customerPanel) customerPanel.innerHTML = '<div class="inbox-empty-state">Customer details and orders appear once they message the Page - send a private message to start a Messenger chat.</div>';
+}
+
+// Post caption/photo not saved yet (comments from before comments.ts saved posts) - fetch it once per
+// comment from Facebook through chatbot-staff-reply's post_info mode, which also saves it.
+const postInfoFetches = new Map(); // comment_id -> { done, error }
+
+async function fetchPostInfo(c) {
+  if (postInfoFetches.has(c.comment_id)) return;
+  postInfoFetches.set(c.comment_id, { done: false, error: null });
+  let state;
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        post_info: { comment_id: c.comment_id }
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok === false) throw new Error(result.error || `HTTP ${response.status}`);
+    // Every comment on the same post gets it too.
+    postComments.forEach((x) => {
+      if (x.comment_id === c.comment_id || (c.post_id && x.post_id === c.post_id)) {
+        x.post_message = x.post_message || result.post_message;
+        x.post_picture = x.post_picture || result.post_picture;
+        x.post_permalink = x.post_permalink || result.post_permalink;
+      }
+    });
+    state = { done: true, error: null };
+  } catch (err) {
+    state = { done: true, error: err instanceof Error ? err.message : String(err) };
+  }
+  postInfoFetches.set(c.comment_id, state);
+  if (selectedCommentId === c.comment_id) renderCommentThread(false);
+}
+
+async function sendCommentReply(c, isPrivate) {
+  const input = document.getElementById('commentReplyInput');
+  const errorEl = document.getElementById('commentReplyErrorEl');
+  const message = input.value.trim();
+  if (!message) {
+    input.focus();
+    return;
+  }
+  const buttons = [document.getElementById('commentReplyPublicBtn'), document.getElementById('commentReplyPrivateBtn')];
+  buttons.forEach((b) => { b.disabled = true; });
+  errorEl.classList.add('hidden');
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        comment_reply: { comment_id: c.comment_id, message, private: isPrivate }
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok === false) throw new Error(result.error || `HTTP ${response.status}`);
+    input.value = '';
+    await loadPostComments();
+    renderCommentThread(true);
+  } catch (err) {
+    errorEl.textContent = err instanceof Error ? err.message : String(err);
+    errorEl.classList.remove('hidden');
+    buttons.forEach((b) => { b.disabled = false; });
+    if (isPrivate && c.dm_status === 'Sent') buttons[1].disabled = true;
+  }
 }
 
 // Realtime Presence on the same 'gma-inbox' channel (no table/SQL): every open Conversations tab
@@ -6177,6 +6555,8 @@ function initDeliveryCalendar() {
   renderMoodFilter();
   document.getElementById('conversationMoodFilter').addEventListener('change', (e) => onConversationMoodFilterChange(e.target.value));
   loadTags();
+  loadPostComments(); // pill counts
+  loadInboxCalls();
   await loadConversations();
   await openConversationFromUrl();
 })();
