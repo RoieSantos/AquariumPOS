@@ -15624,6 +15624,15 @@ ORDER BY VariantName, ItemCode", connection);
                 || normalizedItemCode.StartsWith("CUSTOM_", StringComparison.OrdinalIgnoreCase);
         }
 
+        // Custom Stickers dialog lines (stickers, rubber matting, glass, acrylic, allum top cover) are
+        // cut to size, not built - per "can we allow regular check out for stickers? no need to
+        // maintain serials for this custom stickers". They get the bare "CUSTOM" code, so without this
+        // IsBuildToOrderItemCode would force them into an Advance Order at a non-production store.
+        private static bool IsCustomStickerCategory(string? categoryCode)
+        {
+            return string.Equals(categoryCode?.Trim(), "CUSTOM-STICKER", StringComparison.OrdinalIgnoreCase);
+        }
+
         private bool IsProductionCategoryCode(string? categoryCode)
         {
             string normalizedCategory = categoryCode?.Trim() ?? string.Empty;
@@ -17344,6 +17353,7 @@ END", connection);
                     .Cast<ListViewItem>()
                     .Where(saleItem =>
                         IsBuildToOrderItemCode(saleItem.SubItems.Count > 5 ? saleItem.SubItems[5].Text : null)
+                        && !IsCustomStickerCategory(saleItem.SubItems.Count > 4 ? saleItem.SubItems[4].Text : null)
                         && string.IsNullOrWhiteSpace(saleItem.SubItems.Count > 7 ? saleItem.SubItems[7].Text : null))
                     .Select(saleItem => saleItem.Text?.Trim())
                     .Where(name => !string.IsNullOrWhiteSpace(name))

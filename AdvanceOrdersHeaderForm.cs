@@ -925,6 +925,11 @@ namespace AquariumPOS
             if (string.IsNullOrWhiteSpace(normalizedItemCode))
                 return false;
 
+            // Custom stickers are cut to size, not built - no serials (aol.[No.] holds the line's
+            // Category, so the Custom Stickers dialog's lines arrive here as "CUSTOM-STICKER").
+            if (string.Equals(normalizedItemCode, "CUSTOM-STICKER", StringComparison.OrdinalIgnoreCase))
+                return false;
+
             return normalizedItemCode.StartsWith("AQ-", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM-", StringComparison.OrdinalIgnoreCase)
                 || normalizedItemCode.StartsWith("CUSTOM_", StringComparison.OrdinalIgnoreCase)
