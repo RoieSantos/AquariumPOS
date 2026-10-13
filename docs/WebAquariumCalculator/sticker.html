@@ -120,6 +120,7 @@
           <div id="priceLine" class="price-line"><span id="priceValue" class="price-value">-</span></div>
           <div class="quote-actions">
             <button id="calculate" class="btn btn-primary" type="button">Calculate Price</button>
+            <button id="addToSale" class="btn btn-primary full hidden" type="button">Add to sale</button>
             <button id="closeButton" class="btn btn-neutral full" type="button">Reset</button>
           </div>
         </div>
@@ -173,8 +174,21 @@
     var glassPricingSetupRows = [];
     var pricingLoadPromise = null;
 
+    // Local POS (offline, WebAquariumCalculatorForm in MainForm.WebCalculator.cs): "Add to sale" hands
+    // the piece to the desktop app instead of the web demo - same pattern as the Aquarium Calculator.
+    var isPosHost = Boolean(window.RSPosHost && window.chrome && window.chrome.webview);
+
     function ensurePricingLoaded() {
       if (pricingLoadPromise) return pricingLoadPromise;
+      // Local POS: the desktop app hands over the same RPC rows from its last successful pricing
+      // sync instead - no Supabase call. Empty = the calculator's built-in defaults.
+      if (window.RSPosHost) {
+        var hostPricing = window.RSPosHost.pricing || {};
+        stickerPricingSetupRows = Array.isArray(hostPricing.sticker) ? hostPricing.sticker : [];
+        glassPricingSetupRows = Array.isArray(hostPricing.glass) ? hostPricing.glass : [];
+        pricingLoadPromise = Promise.resolve();
+        return pricingLoadPromise;
+      }
       pricingLoadPromise = Promise.all([
         supabaseClient.rpc('public_get_sticker_pricing'),
         supabaseClient.rpc('public_get_glass_pricing')
@@ -310,6 +324,33 @@
       calculateButton.addEventListener('click', runCalculation);
       closeButton.addEventListener('click', function () {
         window.location.reload();
+      });
+
+      var addToSaleButton = byId('addToSale');
+      addToSaleButton.classList.toggle('hidden', !isPosHost);
+      addToSaleButton.addEventListener('click', async function () {
+        await runCalculation();
+        var result = calculateSticker();
+        if (!result.ok) {
+          window.alert(result.error || 'Enter a valid size first.');
+          return;
+        }
+        window.chrome.webview.postMessage({
+          type: 'rs-pos-add-to-sale',
+          kind: 'sticker',
+          sticker: {
+            type: result.type,
+            thickness: result.thickness || '',
+            isRepair: Boolean(result.isRepair),
+            isTempered: Boolean(result.isTempered),
+            length: String(result.length),
+            width: String(result.width),
+            unit: result.unit,
+            areaSqFt: result.areaSqFt,
+            qty: result.qty,
+            unitPrice: result.unitPrice
+          }
+        });
       });
     }
 

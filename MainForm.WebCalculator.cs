@@ -24,7 +24,22 @@ namespace AquariumPOS
     {
         private void ShowWebAquariumCalculatorOrClassic()
         {
-            string indexPath = Path.Combine(WebAquariumCalculatorForm.RootFolder, "WebAquariumCalculator", "index.html");
+            ShowWebCalculatorOrClassic("index.html", "Custom Aquarium Calculator", AddWebCalculatorQuoteToSale, ShowCustomAquariumDialog);
+        }
+
+        // Custom Stickers screen = the portal's Custom Sticker & Panel Calculator (docs/WebAquariumCalculator/sticker.html),
+        // per "we use the portal way on how we calculate custom aquarium.. can we do that to custom sticker as well?".
+        // Same prices (calculateStandaloneSticker on the synced StickerPricingSetup / GlassPricingSetup rows),
+        // so the POS now also has Acrylic Sump Cover, Tempered / 19mm glass and Plywood. Falls back to the
+        // classic ShowCustomStickersDialog.
+        private void ShowWebStickerCalculatorOrClassic()
+        {
+            ShowWebCalculatorOrClassic("sticker.html", "Custom Sticker & Panel Calculator", AddWebStickerQuoteToSale, ShowCustomStickersDialog);
+        }
+
+        private void ShowWebCalculatorOrClassic(string pageFile, string title, Func<JsonElement, bool> addToSale, Action showClassic)
+        {
+            string pagePath = Path.Combine(WebAquariumCalculatorForm.RootFolder, "WebAquariumCalculator", pageFile);
             bool runtimeAvailable;
             try
             {
@@ -35,14 +50,14 @@ namespace AquariumPOS
                 runtimeAvailable = false;
             }
 
-            if (!runtimeAvailable || !File.Exists(indexPath))
+            if (!runtimeAvailable || !File.Exists(pagePath))
             {
-                ShowCustomAquariumDialog();
+                showClassic();
                 return;
             }
 
             bool openClassic = false;
-            using (var form = new WebAquariumCalculatorForm(BuildWebCalculatorHostJson(), AddWebCalculatorQuoteToSale))
+            using (var form = new WebAquariumCalculatorForm(BuildWebCalculatorHostJson(), addToSale, pageFile, title))
             {
                 form.ClassicRequested += () => openClassic = true;
                 form.ShowDialog(this);
@@ -50,8 +65,39 @@ namespace AquariumPOS
 
             if (openClassic)
             {
-                ShowCustomAquariumDialog();
+                showClassic();
             }
+        }
+
+        // The sticker page's "Add to sale" -> one CUSTOM-STICKER line x its quantity, worded like the classic
+        // dialog's ("Glass REPAIR (6mm) 24Inches x 12Inches") so receipts / reports read the same.
+        private bool AddWebStickerQuoteToSale(JsonElement msg)
+        {
+            if (!msg.TryGetProperty("sticker", out var s) || s.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            string Str(string name) => s.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()?.Trim() ?? string.Empty : string.Empty;
+            bool Flag(string name) => s.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+            string type = Str("type");
+            decimal unitPrice = s.TryGetProperty("unitPrice", out var p) && p.ValueKind == JsonValueKind.Number ? p.GetDecimal() : 0m;
+            int qty = s.TryGetProperty("qty", out var q) && q.ValueKind == JsonValueKind.Number ? Math.Max(1, q.GetInt32()) : 1;
+            if (string.IsNullOrWhiteSpace(type) || unitPrice <= 0)
+            {
+                MessageBox.Show(this, "This piece has no price yet - check the size and try again.", "Custom Stickers", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            string unit = Str("unit");
+            string thickness = Str("thickness");
+            string desc = $"{type}{(Flag("isTempered") ? " TEMPERED" : "")}{(Flag("isRepair") ? " REPAIR" : "")}"
+                + (thickness.Length > 0 ? $" ({thickness})" : "")
+                + $" {Str("length")}{unit} x {Str("width")}{unit}";
+
+            AddToSale(desc, qty, unitPrice, "CUSTOM-STICKER");
+            return true;
         }
 
         // window.RSPosHost for the page: { pricing: { glass, tubular, sticker, extra }, items: { LIGHTS, PUMP } }
@@ -373,7 +419,8 @@ namespace AquariumPOS
         }
     }
 
-    /// <summary>WebView2 window hosting the bundled portal Aquarium Calculator (see MainForm.ShowWebAquariumCalculatorOrClassic).</summary>
+    /// <summary>WebView2 window hosting a bundled portal calculator page - the Aquarium Calculator or the
+    /// Custom Sticker &amp; Panel Calculator (see MainForm.ShowWebCalculatorOrClassic).</summary>
     public class WebAquariumCalculatorForm : Form
     {
         public static string RootFolder => Path.Combine(AppContext.BaseDirectory, "WebCalculator");
@@ -382,15 +429,18 @@ namespace AquariumPOS
         private readonly WebView2 webView = new WebView2 { Dock = DockStyle.Fill };
         private readonly string hostJson;
         private readonly Func<JsonElement, bool> addToSale;
+        private readonly string pageFile;
 
         public event Action? ClassicRequested;
 
-        public WebAquariumCalculatorForm(string hostJson, Func<JsonElement, bool> addToSale)
+        public WebAquariumCalculatorForm(string hostJson, Func<JsonElement, bool> addToSale,
+            string pageFile = "index.html", string title = "Custom Aquarium Calculator")
         {
             this.hostJson = hostJson;
             this.addToSale = addToSale;
+            this.pageFile = pageFile;
 
-            Text = "Custom Aquarium Calculator";
+            Text = title;
             WindowState = FormWindowState.Maximized;
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(900, 600);
@@ -457,7 +507,7 @@ namespace AquariumPOS
                     }
                 };
 
-                core.Navigate($"https://{HostName}/WebAquariumCalculator/index.html");
+                core.Navigate($"https://{HostName}/WebAquariumCalculator/{pageFile}");
             }
             catch (Exception ex)
             {
@@ -467,7 +517,7 @@ namespace AquariumPOS
 
         private void ShowLoadFailure(string reason)
         {
-            MessageBox.Show(this, $"{reason}\n\nOpening the classic calculator instead.", "Custom Aquarium Calculator", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, $"{reason}\n\nOpening the classic calculator instead.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             ClassicRequested?.Invoke();
             Close();
         }
@@ -487,7 +537,7 @@ namespace AquariumPOS
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Could not add this quote to the sale: " + ex.Message, "Custom Aquarium", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, "Could not add this quote to the sale: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
     }

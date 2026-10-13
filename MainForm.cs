@@ -7355,7 +7355,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         ShowIncomeDialog();
                         break;
                     case "CustomStickers":
-                        ShowCustomStickersDialog();
+                        ShowWebStickerCalculatorOrClassic();
                         break;
                     case "TransferOrder":
                         try

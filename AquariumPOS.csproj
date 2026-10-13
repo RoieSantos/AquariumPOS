@@ -62,11 +62,12 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
   </ItemGroup>
 
-  <!-- The portal's Aquarium Calculator, shipped with the POS so the Custom Aquarium screen runs the
-       exact same page offline (see WebAquariumCalculatorForm.cs). Copied from docs/ on every build,
-       keeping the docs/ folder layout so the page's ../js/ references still resolve. -->
+  <!-- The portal's Aquarium Calculator and Custom Sticker and Panel Calculator, shipped with the POS so
+       the Custom Aquarium / Custom Stickers screens run the exact same pages offline (see
+       MainForm.WebCalculator.cs). Copied from docs/ on every build, keeping the docs/ folder layout so
+       the pages' ../js/ references still resolve. -->
   <ItemGroup>
-    <Content Include="docs\WebAquariumCalculator\index.html;docs\WebAquariumCalculator\custom-aquarium-calculator.js;docs\WebAquariumCalculator\calculator-ui.css;docs\WebAquariumCalculator\calculator-ui.js;docs\WebAquariumCalculator\calc-embed-bridge.js">
+    <Content Include="docs\WebAquariumCalculator\index.html;docs\WebAquariumCalculator\sticker.html;docs\WebAquariumCalculator\custom-aquarium-calculator.js;docs\WebAquariumCalculator\calculator-ui.css;docs\WebAquariumCalculator\calculator-ui.js;docs\WebAquariumCalculator\calc-embed-bridge.js">
       <Link>WebCalculator\WebAquariumCalculator\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
