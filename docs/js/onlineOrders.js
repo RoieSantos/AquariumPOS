@@ -6912,8 +6912,10 @@ async function initAdvanceOrdersView() {
   // (no-op for anyone who isn't a Sales User / Tank / Stand Maker).
   maybeShowPushLoginPrompt(session);
   // Super Users and Production Managers (who assign the makers) - see initAdvanceOrdersView. Store
-  // Managers see it view-only (canAssignOrders hides the actions; supabase_advance_orders_store_manager_view.sql).
-  const canSeeAdvance = !!(session.isSuperUser || session.isProductionManager || session.isStoreManager);
+  // Managers, Sales Users and Conversations Access staff see it view-only, own branch only (canAssignOrders
+  // hides the actions; supabase_advance_orders_store_manager_view.sql / supabase_advance_orders_sales_conversations_view.sql).
+  const canSeeAdvance = !!(session.isSuperUser || session.isProductionManager || session.isStoreManager ||
+    session.isSalesUser || session.isConversationsStaff);
   document.getElementById('scopeTabAdvance').classList.toggle('hidden', !canSeeAdvance);
   if (canSeeAdvance && new URLSearchParams(window.location.search).get('scope') === 'advance') {
     await initAdvanceOrdersView();

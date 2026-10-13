@@ -2916,6 +2916,13 @@ body.hide-price-columns .price-col {
   margin-bottom: 10px;
 }
 
+.delivery-receipt-signature-left .delivery-receipt-representative-note {
+  font-size: 11px;
+  font-style: italic;
+  max-width: 420px;
+  margin-top: -4px;
+}
+
 .delivery-receipt-signature-right {
   white-space: nowrap;
 }

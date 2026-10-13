@@ -179,6 +179,7 @@ function deliveryReceiptBlockHtml(info, header, lines, copyLabel) {
             <div>Delivery Date ________________________</div>
             <div>Delivery By :</div>
             <div>Received by (if not the customer) ________________________</div>
+            <div class="delivery-receipt-representative-note">By signing on the customer's behalf, the receiving representative confirms that they have been authorized by the customer to inspect and accept the items, and that their signature carries the same legal validity and accountability as the customer's own.</div>
           </div>
           <div class="delivery-receipt-signature-right">Customer : ${escapeHtml(header.customer_name)}</div>
         </div>

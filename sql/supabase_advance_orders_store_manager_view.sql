@@ -15,7 +15,9 @@
 -- is ever re-run, run this file again afterwards (it would put the old Super User / Production Manager-only
 -- checks back).
 
--- Production Manager or an active Store Manager - may view (not manage) advance orders.
+-- Production Manager or an active Store Manager / Sales User / Conversations Access account - may view
+-- (not manage) advance orders (Sales User + Conversations Access added by
+-- supabase_advance_orders_sales_conversations_view.sql).
 create or replace function public._advance_order_is_viewer(p_username text)
 returns boolean
 language sql
@@ -25,7 +27,10 @@ set search_path = public
 as $$
   select public._production_is_manager(p_username)
       or exists (select 1 from public."StaffUsers"
-                 where "Username" = p_username and "IsActive" and coalesce("StoreManager", false));
+                 where "Username" = p_username and "IsActive"
+                   and (coalesce("StoreManager", false)
+                        or coalesce("SalesUser", false)
+                        or coalesce("ConversationsStaff", false)));
 $$;
 
 revoke execute on function public._advance_order_is_viewer(text) from public, anon, authenticated;
