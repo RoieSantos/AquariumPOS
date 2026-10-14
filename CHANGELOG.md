@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-14
 
+- **Fix: POS in-store sales with a discount rejected by Pancake** (`HTTP 422 "[discount_each_product]: is invalid"`, e.g. RS-0000011254). The per-unit discount was sent as `22.00`; Pancake only takes whole numbers (same as the earlier `cash` fix). It's now rounded to a whole peso ([OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs) in-store order payload).
+
 - **GMA Conversations: search inside the open conversation.** A 🔍 Search button in the chat header opens a search bar that highlights every match in the loaded messages (newest 200), shows "1 of 7", and jumps between matches (↑/Enter = older, ↓/Shift+Enter = newer, Esc closes). Browser-only, no SQL ([gmaConversations.js](docs/js/gmaConversations.js) `highlightThreadSearch`, [gma-conversations.html](docs/gma-conversations.html) `v=threadsearch1`).
 
 - **GMA Conversations: long replies are split instead of failing.** Facebook rejects any text over 2000 characters ("(#100) Length of param message[text]..."), which a long auto reply hit. Text over 1900 characters is now sent as several messages, broken at a paragraph, then a line, then a sentence, then a word ([chatbot-staff-reply/index.ts](supabase/functions/chatbot-staff-reply/index.ts) `splitLongText`). Needs a redeploy of `chatbot-staff-reply`.

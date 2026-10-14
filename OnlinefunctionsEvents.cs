@@ -2104,7 +2104,8 @@ WHERE ile.DocumentNo = @DocNo", conn))
                         if (lineDiscountTotal > 0m)
                         {
                             decimal quantityForDiscount = qtyValueDecimal == 0m ? 1m : qtyValueDecimal;
-                            discountEachProductValue = Math.Round(lineDiscountTotal / quantityForDiscount, 2, MidpointRounding.AwayFromZero);
+                            // Pancake only accepts whole numbers here - 22.00 is rejected ("[discount_each_product]: is invalid", HTTP 422).
+                            discountEachProductValue = Math.Round(lineDiscountTotal / quantityForDiscount, 0, MidpointRounding.AwayFromZero);
                         }
 
                         string lineItemCode = (it.ItemCode ?? string.Empty).Trim();
