@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-14
 
+- **Conversations: Media library redesign with folders.** Folder chips, "+ Add" menu (photos/videos, a whole folder from the computer, new empty folder), drag & drop, numbered picks, Select all, bulk Move/Delete, upload progress, bigger thumbnails. New `Folder` column + move/rename/bulk-delete RPCs ([supabase_chatbot_media_library_folders.sql](sql/supabase_chatbot_media_library_folders.sql)); JS cache `v=mlibfolders1`.
+
+- **Conversations: Advise reply is Super User only for now.** Everyone else sees the button greyed out and disabled as "Under maintenance" ([gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html), cache `v=advmaint1`).
+
+- **Delivery calendar: Assigned orders can be scheduled.** The Add order search now lists online orders in Assigned too (custom orders being built), alongside Confirmed / Printed / To Ship / Shipped. Alice's customer self-scheduling is unchanged - still no Assigned ([supabase_delivery_assign_assigned_status.sql](sql/supabase_delivery_assign_assigned_status.sql)).
+
 - **Store Managers get the Assemble button.** A SET order at their own branch now shows Assemble (pick the package parts) on the list / card, same as Super Users / Production Managers / Online Order Staff. Afterwards it's To Ship or Request Production, and the follow-up alert words it that way. No SQL - the assembly RPCs already allow any staff ([onlineOrders.js](docs/js/onlineOrders.js) `nextStepFor`, [online-orders.html](docs/online-orders.html) `v=smassemble1`).
 
 - **Release / Ship proof photo: "Choose from gallery".** The Dispatcher's Release / Ship photo dialog now has a gallery button next to the camera, so a photo already on the phone can be used. It's the same photo that gets auto-posted to the GMA / Amaya Facebook Page on ship. Production Done stays camera-only ([proofPhoto.js](docs/js/proofPhoto.js) `allowGallery`, [onlineOrders.js](docs/js/onlineOrders.js) `confirmWithPhoto`, [online-orders.html](docs/online-orders.html) / [production-orders.html](docs/production-orders.html) `v=gallery2`).

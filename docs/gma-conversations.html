@@ -2102,88 +2102,254 @@
       position: absolute;
       right: 10px;
       bottom: calc(100% + 6px);
-      width: 420px;
+      width: 480px;
       max-width: calc(100vw - 40px);
-      max-height: 440px;
+      max-height: 520px;
       display: flex;
       flex-direction: column;
       background: #fff;
       border: 1px solid var(--panel-border);
-      border-radius: 10px;
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      border-radius: 12px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
       overflow: hidden;
       z-index: 5;
     }
+    /* "+ Add" dropdown: photos / a whole folder / new empty folder. */
+    .mlib-add-wrap { position: relative; }
+    .mlib-add-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      width: 230px;
+      background: #fff;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      padding: 4px;
+      z-index: 6;
+    }
+    .mlib-add-menu button {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 8px;
+      background: none;
+      text-align: left;
+      cursor: pointer;
+      font-weight: 400;
+    }
+    .mlib-add-menu button:hover { background: #f0f2f5; }
+    .mlib-add-menu button > span:first-child { font-size: 18px; width: 22px; text-align: center; }
+    .mlib-add-menu strong { display: block; font-size: 13px; color: #1c1e21; }
+    .mlib-add-menu small { display: block; font-size: 11px; color: #65676b; }
+    /* Folder chips - one horizontal, scrollable row. */
+    .mlib-folders {
+      display: flex;
+      gap: 6px;
+      padding: 10px 12px 6px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+      flex-shrink: 0;
+    }
+    .mlib-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+      max-width: 180px;
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      background: #fff;
+      color: #1c1e21;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .mlib-chip:hover { background: #f0f2f5; }
+    .mlib-chip.active { background: #1877f2; border-color: #1877f2; color: #fff; }
+    .mlib-chip svg { color: #f5b301; flex-shrink: 0; }
+    .mlib-chip.active svg { color: #fff; }
+    .mlib-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mlib-chip-count {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: #e4e6eb;
+      color: #65676b;
+    }
+    .mlib-chip.active .mlib-chip-count { background: rgba(255, 255, 255, 0.25); color: #fff; }
+    .mlib-chip-new { border-style: dashed; color: #1877f2; background: #f7faff; }
+    /* Open folder: name, count, Select all / Rename / Delete folder. */
+    .mlib-folder-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px 6px;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .mlib-folder-title { font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mlib-folder-actions { margin-left: auto; display: flex; gap: 10px; flex-shrink: 0; }
+    .mlib-link-btn {
+      border: none;
+      background: none;
+      padding: 0;
+      color: #1877f2;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .mlib-link-btn:hover { text-decoration: underline; }
+    .mlib-danger { color: #c0392b; }
+    .mlib-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 12px 6px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: #f0f6ff;
+      color: #1c4f9c;
+      font-size: 12px;
+    }
+    .mlib-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid #c9d9f5;
+      border-top-color: #1877f2;
+      border-radius: 50%;
+      animation: mlib-spin 0.8s linear infinite;
+    }
+    @keyframes mlib-spin { to { transform: rotate(360deg); } }
     .inbox-media-library-grid {
       flex: 1;
       overflow-y: auto;
-      min-height: 120px;
+      min-height: 140px;
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      align-content: start;
       gap: 8px;
-      padding: 10px;
+      padding: 4px 12px 12px;
     }
-    .inbox-media-library-item {
+    .mlib-item {
       position: relative;
-      width: 76px;
-      height: 76px;
-      cursor: pointer;
-    }
-    .inbox-media-library-item img,
-    .inbox-media-library-item .inbox-media-library-video-placeholder {
-      width: 76px;
-      height: 76px;
-      border-radius: 8px;
-      object-fit: cover;
-      border: 2px solid var(--panel-border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      aspect-ratio: 1;
+      border-radius: 10px;
+      overflow: hidden;
       background: #eef0f2;
-      font-size: 22px;
-      box-sizing: border-box;
+      cursor: pointer;
+      outline: 3px solid transparent;
+      outline-offset: -3px;
+      transition: outline-color 0.1s;
     }
-    .inbox-media-library-item.selected img,
-    .inbox-media-library-item.selected .inbox-media-library-video-placeholder {
-      border-color: #1877f2;
+    .mlib-item img,
+    .mlib-item video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      pointer-events: none;
     }
-    .inbox-media-library-item-check {
+    .mlib-item:hover img,
+    .mlib-item:hover video { filter: brightness(0.92); }
+    .mlib-item.selected { outline-color: #1877f2; }
+    .mlib-item.selected img,
+    .mlib-item.selected video { filter: brightness(0.85); }
+    /* Always-visible ring = "you can pick this"; filled + numbered once picked (= order in the reply). */
+    .mlib-check {
       position: absolute;
-      top: 4px;
-      left: 4px;
-      width: 18px;
-      height: 18px;
+      top: 6px;
+      left: 6px;
+      width: 22px;
+      height: 22px;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.9);
-      border: 1px solid var(--panel-border);
+      border: 2px solid #fff;
+      background: rgba(0, 0, 0, 0.25);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 11px;
+      box-sizing: border-box;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+    .mlib-item.selected .mlib-check { background: #1877f2; }
+    .mlib-play {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 22px;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+      pointer-events: none;
+    }
+    .mlib-view {
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+    .mlib-item:hover .mlib-view { opacity: 1; }
+    .mlib-empty {
+      grid-column: 1 / -1;
+      padding: 28px 12px;
+      text-align: center;
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .mlib-empty-icon { font-size: 30px; }
+    .mlib-footer { flex-wrap: wrap; }
+    .mlib-selection-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+    .mlib-selection-actions.hidden { display: none; }
+    .mlib-move-select {
+      height: 28px;
+      padding: 0 6px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 12px;
+      background: #fff;
+    }
+    /* Drag files/folders over the panel to add them. */
+    .mlib-drop-overlay {
+      display: none;
+      position: absolute;
+      inset: 6px;
+      border: 2px dashed #1877f2;
+      border-radius: 10px;
+      background: rgba(240, 246, 255, 0.94);
       color: #1877f2;
       font-weight: 700;
-    }
-    .inbox-media-library-item:not(.selected) .inbox-media-library-item-check {
-      display: none;
-    }
-    .inbox-media-library-item-remove {
-      position: absolute;
-      top: -6px;
-      right: -6px;
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      border: none;
-      background: #c0392b;
-      color: #fff;
-      cursor: pointer;
-      font-size: 12px;
-      line-height: 1;
-      padding: 0;
-      display: flex;
+      font-size: 14px;
       align-items: center;
       justify-content: center;
+      text-align: center;
+      padding: 20px;
+      pointer-events: none;
+      z-index: 7;
     }
+    .inbox-media-library-panel.is-dragover .mlib-drop-overlay { display: flex; }
     /* Shared "small thumbnail with a removable x overlay" look, reused by the pending-attachment
        strip above, the Manage Quick Replies add/edit form, and its results table. */
     .qr-image-thumb-wrap {
@@ -2308,6 +2474,14 @@
     .inbox-advise-btn:disabled {
       opacity: 0.6;
       cursor: default;
+    }
+    /* Super User only for now - everyone else sees it greyed out as "Under maintenance". */
+    .inbox-advise-btn.is-maintenance,
+    .inbox-advise-btn.is-maintenance:hover {
+      border-color: #d8dadf;
+      background: #f0f2f5;
+      color: #8a8d91;
+      cursor: not-allowed;
     }
     /* Custom dark tooltip (matches Meta's own hover tooltip) rather than the plain browser
        default - shown above the icon, with a small downward-pointing arrow. */
@@ -3424,6 +3598,10 @@
         border-radius: 14px;
       }
       .inbox-product-lookup-search input { font-size: 16px; }
+      /* Media library: no hover on touch, so the full-size button is always shown; 3 per row. */
+      .mlib-view { opacity: 1; }
+      .inbox-media-library-grid { grid-template-columns: repeat(3, 1fr); }
+      .mlib-move-select { font-size: 16px; }
 
       /* --- Customer & orders screen --- */
       body[data-inbox-view="info"] .inbox-customer-card {
@@ -3538,18 +3716,36 @@
               </div>
             </div>
             <div class="inbox-media-library-panel hidden" id="mediaLibraryPanel">
+              <!-- Folders + bulk actions: js/gmaConversations.js renderMediaLibrary / initMediaLibrary. -->
               <div class="inbox-quick-replies-header">
                 <span>Media library</span>
-                <button type="button" class="btn btn-secondary btn-sm" id="addMediaLibraryBtn" style="margin-left:auto;">+ Add</button>
+                <div class="mlib-add-wrap">
+                  <button type="button" class="btn btn-primary btn-sm" id="addMediaLibraryBtn">+ Add &#9662;</button>
+                  <div class="mlib-add-menu hidden" id="mediaLibraryAddMenu">
+                    <button type="button" data-add="files"><span>&#128247;</span><span><strong>Photos or videos</strong><small>Pick one or several files</small></span></button>
+                    <button type="button" data-add="folder"><span>&#128193;</span><span><strong>A whole folder</strong><small>Keeps the folder's name</small></span></button>
+                    <button type="button" data-add="new-folder"><span>&#10133;</span><span><strong>New empty folder</strong><small>Then add photos into it</small></span></button>
+                  </div>
+                </div>
               </div>
               <input type="file" id="mediaLibraryFileInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime" multiple class="hidden" />
-              <div id="mediaLibraryError" class="error-text hidden" style="padding:0 10px;"></div>
+              <input type="file" id="mediaLibraryFolderInput" webkitdirectory multiple class="hidden" />
+              <div class="mlib-folders" id="mediaLibraryFolders"></div>
+              <div class="mlib-folder-bar" id="mediaLibraryFolderBar"></div>
+              <div id="mediaLibraryStatus" class="mlib-status hidden"></div>
+              <div id="mediaLibraryError" class="error-text hidden" style="padding:0 12px;"></div>
               <div class="inbox-media-library-grid" id="mediaLibraryGrid">
                 <div class="inbox-empty-state">Loading...</div>
               </div>
-              <div class="inbox-product-lookup-footer">
-                <span class="muted" id="mediaLibrarySelectedCount">0 selected</span>
-                <button type="button" class="btn btn-primary btn-sm" id="useMediaLibrarySelectionBtn">Add to reply</button>
+              <div class="mlib-drop-overlay">Drop photos, videos or folders to add them</div>
+              <div class="inbox-product-lookup-footer mlib-footer">
+                <span class="muted" id="mediaLibrarySelectedCount">Tap photos to pick them</span>
+                <span class="mlib-selection-actions hidden" id="mediaLibrarySelectionActions">
+                  <button type="button" class="mlib-link-btn" id="mediaLibraryClearSelectionBtn">Clear</button>
+                  <select id="mediaLibraryMoveSelect" class="mlib-move-select" title="Move the picked items to a folder"></select>
+                  <button type="button" class="mlib-link-btn mlib-danger" id="mediaLibraryDeleteSelectedBtn">Delete</button>
+                </span>
+                <button type="button" class="btn btn-primary btn-sm" id="useMediaLibrarySelectionBtn" disabled>Add to reply</button>
               </div>
             </div>
             <div class="inbox-replying-to hidden" id="replyingToEl">
@@ -3910,7 +4106,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=ads2"></script>
+  <script src="js/gmaConversations.js?v=mlibfolders1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

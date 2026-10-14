@@ -3594,7 +3594,7 @@ async function submitNewOrder() {
 // replaced by the draft. Ignores the result if staff switched conversations while waiting.
 async function adviseReply() {
   const psid = selectedPsid;
-  if (!psid) return;
+  if (!psid || !currentSession?.isSuperUser) return; // Super User only while under maintenance
   const btn = document.getElementById('adviseReplyBtn');
   const label = document.getElementById('adviseReplyLabel');
   const input = document.getElementById('replyInput');
@@ -3994,8 +3994,21 @@ async function uploadAttachmentFiles(rawFiles) {
 // chatbot-media-library bucket (supabase_chatbot_media_library.sql), so - same as a Quick Reply/
 // Product List image - they're staged with path: null, keeping them out of the 60-day ad-hoc-
 // attachment cleanup cron, which only ever touches chatbot-attachments.
+//
+// Folders (supabase_chatbot_media_library_folders.sql): each item has an optional Folder name, shown
+// as chips across the top. "+ Add" uploads single photos/videos into the open folder, or a whole
+// folder from the computer into a library folder of the same name; files/folders can also be dragged
+// onto the panel. Picked items get numbered badges (the order they go into the reply) and can be
+// moved or deleted together. A folder exists while it has items - "New folder" keeps an empty one
+// locally until something is added to it.
+const MEDIA_LIBRARY_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime'];
+const MEDIA_LIBRARY_FOLDER_KEY = 'gmaMediaLibraryFolder';
+const MEDIA_LIBRARY_UPLOAD_CONCURRENCY = 3;
 let mediaLibraryItems = [];
-let mediaLibrarySelected = new Set();
+let mediaLibrarySelected = []; // ids, in the order picked
+let mediaLibraryView = 'all'; // 'all' | 'unsorted' | 'f:<folder name>'
+let mediaLibraryEmptyFolders = new Set();
+let mediaLibraryUploading = false;
 
 function toggleMediaLibraryPanel(show) {
   const panel = document.getElementById('mediaLibraryPanel');
@@ -4004,12 +4017,18 @@ function toggleMediaLibraryPanel(show) {
 
   panel.classList.toggle('hidden', !willShow);
   btn.classList.toggle('active', willShow);
+  toggleMediaLibraryAddMenu(false);
   if (willShow) {
     toggleQuickRepliesPanel(false);
     toggleProductLookupPanel(false);
+    try {
+      mediaLibraryView = localStorage.getItem(MEDIA_LIBRARY_FOLDER_KEY) || 'all';
+    } catch {
+      mediaLibraryView = 'all';
+    }
     loadMediaLibrary();
   } else {
-    mediaLibrarySelected.clear();
+    mediaLibrarySelected = [];
   }
 }
 
@@ -4026,130 +4045,481 @@ async function loadMediaLibrary() {
   }
 
   mediaLibraryItems = data || [];
+  const ids = new Set(mediaLibraryItems.map((item) => item.id));
+  mediaLibrarySelected = mediaLibrarySelected.filter((id) => ids.has(id));
+  mediaLibraryItems.forEach((item) => { if (item.folder) mediaLibraryEmptyFolders.delete(item.folder); });
+  if (mediaLibraryView.startsWith('f:') && !mediaLibraryFolderNames().includes(mediaLibraryView.slice(2))) {
+    setMediaLibraryView('all');
+  }
+  renderMediaLibrary();
+}
+
+function mediaLibraryFolderNames() {
+  const names = new Set(mediaLibraryEmptyFolders);
+  mediaLibraryItems.forEach((item) => { if (item.folder) names.add(item.folder); });
+  return Array.from(names).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+}
+
+// Folder the open view uploads into - null for All / Unsorted.
+function mediaLibraryCurrentFolder() {
+  return mediaLibraryView.startsWith('f:') ? mediaLibraryView.slice(2) : null;
+}
+
+function mediaLibraryItemsInView() {
+  if (mediaLibraryView === 'all') return mediaLibraryItems;
+  if (mediaLibraryView === 'unsorted') return mediaLibraryItems.filter((item) => !item.folder);
+  const folder = mediaLibraryCurrentFolder();
+  return mediaLibraryItems.filter((item) => item.folder === folder);
+}
+
+function setMediaLibraryView(view) {
+  mediaLibraryView = view;
+  try {
+    localStorage.setItem(MEDIA_LIBRARY_FOLDER_KEY, view);
+  } catch {
+    // per-viewer convenience only
+  }
+}
+
+function renderMediaLibrary() {
+  renderMediaLibraryFolders();
+  renderMediaLibraryFolderBar();
   renderMediaLibraryGrid();
+  renderMediaLibraryFooter();
+}
+
+function renderMediaLibraryFolders() {
+  const el = document.getElementById('mediaLibraryFolders');
+  const folders = mediaLibraryFolderNames();
+  const unsortedCount = mediaLibraryItems.filter((item) => !item.folder).length;
+  const folderIcon = '<svg viewBox="0 0 20 20" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.6l1.6 1.8H16a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5v-9Z"/></svg>';
+  const chip = (view, label, count, icon = '') => `
+    <button type="button" class="mlib-chip${mediaLibraryView === view ? ' active' : ''}" data-view="${escapeHtml(view)}">
+      ${icon}<span class="mlib-chip-label">${escapeHtml(label)}</span><span class="mlib-chip-count">${count}</span>
+    </button>`;
+
+  el.innerHTML = [
+    chip('all', 'All', mediaLibraryItems.length),
+    ...folders.map((name) => chip(`f:${name}`, name, mediaLibraryItems.filter((item) => item.folder === name).length, folderIcon)),
+    folders.length > 0 && unsortedCount > 0 ? chip('unsorted', 'Unsorted', unsortedCount) : '',
+    '<button type="button" class="mlib-chip mlib-chip-new" id="mediaLibraryNewFolderChip">+ New folder</button>'
+  ].join('');
+
+  el.querySelectorAll('.mlib-chip[data-view]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setMediaLibraryView(btn.dataset.view);
+      renderMediaLibrary();
+    });
+  });
+  document.getElementById('mediaLibraryNewFolderChip').addEventListener('click', createMediaLibraryFolder);
+  el.querySelector('.mlib-chip.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function renderMediaLibraryFolderBar() {
+  const el = document.getElementById('mediaLibraryFolderBar');
+  const inView = mediaLibraryItemsInView();
+  const folder = mediaLibraryCurrentFolder();
+  const title = folder || (mediaLibraryView === 'unsorted' ? 'Unsorted' : 'All media');
+  const allPicked = inView.length > 0 && inView.every((item) => mediaLibrarySelected.includes(item.id));
+
+  el.innerHTML = `
+    <span class="mlib-folder-title">${escapeHtml(title)}</span>
+    <span class="muted">${inView.length} item${inView.length === 1 ? '' : 's'}</span>
+    <span class="mlib-folder-actions">
+      ${inView.length > 0 ? `<button type="button" class="mlib-link-btn" id="mediaLibrarySelectAllBtn">${allPicked ? 'Unselect all' : 'Select all'}</button>` : ''}
+      ${folder ? `
+        <button type="button" class="mlib-link-btn" id="mediaLibraryRenameFolderBtn">Rename</button>
+        <button type="button" class="mlib-link-btn mlib-danger" id="mediaLibraryDeleteFolderBtn">Delete folder</button>` : ''}
+    </span>`;
+
+  document.getElementById('mediaLibrarySelectAllBtn')?.addEventListener('click', () => {
+    const viewIds = inView.map((item) => item.id);
+    mediaLibrarySelected = allPicked
+      ? mediaLibrarySelected.filter((id) => !viewIds.includes(id))
+      : [...mediaLibrarySelected, ...viewIds.filter((id) => !mediaLibrarySelected.includes(id))];
+    renderMediaLibrary();
+  });
+  document.getElementById('mediaLibraryRenameFolderBtn')?.addEventListener('click', renameMediaLibraryFolder);
+  document.getElementById('mediaLibraryDeleteFolderBtn')?.addEventListener('click', deleteMediaLibraryFolder);
 }
 
 function renderMediaLibraryGrid() {
   const gridEl = document.getElementById('mediaLibraryGrid');
-  const countEl = document.getElementById('mediaLibrarySelectedCount');
-  countEl.textContent = `${mediaLibrarySelected.size} selected`;
+  const inView = mediaLibraryItemsInView();
 
-  if (mediaLibraryItems.length === 0) {
-    gridEl.innerHTML = '<div class="inbox-empty-state">No media saved yet - click + Add.</div>';
+  if (inView.length === 0) {
+    gridEl.innerHTML = `
+      <div class="mlib-empty">
+        <div class="mlib-empty-icon">&#128444;&#65039;</div>
+        <div>${mediaLibraryItems.length === 0 ? 'Your media library is empty.' : 'Nothing in this folder yet.'}</div>
+        <div class="muted">Use <strong>+ Add</strong> for photos, videos or a whole folder - or drag them here.</div>
+      </div>`;
     return;
   }
 
-  gridEl.innerHTML = mediaLibraryItems.map((item) => `
-    <div class="inbox-media-library-item${mediaLibrarySelected.has(item.id) ? ' selected' : ''}" data-id="${item.id}">
-      <span class="inbox-media-library-item-check">&#10003;</span>
-      ${item.media_type === 'video'
-        ? '<span class="inbox-media-library-video-placeholder">&#127909;</span>'
-        : `<img src="${escapeHtml(item.media_url)}" alt="" />`}
-      <button type="button" class="inbox-media-library-item-remove" data-id="${item.id}" title="Remove from library">&times;</button>
-    </div>
-  `).join('');
+  gridEl.innerHTML = inView.map((item) => {
+    const order = mediaLibrarySelected.indexOf(item.id) + 1;
+    const name = item.file_name || (item.media_type === 'video' ? 'Video' : 'Photo');
+    return `
+      <div class="mlib-item${order ? ' selected' : ''}" data-id="${item.id}" title="${escapeHtml(name)}${item.folder && mediaLibraryView === 'all' ? ` (${escapeHtml(item.folder)})` : ''}">
+        ${item.media_type === 'video'
+          ? `<video src="${escapeHtml(item.media_url)}#t=0.1" muted playsinline preload="metadata"></video><span class="mlib-play">&#9654;</span>`
+          : `<img src="${escapeHtml(item.media_url)}" alt="" loading="lazy" />`}
+        <span class="mlib-check">${order || ''}</span>
+        <a class="mlib-view" href="${escapeHtml(item.media_url)}" target="_blank" rel="noopener" title="Open full size">&#10530;</a>
+      </div>`;
+  }).join('');
 
-  gridEl.querySelectorAll('.inbox-media-library-item').forEach((el) => {
+  gridEl.querySelectorAll('.mlib-item').forEach((el) => {
     el.addEventListener('click', () => toggleMediaLibraryItemSelected(Number(el.dataset.id)));
   });
-  gridEl.querySelectorAll('.inbox-media-library-item-remove').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteMediaLibraryItem(Number(btn.dataset.id));
-    });
-  });
+  gridEl.querySelectorAll('.mlib-view').forEach((a) => a.addEventListener('click', (e) => e.stopPropagation()));
+}
+
+function renderMediaLibraryFooter() {
+  const count = mediaLibrarySelected.length;
+  document.getElementById('mediaLibrarySelectedCount').textContent = count
+    ? `${count} selected`
+    : 'Tap photos to pick them';
+  document.getElementById('mediaLibrarySelectionActions').classList.toggle('hidden', count === 0);
+
+  const moveSelect = document.getElementById('mediaLibraryMoveSelect');
+  moveSelect.innerHTML = [
+    '<option value="">Move to...</option>',
+    '<option value="unsorted">Unsorted (no folder)</option>',
+    ...mediaLibraryFolderNames().map((name) => `<option value="f:${escapeHtml(name)}">${escapeHtml(name)}</option>`),
+    '<option value="new">+ New folder...</option>'
+  ].join('');
+
+  const useBtn = document.getElementById('useMediaLibrarySelectionBtn');
+  useBtn.disabled = count === 0;
+  useBtn.textContent = count ? `Add ${count} to reply` : 'Add to reply';
 }
 
 function toggleMediaLibraryItemSelected(id) {
-  if (mediaLibrarySelected.has(id)) {
-    mediaLibrarySelected.delete(id);
+  const index = mediaLibrarySelected.indexOf(id);
+  if (index >= 0) {
+    mediaLibrarySelected.splice(index, 1);
   } else {
-    mediaLibrarySelected.add(id);
+    mediaLibrarySelected.push(id);
   }
-  renderMediaLibraryGrid();
+  renderMediaLibrary();
 }
 
-async function deleteMediaLibraryItem(id) {
-  if (!confirm('Remove this item from the media library?')) return;
+function promptMediaLibraryFolderName(message, current = '') {
+  const name = (prompt(message, current) || '').trim().slice(0, 100);
+  return name || null;
+}
 
-  const { error } = await supabaseClient.rpc('admin_delete_chatbot_media_item', {
+function createMediaLibraryFolder() {
+  const name = promptMediaLibraryFolderName('New folder name (e.g. "Shrimps", "Tank setups"):');
+  if (!name) return;
+  if (!mediaLibraryFolderNames().includes(name)) mediaLibraryEmptyFolders.add(name);
+  setMediaLibraryView(`f:${name}`);
+  renderMediaLibrary();
+}
+
+async function renameMediaLibraryFolder() {
+  const oldName = mediaLibraryCurrentFolder();
+  if (!oldName) return;
+  const newName = promptMediaLibraryFolderName('Rename folder to:', oldName);
+  if (!newName || newName === oldName) return;
+
+  if (mediaLibraryEmptyFolders.has(oldName)) {
+    mediaLibraryEmptyFolders.delete(oldName);
+    mediaLibraryEmptyFolders.add(newName);
+  } else {
+    const { error } = await supabaseClient.rpc('admin_rename_chatbot_media_folder', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_old_folder: oldName,
+      p_new_folder: newName
+    });
+    if (error) {
+      alert(`Could not rename: ${error.message}`);
+      return;
+    }
+  }
+  setMediaLibraryView(`f:${newName}`);
+  await loadMediaLibrary();
+}
+
+// Deleting a folder never deletes its photos - they just go back to Unsorted.
+async function deleteMediaLibraryFolder() {
+  const name = mediaLibraryCurrentFolder();
+  if (!name) return;
+  const count = mediaLibraryItems.filter((item) => item.folder === name).length;
+  if (count > 0 && !confirm(`Delete the folder "${name}"?\n\nIts ${count} item${count === 1 ? '' : 's'} stay in the library under Unsorted.`)) return;
+
+  if (count > 0) {
+    const { error } = await supabaseClient.rpc('admin_rename_chatbot_media_folder', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_old_folder: name,
+      p_new_folder: null
+    });
+    if (error) {
+      alert(`Could not delete folder: ${error.message}`);
+      return;
+    }
+  }
+  mediaLibraryEmptyFolders.delete(name);
+  setMediaLibraryView(count > 0 ? 'unsorted' : 'all');
+  await loadMediaLibrary();
+}
+
+async function onMediaLibraryMoveSelectChange() {
+  const select = document.getElementById('mediaLibraryMoveSelect');
+  const value = select.value;
+  select.value = '';
+  if (!value || mediaLibrarySelected.length === 0) return;
+
+  let folder = null;
+  if (value === 'new') {
+    folder = promptMediaLibraryFolderName('Move to a new folder named:');
+    if (!folder) return;
+  } else if (value.startsWith('f:')) {
+    folder = value.slice(2);
+  }
+
+  const { error } = await supabaseClient.rpc('admin_move_chatbot_media_items', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
-    p_media_id: id
+    p_media_ids: mediaLibrarySelected,
+    p_folder: folder
+  });
+  if (error) {
+    alert(`Could not move: ${error.message}`);
+    return;
+  }
+  mediaLibrarySelected = [];
+  setMediaLibraryView(folder ? `f:${folder}` : 'unsorted');
+  await loadMediaLibrary();
+}
+
+async function deleteSelectedMediaLibraryItems() {
+  const count = mediaLibrarySelected.length;
+  if (count === 0) return;
+  if (!confirm(`Remove ${count} item${count === 1 ? '' : 's'} from the media library?`)) return;
+
+  const { error } = await supabaseClient.rpc('admin_delete_chatbot_media_items', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_media_ids: mediaLibrarySelected
   });
   if (error) {
     alert(`Could not remove: ${error.message}`);
     return;
   }
-
-  mediaLibrarySelected.delete(id);
+  mediaLibrarySelected = [];
   await loadMediaLibrary();
 }
 
-async function onMediaLibraryFileChange() {
+function toggleMediaLibraryAddMenu(show) {
+  const menu = document.getElementById('mediaLibraryAddMenu');
+  const willShow = show === undefined ? menu.classList.contains('hidden') : show;
+  menu.classList.toggle('hidden', !willShow);
+}
+
+// "+ Add > Photos or videos" - goes into the open folder (Unsorted from All).
+function onMediaLibraryFileChange() {
   const input = document.getElementById('mediaLibraryFileInput');
-  const errorEl = document.getElementById('mediaLibraryError');
-  const addBtn = document.getElementById('addMediaLibraryBtn');
   const files = Array.from(input.files || []);
   input.value = '';
-  if (files.length === 0) return;
+  uploadMediaLibraryFiles(files.map((file) => ({ file, folder: null })));
+}
+
+// "+ Add > A whole folder" - every photo/video in it (subfolders included) goes into a library
+// folder named after the chosen folder.
+function onMediaLibraryFolderInputChange() {
+  const input = document.getElementById('mediaLibraryFolderInput');
+  const files = Array.from(input.files || []);
+  input.value = '';
+  uploadMediaLibraryFiles(files.map((file) => ({
+    file,
+    folder: (file.webkitRelativePath || '').split('/')[0] || null
+  })));
+}
+
+// Dropped files go into the open folder; a dropped folder becomes a library folder of its own.
+// webkitGetAsEntry has to be read synchronously inside the drop event, before anything awaits.
+async function mediaLibraryEntriesFromDrop(dataTransfer) {
+  const entries = Array.from(dataTransfer.items || [])
+    .map((item) => (item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (entries.length === 0) {
+    return Array.from(dataTransfer.files || []).map((file) => ({ file, folder: null }));
+  }
+
+  const out = [];
+  const walk = async (entry, topFolder) => {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      out.push({ file, folder: topFolder });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do {
+        batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        for (const child of batch) await walk(child, topFolder ?? entry.name);
+      } while (batch.length > 0);
+    }
+  };
+  for (const entry of entries) await walk(entry, null);
+  return out;
+}
+
+async function uploadMediaLibraryFile(file, folder) {
+  const { data: uploadRows, error: signError } = await supabaseClient.rpc('admin_create_chatbot_media_upload', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_file_name: file.name
+  });
+  const uploadInfo = uploadRows && uploadRows[0];
+  if (signError || !uploadInfo) throw signError || new Error('Could not prepare upload.');
+
+  const { error: uploadError } = await supabaseClient.storage
+    .from('chatbot-media-library')
+    .uploadToSignedUrl(uploadInfo.storage_path, uploadInfo.upload_token, file);
+  if (uploadError) throw uploadError;
+
+  const { error: addError } = await supabaseClient.rpc('admin_add_chatbot_media_item', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_storage_path: uploadInfo.storage_path,
+    p_media_url: uploadInfo.public_url,
+    p_media_type: file.type.startsWith('video/') ? 'video' : 'image',
+    p_file_name: file.name,
+    p_folder: folder
+  });
+  if (addError) throw addError;
+}
+
+// entries: [{ file, folder }] - folder null means "the open folder". Skips (rather than aborts on)
+// anything that isn't a supported photo/video or is over 25 MB, uploads a few at a time, and
+// reports a summary when done.
+async function uploadMediaLibraryFiles(entries) {
+  const errorEl = document.getElementById('mediaLibraryError');
+  const statusEl = document.getElementById('mediaLibraryStatus');
+  const addBtn = document.getElementById('addMediaLibraryBtn');
+  if (entries.length === 0 || mediaLibraryUploading) return;
 
   errorEl.classList.add('hidden');
-
-  const oversized = files.find((f) => f.size > ATTACHMENT_MAX_BYTES);
-  if (oversized) {
-    errorEl.textContent = `"${oversized.name}" is too large - max 25 MB per file.`;
+  const openFolder = mediaLibraryCurrentFolder();
+  const valid = entries
+    .filter(({ file }) => MEDIA_LIBRARY_TYPES.includes(file.type) && file.size <= ATTACHMENT_MAX_BYTES)
+    .map(({ file, folder }) => ({ file, folder: folder ?? openFolder }));
+  const skipped = entries.length - valid.length;
+  if (valid.length === 0) {
+    errorEl.textContent = 'Nothing to add - only photos/videos (JPG, PNG, WEBP, GIF, MP4, MOV) up to 25 MB each.';
     errorEl.classList.remove('hidden');
     return;
   }
 
+  mediaLibraryUploading = true;
   addBtn.disabled = true;
-  try {
-    for (const file of files) {
-      const type = file.type.startsWith('video/') ? 'video' : 'image';
+  statusEl.classList.remove('hidden');
+  let done = 0;
+  const failures = [];
+  const showProgress = () => {
+    statusEl.innerHTML = `<span class="mlib-spinner"></span> Uploading ${Math.min(done + 1, valid.length)} of ${valid.length}...`;
+  };
+  showProgress();
 
-      const { data: uploadRows, error: signError } = await supabaseClient.rpc('admin_create_chatbot_media_upload', {
-        p_admin_username: currentSession.username,
-        p_admin_password: currentSession.password,
-        p_file_name: file.name
-      });
-      const uploadInfo = uploadRows && uploadRows[0];
-      if (signError || !uploadInfo) throw signError || new Error('Could not prepare upload.');
-
-      const { error: uploadError } = await supabaseClient.storage
-        .from('chatbot-media-library')
-        .uploadToSignedUrl(uploadInfo.storage_path, uploadInfo.upload_token, file);
-      if (uploadError) throw uploadError;
-
-      const { error: addError } = await supabaseClient.rpc('admin_add_chatbot_media_item', {
-        p_admin_username: currentSession.username,
-        p_admin_password: currentSession.password,
-        p_storage_path: uploadInfo.storage_path,
-        p_media_url: uploadInfo.public_url,
-        p_media_type: type,
-        p_file_name: file.name
-      });
-      if (addError) throw addError;
+  const queue = [...valid];
+  const worker = async () => {
+    while (queue.length > 0) {
+      const { file, folder } = queue.shift();
+      try {
+        await uploadMediaLibraryFile(file, folder);
+      } catch (err) {
+        failures.push(`${file.name}: ${err?.message || 'upload failed'}`);
+      }
+      done += 1;
+      showProgress();
     }
-  } catch (err) {
-    errorEl.textContent = err?.message || 'Could not add to media library.';
+  };
+  await Promise.all(Array.from({ length: MEDIA_LIBRARY_UPLOAD_CONCURRENCY }, worker));
+
+  mediaLibraryUploading = false;
+  addBtn.disabled = false;
+  const added = valid.length - failures.length;
+  statusEl.textContent = `Added ${added} item${added === 1 ? '' : 's'}${skipped ? ` - skipped ${skipped} (not a photo/video, or over 25 MB)` : ''}.`;
+  setTimeout(() => statusEl.classList.add('hidden'), 5000);
+  if (failures.length > 0) {
+    errorEl.textContent = `Could not add ${failures.length}: ${failures.slice(0, 3).join('; ')}${failures.length > 3 ? '...' : ''}`;
     errorEl.classList.remove('hidden');
   }
 
-  addBtn.disabled = false;
+  // A single uploaded computer folder - open it so staff see what they just added.
+  const newFolders = Array.from(new Set(valid.map((v) => v.folder).filter(Boolean)));
+  if (newFolders.length === 1 && newFolders[0] !== openFolder) setMediaLibraryView(`f:${newFolders[0]}`);
   await loadMediaLibrary();
 }
 
-// Adds every currently-checked library item into the reply box's pending-attachment strip (same
-// staging area a Quick Reply's photo(s) load into) - path: null so, same as a Quick Reply/Product
-// List image, it's never mistaken for a one-off attachment the cleanup cron should delete.
+function initMediaLibrary() {
+  const panel = document.getElementById('mediaLibraryPanel');
+  document.getElementById('toggleMediaLibraryBtn').addEventListener('click', () => toggleMediaLibraryPanel());
+  document.getElementById('addMediaLibraryBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleMediaLibraryAddMenu();
+  });
+  document.getElementById('mediaLibraryAddMenu').addEventListener('click', (e) => {
+    const action = e.target.closest('[data-add]')?.dataset.add;
+    if (!action) return;
+    toggleMediaLibraryAddMenu(false);
+    if (action === 'files') document.getElementById('mediaLibraryFileInput').click();
+    if (action === 'folder') document.getElementById('mediaLibraryFolderInput').click();
+    if (action === 'new-folder') createMediaLibraryFolder();
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#mediaLibraryAddMenu')) toggleMediaLibraryAddMenu(false);
+  });
+  document.getElementById('mediaLibraryFileInput').addEventListener('change', onMediaLibraryFileChange);
+  document.getElementById('mediaLibraryFolderInput').addEventListener('change', onMediaLibraryFolderInputChange);
+  document.getElementById('useMediaLibrarySelectionBtn').addEventListener('click', useMediaLibrarySelection);
+  document.getElementById('mediaLibraryClearSelectionBtn').addEventListener('click', () => {
+    mediaLibrarySelected = [];
+    renderMediaLibrary();
+  });
+  document.getElementById('mediaLibraryMoveSelect').addEventListener('change', onMediaLibraryMoveSelectChange);
+  document.getElementById('mediaLibraryDeleteSelectedBtn').addEventListener('click', deleteSelectedMediaLibraryItems);
+
+  let dragDepth = 0;
+  const isFileDrag = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+  panel.addEventListener('dragenter', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    panel.classList.add('is-dragover');
+  });
+  panel.addEventListener('dragover', (e) => {
+    if (isFileDrag(e)) e.preventDefault();
+  });
+  panel.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) panel.classList.remove('is-dragover');
+  });
+  panel.addEventListener('drop', async (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    panel.classList.remove('is-dragover');
+    uploadMediaLibraryFiles(await mediaLibraryEntriesFromDrop(e.dataTransfer));
+  });
+}
+
+// Adds every picked library item (in the order picked) into the reply box's pending-attachment strip
+// (same staging area a Quick Reply's photo(s) load into) - path: null so, same as a Quick Reply/
+// Product List image, it's never mistaken for a one-off attachment the cleanup cron should delete.
 function useMediaLibrarySelection() {
-  const selected = mediaLibraryItems.filter((item) => mediaLibrarySelected.has(item.id));
+  const byId = new Map(mediaLibraryItems.map((item) => [item.id, item]));
+  const selected = mediaLibrarySelected.map((id) => byId.get(id)).filter(Boolean);
   if (selected.length === 0) return;
 
   const toAdd = selected.map((item) => ({ url: item.media_url, path: null, type: item.media_type }));
   setPendingReplyImages([...pendingReplyImageUrls, ...toAdd]);
-  mediaLibrarySelected.clear();
+  mediaLibrarySelected = [];
   toggleMediaLibraryPanel(false);
   document.getElementById('replyInput').focus();
 }
@@ -6591,10 +6961,7 @@ function initDeliveryCalendar() {
   document.getElementById('sendLocationPinBtn').addEventListener('click', insertLocationPinLink);
   document.getElementById('productLookupSearchInput').addEventListener('input', (e) => onProductLookupSearchInput(e.target.value));
   document.getElementById('sendProductListBtn').addEventListener('click', sendProductList);
-  document.getElementById('toggleMediaLibraryBtn').addEventListener('click', () => toggleMediaLibraryPanel());
-  document.getElementById('addMediaLibraryBtn').addEventListener('click', () => document.getElementById('mediaLibraryFileInput').click());
-  document.getElementById('mediaLibraryFileInput').addEventListener('change', onMediaLibraryFileChange);
-  document.getElementById('useMediaLibrarySelectionBtn').addEventListener('click', useMediaLibrarySelection);
+  initMediaLibrary();
   document.getElementById('closeVariantPickerModalBtn').addEventListener('click', closeVariantPickerModal);
   document.getElementById('closeCustomStickerModalBtn').addEventListener('click', closeCustomStickerModal);
   document.getElementById('cancelCustomStickerBtn').addEventListener('click', closeCustomStickerModal);
@@ -6633,7 +7000,16 @@ function initDeliveryCalendar() {
     composerToolsExpanded = true;
     autoResizeReplyInput();
   });
-  document.getElementById('adviseReplyBtn').addEventListener('click', adviseReply);
+  const adviseBtn = document.getElementById('adviseReplyBtn');
+  if (session.isSuperUser) {
+    adviseBtn.addEventListener('click', adviseReply);
+  } else {
+    // Advise reply is Super User only for now - everyone else sees it tagged as under maintenance.
+    adviseBtn.disabled = true;
+    adviseBtn.classList.add('is-maintenance');
+    adviseBtn.title = 'Advise reply is under maintenance.';
+    document.getElementById('adviseReplyLabel').textContent = 'Under maintenance';
+  }
   document.getElementById('replyingToCloseBtn').addEventListener('click', clearReplyTo);
   document.getElementById('replyInput').addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && replyingTo) {
