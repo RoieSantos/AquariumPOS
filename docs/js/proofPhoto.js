@@ -41,6 +41,13 @@ function ensureProofPhotoDialog() {
           <span id="proofPhotoPickText">&#128247; Take a photo (required)</span>
         </label>
         <input type="file" id="proofPhotoInput" accept="image/*" capture="environment" class="hidden" />
+        <!-- Per "can we add choose from gallery?" / "release/ship for dispatchers" - same input without
+             capture, so the phone offers its photo library instead of the camera. Release / Ship only
+             (allowGallery) - Production Done stays camera-only. -->
+        <div id="proofPhotoGalleryRow" class="hidden" style="text-align:center; margin-top:8px;">
+          <label class="bc-btn" for="proofPhotoGalleryInput">&#128444; Choose from gallery</label>
+        </div>
+        <input type="file" id="proofPhotoGalleryInput" accept="image/*" class="hidden" />
       </div>
       <div class="bc-dialog-foot oo-confirm-foot">
         <p id="proofPhotoError" class="bc-dialog-msg error-text hidden"></p>
@@ -73,13 +80,14 @@ async function uploadProofPhoto(refId, file) {
   return { url: public_url, storagePath: storage_path };
 }
 
-function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = '', refId, label }) {
+function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = '', refId, label, allowGallery = false }) {
   ensureProofPhotoDialog();
   const dialog = document.getElementById('proofPhotoDialog');
   const panel = dialog.querySelector('.oo-proof-dialog');
   const okBtn = document.getElementById('proofPhotoOkBtn');
   const cancelBtn = document.getElementById('proofPhotoCancelBtn');
   const input = document.getElementById('proofPhotoInput');
+  const galleryInput = document.getElementById('proofPhotoGalleryInput');
   const pick = dialog.querySelector('.oo-proof-pick');
   const preview = document.getElementById('proofPhotoPreview');
   const pickText = document.getElementById('proofPhotoPickText');
@@ -95,6 +103,8 @@ function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = 
   panel.classList.remove('is-done', 'is-ship', 'is-undo');
   if (tone) panel.classList.add(tone);
   input.value = '';
+  galleryInput.value = '';
+  document.getElementById('proofPhotoGalleryRow').classList.toggle('hidden', !allowGallery);
   preview.classList.add('hidden');
   preview.removeAttribute('src');
   pick.classList.remove('has-photo');
@@ -109,12 +119,15 @@ function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = 
       cancelBtn.removeEventListener('click', onCancel);
       dialog.removeEventListener('click', onBackdrop);
       input.removeEventListener('change', onPick);
+      galleryInput.removeEventListener('change', onPick);
       document.removeEventListener('keydown', onKey, true);
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       resolve(answer);
     };
-    const onPick = () => {
-      file = input.files && input.files[0] || null;
+    // Camera or gallery - whichever input just changed.
+    const onPick = (e) => {
+      const src = e?.target || input;
+      file = src.files && src.files[0] || null;
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       previewUrl = file ? URL.createObjectURL(file) : null;
       preview.classList.toggle('hidden', !file);
@@ -164,6 +177,7 @@ function confirmWithPhotoDialog({ caption, title, message, confirmLabel, tone = 
     cancelBtn.addEventListener('click', onCancel);
     dialog.addEventListener('click', onBackdrop);
     input.addEventListener('change', onPick);
+    galleryInput.addEventListener('change', onPick);
     document.addEventListener('keydown', onKey, true);
 
     okBtn.disabled = true;

@@ -1360,7 +1360,8 @@ function confirmAction({ caption = 'PLEASE CONFIRM', title, message, messageHtml
 async function confirmWithPhoto(opts) {
   const kind = /^Production Done/.test(opts.label || '') ? 'production' : 'release';
   lastProofPhoto = null; // only a photo taken in THIS dialog may be posted (postShipPhotoToFacebook)
-  if (await proofPhotoRequired(kind)) return confirmWithPhotoDialog(opts);
+  // Release / Ship may use a photo from the gallery (per "release/ship for dispatchers"); Production Done can't.
+  if (await proofPhotoRequired(kind)) return confirmWithPhotoDialog({ ...opts, allowGallery: kind === 'release' });
   const { caption, title, message, confirmLabel, tone } = opts;
   return confirmAction({ caption, title, message: message.replace(/Take a photo of [^.]*first\.\s*/, '').trim(), confirmLabel, tone });
 }
@@ -1528,8 +1529,13 @@ async function saveWalkinCustomer() {
 // Delivery Fee on the order card - per "can we allow delivery fee to edit even if the status is confirmed".
 // Portal orders only (AO- numbers, made by Confirm Order - a Pancake order's fee comes from Pancake), for
 // delivery, while still open. The server checks all of it again (Source = 'Portal').
+// Any open delivery order, Pancake ones included - per "if an order id is detected in the portal..
+// change the details to the portal directly no need to change the pancake". The portal's value is kept
+// over every Pancake sync (supabase_online_order_shipping_details_sync.sql step 0); Pancake isn't changed.
 function canEditCardDeliveryFee(o) {
-  return isOpenPortalOrder(o) && Boolean(o.for_delivery);
+  if (!o || hidePrices() || myAssignmentsLocked || !o.for_delivery) return false;
+  return !['shipped', 'delivered', 'completed', 'cancelled', 'canceled', 'returned', 'returning']
+    .includes((o.status || '').trim().toLowerCase());
 }
 
 // Warehouse on the card - per "can you also allow the confirmed order edit the warehouse". Portal (AO-)
@@ -1619,7 +1625,7 @@ async function saveCardDeliveryFee() {
 // Delivery tab's Shipping Address / Shipping Contact Number - per "can we apply that to the Address
 // too? add a new field Shipping address, Shipping contact number". Read via
 // admin_get_order_shipping_details (ShippingPhone isn't in the list); editable on the same orders as the
-// fee (canEditCardDeliveryFee - open portal AO- delivery orders). Hidden from maker-only accounts.
+// fee (canEditCardDeliveryFee - any open delivery order, Pancake ones included). Hidden from maker-only accounts.
 // The inputs aren't refilled on a refresh of the same order, so typing isn't wiped (same as the fee).
 async function fillShippingFields(o) {
   const show = !hidePrices();
@@ -2377,7 +2383,7 @@ function orderCardHtml(o) {
   // production") - see nextStepForOnlineOrderStaff. Stock status is prefetched for every card in loadOrders.
   const step = currentSession?.isOnlineOrderStaff ? nextStepFor(o) : null;
   const showToShipBtn = !toShipProductionBlock(o) && step?.action !== 'ship-stock'
-    && (isPrintedOrder(o) || (isPortalOnlyOrder(o) && canToShipOrder(o)));
+    && (isPrintedOrder(o) || canToShipOrder(o));
   const stepBtn = step
     ? `<button type="button" class="btn ${step.action === 'ship-stock' && !step.disabled ? 'btn-primary' : 'btn-secondary'} btn-sm status-next-step-btn" data-action="${escapeHtml(step.action)}" title="${escapeHtml(step.title || '')}"${step.disabled ? ' disabled' : ''}>${escapeHtml(step.label)}</button>`
     : '';
@@ -3852,7 +3858,11 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   // Store Managers can To Ship their own branch's orders even while the general button is off - per
   // "can we allow the store manager to-ship the order". They always pick serials at their own store,
   // and a non-production store can't create new ones (same as the desktop's To Ship).
-  const storeManagerShip = !readyToShip && isStoreManagerShipper();
+  // A Super User's To Ship (from Confirmed / Printed / Assigned, any branch) goes through the same RPC -
+  // admin_store_manager_to_ship_online_order already accepts Super Users and isn't branch-scoped for
+  // them. Portal-only (AO-) orders keep their own path below.
+  const superUserShip = !readyToShip && !!currentSession?.isSuperUser && !isPortalOnlyOrder(findFlatOrder(orderId));
+  const storeManagerShip = !readyToShip && (isStoreManagerShipper() || superUserShip);
   if (storeManagerShip) storeManagerShipOrderIds.add(String(orderId));
   else storeManagerShipOrderIds.delete(String(orderId));
   // Portal-only orders can't go through the POS at all, so their To Ship runs here regardless of
@@ -3860,7 +3870,7 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   const portalShip = !storeManagerShip && !fromStock && isPortalOnlyOrder(findFlatOrder(orderId));
   if (portalShip) portalShipOrderIds.add(String(orderId));
   else portalShipOrderIds.delete(String(orderId));
-  if (storeManagerShip) {
+  if (storeManagerShip && !superUserShip) {
     const order = findFlatOrder(orderId);
     if (currentSession.warehouseName && order && (order.warehouse_name || '') !== currentSession.warehouseName) {
       alert(`Order ${orderId} belongs to ${order.warehouse_name || 'another branch'} - you can only To Ship orders for ${currentSession.warehouseName}.`);
@@ -3869,7 +3879,7 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
   }
   // Online Order Staff (not a Production Manager): in-stock serials only, one for every unit.
   shipRequiresAllSerials = !!currentSession.isOnlineOrderStaff && !canAssignOrders();
-  shipAllowsNewSerials = !(storeManagerShip && !currentSessionIsProductionWarehouse) && !shipRequiresAllSerials;
+  shipAllowsNewSerials = !(storeManagerShip && !superUserShip && !currentSessionIsProductionWarehouse) && !shipRequiresAllSerials;
 
   // Ready to Ship (the Production Manager's next-step button on a Production Done order) runs this
   // real flow even while the general To Ship button is still switched off - see nextStepFor.
@@ -4330,7 +4340,10 @@ function canToShipOrder(o) {
   if (toShipProductionBlock(o)) return false;
   if (isPrintedOrder(o)) return true;
   if (isPortalOnlyOrder(o) && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase())) return true;
-  return isStoreManagerShipper() && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase());
+  // Per "allow super user to mark a confirmed order to-ship" - a Super User too, any branch (same RPC
+  // as the Store Manager's, which already accepts Super Users - see handleToShipClick).
+  return (isStoreManagerShipper() || !!currentSession?.isSuperUser)
+    && ['confirmed', 'submitted'].includes((o?.status || '').trim().toLowerCase());
 }
 
 function updateOrderActionState() {
@@ -4836,7 +4849,7 @@ function fillOrderCardHeader(o) {
   setCardText('ocDeliveryFee', o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '');
   setCardText('ocPrintNote', o.note_print);
   document.getElementById('ocDeliveryFeeRow').classList.toggle('hidden', hidePrices());
-  // Open portal (AO-) delivery orders: the fee is an input instead (admin_set_portal_order_delivery_fee).
+  // Open delivery orders (Pancake ones too): the fee is an input instead (admin_set_portal_order_delivery_fee).
   const feeEditable = canEditCardDeliveryFee(o);
   const feeEdit = document.getElementById('ocDeliveryFeeEdit');
   document.getElementById('ocDeliveryFee').classList.toggle('hidden', feeEditable);

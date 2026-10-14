@@ -2287,8 +2287,8 @@ async function openFixStopDetails(stop, droppedPin = null) {
     askDetails: true,
     title: 'Edit Delivery Details',
     message: droppedPin
-      ? `Move order <strong>${stop.order_id}</strong> to the new pin? The address below was looked up from where you dropped it - edit it if needed (e.g. add a unit no. or landmark), then Continue. For a portal (AO-) order this also updates the order; it never changes anything in Pancake.`
-      : `Update the delivery details shown for order <strong>${stop.order_id}</strong>. For a portal (AO-) order, a changed address, contact number or fee also updates the order itself. Nothing is changed in Pancake.`,
+      ? `Move order <strong>${stop.order_id}</strong> to the new pin? The address below was looked up from where you dropped it - edit it if needed (e.g. add a unit no. or landmark), then Continue. This also updates the order in the portal; nothing is changed in Pancake.`
+      : `Update the delivery details shown for order <strong>${stop.order_id}</strong>. A changed address, contact number or fee also updates the order in the portal. Nothing is changed in Pancake.`,
     prefillAddress: droppedPin ? (droppedPin.address || currentAddress || '') : (currentAddress || ''),
     pinPicker,
     stopPin: hasPin ? { lat: Number(stop.latitude), lng: Number(stop.longitude) } : null,
@@ -2321,9 +2321,11 @@ async function openFixStopDetails(stop, droppedPin = null) {
 // itself?" and "can we apply that to the Address too? add a new field Shipping address, Shipping
 // contact number" - a changed address / contact number / typed fee in Edit Details also updates a
 // portal (AO-) order (admin_set_portal_order_shipping_details / admin_set_portal_order_delivery_fee,
-// supabase_online_order_shipping_details_sync.sql - the server re-checks portal source, delivery order,
-// still open). A Pancake order can't be changed from here (the next sync would overwrite it), so that
-// only gets a reminder. The stop itself is already saved either way.
+// supabase_online_order_shipping_details_sync.sql - the server re-checks delivery order, still open).
+// Per "if an order id is detected in the portal.. change the details to the portal directly no need to
+// change the pancake" this now covers Pancake orders too: the portal's copy of the order is updated and
+// kept over every Pancake sync (that file's step 0); nothing is sent to Pancake. The stop itself is
+// already saved either way.
 async function syncOrderFromStop(stop, details, previousAddress) {
   if (stop.source === 'advance' || stop.source === 'automated') return;
   const orderId = String(stop.order_id || '');
@@ -2334,11 +2336,7 @@ async function syncOrderFromStop(stop, details, previousAddress) {
   const feeChanged = details.deliveryFee !== null;
   if (!shippingChanged && !feeChanged) return;
 
-  const what = [shippingChanged ? 'address / contact number' : null, feeChanged ? 'delivery fee' : null].filter(Boolean).join(' and ');
-  if (!orderId.startsWith('AO-')) {
-    window.alert(`The ${what} was saved for this delivery stop only. Order ${orderId} is a Pancake order - change it in Pancake too, so the order and the receipt match.`);
-    return;
-  }
+  if (!orderId) return;
 
   const failures = [];
   const reasonOf = (error) => (/not authorized/i.test(error.message)

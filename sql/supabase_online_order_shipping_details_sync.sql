@@ -5,7 +5,7 @@
 -- 1. admin_get_order_shipping_details - the order's ShippingAddress / ShippingPhone for the card's new
 --    Shipping Address / Shipping Contact Number fields (ShippingPhone isn't in admin_list_online_orders).
 -- 2. admin_set_portal_order_shipping_details - edit them on an open portal delivery order (same rules
---    as admin_set_portal_order_delivery_fee: Source = 'Portal', ForDelivery, not Shipped / Delivered /
+--    as admin_set_portal_order_delivery_fee: any order (step 0), delivery / on the calendar, not Shipped / Delivered /
 --    Completed / Cancelled / Returned). Keeps the source AutomatedOrders row in step, and copies the new
 --    values onto the order's Delivery stops (ManualAddress / ManualContactNumber) so the calendar,
 --    driver view, receipt and invoice show them. A stop whose address changed is marked
@@ -15,11 +15,62 @@
 --    + clears the order's stops' ManualDeliveryFee, so a fee changed on the card shows on the calendar
 --    too (the stop falls back to the order's fee) instead of an older calendar-typed fee winning.
 --
--- Pancake orders are refused (the next sync would overwrite ShippingAddress / ShippingPhone) - change
--- those in Pancake; the calendar still keeps its own per-stop override for them.
+-- 0. Pancake orders too - per "if an order id is detected in the portal.. change the details to the
+--    portal directly no need to change the pancake". Steps 2 and 3 no longer refuse Pancake orders.
+--    They also save the value into new portal-owned columns (OnlineOrders."PortalShippingAddress" /
+--    "PortalShippingPhone" / "PortalDeliveryFee"), and trigger TRG_OnlineOrders_KeepPortalOverrides
+--    puts them back over whatever every Pancake sync / resync writes: the address and phone are replaced,
+--    and the fee is replaced with Money to Collect / Balance moved by (portal fee - Pancake fee).
+--    Nothing is ever sent to Pancake, so Pancake itself keeps its own values. Every reader of
+--    OnlineOrders (list, card, receipt, invoice, calendar, Alice) sees the portal values unchanged.
 --
 -- Run AFTER supabase_delivery_stop_manual_fee.sql. Replaces supabase_online_order_portal_delivery_fee.sql
--- (no need to run that one first, and do NOT re-run it after this - it would undo step 3). Safe to re-run. Needs js/onlineOrders.js ?v=shipdetails1 and js/delivery.js ?v=shipdetails1.
+-- (no need to run that one first, and do NOT re-run it after this - it would undo step 3). Safe to re-run
+-- (re-run it to pick up step 0). Needs js/onlineOrders.js ?v=portalown1 and js/delivery.js ?v=portalown1.
+
+-- ---------------------------------------------------------------------------
+-- 0. Portal-owned overrides that survive the Pancake sync
+
+set lock_timeout = '10s';
+alter table public."OnlineOrders" add column if not exists "PortalShippingAddress" varchar(1000);
+alter table public."OnlineOrders" add column if not exists "PortalShippingPhone" varchar(50);
+alter table public."OnlineOrders" add column if not exists "PortalDeliveryFee" numeric(18, 2);
+reset lock_timeout;
+
+comment on column public."OnlineOrders"."PortalDeliveryFee" is 'Delivery fee set in the portal (Delivery calendar / Online Orders card). Wins over Pancake''s fee on every sync (TRG_OnlineOrders_KeepPortalOverrides); never sent to Pancake.';
+
+create or replace function public._online_orders_keep_portal_overrides()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_delta numeric(18, 2);
+begin
+  -- A Pancake sync never writes the Portal* columns, so on its upsert NEW keeps them and the
+  -- Pancake values it tries to write are replaced. The portal's own RPCs write both together, so
+  -- there the delta is 0.
+  if nullif(trim(new."PortalShippingAddress"), '') is not null then
+    new."ShippingAddress" := new."PortalShippingAddress";
+  end if;
+  if nullif(trim(new."PortalShippingPhone"), '') is not null then
+    new."ShippingPhone" := new."PortalShippingPhone";
+  end if;
+  if new."PortalDeliveryFee" is not null then
+    v_delta := new."PortalDeliveryFee" - coalesce(new."DeliveryFee", 0);
+    if v_delta <> 0 then
+      new."DeliveryFee" := nullif(new."PortalDeliveryFee", 0);
+      new."MoneyToCollect" := coalesce(new."MoneyToCollect", 0) + v_delta;
+      new."Balance" := coalesce(new."Balance", 0) + v_delta;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists "TRG_OnlineOrders_KeepPortalOverrides" on public."OnlineOrders";
+create trigger "TRG_OnlineOrders_KeepPortalOverrides"
+  before update on public."OnlineOrders"
+  for each row execute function public._online_orders_keep_portal_overrides();
 
 -- ---------------------------------------------------------------------------
 -- 1. Read
@@ -89,10 +140,8 @@ begin
   if not found then
     raise exception 'Order % not found.', v_order_id;
   end if;
-  if coalesce(v_order."Source", '') <> 'Portal' then
-    raise exception 'Order % is a Pancake order - change its shipping address / contact number in Pancake instead.', v_order_id;
-  end if;
-  if not coalesce(v_order."ForDelivery", false) then
+  if not coalesce(v_order."ForDelivery", false)
+     and not exists (select 1 from public."DeliveryStops" s where s."OrderID" = v_order_id) then
     raise exception 'Order % is a pickup order - it has no shipping address.', v_order_id;
   end if;
   v_status := lower(trim(coalesce(v_order."Status", '')));
@@ -100,9 +149,16 @@ begin
     raise exception 'Order % is %, its shipping details can no longer be changed.', v_order_id, v_order."Status";
   end if;
 
+  -- Blank = keep what's there (never erase an address / number by leaving a box empty).
+  v_address := coalesce(v_address, v_order."ShippingAddress");
+  v_phone := coalesce(v_phone, v_order."ShippingPhone");
+
+  -- Portal* (step 0) keeps these over the next Pancake sync.
   update public."OnlineOrders"
   set "ShippingAddress" = v_address,
       "ShippingPhone" = v_phone,
+      "PortalShippingAddress" = v_address,
+      "PortalShippingPhone" = v_phone,
       "Last_Updated_At" = now()
   where "OrderID" = v_order_id;
 
@@ -173,10 +229,8 @@ begin
   if not found then
     raise exception 'Order % not found.', v_order_id;
   end if;
-  if coalesce(v_order."Source", '') <> 'Portal' then
-    raise exception 'Order % is a Pancake order - set its delivery fee in Pancake instead.', v_order_id;
-  end if;
-  if not coalesce(v_order."ForDelivery", false) then
+  if not coalesce(v_order."ForDelivery", false)
+     and not exists (select 1 from public."DeliveryStops" s where s."OrderID" = v_order_id) then
     raise exception 'Order % is a pickup order - it has no delivery fee.', v_order_id;
   end if;
   v_status := lower(trim(coalesce(v_order."Status", '')));
@@ -189,6 +243,7 @@ begin
 
   update public."OnlineOrders"
   set "DeliveryFee" = nullif(v_new_fee, 0),
+      "PortalDeliveryFee" = v_new_fee, -- step 0: kept over the next Pancake sync
       "MoneyToCollect" = coalesce("MoneyToCollect", 0) + v_delta,
       "Balance" = coalesce("Balance", 0) + v_delta,
       "Last_Updated_At" = now()

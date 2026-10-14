@@ -494,7 +494,7 @@
               <div class="bc-doc-field"><label>For Delivery</label><div class="bc-doc-value" id="ocForDelivery"></div></div>
               <div class="bc-doc-field"><label>Est. Delivery Date</label><div class="bc-doc-value" id="ocEstDelivery"></div></div>
               <!-- Shipping Address / Contact Number (js/onlineOrders.js fillShippingFields,
-                   sql/supabase_online_order_shipping_details_sync.sql). Editable on open portal (AO-)
+                   sql/supabase_online_order_shipping_details_sync.sql). Editable on any open
                    delivery orders, like the fee; a save also updates the order's Delivery calendar stops. -->
               <div class="bc-doc-field bc-doc-field-top hidden" id="ocShippingAddressRow"><label for="ocShippingAddressInput">Shipping Address</label>
                 <div class="bc-doc-value">
@@ -518,7 +518,7 @@
               <div class="bc-doc-field" id="ocDeliveryFeeRow"><label for="ocDeliveryFeeInput">Delivery Fee</label>
                 <div class="bc-doc-value">
                   <span id="ocDeliveryFee"></span>
-                  <!-- Editable on open portal (AO-) delivery orders - js/onlineOrders.js saveCardDeliveryFee,
+                  <!-- Editable on any open delivery order - js/onlineOrders.js saveCardDeliveryFee,
                        sql/supabase_online_order_portal_delivery_fee.sql. -->
                   <span class="oc-walkin-customer hidden" id="ocDeliveryFeeEdit">
                     <input type="number" id="ocDeliveryFeeInput" min="0" step="0.01" placeholder="0.00" />
@@ -1147,11 +1147,11 @@
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/proofPhoto.js?v=shippost1"></script>
+  <script src="js/proofPhoto.js?v=gallery2"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=shipdetails1"></script>
+  <script src="js/onlineOrders.js?v=gallery2"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>
