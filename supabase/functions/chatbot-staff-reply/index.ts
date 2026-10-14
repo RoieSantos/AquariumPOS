@@ -72,6 +72,37 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
 }
 
+// Facebook's Send API rejects a text message over 2000 characters ("(#100) Length of param
+// message[text] must be less than or equal to 2000") - a long Quick Reply/auto reply hit this. Long
+// text is split into several messages, breaking at a paragraph, then a line, then a sentence, then a
+// word, so nothing is cut mid-word. 1900 leaves margin for emoji, which Facebook may count as 2.
+const MAX_TEXT_LENGTH = 1900;
+
+// Staff can choose the break themselves: a line with only [split] on it (in a Quick Reply or typed)
+// ends one message and starts the next. Not "---", which already separates entries in the Quick
+// Reply bulk import. A part still over the limit is split automatically on top of that.
+const SPLIT_MARKER = /^[ \t]*\[split\][ \t]*$/im;
+
+function splitMessage(text: string): string[] {
+  return text.split(SPLIT_MARKER).flatMap((part) => splitLongText(part));
+}
+
+function splitLongText(text: string, max = MAX_TEXT_LENGTH): string[] {
+  const parts: string[] = [];
+  let rest = text.trim();
+  while (rest.length > max) {
+    const window = rest.slice(0, max);
+    const sentenceEnd = Math.max(window.lastIndexOf('. '), window.lastIndexOf('! '), window.lastIndexOf('? '));
+    // Only accept a break in the second half, so one chunk is never left tiny.
+    const cut = [window.lastIndexOf('\n\n'), window.lastIndexOf('\n'), sentenceEnd >= 0 ? sentenceEnd + 1 : -1, window.lastIndexOf(' ')]
+      .find((i) => i >= max / 2) ?? max;
+    parts.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
 // Live-updates docs/gma-conversations.html for any OTHER open staff tab (the sender's own tab
 // already refreshes locally on a successful send) - same channel/pattern as facebook-messenger-
 // webhook's broadcastGmaEvent, duplicated here rather than shared since these are two independent
@@ -538,7 +569,7 @@ Deno.serve(async (req) => {
     ? [{ message: '👍', attachmentUrl: null, attachmentPath: null, attachmentKind: 'image', isLike: true }]
     : [
         ...images.map((img) => ({ message: '', attachmentUrl: img.url, attachmentPath: img.path, attachmentKind: img.kind, isLike: false })),
-        ...(message ? [{ message, attachmentUrl: null, attachmentPath: null, attachmentKind: 'image' as const, isLike: false }] : [])
+        ...(message ? splitMessage(message).map((part) => ({ message: part, attachmentUrl: null, attachmentPath: null, attachmentKind: 'image' as const, isLike: false })) : [])
       ];
 
   // Quoted reply: the Facebook mid of the message staff is replying to (extra photos of one message

@@ -499,7 +499,7 @@ namespace AquariumPOS
                 // whole click handler (blocking the payment entirely) if staff cancels a picker that
                 // had real choices to make - matches "block payment until serials are chosen" rather
                 // than letting the order get marked paid with tracking left incomplete.
-                if (!TryCollectSerialsForFullyPaidOrder(transactionNo, out var serialsToMarkSold, out var serialShortfalls))
+                if (!TryCollectSerialsForFullyPaidOrder(transactionNo, out var serialsToMarkSold))
                 {
                     return;
                 }
@@ -567,34 +567,15 @@ namespace AquariumPOS
 
                     // Payment is committed at this point - serial tracking is best-effort from here
                     // on (a failure here shouldn't look like the payment itself failed, since it
-                    // didn't). serialsToMarkSold/serialShortfalls came from TryCollectSerialsForFullyPaidOrder
-                    // above, before payment: real in-stock serials the user picked, and any shortfall
-                    // quantity that had no available serial to pick from and needs a freshly
-                    // auto-generated one instead (same fallback the regular checkout flow uses).
+                    // didn't). serialsToMarkSold came from TryCollectSerialsForFullyPaidOrder above,
+                    // before payment: real in-stock serials the user picked. Units with no serial to
+                    // pick are left untagged - the POS no longer creates serials; the Web Portal tags
+                    // them at Ready to Ship (staff_advance_order_to_ship_with_serials).
                     try
                     {
                         if (serialsToMarkSold.Count > 0)
                         {
                             ProductSerialTrackingForm.MarkSerialsSold(serialsToMarkSold, receiptNo, AdvanceOrderSerialLink(transactionNo));
-                        }
-
-                        if (serialShortfalls.Count > 0)
-                        {
-                            using var serialConn = new SqlConnection(connectionString);
-                            serialConn.Open();
-                            foreach (var shortfall in serialShortfalls)
-                            {
-                                ProductSerialTrackingForm.CreateSoldSerialRecords(
-                                    serialConn,
-                                    null,
-                                    shortfall.ItemCode,
-                                    shortfall.VariantCode,
-                                    shortfall.Description,
-                                    receiptNo,
-                                    AdvanceOrderSerialLink(transactionNo),
-                                    CurrentUser.GetEffectiveUsername("POS_SYSTEM"),
-                                    shortfall.Count);
-                            }
                         }
                     }
                     catch (Exception serialEx)
@@ -995,32 +976,20 @@ ORDER BY aol.[LineNo]", conn);
 
         // Collects serials for every serial-tracked line on this order, BEFORE any payment/DB state
         // changes - so cancelling here (a picker with real choices dismissed) cleanly aborts the
-        // whole "Pay In Full" action, per "block payment until serials are chosen". A line with zero
-        // available serials in stock doesn't block, though - matches the exact fallback the live
-        // checkout flow already uses (see MainForm.PromptForAquariumSaleSerials): those units get
-        // added to shortfallLines for CreateSoldSerialRecords to auto-generate after payment commits,
-        // since a build-to-order item can genuinely have no serial registered yet.
-        //
-        // IMPORTANT: ProductSerialTrackingForm.CreateSerialRecords (what actually generates the
-        // shortfall's new serials) silently no-ops at a non-production warehouse - it's gated so only
-        // the facility that physically builds/tags an item can mint new serials for it, but returns
-        // an empty list rather than throwing, so a caller that isn't warehouse-aware would show staff
-        // a false promise ("will be auto-generated") and end up with nothing recorded. Checked here so
-        // the message staff sees is honest about which outcome they're actually going to get.
+        // whole "Pay In Full" action, per "block payment until serials are chosen". A line with no
+        // (or not enough) available serials doesn't block: the POS no longer creates serials (per
+        // "all local pos dont create serials.. only in the portal can"), so the missing units stay
+        // untagged and the Web Portal tags them at Ready to Ship (staff_advance_order_to_ship_with_serials).
         private bool TryCollectSerialsForFullyPaidOrder(
             string transactionNo,
-            out List<string> serialsToMarkSold,
-            out List<(string ItemCode, string VariantCode, string Description, int Count)> shortfallLines)
+            out List<string> serialsToMarkSold)
         {
             serialsToMarkSold = new List<string>();
-            shortfallLines = new List<(string, string, string, int)>();
 
             // Non-production stores don't ask at all - advance orders are exactly how made-to-order
-            // builds get sold there (never a regular sale), the physical unit typically doesn't exist
-            // yet, and these stores can't tag/create serials anyway (CreateSerialRecords is
-            // production-only), so there'd be nothing to pick and no fallback to fall back to.
-            // Whatever gets built ends up tagged wherever it's actually built. Production warehouses
-            // keep asking exactly as before (real picker, auto-generate on shortfall).
+            // builds get sold there (never a regular sale) and the physical unit typically doesn't
+            // exist yet. Whatever gets built ends up tagged in the Web Portal. Production warehouses
+            // keep the picker for units already on hand.
             bool isProductionWarehouse = IsCurrentWarehouseProduction();
             if (!isProductionWarehouse)
                 return true;
@@ -1047,7 +1016,7 @@ ORDER BY aol.[LineNo]", conn);
                 if (missing > 0)
                 {
                     MessageBox.Show(this,
-                        $"Only {available.Count} serial-tracked unit(s) are available for {line.ItemCode}, but {required} were requested. The remaining {missing} will be auto-generated after payment.",
+                        $"Only {available.Count} serial-tracked unit(s) are available for {line.ItemCode}, but {required} were requested. The remaining {missing} stay untagged - tag them in the Web Portal at Ready to Ship (the POS doesn't create serials).",
                         "Serial Tracking",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
@@ -1068,11 +1037,6 @@ ORDER BY aol.[LineNo]", conn);
 
                     alreadyPicked.Add(chosen.SerialNo);
                     serialsToMarkSold.Add(chosen.SerialNo);
-                }
-
-                if (missing > 0)
-                {
-                    shortfallLines.Add((line.ItemCode, line.VariantCode, line.Description, missing));
                 }
             }
 

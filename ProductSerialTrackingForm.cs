@@ -186,19 +186,21 @@ namespace AquariumPOS
 
             var lblHint = new Label
             {
-                Text = "Leave Custom Serial blank to auto-generate RS-ItemCode-yy-000001 style serials using a running number.",
+                Text = "Serials are created in the Web Portal only (Production Orders / Serial Inventory Journal), then pulled here.",
                 Location = new Point(372, 72),
                 Size = new Size(600, 22),
                 Font = new Font("Arial", 8, FontStyle.Italic),
                 ForeColor = Color.DimGray
             };
 
+            // Disabled - the POS never creates serials (see BtnAddSerials_Click).
             btnAddSerials = new Button
             {
                 Text = "Add Serials",
+                Enabled = false,
                 Location = new Point(1050, 28),
                 Size = new Size(150, 36),
-                BackColor = Color.SeaGreen,
+                BackColor = Color.Gray,
                 ForeColor = Color.White,
                 Font = new Font("Arial", 10, FontStyle.Bold)
             };
@@ -681,34 +683,11 @@ WHERE SerialNo = @SerialNo", conn);
             TriggerCloudSyncFireAndForget();
         }
 
-        public static List<(string SerialNo, string ItemCode, string Description)> CreateSoldSerialRecords(
-            SqlConnection conn,
-            SqlTransaction? tran,
-            string itemCode,
-            string? variantCode,
-            string itemDescription,
-            string sourceDocumentNo,
-            string? soldOnlineOrderId,
-            string createdBy,
-            int quantity)
-        {
-            var createdSerials = CreateSerialRecords(conn, tran, itemCode, variantCode, itemDescription, sourceDocumentNo, createdBy, quantity);
-            if (createdSerials.Count == 0)
-            {
-                return createdSerials;
-            }
-
-            MarkSerialsSold(conn, tran, createdSerials.Select(serial => serial.SerialNo), sourceDocumentNo, soldOnlineOrderId);
-
-            // Safe to fire here unconditionally - every real call site passes tran: null (auto-commit),
-            // so both writes above are already durable by the time we reach this line.
-            if (tran == null)
-            {
-                TriggerCloudSyncFireAndForget();
-            }
-
-            return createdSerials;
-        }
+        // CreateSerialRecords / CreateSoldSerialRecords / InsertSerialRecord were removed on purpose -
+        // per "all local pos dont create serials.. only in the portal can", no POS (production
+        // warehouse included) can create a serial. Serials come only from the Web Portal and reach
+        // this POS through SyncItemSerialTrackingFromSupabaseAsync; Supabase also drops new serials
+        // pushed from a POS (supabase_serial_tracking_portal_only.sql), which covers older POS builds.
 
         private static void MarkSerialsSold(SqlConnection conn, SqlTransaction? tran, IEnumerable<string> serialNumbers, string? soldReceiptNo, string? soldOnlineOrderId)
         {
@@ -872,55 +851,18 @@ ORDER BY RunningSerialNo DESC", conn);
             lblSummary.Text = $"{total} serials | {inStock} in stock";
         }
 
+        // Per "all local pos dont create serials.. only in the portal can" - serials are created only
+        // in the Web Portal (Production Orders > Post Output, Serial Inventory Journal, To Ship) and
+        // pulled down by SyncItemSerialTrackingFromSupabaseAsync. The button is disabled; this is a
+        // safety net in case it gets re-enabled.
         private void BtnAddSerials_Click(object? sender, EventArgs e)
         {
-            try
-            {
-                string selection = cboItem.Text?.Trim() ?? string.Empty;
-                string itemCode = ExtractItemCode(selection);
-                if (string.IsNullOrWhiteSpace(itemCode))
-                {
-                    MessageBox.Show("Select a valid product first.", "Serial Tracker", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                int quantity = Convert.ToInt32(nudQuantity.Value);
-                string customSerial = txtCustomSerial.Text?.Trim() ?? string.Empty;
-                string sourceDocumentNo = txtSourceDocument.Text?.Trim() ?? string.Empty;
-                string itemDescription = itemDescriptionsByCode.TryGetValue(itemCode, out var desc) ? desc : itemCode;
-                string variantCode = itemVariantCodesByCode.TryGetValue(itemCode, out var storedVariantCode) ? storedVariantCode : string.Empty;
-
-                if (!string.IsNullOrWhiteSpace(customSerial) && quantity > 1)
-                {
-                    MessageBox.Show("Custom Serial can only be used when quantity is 1.", "Serial Tracker", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                string userName = CurrentUser.GetEffectiveUsername("SYSTEM");
-                using var conn = new SqlConnection(connectionString);
-                conn.Open();
-
-                if (!IsCurrentWarehouseProduction(conn, null))
-                {
-                    MessageBox.Show("Serial creation is only allowed when the current warehouse is marked as Is_Production_Warehouse.", "Serial Tracker", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-
-                List<(string SerialNo, string ItemCode, string Description)> createdSerials = CreateSerialRecords(conn, null, itemCode, variantCode, itemDescription, sourceDocumentNo, userName, quantity, customSerial);
-                if (createdSerials.Count > 0)
-                {
-                    TriggerCloudSyncFireAndForget();
-                }
-
-                txtCustomSerial.Clear();
-                nudQuantity.Value = 1;
-                LoadSerials();
-                MessageBox.Show($"Created {createdSerials.Count} serial record(s) for {itemCode}.", "Serial Tracker", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to add serials: {ex.Message}", "Serial Tracker", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
+            MessageBox.Show(this,
+                "Serials can only be created in the Web Portal (Production Orders > Post Output, or the Serial Inventory Journal). " +
+                "Use \"Pull from Cloud\" afterwards to bring them into this POS right away.",
+                "Serial Tracker",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
         private async Task SyncSerialsToCloudAsync()
@@ -1000,40 +942,6 @@ ORDER BY RunningSerialNo DESC", conn);
             }
         }
 
-        public static List<(string SerialNo, string ItemCode, string Description)> CreateSerialRecords(
-            SqlConnection conn,
-            SqlTransaction? tran,
-            string itemCode,
-            string? variantCode,
-            string itemDescription,
-            string sourceDocumentNo,
-            string createdBy,
-            int quantity,
-            string? requestedSerialNo = null)
-        {
-            if (conn == null) throw new ArgumentNullException(nameof(conn));
-            if (string.IsNullOrWhiteSpace(itemCode) || quantity <= 0)
-                return new List<(string SerialNo, string ItemCode, string Description)>();
-            if (!IsCurrentWarehouseProduction(conn, tran))
-                return new List<(string SerialNo, string ItemCode, string Description)>();
-
-            EnsureSerialTrackingTable(conn, tran);
-            string location = GetCurrentSerialTrackingLocation();
-
-            List<(string SerialNo, string ItemCode, string Description)> createdSerials = new();
-            for (int index = 0; index < quantity; index++)
-            {
-                string serialToUse = index == 0 ? (requestedSerialNo ?? string.Empty) : string.Empty;
-                string serialNo = InsertSerialRecord(conn, tran, itemCode, variantCode, itemDescription, location, sourceDocumentNo, createdBy, serialToUse);
-                if (!string.IsNullOrWhiteSpace(serialNo))
-                {
-                    createdSerials.Add((serialNo, itemCode, itemDescription));
-                }
-            }
-
-            return createdSerials;
-        }
-
         private static string GetCurrentSerialTrackingLocation()
         {
             var currentWarehouse = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString);
@@ -1043,58 +951,6 @@ ORDER BY RunningSerialNo DESC", conn);
             return !string.IsNullOrWhiteSpace(currentWarehouse.Name)
                 ? currentWarehouse.Name.Trim()
                 : (currentWarehouse.Id ?? string.Empty).Trim();
-        }
-
-        private static string InsertSerialRecord(SqlConnection conn, SqlTransaction? tran, string itemCode, string? variantCode, string itemDescription, string location, string sourceDocumentNo, string createdBy, string requestedSerialNo)
-        {
-            const string sql = @"
-DECLARE @Inserted TABLE (RunningSerialNo BIGINT);
-
-    INSERT INTO dbo.ItemSerialTracking (SerialNo, ItemCode, VariantCode, ItemDescription, Location, Status, SourceDocumentNo, CreatedBy)
-OUTPUT INSERTED.RunningSerialNo INTO @Inserted(RunningSerialNo)
-    VALUES (@TempSerialNo, @ItemCode, NULLIF(@VariantCode, ''), @ItemDescription, NULLIF(@Location, ''), 'IN_STOCK', NULLIF(@SourceDocumentNo, ''), @CreatedBy);
-
-DECLARE @RunningSerialNo BIGINT = (SELECT TOP 1 RunningSerialNo FROM @Inserted);
-DECLARE @SerialYear VARCHAR(2) = RIGHT(CONVERT(VARCHAR(4), DATEPART(YEAR, GETDATE())), 2);
-DECLARE @NextItemRunningNo INT = ISNULL(
-    (
-        SELECT MAX(TRY_CONVERT(INT, RIGHT(SerialNo, 6)))
-        FROM dbo.ItemSerialTracking WITH (UPDLOCK, HOLDLOCK)
-        WHERE ItemCode = @ItemCode
-          AND (
-              SerialNo LIKE @ItemCode + '-' + @SerialYear + '-%'
-              OR SerialNo LIKE 'RS-' + @ItemCode + '-' + @SerialYear + '-%'
-          )
-    ),
-    0) + 1;
-DECLARE @FinalSerialNo NVARCHAR(120) = CASE
-    WHEN NULLIF(@RequestedSerialNo, '') IS NOT NULL THEN @RequestedSerialNo
-    ELSE 'RS-' + @ItemCode + '-' + @SerialYear + '-' + RIGHT(REPLICATE('0', 6) + CONVERT(VARCHAR(20), @NextItemRunningNo), 6)
-END;
-
-IF EXISTS (SELECT 1 FROM dbo.ItemSerialTracking WHERE SerialNo = @FinalSerialNo AND RunningSerialNo <> @RunningSerialNo)
-BEGIN
-    THROW 51000, 'Serial number already exists.', 1;
-END
-
-UPDATE dbo.ItemSerialTracking
-SET SerialNo = @FinalSerialNo,
-    UpdatedAtUtc = SYSUTCDATETIME(),
-    UpdatedBy = @CreatedBy
-WHERE RunningSerialNo = @RunningSerialNo;
-
-SELECT @FinalSerialNo;";
-
-            using var cmd = new SqlCommand(sql, conn, tran);
-            cmd.Parameters.AddWithValue("@TempSerialNo", $"TEMP-{Guid.NewGuid():N}");
-            cmd.Parameters.AddWithValue("@ItemCode", itemCode);
-            cmd.Parameters.AddWithValue("@VariantCode", variantCode ?? string.Empty);
-            cmd.Parameters.AddWithValue("@ItemDescription", itemDescription);
-            cmd.Parameters.AddWithValue("@Location", location ?? string.Empty);
-            cmd.Parameters.AddWithValue("@SourceDocumentNo", sourceDocumentNo ?? string.Empty);
-            cmd.Parameters.AddWithValue("@CreatedBy", createdBy ?? string.Empty);
-            cmd.Parameters.AddWithValue("@RequestedSerialNo", requestedSerialNo ?? string.Empty);
-            return cmd.ExecuteScalar()?.ToString() ?? string.Empty;
         }
 
         private void UpdateSelectedStatus(string status)

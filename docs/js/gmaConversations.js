@@ -680,6 +680,9 @@ function renderThreadHeader(conv) {
     <span class="inbox-thread-viewers" id="threadViewersEl"></span>
     <span class="inbox-header-actions">
       ${pauseNote ? `<span class="inbox-pause-note">${escapeHtml(pauseNote)}</span>` : ''}
+      <button class="btn btn-secondary btn-sm" id="threadSearchBtn" type="button" title="Search in this conversation">
+        🔍<span class="inbox-hdr-btn-label"> Search</span>
+      </button>
       <button class="btn btn-secondary btn-sm inbox-tag-btn${conv.tags?.length ? ' tagged' : ''}" id="tagMenuBtn" type="button" title="Tag this customer (Urgent, Issue, ...)">
         🏷<span class="inbox-hdr-btn-label"> Tags</span>
       </button>
@@ -701,6 +704,10 @@ function renderThreadHeader(conv) {
   document.getElementById('togglePinBtn').addEventListener('click', () => togglePin(conv));
   document.getElementById('markUnreadBtn').addEventListener('click', () => markConversationUnread(conv));
   document.getElementById('tagMenuBtn').addEventListener('click', openTagMenu);
+  document.getElementById('threadSearchBtn').addEventListener('click', () => {
+    if (document.getElementById('threadSearchBar').classList.contains('hidden')) openThreadSearch();
+    else closeThreadSearch();
+  });
   document.getElementById('threadBackBtn').addEventListener('click', mobileBack);
   document.getElementById('threadInfoBtn').addEventListener('click', () => showMobileView('info'));
   renderThreadMood(conv);
@@ -1149,6 +1156,128 @@ function renderMessages(serverRows, opts = {}) {
   threadStickToBottom = stick;
   if (stick) scrollThreadToBottom();
   else messagesEl.scrollTop = prevScrollTop;
+  // A redraw (new message, status change) wipes the search highlights - put them back, same match.
+  if (threadSearchTerm) highlightThreadSearch();
+}
+
+// Search in this conversation (🔍 in the thread header), like Messenger's "Search in conversation":
+// highlights every match in the loaded messages (the newest 200, see loadMessages' p_limit) and steps
+// through them, starting from the newest. Enter = older match, Shift+Enter = newer, Esc closes.
+// Browser-only - finding a conversation by its messages is the list's search box (p_search).
+let threadSearchTerm = '';
+let threadSearchIndex = -1; // into the marks, oldest first
+let threadSearchTimer = null;
+
+function threadSearchMarks() {
+  return [...document.querySelectorAll('#threadMessagesEl mark.inbox-search-hit')];
+}
+
+function openThreadSearch() {
+  document.getElementById('threadSearchBar').classList.remove('hidden');
+  const input = document.getElementById('threadSearchInput');
+  input.focus();
+  input.select();
+}
+
+function closeThreadSearch() {
+  clearTimeout(threadSearchTimer);
+  document.getElementById('threadSearchBar').classList.add('hidden');
+  document.getElementById('threadSearchInput').value = '';
+  threadSearchTerm = '';
+  threadSearchIndex = -1;
+  highlightThreadSearch();
+}
+
+// Wraps each match inside a message bubble in <mark> - text only, never inside a button/select
+// (the payment and pin boxes), so their labels and handlers stay untouched.
+function highlightThreadSearch() {
+  const messagesEl = document.getElementById('threadMessagesEl');
+  messagesEl.querySelectorAll('mark.inbox-search-hit').forEach((mark) => mark.replaceWith(mark.textContent));
+  messagesEl.normalize();
+
+  const term = threadSearchTerm.toLowerCase();
+  if (term) {
+    const walker = document.createTreeWalker(messagesEl, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => node.parentElement.closest('.inbox-msg, .inbox-msg-emoji') && !node.parentElement.closest('button, select')
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((node) => {
+      const text = node.nodeValue;
+      const lower = text.toLowerCase();
+      let at = lower.indexOf(term);
+      if (at < 0) return;
+      const frag = document.createDocumentFragment();
+      let from = 0;
+      while (at >= 0) {
+        frag.append(text.slice(from, at));
+        const mark = document.createElement('mark');
+        mark.className = 'inbox-search-hit';
+        mark.textContent = text.slice(at, at + term.length);
+        frag.append(mark);
+        from = at + term.length;
+        at = lower.indexOf(term, from);
+      }
+      frag.append(text.slice(from));
+      node.replaceWith(frag);
+    });
+  }
+
+  const marks = threadSearchMarks();
+  if (threadSearchIndex >= marks.length) threadSearchIndex = marks.length - 1;
+  marks[threadSearchIndex]?.classList.add('current');
+  updateThreadSearchCount(marks.length);
+}
+
+function updateThreadSearchCount(total) {
+  const countEl = document.getElementById('threadSearchCount');
+  const loaded = (messageCache.get(selectedPsid) || []).length;
+  if (!threadSearchTerm) countEl.textContent = '';
+  else if (!total) countEl.textContent = loaded >= 200 ? 'No results in the latest 200 messages' : 'No results';
+  else countEl.textContent = `${total - threadSearchIndex} of ${total}`; // 1 = newest
+  document.getElementById('threadSearchOlderBtn').disabled = total < 2;
+  document.getElementById('threadSearchNewerBtn').disabled = total < 2;
+}
+
+function onThreadSearchInput(value) {
+  clearTimeout(threadSearchTimer);
+  threadSearchTimer = setTimeout(() => {
+    threadSearchTerm = value.trim();
+    threadSearchIndex = Number.MAX_SAFE_INTEGER; // clamped to the newest match
+    highlightThreadSearch();
+    showThreadSearchMatch(threadSearchIndex);
+  }, 200);
+}
+
+// Makes match `index` (oldest first) the current one and scrolls to it; wraps around at either end.
+function showThreadSearchMatch(index) {
+  const marks = threadSearchMarks();
+  if (!marks.length) return;
+  threadSearchIndex = (index + marks.length) % marks.length;
+  marks.forEach((mark, i) => mark.classList.toggle('current', i === threadSearchIndex));
+  marks[threadSearchIndex].scrollIntoView({ block: 'center', behavior: 'smooth' });
+  updateThreadSearchCount(marks.length);
+}
+
+function initThreadSearch() {
+  const input = document.getElementById('threadSearchInput');
+  input.addEventListener('input', (e) => onThreadSearchInput(e.target.value));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeThreadSearch();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      // Typed faster than the 200ms wait - search now instead of stepping through stale matches.
+      if (input.value.trim() !== threadSearchTerm) onThreadSearchInput(input.value);
+      else showThreadSearchMatch(threadSearchIndex + (e.shiftKey ? 1 : -1));
+    }
+  });
+  document.getElementById('threadSearchOlderBtn').addEventListener('click', () => showThreadSearchMatch(threadSearchIndex - 1));
+  document.getElementById('threadSearchNewerBtn').addEventListener('click', () => showThreadSearchMatch(threadSearchIndex + 1));
+  document.getElementById('threadSearchCloseBtn').addEventListener('click', closeThreadSearch);
 }
 
 // Staff reaction picker for a customer's message. Sends through chatbot-staff-reply's react mode;
@@ -1452,6 +1581,7 @@ async function openConversation(psid) {
   setPendingReplyImages([]);
   clearReplyTo();
   closeTagMenu();
+  closeThreadSearch();
   toggleQuickRepliesPanel(false);
   toggleProductLookupPanel(false);
   toggleMediaLibraryPanel(false);
@@ -5733,6 +5863,7 @@ async function openConversationByPsid(psid, name) {
 function openComment(commentId) {
   selectedCommentId = commentId;
   selectedPsid = null;
+  closeThreadSearch();
   trackPresence();
   renderConversationList();
   renderCommentThread(true);
@@ -6052,6 +6183,7 @@ function closeOpenConversation() {
   selectedPsid = null;
   trackPresence();
   closeTagMenu();
+  closeThreadSearch();
   document.getElementById('threadHeaderEl').innerHTML = '<span class="muted">Select a conversation to view its messages.</span>';
   document.getElementById('threadMessagesEl').innerHTML = '';
   document.getElementById('replyRowEl').classList.add('hidden');
@@ -6952,6 +7084,7 @@ function initDeliveryCalendar() {
   setupMobileViewportHeight();
   if (isMobileInbox()) document.getElementById('replyInput').placeholder = 'Aa';
   document.getElementById('conversationSearchInput').addEventListener('input', (e) => onConversationSearchInput(e.target.value));
+  initThreadSearch();
   document.getElementById('toggleQuickRepliesBtn').addEventListener('click', () => toggleQuickRepliesPanel());
   document.getElementById('toggleAttachmentBtn').addEventListener('click', () => document.getElementById('attachmentFileInput').click());
   document.getElementById('attachmentFileInput').addEventListener('change', onAttachmentFileChange);

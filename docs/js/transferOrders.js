@@ -1988,6 +1988,7 @@ function applyItemSelection(row, code, name) {
   }
   updateProductionCategoryLock();
   scheduleNewBomPreview();
+  checkRowPendingTransfer(row);
 }
 
 // Once a line item is picked, changing "Use Production Category" (which drives which From
@@ -2187,6 +2188,7 @@ function renderVariantSuggestions(row, variants, page, totalCount, onPageChange)
 
       dropdown.classList.add('hidden');
       dropdown.innerHTML = '';
+      checkRowPendingTransfer(row);
     });
   });
   wireSuggestPager(dropdown, page, totalCount, VARIANT_LOOKUP_PAGE_SIZE, onPageChange);
@@ -2424,6 +2426,7 @@ function addNewLineRow() {
     <td class="item-search-cell">
       <input type="text" class="line-item-no" placeholder="Search item code or name..." autocomplete="off" />
       <div class="item-suggest-dropdown hidden"></div>
+      <div class="line-pending-msg error-text hidden" style="margin-top:4px; white-space:normal;"></div>
     </td>
     <td class="item-search-cell">
       <input type="text" class="line-variant-search" placeholder="Search variant..." autocomplete="off" />
@@ -2536,6 +2539,109 @@ async function openNewTransferModal() {
   refreshNewTransferGeneralSummary();
 }
 
+// Returns one entry per new line whose item/variant is still pending (Qty To Transfer - Qty Received
+// > 0) on another active order for the same To Warehouse. Received orders are archived off these
+// tables, so only Cancelled needs excluding.
+async function findPendingTransferConflicts(toWarehouseId, lines) {
+  const { data: headers, error: headerError } = await supabaseClient
+    .from('Transfer_Header')
+    .select('*')
+    .eq('"To Warehouse ID"', toWarehouseId)
+    .not('Status', 'in', '("Received","Cancelled")');
+  if (headerError) throw headerError;
+  if (!headers || headers.length === 0) return [];
+
+  const statusByDoc = new Map(headers.map((h) => [h['No.'], h['Status'] || 'Requested']));
+  const itemNos = Array.from(new Set(lines.map((l) => l.itemNo)));
+  const { data: openLines, error: lineError } = await supabaseClient
+    .from('Transfer_Line')
+    .select('*')
+    .in('"Document No."', Array.from(statusByDoc.keys()))
+    .in('"Item No."', itemNos);
+  if (lineError) throw lineError;
+
+  const conflicts = [];
+  for (const line of lines) {
+    const orders = (openLines || [])
+      .filter((ol) => ol['Item No.'] === line.itemNo && (ol['Variant ID'] || null) === (line.variantId || null))
+      .map((ol) => ({
+        docNo: ol['Document No.'],
+        status: statusByDoc.get(ol['Document No.']),
+        pendingQty: Math.max(0, (Number(ol['Qty To Transfer']) || 0) - (Number(ol['Qty Received']) || 0))
+      }))
+      .filter((o) => o.pendingQty > 0);
+    if (orders.length > 0) conflicts.push({ line, orders });
+  }
+  return conflicts;
+}
+
+function pendingTransferLinksHtml(orders) {
+  return orders.map((o) =>
+    `<a href="#" class="pending-transfer-link" data-doc-no="${encodeURIComponent(o.docNo)}">${escapeHtml(o.docNo)}</a> (${escapeHtml(o.status)}, ${o.pendingQty} pending)`
+  ).join(', ');
+}
+
+function wirePendingTransferLinks(container) {
+  container.querySelectorAll('.pending-transfer-link').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('newTransferModal').classList.add('hidden');
+      openManageModal(decodeURIComponent(a.dataset.docNo));
+    });
+  });
+}
+
+// Save-time safety net (e.g. a manually typed code, or a super user changing To Warehouse after
+// picking items) - the main check runs per row as items are picked (checkRowPendingTransfer).
+function showPendingTransferConflicts(errorEl, toWarehouse, conflicts) {
+  const items = conflicts.map(({ line, orders }) => {
+    const label = [line.itemNo, line.variantName].filter(Boolean).join(' - ');
+    return `<li><strong>${escapeHtml(label)}</strong> - already on ${pendingTransferLinksHtml(orders)}</li>`;
+  }).join('');
+  errorEl.innerHTML = `These items already have a pending transfer to ${escapeHtml(toWarehouse || 'this warehouse')}. `
+    + `Remove them from this request, or wait until the existing order is received:<ul style="margin:4px 0 0 18px;">${items}</ul>`;
+  errorEl.classList.remove('hidden');
+  wirePendingTransferLinks(errorEl);
+}
+
+// Runs right after an item/variant is picked on a New Transfer row: if the To Warehouse already has
+// it pending, clear the row and show the existing order(s) as links under the item box. An item
+// with variants is only checked once its variant is picked (exact item+variant match).
+async function checkRowPendingTransfer(row) {
+  const msgEl = row.querySelector('.line-pending-msg');
+  msgEl.classList.add('hidden');
+  msgEl.innerHTML = '';
+
+  const toWarehouseId = document.getElementById('newToWarehouseId').value.trim();
+  const itemNo = row.querySelector('.line-item-no').value.trim();
+  const variantId = row.querySelector('.line-variant-id').value || null;
+  const variantName = row.querySelector('.line-variant-search').value.trim() || null;
+  if (!toWarehouseId || !itemNo) return;
+
+  let conflicts;
+  try {
+    conflicts = await findPendingTransferConflicts(toWarehouseId, [{ itemNo, variantId, variantName }]);
+  } catch (err) {
+    console.error('Pending transfer check failed:', err);
+    return;
+  }
+  // The row may have changed while the check was in flight - only act on the selection it checked.
+  if (row.querySelector('.line-item-no').value.trim() !== itemNo
+    || (row.querySelector('.line-variant-id').value || null) !== variantId) return;
+  if (conflicts.length === 0) return;
+
+  const label = [itemNo, variantName].filter(Boolean).join(' - ');
+  row.querySelector('.line-item-no').value = '';
+  row.querySelector('.line-description').value = '';
+  clearVariantSelection(row);
+  updateProductionCategoryLock();
+  scheduleNewBomPreview();
+
+  msgEl.innerHTML = `<strong>${escapeHtml(label)}</strong> already has a pending transfer: ${pendingTransferLinksHtml(conflicts[0].orders)}`;
+  msgEl.classList.remove('hidden');
+  wirePendingTransferLinks(msgEl);
+}
+
 async function saveNewTransfer() {
   const errorEl = document.getElementById('newTransferError');
   errorEl.classList.add('hidden');
@@ -2614,6 +2720,22 @@ async function saveNewTransfer() {
   if (linesMissingVariant.length > 0) {
     errorEl.textContent = `Select a variant for: ${linesMissingVariant.join(', ')} - ${linesMissingVariant.length > 1 ? 'these items have' : 'this item has'} variants, so a specific one must be chosen.`;
     errorEl.classList.remove('hidden');
+    return;
+  }
+
+  // One open request per item per store: if this To Warehouse already has the same item/variant on
+  // an active order that isn't fully received yet, block and link to that order instead of letting
+  // duplicate requests pile up.
+  let pendingConflicts;
+  try {
+    pendingConflicts = await findPendingTransferConflicts(toWarehouseId, lines);
+  } catch (err) {
+    errorEl.textContent = describeSupabaseError(err, 'Could not check for pending transfer orders.');
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (pendingConflicts.length > 0) {
+    showPendingTransferConflicts(errorEl, toWarehouse, pendingConflicts);
     return;
   }
 

@@ -1845,6 +1845,42 @@
     }
     @keyframes inbox-msg-flash { from { background: rgba(29, 79, 145, 0.18); } to { background: transparent; } }
     .inbox-msg-row-flash { animation: inbox-msg-flash 1.4s ease-out; border-radius: 12px; }
+    /* Search in this conversation (threadSearch* in gmaConversations.js). */
+    .inbox-thread-search {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-bottom: 1px solid var(--panel-border);
+      background: #f7f9fc;
+    }
+    .inbox-thread-search.hidden { display: none; }
+    .inbox-thread-search input {
+      flex: 1;
+      min-width: 0;
+      padding: 6px 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .inbox-thread-search-count {
+      font-size: 12px;
+      color: #667085;
+      white-space: nowrap;
+    }
+    .inbox-thread-search button {
+      border: 1px solid var(--panel-border);
+      background: #fff;
+      border-radius: 6px;
+      width: 30px;
+      height: 30px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .inbox-thread-search button:disabled { opacity: 0.4; cursor: default; }
+    mark.inbox-search-hit { background: #fde68a; color: inherit; border-radius: 2px; padding: 0; }
+    mark.inbox-search-hit.current { background: #f59e0b; color: #111; }
     .inbox-replying-to {
       display: flex;
       align-items: center;
@@ -3598,6 +3634,7 @@
         border-radius: 14px;
       }
       .inbox-product-lookup-search input { font-size: 16px; }
+      .inbox-thread-search input { font-size: 16px; }
       /* Media library: no hover on touch, so the full-size button is always shown; 3 per row. */
       .mlib-view { opacity: 1; }
       .inbox-media-library-grid { grid-template-columns: repeat(3, 1fr); }
@@ -3679,6 +3716,13 @@
           <div class="inbox-thread-header" id="threadHeaderEl">
             <span class="muted">Select a conversation to view its messages.</span>
           </div>
+          <div class="inbox-thread-search hidden" id="threadSearchBar">
+            <input type="search" id="threadSearchInput" placeholder="Search in this conversation..." autocomplete="off" />
+            <span class="inbox-thread-search-count" id="threadSearchCount"></span>
+            <button type="button" id="threadSearchOlderBtn" title="Older match (Enter)" aria-label="Older match">↑</button>
+            <button type="button" id="threadSearchNewerBtn" title="Newer match (Shift+Enter)" aria-label="Newer match">↓</button>
+            <button type="button" id="threadSearchCloseBtn" title="Close search (Esc)" aria-label="Close search">✕</button>
+          </div>
           <div class="inbox-thread-messages" id="threadMessagesEl"></div>
           <div id="replyErrorEl" class="inbox-reply-error error-text hidden"></div>
           <div class="inbox-reply-row hidden" id="replyRowEl">
@@ -3696,7 +3740,7 @@
               </div>
               <div class="inbox-quick-replies-add">
                 <input type="text" id="newQuickReplyLabel" placeholder="Label (e.g. Thank you)" />
-                <textarea id="newQuickReplyText" rows="2" placeholder="Message to send (optional if you attach a photo)..."></textarea>
+                <textarea id="newQuickReplyText" rows="2" placeholder="Message to send (optional if you attach a photo)... Put [split] on its own line to send it as separate messages."></textarea>
                 <input type="file" id="newQuickReplyImage" accept="image/png,image/jpeg,image/webp,image/gif" />
                 <div id="quickRepliesAddError" class="error-text hidden"></div>
                 <button class="btn btn-secondary btn-sm" id="addQuickReplyBtn" type="button">+ Add Quick Reply</button>
@@ -4049,7 +4093,7 @@
       <div class="manage-quick-reply-form">
         <h3 id="manageQrFormTitle">Add Quick Reply</h3>
         <input type="text" id="manageQrLabel" placeholder="Label (e.g. Thank you)" />
-        <textarea id="manageQrMessage" rows="3" placeholder="Message to send (optional if you attach a photo)..."></textarea>
+        <textarea id="manageQrMessage" rows="3" placeholder="Message to send (optional if you attach a photo)... Put [split] on its own line to send it as separate messages."></textarea>
         <div class="manage-qr-image-row" id="manageQrImagesRow"></div>
         <input type="file" id="manageQrImage" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
         <div id="manageQrError" class="error-text hidden"></div>
@@ -4106,7 +4150,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=mlibfolders1"></script>
+  <script src="js/gmaConversations.js?v=threadsearch1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

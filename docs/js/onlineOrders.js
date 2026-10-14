@@ -6367,6 +6367,11 @@ let advanceAssignNo = null;
 let advanceSendBackNo = null;
 let selectedAdvanceNo = null; // the list's selected row - what the action bar works on
 let myAdvanceOrderCount = 0;
+// TO FOLLOW (supabase_advance_order_to_follow.sql): fully paid, not shipped, and a serial-tracked unit
+// still has no serial - e.g. the POS's Paid-in-Full Advance Orders for out-of-stock tanks. Not a
+// production stage: the "To Follow" pill filters on staff_get_advance_orders_to_follow instead.
+const ADVANCE_TO_FOLLOW_FILTER = 'To Follow';
+const advanceToFollowByNo = new Map(); // transaction_no -> { units_to_follow, to_follow }
 const ADVANCE_CARD_MAXIMIZED_KEY = 'advanceOrderCardMaximized';
 const ADVANCE_PARTS = ['tank', 'stand'];
 
@@ -6429,8 +6434,27 @@ function advanceMakerCellHtml(o, part) {
 
 // Custom / 10mm-12mm glass come from supabase_advance_orders_custom_flags.sql - same badges as the online
 // list (glass isn't a link here: glass-cut-list.html reads online order lines only).
+function advanceToFollowBadgeHtml(transactionNo) {
+  const tf = advanceToFollowByNo.get(String(transactionNo));
+  if (!tf?.to_follow) return '';
+  const n = Number(tf.units_to_follow) || 0;
+  return `<span class="badge badge-warning" title="Fully paid, not released yet - ${n} unit${n === 1 ? '' : 's'} still without a serial (tag at Ready to Ship)">To Follow</span>`;
+}
+
+// Fetches the TO FOLLOW counts for the given orders into advanceToFollowByNo. Quiet on error (e.g.
+// supabase_advance_order_to_follow.sql not run yet) - the badges just don't show.
+async function loadAdvanceToFollow(transactionNos) {
+  const nos = (transactionNos || []).map(String).filter(Boolean);
+  if (!nos.length) return;
+  const { data, error } = await advanceRpc('staff_get_advance_orders_to_follow', { p_nos: nos });
+  if (error) return;
+  nos.forEach((no) => advanceToFollowByNo.delete(no));
+  (data || []).forEach((r) => advanceToFollowByNo.set(String(r.transaction_no), r));
+}
+
 function advanceFlagsHtml(o) {
   return [
+    advanceToFollowBadgeHtml(o.transaction_no),
     o.glass_thickness ? `<span class="badge badge-glass" title="This order has a ${escapeHtml(o.glass_thickness)} glass line">${escapeHtml(o.glass_thickness)} glass</span>` : '',
     o.has_custom_line ? '<span class="badge badge-custom" title="This order has a custom-built line - it may need a maker assigned.">Custom</span>' : '',
     o.needs_tank ? '<span class="badge badge-custom" title="Has a custom tank line">Tank</span>' : '',
@@ -6527,14 +6551,20 @@ async function loadAdvanceOrders() {
   tbody.innerHTML = '<tr><td colspan="19" class="cell-msg">Loading...</td></tr>';
   const thisGeneration = ++advanceLoadGeneration;
 
-  const { data, error } = await advanceRpc('admin_list_advance_orders', {
-    p_search: document.getElementById('orderSearchInput').value.trim() || null,
-    p_page: advancePage,
-    p_page_size: advancePageSize,
-    p_prod_status: advanceStatusFilter,
-    ...listSortParam(advanceListSort)
-  });
+  const { data, error } = advanceStatusFilter === ADVANCE_TO_FOLLOW_FILTER
+    ? await loadAdvanceToFollowRows()
+    : await advanceRpc('admin_list_advance_orders', {
+      p_search: document.getElementById('orderSearchInput').value.trim() || null,
+      p_page: advancePage,
+      p_page_size: advancePageSize,
+      p_prod_status: advanceStatusFilter,
+      ...listSortParam(advanceListSort)
+    });
   if (thisGeneration !== advanceLoadGeneration) return; // superseded by a newer search/page
+  if (!error && advanceStatusFilter !== ADVANCE_TO_FOLLOW_FILTER) {
+    await loadAdvanceToFollow((data || []).map((o) => o.transaction_no));
+    if (thisGeneration !== advanceLoadGeneration) return;
+  }
 
   if (error) {
     tbody.innerHTML = `<tr><td colspan="19" class="cell-msg error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_orders_drop_old_list_overload.sql (or sql/supabase_online_orders_list_sort.sql if the function is missing).' : ''}</td></tr>`;
@@ -6559,10 +6589,39 @@ async function loadAdvanceOrders() {
   );
 }
 
+// "To Follow" pill: the TO FOLLOW orders (newest first), this page's rows read in parallel with the same
+// single-order call refreshAdvanceAfterAction uses - admin_list_advance_orders itself isn't changed.
+// Returns { data, error } shaped like admin_list_advance_orders (total_count on every row).
+async function loadAdvanceToFollowRows() {
+  const { data: tf, error } = await advanceRpc('staff_get_advance_orders_to_follow', {});
+  if (error) {
+    return { data: null, error: { message: `${error.message}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_order_to_follow.sql.' : ''}` } };
+  }
+  (tf || []).forEach((r) => advanceToFollowByNo.set(String(r.transaction_no), r));
+  const search = document.getElementById('orderSearchInput').value.trim().toLowerCase();
+  const nos = (tf || [])
+    .map((r) => String(r.transaction_no))
+    .filter((no) => !search || no.toLowerCase().includes(search))
+    .sort((a, b) => (Number(b) || 0) - (Number(a) || 0) || b.localeCompare(a));
+  const pageNos = nos.slice((advancePage - 1) * advancePageSize, advancePage * advancePageSize);
+  const results = await Promise.all(pageNos.map((no) => advanceRpc('admin_list_advance_orders', { p_transaction_no: no })));
+  const failed = results.find((r) => r.error);
+  if (failed) return { data: null, error: failed.error };
+  const rows = results.map((r) => r.data?.[0]).filter(Boolean).map((o) => ({ ...o, total_count: nos.length }));
+  return { data: rows, error: null };
+}
+
 async function loadAdvanceStatusSummary() {
-  const { data, error } = await advanceRpc('staff_get_advance_order_status_summary', {});
+  const [{ data, error }, toFollow] = await Promise.all([
+    advanceRpc('staff_get_advance_order_status_summary', {}),
+    advanceRpc('staff_get_advance_orders_to_follow', {})
+  ]);
   const counts = new Map((data || []).map((r) => [r.status, Number(r.order_count) || 0]));
   document.querySelectorAll('#advanceStatusBar [data-adv-count]').forEach((el) => {
+    if (el.dataset.advCount === ADVANCE_TO_FOLLOW_FILTER) {
+      el.textContent = toFollow.error ? '-' : String((toFollow.data || []).length);
+      return;
+    }
     el.textContent = error ? '-' : String(counts.get(el.dataset.advCount) || 0);
   });
   document.querySelectorAll('#advanceStatusBar [data-adv-status]').forEach((pill) => {
@@ -6576,10 +6635,12 @@ async function refreshAdvanceAfterAction(transactionNo) {
   const row = data?.[0];
   if (row) {
     advanceRowsByNo.set(String(transactionNo), row);
+    await loadAdvanceToFollow([transactionNo]); // e.g. serials just tagged - the TO FOLLOW badge goes away
     if (openAdvanceNo === String(transactionNo)) {
       fillAdvanceCard(row);
       loadAdvanceCardRework(openAdvanceNo);
       loadAdvanceCardSerials(openAdvanceNo); // serials just tagged at Ready to Ship
+      loadAdvanceCardLines(openAdvanceNo); // ...so the lines' "No serial yet" tags update too
     }
   }
   loadAdvanceOrders();
@@ -6611,6 +6672,7 @@ function fillAdvanceCard(o) {
   const badge = document.getElementById('advanceCardPaidBadge');
   badge.textContent = o.fully_paid ? 'Fully Paid' : 'With Balance';
   badge.className = `badge ${o.fully_paid ? 'badge-success' : 'badge-neutral'}`;
+  fillAdvanceCardToFollow(o.transaction_no);
 
   document.getElementById('acProdStatus').innerHTML = advanceStatusBadgeHtml(status)
     + (Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : '');
@@ -6646,6 +6708,16 @@ function fillAdvanceCard(o) {
   updateAdvanceCardActions(o);
 }
 
+function fillAdvanceCardToFollow(transactionNo) {
+  const el = document.getElementById('advanceCardToFollowBadge');
+  if (!el) return;
+  const tf = advanceToFollowByNo.get(String(transactionNo));
+  const n = Number(tf?.units_to_follow) || 0;
+  el.classList.toggle('hidden', !tf?.to_follow);
+  el.textContent = tf?.to_follow ? `To Follow · ${n} unit${n === 1 ? '' : 's'} without serial` : '';
+  el.title = 'Paid, not released yet - tag the unit(s) at Ready to Ship';
+}
+
 function updateAdvanceCardActions(o) {
   applyAdvanceActions({ assign: 'advanceCardAssignBtn', next: 'advanceCardNextBtn', sendBack: 'advanceCardSendBackBtn', stepBack: 'advanceCardStepBackBtn' }, o);
   // Same people who can Ready to Ship (staff_get_advance_order_serial_labels refuses view-only Store Managers).
@@ -6660,6 +6732,11 @@ function openAdvanceCard(transactionNo) {
   openAdvanceNo = String(o.transaction_no);
   fillAdvanceCard(o);
   document.getElementById('advanceCardModal').classList.remove('hidden');
+  const cardNo = openAdvanceNo;
+  if (!advanceToFollowByNo.has(cardNo)) {
+    // opened from somewhere other than the list - read its TO FOLLOW state now
+    loadAdvanceToFollow([cardNo]).then(() => { if (openAdvanceNo === cardNo) fillAdvanceCardToFollow(cardNo); });
+  }
   loadAdvanceCardLines(openAdvanceNo);
   loadAdvanceCardRework(openAdvanceNo);
   renderSerialsFactbox('advanceCard', []); // clear the previous order's while loading
@@ -6673,13 +6750,29 @@ async function loadAdvanceCardLines(transactionNo) {
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
   tfoot.innerHTML = '';
 
-  const { data, error } = await advanceRpc('staff_list_advance_order_lines', { p_no: transactionNo });
+  const [{ data, error }, serialStatus] = await Promise.all([
+    advanceRpc('staff_list_advance_order_lines', { p_no: transactionNo }),
+    advanceRpc('staff_get_advance_order_line_serial_status', { p_no: transactionNo })
+  ]);
   if (myGeneration !== advanceCardLoadGeneration) return; // closed or another order opened meanwhile
 
   if (error) {
     tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
+  // Serial-tracked lines get "No serial yet" (or "n/m no serial") until tagged at Ready to Ship, then
+  // "Serial ✓". Quiet when supabase_advance_order_to_follow.sql isn't run yet.
+  const serialByLine = new Map((serialStatus.error ? [] : serialStatus.data || [])
+    .filter((s) => s.needs_serial)
+    .map((s) => [String(s.line_no), s]));
+  const serialTagHtml = (lineNo) => {
+    const s = serialByLine.get(String(lineNo));
+    if (!s) return '';
+    const untagged = Number(s.quantity_untagged) || 0;
+    if (!untagged) return ' <span class="badge badge-success" title="Every unit on this line has a serial">Serial &#10003;</span>';
+    const qty = Number(s.quantity) || 0;
+    return ` <span class="badge badge-warning" title="Not in stock / not released yet - tag at Ready to Ship">${untagged < qty ? `${untagged}/${qty} ` : ''}No serial yet</span>`;
+  };
   const lines = data || [];
   if (!lines.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No line items found for this order.</td></tr>';
@@ -6691,7 +6784,7 @@ async function loadAdvanceCardLines(transactionNo) {
       <td>${escapeHtml(l.line_no ?? '')}</td>
       <td>${escapeHtml(l.type || '')}</td>
       <td>${escapeHtml(l.item_no || '')}</td>
-      <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}</td>
+      <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}${serialTagHtml(l.line_no)}</td>
       <td class="num">${l.quantity ?? ''}</td>
       <td class="num">${formatAdvanceMoney(l.price)}</td>
       <td class="num">${formatAdvanceMoney(l.discount)}</td>

@@ -164,6 +164,8 @@
         <button type="button" class="bc-tab status-summary-pill" data-adv-status="To Ship">To Ship <span class="status-summary-count" data-adv-count="To Ship">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-adv-status="Shipped">Shipped <span class="status-summary-count" data-adv-count="Shipped">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-adv-status="Delivered" title="Marked Done by the Delivery Team">Delivered <span class="status-summary-count" data-adv-count="Delivered">-</span></button>
+        <!-- Not a stage: fully paid, not shipped, a unit still without a serial (supabase_advance_order_to_follow.sql). -->
+        <button type="button" class="bc-tab status-summary-pill" data-adv-status="To Follow" title="Paid, not released yet - a tank/stand still has no serial (e.g. sold with no stock)">To Follow <span class="status-summary-count" data-adv-count="To Follow">-</span></button>
       </div>
 
       <div class="bc-body" id="flatOrdersView">
@@ -649,6 +651,7 @@
           <div class="bc-doc-titleline">
             <h2 id="advanceCardTitle">Advance Order</h2>
             <span id="advanceCardPaidBadge" class="badge badge-neutral"></span>
+            <span id="advanceCardToFollowBadge" class="badge badge-warning hidden"></span>
           </div>
         </div>
         <div class="bc-doc-window">
@@ -1151,7 +1154,7 @@
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=smassemble1"></script>
+  <script src="js/onlineOrders.js?v=tofollow1"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>

@@ -545,7 +545,6 @@ ORDER BY Id DESC", conn))
                         string user = CurrentUser.GetEffectiveUsername("SYSTEM");
                         // collect saved rows to print later
                         System.Collections.Generic.List<(string Code, string Description, int Count)> savedLines = new();
-                        System.Collections.Generic.List<(string SerialNo, string ItemCode, string Description)> createdSerialLabels = new();
                         foreach (DataGridViewRow row in dgv.Rows)
                         {
                             if (row.IsNewRow) continue;
@@ -613,20 +612,8 @@ ORDER BY Id DESC", conn))
                                         ledgerCmd.Parameters.AddWithValue("@variationId", string.IsNullOrWhiteSpace(variationId) ? (object)DBNull.Value : variationId);
                                     }
                                     ledgerCmd.ExecuteNonQuery();
-
-                                    var serials = ProductSerialTrackingForm.CreateSerialRecords(
-                                        conn,
-                                        tran,
-                                        code,
-                                        variationId,
-                                        desc,
-                                        batchDocNo,
-                                        user,
-                                        count);
-                                    if (serials.Count > 0)
-                                    {
-                                        createdSerialLabels.AddRange(serials);
-                                    }
+                                    // No serials here anymore - the POS never creates serials
+                                    // (Stock Counts is retired, see MainForm's "StockCounts" case).
                                 }
                             }
                             catch { /* best-effort; do not break saving on ledger failure */ }
@@ -634,28 +621,12 @@ ORDER BY Id DESC", conn))
 
                         tran.Commit();
 
-                        // Now that the transaction is durable, safe to auto-sync any serials created above.
-                        if (createdSerialLabels.Count > 0)
-                        {
-                            ProductSerialTrackingForm.TriggerCloudSyncFireAndForget();
-                        }
-
                         // Attempt to print the saved stock counts for this batch (do not block on print errors)
                         try
                         {
                             if (savedLines != null && savedLines.Count > 0)
                             {
                                 PostingEvents.PrintStockCounts(batchDocNo, savedLines);
-                            }
-                        }
-                        catch { }
-
-                        // Print barcode labels for generated serial numbers using the label printer setup.
-                        try
-                        {
-                            if (createdSerialLabels.Count > 0)
-                            {
-                                MainForm.PrintSerialNumberLabels(createdSerialLabels);
                             }
                         }
                         catch { }

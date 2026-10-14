@@ -7329,14 +7329,20 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         ShowTenderDeclarationDialog();
                         break;
                     case "StockCounts":
-                        try
-                        {
-                            using (var scf = new StockCountsForm())
-                            {
-                                scf.ShowDialog(this);
-                            }
-                        }
-                        catch { }
+                        // Retired per "all local pos dont create serials.. only in the portal can".
+                        // Stock Counts only listed production-category (serial-tracked) items, and
+                        // its whole job was posting found/built units with new serials - without the
+                        // serials it would add stock that can never be sold (every sale needs a
+                        // serial). The Web Portal does both properly: Production Orders > Post Output
+                        // (built units) and the Serial Inventory Journal (found units).
+                        MessageBox.Show(this,
+                            "Stock Counts has moved to the Web Portal - the POS no longer creates serials.\n\n" +
+                            "Built units: Production Orders > Post Output.\n" +
+                            "Found / miscounted units: Serial Inventory Journal.\n\n" +
+                            "New serials reach this POS within 5 minutes (or press \"Pull from Cloud\" in the Serial Tracker).",
+                            "Stock Counts",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
                         break;
                     // Tender Declaration button beside Settings           
                     case "Settings":
@@ -16163,57 +16169,34 @@ END", connection);
             string normalizedVariantCode = variantCode?.Trim() ?? string.Empty;
             var availableSerials = ProductSerialTrackingForm.GetAvailableSerials(itemCode, normalizedVariantCode, serialsAlreadyInSale);
 
-            // Non-production stores never mint new serials (CreateSerialRecords is production-only),
-            // so there's no shortfall fallback for them - per "every normal sale needs a serial 1:1;
-            // if there aren't enough, that means there's no stock, and the customer should be routed
-            // to an Advance Order instead." That reasoning only holds for real catalog stock (a
-            // physical unit that should already be tagged but isn't, or was oversold) - it does NOT
-            // hold for genuinely made-to-order builds (AQ-/CUSTOM- prefixed), which by definition
-            // never have a serial at non-production stores since nothing has been built yet. Those
-            // previously hit this same "Insufficient Stock" block on every single Add to Sale attempt
-            // (0 available is the normal, permanent state there, not a shortfall) - per direct
-            // instruction, made-to-order items are let through instead (same as production warehouses
-            // already are, just below) with guidance to use the Downpayment/Advance Order checkout
-            // flow rather than a regular full sale, since the item doesn't physically exist yet for
-            // this store to hand over. Production warehouses are unaffected - unchanged below.
-            if (availableSerials.Count == 0 && IsBuildToOrderItemCode(itemCode) && !IsCurrentWarehouseProductionForLabels())
-            {
-                MessageBox.Show(this,
-                    $"{itemCode} is a made-to-order build - this store doesn't have a physical unit for it yet, so there's nothing to hand over on a regular sale. " +
-                    "It's fine to add it to the sale, but check out using the Downpayment button (not a full sale) so it's recorded as an Advance Order; production will build it and tag its serial later.",
-                    "Made-to-Order Item",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return new List<ProductSerialTrackingForm.AvailableSerialRecord>();
-            }
-
-            if (availableSerials.Count < requiredQuantity && !IsCurrentWarehouseProductionForLabels())
-            {
-                MessageBox.Show(this,
-                    string.IsNullOrWhiteSpace(normalizedVariantCode)
-                        ? $"Only {availableSerials.Count} serial-tracked unit(s) are available for {itemCode}, but {requiredQuantity} were requested. This store can't sell more than what's physically in stock and tagged - place an Advance Order for the shortfall instead."
-                        : $"Only {availableSerials.Count} serial-tracked unit(s) are available for {itemCode} variant {normalizedVariantCode}, but {requiredQuantity} were requested. This store can't sell more than what's physically in stock and tagged - place an Advance Order for the shortfall instead.",
-                    "Insufficient Stock",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return null;
-            }
-
-            if (availableSerials.Count == 0)
-            {
-                return new List<ProductSerialTrackingForm.AvailableSerialRecord>();
-            }
-
+            // Per "all local pos dont create serials.. only in the portal can": no POS (production
+            // warehouse included) creates serials anymore, so a unit with no available serial isn't
+            // physically on hand to hand over. Instead of blocking the sale (the old "Insufficient
+            // Stock" stop at non-production stores) or auto-creating serials at posting (the old
+            // production-warehouse fallback), the item goes on the sale with whatever serials ARE on
+            // hand, and Checkout turns the whole sale into a Paid-in-Full Advance Order "to follow"
+            // (see SaleNeedsAdvanceOrder) - per "the customer wanted to pay in full... how I can
+            // track this on the system since I dont have serials to give". The portal tags the
+            // missing units when they're built (Ready to Ship).
             if (availableSerials.Count < requiredQuantity)
             {
+                int missingCount = requiredQuantity - availableSerials.Count;
+                string itemLabel = string.IsNullOrWhiteSpace(normalizedVariantCode) ? itemCode : $"{itemCode} variant {normalizedVariantCode}";
                 MessageBox.Show(this,
-                    string.IsNullOrWhiteSpace(normalizedVariantCode)
-                        ? $"Only {availableSerials.Count} serial-tracked unit(s) are available for {itemCode}, but {requiredQuantity} were requested. The remaining quantity will be auto-generated after posting."
-                        : $"Only {availableSerials.Count} serial-tracked unit(s) are available for {itemCode} variant {normalizedVariantCode}, but {requiredQuantity} were requested. The remaining quantity will be auto-generated after posting.",
-                    "Serial Tracking",
+                    (availableSerials.Count == 0
+                        ? $"{itemLabel} has no tagged unit in stock."
+                        : $"Only {availableSerials.Count} tagged unit(s) of {itemLabel} are in stock, but {requiredQuantity} were requested - {missingCount} aren't in stock.") +
+                    "\n\nIt's fine to add it - at Checkout this sale will be saved as an Advance Order (paid in full or with a downpayment), " +
+                    "and the unit is released once production tags it in the Web Portal.",
+                    "No Stock - Advance Order",
                     MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                    MessageBoxIcon.Information);
                 requiredQuantity = availableSerials.Count;
+            }
+
+            if (requiredQuantity == 0)
+            {
+                return new List<ProductSerialTrackingForm.AvailableSerialRecord>();
             }
 
             var selectedSerials = new List<ProductSerialTrackingForm.AvailableSerialRecord>();
@@ -16449,7 +16432,8 @@ END", connection);
                 string serialNo = saleItem.SubItems.Count > 7 ? saleItem.SubItems[7].Text?.Trim() ?? string.Empty : string.Empty;
                 int assignedSerialCount = ParseSaleSerialNumbers(serialNo).Count;
 
-                if (!ShouldRequireAquariumSerialSelection(category, itemCode))
+                // Custom Stickers dialog lines are cut to size, never serial-tracked.
+                if (!ShouldRequireAquariumSerialSelection(category, itemCode) || IsCustomStickerCategory(category))
                 {
                     continue;
                 }
@@ -16478,6 +16462,14 @@ END", connection);
             }
 
             return lines;
+        }
+
+        // A sale with a serial-tracked unit that has no serial (not in stock - the POS can't create
+        // one) can't be a regular sale: Checkout saves it as an Advance Order instead, paid in full
+        // when fully paid (see ProcessCheckout / SaveAdvanceOrder). Exchanges keep their own flow.
+        private bool SaleNeedsAdvanceOrder()
+        {
+            return !isReturnExchangeMode && GetSaleLinesMissingAquariumSerials().Count > 0;
         }
 
         private void EnsureSaleMetadataColumns()
@@ -17326,48 +17318,33 @@ END", connection);
                 return;
             }
 
-            // Blocks a full-payment Checkout when the sale contains a made-to-order build with NO
-            // real physical unit behind it (per "so i see the message did prompt but the complete
-            // payment is allowed. can we force the user to do the advance order instead") -
-            // PromptForAquariumSaleSerials only warned when the item was added, it never stopped
-            // staff from completing a regular full sale afterward. Only Downpayment
-            // (checkoutButton.Tag == "DOWNPAYMENT", wired up by downPaymentButton's click handler
-            // above) may proceed for those, recording it as an Advance Order instead. Production
-            // warehouses are unaffected - they DO have (or can mint) real units, so a normal sale
-            // is legitimate there.
-            //
-            // NOT just an item-code-prefix check, though - a non-production store CAN genuinely
-            // have real, available serials for an AQ-/CUSTOM- item on hand (e.g. received via a
-            // Transfer Order - see PromptForAquariumSaleSerials' own comment on why non-production
-            // stores go through the same required serial picker as production ones). If the sale
-            // line's SubItems[7] (Serial No - see AddSaleLine) is non-blank, a real serial WAS
-            // picked for it at add-to-sale time, so this line has an actual unit to hand over and
-            // should NOT be forced into an Advance Order. An empty SubItems[7] on a build-to-order
-            // item only happens when PromptForAquariumSaleSerials let it through with zero
-            // available serials (see its own "Made-to-Order Item" branch) - that's the genuine
-            // no-physical-unit case this block exists to catch.
+            // A sale with a serial-tracked unit that has no serial (nothing in stock to hand over -
+            // the POS doesn't create serials) is saved as an Advance Order instead of a regular sale,
+            // per "the customer wanted to pay in full... how I can track this on the system since I
+            // dont have serials to give" and "will it automatically grouped as advance order even
+            // the cashier did a straight transaction". This replaces the old "Advance Order Required"
+            // block (non-production stores) and the old auto-created serials (production warehouse):
+            // the cashier just checks out as usual; ProcessCheckout routes full payment to
+            // SaveAdvanceOrder (Paid in Full, to follow) instead of CompleteSale. The whole cart goes
+            // on the advance order, in-stock items included.
             if (!string.Equals(checkoutButton.Tag?.ToString(), "DOWNPAYMENT", StringComparison.OrdinalIgnoreCase)
-                && !IsCurrentWarehouseProductionForLabels())
+                && SaleNeedsAdvanceOrder())
             {
-                var buildToOrderItemNames = salesListView.Items
-                    .Cast<ListViewItem>()
-                    .Where(saleItem =>
-                        IsBuildToOrderItemCode(saleItem.SubItems.Count > 5 ? saleItem.SubItems[5].Text : null)
-                        && !IsCustomStickerCategory(saleItem.SubItems.Count > 4 ? saleItem.SubItems[4].Text : null)
-                        && string.IsNullOrWhiteSpace(saleItem.SubItems.Count > 7 ? saleItem.SubItems[7].Text : null))
-                    .Select(saleItem => saleItem.Text?.Trim())
-                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                var noStockItemNames = GetSaleLinesMissingAquariumSerials()
+                    .Select(line => $"{line.Description} (x{line.Count})")
                     .Distinct()
                     .ToList();
 
-                if (buildToOrderItemNames.Count > 0)
+                var confirm = MessageBox.Show(this,
+                    $"Not in stock (no tagged unit): {string.Join(", ", noStockItemNames)}.\n\n" +
+                    "This sale will be saved as an ADVANCE ORDER (to follow), not a regular sale. " +
+                    "If the customer pays the full amount it's recorded as Paid in Full; the unit is released once production tags it in the Web Portal.\n\n" +
+                    "Continue?",
+                    "No Stock - Advance Order",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Information);
+                if (confirm != DialogResult.Yes)
                 {
-                    MessageBox.Show(this,
-                        $"This sale includes made-to-order build(s) this store doesn't have a physical unit for yet: {string.Join(", ", buildToOrderItemNames)}. " +
-                        "A regular Checkout can't be completed for these - use the Downpayment button instead so it's recorded as an Advance Order.",
-                        "Advance Order Required",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
                     return;
                 }
             }
@@ -17886,6 +17863,15 @@ END", connection);
                 //     return;
                 // }
 
+                // No stock for a serial-tracked unit: save it as a Paid-in-Full Advance Order (to
+                // follow) instead of a regular sale - see CheckoutButton_Click. Also catches full
+                // payment in DOWNPAYMENT mode, which used to fall through to a regular sale here.
+                if (SaleNeedsAdvanceOrder())
+                {
+                    SaveAdvanceOrder();
+                    return;
+                }
+
                 // Complete the sale with all payments
                 CompleteSale();
                 return;
@@ -18237,39 +18223,10 @@ END", connection);
                     MessageBox.Show($"Sale completed but printing failed: {ex.Message}", "Print Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
 
-                try
-                {
-                    var pendingAquariumSerialLines = GetSaleLinesMissingAquariumSerials();
-                    if (pendingAquariumSerialLines.Count > 0)
-                    {
-                        var generatedSerialLabels = new List<(string SerialNo, string ItemCode, string Description)>();
-                        using var serialConn = new SqlConnection(connectionString);
-                        serialConn.Open();
-
-                        foreach (var pendingLine in pendingAquariumSerialLines)
-                        {
-                            generatedSerialLabels.AddRange(ProductSerialTrackingForm.CreateSoldSerialRecords(
-                                serialConn,
-                                null,
-                                pendingLine.ItemCode,
-                                pendingLine.VariationId,
-                                pendingLine.Description,
-                                currentReceiptNo,
-                                mappedOnlineOrderId,
-                                CurrentUser.GetEffectiveUsername("POS_SYSTEM"),
-                                pendingLine.Count));
-                        }
-
-                        if (generatedSerialLabels.Count > 0)
-                        {
-                            PrintSerialNumberLabels(generatedSerialLabels);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Sale completed but fallback aquarium serial tracking/label printing failed: {ex.Message}", "Label Print Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
+                // The old fallback here auto-created SOLD serials (and printed labels) for any
+                // serial-tracked line sold without one. Removed - no POS creates serials anymore, and a
+                // sale with such a line never reaches CompleteSale: ProcessCheckout saves it as an
+                // Advance Order instead (SaleNeedsAdvanceOrder).
                 // }
 
                 // MessageBox.Show(
@@ -24666,13 +24623,25 @@ ORDER BY [Name]", conn);
 
         private void SaveAdvanceOrder()
         {
+            // Paid in Full, to follow: the customer paid the whole amount but a serial-tracked unit
+            // isn't in stock (no serial - the POS can't create one), so it's an advance order with
+            // Balance 0 instead of a regular sale - see CheckoutButton_Click / ProcessCheckout.
+            decimal netAmountDue = currentTotal - currentDiscount;
+            bool isPaidInFullToFollow = totalPaid >= netAmountDue && SaleNeedsAdvanceOrder();
+
             // Check if downpayment is equal to currentTotal
-
-
-            if (totalPaid == currentTotal)
+            if (!isPaidInFullToFollow && totalPaid == currentTotal)
             {
                 MessageBox.Show("Downpayment should not be equal to Grand Total. Please checkout full amount instead", "Invalid Downpayment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
+            }
+
+            if (isPaidInFullToFollow)
+            {
+                // Payment is already taken - if a prompt below is cancelled, POST retries this save.
+                checkoutButton.Text = "POST";
+                checkoutButton.Tag = "DOWNPAYMENT";
+                checkoutButton.BackColor = Color.DarkOrange;
             }
 
             string customerName = "";
@@ -24688,14 +24657,23 @@ ORDER BY [Name]", conn);
                 customerName = FunctionEvents.PromptForCustomerName();
                 if (string.IsNullOrWhiteSpace(customerName))
                 {
-                    MessageBox.Show("Customer name is required.", "Missing Info", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(isPaidInFullToFollow
+                            ? "Customer name is required. Payment is kept - press POST to finish saving the advance order."
+                            : "Customer name is required.",
+                        "Missing Info", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 // Prompt for Order Description
-                orderDescription = FunctionEvents.PromptForOrderDescription();
+                orderDescription = isPaidInFullToFollow
+                    ? FunctionEvents.PromptForOrderDescription(null, "PAID IN FULL - TO FOLLOW (no stock): " +
+                        string.Join(", ", GetSaleLinesMissingAquariumSerials().Select(line => $"{line.Description} x{line.Count}")))
+                    : FunctionEvents.PromptForOrderDescription();
                 if (string.IsNullOrWhiteSpace(orderDescription))
                 {
-                    MessageBox.Show("Order description is required.", "Missing Info", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(isPaidInFullToFollow
+                            ? "Order description is required. Payment is kept - press POST to finish saving the advance order."
+                            : "Order description is required.",
+                        "Missing Info", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 decimal aquariumTotal = FunctionEvents.GetAquariumCategoryTotal(salesListView, connectionString);
@@ -24836,6 +24814,29 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                         }
                     }
 
+                    // Paid in Full with cash change: record what was kept, not what was tendered -
+                    // the same CASH-only, last-payment-first deduction RecordPaymentEntry applies.
+                    var keptPaymentAmounts = new Dictionary<ListViewItem, decimal>();
+                    if (isPaidInFullToFollow)
+                    {
+                        decimal remainingChange = Math.Max(0m, totalPaid - netAmountDue);
+                        var paymentItems = salesListView.Items.Cast<ListViewItem>()
+                            .Where(it => string.Equals(it.Tag?.ToString(), "PAYMENT", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                        for (int i = paymentItems.Count - 1; i >= 0 && remainingChange > 0m; i--)
+                        {
+                            var paymentItem = paymentItems[i];
+                            if (!string.Equals(paymentItem.Text?.Trim(), "CASH", StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            string tenderedText = paymentItem.SubItems.Count > 3 ? paymentItem.SubItems[3].Text : string.Empty;
+                            if (!decimal.TryParse(tenderedText.Replace("?", "").Replace("-", "").Trim(), out decimal tendered))
+                                continue;
+                            decimal deduct = Math.Min(tendered, remainingChange);
+                            keptPaymentAmounts[paymentItem] = tendered - deduct;
+                            remainingChange -= deduct;
+                        }
+                    }
+
                     // Insert payment lines separately
                     foreach (ListViewItem item in salesListView.Items)
                     {
@@ -24857,6 +24858,12 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                             string description = item.SubItems.Count > 5 ? item.SubItems[5].Text : item.SubItems[0].Text;
                             decimal grossAmount = price * quantity;
                             decimal netAmount = grossAmount - discount;
+                            if (keptPaymentAmounts.TryGetValue(item, out decimal keptAmount))
+                            {
+                                if (keptAmount <= 0m)
+                                    continue; // all of it was change
+                                netAmount = keptAmount;
+                            }
 
                             // Insert payment line into AdvanceOrderLines (include UserID when available)
                             string insertPaymentSql = advanceOrderLinesHasUserId ? @"
@@ -24901,7 +24908,8 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                     // Get all valid tender type codes from master table
                     var tenderTypeCodes = new HashSet<string>();
 
-                    downpayment = totalPaid;
+                    // Paid in Full: anything over the amount due was handed back as change.
+                    downpayment = isPaidInFullToFollow ? netAmountDue : totalPaid;
                     decimal NetAmount = currentTotal - currentDiscount;
                     balance = grandTotal - downpayment;
 
@@ -24972,6 +24980,25 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
 
                 RecordPaymentEntry();
 
+                // Units the cashier did pick a serial for are reserved for this order: marked SOLD and
+                // tied to it as 'ADV-<TransactionNo>' (the same link the portal's Ready to Ship and
+                // AdvanceOrdersHeaderForm's Pay in Full use, which skip units already tagged), so the
+                // tank can't be sold to someone else while the rest of the order is still to follow.
+                try
+                {
+                    var pickedSerials = GetSelectedSaleSerialNumbers();
+                    if (pickedSerials.Count > 0)
+                    {
+                        ProductSerialTrackingForm.MarkSerialsSold(pickedSerials, currentReceiptNo, "ADV-" + (currentTransNo ?? string.Empty).Trim());
+                    }
+                }
+                catch (Exception serialEx)
+                {
+                    MessageBox.Show(this, $"Advance order saved, but reserving its serial(s) failed: {serialEx.Message}", "Serial Tracking Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
+                decimal changeDue = isPaidInFullToFollow ? Math.Max(0m, totalPaid - netAmountDue) : 0m;
+
                 try
                 {
                     string advanceReceiptToSync = currentReceiptNo;
@@ -25002,7 +25029,10 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
 
 
                 ClearSaleAndPayments();
-                MessageBox.Show("Advance order saved!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(isPaidInFullToFollow
+                        ? "Advance order saved as PAID IN FULL - to follow." + (changeDue > 0m ? $"\n\nCHANGE DUE: P{changeDue:F2}" : string.Empty)
+                        : "Advance order saved!",
+                    "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 // Revert checkout UI back to normal SALES mode after saving an advance order
                 try
