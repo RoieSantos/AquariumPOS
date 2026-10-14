@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-14
 
+- **POS: manual discounts disabled.** In the Discount dialog, Percentage and Fixed Amount are greyed out and Wholesale is preselected, so cashiers can no longer type in discounts (e.g. commissions given as a discount). Re-enable with `ManualDiscountEnabled = true` in [MainForm.cs](MainForm.cs) `DiscountButton_Click`.
+
+- **New read-only local POS script: list all discounted receipts** (header or line discount) with Pancake sync status, optional date range, and a MANUAL / WHOLESALE `DiscountSource` column + filter (from `TransactionHeader.DiscountDescription`). [local_discounted_receipts.sql](sql/local_discounted_receipts.sql).
+
+- **New read-only local POS script: look up everything for one receipt** - header, item lines (incl. `-REV`), payments, Pancake sync map, advance order, serials. [local_receipt_lookup.sql](sql/local_receipt_lookup.sql).
+
 - **Fix: POS in-store sales with a discount rejected by Pancake** (`HTTP 422 "[discount_each_product]: is invalid"`, e.g. RS-0000011254). The per-unit discount was sent as `22.00`; Pancake only takes whole numbers (same as the earlier `cash` fix). It's now rounded to a whole peso ([OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs) in-store order payload).
 
 - **GMA Conversations: search inside the open conversation.** A 🔍 Search button in the chat header opens a search bar that highlights every match in the loaded messages (newest 200), shows "1 of 7", and jumps between matches (↑/Enter = older, ↓/Shift+Enter = newer, Esc closes). Browser-only, no SQL ([gmaConversations.js](docs/js/gmaConversations.js) `highlightThreadSearch`, [gma-conversations.html](docs/gma-conversations.html) `v=threadsearch1`).

@@ -19093,6 +19093,10 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
             ClearButton_Click(null, EventArgs.Empty);
         }
 
+        // Manual (Percentage / Fixed Amount) discounts are greyed out in the Discount dialog; only
+        // Wholesale can be applied. Set back to true to allow cashiers to type in discounts again.
+        private const bool ManualDiscountEnabled = false;
+
         private void DiscountButton_Click(object? sender, EventArgs e)
         {
             if (salesListView.Items.Count == 0)
@@ -19134,7 +19138,7 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
                 Text = "Percentage (%)",
                 Location = new Point(20, 50),
                 Size = new Size(120, 25),
-                Checked = true
+                Checked = ManualDiscountEnabled
             };
 
             var percentBox = new NumericUpDown
@@ -19177,8 +19181,13 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
             {
                 Text = "Wholesale",
                 Location = new Point(20, 120),
-                Size = new Size(120, 25)
+                Size = new Size(120, 25),
+                Checked = !ManualDiscountEnabled
             };
+
+            // Manual (% / fixed amount) discounts are switched off - see ManualDiscountEnabled.
+            percentRadio.Enabled = percentBox.Enabled = percentSymbol.Enabled = ManualDiscountEnabled;
+            amountRadio.Enabled = amountBox.Enabled = ManualDiscountEnabled;
 
             var wholesaleHintLabel = new Label
             {
@@ -19202,6 +19211,12 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
 
             applyButton.Click += (s, args) =>
             {
+                if (!ManualDiscountEnabled && !wholesaleRadio.Checked)
+                {
+                    MessageBox.Show("Manual discounts are disabled. Only Wholesale discount can be applied.", "Discount", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
                 if (percentRadio.Checked)
                 {
                     currentDiscount = currentTotal * (percentBox.Value / 100);
