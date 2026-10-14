@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-14
 
+- **Delivery calendar: no printing without a delivery fee.** A stop's Print / Print Invoice / Print Job Order now alert and stop when it has no fee (neither a calendar fee nor the order's own). The row shows "No delivery fee - can't print yet" in red ([delivery.js](docs/js/delivery.js) `stopHasDeliveryFee` / `guardStopPrint`, [delivery.html](docs/delivery.html) `v=feeprint1`).
+
 - **Calculate fee now finds the typed address on the map first.** When the Super User map pin is showing and the typed address differs from where the pin is, Calculate fee runs "Find typed address on map" automatically, then quotes to that pin (which is also what Save keeps). A pin dragged or clicked by hand is never moved ([delivery.js](docs/js/delivery.js), [delivery.html](docs/delivery.html) `v=feefind1`).
 
 - **Calculate fee: origin is the order's warehouse, not picked.** Removed the GMA / Amaya dropdown. The truck's branch now comes from the order's own warehouse (online: `LocationID` → Warehouse; Order Form: `Location`; advance: `Warehouse`) via new [supabase_delivery_order_branch.sql](sql/supabase_delivery_order_branch.sql). It's shown read-only as "From GMA / Amaya", and only that branch is quoted. No warehouse on file = no fee. Fixed the shipping-sync SQL header so it no longer says to run the old portal-fee file first ([delivery.js](docs/js/delivery.js), [delivery.html](docs/delivery.html) `v=feebranch1`).

@@ -994,6 +994,20 @@ async function removeDateVendor(dateKey, vendorCode) {
   showDayDetail(dateKey);
 }
 
+// Per "Dont allow to print an order if there is no delivery fee" - a stop's Print / Print Invoice /
+// Print Job Order stay blocked until it has a fee (the stop's own from Calculate fee, or the order's).
+// Client-side only, like the other print gating on this page.
+function stopHasDeliveryFee(s) {
+  return Number(s?.delivery_fee) > 0;
+}
+
+function guardStopPrint(stops, stopId) {
+  const stop = stops.find((x) => x.stop_id === stopId);
+  if (stopHasDeliveryFee(stop)) return true;
+  window.alert(`Order ${stop?.order_id || ''} has no delivery fee yet, so it can't be printed. Open Edit Details, click Calculate fee, then Continue - then print.`);
+  return false;
+}
+
 function showDayDetail(dateKey) {
   selectedDateKey = dateKey;
   document.querySelectorAll('.delivery-day-cell[data-date]').forEach((cell) => {
@@ -1041,7 +1055,7 @@ function showDayDetail(dateKey) {
           <td>${s.order_id || ''}</td>
           <td>${s.customer_name || ''}</td>
           <td>${s.route_name || ''}</td>
-          <td>${s.status || ''}${s.is_manual_delivery_fee ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}</td>
+          <td>${s.status || ''}${s.is_manual_delivery_fee ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}${stopHasDeliveryFee(s) ? '' : '<br><span class="error-text">No delivery fee - can\'t print yet</span>'}</td>
           <td>${displayAddress}${isManuallyEnteredAddress ? ' <span class="muted">(manually entered)</span>' : ''}</td>
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
@@ -1068,6 +1082,7 @@ function showDayDetail(dateKey) {
 
   tbody.querySelectorAll('button[data-print-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      if (!guardStopPrint(stops, btn.dataset.printStopId)) return;
       window.open(`delivery-receipt.html?stop=${encodeURIComponent(btn.dataset.printStopId)}`, '_blank');
     });
   });
@@ -1081,12 +1096,14 @@ function showDayDetail(dateKey) {
 
   tbody.querySelectorAll('button[data-print-invoice-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      if (!guardStopPrint(stops, btn.dataset.printInvoiceStopId)) return;
       window.open(`invoice.html?stop=${encodeURIComponent(btn.dataset.printInvoiceStopId)}`, '_blank');
     });
   });
 
   tbody.querySelectorAll('button[data-print-joborder-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => {
+      if (!guardStopPrint(stops, btn.dataset.printJoborderStopId)) return;
       window.open(`job-order.html?stop=${encodeURIComponent(btn.dataset.printJoborderStopId)}`, '_blank');
     });
   });
