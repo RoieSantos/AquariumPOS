@@ -1257,7 +1257,15 @@ function nextStepFor(o) {
       : { action: 'shipped', label: 'Release / Ship', icon: 'ico-ship', title: 'Release all or some items. Releasing everything marks it Shipped in the portal and Pancake' };
   }
   if (currentSession?.isOnlineOrderStaff && !canAssignOrders()) return nextStepForOnlineOrderStaff(o);
-  if (!canAssignOrders()) return nextStepForRequest(o);
+  if (!canAssignOrders()) {
+    // Per "store manager can see the assemble too" - a SET order at their own branch (canRequestProduction)
+    // gets Assemble before anything else. Then To Ship / Request Production as before.
+    if (isStoreManagerShipper() && canRequestProduction(o)) {
+      const stock = nextStepForStock(o);
+      if (stock?.action === 'set-assemble') return stock;
+    }
+    return nextStepForRequest(o);
+  }
   const status = (o.status || '').trim().toLowerCase();
   const needed = neededProductionRoles(o);
   if (!needed.length) return nextStepForStock(o);
@@ -1395,11 +1403,13 @@ async function handleNextStepClick(orderId, btn) {
     if (openCardOrderId === String(o.order_id)) loadOrderCardLines(String(o.order_id));
     await ensureStockStatus(findFlatOrder(o.order_id) || o);
     const s = stockStatusFor(findFlatOrder(o.order_id) || o);
+    // A Store Manager has no Ready to Ship / Assign - they To Ship, or Request Production.
+    const manager = !canAssignOrders() && isStoreManagerShipper();
     alert(!s || !s.needs_serial
       ? `Order ${o.order_id} is assembled.`
       : s.all_available
-        ? `Order ${o.order_id} is assembled and every part is in stock at ${s.warehouse_name || 'this branch'} - it can go Ready to Ship.\n${stockLinesSummary(s)}`
-        : `Order ${o.order_id} is assembled, but not everything is in stock at ${s.warehouse_name || 'this branch'} - use Assign to build the missing parts.\n${stockLinesSummary(s)}`);
+        ? `Order ${o.order_id} is assembled and every part is in stock at ${s.warehouse_name || 'this branch'} - it can go ${manager ? 'To Ship' : 'Ready to Ship'}.\n${stockLinesSummary(s)}`
+        : `Order ${o.order_id} is assembled, but not everything is in stock at ${s.warehouse_name || 'this branch'} - ${manager ? 'use Request Production to have the missing parts built' : 'use Assign to build the missing parts'}.\n${stockLinesSummary(s)}`);
   } else if (btn.dataset.action === 'ship-stock') {
     // Fresh lines from Pancake first, then re-check stock - the cached check / saved lines can still
     // hold old copies of the lines (order 105852 asked for 2 + 2).
