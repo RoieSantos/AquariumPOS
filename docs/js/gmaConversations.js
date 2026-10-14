@@ -627,7 +627,6 @@ function renderConversationList() {
       moodBadgeHtml(c),
       c.pinned_at_utc ? `<span class="inbox-pin-icon" title="${escapeHtml(pinnedTitle(c))}">📌</span>` : '',
       pageBadgeHtml(c.page_id),
-      adListBadgeHtml(c.psid),
       c.status === 'Escalated' ? '<span class="inbox-badge inbox-badge-escalated">Escalated</span>' : '',
       c.is_paused ? '<span class="inbox-badge inbox-badge-paused">Paused</span>' : ''
     ].join('');
@@ -644,7 +643,7 @@ function renderConversationList() {
             <span class="inbox-conv-psid">${escapeHtml(c.customer_name || c.psid)}${badges}</span>
             <span class="inbox-conv-time">${viewerBadgesHtml(c.psid)}${formatRelativeTime(c.last_message_at_utc)}${unread ? '<span class="inbox-unread-dot" title="Unread"></span>' : ''}</span>
           </div>
-          <div class="inbox-conv-preview">${escapeHtml(c.last_message_preview || '(no messages)')}</div>
+          <div class="inbox-conv-preview">${adListBadgeHtml(c.psid)}${escapeHtml(c.last_message_preview || '(no messages)')}</div>
           ${c.tags?.length ? `<div class="inbox-conv-tags">${tagChipsHtml(c.tags)}</div>` : ''}
         </div>
       </div>

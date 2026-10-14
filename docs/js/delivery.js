@@ -1254,6 +1254,40 @@ function getOrderIdLabelOverlayClass() {
   return OrderIdLabelOverlayClass;
 }
 
+// A stop marked GeocodeStatus = 'stale' had its address changed from the Online Orders card
+// (admin_set_portal_order_shipping_details, supabase_online_order_shipping_details_sync.sql - SQL can't
+// geocode). Geocoded here the first time its day is drawn, saved, and patched into `stops` in place so
+// this same render plots it.
+async function replotStaleStops(stops) {
+  for (const s of stops) {
+    if (s.geocode_status !== 'stale') continue;
+    const address = isPlaceholderAddress(s.shipping_address) ? '' : (s.shipping_address || '').trim();
+    const result = !address ? null : await new Promise((resolve) => {
+      new google.maps.Geocoder().geocode({ address }, (results, status) => {
+        resolve(status === 'OK' && results && results[0] ? results[0] : null);
+      });
+    });
+    const coords = result ? { lat: result.geometry.location.lat(), lng: result.geometry.location.lng() } : null;
+    const { error } = await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_stop_id: s.stop_id,
+      p_geocoded_address: address || null,
+      p_latitude: coords ? coords.lat : null,
+      p_longitude: coords ? coords.lng : null,
+      p_geocode_status: coords ? 'ok' : 'failed'
+    });
+    if (error) {
+      console.error('Re-plotting stale stop failed:', error);
+      continue;
+    }
+    s.geocode_status = coords ? 'ok' : 'failed';
+    s.geocoded_address = address || null;
+    s.latitude = coords ? coords.lat : null;
+    s.longitude = coords ? coords.lng : null;
+  }
+}
+
 // mapElId defaults to the admin day-detail panel's map ('dayMap'); the Driver Route View passes
 // 'driverRouteMap' to reuse this same marker/bounds logic for its single-day map.
 async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
@@ -1269,6 +1303,8 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
     mapEl.textContent = err.message;
     return;
   }
+
+  await replotStaleStops(stops);
 
   const plottedStops = stops.filter((s) => s.geocode_status === 'ok' && s.latitude && s.longitude);
   const warehouseMarkers = await resolveFixedRouteWarehouseMarkers(dateKey);
@@ -1330,12 +1366,17 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
     bounds.extend(position);
   });
 
+  // Super Users can drag an order's pin on the admin calendar map to move the stop - see
+  // onStopPinDragged (confirms via Edit Details before saving).
+  const canDragPins = !isDriverMap && currentSession.isSuperUser;
+
   plottedStops.forEach((s) => {
     const position = { lat: Number(s.latitude), lng: Number(s.longitude) };
-    new google.maps.Marker({
+    const marker = new google.maps.Marker({
       position,
       map: dayMapInstance,
-      title: `${s.order_id} - ${s.customer_name || ''}`,
+      title: `${s.order_id} - ${s.customer_name || ''}${canDragPins ? ' (drag to move)' : ''}`,
+      draggable: canDragPins,
       // Cyan pin on the driver map to match the tech motif's accent color - default red pin on
       // the admin calendar's map stays untouched.
       icon: isDriverMap ? 'https://maps.google.com/mapfiles/ms/icons/ltblue-dot.png' : undefined
@@ -1344,9 +1385,18 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
 
     // Order id chip beside the pin - admin calendar map only (see OrderIdLabelOverlay above); the
     // driver map already shows this via the tooltip/marker title and doesn't need the extra chip.
+    let chip = null;
     if (!isDriverMap && s.order_id) {
       const OrderIdLabelOverlay = getOrderIdLabelOverlayClass();
-      new OrderIdLabelOverlay(new google.maps.LatLng(position.lat, position.lng), String(s.order_id)).setMap(dayMapInstance);
+      chip = new OrderIdLabelOverlay(new google.maps.LatLng(position.lat, position.lng), String(s.order_id));
+      chip.setMap(dayMapInstance);
+    }
+
+    if (canDragPins) {
+      marker.addListener('drag', () => {
+        if (chip) { chip.position = marker.getPosition(); chip.draw(); }
+      });
+      marker.addListener('dragend', () => onStopPinDragged(s, marker, chip, position));
     }
   });
 
@@ -1783,7 +1833,36 @@ function closeAssignModal() {
 // supabase_delivery_stop_manual_address.sql for why that distinction matters (a real Pancake
 // address can still legitimately change later; a manual override should only freeze it once
 // someone has actually corrected it by hand).
-async function geocodeAndSaveStop(stopId, address, details = null, { setManualAddress = false } = {}) {
+//
+// pinnedLocation ({lat, lng}) - a Super User placed the pin by hand (Edit Details' map, or dragging
+// the stop's pin on the day map - see setupPinPicker/onStopPinDragged). Saved as-is instead of
+// geocoding the address text, which would snap it back to wherever Google thinks the text is.
+async function geocodeAndSaveStop(stopId, address, details = null, { setManualAddress = false, pinnedLocation = null } = {}) {
+  if (pinnedLocation) {
+    const label = (address || '').trim() || `Pinned location (${pinnedLocation.lat.toFixed(6)}, ${pinnedLocation.lng.toFixed(6)})`;
+    const { error } = await supabaseClient.rpc('admin_update_delivery_stop_geocode', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_stop_id: stopId,
+      p_geocoded_address: label,
+      p_latitude: pinnedLocation.lat,
+      p_longitude: pinnedLocation.lng,
+      p_geocode_status: 'ok',
+      p_customer_name: details?.customerName || null,
+      p_contact_number: details?.phone || null,
+      p_notes: details?.notes || null,
+      p_note_print: details?.notePrint || null,
+      p_set_manual_address: true,
+      ...(details?.deliveryFee !== null && details?.deliveryFee !== undefined ? { p_delivery_fee: details.deliveryFee } : {})
+    });
+    if (error) {
+      console.error('admin_update_delivery_stop_geocode failed:', error);
+      window.alert(`Saving the new address / pin failed: ${error.message}`);
+      return false;
+    }
+    return true;
+  }
+
   const customerName = details?.customerName || null;
   const phone = details?.phone || null;
   const notes = details?.notes || null;
@@ -1884,12 +1963,222 @@ async function geocodeAndSaveStop(stopId, address, details = null, { setManualAd
 // wireToolbarAndModal) can settle whichever promise is currently pending.
 let noAddressResolve = null;
 
+// Super User map pin on the Edit Details modal (#noAddressPinRow) - per "let the super user change
+// the address of the order by typing the address or moving the pin". pinPickerMoved is only set
+// once the pin is placed by hand (drag / map click / "Find typed address on map"), so a plain
+// text-only edit still geocodes the typed address the way it always did.
+let pinPickerMarker = null;
+let pinPickerMoved = false;
+// How the pin got where it is: 'hand' (dragged / map click - never overridden) or 'find' (geocoded
+// from pinFoundForAddress). "Calculate fee" re-finds a non-hand pin whenever the typed address differs.
+let pinPickerSource = null;
+let pinFoundForAddress = null;
+const PIN_PICKER_DEFAULT_CENTER = { lat: 14.5995, lng: 120.9842 }; // Metro Manila, when the stop has no pin yet
+
+function reverseGeocode(position) {
+  return new Promise((resolve) => {
+    new google.maps.Geocoder().geocode({ location: position }, (results, status) => {
+      resolve(status === 'OK' && results && results[0] ? results[0].formatted_address : null);
+    });
+  });
+}
+
+function setPinPickerStatus(text) {
+  document.getElementById('noAddressPinStatus').textContent = text;
+}
+
+// Pin dropped by hand: remember it, and fill the address box with Google's address for that spot
+// (still editable - e.g. to add a unit no. or landmark - the pin itself is what gets saved).
+async function onPinPickerPlaced(latLng) {
+  pinPickerMarker.setPosition(latLng);
+  pinPickerMoved = true;
+  pinPickerSource = 'hand';
+  invalidateFeeQuote();
+  setPinPickerStatus('Looking up address...');
+  const address = await reverseGeocode(latLng);
+  if (address) document.getElementById('noAddressInput').value = address;
+  setPinPickerStatus('Pin moved - this exact spot will be saved.');
+}
+
+// pinPicker: { position: {lat, lng} | null, moved: bool } - moved=true when opened from a pin
+// already dragged on the day map, so Save keeps that spot.
+async function setupPinPicker(pinPicker) {
+  pinPickerMarker = null;
+  pinPickerMoved = false;
+  pinPickerSource = null;
+  // The stop's saved pin already matches its saved address - no re-find until the text changes.
+  pinFoundForAddress = pinPicker.position ? feeQuoteContext.prefillAddress : null;
+  setPinPickerStatus('');
+  try {
+    await loadGoogleMapsScript();
+  } catch (err) {
+    document.getElementById('noAddressPinMap').textContent = err.message;
+    return;
+  }
+  const start = pinPicker.position || PIN_PICKER_DEFAULT_CENTER;
+  const map = new google.maps.Map(document.getElementById('noAddressPinMap'), {
+    center: start,
+    zoom: pinPicker.position ? 16 : 11,
+    mapTypeControl: false,
+    streetViewControl: false
+  });
+  pinPickerMarker = new google.maps.Marker({ position: start, map, draggable: true });
+  pinPickerMarker.addListener('dragend', (e) => onPinPickerPlaced(e.latLng));
+  map.addListener('click', (e) => onPinPickerPlaced(e.latLng));
+
+  if (pinPicker.moved) {
+    pinPickerMoved = true;
+    pinPickerSource = 'hand';
+    setPinPickerStatus('Pin moved - this exact spot will be saved.');
+  } else if (!pinPicker.position) {
+    setPinPickerStatus('No pin yet - drag it or click the map, or use "Find typed address on map".');
+  }
+}
+
+// Returns true once the pin is on the typed address (also run automatically by "Calculate fee").
+async function findTypedAddressOnPinMap() {
+  const address = document.getElementById('noAddressInput').value.trim();
+  if (!address || !pinPickerMarker) return false;
+  setPinPickerStatus('Searching...');
+  const result = await new Promise((resolve) => {
+    new google.maps.Geocoder().geocode({ address }, (results, status) => {
+      resolve(status === 'OK' && results && results[0] ? results[0] : null);
+    });
+  });
+  if (!result) {
+    setPinPickerStatus("Couldn't find that address - drag the pin to the spot instead.");
+    return false;
+  }
+  pinPickerMarker.setPosition(result.geometry.location);
+  pinPickerMarker.getMap().setCenter(result.geometry.location);
+  pinPickerMarker.getMap().setZoom(17);
+  pinPickerMoved = true;
+  pinPickerSource = 'find';
+  pinFoundForAddress = address;
+  invalidateFeeQuote();
+  setPinPickerStatus('Pin moved to the typed address - drag it to fine-tune.');
+  return true;
+}
+
+// "Calculate fee" on the modal - per "on actual adding the delivery fee can we use the delivery quote?
+// ... calculate the fee base on the address they input and fill in the delivery fee automatically..
+// dont allow the user to edit the delivery fee" and "the origin should be base on the warehouse
+// location .. dont allow the user to edit this delivery fee and delivery from". The fee box is
+// read-only and this is the only way to fill it. The branch the truck leaves from is the order's own
+// warehouse (admin_get_order_delivery_branch, supabase_delivery_order_branch.sql) - shown, never picked.
+// Priced by the delivery-fee-from-pin Edge Function - the same official formula (base fee + per km +
+// toll) as Conversations' quote window and Alice. Quotes to the hand-placed pin if there is one, else
+// the stop's saved pin while the address is unchanged, else the typed address.
+let feeQuoteContext = { prefillAddress: '', prefillFee: '', stopPin: null, branchOrder: null, branch: undefined, quoted: false, seq: 0 };
+
+function setFeeQuoteStatus(html) {
+  document.getElementById('noAddressFeeQuoteStatus').innerHTML = html;
+}
+
+// Address / pin changed after a quote - the quoted fee no longer matches, so put the box back.
+function invalidateFeeQuote() {
+  if (!feeQuoteContext.quoted) return;
+  feeQuoteContext.quoted = false;
+  feeQuoteContext.seq++;
+  document.getElementById('noAddressDeliveryFeeInput').value = feeQuoteContext.prefillFee;
+  setFeeQuoteStatus('Address changed - click <strong>Calculate fee</strong> again.');
+}
+
+// 'GMA' / 'Amaya' from the order's warehouse, looked up once per modal open; null = unknown.
+async function resolveFeeBranch() {
+  if (feeQuoteContext.branch !== undefined) return feeQuoteContext.branch;
+  const order = feeQuoteContext.branchOrder;
+  if (!order?.orderId) return null;
+  const { data, error } = await supabaseClient.rpc('admin_get_order_delivery_branch', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(order.orderId),
+    p_source: order.source || 'online'
+  });
+  if (error) throw new Error(`couldn't look up the order's warehouse: ${error.message}`);
+  feeQuoteContext.branch = data || null;
+  return feeQuoteContext.branch;
+}
+
+async function calculateDeliveryFeeQuote() {
+  const address = document.getElementById('noAddressInput').value.trim();
+  // Per "once the calculate fee is clicked.. automate the find type address on map" - with the map pin
+  // showing (Super User), a typed address the pin isn't on yet is found on the map first, so the fee is
+  // measured to (and Save keeps) that spot. A pin placed by hand is never moved.
+  if (pinPickerMarker && pinPickerSource !== 'hand' && address.length >= 5 && address !== pinFoundForAddress) {
+    const found = await findTypedAddressOnPinMap();
+    if (!found) {
+      setFeeQuoteStatus('<span class="error-text">Couldn\'t find that address on the map - make it more specific, or drag the pin to the spot.</span>');
+      return;
+    }
+  }
+  let pin = null;
+  if (pinPickerMoved && pinPickerMarker) {
+    pin = { lat: pinPickerMarker.getPosition().lat(), lng: pinPickerMarker.getPosition().lng() };
+  } else if (feeQuoteContext.stopPin && address === feeQuoteContext.prefillAddress) {
+    pin = feeQuoteContext.stopPin;
+  }
+  if (!pin && address.length < 5) {
+    setFeeQuoteStatus('<span class="error-text">Type the full delivery address first (street, barangay, city).</span>');
+    return;
+  }
+
+  const seq = ++feeQuoteContext.seq;
+  const btn = document.getElementById('noAddressCalcFeeBtn');
+  btn.disabled = true;
+  setFeeQuoteStatus('Calculating...');
+  try {
+    const branch = await resolveFeeBranch();
+    if (seq !== feeQuoteContext.seq) return;
+    document.getElementById('noAddressFeeBranch').textContent = branch ? `From ${branch}` : '';
+    if (!branch) throw new Error('this order has no GMA / Amaya warehouse on file - set the order\'s warehouse first.');
+
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-fee-from-pin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        address,
+        branches: [branch],
+        ...(pin ? { latitude: pin.lat, longitude: pin.lng } : {})
+      })
+    });
+    const body = await response.json().catch(() => null);
+    if (seq !== feeQuoteContext.seq) return; // address changed / newer quote since
+    if (!response.ok || !body?.quotes) {
+      const reason = response.status === 403
+        ? 'your account can\'t calculate delivery fees (Super User / Conversations Access only)'
+        : (body?.error || `Request failed (${response.status}).`);
+      throw new Error(reason);
+    }
+    const q = body.quotes[branch];
+    if (!q || q.error || q.estimatedFee == null) throw new Error(q?.error || `no quote from ${branch}.`);
+    document.getElementById('noAddressDeliveryFeeInput').value = Number(q.estimatedFee).toFixed(2);
+    feeQuoteContext.quoted = true;
+    setFeeQuoteStatus(`From ${branch} (order's warehouse): ₱${Number(q.estimatedFee).toLocaleString('en-PH')} &middot; ${q.distanceKm} km`);
+  } catch (err) {
+    if (seq === feeQuoteContext.seq) setFeeQuoteStatus(`<span class="error-text">Could not calculate the fee: ${err.message}</span>`);
+  } finally {
+    if (seq === feeQuoteContext.seq) btn.disabled = false;
+  }
+}
+
 // title/message/prefill* let openFixStopDetails (below) reuse this same modal as a general "edit
 // an existing stop's details" tool, with its own wording and the values it already has typed in
-// rather than blank boxes.
-function openNoAddressModal(orderId, { askDetails = false, title, message, prefillAddress = '', prefillName = '', prefillPhone = '', prefillNotes = '', prefillNotePrint = '', prefillDeliveryFee = '', orderDeliveryFee = null } = {}) {
+// rather than blank boxes. pinPicker (Super User + Edit Details only) shows the map pin - see
+// setupPinPicker. stopPin = the stop's saved pin, for "Calculate fee" (see calculateDeliveryFeeQuote).
+function openNoAddressModal(orderId, { askDetails = false, title, message, prefillAddress = '', prefillName = '', prefillPhone = '', prefillNotes = '', prefillNotePrint = '', prefillDeliveryFee = '', orderDeliveryFee = null, pinPicker = null, stopPin = null, branchOrder = null } = {}) {
   const feeInput = document.getElementById('noAddressDeliveryFeeInput');
   feeInput.value = prefillDeliveryFee === null || prefillDeliveryFee === undefined ? '' : prefillDeliveryFee;
+  feeQuoteContext = { prefillAddress: (prefillAddress || '').trim(), prefillFee: feeInput.value, stopPin, branchOrder, branch: undefined, quoted: false, seq: feeQuoteContext.seq + 1 };
+  document.getElementById('noAddressFeeBranch').textContent = '';
+  document.getElementById('noAddressCalcFeeBtn').disabled = false;
+  setFeeQuoteStatus('');
   // Shows the order's own fee as the hint, so it's clear what blank keeps.
   feeInput.placeholder = orderDeliveryFee !== null && orderDeliveryFee !== undefined && orderDeliveryFee !== ''
     ? `Blank = keep the order's fee (${Number(orderDeliveryFee).toFixed(2)})`
@@ -1913,6 +2202,12 @@ function openNoAddressModal(orderId, { askDetails = false, title, message, prefi
     ? `Order <strong>${orderId}</strong> is logged under Pancake's generic "POS WALKIN ORDERS" customer with no real address on file. Who is this delivery actually for, and where is it going?`
     : `Order <strong>${orderId}</strong> has no shipping address on file. Enter one below to plot it on the map, or leave it blank to continue without one.`);
   document.getElementById('noAddressModal').classList.remove('hidden');
+  // Shown (and the map built) only after the modal is visible, so Google Maps sizes it correctly.
+  document.getElementById('noAddressPinRow').classList.toggle('hidden', !pinPicker);
+  pinPickerMarker = null;
+  pinPickerMoved = false;
+  pinPickerSource = null;
+  if (pinPicker) setupPinPicker(pinPicker);
   document.getElementById(askDetails ? 'noAddressNameInput' : 'noAddressInput').focus();
 
   return new Promise((resolve) => { noAddressResolve = resolve; });
@@ -1930,7 +2225,7 @@ function closeNoAddressModal(proceed) {
   const feeText = document.getElementById('noAddressDeliveryFeeInput').value.replace(/[,\s₱]|php/gi, '');
   const deliveryFee = feeText === '' ? null : Number(feeText);
   if (proceed && deliveryFee !== null && (!Number.isFinite(deliveryFee) || deliveryFee < 0)) {
-    window.alert(`"${document.getElementById('noAddressDeliveryFeeInput').value}" isn't a valid delivery fee. Type a number like 500 or 1500 (0 = free delivery), or leave it blank to keep the order's fee.`);
+    window.alert(`"${document.getElementById('noAddressDeliveryFeeInput').value}" isn't a valid delivery fee. Click Calculate fee again.`);
     document.getElementById('noAddressDeliveryFeeInput').focus();
     return;
   }
@@ -1938,7 +2233,12 @@ function closeNoAddressModal(proceed) {
 
   if (noAddressResolve) {
     noAddressResolve(proceed
-      ? { address: address || null, customerName: customerName || null, phone: phone || null, notes: notes || null, notePrint: notePrint || null, deliveryFee }
+      ? {
+          address: address || null, customerName: customerName || null, phone: phone || null, notes: notes || null, notePrint: notePrint || null, deliveryFee,
+          pinnedLocation: pinPickerMoved && pinPickerMarker
+            ? { lat: pinPickerMarker.getPosition().lat(), lng: pinPickerMarker.getPosition().lng() }
+            : null
+        }
       : undefined);
     noAddressResolve = null;
   }
@@ -1955,13 +2255,27 @@ function closeNoAddressModal(proceed) {
 // "Walkin" text because nothing has been saved for it yet), the current customer_name (already
 // resolved to the manual one if admin_list_delivery_stops has one on file), and the stop's own
 // contact_number/notes.
-async function openFixStopDetails(stop) {
+//
+// droppedPin ({ position: {lat, lng}, address }) - set when a Super User dragged this stop's pin on
+// the day map (onStopPinDragged): opens with the pin already at the new spot and the address box
+// prefilled from Google's reverse geocode, so they confirm/tweak before anything is saved.
+// Returns true once saved, false if cancelled or the save failed.
+async function openFixStopDetails(stop, droppedPin = null) {
   const currentAddress = isPlaceholderAddress(stop.shipping_address) ? (stop.geocoded_address || '') : stop.shipping_address;
+  const hasPin = stop.geocode_status === 'ok' && stop.latitude && stop.longitude;
+  const pinPicker = !currentSession.isSuperUser ? null : droppedPin
+    ? { position: droppedPin.position, moved: true }
+    : { position: hasPin ? { lat: Number(stop.latitude), lng: Number(stop.longitude) } : null, moved: false };
   const manualDetails = await openNoAddressModal(stop.order_id, {
     askDetails: true,
     title: 'Edit Delivery Details',
-    message: `Update the delivery details shown for order <strong>${stop.order_id}</strong>. This only affects what this portal shows and prints for this stop - it does not change anything in Pancake.`,
-    prefillAddress: currentAddress || '',
+    message: droppedPin
+      ? `Move order <strong>${stop.order_id}</strong> to the new pin? The address below was looked up from where you dropped it - edit it if needed (e.g. add a unit no. or landmark), then Continue. For a portal (AO-) order this also updates the order; it never changes anything in Pancake.`
+      : `Update the delivery details shown for order <strong>${stop.order_id}</strong>. For a portal (AO-) order, a changed address, contact number or fee also updates the order itself. Nothing is changed in Pancake.`,
+    prefillAddress: droppedPin ? (droppedPin.address || currentAddress || '') : (currentAddress || ''),
+    pinPicker,
+    stopPin: hasPin ? { lat: Number(stop.latitude), lng: Number(stop.longitude) } : null,
+    branchOrder: { orderId: stop.order_id, source: stop.source },
     prefillName: stop.customer_name || '',
     prefillPhone: stop.contact_number || '',
     prefillNotes: stop.notes || '',
@@ -1971,13 +2285,83 @@ async function openFixStopDetails(stop) {
     prefillDeliveryFee: stop.is_manual_delivery_fee ? stop.delivery_fee : '',
     orderDeliveryFee: stop.is_manual_delivery_fee ? null : stop.delivery_fee
   });
-  if (manualDetails === undefined) return; // cancelled
+  if (manualDetails === undefined) return false; // cancelled
 
-  const saved = await geocodeAndSaveStop(stop.stop_id, manualDetails.address, manualDetails, { setManualAddress: true });
-  if (!saved) return; // geocodeAndSaveStop already alerted why
+  const saved = await geocodeAndSaveStop(stop.stop_id, manualDetails.address, manualDetails, {
+    setManualAddress: true,
+    pinnedLocation: manualDetails.pinnedLocation
+  });
+  if (!saved) return false; // geocodeAndSaveStop already alerted why
+
+  await syncOrderFromStop(stop, manualDetails, currentAddress);
 
   await renderMonth(currentYear, currentMonth);
   showDayDetail(selectedDateKey);
+  return true;
+}
+
+// Per "if i change the delivery fee on the calendar.. will it change the delivery fee on the order
+// itself?" and "can we apply that to the Address too? add a new field Shipping address, Shipping
+// contact number" - a changed address / contact number / typed fee in Edit Details also updates a
+// portal (AO-) order (admin_set_portal_order_shipping_details / admin_set_portal_order_delivery_fee,
+// supabase_online_order_shipping_details_sync.sql - the server re-checks portal source, delivery order,
+// still open). A Pancake order can't be changed from here (the next sync would overwrite it), so that
+// only gets a reminder. The stop itself is already saved either way.
+async function syncOrderFromStop(stop, details, previousAddress) {
+  if (stop.source === 'advance' || stop.source === 'automated') return;
+  const orderId = String(stop.order_id || '');
+  // Blank boxes mean "keep" (same as the stop save) - not "erase it on the order".
+  const address = details.address || previousAddress || '';
+  const phone = details.phone || stop.contact_number || '';
+  const shippingChanged = address !== (previousAddress || '') || phone !== (stop.contact_number || '');
+  const feeChanged = details.deliveryFee !== null;
+  if (!shippingChanged && !feeChanged) return;
+
+  const what = [shippingChanged ? 'address / contact number' : null, feeChanged ? 'delivery fee' : null].filter(Boolean).join(' and ');
+  if (!orderId.startsWith('AO-')) {
+    window.alert(`The ${what} was saved for this delivery stop only. Order ${orderId} is a Pancake order - change it in Pancake too, so the order and the receipt match.`);
+    return;
+  }
+
+  const failures = [];
+  const reasonOf = (error) => (/not authorized/i.test(error.message)
+    ? 'your account can\'t edit orders (Super User / Conversations Access only)'
+    : error.message);
+  if (shippingChanged) {
+    const { error } = await supabaseClient.rpc('admin_set_portal_order_shipping_details', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId,
+      p_shipping_address: address,
+      p_shipping_phone: phone,
+      p_from_stop_id: stop.stop_id
+    });
+    if (error) { console.error('admin_set_portal_order_shipping_details failed:', error); failures.push(`address / contact number: ${reasonOf(error)}`); }
+  }
+  if (feeChanged) {
+    const { error } = await supabaseClient.rpc('admin_set_portal_order_delivery_fee', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId,
+      p_delivery_fee: details.deliveryFee
+    });
+    if (error) { console.error('admin_set_portal_order_delivery_fee failed:', error); failures.push(`delivery fee: ${reasonOf(error)}`); }
+  }
+  if (failures.length) {
+    window.alert(`Saved for this delivery stop, but order ${orderId} itself was NOT updated -\n${failures.join('\n')}`);
+  }
+}
+
+// Super User dragged an order's pin on the day map - reverse-geocode the drop spot and hand off to
+// Edit Details to confirm. Cancel (or a failed save) snaps the pin and its order-id chip back.
+async function onStopPinDragged(stop, marker, chip, originalPosition) {
+  const position = { lat: marker.getPosition().lat(), lng: marker.getPosition().lng() };
+  const address = await reverseGeocode(position);
+  const saved = await openFixStopDetails(stop, { position, address });
+  if (!saved) {
+    marker.setPosition(originalPosition);
+    if (chip) { chip.position = new google.maps.LatLng(originalPosition.lat, originalPosition.lng); chip.draw(); }
+  }
 }
 
 async function confirmAssign() {
@@ -2035,7 +2419,8 @@ async function confirmAssign() {
         ? `Advance order <strong>${assignOrderLabel(matchedOrder)}</strong> has no delivery address on file. Where is it going, and who should the driver contact?`
         : undefined,
       prefillName: knownName.toLowerCase() === 'pos walkin orders' ? '' : knownName,
-      prefillPhone: knownPhone === '11111' ? '' : knownPhone
+      prefillPhone: knownPhone === '11111' ? '' : knownPhone,
+      branchOrder: { orderId: matchedOrder ? matchedOrder.order_id : selectedOrderId, source: matchedOrder?.source || 'online' }
     });
     if (manualDetails === undefined) return; // cancelled
     addressForGeocode = manualDetails.address;
@@ -2113,6 +2498,9 @@ function wireToolbarAndModal() {
 
   document.getElementById('noAddressCloseBtn').addEventListener('click', () => closeNoAddressModal(false));
   document.getElementById('noAddressContinueBtn').addEventListener('click', () => closeNoAddressModal(true));
+  document.getElementById('noAddressFindOnMapBtn').addEventListener('click', findTypedAddressOnPinMap);
+  document.getElementById('noAddressCalcFeeBtn').addEventListener('click', calculateDeliveryFeeQuote);
+  document.getElementById('noAddressInput').addEventListener('input', invalidateFeeQuote);
 
   wireAssignSortHeaders();
 

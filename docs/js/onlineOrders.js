@@ -1616,6 +1616,71 @@ async function saveCardDeliveryFee() {
   await refreshCurrentOrders();
 }
 
+// Delivery tab's Shipping Address / Shipping Contact Number - per "can we apply that to the Address
+// too? add a new field Shipping address, Shipping contact number". Read via
+// admin_get_order_shipping_details (ShippingPhone isn't in the list); editable on the same orders as the
+// fee (canEditCardDeliveryFee - open portal AO- delivery orders). Hidden from maker-only accounts.
+// The inputs aren't refilled on a refresh of the same order, so typing isn't wiped (same as the fee).
+async function fillShippingFields(o) {
+  const show = !hidePrices();
+  document.getElementById('ocShippingAddressRow').classList.toggle('hidden', !show);
+  document.getElementById('ocShippingPhoneRow').classList.toggle('hidden', !show);
+  if (!show) return;
+
+  const key = String(o.order_id);
+  const editable = canEditCardDeliveryFee(o);
+  const addressEdit = document.getElementById('ocShippingAddressEdit');
+  document.getElementById('ocShippingAddress').classList.toggle('hidden', editable);
+  document.getElementById('ocShippingPhone').classList.toggle('hidden', editable);
+  addressEdit.classList.toggle('hidden', !editable);
+  document.getElementById('ocShippingPhoneEdit').classList.toggle('hidden', !editable);
+  if (addressEdit.dataset.orderId === key) return;
+  addressEdit.dataset.orderId = key;
+
+  setCardText('ocShippingAddress', o.shipping_address);
+  setCardText('ocShippingPhone', '');
+  document.getElementById('ocShippingAddressInput').value = o.shipping_address || '';
+  document.getElementById('ocShippingPhoneInput').value = '';
+
+  const { data, error } = await supabaseClient.rpc('admin_get_order_shipping_details', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: key
+  });
+  const row = !error && data && data[0];
+  if (error) console.error('admin_get_order_shipping_details failed:', error);
+  if (!row || addressEdit.dataset.orderId !== key) return;
+  setCardText('ocShippingAddress', row.shipping_address);
+  setCardText('ocShippingPhone', row.shipping_phone);
+  document.getElementById('ocShippingAddressInput').value = row.shipping_address || '';
+  document.getElementById('ocShippingPhoneInput').value = row.shipping_phone || '';
+}
+
+// Also copies the new address / number onto the order's Delivery calendar stops (server side), which
+// re-plot on the map the next time that day is opened.
+async function saveCardShippingDetails() {
+  const orderId = openCardOrderId;
+  if (!orderId) return;
+  const btn = document.getElementById('ocShippingSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const { error } = await supabaseClient.rpc('admin_set_portal_order_shipping_details', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId),
+    p_shipping_address: document.getElementById('ocShippingAddressInput').value.trim(),
+    p_shipping_phone: document.getElementById('ocShippingPhoneInput').value.trim()
+  });
+  btn.disabled = false;
+  btn.textContent = 'Save';
+  if (error) {
+    alert(error.message);
+    return;
+  }
+  delete document.getElementById('ocShippingAddressEdit').dataset.orderId;
+  await refreshCurrentOrders();
+}
+
 // Shared by the next-step button (list / card) and the Dispatcher's phone card. Per "in the dispatcher..
 // can they do partial release only": opens the Release dialog (openReleaseDialog) - all or some lines.
 // Orders with no lines on file fall back to the plain whole-order Mark Shipped below.
@@ -4780,6 +4845,7 @@ function fillOrderCardHeader(o) {
     feeEdit.dataset.orderId = String(o.order_id);
     document.getElementById('ocDeliveryFeeInput').value = o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '';
   }
+  fillShippingFields(o);
 
   // Payment FastTab - same Pancake-synced amounts as the Excel export's Money To Collect /
   // Amount Paid / Discount / Balance columns.
@@ -5591,6 +5657,7 @@ function wireOrderCard() {
   document.getElementById('cardDeleteOrderBtn').addEventListener('click', (e) => openCardOrderId && deleteOnlineOrder(openCardOrderId, e.currentTarget));
   document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
   document.getElementById('ocDeliveryFeeSaveBtn').addEventListener('click', saveCardDeliveryFee);
+  document.getElementById('ocShippingSaveBtn').addEventListener('click', saveCardShippingDetails);
   document.getElementById('ocBranchSaveBtn').addEventListener('click', saveCardBranch);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || document.getElementById('orderCardModal').classList.contains('hidden')) return;

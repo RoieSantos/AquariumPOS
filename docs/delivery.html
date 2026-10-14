@@ -191,7 +191,7 @@
        Details" on an existing stop - an order that's simply missing an address at assignment time
        keeps the original, name-free prompt. -->
   <div id="noAddressModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
+    <div class="modal-panel" style="max-height:92vh; overflow-y:auto;">
       <div class="toolbar">
         <h2 id="noAddressTitle" style="margin:0;">No Delivery Address</h2>
         <button class="btn btn-secondary btn-sm" id="noAddressCloseBtn" type="button">Cancel</button>
@@ -213,6 +213,18 @@
         <div class="form-row">
           <label for="noAddressInput" id="noAddressInputLabel">Delivery Address (optional)</label>
           <input type="text" id="noAddressInput" placeholder="e.g. 123 Main St, Quezon City" />
+        </div>
+        <!-- Super User only, "Edit Details" on an existing stop (js/delivery.js's setupPinPicker):
+             drag the pin / click the map to set the exact drop-off spot (fills the address box from
+             Google's reverse geocode), or "Find on map" to move the pin to the typed address. A pin
+             set here is saved as the stop's exact coordinates instead of geocoding the text. -->
+        <div class="form-row hidden" id="noAddressPinRow">
+          <label>Map Pin <span class="muted" style="font-weight:normal;">(drag the pin or click the map to move it)</span></label>
+          <div style="margin-bottom:6px;">
+            <button class="btn btn-secondary btn-sm" id="noAddressFindOnMapBtn" type="button">Find typed address on map</button>
+            <span class="muted" id="noAddressPinStatus" style="margin-left:8px; font-size:12px;"></span>
+          </div>
+          <div id="noAddressPinMap" style="height:260px; border-radius:8px; border:1px solid #d1d5db;"></div>
         </div>
         <!-- Printed on the Delivery Receipt/Invoice as its own "Delivery Instructions" line,
              separate from the order's own Pancake "Additional NOTE" (note_print, already labelled
@@ -236,9 +248,18 @@
         <!-- Manual delivery fee (sql/supabase_delivery_stop_manual_fee.sql) - replaces the order's own fee
              on this stop's receipt / invoice / manifest, and Total / Balance move with it. Blank = keep. -->
         <div class="form-row walkin-extra-row hidden">
-          <label for="noAddressDeliveryFeeInput">Delivery Fee (manual)</label>
-          <!-- type="text", not "number": a number box hands JS "" for "1,500", which used to be dropped as "blank = keep". -->
-          <input type="text" id="noAddressDeliveryFeeInput" inputmode="decimal" placeholder="Blank = keep the order's fee" />
+          <label for="noAddressDeliveryFeeInput">Delivery Fee (from Delivery Quote)</label>
+          <!-- Read-only: filled only by "Calculate fee" (js/delivery.js calculateDeliveryFeeQuote - the
+               delivery-fee-from-pin Edge Function, the same official formula as the Delivery Quote
+               page / Conversations / Alice), per "dont allow the user to edit the delivery fee". -->
+          <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+            <input type="text" id="noAddressDeliveryFeeInput" readonly placeholder="Blank = keep the order's fee" style="flex:1 1 140px; min-width:0;" />
+            <!-- Not editable - the order's own warehouse (admin_get_order_delivery_branch,
+                 sql/supabase_delivery_order_branch.sql), shown once "Calculate fee" looks it up. -->
+            <span class="muted" id="noAddressFeeBranch" title="Truck leaves from the order's warehouse"></span>
+            <button class="btn btn-secondary btn-sm" id="noAddressCalcFeeBtn" type="button">Calculate fee</button>
+          </div>
+          <div class="muted" id="noAddressFeeQuoteStatus" style="font-size:12px; margin-top:4px;"></div>
         </div>
       </div>
 
@@ -300,7 +321,7 @@
   <script src="js/pushNotifications.js?v=3"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/delivery.js?v=parallel1"></script>
+  <script src="js/delivery.js?v=feefind1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
