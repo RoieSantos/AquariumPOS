@@ -19,6 +19,7 @@
 // ItemStockFactbox.setAssigned(box, docKey, serialRows) - the document's linked serials ({ item_code }); an
 // item that already has one shows "Serial assigned to this order" instead of its stock badge, and isn't
 // counted as out. Matched by docKey (load's 3rd / loadDocument's docNo), so it can arrive before or after.
+// ItemStockFactbox.loadSets(box, orderId) - Online orders: each SET's package parts with their serials.
 // ItemStockFactbox.clear(box, text) - placeholder while a document loads / has no lines.
 (function () {
   function esc(value) {
@@ -124,7 +125,7 @@
     });
     box._isfAssigned = { doc: String(docKey), counts };
     const last = box._isfLast;
-    if (last && box._isfDoc === String(docKey)) render(box, last.list, last.data, last.error, last.sqlFile);
+    if (last && last.doc === String(docKey) && box._isfDoc === String(docKey)) render(box, last.list, last.data, last.error, last.sqlFile);
   }
 
   function assignedCount(box, itemCode) {
@@ -134,7 +135,7 @@
   }
 
   function render(box, list, data, error, sqlFile) {
-    box._isfLast = { list, data, error, sqlFile }; // re-drawn by setAssigned when the serials arrive
+    box._isfLast = { list, data, error, sqlFile, doc: box._isfDoc }; // re-drawn by setAssigned / loadSets
     const { body, count } = parts(box);
     if (error) {
       body.innerHTML = `<p class="oc-fact-empty muted">${/schema cache|could not find the function|does not exist/i.test(error.message)
@@ -152,6 +153,7 @@
     let outCount = 0;
     let notStock = 0;
     const html = list.map((l) => {
+      if (isSetLine(box, l.item_code)) return ''; // its parts are shown in the SET section below
       const rows = rowsByKey.get(l.key);
       if (!rows) { notStock++; return ''; }
       const here = l.warehouse ? rows.find((r) => sameWarehouse(r, l.warehouse)) : null;
@@ -183,10 +185,98 @@
       </li>`;
     }).join('');
 
-    body.innerHTML = (html ? `<ul class="isf-list">${html}</ul>` : '<p class="oc-fact-empty muted">No stock items on this document.</p>')
-      + (notStock && html ? `<p class="isf-note muted">${notStock} line${notStock === 1 ? '' : 's'} not a stock item (custom / service).</p>` : '');
+    const set = setSectionHtml(box);
+    outCount += set.outCount;
+    body.innerHTML = (html ? `<ul class="isf-list">${html}</ul>` : set.html ? '' : '<p class="oc-fact-empty muted">No stock items on this document.</p>')
+      + (notStock && html ? `<p class="isf-note muted">${notStock} line${notStock === 1 ? '' : 's'} not a stock item (custom / service).</p>` : '')
+      + set.html;
     if (count) count.textContent = outCount ? `(${outCount} out)` : '';
     if (count) count.classList.toggle('isf-out', outCount > 0);
+  }
+
+  // ---- SET orders: the package's BOM parts and their serials (staff_get_online_order_set_stock,
+  // sql/supabase_online_order_set_stock_factbox.sql). Loaded beside the normal stock (same docKey rule as
+  // setAssigned); the SET line itself is left out of the list above - a SET has no stock, its parts do.
+  async function loadSets(box, docKey) {
+    if (!box || !docKey) return;
+    const key = String(docKey);
+    const { data, error } = await supabaseClient.rpc('staff_get_online_order_set_stock', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: key
+    });
+    if (error) {
+      // quiet until the SQL is run - the normal Stock list still works
+      if (!/schema cache|could not find the function|does not exist/i.test(error.message)) console.warn('staff_get_online_order_set_stock:', error.message);
+      return;
+    }
+    box._isfSets = { doc: key, rows: data || [] };
+    const last = box._isfLast;
+    if (last && last.doc === key && box._isfDoc === key) render(box, last.list, last.data, last.error, last.sqlFile);
+  }
+
+  function setRows(box) {
+    const s = box._isfSets;
+    return s && s.doc === box._isfDoc ? s.rows : [];
+  }
+
+  function isSetLine(box, itemCode) {
+    const code = String(itemCode || '').trim().toUpperCase();
+    return !!code && setRows(box).some((r) => String(r.set_item_code || '').trim().toUpperCase() === code);
+  }
+
+  function setSectionHtml(box) {
+    const rows = setRows(box);
+    if (!rows.length) return { html: '', outCount: 0 };
+    let outCount = 0;
+    const bySet = new Map();
+    rows.forEach((r) => {
+      if (!bySet.has(r.set_line_id)) bySet.set(r.set_line_id, []);
+      bySet.get(r.set_line_id).push(r);
+    });
+    const html = [...bySet.values()].map((parts) => {
+      const head = parts[0];
+      const status = head.exploded
+        ? '<span class="badge badge-success" title="Its parts are now order lines - listed above">Assembled</span>'
+        : '<span class="badge badge-warning" title="Assemble picks the package parts">Not assembled yet</span>';
+      const title = `<div class="isf-set-head"><span>SET &middot; ${esc(head.set_description)}${Number(head.set_quantity) > 1 ? ` &times;${fmtQty(head.set_quantity)}` : ''}</span>${status}</div>
+        ${head.package_name ? `<div class="isf-desc muted">Package: ${esc(head.package_name)}</div>` : ''}`;
+      if (!head.package_name) {
+        return `<div class="isf-set">${title}<p class="isf-note muted">No package mapped yet - pick it in Assemble.</p></div>`;
+      }
+      if (head.exploded) {
+        return `<div class="isf-set">${title}<p class="isf-note muted">The parts are on the order now - see their stock above.</p></div>`;
+      }
+      const items = parts.filter((p) => p.part_no > 0).map((p) => {
+        const need = Number(p.quantity) || 0;
+        const have = (Number(p.in_stock) || 0) + (Number(p.reserved_here) || 0);
+        let badge;
+        let cls = 'isf-in';
+        if (!p.serial_tracked) {
+          badge = '<span class="badge badge-neutral">Not serial-tracked</span>';
+          cls = 'isf-plain';
+        } else if (have >= need && need > 0) {
+          badge = `<span class="badge badge-success">${have} serial${have === 1 ? '' : 's'} available</span>`;
+        } else {
+          outCount++;
+          cls = 'isf-none';
+          badge = `<span class="badge badge-danger">${have ? `Only ${have} of ${fmtQty(need)}` : 'No serials'} in stock</span>`;
+        }
+        const chips = (p.serials || []).map((s) => s.reserved
+          ? `<span class="isf-serial isf-serial-res" title="Reserved for this order">${esc(s.serial_no)}</span>`
+          : `<span class="isf-serial">${esc(s.serial_no)}</span>`).join('');
+        const more = have > (p.serials || []).length ? `<span class="muted">+${have - p.serials.length} more</span>` : '';
+        return `<li class="isf-item ${cls}">
+          <div class="isf-set-part"><span class="isf-code">${esc(p.part_item_code || p.part_name)}</span><span class="muted">need ${fmtQty(need)}</span></div>
+          ${p.part_name && p.part_name !== p.part_item_code ? `<div class="isf-desc muted" title="${esc(p.part_name)}">${esc(p.part_name)}${p.part_variant ? ` &middot; ${esc(p.part_variant)}` : ''}</div>` : ''}
+          ${p.requires_choice ? '<div class="isf-desc muted">Variant chosen in Assemble - counted across all variants.</div>' : ''}
+          <div class="isf-badges">${badge}</div>
+          ${chips || more ? `<div class="isf-serials">${chips}${more}</div>` : ''}
+        </li>`;
+      }).join('');
+      return `<div class="isf-set">${title}<ul class="isf-list">${items}</ul></div>`;
+    }).join('');
+    return { html, outCount };
   }
 
   // Transfer / Purchase Order lists (BC-style like the Online Orders list): clicking a row selects it and
@@ -214,5 +304,5 @@
     }
   }
 
-  window.ItemStockFactbox = { load, loadDocument, setAssigned, clear, wireListRows };
+  window.ItemStockFactbox = { load, loadDocument, setAssigned, loadSets, clear, wireListRows };
 })();

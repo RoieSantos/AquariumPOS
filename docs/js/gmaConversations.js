@@ -835,6 +835,44 @@ function messageDayKey(m) {
 // hidden when the media itself is shown, but kept as text when the file couldn't be stored.
 const MEDIA_PLACEHOLDER_TEXT = new Set(['[Photo]', '[Video]', '[Voice message]', '[File]', '[Attachment]']);
 
+// Per "when a customer ask for a quote ... and send over the dimension.. convert that into a quote":
+// finds the first L x W x H in a customer message - "36x18x18", "36 x 18 x 18 inches", "36\"x18\"x18\"",
+// "90cm x 45cm x 45cm", "3ft by 1.5 by 1.5", "36*18*18". Separators: x / × / * / by. Unit = the last
+// one written (in / " / cm / mm / ft / '), Inches if none. Each side must work out to 4-240 inches,
+// so things like "2x2x2 tubular" or "1x1" don't trigger it. Returns the calculator's own unit
+// option names (Inches / CM / MM / Ft), or null.
+const DIM_NUM = '(\\d+(?:\\.\\d+)?)';
+const DIM_UNIT = '\\s*(inches|inch|in\\b|"|\u201D|\u2033|cm\\b|mm\\b|ft\\b|feet|foot|\'|\u2019|\u2032)?';
+const DIM_SEP = '\\s*(?:x|\u00D7|\\*|by)\\s*';
+const DIM_PATTERN = new RegExp(`${DIM_NUM}${DIM_UNIT}${DIM_SEP}${DIM_NUM}${DIM_UNIT}${DIM_SEP}${DIM_NUM}${DIM_UNIT}`, 'i');
+
+function dimUnitName(token) {
+  const t = String(token || '').toLowerCase();
+  if (!t) return null;
+  if (t === 'cm') return 'CM';
+  if (t === 'mm') return 'MM';
+  if (['ft', 'feet', 'foot', "'", '\u2019', '\u2032'].includes(t)) return 'Ft';
+  return 'Inches';
+}
+
+function parseCustomerDimensions(text) {
+  const match = DIM_PATTERN.exec(String(text || ''));
+  if (!match) return null;
+  const [length, width, height] = [match[1], match[3], match[5]].map(Number);
+  const unit = dimUnitName(match[6]) || dimUnitName(match[4]) || dimUnitName(match[2]) || 'Inches';
+  const toIn = { Inches: 1, CM: 1 / 2.54, MM: 1 / 25.4, Ft: 12 }[unit];
+  if (![length, width, height].every((v) => v * toIn >= 4 && v * toIn <= 240)) return null;
+  return { length, width, height, unit };
+}
+
+function quoteChipHtml(text) {
+  const d = parseCustomerDimensions(text);
+  if (!d) return '';
+  const unitLabel = { Inches: 'in', CM: 'cm', MM: 'mm', Ft: 'ft' }[d.unit];
+  return `<button type="button" class="inbox-quote-chip" data-length="${d.length}" data-width="${d.width}" data-height="${d.height}" data-unit="${d.unit}" title="Open the Custom Aquarium calculator with these dimensions">` +
+    `\uD83D\uDCD0 Quote this: ${d.length} x ${d.width} x ${d.height} ${unitLabel}</button>`;
+}
+
 // Per "if we are sending links.. can you hyperlink it": escapes the text and turns every http(s)://
 // or www. link into a clickable link (new tab). Trailing punctuation (a sentence's "." or ")") is
 // left outside the link.
@@ -1008,6 +1046,7 @@ function renderMessages(serverRows, opts = {}) {
     const isPending = run.some((r) => r.pending);
 
     let bubbleHtml;
+    let bubbleChipHtml = '';
     if (isMediaOnlyMessage(m)) {
       const gridClass = run.length === 1 ? '' : (run.length === 2 || run.length === 4) ? ' inbox-msg-media-grid' : ' inbox-msg-media-grid inbox-msg-media-grid-3';
       bubbleHtml = `<div class="inbox-msg-media${gridClass}">${run.map(mediaTileHtml).join('')}</div>`;
@@ -1063,6 +1102,9 @@ function renderMessages(serverRows, opts = {}) {
           '</div>'
         : '';
       bubbleHtml = `<div class="inbox-msg ${bubbleClass}">${mediaHtml}${extraHtml}${textHtml}${paymentHtml}${pinHtml}</div>`;
+      // Customer sent tank dimensions ("36x18x18", "90cm x 45 x 45") - "Quote this" chip under the
+      // bubble opens the Custom Aquarium calculator pre-filled (quoteChipHtml / parseCustomerDimensions).
+      if (m.role === 'user' && showText) bubbleChipHtml = quoteChipHtml(m.content);
     }
 
     // Reactions (supabase_chatbot_message_reactions.sql): the customer's on our messages, staff's on
@@ -1090,6 +1132,7 @@ function renderMessages(serverRows, opts = {}) {
         ${sender ? `<span class="inbox-msg-sender">${escapeHtml(sender)}</span>` : ''}
         ${quoteHtml}
         ${bubbleHtml}
+        ${bubbleChipHtml}
         ${isGroupEnd || isPending ? `<div class="inbox-msg-meta">${escapeHtml(timeLabel)}${statusLabel}</div>` : ''}
       </div>
     `);
@@ -3130,8 +3173,12 @@ function sendCalcEmbedInit() {
   }
 }
 
-function openCalcEmbedModal(kind, mode = 'order') {
+// prefill (optional, e.g. from a message's "Quote this" chip): { length, width, height, unit } - always
+// starts a fresh build, passed as the calculator's own link params (index.html applyLinkedQuoteParams
+// fills them and calculates; its glass safety check auto-upgrades the glass for the size).
+function openCalcEmbedModal(kind, mode = 'order', prefill = null) {
   const cfg = CALC_EMBED_KINDS[kind];
+  if (prefill) calcEmbedKind = null;
   calcEmbedMode = mode;
   document.getElementById('calcEmbedTitle').textContent = mode === 'reply' ? cfg.quoteTitle : cfg.title;
   document.getElementById('calcEmbedSub').textContent = mode === 'reply'
@@ -3147,7 +3194,7 @@ function openCalcEmbedModal(kind, mode = 'order') {
     calcEmbedOpenedAt = Date.now();
     const frame = document.getElementById('calcEmbedFrame');
     frame.onload = sendCalcEmbedInit;
-    frame.src = cfg.src;
+    frame.src = prefill ? `${cfg.src}&${new URLSearchParams(prefill).toString()}` : cfg.src;
   }
   document.getElementById('calcEmbedModal').classList.remove('hidden');
   // Re-sends init every 1.5s while open: covers the iframe finishing its load before/after our
@@ -6405,6 +6452,19 @@ function setupThreadInteractions() {
   messagesEl.addEventListener('click', (e) => {
     const img = e.target.closest('[data-lightbox-src]');
     if (img) openLightbox(img.dataset.lightboxSrc);
+    const quoteChip = e.target.closest('.inbox-quote-chip');
+    if (quoteChip) {
+      const d = quoteChip.dataset;
+      const prefill = { length: d.length, width: d.width, height: d.height, unit: d.unit };
+      // Thinnest safe glass for the size - what the calculator itself picks when the size is typed in
+      // (index.html applyMinimumGlass, which doesn't run for link params). Its safety check still
+      // upgrades it if staff then make the tank bigger.
+      const calc = window.CustomAquariumCalculator;
+      if (calc?.getMinimumGlassForSize) {
+        prefill.glass = calc.getMinimumGlassForSize(calc.toInches(d.length, d.unit), calc.toInches(d.width, d.unit), calc.toInches(d.height, d.unit), false).glass;
+      }
+      openCalcEmbedModal('aquarium', 'reply', prefill);
+    }
     // Phone: the tool panels cover the thread, so tapping the conversation closes them.
     if (isMobileInbox()) {
       toggleQuickRepliesPanel(false);

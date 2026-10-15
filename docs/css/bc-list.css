@@ -559,6 +559,14 @@
   min-width: 0;
   border: 1px solid var(--bc-line);
   background: var(--bc-surface);
+  /* The grid fills the panel (stretched to the filter pane / FactBox height), so with only a few rows the
+     horizontal scrollbar sits at the bottom of the panel - not right under the last row, mid-page. */
+  display: flex;
+  flex-direction: column;
+}
+
+.bc-ile .bc-main > .bc-grid-wrap {
+  flex: 1 1 auto;
 }
 
 .bc-ile .bc-grid-toolbar {
@@ -2926,6 +2934,17 @@ a.bc-cue:hover {
 .isf-loc b { font-weight: 600; }
 .isf-loc.isf-has { color: var(--success); border-color: currentColor; }
 .isf-note { margin: 8px 0 0; font-size: 11.5px; }
+/* SET orders: the package's BOM parts and their serials (itemStockFactbox.js setSectionHtml). */
+.isf-set { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--bc-line); }
+.isf-set:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.isf-set-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 6px; font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.isf-set > .isf-desc { margin-bottom: 6px; }
+.isf-set-part { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.isf-set-part .muted { font-size: 11px; white-space: nowrap; }
+.isf-item.isf-plain { border-left-color: var(--bc-line); }
+.isf-serials { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; font-size: 10.5px; align-items: center; }
+.isf-serial { padding: 0 5px; border: 1px solid var(--bc-line); border-radius: 3px; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+.isf-serial-res { color: var(--primary); border-color: currentColor; }
 .oc-fact-title .isf-out, .bc-fact-title .isf-out { color: var(--danger); }
 /* Same box on the lists (.bc-factbox) - Online / Advance, Transfer and Purchase Order lists. */
 .bc-fact .oc-fact-empty { margin: 0; font-size: 12.5px; color: var(--text-muted); }
@@ -3061,3 +3080,39 @@ a.bc-cue:hover {
   .ao-pay .ao-pay-form .ao-pay-amount,
   .ao-pay .ao-pay-form .ao-pay-method { flex: 1 1 120px; width: auto; }
 }
+
+/* SET Assembly dialog: the serials to reserve for a part (js/onlineOrders.js refreshSetCompSerials) - one
+   serial per row under a heading naming the part's SKU, so picks for different parts don't get mixed up. */
+.set-serial-box { margin-top: 8px; border: 1px solid var(--bc-line, #d0d0d0); border-radius: 6px; overflow: hidden; }
+.set-serial-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 6px 10px; font-size: 12.5px; background: var(--bc-surface-2, rgba(127,127,127,.08)); border-bottom: 1px solid var(--bc-line, #d0d0d0); }
+.set-serial-head.error-text { display: block; border-bottom: none; }
+.set-serial-list { max-height: 180px; overflow-y: auto; }
+.set-serial-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--bc-line, #e5e5e5); font-size: 12.5px; cursor: pointer; }
+.set-serial-row:first-child { border-top: none; }
+.set-serial-row:hover { background: rgba(127,127,127,.06); }
+.set-serial-row.is-picked { background: rgba(29,79,145,.08); font-weight: 600; }
+.set-serial-row input:disabled + .set-serial-no { opacity: .45; }
+.set-serial-no { font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+.set-serial-foot { padding: 5px 10px; font-size: 11.5px; border-top: 1px solid var(--bc-line, #e5e5e5); }
+
+/* SET Assembly dialog: variant choice as clickable rows (js/onlineOrders.js setComponentRowHtml) instead of
+   a long dropdown - SKU bold, name under it, stock badge on the right. */
+.set-variant-head { margin-top: 6px; font-size: 12px; color: var(--text-muted); }
+.set-variant-list { margin-top: 4px; border: 1px solid var(--bc-line, #d0d0d0); border-radius: 6px; overflow: hidden; max-height: 220px; overflow-y: auto; }
+.set-variant-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--bc-line, #e5e5e5); cursor: pointer; font-size: 13px; }
+.set-variant-row:first-child { border-top: none; }
+.set-variant-row:hover { background: rgba(127,127,127,.06); }
+.set-variant-row.is-picked { background: rgba(29,79,145,.08); box-shadow: inset 3px 0 0 var(--primary); }
+.set-variant-text { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.set-variant-text .muted { font-size: 12px; }
+.set-variant-row .badge { white-space: nowrap; }
+
+/* SET Assembly dialog: a solid, clearly visible line between parts (was a faint 1px grey border). */
+#setAssemblyModalSets .set-comp {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 16px 0;
+  border-top: 2px solid var(--text-muted, #8a8f98);
+}
+#setAssemblyModalSets .set-comp-list > .set-comp:first-child { border-top-color: var(--bc-line, #d0d0d0); border-top-width: 1px; }

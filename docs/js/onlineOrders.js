@@ -2834,7 +2834,10 @@ function showListStock(kind, id, forceReload = false) {
   if (!id) { ItemStockFactbox.clear(box, 'Select an order to see its stock.'); return; }
   // the online row's branch name, so the badge never shows its LocationID (advance rows store the name)
   const warehouseName = kind === 'online' ? findFlatOrder(id)?.warehouse_name : null;
-  listStockTimer = setTimeout(() => ItemStockFactbox.loadDocument(box, kind, id, warehouseName), 250);
+  listStockTimer = setTimeout(() => {
+    ItemStockFactbox.loadDocument(box, kind, id, warehouseName);
+    if (kind === 'online') ItemStockFactbox.loadSets(box, id); // SET lines: package parts + serials
+  }, 250);
 }
 
 // Serials FactBox on the lists (#orderListFactbox / #advanceListFactbox) - the selected row's serials.
@@ -3016,6 +3019,17 @@ function setComponentTitle(comp) {
     || comp.bom_item_name;
 }
 
+let setVariantGroupSeq = 0; // unique radio-group name per part row
+
+// The variant's name without the code it repeats ("P-013 - A1100-..." -> "A1100-...").
+function setVariantRowName(v) {
+  let label = v.variant_name || v.name || '';
+  [v.item_code, v.sku].filter(Boolean).forEach((code) => {
+    if (label.toLowerCase().startsWith(`${code.toLowerCase()} - `)) label = label.slice(code.length + 3);
+  });
+  return label && label !== (v.sku || v.item_code) ? label : (v.description || '');
+}
+
 function setComponentRowHtml(comp, compIdx) {
   const def = comp.default || null;
   const variants = comp.variants || [];
@@ -3036,25 +3050,150 @@ function setComponentRowHtml(comp, compIdx) {
     const noneNote = comp.serial_tracked && !filterToStock
       ? '<div class="error-text" style="font-size:12px; margin-top:2px;">None in stock at this branch - pick the one to build (Assign builds it after Assemble).</div>'
       : '';
+    // A list of clickable rows (SKU / name / stock) instead of a long dropdown - per "this is not very
+    // user friendly". The <select> stays (hidden) as the value the rest of the dialog reads.
+    const groupName = `setvar-${++setVariantGroupSeq}`;
     picker = `
-      <select class="set-comp-variant" style="width:100%; margin-top:4px;">
-        <option value=""${defIdx < 0 ? ' selected' : ''}>${comp.sealant_choice ? '- choose sealant colour -' : '- choose variant -'}</option>
-        ${shown.map((i) => `<option value="${i}"${i === defIdx ? ' selected' : ''}>${escapeHtml(setVariantOptionText(variants[i]))}</option>`).join('')}
-      </select>${noneNote}`;
+      <select class="set-comp-variant hidden" aria-hidden="true" tabindex="-1">
+        <option value=""${defIdx < 0 ? ' selected' : ''}></option>
+        ${shown.map((i) => `<option value="${i}"${i === defIdx ? ' selected' : ''}></option>`).join('')}
+      </select>
+      <div class="set-variant-head">${comp.sealant_choice ? 'Pick the sealant colour' : shown.length === 1 ? 'Variant' : 'Pick the variant'}</div>
+      <div class="set-variant-list">${shown.map((i) => {
+        const v = variants[i];
+        const stock = typeof v.in_stock === 'number'
+          ? `<span class="badge ${v.in_stock > 0 ? 'badge-success' : 'badge-danger'}">${v.in_stock > 0 ? `${v.in_stock} in stock` : 'none in stock'}</span>` : '';
+        return `
+        <label class="set-variant-row${i === defIdx ? ' is-picked' : ''}">
+          <input type="radio" name="${groupName}" class="set-variant-pick" value="${i}"${i === defIdx ? ' checked' : ''} />
+          <span class="set-variant-text"><b>${escapeHtml(v.sku || v.item_code || '')}</b><span class="muted">${escapeHtml(setVariantRowName(v))}</span></span>
+          ${stock}
+        </label>`;
+      }).join('')}</div>${noneNote}`;
   } else if (def && !def.variation_id) {
     picker = '<div class="error-text" style="font-size:12px; margin-top:2px;">Not linked to a Pancake product - untick it or fix the item first.</div>';
   }
   return `
-    <div class="set-comp" data-comp-idx="${compIdx}" style="display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-top:1px solid var(--border, #e5e5e5);">
+    <div class="set-comp" data-comp-idx="${compIdx}">
       <input type="checkbox" class="set-comp-include" checked style="margin-top:4px;" aria-label="Include ${escapeHtml(setComponentTitle(comp))}" />
       <div style="flex:1; min-width:0;">
         <div style="font-weight:600;">${escapeHtml(setComponentTitle(comp))}</div>
         <div class="muted" style="font-size:12px;">${escapeHtml(String(comp.qty_per))} per set</div>
         ${picker}
         <div class="set-comp-detail" style="font-size:12.5px; margin-top:6px; padding:6px 8px; border-radius:6px; background:var(--surface-2, rgba(127,127,127,.08));">${setCompDetailHtml(pick, comp)}</div>
+        ${comp.serial_tracked ? '<div class="set-comp-serials"></div>' : ''}
       </div>
       <input type="number" class="set-comp-qty" min="0" step="1" value="${escapeHtml(String(comp.quantity))}" style="width:72px;" aria-label="Quantity" />
     </div>`;
+}
+
+// ---- SET Assemble: pick the serials of each serial-tracked part, reserved for the order on Assemble -
+// per "for set serials should be picked at assemble so the serials should be reserved and cannot pick"
+// (staff_list_set_part_serials / staff_assemble_online_order_set, sql/supabase_set_assemble_reserve_serials.sql).
+// Required = min(qty, serials in stock at the branch); the rest is built by Assign. Oldest pre-ticked.
+function setCompRowState(row) {
+  const s = setAssemblyState?.sets[Number(row.closest('.set-assembly-set').dataset.setIdx)];
+  const comp = s?.components[Number(row.dataset.compIdx)];
+  const sel = row.querySelector('.set-comp-variant');
+  const pick = sel ? (sel.value === '' ? null : comp.variants[Number(sel.value)]) : (comp?.default || null);
+  const qty = parseInt(row.querySelector('.set-comp-qty').value, 10);
+  const included = row.querySelector('.set-comp-include').checked;
+  return { comp, pick, qty: Number.isFinite(qty) ? qty : 0, included };
+}
+
+// Serials already ticked on OTHER rows - the same unit can't go into two parts.
+function setSerialsPickedElsewhere(row) {
+  const taken = new Set();
+  document.querySelectorAll('#setAssemblyModalSets .set-comp').forEach((r) => {
+    if (r !== row && r._picked) r._picked.forEach((sn) => taken.add(sn));
+  });
+  return taken;
+}
+
+async function refreshSetCompSerials(row) {
+  const box = row.querySelector('.set-comp-serials');
+  if (!box || !setAssemblyState) return;
+  const { pick, qty, included } = setCompRowState(row);
+  row._serialRequired = 0;
+  row._serialError = false;
+  if (!included || qty <= 0 || !pick || !pick.item_code) {
+    row._picked = null;
+    box.innerHTML = '';
+    return;
+  }
+  const cacheKey = `${pick.item_code}|${pick.variation_id || ''}`;
+  setAssemblyState.serialCache = setAssemblyState.serialCache || new Map();
+  let serials = setAssemblyState.serialCache.get(cacheKey);
+  if (!serials) {
+    box.innerHTML = '<div class="muted" style="font-size:12px; margin-top:6px;">Loading serials...</div>';
+    const { data, error } = await supabaseClient.rpc('staff_list_set_part_serials', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: setAssemblyState.orderId,
+      p_item_code: pick.item_code,
+      p_variation_id: pick.variation_id || null
+    });
+    if (!setAssemblyState || !row.isConnected) return;
+    if (error) {
+      const missing = /could not find the function|does not exist|schema cache/i.test(error.message || '');
+      box.innerHTML = `<div class="error-text" style="font-size:12px; margin-top:6px;">${missing
+        ? 'Serial picking is not set up yet - run sql/supabase_set_assemble_reserve_serials.sql.'
+        : 'Could not load serials: ' + escapeHtml(error.message || '')}</div>`;
+      row._serialError = true;
+      return;
+    }
+    serials = data || [];
+    setAssemblyState.serialCache.set(cacheKey, serials);
+    if (setCompRowState(row).pick !== pick) return; // variant changed while loading
+  }
+
+  const taken = setSerialsPickedElsewhere(row);
+  const free = serials.filter((x) => !taken.has(x.serial_no));
+  const required = Math.min(qty, free.length);
+  row._serialRequired = required;
+  // Nothing pre-ticked - per "default it to none so it become mandatory": staff tick the unit that's
+  // actually going out. Only what they already ticked (before a qty / include change) is kept.
+  const picked = (row._picked || []).filter((sn) => free.some((x) => x.serial_no === sn)).slice(0, required);
+  row._picked = picked;
+
+  const short = qty - required;
+  const sku = pick.sku || pick.item_code;
+  if (!free.length) {
+    box.innerHTML = `<div class="set-serial-box"><div class="set-serial-head error-text">No serials of <b>${escapeHtml(sku)}</b> in stock at this branch - Assign builds ${qty === 1 ? 'it' : `all ${qty}`} after Assemble.</div></div>`;
+    return;
+  }
+  // One serial per row, with a line between each, under a heading naming this part - so picks for
+  // different parts can't be mixed up.
+  box.innerHTML = `
+    <div class="set-serial-box">
+      <div class="set-serial-head">
+        <span>Serial${required === 1 ? '' : 's'} for <b>${escapeHtml(sku)}</b> - tick ${required}</span>
+        <span class="badge set-serial-count"></span>
+      </div>
+      <div class="set-serial-list">${free.map((x) => `
+        <label class="set-serial-row">
+          <input type="checkbox" class="set-serial-pick" value="${escapeHtml(x.serial_no)}"${picked.includes(x.serial_no) ? ' checked' : ''} />
+          <span class="set-serial-no">${escapeHtml(x.serial_no)}</span>
+          ${x.reserved ? '<span class="badge badge-warning" style="font-size:10px;">already reserved for this order</span>' : ''}
+        </label>`).join('')}</div>
+      <div class="set-serial-foot muted">Reserved for this order on Assemble${short > 0 ? ` &middot; <span class="error-text">${short} more to build (Assign)</span>` : ''}</div>
+    </div>`;
+
+  const sync = () => {
+    const boxes = [...box.querySelectorAll('.set-serial-pick')];
+    row._picked = boxes.filter((b) => b.checked).map((b) => b.value);
+    const full = row._picked.length >= required;
+    boxes.forEach((b) => {
+      b.disabled = !b.checked && full;
+      b.closest('.set-serial-row').classList.toggle('is-picked', b.checked);
+    });
+    const countEl = box.querySelector('.set-serial-count');
+    countEl.textContent = `${row._picked.length} / ${required} picked`;
+    countEl.classList.toggle('badge-success', full);
+    countEl.classList.toggle('badge-danger', !full);
+  };
+  box.querySelectorAll('.set-serial-pick').forEach((b) => b.addEventListener('change', sync));
+  sync();
 }
 
 function renderSetAssemblyModal() {
@@ -3093,7 +3232,28 @@ function renderSetAssemblyModal() {
       const comp = s.components[Number(row.dataset.compIdx)];
       const pick = sel.value === '' ? null : comp.variants[Number(sel.value)];
       row.querySelector('.set-comp-detail').innerHTML = setCompDetailHtml(pick, comp);
+      row._picked = null; // another variant - its own serials
+      refreshSetCompSerials(row);
     });
+  });
+
+  // Variant rows drive the hidden <select> - same change handling as before.
+  container.querySelectorAll('.set-variant-pick').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const row = radio.closest('.set-comp');
+      const sel = row.querySelector('.set-comp-variant');
+      row.querySelectorAll('.set-variant-row').forEach((r) => r.classList.toggle('is-picked', r.contains(radio)));
+      sel.value = radio.value;
+      sel.dispatchEvent(new Event('change'));
+    });
+  });
+
+  // Serial-tracked parts: pick the serials to reserve (refreshSetCompSerials).
+  container.querySelectorAll('.set-comp').forEach((row) => {
+    if (!row.querySelector('.set-comp-serials')) return;
+    row.querySelector('.set-comp-qty').addEventListener('input', () => refreshSetCompSerials(row));
+    row.querySelector('.set-comp-include').addEventListener('change', () => refreshSetCompSerials(row));
+    refreshSetCompSerials(row);
   });
 
   container.querySelectorAll('.set-package-select').forEach((sel) => {
@@ -3259,6 +3419,7 @@ function wireSetAssemblyModalButtons() {
     const confirmBtn = document.getElementById('setAssemblyModalConfirmBtn');
     const problems = [];
     const payload = [];
+    const serialNos = []; // reserved for the order with the parts (staff_assemble_online_order_set)
 
     document.querySelectorAll('#setAssemblyModalSets .set-assembly-set').forEach((setEl) => {
       const s = setAssemblyState.sets[Number(setEl.dataset.setIdx)];
@@ -3279,6 +3440,15 @@ function wireSetAssemblyModalButtons() {
           if (!pick) { problems.push(`${setComponentTitle(comp)}: choose a variant`); return; }
         }
         if (!pick || !pick.variation_id) { problems.push(`${setComponentTitle(comp)}: not linked to a Pancake product - untick it`); return; }
+        if (row.querySelector('.set-comp-serials')) {
+          if (row._serialError) { problems.push(`${setComponentTitle(comp)}: serials could not be loaded`); return; }
+          const picked = row._picked || [];
+          if (picked.length < (row._serialRequired || 0)) {
+            problems.push(`${setComponentTitle(comp)}: pick ${row._serialRequired} serial${row._serialRequired === 1 ? '' : 's'}`);
+            return;
+          }
+          picked.forEach((sn) => serialNos.push(sn));
+        }
         materials.push({ item_code: pick.item_code || null, variation_id: pick.variation_id, name: pick.name || comp.bom_item_name, quantity: qty });
       });
 
@@ -3297,6 +3467,9 @@ function wireSetAssemblyModalButtons() {
       });
     });
 
+    const dupSerials = serialNos.filter((sn, i) => serialNos.indexOf(sn) !== i);
+    if (dupSerials.length) problems.push(`Serial ${[...new Set(dupSerials)].join(', ')} is ticked on two parts - untick one`);
+
     if (problems.length) {
       errorEl.textContent = problems.join(' · ');
       errorEl.classList.remove('hidden');
@@ -3309,11 +3482,13 @@ function wireSetAssemblyModalButtons() {
     cancelBtn.disabled = true; // Pancake may already be updated - don't let a cancel strand To Ship
     const originalLabel = confirmBtn.textContent;
     confirmBtn.textContent = 'Saving to Pancake...';
-    const { data, error } = await supabaseClient.rpc('staff_save_online_order_set_materials', {
+    // Parts + serial reservations in one transaction - if Pancake fails, nothing is reserved.
+    const { data, error } = await supabaseClient.rpc('staff_assemble_online_order_set', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_order_id: setAssemblyState.orderId,
-      p_sets: payload
+      p_sets: payload,
+      p_serial_nos: serialNos
     });
     confirmBtn.disabled = false;
     cancelBtn.disabled = false;
@@ -4495,6 +4670,37 @@ async function openAssignDialog(orderId) {
   // (supabase_online_order_thick_glass_tank_maker.sql).
   const thickGlass = /^(10|12)mm$/i.test(String(o.glass_thickness || '').replace(/\s+/g, ''));
   const needs = [o.has_aquarium_line ? (thickGlass && !o.has_custom_line ? `${o.glass_thickness} glass tank work` : 'custom tank work') : null, o.has_stand_line ? 'a stand / top cover' : null].filter(Boolean);
+
+  // No custom work, but a stock / SET order with parts short - per "i tried assigning a order that has
+  // missing parts" (a SET with no stand serial got "nothing to assign"). Send Assign to the step the
+  // order is actually on: Assemble a SET first (that's where its parts are chosen), else build the
+  // missing units - the same as the next-step button (nextStepForStock).
+  if (!needs.length) {
+    // A fresh check of our own: the list refresh above starts one without waiting, and ensureStockStatus
+    // returns straight away while that's still 'loading' - which left no step and the old message.
+    stockStatusCache.delete(String(o.order_id));
+    showSendStatusBanner('Checking stock...');
+    try {
+      await ensureStockStatus(o);
+    } finally {
+      hideSendStatusBanner();
+    }
+    const step = nextStepForStock(o);
+    if (step?.action === 'set-assemble') {
+      const ok = await confirmAction({
+        caption: 'ASSIGN ORDER',
+        title: orderLabel(o),
+        message: `This SET isn't assembled yet - its parts are picked in Assemble first.\n\nAfter Assemble, Assign builds whatever part has no stock (a Production Order for the maker).\n\n${stockLinesSummary(stockStatusFor(o))}`.trim(),
+        confirmLabel: 'Assemble Now'
+      });
+      if (ok) await handleNextStepClick(String(o.order_id), { dataset: { action: 'set-assemble' }, disabled: false });
+      return;
+    }
+    if (step?.action === 'build') {
+      await openStockBuildDialog(o);
+      return;
+    }
+  }
   // Only custom orders go Confirmed > Assigned > To Ship here; normal orders still go through the
   // local POS (see _online_order_assignment_complete in supabase_online_order_assigned_status.sql).
   // Per "no need to asign a dispatcher since the dispatcher will be logged after shipping the order" -
@@ -5206,6 +5412,8 @@ function loadOrderCardStock(orderId) {
     warehouse: o?.location_id || o?.warehouse_name,
     warehouseName: o?.warehouse_name
   })), orderId);
+  // SET lines: the package's BOM parts and their serials, in the same box.
+  ItemStockFactbox.loadSets(document.getElementById('orderCardStockPart'), orderId);
 }
 
 // ---------------------------------------------------------------- Change Item
