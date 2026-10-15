@@ -33,6 +33,13 @@
     return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '');
   }
 
+  // "SKU ..." pill beside the item code - skipped when the SKU is just the code again.
+  function skuPill(sku, code) {
+    const s = String(sku || '').trim();
+    if (!s || s.toUpperCase() === String(code || '').trim().toUpperCase()) return '';
+    return ` <span class="isf-sku" title="SKU">${esc(s)}</span>`;
+  }
+
   function parts(box) {
     return { body: box.querySelector('[data-isf-body]'), count: box.querySelector('[data-isf-count]') };
   }
@@ -177,9 +184,13 @@
         .map((r) => `<span class="isf-loc${(Number(r.quantity) || 0) > 0 ? ' isf-has' : ''}"${(Number(r.reserved) || 0) > 0 ? ` title="+${fmtQty(r.reserved)} reserved"` : ''}>${esc(r.warehouse_name)} <b>${fmtQty(r.quantity)}</b></span>`)
         .join('');
       const src = rows[0].source === 'serials' ? 'Counted from IN_STOCK serials' : 'From the Item Ledger';
+      // SKU + the item's own name (supabase_stock_factbox_sku_name.sql), then the document line's text when it says more.
+      const sku = rows[0].sku;
+      const name = rows[0].item_name;
       return `<li class="isf-item ${assigned ? 'isf-assigned' : qty > 0 ? 'isf-in' : 'isf-none'}" title="${src}">
-        <div class="isf-code">${esc(l.item_code)}</div>
-        ${l.label && l.label !== l.item_code ? `<div class="isf-desc muted" title="${esc(l.label)}">${esc(l.label)}</div>` : ''}
+        <div class="isf-code">${esc(l.item_code)}${skuPill(sku, l.item_code)}</div>
+        ${name ? `<div class="isf-name" title="${esc(name)}">${esc(name)}</div>` : ''}
+        ${l.label && l.label !== l.item_code && l.label !== name ? `<div class="isf-desc muted" title="${esc(l.label)}">${esc(l.label)}</div>` : ''}
         <div class="isf-badges">${badge}</div>
         ${others ? `<div class="isf-locs">${l.warehouse ? `<span class="isf-locs-label muted">${assigned ? 'Stock' : 'Elsewhere'}</span>` : ''}${others}</div>` : ''}
       </li>`;
@@ -267,8 +278,9 @@
           : `<span class="isf-serial">${esc(s.serial_no)}</span>`).join('');
         const more = have > (p.serials || []).length ? `<span class="muted">+${have - p.serials.length} more</span>` : '';
         return `<li class="isf-item ${cls}">
-          <div class="isf-set-part"><span class="isf-code">${esc(p.part_item_code || p.part_name)}</span><span class="muted">need ${fmtQty(need)}</span></div>
-          ${p.part_name && p.part_name !== p.part_item_code ? `<div class="isf-desc muted" title="${esc(p.part_name)}">${esc(p.part_name)}${p.part_variant ? ` &middot; ${esc(p.part_variant)}` : ''}</div>` : ''}
+          <div class="isf-set-part"><span class="isf-code">${esc(p.part_item_code || p.part_name)}${skuPill(p.part_sku, p.part_item_code)}</span><span class="muted">need ${fmtQty(need)}</span></div>
+          ${p.part_description ? `<div class="isf-name" title="${esc(p.part_description)}">${esc(p.part_description)}</div>` : ''}
+          ${p.part_name && p.part_name !== p.part_item_code && p.part_name !== p.part_sku && p.part_name !== p.part_description ? `<div class="isf-desc muted" title="${esc(p.part_name)}">${esc(p.part_name)}${p.part_variant ? ` &middot; ${esc(p.part_variant)}` : ''}</div>` : ''}
           ${p.requires_choice ? '<div class="isf-desc muted">Variant chosen in Assemble - counted across all variants.</div>' : ''}
           <div class="isf-badges">${badge}</div>
           ${chips || more ? `<div class="isf-serials">${chips}${more}</div>` : ''}

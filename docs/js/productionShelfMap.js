@@ -26,6 +26,9 @@ let shelves = [];
 let currentShelfId = null;
 let currentLocation = null;
 let locationSerials = []; // every IN_STOCK serial at currentLocation
+// RESERVED serials at currentLocation - on the rack but held for an order (sql/supabase_production_shelf_reserved.sql).
+// Shown as "+ n reserved", never in the count / Available / Low / Out.
+let locationReserved = [];
 let locationLedgerUnits = []; // Item Ledger on-hand at currentLocation, one entry per pc ('ledger' racks only)
 let findTerm = '';
 // While editing, a working copy - nothing is written until Save:
@@ -217,6 +220,16 @@ function spotSerials(spot) {
   return units.filter((s) => unitFitsSpot(s, spot));
 }
 
+// The spot's units RESERVED for orders (serial racks only - a ledger rack's on-hand already includes them).
+function spotReserved(spot) {
+  if (!spot?.item_code || spot.count_source === 'ledger') return [];
+  return locationReserved.filter((s) => unitFitsSpot(s, spot));
+}
+
+function reservedTagHtml(n) {
+  return n ? `<span class="stock-coming" style="color:#b45309;" title="On the rack but held for an order - not for sale">+ ${n} reserved</span>` : '';
+}
+
 // Stock status for sales at a glance: out (0), low (1-2 left, unless that already fills the rack),
 // or available.
 const LOW_STOCK = 2;
@@ -284,6 +297,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
     spot.item_code ? `${spot.item_code}${spot.variant_name ? ' · ' + spot.variant_name : ''}${spotOnlyColour(spot) ? ` (${spotOnlyColour(spot)} only)` : ''}` : 'No aquarium linked',
     count !== null ? `${count} ${spotCountLabel(spot)}${spot.capacity ? ` (fits ${spot.capacity})` : ''}` : '',
     count ? colourBreakdown(serials).map((c) => `${c.colour}: ${c.count}`).join(' · ') : '',
+    !editing && spotReserved(spot).length ? `+ ${spotReserved(spot).length} reserved for orders (on the rack, not for sale)` : '',
     shared.length ? `Same aquarium as ${shared.join(', ')} - count is shared` : '',
     spot.notes || ''
   ].filter(Boolean).join('\n');
@@ -295,13 +309,14 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
   // just the coloured stripe and number.
   const status = count !== null ? stockStatus(count, spot.capacity) : null;
   const onOrder = count !== null && !compact ? spotOnOrder(spot) : 0;
+  const reservedN = count !== null && !compact ? spotReserved(spot).length : 0;
   const pillHtml = status && !compact ? `<span class="stock-pill">${STATUS_LABEL[status]}</span>` : '';
   return `<div class="${cls}" ${attrs} ${spot.id ? `data-spot-id="${spot.id}"` : ''} style="${style}" title="${escapeHtml(tooltip)}" role="button" tabindex="0">
     <div class="pspot-head">
       <span class="pspot-label">${escapeHtml(spotName(spot, fallbackName))}</span>
       ${countHtml}
     </div>
-    ${shortTag || pillHtml || onOrder ? `<span class="pspot-tagrow">${shortTag ? `<span class="pspot-tag">${escapeHtml(shortTag)}</span>` : ''}${pillHtml}${onOrder ? `<span class="stock-coming">+ ${onOrder} being built</span>` : ''}</span>` : ''}
+    ${shortTag || pillHtml || onOrder || reservedN ? `<span class="pspot-tagrow">${shortTag ? `<span class="pspot-tag">${escapeHtml(shortTag)}</span>` : ''}${pillHtml}${onOrder ? `<span class="stock-coming">+ ${onOrder} being built</span>` : ''}${reservedTagHtml(reservedN)}</span>` : ''}
     ${count ? `<span class="pspot-colours">${colourChipsHtml(serials)}</span>` : ''}
     ${!compact && spot.item_code ? `<span class="pspot-sub pspot-clamp">${escapeHtml(spot.item_code)}${spot.variant_name ? ' · ' + escapeHtml(spot.variant_name) : ''}${spotOnlyColour(spot) ? ` · <b>${escapeHtml(spotOnlyColour(spot))} only</b>` : ''}</span>` : ''}
     ${!compact && shared.length ? `<span class="pspot-sub">shared with ${escapeHtml(shared.join(', '))}</span>` : ''}
@@ -352,7 +367,7 @@ function stockProducts() {
     // The rack's own label reads best ("Standard 2.5g 3mm glass"); a short code like "B4" doesn't.
     const title = (sp.label && sp.label.length > 4 ? sp.label : '') || spotTagText(sp) || sp.item_code;
     const units = spotSerials(sp);
-    return { ...g, title, units, count: units.length, onOrder: spotOnOrder(sp), status: stockStatus(units.length, g.capacity) };
+    return { ...g, title, units, count: units.length, onOrder: spotOnOrder(sp), reserved: spotReserved(sp).length, status: stockStatus(units.length, g.capacity) };
   });
 }
 
@@ -370,6 +385,7 @@ function stockCardHtml(p) {
       ${p.count ? `<span class="pspot-colours">${colourChipsHtml(p.units)}</span>` : ''}
     </div>
     ${p.onOrder ? `<div class="stock-coming">+ ${p.onOrder} being built</div>` : ''}
+    ${p.reserved ? `<div>${reservedTagHtml(p.reserved)}</div>` : ''}
   </div>`;
 }
 
@@ -495,7 +511,7 @@ function renderShelfSelect() {
 
 async function loadLocationSerials() {
   locationLedgerUnits = [];
-  if (!currentLocation) { locationSerials = []; locationOpenLines = []; return; }
+  if (!currentLocation) { locationSerials = []; locationReserved = []; locationOpenLines = []; return; }
   const usesLedger = shelves.some((sh) => sh.warehouse_id === currentLocation && (sh.spots || []).some((sp) => sp.count_source === 'ledger'));
   const [serialRes, ledgerRes, openRes] = await Promise.all([
     rpc('staff_list_production_location_serials', { p_warehouse_id: currentLocation }),
@@ -504,7 +520,9 @@ async function loadLocationSerials() {
     rpc('staff_list_production_open_qty', { p_warehouse_id: currentLocation })
   ]);
   locationOpenLines = openRes.error ? [] : (openRes.data || []);
-  locationSerials = serialRes.error ? [] : (serialRes.data || []);
+  const allSerials = serialRes.error ? [] : (serialRes.data || []);
+  locationSerials = allSerials.filter((s) => s.status !== 'RESERVED');
+  locationReserved = allSerials.filter((s) => s.status === 'RESERVED');
   if (serialRes.error) showError(serialRes.error.message);
   if (ledgerRes.error) showError(`Item Ledger counts: ${ledgerRes.error.message}`);
   (ledgerRes.data || []).forEach((row) => {
@@ -583,6 +601,20 @@ function openSpotModal(spotId) {
             </div>
           </div>`).join('')}`).join('')
       : '<p class="muted">None in stock.</p>';
+  // Reserved units: on this rack, held for an order (sql/supabase_serial_order_reservation.sql).
+  const reserved = serials ? spotReserved(spot) : [];
+  if (reserved.length) {
+    stockEl.insertAdjacentHTML('beforeend', ` Plus <b>${reserved.length}</b> reserved for orders (on the rack, not for sale).`);
+    document.getElementById('spotSerials').insertAdjacentHTML('beforeend', `
+      <div class="colour-group-head" style="color:#b45309;">Reserved for orders <span class="muted">(${reserved.length})</span></div>
+      ${reserved.map((s) => `
+        <div class="spot-serial-row">
+          <div class="grow">
+            <b>${escapeHtml(s.serial_no)}</b> <span class="muted">- for order ${escapeHtml(s.reserved_for_order_id || '?')}</span>
+            <div class="muted" style="font-size:12px;">${escapeHtml(s.item_code)}${s.variant_sku && s.variant_sku !== s.item_code ? ' · SKU: ' + escapeHtml(s.variant_sku) : ''}${s.variant_name ? ' · ' + escapeHtml(s.variant_name) : ''}</div>
+          </div>
+        </div>`).join('')}`);
+  }
   document.getElementById('spotModal').classList.remove('hidden');
 }
 

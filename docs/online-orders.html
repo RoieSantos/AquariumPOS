@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=setline1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=skuname1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -408,6 +408,9 @@
         <button class="bc-cmd hidden" id="cardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
         <button class="bc-cmd" id="cardShowSerialsBtn" type="button" title="Show the serials linked to this order"><svg class="bc-ico"><use href="#ico-serials"/></svg>Show Serials</button>
         <button class="bc-cmd" id="cardPrintSerialsBtn" type="button" title="Print (or reprint) the serial labels tied to this order"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serial Labels</button>
+        <!-- Super User / Production Manager / Sales User / Store Manager, open orders before To Ship -
+             js/onlineOrders.js cancelCardOrder, sql/supabase_online_order_cancel.sql. -->
+        <button class="bc-cmd bc-cmd-danger hidden" id="cardCancelOrderBtn" type="button" title="Cancel this order (in Pancake too) - a reason is required">Cancel Order</button>
         <button class="bc-cmd bc-cmd-danger hidden" id="cardDeleteOrderBtn" type="button" title="Super Users only - permanently delete this order from the portal (cleanup of junk/test orders)">Delete Order</button>
       </div>
 
@@ -1204,8 +1207,8 @@
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
-  <script src="js/itemStockFactbox.js?v=setstock1"></script>
-  <script src="js/onlineOrders.js?v=setline1"></script>
+  <script src="js/itemStockFactbox.js?v=skuname1"></script>
+  <script src="js/onlineOrders.js?v=cancelorder1"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>

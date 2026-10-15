@@ -1564,34 +1564,151 @@ function canEditCardDeliveryFee(o) {
 // Warehouse on the card - per "can you also allow the confirmed order edit the warehouse". Portal (AO-)
 // orders while still Confirmed (before makers / stock / serials are tied to the branch); the server
 // re-checks. Branch = Amaya / GMA, like the order's original Location.
+// Move an order to another branch - per "sometimes the location is changing so the origin of orders will
+// be moved to different branch" (sql/supabase_online_order_change_branch.sql): Super User, Production
+// Manager, Sales User or Store Manager, any open online order (portal or Pancake) before To Ship, never a
+// walk-in. Other accounts keep the older rule: a Confirmed portal (AO-) order, Amaya / GMA only.
+function canMoveOrderBranch() {
+  const s = currentSession || {};
+  return !!(s.isSuperUser || s.isProductionManager || s.isSalesUser || s.isStoreManager);
+}
+
 function canEditCardBranch(o) {
   if (!o || myAssignmentsLocked || o.received_at_shop) return false;
-  return String(o.order_id || '').startsWith('AO-') && (o.status || '').trim().toLowerCase() === 'confirmed';
+  const status = (o.status || '').trim().toLowerCase();
+  if (canMoveOrderBranch()) {
+    return !['to ship', 'shipped', 'delivered', 'completed', 'canceled', 'cancelled', 'returned', 'returning'].includes(status);
+  }
+  return String(o.order_id || '').startsWith('AO-') && status === 'confirmed';
+}
+
+// Cancel Order (sql/supabase_online_order_cancel.sql): same accounts as moving the branch, open orders
+// before To Ship, never a walk-in (already a POS sale - refund it there).
+function canCancelOrder(o) {
+  if (!o || myAssignmentsLocked || o.received_at_shop || !canMoveOrderBranch()) return false;
+  return !['to ship', 'pending transfer', 'in-transit', 'shipped', 'delivered', 'received', 'completed',
+    'canceled', 'cancelled', 'returned', 'returning'].includes((o.status || '').trim().toLowerCase());
+}
+
+async function cancelCardOrder(orderId, btn) {
+  const args = {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  };
+  btn.disabled = true;
+  try {
+    // Dry run: what staff should know first (makers, Production Order, payments, reserved serials).
+    const { data: check, error: checkError } = await supabaseClient.rpc('staff_cancel_online_order', { ...args, p_reason: null, p_dry_run: true });
+    if (checkError) {
+      alert(/could not find the function|schema cache/i.test(checkError.message)
+        ? 'Cancelling orders isn\'t set up yet - run sql/supabase_online_order_cancel.sql.' : checkError.message);
+      return;
+    }
+    const warnings = check?.[0]?.warnings || [];
+    const isPortal = String(orderId).startsWith('AO-');
+    const reason = window.prompt(`Cancel order ${orderId}?${isPortal ? '' : ' It is cancelled in Pancake too.'} The customer is NOT messaged.`
+      + (warnings.length ? `\n\nHeads up:\n- ${warnings.join('\n- ')}` : '')
+      + '\n\nReason for cancelling (required):');
+    if (reason === null) return;
+    if (!reason.trim()) { alert('A reason is required to cancel an order.'); return; }
+
+    const { error } = await supabaseClient.rpc('staff_cancel_online_order', { ...args, p_reason: reason.trim(), p_dry_run: false });
+    if (error) { alert(error.message); return; }
+    stockStatusCache.delete(String(orderId));
+    alert(`Order ${orderId} cancelled.`);
+    await refreshCurrentOrders();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Every active warehouse, loaded once, for the branch picker (value = warehouse ID).
+let branchWarehouses = null;
+async function fillBranchSelect(o) {
+  const select = document.getElementById('ocBranchSelect');
+  if (!canMoveOrderBranch()) {
+    // Older AO- rule: the two bot branches by name (admin_set_portal_order_branch).
+    select.innerHTML = '<option value="Amaya">Amaya</option><option value="GMA">GMA</option>';
+    select.value = /gma/i.test(o.warehouse_name || '') ? 'GMA' : 'Amaya';
+    return;
+  }
+  if (!branchWarehouses) {
+    const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_search: null,
+      p_limit: 100
+    });
+    branchWarehouses = error ? [] : (data || []);
+  }
+  const list = [...branchWarehouses];
+  if (o.location_id && !list.some((w) => String(w.id) === String(o.location_id))) {
+    list.unshift({ id: o.location_id, name: o.warehouse_name || o.location_id });
+  }
+  select.innerHTML = list.map((w) => `<option value="${escapeHtml(String(w.id))}">${escapeHtml(w.name || w.id)}</option>`).join('');
+  select.value = String(o.location_id || '');
 }
 
 async function saveCardBranch() {
   const orderId = openCardOrderId;
   const o = findFlatOrder(orderId);
   if (!o) return;
-  const branch = document.getElementById('ocBranchSelect').value;
-  if (!confirm(`Move order ${orderId} to the ${branch} warehouse?`)) return;
+  const select = document.getElementById('ocBranchSelect');
   const btn = document.getElementById('ocBranchSaveBtn');
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
-  const { error } = await supabaseClient.rpc('admin_set_portal_order_branch', {
+
+  if (!canMoveOrderBranch()) {
+    const branch = select.value;
+    if (!confirm(`Move order ${orderId} to the ${branch} warehouse?`)) return;
+    btn.disabled = true;
+    const { error } = await supabaseClient.rpc('admin_set_portal_order_branch', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: String(orderId),
+      p_location: branch
+    });
+    btn.disabled = false;
+    if (error) { alert(error.message); return; }
+    delete document.getElementById('ocBranchEdit').dataset.orderId;
+    await refreshCurrentOrders();
+    return;
+  }
+
+  const warehouseId = select.value;
+  if (String(warehouseId) === String(o.location_id || '')) { alert(`Order ${orderId} is already at this branch.`); return; }
+  const args = {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_order_id: String(orderId),
-    p_location: branch
-  });
-  btn.disabled = false;
-  btn.textContent = 'Save';
-  if (error) {
-    alert(error.message);
-    return;
+    p_warehouse_id: warehouseId
+  };
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+  try {
+    // Dry run first: the warnings (reserved units / a Production Order at the old branch) before confirming.
+    const { data: check, error: checkError } = await supabaseClient.rpc('staff_change_online_order_branch', { ...args, p_dry_run: true });
+    if (checkError) {
+      alert(/could not find the function|schema cache/i.test(checkError.message)
+        ? 'Moving orders isn\'t set up yet - run sql/supabase_online_order_change_branch.sql.' : checkError.message);
+      return;
+    }
+    const info = check?.[0] || {};
+    const warnings = info.warnings || [];
+    const isPortal = String(orderId).startsWith('AO-');
+    if (!confirm(`Move order ${orderId} from ${info.from_warehouse || 'its branch'} to ${info.to_warehouse}?`
+      + (isPortal ? '' : '\n\nThe warehouse is changed in Pancake too.')
+      + (warnings.length ? `\n\nHeads up - kept with the order:\n- ${warnings.join('\n- ')}` : ''))) return;
+
+    btn.textContent = 'Moving...';
+    const { error } = await supabaseClient.rpc('staff_change_online_order_branch', { ...args, p_dry_run: false });
+    if (error) { alert(error.message); return; }
+    delete document.getElementById('ocBranchEdit').dataset.orderId;
+    stockStatusCache.delete(String(orderId)); // re-checked at the new branch
+    await refreshCurrentOrders();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = canMoveOrderBranch() ? 'Move' : 'Save';
   }
-  delete document.getElementById('ocBranchEdit').dataset.orderId;
-  await refreshCurrentOrders();
 }
 
 // A portal order (AO-, made by Confirm Order) that's still open, on an account that sees prices - its
@@ -5115,15 +5232,17 @@ function fillOrderCardHeader(o) {
     document.getElementById('ocWalkinPhone').value = o.walkin_customer_phone || '';
   }
   setCardText('ocWarehouse', o.warehouse_name || o.location_id);
-  // Confirmed portal (AO-) orders: the warehouse is a branch picker instead (admin_set_portal_order_branch).
+  // Open orders the account may move: the warehouse is a branch picker instead (saveCardBranch).
   const branchEditable = canEditCardBranch(o);
   const branchEdit = document.getElementById('ocBranchEdit');
   document.getElementById('ocWarehouse').classList.toggle('hidden', branchEditable);
   branchEdit.classList.toggle('hidden', !branchEditable);
   if (branchEditable && branchEdit.dataset.orderId !== String(o.order_id)) {
     branchEdit.dataset.orderId = String(o.order_id);
-    document.getElementById('ocBranchSelect').value = /gma/i.test(o.warehouse_name || '') ? 'GMA' : 'Amaya';
+    document.getElementById('ocBranchSaveBtn').textContent = canMoveOrderBranch() ? 'Move' : 'Save';
+    fillBranchSelect(o);
   }
+  document.getElementById('cardCancelOrderBtn').classList.toggle('hidden', !canCancelOrder(o));
   setCardText('ocConfirmedBy', o.confirmed_by);
   setCardText('ocConfirmedAt', o.confirmed_at_utc ? new Date(o.confirmed_at_utc).toLocaleString() : '');
   setCardText('ocCreatedBy', o.created_by);
@@ -6107,6 +6226,7 @@ function wireOrderCard() {
   document.getElementById('cardShowSerialsBtn').addEventListener('click', (e) => openCardOrderId && showOrderSerials(openCardOrderId, e.currentTarget));
   document.getElementById('cardPrintSerialsBtn').addEventListener('click', (e) => openCardOrderId && printOrderSerialLabels(openCardOrderId, e.currentTarget));
   document.getElementById('cardDeleteOrderBtn').addEventListener('click', (e) => openCardOrderId && deleteOnlineOrder(openCardOrderId, e.currentTarget));
+  document.getElementById('cardCancelOrderBtn').addEventListener('click', (e) => openCardOrderId && cancelCardOrder(openCardOrderId, e.currentTarget));
   document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
   document.getElementById('ocDeliveryFeeSaveBtn').addEventListener('click', saveCardDeliveryFee);
   document.getElementById('ocShippingSaveBtn').addEventListener('click', saveCardShippingDetails);
