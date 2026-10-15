@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Purchase Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp3" />
+  <link rel="stylesheet" href="css/bc-list.css?v=liststock1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -52,7 +52,7 @@
       <a class="bc-cmd" href="posted-purchase-orders.html"><svg class="bc-ico"><use href="#ico-posted"/></svg>Posted Purchase Orders</a>
     </div>
 
-    <div class="bc-body no-filterpane no-factbox">
+    <div class="bc-body no-filterpane">
       <section class="bc-main">
         <div class="bc-grid-wrap" id="poGridWrap">
           <table class="bc-grid" data-resize-key="purchase-orders">
@@ -77,6 +77,16 @@
         </div>
         <div id="poPaginationBar"></div>
       </section>
+
+      <!-- Stock FactBox: the selected purchase order's lines with on-hand per warehouse (js/itemStockFactbox.js
+           wireListRows / loadDocument). Click a row to select it; its No. or a double-click opens it.
+           Hidden below 1280px like every BC list FactBox (a click then opens straight away). -->
+      <aside class="bc-factbox" aria-label="Stock">
+        <div class="bc-fact" id="poListStockFact">
+          <div class="bc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+          <div class="bc-fact-body" data-isf-body><p class="bc-fact-empty">Select a row to see its stock.</p></div>
+        </div>
+      </aside>
     </div>
   </div>
 
@@ -141,7 +151,10 @@
 
       <div id="poCardError" class="bc-doc-error error-text hidden"></div>
 
-      <div class="bc-doc-body">
+      <!-- Split BC-style like the Online Order card: the document on the left, the Stock FactBox on
+           the right (stacks under it on a narrow screen). -->
+      <div class="bc-doc-body oc-split">
+       <div class="oc-main">
         <!-- Business Central-style "General" FastTab - collapsible, and when collapsed it keeps the
              vendor/warehouse/notes on the tab itself so folding it away never hides what you needed.
              Open by default; the choice is remembered per browser (js/purchaseOrders.js). -->
@@ -354,6 +367,16 @@
             <button class="bc-btn" id="poAddItemBtn" type="button">Add Item</button>
           </div>
         </div>
+       </div>
+
+        <!-- Stock FactBox: each line's on-hand per warehouse (js/itemStockFactbox.js,
+             staff_get_lines_stock_by_warehouse) - the badge is the line's own warehouse. -->
+        <div class="oc-factbox-col">
+        <aside class="oc-factbox" id="poCardStockPart" aria-label="Stock">
+          <div class="oc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+          <div class="oc-fact-body" data-isf-body></div>
+        </aside>
+        </div>
       </div>
     </div>
   </div>
@@ -403,7 +426,8 @@
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/purchaseOrders.js?v=merge1"></script>
+  <script src="js/itemStockFactbox.js?v=liststock1"></script>
+  <script src="js/purchaseOrders.js?v=liststock1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

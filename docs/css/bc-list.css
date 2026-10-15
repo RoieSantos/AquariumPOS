@@ -2891,8 +2891,24 @@ a.bc-cue:hover {
 #orderListFactbox, #advanceListFactbox { overflow-y: auto; }
 #orderListFactbox .oc-fact-serials, #advanceListFactbox .oc-fact-serials { max-height: none; overflow: visible; }
 .bc-ile .bc-body.no-factbox > .bc-factbox { display: none; }
-#advanceCardModal .bc-doc-body.oc-split.no-factbox { display: block; }
-#advanceCardModal .bc-doc-body.oc-split.no-factbox .oc-factbox-col { display: none; }
+/* View-only Store Managers: only the Serials FactBox is hidden - Stock stays. */
+#advanceCardModal .bc-doc-body.oc-split.no-factbox #advanceCardSerialsPart { display: none; }
+/* Stock FactBox (js/itemStockFactbox.js) - Online / Advance Order, Transfer Order and Purchase Order cards. */
+.isf-list { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
+.isf-list li { padding: 6px 0; border-top: 1px solid var(--bc-line); font-size: 12.5px; overflow-wrap: anywhere; }
+.isf-list li:first-child { border-top: none; padding-top: 0; }
+.isf-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.isf-code { font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+.isf-head .badge { white-space: nowrap; }
+.isf-desc, .isf-locs { font-size: 11.5px; }
+.isf-locs .isf-has { color: var(--success); }
+.isf-note { margin: 8px 0 0; font-size: 11.5px; }
+.oc-fact-title .isf-out, .bc-fact-title .isf-out { color: var(--danger); }
+/* Same box on the lists (.bc-factbox) - Online / Advance, Transfer and Purchase Order lists. */
+.bc-fact .oc-fact-empty { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+/* Transfer / Purchase Order cards get the same split as the Online Order card - a bit wider windowed. */
+#viewLinesModal .to-manage-panel:not(.modal-maximized),
+#poCardModal .po-doc-panel:not(.modal-maximized) { max-width: 1380px; }
 #orderCardModal.maker-focus .bc-doc-body.oc-split,
 #prodCardModal.maker-view .bc-doc-body.oc-split { display: block; }
 #prodCardModal.maker-view .oc-factbox { display: none; }

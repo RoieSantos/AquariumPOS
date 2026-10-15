@@ -269,7 +269,7 @@ function renderHeaders() {
 
   tbody.innerHTML = rows
     .map((r) => `
-      <tr class="clickable-row" data-doc-no="${encodeURIComponent(r['No.'] || '')}">
+      <tr class="clickable-row" data-doc-no="${encodeURIComponent(r['No.'] || '')}" data-doc-key="${escapeHtml(r['No.'] || '')}">
         <td><span class="bc-doc-no">${r['No.'] || ''}</span>${r['Is Locked'] ? ' <svg class="bc-ico" style="vertical-align:-3px; color:var(--text-muted);"><title>Locked - no more changes except Ship/Receive</title><use href="#ico-lock"/></svg>' : ''}</td>
         <td class="cell-text" title="${escapeHtml(r['Description'] || '')}">${r['Description'] || ''}</td>
         <td><span class="badge ${statusBadgeClass(r['Status'])}">${r['Status'] || ''}</span></td>
@@ -283,9 +283,8 @@ function renderHeaders() {
     `)
     .join('');
 
-  tbody.querySelectorAll('tr[data-doc-no]').forEach((row) => {
-    row.addEventListener('click', () => openManageModal(decodeURIComponent(row.dataset.docNo)));
-  });
+  // Click = select + Stock FactBox; the No. / double-click opens (js/itemStockFactbox.js).
+  ItemStockFactbox.wireListRows(tbody, document.getElementById('toListStockFact'), 'transfer', openManageModal);
 }
 
 // Manage Transfer Order modal - view + the portal's own standalone Ship/Receive/Cancel
@@ -707,6 +706,7 @@ async function openManageModal(docNo) {
   document.getElementById('viewLinesError').classList.add('hidden');
   const body = document.getElementById('viewLinesBody');
   body.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
+  ItemStockFactbox.clear(document.getElementById('viewLinesStockPart'), 'Loading...');
   // Browser Back closes the order; the ?doc= keeps it reopenable when coming Back from another page (js/nav.js).
   document.getElementById('viewLinesModal').dataset.historyUrl = `?doc=${encodeURIComponent(docNo)}`;
   document.getElementById('viewLinesModal').classList.remove('hidden');
@@ -766,6 +766,13 @@ async function openManageModal(docNo) {
   renderManageLines(lines, status);
   updateManageActionButtons(status, lines);
   loadTransferProductionOrders(docNo);
+  // Stock FactBox (js/itemStockFactbox.js) - every warehouse, the badge at the From Warehouse.
+  ItemStockFactbox.load(document.getElementById('viewLinesStockPart'), lines.map((l) => ({
+    item_code: l['Item No.'],
+    variant_id: l['Variant ID'],
+    label: l['Description'] || l['Variant Name'],
+    warehouse: header['From Warehouse ID'] || header['From Warehouse']
+  })));
   await loadAvailableStockForLines(docNo);
   await loadTransferBom(docNo);
   await autoFillQtyToShip(docNo, lines);

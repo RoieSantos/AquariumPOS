@@ -2,6 +2,18 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-15
+
+- Change Item fix: a changed line now keeps showing its variant/colour - the POS line text has just its variant part swapped (e.g. "... - AST-003-BlackPaint" -> "... - AST-003-WhitePaint"), the picker lists name + variant tag, and re-running [supabase_order_line_change_variant.sql](sql/supabase_order_line_change_variant.sql) repairs lines already changed. JS ?v=chgvariant2.
+
+- Super Users can now change a line's item/variant (e.g. Black Paint -> White Paint) on Online and Advance order cards, before To Ship: new "Change" link + Change Item dialog ([onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html) ?v=chgvariant1) backed by [supabase_order_line_change_variant.sql](sql/supabase_order_line_change_variant.sql) - online orders push the swap to Pancake (portal-only orders edit locally); advance orders keep the change over the POS's 5-min sync via an override trigger; every change logged in OrderLineVariantChanges. Walk-ins not covered (POS exchange).
+
+- **Stock FactBox on the lists too.** Online / Walk-in, Advance, Transfer and Purchase Order lists show the selected row's stock in the right FactBox (above Serials on the Online / Advance lists). Lines are read server-side ([supabase_document_stock_by_warehouse.sql](sql/supabase_document_stock_by_warehouse.sql), run after the lines file). Transfer and PO lists now work like Online Orders: click a row to select it, click its No. or double-click to open (single click still opens below 1280px, where the FactBox is hidden). View-only Store Managers get the Advance list FactBox with Stock only. Cache `v=liststock1`.
+
+- Added read-only [supabase_check_advance_order_10455_ship.sql](sql/supabase_check_advance_order_10455_ship.sql) - diagnoses why advance order 10455 can't go Ready to Ship (stage, serial lines, branch stock, user rights).
+
+- **Stock FactBox on the Online / Walk-in, Advance, Transfer and Purchase Order cards.** A "Stock" box on the right shows each line's on-hand: a green "5 at Amaya" / red "No stock at Amaya" badge for the document's warehouse (Online / Advance: the order's branch, Transfer: From Warehouse, PO: the line's warehouse), plus the other warehouses underneath. The title shows "(n out)". Item Ledger for regular items, IN_STOCK serials for Aquarium / Stand / Sump (same as Alice). One batch RPC for all lines ([supabase_lines_stock_by_warehouse.sql](sql/supabase_lines_stock_by_warehouse.sql)), shared [itemStockFactbox.js](docs/js/itemStockFactbox.js). Transfer and PO cards now use the same split layout as the Online Order card. View-only Store Managers see Stock on the Advance card (only Serials stays hidden). Cache `v=stockfb1`.
+
 ## 2026-10-14
 
 - **POS: manual discounts disabled.** In the Discount dialog, Percentage and Fixed Amount are greyed out and Wholesale is preselected, so cashiers can no longer type in discounts (e.g. commissions given as a discount). Re-enable with `ManualDiscountEnabled = true` in [MainForm.cs](MainForm.cs) `DiscountButton_Click`.

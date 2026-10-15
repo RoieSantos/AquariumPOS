@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=convfit1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=liststock1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -233,7 +233,12 @@
 
         <!-- Serials FactBox: the selected row's linked serials (js/onlineOrders.js showListSerials,
              staff_get_online_order_serial_labels). Hidden below 1280px like every BC list FactBox. -->
-        <aside class="bc-factbox" id="orderListFactbox" aria-label="Serials">
+        <aside class="bc-factbox" id="orderListFactbox" aria-label="Stock and Serials">
+          <!-- Stock: the selected row's lines with on-hand per warehouse (js/itemStockFactbox.js loadDocument). -->
+          <div class="bc-fact" id="orderListStockFact">
+            <div class="bc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+            <div class="bc-fact-body" data-isf-body><p class="bc-fact-empty">Select an order to see its stock.</p></div>
+          </div>
           <div class="bc-fact">
             <div class="bc-fact-title">Serials <span class="muted" id="orderListSerialsCount"></span></div>
             <div class="bc-fact-body">
@@ -314,10 +319,16 @@
         </section>
 
         <!-- Serials FactBox: the selected advance order's linked serials (js/onlineOrders.js showListSerials,
-             staff_get_advance_order_serial_labels). no-factbox is dropped in initAdvanceOrdersView for
-             those who can see serials (not view-only Store Managers). -->
-        <aside class="bc-factbox" id="advanceListFactbox" aria-label="Serials">
-          <div class="bc-fact">
+             staff_get_advance_order_serial_labels). no-factbox is dropped in initAdvanceOrdersView; this
+             Serials part is hidden there for view-only Store Managers (they still get Stock). -->
+        <aside class="bc-factbox" id="advanceListFactbox" aria-label="Stock and Serials">
+          <!-- Stock: the selected row's lines with on-hand per warehouse (js/itemStockFactbox.js loadDocument) -
+               shown to everyone; the Serials part is hidden for view-only Store Managers. -->
+          <div class="bc-fact" id="advanceListStockFact">
+            <div class="bc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+            <div class="bc-fact-body" data-isf-body><p class="bc-fact-empty">Select an order to see its stock.</p></div>
+          </div>
+          <div class="bc-fact" id="advanceListSerialsFact">
             <div class="bc-fact-title">Serials <span class="muted" id="advanceListSerialsCount"></span></div>
             <div class="bc-fact-body">
               <div class="muted oc-fact-order" id="advanceListSerialsOrder"></div>
@@ -618,6 +629,12 @@
           <div class="oc-fact-title">Conversation <a id="orderCardConversationOpen" class="oc-conv-open" target="_blank" rel="noopener">Open &rsaquo;</a></div>
           <div class="oc-conv-thread" id="orderCardConversationThread"></div>
         </aside>
+        <!-- Stock FactBox: on-hand per warehouse for each line (js/itemStockFactbox.js,
+             staff_get_lines_stock_by_warehouse) - the badge is the order's own branch. -->
+        <aside class="oc-factbox" id="orderCardStockPart" aria-label="Stock">
+          <div class="oc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+          <div class="oc-fact-body" data-isf-body></div>
+        </aside>
         <aside class="oc-factbox" id="orderCardPhotosPart" aria-label="Photos">
           <div class="oc-fact-title">Photos <span class="muted" id="orderCardPhotosCount"></span></div>
           <div class="oc-fact-body">
@@ -766,9 +783,15 @@
 
         <!-- Serials FactBox: serials linked to the advance order (staff_get_advance_order_serial_labels) -
              tagged at Ready to Ship or by the POS at Pay In Full. js/onlineOrders.js loadAdvanceCardSerials.
-             Hidden (and the split dropped) for view-only Store Managers, whom the RPC refuses. -->
+             Hidden for view-only Store Managers, whom the RPC refuses (the Stock box stays). -->
         <div class="oc-factbox-col" id="advanceCardFactboxes">
-        <aside class="oc-factbox" aria-label="Serials">
+        <!-- Stock FactBox: on-hand per warehouse for each line (js/itemStockFactbox.js) - shown to
+             everyone, view-only Store Managers included (only Serials is hidden for them). -->
+        <aside class="oc-factbox" id="advanceCardStockPart" aria-label="Stock">
+          <div class="oc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+          <div class="oc-fact-body" data-isf-body></div>
+        </aside>
+        <aside class="oc-factbox" id="advanceCardSerialsPart" aria-label="Serials">
           <div class="oc-fact-title">Serials <span class="muted" id="advanceCardSerialsCount"></span></div>
           <div class="oc-fact-body">
             <p class="oc-fact-empty muted" id="advanceCardSerialsEmpty">No serials linked yet.</p>
@@ -937,6 +960,33 @@
         <span style="flex:1;"></span>
         <button class="bc-btn bc-btn-primary" id="saveSendBackBtn" type="button">Send Back</button>
         <button class="bc-btn" id="cancelSendBackBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change a line's item / variant - Super Users (sql/supabase_order_line_change_variant.sql). -->
+  <div id="changeItemDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="changeItemTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">CHANGE ITEM</div>
+          <h2 id="changeItemTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeChangeItemBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">Now: <b id="changeItemCurrent"></b><br />Pick what was actually ordered. Quantity, price and discount stay the same.</p>
+        <div class="bc-field">
+          <label for="changeItemSearch">Search another product (leave empty for this item's variants)</label>
+          <input type="text" id="changeItemSearch" autocomplete="off" placeholder="e.g. white paint, AST-003" />
+        </div>
+        <div id="changeItemOptions" class="oo-sb-parts" style="max-height:320px; overflow:auto;"></div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="changeItemError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveChangeItemBtn" type="button">Change Item</button>
+        <button class="bc-btn" id="cancelChangeItemBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -1154,7 +1204,8 @@
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
-  <script src="js/onlineOrders.js?v=tofollow1"></script>
+  <script src="js/itemStockFactbox.js?v=liststock1"></script>
+  <script src="js/onlineOrders.js?v=chgvariant2"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>

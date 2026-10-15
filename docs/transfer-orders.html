@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Transfer Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fp1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=liststock1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -71,7 +71,7 @@
       <button class="bc-tab" type="button" role="tab" data-status="Cancelled">Cancelled</button>
     </div>
 
-    <div class="bc-body no-factbox" id="bcBody">
+    <div class="bc-body" id="bcBody">
       <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
         <div class="bc-pane-head">Filter list by</div>
         <div class="bc-pane-body">
@@ -128,6 +128,16 @@
           <span class="muted" id="toCount"></span>
         </div>
       </section>
+
+      <!-- Stock FactBox: the selected transfer order's lines with on-hand per warehouse (js/itemStockFactbox.js
+           wireListRows / loadDocument). Click a row to select it; its No. or a double-click opens it.
+           Hidden below 1280px like every BC list FactBox (a click then opens straight away). -->
+      <aside class="bc-factbox" aria-label="Stock">
+        <div class="bc-fact" id="toListStockFact">
+          <div class="bc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+          <div class="bc-fact-body" data-isf-body><p class="bc-fact-empty">Select a row to see its stock.</p></div>
+        </div>
+      </aside>
     </div>
   </div>
 
@@ -166,7 +176,10 @@
 
       <div id="viewLinesError" class="bc-doc-error error-text hidden"></div>
 
-      <div class="bc-doc-body">
+      <!-- Split BC-style like the Online Order card: the document on the left, the Stock FactBox on
+           the right (stacks under it on a narrow screen). -->
+      <div class="bc-doc-body oc-split">
+       <div class="oc-main">
         <!-- Business Central-style "General" FastTab - collapsible, and when collapsed it keeps the
              warehouses on the tab itself so folding it away never hides what you needed. Open by
              default; the choice is remembered per browser (js/transferOrders.js). -->
@@ -243,6 +256,16 @@
               <tbody id="viewLinesBody"></tbody>
             </table>
           </div>
+        </div>
+       </div>
+
+        <!-- Stock FactBox: each line's on-hand per warehouse (js/itemStockFactbox.js,
+             staff_get_lines_stock_by_warehouse) - the badge is the From Warehouse. -->
+        <div class="oc-factbox-col">
+        <aside class="oc-factbox" id="viewLinesStockPart" aria-label="Stock">
+          <div class="oc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+          <div class="oc-fact-body" data-isf-body></div>
+        </aside>
         </div>
       </div>
     </div>
@@ -408,7 +431,8 @@
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/transferOrders.js?v=pendingblock2"></script>
+  <script src="js/itemStockFactbox.js?v=liststock1"></script>
+  <script src="js/transferOrders.js?v=liststock1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

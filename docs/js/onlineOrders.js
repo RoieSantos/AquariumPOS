@@ -2801,6 +2801,24 @@ async function loadAdvanceCardSerials(no) {
   renderSerialsFactbox('advanceCard', error ? [] : data || [], error?.message);
 }
 
+// Stock part of the list FactBox - the selected row's lines with their on-hand per warehouse
+// (js/itemStockFactbox.js loadDocument, staff_get_document_stock_by_warehouse). Same 250ms settle and
+// hidden-FactBox skip as the Serials part below.
+let listStockKey = null;
+let listStockTimer = null;
+
+function showListStock(kind, id, forceReload = false) {
+  const prefix = kind === 'advance' ? 'advanceList' : 'orderList';
+  const box = document.getElementById(`${prefix}StockFact`);
+  const key = id ? `${kind}:${id}` : null;
+  if (!box || (key === listStockKey && !forceReload)) return;
+  clearTimeout(listStockTimer);
+  if (!box.offsetParent) { listStockKey = null; return; }
+  listStockKey = key;
+  if (!id) { ItemStockFactbox.clear(box, 'Select an order to see its stock.'); return; }
+  listStockTimer = setTimeout(() => ItemStockFactbox.loadDocument(box, kind, id), 250);
+}
+
 // Serials FactBox on the lists (#orderListFactbox / #advanceListFactbox) - the selected row's serials.
 // One small call per selection, after it settles for 250ms (arrowing through rows doesn't fire one per
 // row); skipped while the FactBox is hidden (narrow screens). kind: 'online' (Online / Walk-in) or
@@ -2810,6 +2828,8 @@ let listSerialsKey = null;
 let listSerialsTimer = null;
 
 function showListSerials(kind, id, forceReload = false) {
+  showListStock(kind, id, forceReload);
+  if (kind === 'advance' && !canAssignOrders()) return; // view-only Store Managers: Serials part hidden, Stock only
   const prefix = kind === 'advance' ? 'advanceList' : 'orderList';
   const box = document.getElementById(`${prefix}Factbox`);
   const key = id ? `${kind}:${id}` : null;
@@ -5057,11 +5077,12 @@ function renderOrderCardLines() {
   }
 
   const priceCell = (v) => (hidePrices() ? '' : `<td class="num">${money(v)}</td>`);
+  const canChange = canChangeOnlineOrderLineItem(findFlatOrder(openCardOrderId));
   tbody.innerHTML = cardLines.map((l) => `
     <tr>
       <td>${escapeHtml(l.item_code || l.product_display_id)}</td>
       <td><b>${escapeHtml(lineSku(l))}</b></td>
-      <td style="white-space:normal;">${escapeHtml(l.description)}</td>
+      <td style="white-space:normal;">${escapeHtml(l.description)}${canChange && l.line_id ? changeItemLinkHtml(l.line_id) : ''}</td>
       <td class="num">${l.quantity ?? ''}</td>
       ${priceCell(l.price)}
       ${priceCell(l.discount)}
@@ -5092,6 +5113,7 @@ async function loadOrderCardLines(orderId) {
   document.getElementById('orderCardGlassTab').classList.add('hidden');
   renderPosDescription(null);
   renderSerialsFactbox('orderCard', []); // clear the previous order's while loading
+  ItemStockFactbox.clear(document.getElementById('orderCardStockPart'), 'Loading...');
 
   const [linesRes] = await Promise.all([
     supabaseClient.rpc('admin_get_online_order_detail_live', {
@@ -5110,6 +5132,7 @@ async function loadOrderCardLines(orderId) {
     tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">Could not load lines: ${escapeHtml(linesRes.error.message)}
       <button type="button" class="bc-link" id="retryOrderCardLinesBtn" style="margin-left:8px;">Retry</button></td></tr>`;
     document.getElementById('retryOrderCardLinesBtn').addEventListener('click', () => loadOrderCardLines(orderId));
+    ItemStockFactbox.clear(document.getElementById('orderCardStockPart'), 'Lines did not load.');
     return;
   }
 
@@ -5117,6 +5140,150 @@ async function loadOrderCardLines(orderId) {
   renderPosDescription(findFlatOrder(orderId), linesRes.data?.[0]?.order_note || findFlatOrder(orderId)?.pos_note);
   renderOrderCardLines();
   loadOrderCardGlassTanks();
+  loadOrderCardStock(orderId);
+}
+
+// Stock FactBox (js/itemStockFactbox.js) - each line's on-hand, the badge at the order's own branch.
+function loadOrderCardStock(orderId) {
+  const o = findFlatOrder(orderId);
+  ItemStockFactbox.load(document.getElementById('orderCardStockPart'), cardLines.map((l) => ({
+    item_code: l.item_code || l.product_display_id,
+    variant_id: l.variation_id,
+    label: l.description,
+    warehouse: o?.location_id || o?.warehouse_name
+  })));
+}
+
+// ---------------------------------------------------------------- Change Item
+// Per "can a super user change the item.. the punched is black paint but the actual is white paint" - a
+// Super User swaps a line's product / variant (quantity, price, discount stay). Online orders go through
+// Pancake, advance orders are kept over the POS sync (sql/supabase_order_line_change_variant.sql). Only
+// before To Ship; walk-ins are posted POS receipts, so not here (POS exchange instead).
+const CHANGE_ITEM_LOCKED_STATUSES = ['to ship', 'packing', 'packed', 'shipped', 'delivered', 'completed', 'received',
+  'canceled', 'cancelled', 'returned', 'returning', 'deleted'];
+let changeItemCtx = null; // { kind: 'online' | 'advance', orderNo, lineId, variationId, itemCode, description }
+let changeItemSearchGeneration = 0;
+let changeItemWired = false;
+
+function canChangeOnlineOrderLineItem(o) {
+  return !!currentSession?.isSuperUser && !!o && !o.walkin_stage
+    && !CHANGE_ITEM_LOCKED_STATUSES.includes((o.status || '').trim().toLowerCase());
+}
+
+function canChangeAdvanceOrderLineItem(o) {
+  return !!currentSession?.isSuperUser && !!o && !['To Ship', 'Shipped', 'Delivered'].includes(advanceStatus(o));
+}
+
+function changeItemLinkHtml(lineId) {
+  return ` <button type="button" class="bc-link oc-change-item" data-change-line="${escapeHtml(String(lineId))}" title="Change this line's item / variant (Super User)">Change</button>`;
+}
+
+function openChangeItemDialog(ctx) {
+  changeItemCtx = ctx;
+  document.getElementById('changeItemTitle').textContent = `${ctx.kind === 'advance' ? 'Advance order' : 'Order'} ${ctx.orderNo}`;
+  document.getElementById('changeItemCurrent').textContent = ctx.description || ctx.itemCode || '-';
+  document.getElementById('changeItemSearch').value = '';
+  document.getElementById('changeItemError').classList.add('hidden');
+  document.getElementById('changeItemDialog').classList.remove('hidden');
+  loadChangeItemOptions();
+}
+
+function closeChangeItemDialog() {
+  changeItemCtx = null;
+  document.getElementById('changeItemDialog').classList.add('hidden');
+}
+
+async function loadChangeItemOptions() {
+  const ctx = changeItemCtx;
+  if (!ctx) return;
+  const box = document.getElementById('changeItemOptions');
+  const generation = ++changeItemSearchGeneration;
+  box.innerHTML = '<div class="muted">Loading...</div>';
+  const { data, error } = await supabaseClient.rpc('staff_search_order_line_variants', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_variation_id: ctx.kind === 'online' ? ctx.variationId || null : null,
+    p_item_code: ctx.kind === 'online' ? ctx.itemCode || null : null,
+    p_query: document.getElementById('changeItemSearch').value.trim() || null,
+    p_advance_no: ctx.kind === 'advance' ? ctx.orderNo : null,
+    p_advance_line_no: ctx.kind === 'advance' ? String(ctx.lineId) : null
+  });
+  if (generation !== changeItemSearchGeneration || changeItemCtx !== ctx) return;
+  if (error) {
+    box.innerHTML = `<div class="error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_order_line_change_variant.sql.' : ''}</div>`;
+    return;
+  }
+  const options = data?.options || [];
+  box.innerHTML = options.length
+    ? options.map((v) => `
+      <label class="oo-sb-part"><input type="radio" name="changeItemPick" value="${escapeHtml(v.variation_id)}" ${v.is_current ? 'disabled' : ''} />
+        <span><b>${escapeHtml(v.label || v.name)}</b>${v.is_current ? ' <span class="badge badge-neutral">Current</span>' : ''}
+        <small>${escapeHtml([v.item_code, v.sku].filter(Boolean).join(' · '))}${hidePrices() ? '' : ` · list price ${money(v.price)}`}</small></span></label>`).join('')
+    : '<div class="muted">No matching products. Type part of the name, code or SKU above.</div>';
+}
+
+async function saveChangeItem() {
+  const ctx = changeItemCtx;
+  if (!ctx) return;
+  const errorEl = document.getElementById('changeItemError');
+  const picked = document.querySelector('#changeItemOptions input[name="changeItemPick"]:checked');
+  if (!picked) {
+    errorEl.textContent = 'Pick the product it should be.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('saveChangeItemBtn');
+  btn.disabled = true;
+  errorEl.classList.add('hidden');
+  const { data, error } = ctx.kind === 'advance'
+    ? await advanceRpc('staff_change_advance_order_line_variant', { p_no: ctx.orderNo, p_line_no: String(ctx.lineId), p_variation_id: picked.value })
+    : await supabaseClient.rpc('admin_change_online_order_line_variant', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: ctx.orderNo,
+      p_line_id: String(ctx.lineId),
+      p_variation_id: picked.value
+    });
+  btn.disabled = false;
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  closeChangeItemDialog();
+  if (ctx.kind === 'advance') {
+    if (openAdvanceNo === ctx.orderNo) loadAdvanceCardLines(ctx.orderNo);
+  } else if (openCardOrderId === ctx.orderNo) {
+    loadOrderCardLines(ctx.orderNo);
+  }
+  const note = data?.resynced === false ? '\n\nPancake has the change, but the portal could not re-read the order yet - Refresh in a minute.' : '';
+  alert(`Changed:\n${data?.old_description || '-'}\n→ ${data?.new_description || '-'}${note}`);
+}
+
+function wireChangeItemDialog() {
+  if (changeItemWired) return;
+  changeItemWired = true;
+  document.getElementById('orderCardLinesBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-change-line]');
+    const l = btn && cardLines.find((x) => String(x.line_id) === btn.dataset.changeLine);
+    if (!l || !openCardOrderId) return;
+    openChangeItemDialog({ kind: 'online', orderNo: openCardOrderId, lineId: l.line_id, variationId: l.variation_id,
+      itemCode: l.item_code || l.product_display_id, description: l.description });
+  });
+  document.getElementById('advanceCardLinesBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-change-line]');
+    const l = btn && advanceCardLines.find((x) => String(x.line_no) === btn.dataset.changeLine);
+    if (!l || !openAdvanceNo) return;
+    openChangeItemDialog({ kind: 'advance', orderNo: openAdvanceNo, lineId: l.line_no, description: l.description });
+  });
+  let debounce = null;
+  document.getElementById('changeItemSearch').addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(loadChangeItemOptions, 300);
+  });
+  document.getElementById('saveChangeItemBtn').addEventListener('click', saveChangeItem);
+  document.getElementById('cancelChangeItemBtn').addEventListener('click', closeChangeItemDialog);
+  document.getElementById('closeChangeItemBtn').addEventListener('click', closeChangeItemDialog);
 }
 
 // Walk-in POS description - per "in the walk-in orders can you sync over the descriptions from local
@@ -6362,6 +6529,7 @@ let advanceLoadGeneration = 0;
 let advanceStatusFilter = null; // null = all, else New / Assigned / Production Done / To Ship / Shipped
 let advanceRowsByNo = new Map(); // transaction_no -> latest list row, for the Advance Order document
 let openAdvanceNo = null;
+let advanceCardLines = []; // the open advance order's lines (Change Item reads the picked line from here)
 let advanceCardLoadGeneration = 0;
 let advanceAssignNo = null;
 let advanceSendBackNo = null;
@@ -6749,6 +6917,7 @@ async function loadAdvanceCardLines(transactionNo) {
   const tfoot = document.getElementById('advanceCardLinesFoot');
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
   tfoot.innerHTML = '';
+  ItemStockFactbox.clear(document.getElementById('advanceCardStockPart'), 'Loading...');
 
   const [{ data, error }, serialStatus] = await Promise.all([
     advanceRpc('staff_list_advance_order_lines', { p_no: transactionNo }),
@@ -6758,8 +6927,15 @@ async function loadAdvanceCardLines(transactionNo) {
 
   if (error) {
     tbody.innerHTML = `<tr><td colspan="9" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    ItemStockFactbox.clear(document.getElementById('advanceCardStockPart'), 'Lines did not load.');
     return;
   }
+  // Stock FactBox (js/itemStockFactbox.js) - each line's on-hand, the badge at the order's warehouse.
+  ItemStockFactbox.load(document.getElementById('advanceCardStockPart'), (data || []).map((l) => ({
+    item_code: l.item_no,
+    label: l.description,
+    warehouse: advanceRowsByNo.get(String(transactionNo))?.warehouse
+  })));
   // Serial-tracked lines get "No serial yet" (or "n/m no serial") until tagged at Ready to Ship, then
   // "Serial ✓". Quiet when supabase_advance_order_to_follow.sql isn't run yet.
   const serialByLine = new Map((serialStatus.error ? [] : serialStatus.data || [])
@@ -6774,17 +6950,19 @@ async function loadAdvanceCardLines(transactionNo) {
     return ` <span class="badge badge-warning" title="Not in stock / not released yet - tag at Ready to Ship">${untagged < qty ? `${untagged}/${qty} ` : ''}No serial yet</span>`;
   };
   const lines = data || [];
+  advanceCardLines = lines;
   if (!lines.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No line items found for this order.</td></tr>';
     return;
   }
 
+  const canChange = canChangeAdvanceOrderLineItem(advanceRowsByNo.get(String(transactionNo)));
   tbody.innerHTML = lines.map((l) => `
     <tr>
       <td>${escapeHtml(l.line_no ?? '')}</td>
       <td>${escapeHtml(l.type || '')}</td>
       <td>${escapeHtml(l.item_no || '')}</td>
-      <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}${serialTagHtml(l.line_no)}</td>
+      <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}${serialTagHtml(l.line_no)}${canChange && (l.type || '').toUpperCase() === 'ITEM' ? changeItemLinkHtml(l.line_no) : ''}</td>
       <td class="num">${l.quantity ?? ''}</td>
       <td class="num">${formatAdvanceMoney(l.price)}</td>
       <td class="num">${formatAdvanceMoney(l.discount)}</td>
@@ -7218,9 +7396,10 @@ async function initAdvanceOrdersView() {
   document.getElementById('ordersSubtitle').textContent = 'Customer deposit/downpayment orders from the POS. Open one to assign makers and follow it to Shipped.';
   document.title = document.title.replace('Online Orders', 'Advance Orders');
   document.getElementById('orderSearchInput').placeholder = 'Search transaction, receipt, or customer';
-  // Serials FactBox only for those who can see serials (staff_get_advance_order_serial_labels refuses
-  // view-only Store Managers).
-  document.getElementById('advanceOrdersView').classList.toggle('no-factbox', !canAssignOrders());
+  // List FactBox for everyone (Stock); its Serials part only for those who can see serials
+  // (staff_get_advance_order_serial_labels refuses view-only Store Managers).
+  document.getElementById('advanceOrdersView').classList.remove('no-factbox');
+  document.getElementById('advanceListSerialsFact').classList.toggle('hidden', !canAssignOrders());
 
   // Same layout as the Online / Walk-in lists: the advance actions (.adv-cmd) + Refresh on the action
   // bar, the advance stage tabs where the online status tabs sit, and the advance list.
@@ -7231,6 +7410,7 @@ async function initAdvanceOrdersView() {
   document.getElementById('advanceStatusBar').classList.remove('hidden');
   document.getElementById('advanceOrdersView').classList.remove('hidden');
   wireAdvanceCard();
+  wireChangeItemDialog();
   wireShipSerialModalButtons(); // Ready to Ship serial picker (collectAdvanceSerials)
   updateAdvanceListActions(); // nothing selected yet - Open/Assign disabled, stage buttons hidden
   currentSessionIsProductionWarehouse = await resolveIsProductionWarehouse(currentSession);
@@ -7310,6 +7490,7 @@ async function initAdvanceOrdersView() {
   wireReleaseDialog();
   wireNextStepButtons();
   wireOrderCardAttachments();
+  wireChangeItemDialog();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
   if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);

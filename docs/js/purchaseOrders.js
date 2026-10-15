@@ -62,7 +62,7 @@ function setPoCardStatus(lines) {
 function poRowsHtml(rows) {
   return rows
     .map((po) => `
-      <tr class="clickable-row" data-po-no="${encodeURIComponent(po.po_no)}">
+      <tr class="clickable-row" data-po-no="${encodeURIComponent(po.po_no)}" data-doc-key="${escapeHtml(po.po_no)}">
         <td><span class="bc-doc-no">${po.po_no}</span></td>
         <td>${po.vendor_name || po.vendor_code || ''}</td>
         <td>${escapeHtml(po.warehouse_name || '')}</td>
@@ -103,9 +103,8 @@ async function loadPurchaseOrders() {
     ? '<tr><td colspan="10" class="cell-msg">No Purchase Orders yet - create one from Stock On Hand, or with New.</td></tr>'
     : poRowsHtml(rows);
 
-  tbody.querySelectorAll('tr[data-po-no]').forEach((row) => {
-    row.addEventListener('click', () => openReceiveModal(decodeURIComponent(row.dataset.poNo)));
-  });
+  // Click = select + Stock FactBox; the PO No. / double-click opens (js/itemStockFactbox.js).
+  ItemStockFactbox.wireListRows(tbody, document.getElementById('poListStockFact'), 'purchase', openReceiveModal);
 
   renderPaginationBar(
     document.getElementById('poPaginationBar'),
@@ -591,8 +590,34 @@ async function savePurchaseOrderLineQuantity(input) {
   await openReceiveModal(currentReceivePoNo);
 }
 
+// Stock FactBox (js/itemStockFactbox.js) - each line's on-hand per warehouse, the badge at the line's
+// own warehouse. Existing order: from its saved lines; New order: from the picked rows (debounced).
+function loadPoCardStock(lines) {
+  ItemStockFactbox.load(document.getElementById('poCardStockPart'), lines);
+}
+
+let newPoStockTimer = null;
+function scheduleNewPoStockRefresh() {
+  clearTimeout(newPoStockTimer);
+  newPoStockTimer = setTimeout(() => {
+    if (currentPoCardMode !== 'new') return;
+    loadPoCardStock(Array.from(document.querySelectorAll('#newPoLinesBody tr')).map((row) => ({
+      item_code: row.dataset.itemCode,
+      variant_id: row.dataset.variantId,
+      label: row.querySelector('.new-po-line-description')?.value || row.dataset.itemName,
+      warehouse: row.querySelector('.new-po-line-warehouse')?.value || newPoHeaderWarehouseId()
+    })));
+  }, 300);
+}
+
 async function renderReceiveLines(lines) {
   const body = document.getElementById('receiveLinesBody');
+  loadPoCardStock((lines || []).map((l) => ({
+    item_code: l.item_code,
+    variant_id: l.variant_code,
+    label: l.description || l.item_name,
+    warehouse: l.warehouse_id || l.warehouse_name || currentReceiveWarehouseId
+  })));
 
   // The UoM and Variant pickers both need their item's own options before the rows are built.
   const itemCodes = (lines || []).map((l) => l.item_code);
@@ -696,6 +721,7 @@ let currentReceiveWarehouseId = '';
 async function openReceiveModal(poNo) {
   currentPoCardMode = 'existing';
   currentReceivePoNo = poNo;
+  ItemStockFactbox.clear(document.getElementById('poCardStockPart'), 'Loading...');
   currentReceiveVendorCode = null;
   currentReceiveWarehouseId = '';
   applyPoCardMode('existing');
@@ -1482,6 +1508,7 @@ function applyNewPoItemSelection(row, code, name, cost, description) {
   refreshNewPoLineDescription(row);
   refreshNewPoCostTotals();
   applyNewPoLineUnits(row, code);
+  scheduleNewPoStockRefresh();
 }
 
 function clearNewPoVariantSelection(row) {
@@ -1617,6 +1644,7 @@ async function searchVariantsForNewPoRow(row, searchText) {
       row.dataset.variantId = decodeURIComponent(opt.dataset.variationId || '');
       row.dataset.variantLabel = decodeURIComponent(opt.dataset.variantName || '');
       row.querySelector('.new-po-line-variant').value = decodeURIComponent(opt.dataset.label);
+      scheduleNewPoStockRefresh();
 
       // Re-validate Unit Cost against THIS variant's own item setup (staff_search_variants joins
       // Items on coalesce(ItemCode, MainItemCode), so this is already "the variant's own cost, or
@@ -1727,6 +1755,7 @@ function addNewPoLineRow() {
     row.remove();
     renumberNewPoLines();
     refreshNewPoCostTotals();
+    scheduleNewPoStockRefresh();
   });
 
   // A new line starts on the header's warehouse (which itself starts on the user's own), and
@@ -1737,6 +1766,7 @@ function addNewPoLineRow() {
   row.dataset.warehouseAuto = '1';
   lineWarehouseSelect.addEventListener('change', () => {
     row.dataset.warehouseAuto = lineWarehouseSelect.value === newPoHeaderWarehouseId() ? '1' : '0';
+    scheduleNewPoStockRefresh();
   });
 
   // Until an item is picked there is nothing to convert, so the line sits on its base unit at 1:1.
@@ -1814,6 +1844,7 @@ function resetNewPoModal() {
   addNewPoLineRow();
   refreshNewPoCostTotals();
   refreshNewPoGeneralSummary();
+  ItemStockFactbox.clear(document.getElementById('poCardStockPart'), 'Pick an item to see its stock.');
 }
 
 async function openNewPoModal() {
@@ -2095,6 +2126,7 @@ async function createNewPurchaseOrder() {
   document.getElementById('newPoWarehouse').addEventListener('change', () => {
     applyHeaderWarehouseToNewPoLines();
     refreshNewPoGeneralSummary();
+    scheduleNewPoStockRefresh();
   });
 
   // Payment Method is shared by both card modes (unlike the fields above). On an existing PO
