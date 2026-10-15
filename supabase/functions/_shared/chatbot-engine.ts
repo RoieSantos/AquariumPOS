@@ -1013,7 +1013,9 @@ export const TOOLS: Anthropic.Tool[] = [
         cabinet_type: { type: 'string', enum: ['Laminated Plywood', 'Aluminum'], description: 'Material for the cabinet AND canopy: "Laminated Plywood" (18mm, default) or "Aluminum" (4mm ACP aluminum composite panels, pricier). Only used when stand_cabinet or canopy is true.' },
         stand_cabinet_doors: { type: 'integer', description: 'Number of cabinet doors. Leave out to use the default (2 doors per 3ft of length, e.g. 3ft = 2 doors, 6ft = 4 doors). Only used when stand_cabinet is true.' },
         canopy: { type: 'boolean', description: 'Add a canopy (18mm laminated plywood box cover on top of the tank). Only used when add_stand is true.' },
-        canopy_height: { type: 'number', description: 'Canopy height, in the same unit as the tank. Leave out to use the default 6 inches. Only used when canopy is true.' }
+        canopy_height: { type: 'number', description: 'Canopy height, in the same unit as the tank. Leave out to use the default 6 inches. Only used when canopy is true.' },
+        sealant: { type: 'string', enum: ['Clear', 'Black'], description: 'Sealant (silicone) color, if the customer said. Doesn\'t change the price - it\'s shown on the drawing link.' },
+        build_notes: { type: 'string', description: 'Short build details that the price doesn\'t capture but the drawing should show, e.g. hole placement/size ("2 holes, right side, for 1/2 inch pipe, 4 inches from top"). Shown as the drawing link\'s note.' }
       },
       required: ['length', 'width', 'height']
     }
@@ -1113,7 +1115,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'react_to_message',
     description:
-      'Puts an emoji reaction on the customer\'s latest Messenger message, the way a person would tap ❤️ or 👍 on it. This is in addition to your normal text reply and never replaces it. Use it sparingly, at most once per customer message and only where a person naturally would: ❤️ for thanks, a kind word, a photo of their tank or fish, or when they confirm something (a booking, a payment sent, "ok noted"); 😆 for a joke. Don\'t react to plain questions, complaints, or angry or sad messages. A 😢 is fine for a fish that died, but always reply with words too. Only ❤️, 😆 and 😢 are allowed (never 👍, 😮 or 😠). This only works on Facebook Messenger. If the result says it isn\'t available, just carry on without mentioning it.',
+      'Puts an emoji reaction on the customer\'s latest Messenger message, the way a person would tap ❤️ on it. This is in addition to your normal text reply and never replaces it. Call it at most once per customer message. ALWAYS ❤️ when they thank you ("thank you", "salamat", "ty") or say something kind, and when they send a photo of their tank or fish. Also ❤️ when they confirm something (a booking, a payment sent, "ok noted"), and 😆 for a joke. Don\'t react to plain questions, complaints, or angry or sad messages. A 😢 is fine for a fish that died, but always reply with words too. Only ❤️, 😆 and 😢 are allowed (never 👍, 😮 or 😠). This only works on Facebook Messenger. If the result says it isn\'t available, just carry on without mentioning it.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1413,7 +1415,12 @@ export function buildSystemPrompt(
     '- Keep replies conversational and reasonably short, not bulleted essays.',
     '',
     'REACTIONS (Messenger only):',
-    '- You can put an emoji reaction on the customer\'s message with react_to_message, the way a friendly shop assistant would. Use it occasionally, not on every message, and always send your normal text reply as well. Use ❤️ for a thank-you, a photo of their tank or fish, or when they confirm something; 😆 for a joke. Never use 👍 or 😮, use ❤️ instead. Don\'t react to plain questions, complaints or angry messages.'
+    '- React to the customer\'s message with react_to_message in these cases, always together with your normal text reply:',
+    '  - ALWAYS ❤️ when they thank you ("thank you", "thanks", "salamat", "ty") or say something kind.',
+    '  - ALWAYS ❤️ when they send a photo of their tank or fish.',
+    '  - ❤️ when they confirm something (a booking, "ok noted", "sent the payment").',
+    '  - 😆 when they make a joke.',
+    '- Never use 👍 or 😮; use ❤️ instead. Don\'t react to plain questions, complaints or angry messages.'
   );
 
   if (storeInfo) {
@@ -1656,8 +1663,16 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
       glass: String(normalized.glassThickness)
     });
     if (normalized.temperedGlass) aquariumParams.set('tempered', '1');
+    if (input.low_iron) aquariumParams.set('lowIron', '1');
     if (normalized.rimless) aquariumParams.set('rimless', '1');
     if (input.high_strip) aquariumParams.set('highStrip', '1');
+    const holeCount = Math.max(0, Math.round(Number(input.hole_count) || 0));
+    const dividerCount = Math.max(0, Math.round(Number(input.divider_count) || 0));
+    if (holeCount > 0) aquariumParams.set('holeCount', String(holeCount));
+    if (dividerCount > 0) aquariumParams.set('dividerCount', String(dividerCount));
+    if (input.sealant === 'Clear' || input.sealant === 'Black') aquariumParams.set('sealant', String(input.sealant));
+    const buildNotes = String(input.build_notes ?? '').trim();
+    if (buildNotes) aquariumParams.set('notes', buildNotes.slice(0, 300));
     if (input.enclosure) aquariumParams.set('enclosure', '1');
     if (input.turtle_tank) aquariumParams.set('turtleTank', '1');
     if (backgroundKind) {
@@ -2691,6 +2706,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       if (!row || !mid) return 'There is no customer message to react to - carry on without one.';
 
       const sent = await sendMessengerReaction(psid, mid, emoji, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION);
+      console.log('Bot reaction', JSON.stringify({ psid, emoji, messageId: row.Id, sent }));
       if (!sent) return 'The reaction could not be sent - carry on without it, don\'t mention it.';
       // Shown on the message in GMA Conversations, same as a staff reaction.
       await supabase.from('ChatbotMessages').update({ StaffReaction: emoji }).eq('Id', row.Id);

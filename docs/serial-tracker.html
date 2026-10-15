@@ -169,6 +169,10 @@
         <button class="btn btn-secondary btn-sm" id="closeSerialCardBtn" type="button" style="margin-left:auto;">Close</button>
       </div>
       <div class="form-grid" id="serialCardFields"></div>
+      <!-- Every change to this serial, newest first (js/serialTracker.js loadSerialHistory,
+           sql/supabase_serial_history.sql). -->
+      <h3 style="margin:16px 0 6px; font-size:14px;">History</h3>
+      <div id="serialCardHistory" style="max-height:320px; overflow:auto;"></div>
     </div>
   </div>
 
@@ -295,7 +299,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/serialTracker.js?v=reserve1"></script>
+  <script src="js/serialTracker.js?v=history1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

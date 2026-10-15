@@ -856,6 +856,70 @@ function openSerialCard(serialNo) {
     });
   });
   document.getElementById('serialCardModal').classList.remove('hidden');
+  loadSerialHistory(r.SerialNo);
+}
+
+// ---- Serial history (sql/supabase_serial_history.sql): every status / location / order change, who
+// stamped it and where it came from (Portal action, POS sync, a page writing directly, SQL).
+
+let historySerialNo = null;
+async function loadSerialHistory(serialNo) {
+  const box = document.getElementById('serialCardHistory');
+  historySerialNo = serialNo;
+  box.innerHTML = '<p class="muted">Loading history...</p>';
+  const { data, error } = await supabaseClient.rpc('staff_get_serial_history', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_no: serialNo
+  });
+  if (historySerialNo !== serialNo) return; // another card opened meanwhile
+  if (error) {
+    box.innerHTML = `<p class="muted">${/could not find the function|schema cache/i.test(error.message)
+      ? 'History isn\'t set up yet - run sql/supabase_serial_history.sql.' : escapeHtml(error.message)}</p>`;
+    return;
+  }
+  if (!data || !data.length) { box.innerHTML = '<p class="muted">No history yet.</p>'; return; }
+  box.innerHTML = `<table class="bc-grid" style="width:100%;">
+    <thead><tr><th>When</th><th>Change</th><th>By</th><th>From</th></tr></thead>
+    <tbody>${data.map((h) => `<tr>
+      <td style="white-space:nowrap;">${escapeHtml(formatDateTime(h.changed_at))}</td>
+      <td>${historyChangeHtml(h)}</td>
+      <td style="white-space:nowrap;">${escapeHtml(h.updated_by || '-')}</td>
+      <td style="white-space:nowrap;" title="${escapeHtml(h.via || '')}">${escapeHtml(h.source || '-')}${h.via ? `<div class="muted" style="font-size:11px;">${escapeHtml(historyViaLabel(h.via))}</div>` : ''}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+// "/rpc/admin_update_online_order_status" -> "admin update online order status"; a table write -> "direct table edit".
+function historyViaLabel(via) {
+  const m = /\/rpc\/([a-z0-9_]+)/i.exec(via || '');
+  if (m) return m[1].replace(/^(staff|admin)_/, '').replace(/_/g, ' ');
+  return /ItemSerialTracking/i.test(via || '') ? 'direct table edit' : via;
+}
+
+function historyChangeHtml(h) {
+  if (h.action === 'BASELINE') {
+    return `<span class="muted">Starting point:</span> ${statusLabel(h.new_status)}${h.new_location ? ` at ${escapeHtml(h.new_location)}` : ''}${historyOrderText(h.new_order, h.new_receipt, h.new_reserved_for, h.new_status)}`;
+  }
+  if (h.action === 'INSERT') {
+    return `<b>Created</b> ${statusLabel(h.new_status)}${h.new_location ? ` at ${escapeHtml(h.new_location)}` : ''}${h.new_source_doc ? ` (${escapeHtml(h.new_source_doc)})` : ''}${historyOrderText(h.new_order, h.new_receipt, h.new_reserved_for, h.new_status)}`;
+  }
+  if (h.action === 'DELETE') return `<b style="color:var(--danger);">Deleted</b> (was ${statusLabel(h.old_status)})`;
+  const parts = [];
+  if (h.old_status !== h.new_status) parts.push(`${statusLabel(h.old_status)} &rarr; <b>${statusLabel(h.new_status)}</b>`);
+  if (h.old_location !== h.new_location) parts.push(`Location ${escapeHtml(h.old_location || '-')} &rarr; <b>${escapeHtml(h.new_location || '-')}</b>`);
+  if (h.old_order !== h.new_order) parts.push(`Order ${escapeHtml(h.old_order || '-')} &rarr; <b>${escapeHtml(h.new_order || '-')}</b>`);
+  if (h.old_receipt !== h.new_receipt) parts.push(`Receipt ${escapeHtml(h.old_receipt || '-')} &rarr; <b>${escapeHtml(h.new_receipt || '-')}</b>`);
+  if (h.old_reserved_for !== h.new_reserved_for) parts.push(`Reserved for ${escapeHtml(h.old_reserved_for || '-')} &rarr; <b>${escapeHtml(h.new_reserved_for || '-')}</b>`);
+  if (h.old_source_doc !== h.new_source_doc) parts.push(`Source doc ${escapeHtml(h.old_source_doc || '-')} &rarr; <b>${escapeHtml(h.new_source_doc || '-')}</b>`);
+  return parts.join('<br>') || '<span class="muted">Item / variant changed</span>';
+}
+
+function historyOrderText(order, receipt, reservedFor, status) {
+  if (status === 'RESERVED' && reservedFor) return ` · for order ${escapeHtml(reservedFor)}`;
+  if (order) return ` · order ${escapeHtml(order)}`;
+  if (receipt) return ` · receipt ${escapeHtml(receipt)}`;
+  return '';
 }
 
 // ---- Status view tabs

@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-15
 
+- **Vic's aquarium drawing link now matches the quote.** The calculator page overwrote the linked undersump size with its defaults (tank length x 18 x 18), so it now keeps the link's size ([index.html](docs/WebAquariumCalculator/index.html)). The link also now carries holes, dividers, Low Iron and sealant, plus a new `build_notes` input (e.g. hole placement) shown as the drawing's note. `compute_aquarium_quote` has new `sealant` / `build_notes` inputs ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
+
+- **Bot reactions: explicit rules + logging.** Vic didn't react to a "Thank you" because the rule said "occasionally". It now says ALWAYS ❤️ for thanks/kind words and tank or fish photos (❤️ for confirmations, 😆 for jokes), and every reaction attempt is logged as "Bot reaction" ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
+
+- **Serial history.** Every serial change (status, location, item/variant, sold order/receipt, reserved-for, source doc; inserts and deletes) is now logged by a trigger in private."ItemSerialTrackingHistory", with who stamped it and where it came from (Portal action + which one, POS sync, a page writing directly, SQL / job). Baseline row per existing serial. Shown as a History table on the Serial Tracker's serial card ([supabase_serial_history.sql](sql/supabase_serial_history.sql), [serialTracker.js](docs/js/serialTracker.js) `v=history1`).
+
 - **GMA Conversations: "Load more" button.** The list stopped at the newest 100 conversations, so older customers never showed. The bottom of the list now shows "Showing 100 of N" with a Load more button that adds 100 at a time. Live updates keep the extra pages loaded, and a new search or filter starts again from the first 100 ([gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html) `v=loadmore1`).
 
 - **AI bot can react to customer messages (Messenger).** New `react_to_message` tool (❤️ 😆 😢 only; no 👍 or 😮, ❤️ is used instead) reacts to the customer's latest message using the same Facebook call as staff reactions, and saves it as `StaffReaction` so it shows in GMA Conversations. A system-prompt rule keeps it occasional, alongside a normal reply. It's skipped on the website, Portal Chat and Telegram, and simulated in the sandbox ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).

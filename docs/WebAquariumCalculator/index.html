@@ -3002,7 +3002,12 @@
       byId('unit').value = params.get('unit') || 'Inches';
       if (params.has('glass')) byId('glass').value = params.get('glass');
       if (params.get('tempered') === '1') byId('tempered').checked = true;
+      if (params.get('lowIron') === '1') byId('lowIron').checked = true;
       if (params.get('rimless') === '1') byId('rimless').checked = true;
+      if (params.has('holeCount')) byId('holeCount').value = params.get('holeCount');
+      if (params.has('dividerCount')) byId('dividerCount').value = params.get('dividerCount');
+      if (params.get('sealant') === 'Clear' || params.get('sealant') === 'Black') byId('sealant').value = params.get('sealant');
+      if (params.get('notes')) byId('specialNote').value = params.get('notes');
       if (params.get('highStrip') === '1') byId('highStrip').checked = true;
       if (params.get('enclosure') === '1') byId('enclosure').checked = true;
       if (params.get('turtleTank') === '1') byId('turtleTank').checked = true;
@@ -3036,6 +3041,12 @@
           if (params.has(id)) byId(id).value = params.get(id);
         });
         byId('sumpUnit').value = 'Inches';
+        // The sump is already "on" with the link's own size - without this, the first rules pass
+        // (enforceOptionRules) treats it as just ticked and overwrites it with the default
+        // tank-length x 18 x 18, and the length would keep following the tank length.
+        sumpAutoFillState.sumpEnabled = true;
+        sumpAutoFillState.sumpType = byId('sumpType').value;
+        if (params.has('sumpLength')) sumpLengthEditedByHand = true;
         if (params.has('sumpGlass')) byId('sumpGlass').value = params.get('sumpGlass');
         ['filterMedias', 'piping', 'overflowBox', 'allumTopCover'].forEach(function (id) {
           if (params.get(id) === '1') byId(id).checked = true;
