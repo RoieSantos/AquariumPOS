@@ -2805,6 +2805,8 @@ async function loadOrderCardSerials(orderId) {
   });
   if (String(orderId) !== String(openCardOrderId)) return;
   renderSerialsFactbox('orderCard', error ? [] : data || [], error?.message);
+  // Stock box: items with a serial already tagged here read "Serial assigned to this order".
+  ItemStockFactbox.setAssigned(document.getElementById('orderCardStockPart'), orderId, error ? [] : data);
 }
 
 async function loadAdvanceCardSerials(no) {
@@ -2812,6 +2814,7 @@ async function loadAdvanceCardSerials(no) {
   const { data, error } = await advanceRpc('staff_get_advance_order_serial_labels', { p_no: no });
   if (openAdvanceNo !== String(no)) return;
   renderSerialsFactbox('advanceCard', error ? [] : data || [], error?.message);
+  ItemStockFactbox.setAssigned(document.getElementById('advanceCardStockPart'), no, error ? [] : data);
 }
 
 // Stock part of the list FactBox - the selected row's lines with their on-hand per warehouse
@@ -2829,7 +2832,9 @@ function showListStock(kind, id, forceReload = false) {
   if (!box.offsetParent) { listStockKey = null; return; }
   listStockKey = key;
   if (!id) { ItemStockFactbox.clear(box, 'Select an order to see its stock.'); return; }
-  listStockTimer = setTimeout(() => ItemStockFactbox.loadDocument(box, kind, id), 250);
+  // the online row's branch name, so the badge never shows its LocationID (advance rows store the name)
+  const warehouseName = kind === 'online' ? findFlatOrder(id)?.warehouse_name : null;
+  listStockTimer = setTimeout(() => ItemStockFactbox.loadDocument(box, kind, id, warehouseName), 250);
 }
 
 // Serials FactBox on the lists (#orderListFactbox / #advanceListFactbox) - the selected row's serials.
@@ -2866,6 +2871,7 @@ function showListSerials(kind, id, forceReload = false) {
       });
     if (listSerialsKey !== key) return; // another row picked meanwhile
     renderSerialsFactbox(prefix, error ? [] : data || [], error?.message);
+    ItemStockFactbox.setAssigned(document.getElementById(`${prefix}StockFact`), id, error ? [] : data);
   }, 250);
 }
 
@@ -5197,8 +5203,9 @@ function loadOrderCardStock(orderId) {
     item_code: l.item_code || l.product_display_id,
     variant_id: l.variation_id,
     label: l.description,
-    warehouse: o?.location_id || o?.warehouse_name
-  })));
+    warehouse: o?.location_id || o?.warehouse_name,
+    warehouseName: o?.warehouse_name
+  })), orderId);
 }
 
 // ---------------------------------------------------------------- Change Item
@@ -6982,7 +6989,7 @@ async function loadAdvanceCardLines(transactionNo) {
     item_code: l.item_no,
     label: l.description,
     warehouse: advanceRowsByNo.get(String(transactionNo))?.warehouse
-  })));
+  })), transactionNo);
   // Serial-tracked lines get "No serial yet" (or "n/m no serial") until tagged at Ready to Ship, then
   // "Serial ✓". Quiet when supabase_advance_order_to_follow.sql isn't run yet.
   const serialByLine = new Map((serialStatus.error ? [] : serialStatus.data || [])

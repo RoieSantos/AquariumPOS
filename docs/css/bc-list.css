@@ -2894,14 +2894,37 @@ a.bc-cue:hover {
 /* View-only Store Managers: only the Serials FactBox is hidden - Stock stays. */
 #advanceCardModal .bc-doc-body.oc-split.no-factbox #advanceCardSerialsPart { display: none; }
 /* Stock FactBox (js/itemStockFactbox.js) - Online / Advance Order, Transfer Order and Purchase Order cards. */
-.isf-list { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
-.isf-list li { padding: 6px 0; border-top: 1px solid var(--bc-line); font-size: 12.5px; overflow-wrap: anywhere; }
-.isf-list li:first-child { border-top: none; padding-top: 0; }
-.isf-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.isf-code { font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
-.isf-head .badge { white-space: nowrap; }
-.isf-desc, .isf-locs { font-size: 11.5px; }
-.isf-locs .isf-has { color: var(--success); }
+.isf-list { list-style: none; margin: 0; padding: 0; max-height: 380px; overflow-y: auto; overflow-x: hidden; display: grid; gap: 8px; }
+/* One card per item: a coloured edge (green = in stock here, red = none) so the box reads at a glance. */
+.isf-item {
+  min-width: 0;
+  padding: 7px 9px 8px 10px;
+  border: 1px solid var(--bc-line);
+  border-left: 3px solid var(--success);
+  border-radius: 4px;
+  background: var(--bc-surface);
+  font-size: 12.5px;
+}
+.isf-item.isf-none { border-left-color: var(--danger); }
+.isf-item.isf-assigned { border-left-color: var(--primary); }
+.isf-code { font-weight: 600; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; overflow-wrap: anywhere; }
+.isf-desc {
+  margin-top: 1px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.isf-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.isf-badges .badge { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.isf-locs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; font-size: 11px; }
+.isf-locs-label { margin-right: 2px; }
+.isf-loc { padding: 1px 6px; border: 1px solid var(--bc-line); border-radius: 10px; color: var(--text-muted); white-space: nowrap; }
+.isf-loc b { font-weight: 600; }
+.isf-loc.isf-has { color: var(--success); border-color: currentColor; }
 .isf-note { margin: 8px 0 0; font-size: 11.5px; }
 .oc-fact-title .isf-out, .bc-fact-title .isf-out { color: var(--danger); }
 /* Same box on the lists (.bc-factbox) - Online / Advance, Transfer and Purchase Order lists. */

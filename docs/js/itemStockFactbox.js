@@ -10,10 +10,15 @@
 //     <div class="oc-fact-title">Stock <span class="muted" data-isf-count></span></div>
 //     <div class="oc-fact-body" data-isf-body></div>
 //   </aside>
-// ItemStockFactbox.load(box, lines) - lines: [{ item_code, variant_id, label, warehouse }]; warehouse is
-// the ID or name the line is for (its quantity becomes the badge), else the badge is the total.
-// ItemStockFactbox.loadDocument(box, docType, docNo) - same, for a list's selected row (lines read server-side).
+// ItemStockFactbox.load(box, lines) - lines: [{ item_code, variant_id, label, warehouse, warehouseName }];
+// warehouse is the ID or name the line is for (its quantity becomes the badge), else the badge is the
+// total. warehouseName labels it when that warehouse has no row (not a stock warehouse, nothing there).
+// ItemStockFactbox.loadDocument(box, docType, docNo, warehouseName) - same, for a list's selected row
+// (lines read server-side).
 // ItemStockFactbox.wireListRows(tbody, box, docType, open) - list click = select + stock, No. / dblclick = open.
+// ItemStockFactbox.setAssigned(box, docKey, serialRows) - the document's linked serials ({ item_code }); an
+// item that already has one shows "Serial assigned to this order" instead of its stock badge, and isn't
+// counted as out. Matched by docKey (load's 3rd / loadDocument's docNo), so it can arrive before or after.
 // ItemStockFactbox.clear(box, text) - placeholder while a document loads / has no lines.
 (function () {
   function esc(value) {
@@ -44,8 +49,9 @@
     return !!w && (String(row.warehouse_id || '').toLowerCase() === w || String(row.warehouse_name || '').trim().toLowerCase() === w);
   }
 
-  async function load(box, lines) {
+  async function load(box, lines, docKey) {
     if (!box) return;
+    box._isfDoc = docKey == null ? null : String(docKey);
     // One entry per item + variant + warehouse - the same item on two lines is shown once.
     const unique = new Map();
     (lines || []).forEach((l) => {
@@ -74,9 +80,10 @@
 
   // List FactBox: the selected row's document - the server reads its lines (a list row doesn't carry
   // them). docType: 'online' | 'advance' | 'transfer' | 'purchase' (staff_get_document_stock_by_warehouse).
-  async function loadDocument(box, docType, docNo) {
+  async function loadDocument(box, docType, docNo, warehouseName) {
     if (!box) return;
     if (!docNo) { clear(box, 'Select a row to see its stock.'); return; }
+    box._isfDoc = String(docNo);
     const token = (box._isfToken || 0) + 1;
     box._isfToken = token;
     const { body, count } = parts(box);
@@ -96,12 +103,38 @@
     (data || []).forEach((r) => {
       if (seen.has(r.line_key)) return;
       seen.add(r.line_key);
-      list.push({ key: r.line_key, item_code: r.item_code, label: r.label, warehouse: r.doc_warehouse });
+      list.push({ key: r.line_key, item_code: r.item_code, label: r.label, warehouse: r.doc_warehouse, warehouseName });
     });
     render(box, list, data, error, 'supabase_document_stock_by_warehouse.sql');
   }
 
+  // The badge's place name - never a raw warehouse UUID (an order's LocationID that isn't a stock warehouse).
+  function placeName(here, l) {
+    if (here) return here.warehouse_name;
+    if (l.warehouseName) return l.warehouseName;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(l.warehouse)) ? 'this branch' : l.warehouse;
+  }
+
+  function setAssigned(box, docKey, serialRows) {
+    if (!box) return;
+    const counts = new Map();
+    (serialRows || []).forEach((s) => {
+      const code = String(s.item_code || '').trim().toUpperCase();
+      if (code) counts.set(code, (counts.get(code) || 0) + 1);
+    });
+    box._isfAssigned = { doc: String(docKey), counts };
+    const last = box._isfLast;
+    if (last && box._isfDoc === String(docKey)) render(box, last.list, last.data, last.error, last.sqlFile);
+  }
+
+  function assignedCount(box, itemCode) {
+    const a = box._isfAssigned;
+    if (!a || a.doc !== box._isfDoc) return 0;
+    return a.counts.get(String(itemCode || '').trim().toUpperCase()) || 0;
+  }
+
   function render(box, list, data, error, sqlFile) {
+    box._isfLast = { list, data, error, sqlFile }; // re-drawn by setAssigned when the serials arrive
     const { body, count } = parts(box);
     if (error) {
       body.innerHTML = `<p class="oc-fact-empty muted">${/schema cache|could not find the function|does not exist/i.test(error.message)
@@ -122,26 +155,31 @@
       const rows = rowsByKey.get(l.key);
       if (!rows) { notStock++; return ''; }
       const here = l.warehouse ? rows.find((r) => sameWarehouse(r, l.warehouse)) : null;
-      const hereName = here ? here.warehouse_name : l.warehouse;
+      const hereName = placeName(here, l);
       const qty = l.warehouse ? (here ? Number(here.quantity) || 0 : 0) : rows.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
-      if (qty <= 0) outCount++;
+      // Serials already tagged to this order - its stock doesn't matter any more.
+      const assigned = assignedCount(box, l.item_code);
+      if (qty <= 0 && !assigned) outCount++;
       // Reserved = serials held for an order (sql/supabase_serial_order_reservation.sql) - on the shelf but
       // not for sale, so not in the quantity.
       const reserved = l.warehouse ? (here ? Number(here.reserved) || 0 : 0) : rows.reduce((s, r) => s + (Number(r.reserved) || 0), 0);
       const reservedBadge = reserved > 0
-        ? ` <span class="badge badge-warning" title="Held for an order - can't be sold to anyone else">${fmtQty(reserved)} reserved</span>` : '';
-      const badge = (qty > 0
+        ? `<span class="badge badge-warning" title="Held for an order - can't be sold to anyone else">${fmtQty(reserved)} reserved</span>` : '';
+      const badge = assigned
+        ? `<span class="badge badge-primary" title="Serials linked to this order - see Serials below">&#10003; ${assigned === 1 ? 'Serial' : `${assigned} serials`} assigned to this order</span>`
+        : (qty > 0
         ? `<span class="badge badge-success">${fmtQty(qty)}${l.warehouse ? ` at ${esc(hereName)}` : ' in stock'}</span>`
         : `<span class="badge badge-danger">No stock${l.warehouse ? ` at ${esc(hereName)}` : ''}</span>`) + reservedBadge;
       const others = rows
-        .filter((r) => r !== here && ((Number(r.quantity) || 0) !== 0 || (Number(r.reserved) || 0) !== 0 || r.is_stock_warehouse))
-        .map((r) => `<span class="${(Number(r.quantity) || 0) > 0 ? 'isf-has' : ''}">${esc(r.warehouse_name)} ${fmtQty(r.quantity)}${(Number(r.reserved) || 0) > 0 ? ` (+${fmtQty(r.reserved)} reserved)` : ''}</span>`)
-        .join(' · ');
-      const src = rows[0].source === 'serials' ? ' title="Counted from IN_STOCK serials"' : '';
-      return `<li${src}>
-        <div class="isf-head"><span class="isf-code">${esc(l.item_code)}</span>${badge}</div>
-        ${l.label && l.label !== l.item_code ? `<div class="isf-desc muted">${esc(l.label)}</div>` : ''}
-        ${others ? `<div class="isf-locs muted">${l.warehouse ? 'Elsewhere: ' : ''}${others}</div>` : ''}
+        .filter((r) => (assigned || r !== here) && ((Number(r.quantity) || 0) !== 0 || (Number(r.reserved) || 0) !== 0 || r.is_stock_warehouse))
+        .map((r) => `<span class="isf-loc${(Number(r.quantity) || 0) > 0 ? ' isf-has' : ''}"${(Number(r.reserved) || 0) > 0 ? ` title="+${fmtQty(r.reserved)} reserved"` : ''}>${esc(r.warehouse_name)} <b>${fmtQty(r.quantity)}</b></span>`)
+        .join('');
+      const src = rows[0].source === 'serials' ? 'Counted from IN_STOCK serials' : 'From the Item Ledger';
+      return `<li class="isf-item ${assigned ? 'isf-assigned' : qty > 0 ? 'isf-in' : 'isf-none'}" title="${src}">
+        <div class="isf-code">${esc(l.item_code)}</div>
+        ${l.label && l.label !== l.item_code ? `<div class="isf-desc muted" title="${esc(l.label)}">${esc(l.label)}</div>` : ''}
+        <div class="isf-badges">${badge}</div>
+        ${others ? `<div class="isf-locs">${l.warehouse ? `<span class="isf-locs-label muted">${assigned ? 'Stock' : 'Elsewhere'}</span>` : ''}${others}</div>` : ''}
       </li>`;
     }).join('');
 
@@ -176,5 +214,5 @@
     }
   }
 
-  window.ItemStockFactbox = { load, loadDocument, clear, wireListRows };
+  window.ItemStockFactbox = { load, loadDocument, setAssigned, clear, wireListRows };
 })();
