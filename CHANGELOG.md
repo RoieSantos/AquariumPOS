@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-15
 
+- **Conversations: Aquarium / Stand quote from the chat.** New aquarium and stand buttons in the reply toolbar open the full Custom Aquarium / Custom Stand calculators. "Put in reply" drops a customer quote (lines, total, drawing link) into the reply box, ending with an "order this / more details?" question, with no order needed. Uses the same line builders as Add to Order, so the prices match. The build is kept for the matching Create Order tile ([gmaConversations.js](docs/js/gmaConversations.js) `insertCalcQuoteIntoReply`, [gma-conversations.html](docs/gma-conversations.html) `v=calcquote3`).
+
 - **Stock FactBox: "Serial assigned to this order".** On the Online / Walk-in and Advance cards and lists, an item that already has a serial tagged to the order shows a blue "✓ Serial assigned to this order" badge (blue edge) instead of "No stock at ...", and isn't counted in "(n out)". Its stock per warehouse stays underneath. Uses the Serials box's own data, no SQL ([itemStockFactbox.js](docs/js/itemStockFactbox.js) `setAssigned`, [onlineOrders.js](docs/js/onlineOrders.js), cache `v=serialasg1`).
 
 - **Stock FactBox redesign.** Each item is now a small card (green / red edge) with the code and a 2-line description on top, the badge on its own line, and other warehouses as chips. Fixes the squeezed vertical item code, the sideways scrollbar, and the badge showing a raw warehouse UUID (now the branch name, or "this branch"). JS/CSS only ([itemStockFactbox.js](docs/js/itemStockFactbox.js), [bc-list.css](docs/css/bc-list.css), cache `v=stockui1`).

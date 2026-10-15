@@ -3080,11 +3080,13 @@ const CALC_EMBED_KINDS = {
   aquarium: {
     src: 'WebAquariumCalculator/index.html?embed=gma',
     title: 'Custom Aquarium',
+    quoteTitle: 'Custom Aquarium Quote',
     sub: 'Full calculator - aquarium plus optional stand, sump and stickers. Build it, then Add to Order.'
   },
   stand: {
     src: 'WebAquariumCalculator/stand.html?embed=gma',
     title: 'Custom Stand Only',
+    quoteTitle: 'Custom Stand Quote',
     sub: 'A stand with no aquarium - priced off its own length and width. Build it, then Add to Order.'
   }
 };
@@ -3099,6 +3101,9 @@ let calcEmbedFooterKey = '';
 // the calculator from this page"), which blocks direct access but not messages.
 let calcEmbedSnapshot = null;
 let calcEmbedOpenedAt = 0;
+// 'order' = Create Order tab tiles (Add to Order); 'reply' = the composer's Aquarium quote button
+// (Put in reply - customer-facing quote text, no order needed). Same calculator and build either way.
+let calcEmbedMode = 'order';
 
 window.addEventListener('message', (event) => {
   const frame = document.getElementById('calcEmbedFrame');
@@ -3117,10 +3122,14 @@ function sendCalcEmbedInit() {
   }
 }
 
-function openCalcEmbedModal(kind) {
+function openCalcEmbedModal(kind, mode = 'order') {
   const cfg = CALC_EMBED_KINDS[kind];
-  document.getElementById('calcEmbedTitle').textContent = cfg.title;
-  document.getElementById('calcEmbedSub').textContent = cfg.sub;
+  calcEmbedMode = mode;
+  document.getElementById('calcEmbedTitle').textContent = mode === 'reply' ? cfg.quoteTitle : cfg.title;
+  document.getElementById('calcEmbedSub').textContent = mode === 'reply'
+    ? 'Build it, then Put in reply - the price and drawing link go into the reply box for you to check and send.'
+    : cfg.sub;
+  document.getElementById('addCalcEmbedToOrderBtn').textContent = mode === 'reply' ? 'Put in reply' : 'Add to Order';
   document.getElementById('calcEmbedPanel').classList.toggle('calc-embed-stand', kind === 'stand');
   // Reopening the same calculator keeps what was already typed (e.g. closed by accident); switching
   // calculators, or reopening after Add to Order, starts fresh.
@@ -3449,10 +3458,37 @@ function buildStandCalcLines(win) {
 function addCalcEmbedToOrder() {
   const lines = buildCalcEmbedLines();
   if (!lines.length) return;
+  if (calcEmbedMode === 'reply') {
+    insertCalcQuoteIntoReply(lines);
+    return;
+  }
   lines.forEach((line) => newOrderLines.push(line));
   renderNewOrderLines();
   closeCalcEmbedModal();
   calcEmbedKind = null; // next open starts a fresh build
+}
+
+// Composer "Aquarium quote" / "Stand quote" -> customer-facing text in the reply box: each priced line, the total and
+// the public drawing link (pulled from the line's build note). Prices/names come from the same line
+// builders as Add to Order, so the chat quote always matches what the order would be. The build is
+// kept (calcEmbedKind not cleared) so the matching Create Order tile reopens it as-is.
+function insertCalcQuoteIntoReply(lines) {
+  const peso = (n) => `₱${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const total = lines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  const drawing = lines.map((line) => /^Drawing: (\S+)$/m.exec(line.note || '')?.[1]).find(Boolean);
+  const text = ['Here is the quote for your custom build:']
+    .concat(lines.map((line) => `• ${line.quantity > 1 ? `${line.quantity} x ` : ''}${line.item_name} - ${peso(line.price * line.quantity)}`))
+    .concat([`Total: ${peso(total)}`])
+    .concat(drawing ? [`Drawing: ${drawing}`] : [])
+    .concat(['', 'Would you like to order this, or would you like to know more details? Don\'t hesitate to ask any questions you have in mind.'])
+    .join('\n');
+  const input = document.getElementById('replyInput');
+  input.value = input.value.trim() ? `${input.value.trimEnd()}\n${text}` : text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  autoResizeReplyInput();
+  closeCalcEmbedModal();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 // Second "+" quote button in the Create Order tab, for the desktop POS app's other "CUSTOM
@@ -7092,6 +7128,8 @@ function initDeliveryCalendar() {
   initDeliveryCalendar();
   initDeliveryQuote();
   document.getElementById('sendLocationPinBtn').addEventListener('click', insertLocationPinLink);
+  document.getElementById('openCalcQuoteBtn').addEventListener('click', () => openCalcEmbedModal('aquarium', 'reply'));
+  document.getElementById('openStandQuoteBtn').addEventListener('click', () => openCalcEmbedModal('stand', 'reply'));
   document.getElementById('productLookupSearchInput').addEventListener('input', (e) => onProductLookupSearchInput(e.target.value));
   document.getElementById('sendProductListBtn').addEventListener('click', sendProductList);
   initMediaLibrary();
