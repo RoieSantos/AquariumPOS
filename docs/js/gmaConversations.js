@@ -3088,6 +3088,14 @@ const CALC_EMBED_KINDS = {
     title: 'Custom Stand Only',
     quoteTitle: 'Custom Stand Quote',
     sub: 'A stand with no aquarium - priced off its own length and width. Build it, then Add to Order.'
+  },
+  // Reply mode only (no Create Order tile - repairs aren't an order line type yet). The portal's own
+  // Repair Calculator page; js/repairCalculator.js posts rs-repair-state when ?embed=gma.
+  repair: {
+    src: 'repair-calculator.html?embed=gma',
+    title: 'Repair',
+    quoteTitle: 'Repair Quote',
+    sub: ''
   }
 };
 const CALC_TUBULAR_LABELS = { '1x1': '1x1', '1.5x1.5': '1 1/2x1 1/2', '2x2': '2x2' };
@@ -3108,7 +3116,7 @@ let calcEmbedMode = 'order';
 window.addEventListener('message', (event) => {
   const frame = document.getElementById('calcEmbedFrame');
   if (!frame || event.source !== frame.contentWindow) return;
-  if (!event.data || event.data.type !== 'rs-calc-state') return;
+  if (!event.data || (event.data.type !== 'rs-calc-state' && event.data.type !== 'rs-repair-state')) return;
   calcEmbedSnapshot = event.data;
   refreshCalcEmbedFooter();
 });
@@ -3194,6 +3202,20 @@ function readCalcEmbedState() {
       problem: Date.now() - calcEmbedOpenedAt < 8000
         ? 'Loading the calculator...'
         : "The calculator isn't responding - press Ctrl+F5 to reload this page, then open it again."
+    };
+  }
+  if (calcEmbedKind === 'repair') {
+    const s = calcEmbedSnapshot;
+    if (!s.ready) return { lines: [], problem: s.problem || 'Loading repair pricing...' };
+    // One line for the whole repair; the per-panel breakdown rides in the note for the reply text.
+    return {
+      lines: [{
+        item_name: s.spec,
+        price: Math.round(Number(s.total) * 100) / 100,
+        quantity: 1,
+        note: (s.rows || []).map((r) => `${r.label} - ${r.value}`).join('\n')
+      }],
+      problem: ''
     };
   }
   const win = calcEmbedWinFromSnapshot(calcEmbedSnapshot);
@@ -3468,17 +3490,17 @@ function addCalcEmbedToOrder() {
   calcEmbedKind = null; // next open starts a fresh build
 }
 
-// Composer "Aquarium quote" / "Stand quote" -> customer-facing text in the reply box: each priced line, the total and
-// the public drawing link (pulled from the line's build note). Prices/names come from the same line
+// Composer quote buttons (Aquarium / Stand / Stickers / Repair) -> customer-facing text in the reply
+// box: each priced line, the total, the public drawing link when there is one (pulled from the line's
+// build note), then the "order this / more details?" closing. Prices/names come from the same line
 // builders as Add to Order, so the chat quote always matches what the order would be. The build is
 // kept (calcEmbedKind not cleared) so the matching Create Order tile reopens it as-is.
-function insertCalcQuoteIntoReply(lines) {
-  const peso = (n) => `₱${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const total = lines.reduce((sum, line) => sum + line.price * line.quantity, 0);
-  const drawing = lines.map((line) => /^Drawing: (\S+)$/m.exec(line.note || '')?.[1]).find(Boolean);
-  const text = ['Here is the quote for your custom build:']
-    .concat(lines.map((line) => `• ${line.quantity > 1 ? `${line.quantity} x ` : ''}${line.item_name} - ${peso(line.price * line.quantity)}`))
-    .concat([`Total: ${peso(total)}`])
+const quotePeso = (n) => `₱${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function insertQuoteTextIntoReply(intro, bullets, total, drawing) {
+  const text = [intro]
+    .concat(bullets.map((b) => `• ${b}`))
+    .concat([`Total: ${quotePeso(total)}`])
     .concat(drawing ? [`Drawing: ${drawing}`] : [])
     .concat(['', 'Would you like to order this, or would you like to know more details? Don\'t hesitate to ask any questions you have in mind.'])
     .join('\n');
@@ -3486,9 +3508,27 @@ function insertCalcQuoteIntoReply(lines) {
   input.value = input.value.trim() ? `${input.value.trimEnd()}\n${text}` : text;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   autoResizeReplyInput();
-  closeCalcEmbedModal();
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function quoteLineBullet(line) {
+  return `${line.quantity > 1 ? `${line.quantity} x ` : ''}${line.item_name} - ${quotePeso(line.price * line.quantity)}`;
+}
+
+function insertCalcQuoteIntoReply(lines) {
+  const total = lines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  if (calcEmbedKind === 'repair') {
+    // Repair: the spec as the intro detail, then the calculator's own breakdown rows (each panel's
+    // price, glass type, reseal size tier) as the bullets.
+    const line = lines[0];
+    const rows = (line.note || '').split('\n').filter(Boolean);
+    insertQuoteTextIntoReply(`Here is the quote for your aquarium repair:\n${line.item_name}`, rows, total, null);
+  } else {
+    const drawing = lines.map((line) => /^Drawing: (\S+)$/m.exec(line.note || '')?.[1]).find(Boolean);
+    insertQuoteTextIntoReply('Here is the quote for your custom build:', lines.map(quoteLineBullet), total, drawing);
+  }
+  closeCalcEmbedModal();
 }
 
 // Second "+" quote button in the Create Order tab, for the desktop POS app's other "CUSTOM
@@ -3522,7 +3562,12 @@ function ensureCustomStickerPricingLoaded() {
   return customStickerPricingLoadPromise;
 }
 
-function openCustomStickerModal() {
+// 'order' = Create Order tab's Stickers tile (Add to Sale); 'reply' = composer's Stickers quote button.
+let customStickerMode = 'order';
+
+function openCustomStickerModal(mode = 'order') {
+  customStickerMode = mode === 'reply' ? 'reply' : 'order';
+  document.getElementById('addCustomStickerToSaleBtn').textContent = customStickerMode === 'reply' ? 'Put in reply' : 'Add to Sale';
   document.getElementById('customStickerModal').classList.remove('hidden');
   document.getElementById('customStickerError').classList.add('hidden');
   document.getElementById('customStickerResult').classList.add('hidden');
@@ -3656,8 +3701,7 @@ function addCustomStickerToSale() {
   const result = customStickerResult;
   const qty = Math.max(1, Math.round(Number(document.getElementById('customStickerQty').value) || 1));
   const spec = customStickerSpecText(result);
-
-  newOrderLines.push({
+  const line = {
     category_code: 'CUSTOM-STICKER',
     item_code: null,
     item_name: `Custom Accessory/Sticker - ${spec}`,
@@ -3665,8 +3709,15 @@ function addCustomStickerToSale() {
     quantity: qty,
     note: customStickerNoteText(result, qty),
     variation_id: null
-  });
+  };
 
+  if (customStickerMode === 'reply') {
+    insertQuoteTextIntoReply('Here is the quote for your custom order:', [quoteLineBullet(line)], line.price * qty, null);
+    closeCustomStickerModal();
+    return;
+  }
+
+  newOrderLines.push(line);
   renderNewOrderLines();
   closeCustomStickerModal();
 }
@@ -3982,18 +4033,25 @@ function autoResizeReplyInput() {
 }
 
 // Messenger composer behaviour: the like button turns into a Send arrow as soon as there's
-// something to send, and on the phone layout the extra tool icons fold away behind a single ">"
-// while typing so the text box gets the room (tap ">" to bring them back).
+// something to send. On the phone layout the tool icons stay folded behind a single ">" (per "in
+// the phone can you make all the buttons collapsible?") - tap it to open/close them. They fold
+// back up when the box empties (message sent / chat switched). Desktop CSS ignores tools-collapsed.
 let composerToolsExpanded = false;
+let composerHadText = false;
 
 function updateComposerState() {
   const row = document.getElementById('replyRowEl');
   if (!row) return;
   const hasText = document.getElementById('replyInput').value.trim().length > 0;
   const hasContent = hasText || pendingReplyImageUrls.length > 0;
-  if (!hasText) composerToolsExpanded = false;
+  if (composerHadText && !hasText) composerToolsExpanded = false;
+  composerHadText = hasText;
   row.classList.toggle('has-content', hasContent);
-  row.classList.toggle('is-typing', hasText && !composerToolsExpanded);
+  row.classList.toggle('tools-collapsed', !composerToolsExpanded);
+  const expandBtn = document.getElementById('composerExpandBtn');
+  expandBtn.classList.toggle('is-open', composerToolsExpanded);
+  expandBtn.setAttribute('aria-label', composerToolsExpanded ? 'Hide tools' : 'Show tools');
+  expandBtn.setAttribute('aria-expanded', String(composerToolsExpanded));
 }
 
 // Phones: Enter adds a new line (tap the Send arrow instead), like the Messenger app. A keyboard on
@@ -7128,8 +7186,30 @@ function initDeliveryCalendar() {
   initDeliveryCalendar();
   initDeliveryQuote();
   document.getElementById('sendLocationPinBtn').addEventListener('click', insertLocationPinLink);
-  document.getElementById('openCalcQuoteBtn').addEventListener('click', () => openCalcEmbedModal('aquarium', 'reply'));
-  document.getElementById('openStandQuoteBtn').addEventListener('click', () => openCalcEmbedModal('stand', 'reply'));
+  // Composer Quote menu - each item opens its calculator in 'reply' mode (Put in reply).
+  const quoteMenuBtn = document.getElementById('openQuoteMenuBtn');
+  const quoteMenu = document.getElementById('quoteMenuEl');
+  const setQuoteMenuOpen = (open) => {
+    quoteMenu.classList.toggle('hidden', !open);
+    quoteMenuBtn.classList.toggle('active', open);
+    quoteMenuBtn.setAttribute('aria-expanded', String(open));
+  };
+  quoteMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setQuoteMenuOpen(quoteMenu.classList.contains('hidden'));
+  });
+  document.addEventListener('click', (e) => {
+    if (!quoteMenu.classList.contains('hidden') && !quoteMenu.contains(e.target)) setQuoteMenuOpen(false);
+  });
+  [
+    ['openCalcQuoteBtn', () => openCalcEmbedModal('aquarium', 'reply')],
+    ['openStandQuoteBtn', () => openCalcEmbedModal('stand', 'reply')],
+    ['openStickerQuoteBtn', () => openCustomStickerModal('reply')],
+    ['openRepairQuoteBtn', () => openCalcEmbedModal('repair', 'reply')]
+  ].forEach(([id, open]) => document.getElementById(id).addEventListener('click', () => {
+    setQuoteMenuOpen(false);
+    open();
+  }));
   document.getElementById('productLookupSearchInput').addEventListener('input', (e) => onProductLookupSearchInput(e.target.value));
   document.getElementById('sendProductListBtn').addEventListener('click', sendProductList);
   initMediaLibrary();
@@ -7167,10 +7247,13 @@ function initDeliveryCalendar() {
   const sendBtn = document.getElementById('sendReplyBtn');
   sendBtn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the phone keyboard open
   sendBtn.addEventListener('click', sendReply);
-  document.getElementById('composerExpandBtn').addEventListener('click', () => {
-    composerToolsExpanded = true;
+  const composerExpandBtn = document.getElementById('composerExpandBtn');
+  composerExpandBtn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the phone keyboard open
+  composerExpandBtn.addEventListener('click', () => {
+    composerToolsExpanded = !composerToolsExpanded;
     autoResizeReplyInput();
   });
+  updateComposerState(); // start folded on the phone
   const adviseBtn = document.getElementById('adviseReplyBtn');
   if (session.isSuperUser) {
     adviseBtn.addEventListener('click', adviseReply);

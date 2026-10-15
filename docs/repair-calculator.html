@@ -82,6 +82,11 @@
     .repair-panel-checkbox-label input {
       width: auto;
     }
+    /* Embedded in GMA Conversations' Repair quote popup (js/repairCalculator.js REPAIR_EMBEDDED). */
+    body.repair-embedded .page > h1,
+    body.repair-embedded .page > p.muted,
+    body.repair-embedded .page > .toolbar { display: none; }
+    body.repair-embedded .page { padding-top: 8px; }
   </style>
 </head>
 <body>
@@ -200,7 +205,7 @@
   <script src="js/auth.js?v=tabsync1"></script>
   <script src="js/nav.js?v=salesshelf1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/repairCalculator.js?v=lowiron2"></script>
+  <script src="js/repairCalculator.js?v=embed1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

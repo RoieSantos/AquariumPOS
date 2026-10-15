@@ -127,7 +127,29 @@ function repairEstimateGallons(aquarium) {
   return (aquarium.length * aquarium.width * aquarium.height) / 231;
 }
 
+// GMA Conversations' "Repair quote" button opens this page in an iframe (?embed=gma) and reads the
+// quote over postMessage (same handshake as WebAquariumCalculator/calc-embed-bridge.js: the parent
+// sends rs-calc-embed-init, we answer with rs-repair-state whenever the summary changes).
+const REPAIR_EMBEDDED = window.parent !== window && new URLSearchParams(location.search).get('embed') === 'gma';
+let repairEmbedStarted = false;
+
+function repairPostEmbedState(rows, total) {
+  if (!REPAIR_EMBEDDED || !repairEmbedStarted) return;
+  window.parent.postMessage({
+    type: 'rs-repair-state',
+    ready: total > 0,
+    problem: total > 0 ? '' : rows.map((r) => r.value).join(' - '),
+    spec: repairBuildSpecText(),
+    rows: rows.map((r) => ({ label: r.label, value: r.value })),
+    total
+  }, '*');
+}
+
+let repairLastSummary = { rows: [], total: 0 };
+
 function repairRenderSummary(rows, total) {
+  repairLastSummary = { rows, total };
+  repairPostEmbedState(rows, total);
   const container = document.getElementById('repairSummaryRows');
   container.innerHTML = rows.map((r) => `
     <div class="repair-summary-row"><span>${r.label}</span><span>${r.value}</span></div>
@@ -272,9 +294,21 @@ async function repairCopySummary() {
 }
 
 (async function init() {
-  const session = await requireAuth();
-  if (!session) return;
-  renderTopNav('Repair Calculator');
+  if (REPAIR_EMBEDDED) {
+    // Inside Conversations (already logged in): no requireAuth here - its idle-logout timer would
+    // only see activity inside this frame and could log staff out mid-chat. Pricing comes from the
+    // public (anon) RPCs. Opened directly, the page still requires a login as before.
+    document.body.classList.add('repair-embedded');
+    window.addEventListener('message', (event) => {
+      if (event.source !== window.parent || event.data?.type !== 'rs-calc-embed-init') return;
+      repairEmbedStarted = true;
+      repairPostEmbedState(repairLastSummary.rows, repairLastSummary.total);
+    });
+  } else {
+    const session = await requireAuth();
+    if (!session) return;
+    renderTopNav('Repair Calculator');
+  }
 
   document.getElementById('repairTabPanel').addEventListener('click', () => repairSetType('panel'));
   document.getElementById('repairTabReseal').addEventListener('click', () => repairSetType('reseal'));
