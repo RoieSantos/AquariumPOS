@@ -5212,6 +5212,19 @@ function onProductLookupCheckboxChange(cb) {
   updateProductLookupSelectedCount();
 }
 
+// Variant names often repeat the SKU and the parent name ("AS-002 - 75GALLONS-AQUARIUM-6MM (...)"),
+// which read as the same name twice in the customer message. Strip the "SKU - " prefix; if what's left
+// is just the parent name again, show the parent name alone, otherwise "Parent - Variant".
+function productVariantDisplayName(parentName, variantName, sku) {
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  let label = String(variantName || '').trim();
+  if (sku && norm(label).startsWith(`${norm(sku)} - `)) label = label.slice(String(sku).trim().length + 3).trim();
+  if (!parentName) return label || variantName || '';
+  if (!label || norm(label) === norm(parentName) || norm(parentName).includes(norm(label))) return parentName;
+  if (norm(label).includes(norm(parentName))) return label;
+  return `${parentName} - ${label}`;
+}
+
 // Normalizes a selected item or variant into the same {name, sku, price, images} shape, so the send
 // path below never needs to know which kind of row it came from. No stock in here on purpose - the
 // customer message must never show stock counts.
@@ -5223,7 +5236,7 @@ function resolveProductLookupEntry(key) {
   if (kind === 'item') {
     const item = productLookupResults.find((r) => r.code === id);
     if (!item) return null;
-    return { name: item.name, sku: null, price: item.price, images: item.images };
+    return { name: item.name, sku: null, price: item.price, images: item.images, description: item.description };
   }
 
   if (kind === 'variant') {
@@ -5231,8 +5244,13 @@ function resolveProductLookupEntry(key) {
       const v = (variants || []).find((vv) => vv.variation_id === id);
       if (v) {
         const parent = productLookupResults.find((r) => r.code === itemCode);
-        const name = parent ? `${parent.name} (${v.variant_name})` : v.variant_name;
-        return { name, sku: v.sku || null, price: v.price, images: v.images };
+        return {
+          name: productVariantDisplayName(parent?.name, v.variant_name, v.sku),
+          sku: v.sku || null,
+          price: v.price,
+          images: v.images,
+          description: parent?.description
+        };
       }
     }
   }
@@ -5261,30 +5279,44 @@ const PRODUCT_LIST_INTRO = 'Here are the options for you 🐠';
 const PRODUCT_LIST_OUTRO_MULTI = "Just reply with the number of the item you'd like and we'll get it ready for you 😊";
 const PRODUCT_LIST_OUTRO_SINGLE = "Let us know if you'd like to order this and we'll get it ready for you 😊";
 
-// The customer sees the variant name only - except when two picked variants would read identically
-// (VariantName is often the same across e.g. sealant colors), then the SKU tells them apart.
+const PRODUCT_LIST_FULFILLMENT = 'Available for pickup or delivery 🚚';
+
+// Per "can we do one message only and a picture and make the message more informative": one caption
+// per product - name, price, item code (so the customer can quote it back), the description when it
+// says more than the name, then pickup/delivery. With several products the intro rides on the first
+// caption and the closing line on the last, instead of their own separate bubbles.
 function productListCaption(item, index, items) {
-  const duplicate = item.sku && items.some((other) => other !== item && other.name === item.name);
-  const name = duplicate ? `${item.name} - ${item.sku}` : item.name;
-  const number = items.length > 1 ? `${index + 1}. ` : '';
-  return `${number}${name}\n₱${Number(item.price || 0).toLocaleString()}`;
+  const multi = items.length > 1;
+  const peso = `₱${Number(item.price || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const desc = String(item.description || '').trim();
+  const showDesc = desc && !norm(item.name).includes(norm(desc)) && !norm(desc).includes(norm(item.name));
+
+  const lines = [];
+  if (multi && index === 0) lines.push(PRODUCT_LIST_INTRO, '');
+  lines.push(`${multi ? `${index + 1}. ` : ''}${item.name}`);
+  lines.push(`💰 Price: ${peso}`);
+  if (item.sku) lines.push(`🏷️ Item code: ${item.sku}`);
+  if (showDesc) lines.push(`📝 ${desc}`);
+  if (!multi || index === items.length - 1) {
+    lines.push('', PRODUCT_LIST_FULFILLMENT, multi ? PRODUCT_LIST_OUTRO_MULTI : PRODUCT_LIST_OUTRO_SINGLE);
+  }
+  return lines.join('\n');
 }
 
-// Each product goes out as its own photo with its numbered caption right under it (one
-// sendMessageToCustomer each - chatbot-staff-reply sends the photo first, then the text), so the
-// customer can tell which photo is which. Everything rides sendQueue, so the order holds.
+// Each product goes out as its own photo with its caption right under it (one sendMessageToCustomer
+// each - chatbot-staff-reply sends the photo first, then the text), so the customer can tell which
+// photo is which. Everything rides sendQueue, so the order holds.
 async function sendProductList() {
   if (productLookupSelected.size === 0) return;
   const items = Array.from(productLookupSelected.values());
 
   // Optimistic send - the bubbles appear in the thread immediately (with Retry if delivery fails),
   // so the picker can close right away.
-  if (items.length > 1) sendMessageToCustomer(PRODUCT_LIST_INTRO, []);
   items.forEach((item, index) => {
     const img = firstImageUrl(item.images);
     sendMessageToCustomer(productListCaption(item, index, items), img ? [img] : []);
   });
-  sendMessageToCustomer(items.length > 1 ? PRODUCT_LIST_OUTRO_MULTI : PRODUCT_LIST_OUTRO_SINGLE, []);
   toggleProductLookupPanel(false);
   resetProductLookup();
 }
