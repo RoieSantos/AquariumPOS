@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Customers - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=skuname1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -12,46 +13,273 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    /* Page-specific bits only - everything else is the shared BC list shell (css/bc-list.css). */
+    .cust-src { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0 5px; border-radius: 3px; border: 1px solid currentColor; color: var(--text-muted); }
+    .cust-src-chat { color: var(--success); }
+    .cust-chip { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; color: #fff; line-height: 17px; margin-right: 3px; }
+    .cust-chip-page-gma { background: #1d6fd1; }
+    .cust-chip-page-rs { background: #1e9a59; }
+    .cust-chip-page-web { background: #64748b; }
+    .cust-chip-paused { background: #a6720a; }
+    .cust-fact-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+    .cust-avatar {
+      position: relative; flex: 0 0 40px; width: 40px; height: 40px; border-radius: 50%; overflow: hidden;
+      display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 14px;
+    }
+    .cust-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .cust-fact-name { font-weight: 600; font-size: 14px; }
+    .cust-fact-sub { font-size: 12px; color: var(--text-muted); }
+    .bc-ile dl.bc-facts dd { overflow-wrap: anywhere; }
+    /* Customer Card */
+    #custCardModal .po-doc-panel:not(.modal-maximized) { max-width: 1240px; }
+    #custCardModal textarea { width: 100%; resize: vertical; font: inherit; }
+    #custCardBadges .cust-chip { vertical-align: middle; }
+    .cust-field-src { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
+    .cust-stat-head { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 12px; text-align: center; }
+    .cust-stat-head .cust-avatar { width: 64px; height: 64px; flex-basis: 64px; font-size: 20px; }
+    dl.cust-stats { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 10px; margin: 0; font-size: 12.5px; }
+    dl.cust-stats dt { color: var(--text-muted); }
+    dl.cust-stats dd { margin: 0; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+    dl.cust-stats .cust-stat-sep { grid-column: 1 / -1; border-top: 1px solid var(--panel-border); margin: 4px 0; }
+    #custCardOrdersBody td.num { text-align: right; }
+    .cust-contacts td { vertical-align: middle; }
+    .cust-contacts .cust-default-star { color: #e0a100; font-size: 15px; }
+    .cust-contacts .cust-contact-value { white-space: normal; overflow-wrap: anywhere; min-width: 220px; }
+    .cust-contacts .cust-contact-actions { white-space: nowrap; text-align: right; }
+    .cust-contacts .cust-contact-actions button { border: none; background: none; color: var(--bc-link, var(--primary)); cursor: pointer; padding: 2px 6px; font: inherit; font-size: 12.5px; }
+    .cust-contacts .cust-contact-actions button:hover { text-decoration: underline; }
+    .cust-contacts .cust-contact-actions button.danger { color: var(--danger); }
+    .cust-contacts input[type="text"], .cust-contacts textarea { width: 100%; font: inherit; }
+    .cust-contacts tr.editing td { background: var(--bc-selected, rgba(29, 79, 145, 0.08)); }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <div id="notAuthorizedBox" class="hidden">
-      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-chat" viewBox="0 0 16 16"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3.2 8.4 6.4 11.5 12.8 4.6"/></symbol>
+    <symbol id="ico-copy" viewBox="0 0 16 16"><path d="M5.5 5.5h7v8h-7z"/><path d="M3.5 10.5v-8h7"/></symbol>
+  </svg>
+
+  <div id="notAuthorizedBox" class="page hidden">
+    <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+  </div>
+
+  <div id="unlockBox" class="page hidden">
+    <p class="error-text" id="unlockError"></p>
+    <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+  </div>
+
+  <!-- Business Central list page (css/bc-list.css) - same shell as Purchase Orders / Transfer Orders.
+       Search, tabs and paging are server-side (admin_list_gma_customers), so there is no filter pane.
+       Click a row to show it in the FactBox; the name or a double-click opens the conversation. -->
+  <div id="customersContent" class="page bc-ile hidden">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Customers</h1>
+        <p class="bc-subtitle">Every Messenger contact who has chatted with us. A contact the bot didn't capture is filled from their latest order, then Pancake - the Source column says which.</p>
+      </div>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="customerSearchInput" placeholder="Search" aria-label="Search by name, phone, address or email" autocomplete="off" />
+        </div>
+      </div>
     </div>
 
-    <div id="unlockBox" class="hidden">
-      <p class="error-text" id="unlockError"></p>
-      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+      <button class="bc-cmd bc-cmd-accent" id="openChatBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-chat"/></svg>Open Conversation</button>
+      <button class="bc-cmd" id="copyPhoneBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-copy"/></svg>Copy Contact No.</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="refreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
     </div>
 
-    <div id="customersContent" class="hidden">
-      <h1>Customers</h1>
-      <p class="muted">Every Facebook Messenger contact who has chatted with the AI bot on GMA - name, contact number, and address saved as they're given, so returning customers don't have to repeat themselves.</p>
+    <div class="bc-tabs status-summary-bar" id="customerFilters">
+      <button type="button" class="bc-tab status-summary-pill active" data-filter="all">All <span class="status-summary-count" data-count="all">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-filter="has_phone">Has Contact No. <span class="status-summary-count" data-count="has_phone">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-filter="no_phone">No Contact No. <span class="status-summary-count" data-count="no_phone">-</span></button>
+      <button type="button" class="bc-tab status-summary-pill" data-filter="ordered">Has Ordered <span class="status-summary-count" data-count="ordered">-</span></button>
+    </div>
 
-      <div class="toolbar">
-        <h2 style="margin:0;">Records</h2>
-        <input type="text" id="customerSearchInput" placeholder="Search by name, phone, address..." style="max-width:280px;" />
-      </div>
+    <div class="bc-body no-filterpane">
+      <section class="bc-main">
+        <div class="bc-grid-wrap">
+          <table class="bc-grid" data-resize-key="customers">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Page</th>
+                <th>Contact No.</th>
+                <th>Source</th>
+                <th>Email</th>
+                <th>Address</th>
+                <th>Tags</th>
+                <th class="num">Orders</th>
+                <th class="num">Order Value</th>
+                <th>Last Order</th>
+                <th>Last Message</th>
+                <th>First Seen</th>
+              </tr>
+            </thead>
+            <tbody id="customerTableBody">
+              <tr><td colspan="12" class="cell-msg">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="customerPaginationBar"></div>
+      </section>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Source</th>
-              <th>Phone</th>
-              <th>Address</th>
-              <th>Orders</th>
-              <th>Last Message</th>
-              <th>First Seen</th>
-            </tr>
-          </thead>
-          <tbody id="customerTableBody"></tbody>
-        </table>
+      <!-- Hidden below 1280px like every BC list FactBox. -->
+      <aside class="bc-factbox" aria-label="Customer details">
+        <div class="bc-fact">
+          <div class="bc-fact-title">Customer Details</div>
+          <div class="bc-fact-body" id="customerFactBody"><p class="bc-fact-empty">Select a row to see the customer.</p></div>
+        </div>
+        <div class="bc-fact">
+          <div class="bc-fact-title">Summary</div>
+          <div class="bc-fact-body" id="customerSummaryBody"><p class="bc-fact-empty">-</p></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Customer Card - Business Central document layout (.bc-doc in css/bc-list.css), same shell as the
+       Purchase Order card: General / Communication FastTabs (editable - admin_update_gma_customer,
+       sql/supabase_gma_customer_card.sql), the customer's orders as a lines part, Statistics FactBox. -->
+  <div id="custCardModal" class="modal-backdrop hidden">
+    <div class="modal-panel po-doc-panel bc-doc" role="dialog" aria-modal="true" aria-labelledby="custCardTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">CUSTOMER CARD</div>
+          <div class="bc-doc-titleline">
+            <h2 id="custCardTitle">Customer</h2>
+            <span id="custCardBadges"></span>
+          </div>
+        </div>
+        <div class="bc-doc-window">
+          <button class="bc-cmd" id="custCardMaximizeBtn" type="button" title="Maximize this card to fill the window">Maximize</button>
+          <button class="bc-iconbtn bc-doc-close" id="custCardCloseBtn" type="button" aria-label="Close" title="Close">&times;</button>
+        </div>
       </div>
-      <div id="customerPaginationBar"></div>
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd bc-cmd-accent" id="custCardSaveBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-check"/></svg>Save</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="custCardChatBtn" type="button"><svg class="bc-ico"><use href="#ico-chat"/></svg>Open Conversation</button>
+        <button class="bc-cmd" id="custCardCopyBtn" type="button"><svg class="bc-ico"><use href="#ico-copy"/></svg>Copy Contact No.</button>
+      </div>
+      <div id="custCardError" class="bc-doc-error error-text hidden"></div>
+
+      <div class="bc-doc-body oc-split">
+        <div class="oc-main">
+          <details class="doc-fasttab" id="custCardGeneralTab" open>
+            <summary>General <span class="doc-fasttab-summary" id="custCardGeneralSummary"></span></summary>
+            <div class="doc-fasttab-body bc-doc-cols">
+              <div>
+                <div class="bc-doc-field">
+                  <label for="custCardName">Name</label>
+                  <input type="text" id="custCardName" maxlength="255" />
+                </div>
+                <div class="bc-doc-field"><label>Name From</label><div class="bc-doc-value" id="custCardNameSource"></div></div>
+                <div class="bc-doc-field"><label>Page</label><div class="bc-doc-value" id="custCardPage"></div></div>
+                <div class="bc-doc-field"><label>PSID</label><div class="bc-doc-value" id="custCardPsid"></div></div>
+              </div>
+              <div>
+                <div class="bc-doc-field"><label>Mood</label><div class="bc-doc-value" id="custCardMood"></div></div>
+                <div class="bc-doc-field"><label>Tags</label><div class="bc-doc-value" id="custCardTags"></div></div>
+                <div class="bc-doc-field"><label>Bot</label><div class="bc-doc-value" id="custCardBot"></div></div>
+                <div class="bc-doc-field"><label>First Seen</label><div class="bc-doc-value" id="custCardFirstSeen"></div></div>
+                <div class="bc-doc-field"><label>Last Message</label><div class="bc-doc-value" id="custCardLastMessage"></div></div>
+              </div>
+            </div>
+          </details>
+
+          <details class="doc-fasttab" id="custCardCommTab" open>
+            <summary>Communication <span class="doc-fasttab-summary" id="custCardCommSummary"></span></summary>
+            <div class="doc-fasttab-body bc-doc-cols">
+              <div>
+                <!-- The defaults - change them in Contacts & Addresses below (Set Default / Edit). -->
+                <div class="bc-doc-field">
+                  <label>Contact No.</label>
+                  <div>
+                    <div class="bc-doc-value" id="custCardPhone"></div>
+                    <div class="cust-field-src" id="custCardPhoneSrc"></div>
+                  </div>
+                </div>
+                <div class="bc-doc-field"><label>Email</label><div class="bc-doc-value" id="custCardEmail"></div></div>
+              </div>
+              <div>
+                <div class="bc-doc-field">
+                  <label>Address</label>
+                  <div>
+                    <div class="bc-doc-value" id="custCardAddress"></div>
+                    <div class="cust-field-src" id="custCardAddressSrc"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Every number / address this customer has used (sql/supabase_gma_customer_contacts.sql).
+               The ★ default is what the list, Create Order and the bot use. -->
+          <div class="bc-doc-part">
+            <div class="bc-doc-part-head">
+              Contacts &amp; Addresses <span class="muted" id="custContactsCount"></span>
+              <button class="bc-cmd" id="custContactNewPhoneBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Contact No.</button>
+              <button class="bc-cmd" id="custContactNewAddressBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Address</button>
+            </div>
+            <div class="doc-lines-wrap">
+              <table class="doc-lines cust-contacts">
+                <thead>
+                  <tr>
+                    <th style="width:28px;" title="Default"></th>
+                    <th>Type</th>
+                    <th>Contact No. / Address</th>
+                    <th>Label</th>
+                    <th>Source</th>
+                    <th>Last Used</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="custContactsBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="bc-doc-part">
+            <div class="bc-doc-part-head">Orders <span class="muted" id="custCardOrdersCount"></span></div>
+            <div class="doc-lines-wrap">
+              <table class="doc-lines">
+                <thead>
+                  <tr>
+                    <th>Order No.</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>Online Order</th>
+                    <th>Fulfillment</th>
+                    <th>Branch</th>
+                    <th style="text-align:right;">Qty</th>
+                    <th style="text-align:right;">Total</th>
+                    <th style="text-align:right;">Paid</th>
+                    <th style="text-align:right;">Balance</th>
+                  </tr>
+                </thead>
+                <tbody id="custCardOrdersBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <aside class="oc-factbox" aria-label="Customer Statistics">
+          <div class="oc-fact-title">Customer Statistics</div>
+          <div class="oc-fact-body" id="custCardStats"></div>
+        </aside>
+      </div>
     </div>
   </div>
 
@@ -59,9 +287,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tabsync1"></script>
-  <script src="js/nav.js?v=salesshelf1"></script>
+  <script src="js/nav.js?v=owner1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/customers.js"></script>
+  <script src="js/bcColumnResize.js?v=1"></script>
+  <script src="js/customers.js?v=5"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

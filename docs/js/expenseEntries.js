@@ -18,11 +18,21 @@ function formatMoney(value) {
   return Number(value).toFixed(2);
 }
 
-function renderEntryRows(entries) {
+// Owner-paid receipts (Owner Funds "Paid Directly", supabase_owner_funds.sql) -> badge; anything
+// else was paid by the business. null map = lookup failed, so show nothing rather than guess.
+function paidByCell(receiptNo, paidByMap) {
+  if (!paidByMap) return '';
+  const owner = paidByMap.get(receiptNo);
+  if (!owner) return '<span class="badge badge-success">Business</span>';
+  const label = owner.entry_type === 'Owner Loan' ? 'Owner (loan)' : 'Owner';
+  return `<span class="badge badge-warning" title="Owner Funds ${owner.owner_entry_no}">${label}</span>`;
+}
+
+function renderEntryRows(entries, paidByMap) {
   const tbody = document.getElementById('entryTableBody');
 
   if (!entries || entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">No expense entries found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">No expense entries found.</td></tr>';
     return;
   }
 
@@ -37,6 +47,7 @@ function renderEntryRows(entries) {
         <td>${e.entry_date || ''}</td>
         <td>${e.entry_time || ''}</td>
         <td>${formatMoney(e.net_amount)}</td>
+        <td>${paidByCell(e.receipt_no, paidByMap)}</td>
         <td>${(e.receipt_no || '').startsWith('EXP-')
           ? '<span class="muted" title="Manual Expense Journal entry - no line items">Manual entry</span>'
           : `<a href="expense-entry-lines.html?receipt=${encodeURIComponent(e.receipt_no)}">View</a>`}</td>
@@ -47,7 +58,7 @@ function renderEntryRows(entries) {
 
 async function loadEntries() {
   const tbody = document.getElementById('entryTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
 
   const thisGeneration = ++loadGeneration;
 
@@ -63,11 +74,24 @@ async function loadEntries() {
   if (thisGeneration !== loadGeneration) return; // a newer search/page request superseded this one
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
-  renderEntryRows(data);
+  // Only portal Expense Journal receipts (EXP-) can be owner-paid; desktop RS- ones are always business.
+  const expReceipts = (data || []).map((e) => e.receipt_no).filter((r) => (r || '').startsWith('EXP-'));
+  let paidByMap = new Map();
+  if (expReceipts.length) {
+    const paidBy = await supabaseClient.rpc('admin_get_expense_paid_by', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_receipt_nos: expReceipts
+    });
+    if (thisGeneration !== loadGeneration) return;
+    paidByMap = paidBy.error ? null : new Map((paidBy.data || []).map((r) => [r.receipt_no, r]));
+  }
+
+  renderEntryRows(data, paidByMap);
 
   renderPaginationBar(
     document.getElementById('entryPaginationBar'),

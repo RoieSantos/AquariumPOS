@@ -16,8 +16,11 @@
 -- admin_list_business_bill_schedule (every due date in a date range, paid or not),
 -- admin_list_business_bill_payments, admin_pay_business_bill, admin_void_business_bill_payment.
 --
--- Run AFTER supabase_expense_journal_receipt_numbers.sql (uses admin_add_expense_journal_entry).
--- Safe to re-run.
+-- Paid by Owner (p_paid_by 'Owner Capital' / 'Owner Loan'): the expense is logged as usual and an
+-- Owner Funds entry (Paid Directly) records that the owner's own money paid it.
+--
+-- Run AFTER supabase_expense_journal_receipt_numbers.sql (uses admin_add_expense_journal_entry) and
+-- supabase_owner_funds.sql (Paid by Owner). Safe to re-run.
 
 create table if not exists public."BusinessBills" (
     "BillID" uuid primary key default gen_random_uuid(),
@@ -60,6 +63,11 @@ alter table public."BusinessBillPayments" enable row level security;
 revoke all on public."BusinessBillPayments" from anon, authenticated;
 create index if not exists "IX_BusinessBillPayments_Bill" on public."BusinessBillPayments" ("BillID", "DueDate");
 create index if not exists "IX_BusinessBillPayments_PaidDate" on public."BusinessBillPayments" ("PaidDate");
+
+-- Who paid: the business, or the owner from their own pocket (recorded on Owner Funds as Capital In
+-- or Owner Loan, "Paid Directly" - supabase_owner_funds.sql).
+alter table public."BusinessBillPayments" add column if not exists "PaidBy" varchar(20) not null default 'Business';
+alter table public."BusinessBillPayments" add column if not exists "OwnerFundEntryID" uuid;
 
 -- ---------------------------------------------------------------------------
 -- Months between due dates for a frequency (0 = One-time).
@@ -351,6 +359,8 @@ returns table(
   reference_no text,
   notes text,
   expense_receipt_no text,
+  paid_by text,
+  owner_entry_no text,
   is_void boolean,
   created_by text,
   created_at_utc timestamptz
@@ -366,11 +376,14 @@ begin
 
   return query
     select p."PaymentID", p."BillID", b."Name"::text, p."DueDate", p."PaidDate", p."Amount",
-           p."Method"::text, p."ReferenceNo"::text, p."Notes"::text, j."ReceiptNo"::text,
+           p."Method"::text, p."ReferenceNo"::text, p."Notes"::text,
+           coalesce(j."ReceiptNo", o."ExpenseReceiptNo")::text,
+           p."PaidBy"::text, o."EntryNo"::text,
            p."IsVoid", p."CreatedBy"::text, p."CreatedAtUtc"
     from public."BusinessBillPayments" p
     join public."BusinessBills" b on b."BillID" = p."BillID"
     left join public."ExpenseJournalEntries" j on j."EntryID" = p."ExpenseJournalEntryID"
+    left join public."OwnerFundEntries" o on o."EntryID" = p."OwnerFundEntryID"
     where p_bill_id is null or p."BillID" = p_bill_id
     order by p."PaidDate" desc, p."CreatedAtUtc" desc
     limit least(greatest(coalesce(p_limit, 200), 1), 1000);
@@ -381,9 +394,12 @@ grant execute on function public.admin_list_business_bill_payments(text, text, u
 
 -- ---------------------------------------------------------------------------
 -- Pay one period. p_expense_category not null -> also logs an Expense Journal entry (EXP- receipt)
--- dated the paid date, for the bill's branch.
+-- dated the paid date, for the bill's branch. p_paid_by 'Owner Capital' / 'Owner Loan' = the owner
+-- paid it personally: needs the expense category, and adds an Owner Funds "Paid Directly" entry
+-- that posts the expense to the G/L against Owner's Equity / Due to Owner instead of Cash.
 
 drop function if exists public.admin_pay_business_bill(text, text, uuid, date, date, numeric, text, text, text, text);
+drop function if exists public.admin_pay_business_bill(text, text, uuid, date, date, numeric, text, text, text, text, text);
 
 create or replace function public.admin_pay_business_bill(
   p_admin_username text,
@@ -395,7 +411,8 @@ create or replace function public.admin_pay_business_bill(
   p_method text default null,
   p_reference_no text default null,
   p_notes text default null,
-  p_expense_category text default null
+  p_expense_category text default null,
+  p_paid_by text default 'Business'
 )
 returns uuid
 language plpgsql
@@ -405,7 +422,10 @@ as $$
 declare
   v_bill public."BusinessBills"%rowtype;
   v_entry uuid;
+  v_receipt text;
   v_id uuid;
+  v_paid_by text := coalesce(nullif(trim(coalesce(p_paid_by, '')), ''), 'Business');
+  v_owner_entry uuid;
   v_paid_date date := coalesce(p_paid_date, (now() at time zone 'Asia/Manila')::date);
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
@@ -422,9 +442,15 @@ begin
   if p_amount is null or p_amount <= 0 then
     raise exception 'Amount must be greater than zero.';
   end if;
+  if v_paid_by not in ('Business', 'Owner Capital', 'Owner Loan') then
+    raise exception 'Invalid Paid By: %', v_paid_by;
+  end if;
+  if v_paid_by <> 'Business' and nullif(trim(coalesce(p_expense_category, '')), '') is null then
+    raise exception 'A bill paid by the owner must be logged to the Expense Journal - pick an Expense Category.';
+  end if;
 
   if nullif(trim(coalesce(p_expense_category, '')), '') is not null then
-    select e.entry_id into v_entry
+    select e.entry_id, e.receipt_no into v_entry, v_receipt
     from public.admin_add_expense_journal_entry(
       p_admin_username, p_admin_password, trim(p_expense_category),
       v_bill."Name" || ' - due ' || to_char(p_due_date, 'Mon DD, YYYY')
@@ -434,18 +460,28 @@ begin
   end if;
 
   insert into public."BusinessBillPayments"
-    ("BillID", "DueDate", "PaidDate", "Amount", "Method", "ReferenceNo", "Notes", "ExpenseJournalEntryID", "CreatedBy")
+    ("BillID", "DueDate", "PaidDate", "Amount", "Method", "ReferenceNo", "Notes", "ExpenseJournalEntryID", "PaidBy", "CreatedBy")
   values
-    (p_bill_id, p_due_date, v_paid_date, p_amount, nullif(trim(coalesce(p_method, '')), ''),
+    (p_bill_id, p_due_date, v_paid_date, p_amount,
+     coalesce(nullif(trim(coalesce(p_method, '')), ''), case when v_paid_by <> 'Business' then 'Owner (personal funds)' end),
      nullif(trim(coalesce(p_reference_no, '')), ''), nullif(trim(coalesce(p_notes, '')), ''),
-     v_entry, p_admin_username)
+     v_entry, v_paid_by, p_admin_username)
   returning "PaymentID" into v_id;
+
+  if v_paid_by <> 'Business' then
+    v_owner_entry := public._owner_fund_add(
+      case v_paid_by when 'Owner Loan' then 'Owner Loan' else 'Capital In' end,
+      v_paid_date, p_amount, 'Paid Directly',
+      v_bill."Name" || ' - due ' || to_char(p_due_date, 'Mon DD, YYYY'),
+      v_bill."Warehouse", trim(p_expense_category), v_entry, v_receipt, v_id, p_admin_username);
+    update public."BusinessBillPayments" set "OwnerFundEntryID" = v_owner_entry where "PaymentID" = v_id;
+  end if;
 
   return v_id;
 end;
 $$;
 
-grant execute on function public.admin_pay_business_bill(text, text, uuid, date, date, numeric, text, text, text, text) to anon;
+grant execute on function public.admin_pay_business_bill(text, text, uuid, date, date, numeric, text, text, text, text, text) to anon;
 
 -- ---------------------------------------------------------------------------
 -- Void a payment (the period goes back to unpaid) and remove its linked Expense Journal entry.
@@ -464,6 +500,7 @@ set search_path = public, extensions
 as $$
 declare
   v_entry uuid;
+  v_owner_entry uuid;
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -471,10 +508,16 @@ begin
 
   update public."BusinessBillPayments" set "IsVoid" = true
   where "PaymentID" = p_payment_id and not "IsVoid"
-  returning "ExpenseJournalEntryID" into v_entry;
+  returning "ExpenseJournalEntryID", "OwnerFundEntryID" into v_entry, v_owner_entry;
 
   if not found then
     raise exception 'Payment not found or already voided.';
+  end if;
+
+  -- Owner-paid: void the Owner Funds entry first (reverses its G/L posting), which also lets the
+  -- expense below be deleted.
+  if v_owner_entry is not null then
+    perform public._owner_fund_void(v_owner_entry, p_admin_username);
   end if;
 
   if v_entry is not null then
@@ -484,3 +527,11 @@ end;
 $$;
 
 grant execute on function public.admin_void_business_bill_payment(text, text, uuid) to anon;
+
+notify pgrst, 'reload schema';
+
+-- Verification - one result: should list all 6 Bills & Dues RPCs.
+select p.proname::text as function_name, pg_get_function_identity_arguments(p.oid) as args
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname like 'admin_%business_bill%'
+order by 1;

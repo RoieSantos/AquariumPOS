@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=bgvar1" />
+  <link rel="stylesheet" href="css/styles.css?v=myview3" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -63,6 +63,7 @@
          js/dashboard.js's setupDashboardGroups un-hides this nav, switches .dash-layout to two
          columns and shows one data-dash-group section at a time. Everyone else never sees it. -->
     <nav class="dash-groups-nav hidden" id="dashGroupsNav" aria-label="Dashboard groups">
+      <button type="button" class="dash-group-tab" data-dash-tab="myview"><span class="dash-group-tab-icon">👑</span> My View</button>
       <button type="button" class="dash-group-tab" data-dash-tab="sales"><span class="dash-group-tab-icon">💰</span> Sales</button>
       <button type="button" class="dash-group-tab" data-dash-tab="production"><span class="dash-group-tab-icon">🏭</span> Production</button>
       <button type="button" class="dash-group-tab" data-dash-tab="costs"><span class="dash-group-tab-icon">🧾</span> Purchase, Expense &amp; Payroll</button>
@@ -78,6 +79,92 @@
 
     <!-- Super-user report cards, one section per left-nav group (data-dash-group). -->
     <div class="hidden" id="financeCardGrid">
+      <!-- "My View" - the owner's accounting view: income statement (accrual - purchases become
+           inventory, only the cost of what SOLD is expensed), where the business stands today,
+           owner's money and what's coming due. One RPC, admin_get_my_view
+           (sql/supabase_dashboard_my_view.sql), loaded by js/dashboard.js's loadMyView. -->
+      <section class="dash-group" data-dash-group="myview">
+        <div class="mv-toolbar">
+          <h3 class="finance-section-heading">How the business is doing</h3>
+          <div class="mv-period" role="tablist" id="mvPeriod">
+            <button type="button" class="dash-ranking-tab active" data-period="month">This Month</button>
+            <button type="button" class="dash-ranking-tab" data-period="prevmonth">Last Month</button>
+            <button type="button" class="dash-ranking-tab" data-period="quarter">This Quarter</button>
+            <button type="button" class="dash-ranking-tab" data-period="ytd">Year to Date</button>
+          </div>
+        </div>
+        <p class="muted mv-range" id="mvRange">Loading...</p>
+        <div class="error-text hidden" id="mvError"></div>
+
+        <div class="finance-card-grid">
+          <div class="finance-card finance-total-sales">
+            <div class="finance-top"><div class="finance-label"><span class="finance-icon">💵</span> Total Sales</div></div>
+            <div class="finance-value" id="mvRevenue">-</div>
+            <div class="finance-sub" id="mvRevenueSub">Online + Walk-In</div>
+          </div>
+          <div class="finance-card finance-expense">
+            <div class="finance-top"><div class="finance-label"><span class="finance-icon">🧾</span> Total Expenses</div></div>
+            <div class="finance-value" id="mvCosts">-</div>
+            <div class="finance-sub" id="mvCostsSub">Cost of goods sold + operating expenses</div>
+          </div>
+          <div class="finance-card finance-profit" id="mvProfitCard">
+            <div class="finance-top"><div class="finance-label"><span class="finance-icon">📊</span> Net Profit</div></div>
+            <div class="finance-value" id="mvProfit">-</div>
+            <div class="finance-sub" id="mvProfitSub">Sales - all expenses</div>
+          </div>
+          <a class="finance-card finance-owner" href="owner-funds.html">
+            <div class="finance-top"><div class="finance-label"><span class="finance-icon">👤</span> Owner Put In</div></div>
+            <div class="finance-value" id="mvOwnerIn">-</div>
+            <div class="finance-sub" id="mvOwnerInSub">Capital + loans from your own pocket</div>
+          </a>
+        </div>
+
+        <div class="mv-health" id="mvHealth"></div>
+
+        <div class="mv-grid">
+          <div class="card mv-card">
+            <div class="mv-card-head">
+              <h4>📒 Income Statement</h4>
+              <span class="muted mv-card-note">vs previous period</span>
+            </div>
+            <div id="mvPnl"><div class="muted">Loading...</div></div>
+          </div>
+          <div class="card mv-card">
+            <div class="mv-card-head">
+              <h4>⚖️ Where You Stand Today</h4>
+              <span class="muted mv-card-note" id="mvAsOf"></span>
+            </div>
+            <div id="mvPosition"><div class="muted">Loading...</div></div>
+          </div>
+        </div>
+
+        <div class="card mv-card mv-trend-card">
+          <div class="mv-card-head">
+            <h4>📈 Last 6 Months</h4>
+            <div class="mv-legend" aria-hidden="true">
+              <span><i class="mv-swatch mv-swatch-rev"></i>Sales</span>
+              <span><i class="mv-swatch mv-swatch-cost"></i>Expenses</span>
+            </div>
+          </div>
+          <div id="mvTrend"><div class="muted">Loading...</div></div>
+        </div>
+
+        <div class="mv-grid mv-grid-3">
+          <div class="card mv-card">
+            <div class="mv-card-head"><h4>⏰ Coming Due (30 days)</h4><a class="mv-card-note" href="business-bills.html">Bills &amp; Dues →</a></div>
+            <div id="mvUpcoming"><div class="muted">Loading...</div></div>
+          </div>
+          <div class="card mv-card">
+            <div class="mv-card-head"><h4>👤 Owner's Money</h4><a class="mv-card-note" href="owner-funds.html">Owner Funds →</a></div>
+            <div id="mvOwner"><div class="muted">Loading...</div></div>
+          </div>
+          <div class="card mv-card">
+            <div class="mv-card-head"><h4>💸 Money Out</h4><span class="muted mv-card-note">this period</span></div>
+            <div id="mvCashOut"><div class="muted">Loading...</div></div>
+          </div>
+        </div>
+      </section>
+
       <section class="dash-group" data-dash-group="sales">
       <h3 class="finance-section-heading">Sales - This Month</h3>
       <div class="finance-card-grid">
@@ -556,10 +643,10 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tabsync1"></script>
-  <script src="js/nav.js?v=salesshelf1"></script>
+  <script src="js/nav.js?v=owner1"></script>
   <script src="js/companyBranding.js?v=bgvar1"></script>
   <script src="js/pushNotifications.js?v=3"></script>
-  <script src="js/dashboard.js?v=parallel1"></script>
+  <script src="js/dashboard.js?v=myview5"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

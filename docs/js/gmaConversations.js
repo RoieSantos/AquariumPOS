@@ -2743,6 +2743,7 @@ function renderCreateOrderTab(conv) {
     // Prefilled from their Facebook profile name (ChatbotConversations.CustomerName - see
     // fetchFacebookProfileName in the webhook), not authoritative - staff can still edit it.
     document.getElementById('newOrderCustomerName').value = conv.customer_name || '';
+    prefillCreateOrderFromCustomer(conv);
   }
 
   document.getElementById('newOrderClearBtn')?.addEventListener('click', () => {
@@ -2798,6 +2799,83 @@ function renderCreateOrderTab(conv) {
   });
 
   renderNewOrderLines();
+}
+
+// Create Order pre-fill - per "when the user creates new order this will fill in Phone or contact
+// number / email and location". staff_get_gma_customer_prefill (sql/supabase_gma_create_order_prefill.sql)
+// returns the customer's saved Contacts & Addresses (default first), email and last order's branch.
+// Only empty fields are filled (never what staff already typed), and only on a new order. A customer
+// with more than one number / address gets the others as one-click chips under the field.
+async function prefillCreateOrderFromCustomer(conv) {
+  if (!conv?.psid || conv.page_id === 'website') return;
+  const { data, error } = await supabaseClient.rpc('staff_get_gma_customer_prefill', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: conv.psid,
+    p_page_id: conv.page_id
+  });
+  if (error) {
+    // Not set up yet (SQL not run) or no access - the form just stays blank, as before.
+    console.warn('Create Order pre-fill unavailable:', error.message);
+    return;
+  }
+  // Switched conversation / tab, or started editing an order, while this was loading.
+  const phoneInput = document.getElementById('newOrderCustomerPhone');
+  if (!phoneInput || editingOrder || newOrderConv?.psid !== conv.psid) return;
+
+  const rows = data || [];
+  const ofKind = (kind) => rows.filter((r) => r.kind === kind && r.value);
+  const phones = ofKind('Phone');
+  const addresses = ofKind('Address');
+  const email = ofKind('Email')[0];
+  const location = ofKind('Location')[0];
+
+  const fillIfEmpty = (input, value) => {
+    if (!input || !value || input.value.trim()) return false;
+    input.value = value;
+    return true;
+  };
+
+  if (fillIfEmpty(phoneInput, phones[0]?.value)) checkPhoneMatch();
+  // A chip fires the field's input event, so the phone-match check runs on its own.
+  renderPrefillAlternatives(phoneInput, phones, 'number');
+
+  fillIfEmpty(document.getElementById('newOrderCustomerEmail'), email?.value);
+
+  const addressInput = document.getElementById('newOrderDeliveryAddress');
+  fillIfEmpty(addressInput, addresses[0]?.value);
+  renderPrefillAlternatives(addressInput, addresses, 'address');
+
+  if (location) {
+    const select = document.getElementById('newOrderLocation');
+    if (select && [...select.options].some((o) => o.value === location.value)) {
+      select.value = location.value;
+      let note = document.getElementById('newOrderLocationNote');
+      if (!note) {
+        select.insertAdjacentHTML('afterend', '<div class="prefill-note" id="newOrderLocationNote"></div>');
+        note = document.getElementById('newOrderLocationNote');
+      }
+      note.textContent = 'Same branch as their last order';
+    }
+  }
+}
+
+// "Saved numbers: [0917... ★] [0918...]" under a field - click one to use it instead.
+function renderPrefillAlternatives(input, entries, noun) {
+  if (!input) return;
+  input.parentElement.querySelector('.prefill-alts')?.remove();
+  if (entries.length < 2) return;
+  input.insertAdjacentHTML('afterend', `
+    <div class="prefill-alts">
+      <span>Saved ${noun === 'number' ? 'numbers' : 'addresses'}:</span>
+      ${entries.map((e) => `<button type="button" data-prefill-value="${escapeHtml(e.value)}" title="${escapeHtml(e.value)}">${escapeHtml(e.label ? `${e.label}: ${e.value}` : e.value)}${e.is_default ? ' ★' : ''}</button>`).join('')}
+    </div>`);
+  input.parentElement.querySelectorAll('.prefill-alts [data-prefill-value]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      input.value = btn.dataset.prefillValue;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
 }
 
 // Mirrors Pancake's phone-linked-order warning: debounced on every keystroke in the Phone field,

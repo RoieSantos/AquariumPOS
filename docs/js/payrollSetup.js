@@ -474,6 +474,7 @@ async function logFunding() {
   const method = document.getElementById('fundingMethod').value;
   const amount = Number(document.getElementById('fundingAmount').value) || 0;
   const notes = document.getElementById('fundingNotes').value.trim();
+  const fundedBy = document.getElementById('fundingFundedBy').value || 'Business';
 
   if (amount <= 0) {
     errorEl.textContent = 'Amount must be greater than zero.';
@@ -490,7 +491,8 @@ async function logFunding() {
     p_admin_password: currentSession.password,
     p_method: method,
     p_amount: amount,
-    p_notes: notes || null
+    p_notes: notes || null,
+    p_funded_by: fundedBy
   });
 
   logBtn.disabled = false;
@@ -505,6 +507,7 @@ async function logFunding() {
 
   document.getElementById('fundingAmount').value = '';
   document.getElementById('fundingNotes').value = '';
+  document.getElementById('fundingFundedBy').value = 'Business';
   await loadFundBalances();
   await loadFundingJournal();
 }
@@ -805,6 +808,10 @@ function wireSetupTabs() {
   document.getElementById('saveNewEmployeeBtn').addEventListener('click', saveNewEmployee);
 
   document.getElementById('logFundingBtn').addEventListener('click', logFunding);
+  // "Funded By: Owner" also adds an Owner Funds entry - super users only (the RPC re-checks).
+  if (!session.isSuperUser) {
+    document.querySelectorAll('#fundingFundedBy [data-owner-only]').forEach((opt) => opt.remove());
+  }
   document.getElementById('journalMethodFilter').addEventListener('change', (e) => {
     currentFundingMethodFilter = e.target.value;
     currentFundingPage = 1;

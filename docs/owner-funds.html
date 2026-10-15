@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Owner Funds - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=sky1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Owner Funds</h1>
+    <p class="muted">Money moving between you and the business: your own money put in (as capital or as a loan the business pays back), bills or expenses you paid from your own pocket, loan repayments, and money you take out. Every entry posts to the General Ledger. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="ownerContent" class="hidden">
+      <div class="stat-card-grid" style="margin-bottom:18px;">
+        <div class="stat-card stat-confirmed">
+          <div class="stat-label">Capital Put In</div>
+          <div class="stat-value" id="statCapital">-</div>
+          <div class="muted" id="statCapitalNote" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card stat-cancelled">
+          <div class="stat-label">Drawings (Taken Out)</div>
+          <div class="stat-value" id="statDrawings">-</div>
+        </div>
+        <div class="stat-card stat-shipped">
+          <div class="stat-label">Net Invested</div>
+          <div class="stat-value" id="statNet">-</div>
+          <div class="muted" style="font-size:12px;">Capital in - drawings</div>
+        </div>
+        <div class="stat-card stat-printed">
+          <div class="stat-label">Business Owes You (Loans)</div>
+          <div class="stat-value" id="statLoan">-</div>
+          <div class="muted" id="statLoanNote" style="font-size:12px;"></div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Entries</h2>
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:6px; margin:0;">
+            <input type="checkbox" id="showVoidInput" style="width:auto;" />
+            <span>Show voided</span>
+          </label>
+          <button class="btn btn-primary" id="newEntryBtn" type="button">+ New Entry</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>No.</th>
+              <th>Type</th>
+              <th>Method</th>
+              <th>Description</th>
+              <th>Branch</th>
+              <th style="text-align:right;">Amount</th>
+              <th>Expense</th>
+              <th>By</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="entryTableBody">
+            <tr><td colspan="10" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- New entry -->
+  <div id="entryModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:640px;">
+      <div class="toolbar">
+        <h2 style="margin:0;">New Owner Funds Entry</h2>
+        <button class="btn btn-secondary btn-sm" id="closeEntryModalBtn" type="button">Close</button>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="entryType">Type</label>
+          <select id="entryType">
+            <option value="Capital In">Capital In - I put my money in (kept as investment)</option>
+            <option value="Owner Loan">Owner Loan - I lent it (business pays me back)</option>
+            <option value="Loan Repayment">Loan Repayment - business paid me back</option>
+            <option value="Drawing">Drawing - I took money out</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="entryMethod">Method</label>
+          <select id="entryMethod"></select>
+        </div>
+        <div class="form-row">
+          <label for="entryDate">Date</label>
+          <input type="date" id="entryDate" />
+        </div>
+        <div class="form-row">
+          <label for="entryAmount">Amount</label>
+          <input type="number" id="entryAmount" min="0" step="0.01" />
+        </div>
+        <div class="form-row">
+          <label for="entryWarehouse">Branch</label>
+          <select id="entryWarehouse"></select>
+        </div>
+        <div class="form-row hidden" id="entryExpenseCategoryRow">
+          <label for="entryExpenseCategory">Expense Category (what you paid for)</label>
+          <input type="text" id="entryExpenseCategory" list="expenseCategoryOptions" />
+          <datalist id="expenseCategoryOptions"></datalist>
+        </div>
+        <div class="form-row" style="grid-column: 1 / -1;">
+          <label for="entryDescription">Description</label>
+          <input type="text" id="entryDescription" placeholder="e.g. Deposited to BDO, Paid Meralco from my GCash" />
+        </div>
+      </div>
+      <p class="muted" id="entryHint" style="font-size:12px;"></p>
+
+      <div id="entryError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveEntryBtn" type="button">Save Entry</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=tabsync1"></script>
+  <script src="js/nav.js?v=owner1"></script>
+  <script src="js/ownerFunds.js?v=1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

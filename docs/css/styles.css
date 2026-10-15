@@ -1353,6 +1353,311 @@ a.badge:hover { text-decoration: underline; }
   background: linear-gradient(135deg, #cb356b 0%, #bd3f32 100%);
 }
 
+/* Dashboard "My View" group (js/dashboard.js loadMyView). */
+:root {
+  --mv-rev: #2a78d6;
+  --mv-cost: #eb6834;
+  --mv-grid: #e6ecf5;
+}
+:root[data-theme="dark"] {
+  --mv-rev: #3987e5;
+  --mv-cost: #d95926;
+  --mv-grid: #1e2b42;
+}
+
+.finance-card.finance-owner {
+  background: linear-gradient(135deg, #b8860b 0%, #6a3093 100%);
+}
+
+.mv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mv-toolbar .finance-section-heading {
+  margin: 0;
+}
+
+.mv-period {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+}
+
+.mv-range {
+  margin: 6px 0 14px;
+  font-size: 13px;
+}
+
+.mv-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.mv-chip {
+  flex: 1 1 160px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: var(--shadow);
+}
+
+.mv-chip-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mv-chip-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-top: 2px;
+}
+
+.mv-chip-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.mv-grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+}
+
+.mv-card {
+  min-width: 0;
+  margin: 0;
+}
+
+.mv-trend-card {
+  margin-bottom: 16px;
+}
+
+.mv-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mv-card-head h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.mv-card-note {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Statement rows: label left, amount right; .mv-total rows are the subtotals. */
+.mv-stmt {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  background: transparent;
+}
+
+.mv-stmt td {
+  padding: 6px 4px;
+  border: none;
+  color: var(--text-main);
+}
+
+.mv-stmt td.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.mv-stmt td.mv-delta {
+  width: 70px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mv-stmt tr.mv-section td {
+  padding-top: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.mv-stmt tr.mv-indent td:first-child {
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+
+.mv-stmt tr.mv-other-row,
+.mv-stmt tr.mv-cat-row {
+  cursor: pointer;
+}
+
+.mv-stmt tr.mv-cat-row:hover td:first-child,
+.mv-stmt tr.mv-other-row:hover td:first-child,
+.mv-stmt tr.mv-other-row.mv-open td:first-child {
+  color: var(--text-main);
+}
+
+/* The categories folded into "Other", indented one step further once expanded. */
+.mv-stmt tr.mv-sub-row td:first-child {
+  padding-left: 34px;
+}
+
+/* One expense entry, opened under its category row. */
+.mv-stmt tr.mv-entry-row td {
+  font-size: 13px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  background: rgba(127, 140, 160, 0.07);
+}
+
+.mv-stmt tr.mv-entry-row td:first-child {
+  padding-left: 40px;
+  color: var(--text-main);
+}
+
+.mv-stmt tr.mv-total td {
+  font-weight: 700;
+  border-top: 1px solid var(--panel-border);
+}
+
+.mv-stmt tr.mv-grand td {
+  font-weight: 800;
+  font-size: 16px;
+  border-top: 2px solid var(--text-main);
+}
+
+.mv-good { color: var(--success) !important; }
+.mv-bad { color: var(--danger) !important; }
+
+.mv-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mv-list-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--panel-border);
+  font-size: 14px;
+  color: var(--text-main);
+}
+
+.mv-list-row:last-child {
+  border-bottom: none;
+}
+
+.mv-list-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mv-list-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mv-list-amt {
+  white-space: nowrap;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Trend: per month, a Sales and an Expenses bar on one shared scale, net profit underneath. */
+.mv-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mv-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+.mv-swatch-rev { background: var(--mv-rev); }
+.mv-swatch-cost { background: var(--mv-cost); }
+
+.mv-trend {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  height: 210px;
+  border-bottom: 1px solid var(--panel-border);
+  background-image: linear-gradient(var(--mv-grid) 1px, transparent 1px);
+  background-size: 100% 25%;
+}
+
+.mv-trend-col {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  cursor: default;
+}
+
+.mv-trend-col:hover {
+  background: rgba(127, 140, 160, 0.08);
+}
+
+.mv-bar {
+  width: min(26px, 38%);
+  border-radius: 4px 4px 0 0;
+  min-height: 1px;
+}
+
+.mv-bar-rev { background: var(--mv-rev); }
+.mv-bar-cost { background: var(--mv-cost); }
+
+.mv-trend-labels {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mv-trend-labels b {
+  display: block;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
 .finance-card .finance-value.placeholder {
   font-size: 22px;
   font-weight: 700;

@@ -95,7 +95,13 @@ async function loadBills() {
     return;
   }
 
-  currentBills = data || [];
+  // Nearest due on top (overdue = oldest date, so it naturally leads); bills with nothing left to
+  // pay next, then inactive bills, go last.
+  currentBills = (data || []).slice().sort((a, b) =>
+    (a.is_active === b.is_active ? 0 : a.is_active ? -1 : 1) ||
+    (!a.next_due_date - !b.next_due_date) ||
+    String(a.next_due_date || '').localeCompare(String(b.next_due_date || '')) ||
+    String(a.name || '').localeCompare(String(b.name || '')));
   renderStatsFromBills();
 
   if (currentBills.length === 0) {
@@ -243,7 +249,8 @@ async function loadPayments() {
       <td>${escapeHtml(p.bill_name)}</td>
       <td>${formatDate(p.due_date)}</td>
       <td style="text-align:right;">${p.is_void ? `<s>${formatMoney(p.amount)}</s>` : formatMoney(p.amount)}</td>
-      <td>${escapeHtml(p.method || '')}</td>
+      <td>${escapeHtml(p.method || '')}${p.paid_by && p.paid_by !== 'Business'
+        ? `<div><span class="badge badge-warning" title="${escapeHtml(p.owner_entry_no || '')}">${p.paid_by === 'Owner Loan' ? 'Owner loan' : 'Owner capital'}</span></div>` : ''}</td>
       <td>${escapeHtml(p.reference_no || '')}${p.notes ? `<div class="muted" style="font-size:12px;">${escapeHtml(p.notes)}</div>` : ''}</td>
       <td>${p.expense_receipt_no ? escapeHtml(p.expense_receipt_no) : '<span class="muted">-</span>'}</td>
       <td>${escapeHtml(p.created_by || '')}</td>
@@ -253,7 +260,7 @@ async function loadPayments() {
 }
 
 async function voidPayment(paymentId) {
-  if (!window.confirm('Void this payment? The due date goes back to unpaid, and its Expense Journal entry (if any) is deleted.')) return;
+  if (!window.confirm('Void this payment? The due date goes back to unpaid, its Expense Journal entry (if any) is deleted, and an Owner Funds entry (if the owner paid it) is voided.')) return;
   const { error } = await rpc('admin_void_business_bill_payment', { p_payment_id: paymentId });
   if (error) {
     window.alert(error.message);
@@ -344,7 +351,8 @@ function openPayModal(billId, dueDate) {
   document.getElementById('payNotes').value = '';
   document.getElementById('payLogExpense').checked = !!bill.expense_category;
   document.getElementById('payExpenseCategory').value = bill.expense_category || '';
-  syncExpenseCategoryRow();
+  document.getElementById('payPaidBy').value = 'Business';
+  syncPaidBy();
   document.getElementById('payError').classList.add('hidden');
   document.getElementById('payModal').classList.remove('hidden');
   document.getElementById('payAmount').focus();
@@ -352,6 +360,17 @@ function openPayModal(billId, dueDate) {
 
 function syncExpenseCategoryRow() {
   document.getElementById('payExpenseCategoryRow').classList.toggle('hidden', !document.getElementById('payLogExpense').checked);
+}
+
+// Owner-paid bills must be logged as an expense (the Owner Funds entry posts that expense to the
+// G/L against Owner's Equity / Due to Owner), so the checkbox is forced on.
+function syncPaidBy() {
+  const byOwner = document.getElementById('payPaidBy').value !== 'Business';
+  const logBox = document.getElementById('payLogExpense');
+  if (byOwner) logBox.checked = true;
+  logBox.disabled = byOwner;
+  document.getElementById('payOwnerNote').classList.toggle('hidden', !byOwner);
+  syncExpenseCategoryRow();
 }
 
 async function savePayment() {
@@ -384,7 +403,8 @@ async function savePayment() {
     p_method: document.getElementById('payMethod').value.trim() || null,
     p_reference_no: document.getElementById('payReference').value.trim() || null,
     p_notes: document.getElementById('payNotes').value.trim() || null,
-    p_expense_category: logExpense ? expenseCategory : null
+    p_expense_category: logExpense ? expenseCategory : null,
+    p_paid_by: document.getElementById('payPaidBy').value
   });
   btn.disabled = false;
 
@@ -401,6 +421,55 @@ async function savePayment() {
 // ---------------------------------------------------------------------------
 // Lookups (branches, expense categories, payment methods)
 
+function renderExpenseCategoryOptions(rows) {
+  document.getElementById('expenseCategoryOptions').innerHTML = (rows || [])
+    .map((c) => `<option value="${escapeHtml(c.category)}"></option>`).join('');
+}
+
+// "+ New" next to either Expense Category field: adds to the Expense Journal's managed category
+// list (same as Expense Journal > Categories) and fills the field it was opened from.
+let newCatTargetId = null;
+
+function openNewCategoryModal(targetId) {
+  newCatTargetId = targetId;
+  document.getElementById('newCatCode').value = '';
+  document.getElementById('newCatDescription').value = '';
+  document.getElementById('newCatError').classList.add('hidden');
+  document.getElementById('newCatModal').classList.remove('hidden');
+  document.getElementById('newCatCode').focus();
+}
+
+async function saveNewCategory() {
+  const errorEl = document.getElementById('newCatError');
+  errorEl.classList.add('hidden');
+  const code = document.getElementById('newCatCode').value.trim();
+  const description = document.getElementById('newCatDescription').value.trim();
+  if (!code || !description) {
+    errorEl.textContent = 'Code and Description are required.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('saveNewCatBtn');
+  btn.disabled = true;
+  const { data, error } = await rpc('admin_add_expense_journal_category', { p_code: code, p_description: description });
+  btn.disabled = false;
+
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const added = Array.isArray(data) ? data[0] : data;
+  const cats = await rpc('admin_list_expense_journal_categories', {});
+  if (!cats.error) renderExpenseCategoryOptions(cats.data);
+  if (added && newCatTargetId) {
+    document.getElementById(newCatTargetId).value = `${added.code} - ${added.description}`;
+  }
+  document.getElementById('newCatModal').classList.add('hidden');
+}
+
 async function loadLookups() {
   const [wh, cats, methods] = await Promise.all([
     rpc('admin_list_warehouses', { p_page: 1, p_page_size: 200 }),
@@ -412,8 +481,7 @@ async function loadLookups() {
   document.getElementById('billWarehouse').innerHTML = '<option value="">Company-wide</option>' +
     names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
 
-  document.getElementById('expenseCategoryOptions').innerHTML = (cats.data || [])
-    .map((c) => `<option value="${escapeHtml(c.category)}"></option>`).join('');
+  renderExpenseCategoryOptions(cats.data);
 
   const methodNames = (methods.data || [])
     .filter((m) => m.is_active !== false)
@@ -479,6 +547,18 @@ async function refreshAll() {
     document.getElementById('payModal').classList.add('hidden'));
   document.getElementById('savePayBtn').addEventListener('click', savePayment);
   document.getElementById('payLogExpense').addEventListener('change', syncExpenseCategoryRow);
+  document.getElementById('payPaidBy').addEventListener('change', syncPaidBy);
+
+  document.querySelectorAll('.new-expense-cat-link').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    openNewCategoryModal(a.dataset.target);
+  }));
+  document.getElementById('closeNewCatModalBtn').addEventListener('click', () =>
+    document.getElementById('newCatModal').classList.add('hidden'));
+  document.getElementById('saveNewCatBtn').addEventListener('click', saveNewCategory);
+  document.getElementById('newCatDescription').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveNewCategory();
+  });
 
   document.getElementById('clearPaymentFilterBtn').addEventListener('click', () => {
     paymentFilterBillId = null;

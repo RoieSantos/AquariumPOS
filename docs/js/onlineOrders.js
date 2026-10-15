@@ -36,6 +36,16 @@ let currentScope = null;
 let outstandingOnly = false;
 let currentConfirmedBy = null;
 
+// ?filter=outstanding - unpaid orders still in progress. Per "why are we still showing the status of
+// canceled / delivered / shipped? in the outstanding balance view" these statuses are left out (same
+// rule as the Dashboard My View's "Customers still owe you"), unless that status was picked on purpose.
+const OUTSTANDING_EXCLUDED_STATUSES = ['canceled', 'cancelled', 'delivered', 'shipped', 'new'];
+function isOutstandingRow(o, pickedStatus) {
+  if (!(Number(o.balance) > 0)) return false;
+  if (pickedStatus) return true;
+  return !OUTSTANDING_EXCLUDED_STATUSES.includes(String(o.status || '').trim().toLowerCase());
+}
+
 // Per "if the user is a online order staff They can only see Confirmed / Printed / To Ship" -
 // applied as an exact-match IN-list server-side (see admin_list_online_orders' p_status_in in
 // supabase_online_order_staff_status_scope.sql), not just a client-side hide, so the restriction
@@ -6434,7 +6444,7 @@ async function loadOrders(search, status) {
   let rows = myAssignmentsOnly ? (data || []) : branchFilterRows(data || []);
   if (myAssignmentsOnly) setMyAssignmentsCount(data?.[0]?.total_count || 0);
   if (outstandingOnly) {
-    rows = rows.filter((o) => Number(o.balance) > 0);
+    rows = rows.filter((o) => isOutstandingRow(o, trimmedStatus));
   }
 
   // In parallel - each only reads the list's own fields and writes its own, and one-after-another
@@ -6600,7 +6610,7 @@ async function exportOrdersToExcel() {
 
       let rows = branchFilterRows(data || []);
       if (outstandingOnly) {
-        rows = rows.filter((o) => Number(o.balance) > 0);
+        rows = rows.filter((o) => isOutstandingRow(o, trimmedStatus));
       }
       allRows.push(...rows);
 

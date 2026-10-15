@@ -862,6 +862,333 @@ async function loadSpendingRanking(session) {
   });
 }
 
+// "My View" group - per "I want to see how the business is doing base on how the real accounting
+// see it". Everything comes from one call, admin_get_my_view (sql/supabase_dashboard_my_view.sql):
+// an accrual income statement (purchases become inventory; only the cost of what SOLD is expensed),
+// a today snapshot of what the business owns / is owed / owes, owner's money, what's coming due and
+// a 6-month trend. The period tabs just re-call it with another date range.
+// The range on screen and its expense categories, for the per-category drill-down.
+let myViewCurrentRange = null;
+let myViewCategories = [];
+
+// Click on an expense category row: load its entries once (admin_list_my_view_expense_entries) and
+// show/hide them right under it.
+async function toggleMyViewEntries(session, catRowEl) {
+  const idx = catRowEl.dataset.catIdx;
+  const table = catRowEl.closest('table');
+  const existing = table.querySelectorAll(`.mv-entry-row[data-for="${idx}"]`);
+  const arrow = catRowEl.querySelector('.mv-toggle');
+  if (existing.length) {
+    const open = existing[0].classList.contains('hidden');
+    existing.forEach((r) => r.classList.toggle('hidden', !open));
+    arrow.textContent = open ? '▾' : '▸';
+    return;
+  }
+
+  const cat = myViewCategories[Number(idx)];
+  if (!cat || !myViewCurrentRange) return;
+  arrow.textContent = '…';
+  const { data, error } = await supabaseClient.rpc('admin_list_my_view_expense_entries', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_from: myViewCurrentRange.from,
+    p_to: myViewCurrentRange.to,
+    p_code: cat.code
+  });
+  arrow.textContent = '▾';
+
+  const rows = error
+    ? [`<tr class="mv-entry-row" data-for="${idx}"><td colspan="3" class="error-text">${escapeDashboardHtml(error.message)}</td></tr>`]
+    : (data || []).map((e) => `
+      <tr class="mv-entry-row" data-for="${idx}">
+        <td>${escapeDashboardHtml(e.description || '(no description)')}
+          <div class="mv-list-sub">${myViewDateLabel(e.entry_date)} · ${escapeDashboardHtml(e.source)}${e.doc_no ? ` ${escapeDashboardHtml(e.doc_no)}` : ''}${e.warehouse ? ` · ${escapeDashboardHtml(e.warehouse)}` : ''}${e.created_by ? ` · ${escapeDashboardHtml(e.created_by)}` : ''}</div></td>
+        <td class="num">${formatCurrency(e.amount)}</td>
+        <td></td>
+      </tr>`);
+  if (!error && rows.length === 0) {
+    rows.push(`<tr class="mv-entry-row" data-for="${idx}"><td colspan="3" class="muted">No entries.</td></tr>`);
+  }
+  catRowEl.insertAdjacentHTML('afterend', rows.join(''));
+}
+
+function myViewIsoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function myViewRange(period) {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  if (period === 'prevmonth') return { from: new Date(y, m - 1, 1), to: new Date(y, m, 0) };
+  if (period === 'quarter') return { from: new Date(y, m - (m % 3), 1), to: today };
+  if (period === 'ytd') return { from: new Date(y, 0, 1), to: today };
+  return { from: new Date(y, m, 1), to: today };
+}
+
+function myViewDateLabel(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function myViewPct(part, whole) {
+  const w = Number(whole) || 0;
+  return w === 0 ? null : (Number(part) || 0) / w * 100;
+}
+
+// "+12%" vs the previous period. goodWhenUp=false for costs, so a rise in expenses reads red.
+function myViewDelta(cur, prev, goodWhenUp = true) {
+  const c = Number(cur) || 0;
+  const p = Number(prev) || 0;
+  if (p === 0) return '';
+  const change = (c - p) / Math.abs(p) * 100;
+  if (Math.abs(change) < 0.5) return '<span title="vs previous period">±0%</span>';
+  const good = (change > 0) === goodWhenUp;
+  return `<span class="${good ? 'mv-good' : 'mv-bad'}" title="vs previous period: ${formatCurrency(p)}">${change > 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(0)}%</span>`;
+}
+
+function renderMyViewPnl(pnl, prev) {
+  const row = (label, amount, prevAmount, cls = '', goodWhenUp = true, sign = '') => `
+    <tr class="${cls}">
+      <td>${label}</td>
+      <td class="num">${sign}${formatCurrency(amount)}</td>
+      <td class="num mv-delta">${prevAmount === undefined ? '' : myViewDelta(amount, prevAmount, goodWhenUp)}</td>
+    </tr>`;
+  const gm = myViewPct(pnl.gross_profit, pnl.revenue);
+  const nm = myViewPct(pnl.net_profit, pnl.revenue);
+  const cats = pnl.expense_categories || [];
+  const shown = cats.slice(0, 8);
+  const other = cats.slice(8).reduce((t, c) => t + (Number(c.amount) || 0), 0);
+  const coverage = pnl.cogs_coverage === null ? null : Number(pnl.cogs_coverage) * 100;
+  // Each expense category opens its entries underneath (wireMyView's click handler, loadMyViewEntries).
+  myViewCategories = cats;
+  const catRow = (c, i, cls) => `
+    <tr class="${cls} mv-cat-row" data-cat-idx="${i}" title="Click to see the entries">
+      <td><span class="mv-toggle">▸</span> ${escapeDashboardHtml(c.category)} <span class="mv-list-sub">(${c.entries})</span></td>
+      <td class="num">${formatCurrency(c.amount)}</td>
+      <td class="num mv-delta"></td>
+    </tr>`;
+
+  document.getElementById('mvPnl').innerHTML = `
+    <table class="mv-stmt">
+      <tr class="mv-section"><td colspan="3">Revenue</td></tr>
+      ${row(`Online sales <span class="mv-list-sub">(${pnl.online_count} orders)</span>`, pnl.online_sales, prev.online_sales, 'mv-indent')}
+      ${row(`Walk-in sales <span class="mv-list-sub">(${pnl.walkin_count} orders)</span>`, pnl.walkin_sales, prev.walkin_sales, 'mv-indent')}
+      ${row('Total Revenue', pnl.revenue, prev.revenue, 'mv-total')}
+      ${row('Less: Cost of Goods Sold', pnl.cogs, prev.cogs, '', false, '- ')}
+      ${row(`Gross Profit${gm === null ? '' : ` <span class="mv-list-sub">(${gm.toFixed(1)}% margin)</span>`}`, pnl.gross_profit, prev.gross_profit, 'mv-total')}
+      <tr class="mv-section"><td colspan="3">Operating Expenses</td></tr>
+      ${shown.map((c, i) => catRow(c, i, 'mv-indent')).join('')}
+      ${other > 0 ? row(`<span class="mv-toggle">▸ Other (${cats.length - 8} categories)</span>`, other, undefined, 'mv-indent mv-other-row') : ''}
+      ${cats.slice(8).map((c, i) => catRow(c, i + 8, 'mv-indent mv-sub-row hidden')).join('')}
+      ${row(`Salaries &amp; Wages <span class="mv-list-sub">(gross, ${pnl.payroll_employees} staff)</span>`, pnl.payroll_gross, prev.payroll_gross, 'mv-indent', false)}
+      ${row('Total Operating Expenses', pnl.opex_total, prev.opex_total, 'mv-total', false)}
+      <tr class="mv-grand">
+        <td>Net ${Number(pnl.net_profit) < 0 ? 'Loss' : 'Profit'}${nm === null ? '' : ` <span class="mv-list-sub">(${nm.toFixed(1)}%)</span>`}</td>
+        <td class="num ${Number(pnl.net_profit) < 0 ? 'mv-bad' : 'mv-good'}">${formatCurrency(pnl.net_profit)}</td>
+        <td class="num mv-delta">${myViewDelta(pnl.net_profit, prev.net_profit)}</td>
+      </tr>
+    </table>
+    <div class="mv-note">Purchases aren't an expense here - they become inventory, and only the cost of what sold
+      (Cost of Goods Sold) comes off profit.${coverage === null ? '' : ` Item costs cover <b>${coverage.toFixed(0)}%</b> of sales value${coverage < 90 ? ` - ${pnl.uncosted_lines} sold line(s) have no item cost yet, so the real cost is higher and profit lower than shown. Set costs in Item Setup.` : '.'}`}</div>`;
+}
+
+function renderMyViewPosition(pos) {
+  const line = (label, amount, sub = '', href = '') => `
+    <div class="mv-list-row">
+      <div class="mv-list-name">${href ? `<a href="${href}">${label}</a>` : label}${sub ? `<div class="mv-list-sub">${sub}</div>` : ''}</div>
+      <div class="mv-list-amt">${formatCurrency(amount)}</div>
+    </div>`;
+  const owns = (Number(pos.inventory_value) || 0) + (Number(pos.receivables) || 0);
+  const owes = (Number(pos.vendor_payables) || 0) + (Number(pos.bills_overdue_amount) || 0)
+    + (Number(pos.owed_to_owner) || 0) + (Number(pos.customer_deposits) || 0);
+  const net = owns - owes;
+
+  document.getElementById('mvPosition').innerHTML = `
+    <table class="mv-stmt"><tr class="mv-section"><td>What the business has</td></tr></table>
+    ${line('Inventory on hand (at cost)', pos.inventory_value,
+      Number(pos.inventory_uncosted_items) > 0 ? `${pos.inventory_uncosted_items} stocked item(s) have no cost - not counted` : '', 'stock-on-hand.html')}
+    ${line('Customers still owe you', pos.receivables, `${pos.receivables_count} unpaid order(s) in progress - not New / Shipped / Delivered`, 'online-orders.html?filter=outstanding')}
+    <table class="mv-stmt"><tr class="mv-section"><td>What the business owes</td></tr></table>
+    ${line('Unpaid vendor bills', pos.vendor_payables,
+      Number(pos.vendor_overdue) > 0 ? `<span class="mv-bad">${formatCurrency(pos.vendor_overdue)} overdue</span>` : 'Accounts payable', 'vendor-setup.html')}
+    ${line('Overdue Bills &amp; Dues', pos.bills_overdue_amount,
+      Number(pos.bills_overdue_count) > 0 ? `<span class="mv-bad">${pos.bills_overdue_count} past due</span>` : 'Nothing overdue', 'business-bills.html')}
+    ${line('Owed back to owner', pos.owed_to_owner, 'Owner loans not yet repaid', 'owner-funds.html')}
+    ${line('Customer deposits held', pos.customer_deposits, `${pos.customer_deposits_count} advance order(s) not yet delivered`, 'advance-orders.html')}
+    <table class="mv-stmt">
+      <tr class="mv-grand"><td>Net position</td><td class="num ${net < 0 ? 'mv-bad' : 'mv-good'}">${formatCurrency(net)}</td></tr>
+    </table>
+    <div class="mv-note">Has minus owes, excluding cash on hand. Owner has put in ${formatCurrency(pos.capital_total)} capital and taken ${formatCurrency(pos.drawings_total)} in drawings (all time).
+      ${Number(pos.bills_due30_count) > 0 ? `${pos.bills_due30_count} more bill(s) worth ${formatCurrency(pos.bills_due30_amount)} fall due in the next 30 days.` : ''}</div>`;
+}
+
+function renderMyViewTrend(trend) {
+  const el = document.getElementById('mvTrend');
+  if (!trend.length) { el.innerHTML = '<div class="muted">No data yet.</div>'; return; }
+  const costOf = (t) => (Number(t.cogs) || 0) + (Number(t.opex_total) || 0);
+  const max = Math.max(1, ...trend.map((t) => Math.max(Number(t.revenue) || 0, costOf(t))));
+  const monthName = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short' });
+  const short = (n) => {
+    const v = Number(n) || 0;
+    const a = Math.abs(v);
+    const s = a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}k` : a.toFixed(0);
+    return `${v < 0 ? '-' : ''}₱${s}`;
+  };
+  el.innerHTML = `
+    <div class="mv-trend" role="img" aria-label="Sales vs expenses, last 6 months">
+      ${trend.map((t) => `
+        <div class="mv-trend-col" title="${monthName(t.month)}: Sales ${formatCurrency(t.revenue)} · Expenses ${formatCurrency(costOf(t))} · Net ${formatCurrency(t.net_profit)}">
+          <div class="mv-bar mv-bar-rev" style="height:${((Number(t.revenue) || 0) / max * 100).toFixed(1)}%"></div>
+          <div class="mv-bar mv-bar-cost" style="height:${(costOf(t) / max * 100).toFixed(1)}%"></div>
+        </div>`).join('')}
+    </div>
+    <div class="mv-trend-labels">
+      ${trend.map((t) => `<div>${monthName(t.month)}<b class="${Number(t.net_profit) < 0 ? 'mv-bad' : ''}">${short(t.net_profit)}</b></div>`).join('')}
+    </div>
+    <div class="mv-note">Number under each month = net profit. Hover a month for the figures.</div>`;
+}
+
+function renderMyViewSide(data) {
+  const today = data.today;
+  const up = data.upcoming || [];
+  document.getElementById('mvUpcoming').innerHTML = up.length === 0
+    ? '<div class="muted">Nothing due in the next 30 days. 🎉</div>'
+    : up.map((u) => {
+      const overdue = u.due_date < today;
+      return `
+        <div class="mv-list-row">
+          <div class="mv-list-name">${u.kind === 'Vendor' ? '🧾' : '📅'} ${escapeDashboardHtml(u.name)}
+            <div class="mv-list-sub ${overdue ? 'mv-bad' : ''}">${overdue ? 'Overdue · ' : ''}${myViewDateLabel(u.due_date)}</div></div>
+          <div class="mv-list-amt">${u.amount === null ? '-' : formatCurrency(u.amount)}</div>
+        </div>`;
+    }).join('');
+
+  const o = data.owner || {};
+  const put = (Number(o.capital_in) || 0) + (Number(o.owner_loan) || 0);
+  const took = (Number(o.drawings) || 0) + (Number(o.repayments) || 0);
+  const ownerRow = (label, amount, sub = '') => `
+    <div class="mv-list-row"><div class="mv-list-name">${label}${sub ? `<div class="mv-list-sub">${sub}</div>` : ''}</div>
+    <div class="mv-list-amt">${formatCurrency(amount)}</div></div>`;
+  document.getElementById('mvOwner').innerHTML = `
+    ${ownerRow('Capital put in', o.capital_in, 'Permanent investment')}
+    ${ownerRow('Loaned to the business', o.owner_loan, 'To be paid back')}
+    ${ownerRow('Taken out (drawings)', o.drawings)}
+    ${ownerRow('Loan repaid to owner', o.repayments)}
+    <div class="mv-note">${formatCurrency(o.paid_directly)} of this paid business expenses straight from your pocket.
+      Net ${put - took >= 0 ? 'into' : 'out of'} the business: <b>${formatCurrency(Math.abs(put - took))}</b>.</div>`;
+
+  const c = data.cash_out || {};
+  const p = data.pnl || {};
+  document.getElementById('mvCashOut').innerHTML = `
+    ${ownerRow('Stock purchased', c.purchases, 'Posted POs - goes to inventory')}
+    ${ownerRow('Paid to vendors', c.vendor_payments, 'Includes POs, paid when posted - not on top of the line above')}
+    ${ownerRow('Expenses', p.expense_total, 'POS + Expense Journal')}
+    ${ownerRow('Payroll (net pay)', p.payroll_net)}
+    ${ownerRow('Bills &amp; Dues paid', (Number(c.bills_paid_business) || 0) + (Number(c.bills_paid_owner) || 0),
+      Number(c.bills_paid_owner) > 0 ? `${formatCurrency(c.bills_paid_owner)} by the owner` : 'All by the business')}
+    <div class="mv-note">Bills &amp; Dues paid with an expense category are already inside Expenses.</div>`;
+}
+
+function renderMyViewHealth(pnl) {
+  const chip = (label, value, sub) => `
+    <div class="mv-chip"><div class="mv-chip-label">${label}</div><div class="mv-chip-value">${value}</div><div class="mv-chip-sub">${sub}</div></div>`;
+  const gm = myViewPct(pnl.gross_profit, pnl.revenue);
+  const nm = myViewPct(pnl.net_profit, pnl.revenue);
+  const payrollShare = myViewPct(pnl.payroll_gross, pnl.revenue);
+  // Break-even: the sales needed for gross profit to cover operating expenses at this margin.
+  const breakEven = gm && gm > 0 ? (Number(pnl.opex_total) || 0) / (gm / 100) : null;
+  const fmtPct = (v) => (v === null ? '-' : `${v.toFixed(1)}%`);
+  document.getElementById('mvHealth').innerHTML =
+    chip('Gross margin', fmtPct(gm), 'kept from each ₱1 sold, after item cost') +
+    chip('Net margin', fmtPct(nm), 'kept after every expense') +
+    chip('Payroll vs sales', fmtPct(payrollShare), 'gross salaries ÷ revenue') +
+    chip('Break-even sales', breakEven === null ? '-' : formatCurrency(breakEven),
+      breakEven === null ? 'needs sales with item costs'
+        : (Number(pnl.revenue) || 0) >= breakEven ? '✅ reached this period' : `${formatCurrency(breakEven - (Number(pnl.revenue) || 0))} to go`);
+}
+
+async function loadMyView(session, period = 'month') {
+  if (!session.password) return;
+  const { from, to } = myViewRange(period);
+  const errorEl = document.getElementById('mvError');
+  document.getElementById('mvRange').textContent = `${myViewDateLabel(myViewIsoDate(from))} - ${myViewDateLabel(myViewIsoDate(to))} · loading...`;
+
+  const { data, error } = await supabaseClient.rpc('admin_get_my_view', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_from: myViewIsoDate(from),
+    p_to: myViewIsoDate(to)
+  });
+  if (error || !data) {
+    console.error('admin_get_my_view failed:', error);
+    errorEl.textContent = `Could not load My View: ${error?.message || 'no data'}`;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  errorEl.classList.add('hidden');
+  myViewCurrentRange = { from: data.from, to: data.to };
+
+  const pnl = data.pnl;
+  const prev = data.prev;
+  const costs = (Number(pnl.cogs) || 0) + (Number(pnl.opex_total) || 0);
+  const prevCosts = (Number(prev.cogs) || 0) + (Number(prev.opex_total) || 0);
+  const ownerIn = (Number(data.owner.capital_in) || 0) + (Number(data.owner.owner_loan) || 0);
+
+  document.getElementById('mvRange').textContent =
+    `${myViewDateLabel(data.from)} - ${myViewDateLabel(data.to)} · compared with the ${data.to >= data.today ? 'same number of days' : 'period'} before`;
+  document.getElementById('mvAsOf').textContent = `as of ${myViewDateLabel(data.today)}`;
+  setStatValue('mvRevenue', formatCurrency(pnl.revenue));
+  setStatValue('mvRevenueSub', `${pnl.online_count + pnl.walkin_count} orders · ${prev.revenue ? `${myViewDelta(pnl.revenue, prev.revenue).replace(/<[^>]+>/g, '')} vs before` : 'Online + Walk-In'}`);
+  setStatValue('mvCosts', formatCurrency(costs));
+  setStatValue('mvCostsSub', `Item cost ${formatCurrency(pnl.cogs)} + operating ${formatCurrency(pnl.opex_total)}${prevCosts ? ` · ${myViewDelta(costs, prevCosts).replace(/<[^>]+>/g, '')}` : ''}`);
+  setStatValue('mvProfit', formatCurrency(pnl.net_profit));
+  document.getElementById('mvProfitCard').classList.toggle('finance-loss', Number(pnl.net_profit) < 0);
+  const nm = myViewPct(pnl.net_profit, pnl.revenue);
+  setStatValue('mvProfitSub', `${nm === null ? 'No sales yet' : `${nm.toFixed(1)}% of sales`}${prev.revenue ? ` · was ${formatCurrency(prev.net_profit)}` : ''}`);
+  setStatValue('mvOwnerIn', formatCurrency(ownerIn));
+  setStatValue('mvOwnerInSub', `${formatCurrency(data.owner.paid_directly)} paid bills directly · ${formatCurrency(data.owner.drawings)} taken out`);
+
+  renderMyViewHealth(pnl);
+  renderMyViewPnl(pnl, prev);
+  renderMyViewPosition(data.position);
+  renderMyViewTrend(data.trend || []);
+  renderMyViewSide(data);
+}
+
+function wireMyView(session) {
+  // "Other (N categories)" in the Income Statement expands to list each one (click again to fold).
+  document.getElementById('mvPnl').addEventListener('click', (e) => {
+    const catRow = e.target.closest('.mv-cat-row');
+    if (catRow) {
+      toggleMyViewEntries(session, catRow);
+      return;
+    }
+    const otherRow = e.target.closest('.mv-other-row');
+    if (!otherRow) return;
+    const open = otherRow.classList.toggle('mv-open');
+    const table = otherRow.closest('table');
+    table.querySelectorAll('.mv-sub-row').forEach((r) => r.classList.toggle('hidden', !open));
+    if (!open) {
+      // Folding "Other" also folds any entries opened under its categories.
+      table.querySelectorAll('.mv-sub-row').forEach((r) => {
+        r.querySelector('.mv-toggle').textContent = '▸';
+        table.querySelectorAll(`.mv-entry-row[data-for="${r.dataset.catIdx}"]`).forEach((x) => x.classList.add('hidden'));
+      });
+    }
+    const label = otherRow.querySelector('.mv-toggle');
+    label.textContent = label.textContent.replace(/^[▸▾]/, open ? '▾' : '▸');
+  });
+
+  const tabs = document.getElementById('mvPeriod');
+  tabs.addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-period]');
+    if (!tab) return;
+    tabs.querySelectorAll('[data-period]').forEach((t) => t.classList.toggle('active', t === tab));
+    loadMyView(session, tab.dataset.period);
+  });
+  return loadMyView(session, 'month');
+}
+
 // Per "dashboards are mostly for reportings - 1st group Sales, 2nd Production, 3rd Purchase and
 // Expense and payroll... put the grouping on the left" (super users first). The left
 // #dashGroupsNav shows one data-dash-group section of #financeCardGrid at a time. The shared
@@ -923,7 +1250,7 @@ function setupDashboardGroups() {
   let saved = null;
   try { saved = localStorage.getItem(DASH_GROUP_STORAGE_KEY); } catch (e) { /* storage blocked */ }
   const valid = Array.from(nav.querySelectorAll('.dash-group-tab')).some(t => t.dataset.dashTab === saved);
-  showDashboardGroup(valid ? saved : 'sales');
+  showDashboardGroup(valid ? saved : 'myview');
 }
 
 (async function init() {
@@ -1014,7 +1341,8 @@ function setupDashboardGroups() {
       loadDailyAdvanceOrders(session),
       loadSpendingRanking(session),
       loadProductionSummary(session),
-      loadMakerAssignmentSummary(session)
+      loadMakerAssignmentSummary(session),
+      wireMyView(session)
     );
   }
 

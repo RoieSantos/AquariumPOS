@@ -743,6 +743,32 @@
       font-weight: 700;
       line-height: 1;
     }
+    /* Create Order pre-fill (prefillCreateOrderFromCustomer in gmaConversations.js): the customer's
+       other saved numbers / addresses as one-click chips under the field. */
+    .prefill-alts {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--muted-text, #61738f);
+    }
+    .prefill-alts button {
+      border: 1px solid var(--panel-border, #d7e0ef);
+      background: transparent;
+      color: var(--primary, #1d4f91);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font: inherit;
+      cursor: pointer;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .prefill-alts button:hover { border-color: currentColor; }
+    .prefill-note { font-size: 11px; color: var(--muted-text, #61738f); margin-top: 3px; }
     .matched-customer-card {
       display: flex;
       align-items: center;
@@ -4222,10 +4248,10 @@ Message: ..."></textarea>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tabsync1"></script>
-  <script src="js/nav.js?v=salesshelf1"></script>
+  <script src="js/nav.js?v=owner1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=loadmore1"></script>
+  <script src="js/gmaConversations.js?v=prefill1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

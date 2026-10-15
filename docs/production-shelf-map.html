@@ -151,6 +151,15 @@
     .view-toggle button { border: 0; background: var(--panel-bg, #fff); color: inherit; padding: 0 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
     .view-toggle button + button { border-left: 1px solid var(--panel-border, #c9d3e0); }
     .view-toggle button.active { background: #1d4f91; color: #fff; }
+    /* Minimums view (js/productionShelfMap.js renderMinimums). */
+    .min-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .min-actions { display: flex; align-items: center; gap: 10px; }
+    .min-table td { vertical-align: middle; }
+    .min-table .min-input { width: 80px; text-align: right; padding: 4px 6px; }
+    .min-table .min-input.min-changed { border-color: #d98a00; box-shadow: 0 0 0 2px rgba(217, 138, 0, 0.25); }
+    .min-table .stock-pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: #fff; background: #1f8a4c; }
+    .min-table tr.st-low .stock-pill { background: #b7701a; }
+    .min-table tr.st-out .stock-pill { background: #c0392b; }
     .stock-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
     .stock-filter { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--panel-border, #c9d3e0); border-radius: 999px; background: var(--panel-bg, #fff); color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
     .stock-filter b { font-size: 14px; }
@@ -213,6 +222,8 @@
         <span class="view-toggle" role="group" aria-label="View">
           <button type="button" data-view="stock">Stock list</button>
           <button type="button" data-view="map">Floor map</button>
+          <!-- Minimum stock to maintain per product (supabase_production_shelf_minimums.sql) - managers only. -->
+          <button type="button" data-view="mins" id="minsViewBtn" class="hidden">Minimums</button>
         </span>
         <label class="psm-field"><span>Location</span><select id="locationSelect"></select></label>
         <label class="psm-field" id="shelfField"><span>Shelf</span><select id="shelfSelect"></select></label>
@@ -255,7 +266,7 @@
 
     <div class="shelf-legend muted" id="legend">
       <span><i class="shelf-dot" style="background:#1f8a4c"></i>Available</span>
-      <span><i class="shelf-dot" style="background:#b7701a"></i>Low stock (1-2 left)</span>
+      <span><i class="shelf-dot" style="background:#b7701a"></i>Low stock (at/below its minimum, else 1-2 left)</span>
       <span><i class="shelf-dot" style="background:#c0392b"></i>Out of stock</span>
       <span><i class="shelf-dot" style="background:#d98a00"></i>Orange border = at or over the rack's capacity</span>
       <span><i class="shelf-dot" style="background:#999"></i>None in stock (dashed)</span>
@@ -342,8 +353,8 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tabsync1"></script>
-  <script src="js/nav.js?v=salesshelf1"></script>
-  <script src="js/productionShelfMap.js?v=26"></script>
+  <script src="js/nav.js?v=owner1"></script>
+  <script src="js/productionShelfMap.js?v=27"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

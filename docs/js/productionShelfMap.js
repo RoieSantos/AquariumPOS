@@ -230,14 +230,28 @@ function reservedTagHtml(n) {
   return n ? `<span class="stock-coming" style="color:#b45309;" title="On the rack but held for an order - not for sale">+ ${n} reserved</span>` : '';
 }
 
-// Stock status for sales at a glance: out (0), low (1-2 left, unless that already fills the rack),
-// or available.
+// Stock status for sales at a glance: out (0), low, or available. Low = at or below the product's
+// minimum when one is set (Minimums view, sql/supabase_production_shelf_minimums.sql), otherwise the
+// old default of 1-2 left (unless that already fills the rack).
 const LOW_STOCK = 2;
 const STATUS_LABEL = { ok: 'Available', low: 'Low stock', out: 'Out of stock' };
-function stockStatus(count, capacity) {
+function stockStatus(count, capacity, min = null) {
   if (!count) return 'out';
+  if (min !== null) return count <= min ? 'low' : 'ok';
   if (count <= LOW_STOCK && !(capacity && count >= capacity)) return 'low';
   return 'ok';
+}
+
+// Minimum to maintain per product at currentLocation, keyed "item|variant" ('' = any variant).
+let locationMinimums = new Map();
+let minimumsUnavailable = false; // the minimums RPC failed (SQL not run yet)
+function minKey(itemCode, variantId) {
+  return `${itemCode}|${variantId || ''}`;
+}
+function minFor(spot) {
+  if (!spot?.item_code) return null;
+  const v = locationMinimums.get(minKey(spot.item_code, spot.variant_id));
+  return v === undefined ? null : v;
 }
 
 // Units of the spot's aquarium still to be built on Open / Released production orders here.
@@ -290,7 +304,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
     match ? 'match' : '',
     !editing && findTerm && !match ? 'dim' : '',
     compact ? 'compact' : '',
-    count !== null ? `st-${stockStatus(count, spot.capacity)}` : ''
+    count !== null ? `st-${stockStatus(count, spot.capacity, minFor(spot))}` : ''
   ].filter(Boolean).join(' ');
   const tooltip = [
     spotName(spot, fallbackName) + (tag ? ` - ${tag}` : ''),
@@ -307,7 +321,7 @@ function spotHtml(spot, fallbackName, { attrs = '', style = '', compact = false,
   const shortTag = spotShortTag(spot);
   // Same status pill / "being built" as the Stock list cards (stockCardHtml); a compact rack keeps
   // just the coloured stripe and number.
-  const status = count !== null ? stockStatus(count, spot.capacity) : null;
+  const status = count !== null ? stockStatus(count, spot.capacity, minFor(spot)) : null;
   const onOrder = count !== null && !compact ? spotOnOrder(spot) : 0;
   const reservedN = count !== null && !compact ? spotReserved(spot).length : 0;
   const pillHtml = status && !compact ? `<span class="stock-pill">${STATUS_LABEL[status]}</span>` : '';
@@ -333,18 +347,111 @@ function renderShelf() {
     renderFindResult(0);
     return;
   }
-  const stock = viewMode === 'stock' && !draft;
+  const mins = viewMode === 'mins' && !draft;
+  const stock = (viewMode === 'stock' || mins) && !draft;
   document.getElementById('zoomControls').classList.toggle('hidden', stock || currentLayout() !== 'floor');
   document.getElementById('shelfField').classList.toggle('hidden', stock);
   document.getElementById('legend').classList.toggle('hidden', stock);
-  document.querySelectorAll('.view-toggle [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === (stock ? 'stock' : 'map')));
-  if (stock) renderStock(body);
+  document.querySelectorAll('.view-toggle [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === (mins ? 'mins' : stock ? 'stock' : 'map')));
+  if (mins) renderMinimums(body);
+  else if (stock) renderStock(body);
   else if (currentLayout() === 'floor') renderFloor(body);
   else renderGrid(body);
 }
 
+// Minimums view - per "share me a view like a list so I can manually change the minimum count to
+// mantain". One row per product at this location (same grouping as the Stock list), with an editable
+// Minimum; "To build" = minimum - in stock - already being built. Super User / Production Manager.
+function renderMinimums(body) {
+  body.classList.remove('floor-mode');
+  const findEl = document.getElementById('findResult');
+  if (minimumsUnavailable) {
+    body.innerHTML = '<p class="error-text">Minimums are not set up yet - run sql/supabase_production_shelf_minimums.sql.</p>';
+    findEl.textContent = '';
+    return;
+  }
+  const products = stockProducts()
+    .filter((p) => !findTerm || spotMatches(p.spot, findTerm))
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
+  if (!products.length) {
+    body.innerHTML = `<p class="muted">${findTerm ? 'Nothing matches.' : 'No racks at this location are linked to a product yet.'}</p>`;
+    findEl.textContent = '';
+    return;
+  }
+  const below = products.filter((p) => p.min !== null && p.count <= p.min).length;
+  body.innerHTML = `
+    <div class="min-head">
+      <p class="muted" style="margin:0;">Set how many of each product to keep in stock at this location. A product shows <b>Low stock</b> once it's at or below its minimum.
+        Leave blank to use the default (low at 1-2 left). ${below ? `<b>${below}</b> product(s) are at or below their minimum now.` : ''}</p>
+      <div class="min-actions">
+        <span class="muted" id="minSaveMsg"></span>
+        <button class="btn btn-primary btn-sm" id="saveMinsBtn" type="button" disabled>Save minimums</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="min-table">
+        <thead><tr>
+          <th>Product</th><th class="num">In stock</th><th class="num">Being built</th><th class="num">Rack capacity</th>
+          <th class="num">Minimum</th><th class="num">To build</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${products.map((p, i) => {
+            const only = spotOnlyColour(p.spot);
+            const toBuild = p.min === null ? null : Math.max(0, p.min - p.count - p.onOrder);
+            return `<tr class="st-${p.status}">
+              <td><b>${escapeHtml(p.title)}</b>
+                <div class="muted" style="font-size:12px;">${escapeHtml(p.spot.item_code)}${p.spot.variant_name ? ' · ' + escapeHtml(p.spot.variant_name) : ' · any variant'}${only ? ` · <b>${escapeHtml(only)} only</b>` : ''}</div></td>
+              <td class="num">${p.count}</td>
+              <td class="num">${p.onOrder || ''}</td>
+              <td class="num">${p.capacity || ''}</td>
+              <td class="num"><input type="number" class="min-input" data-idx="${i}" min="0" step="1" inputmode="numeric"
+                value="${p.min === null ? '' : p.min}" data-orig="${p.min === null ? '' : p.min}" placeholder="1-2" /></td>
+              <td class="num">${toBuild ? `<b>${toBuild}</b>` : toBuild === 0 ? '0' : ''}</td>
+              <td><span class="stock-pill">${STATUS_LABEL[p.status]}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  findEl.textContent = findTerm ? `${products.length} product(s)` : '';
+
+  const saveBtn = document.getElementById('saveMinsBtn');
+  const changed = () => Array.from(body.querySelectorAll('.min-input')).filter((el) => el.value.trim() !== el.dataset.orig);
+  body.querySelectorAll('.min-input').forEach((el) => el.addEventListener('input', () => {
+    el.classList.toggle('min-changed', el.value.trim() !== el.dataset.orig);
+    const n = changed().length;
+    saveBtn.disabled = n === 0;
+    saveBtn.textContent = n ? `Save minimums (${n})` : 'Save minimums';
+  }));
+  saveBtn.addEventListener('click', async () => {
+    const rows = changed().map((el) => {
+      const p = products[Number(el.dataset.idx)];
+      const v = el.value.trim();
+      return { item_code: p.spot.item_code, variant_id: p.spot.variant_id || '', min_qty: v === '' ? null : Math.max(0, Math.round(Number(v))) };
+    });
+    if (!rows.length) return;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    const { error } = await rpc('admin_save_production_shelf_minimums', { p_warehouse_id: currentLocation, p_rows: rows });
+    if (error) {
+      document.getElementById('minSaveMsg').textContent = '';
+      showError(error.message);
+      saveBtn.disabled = false;
+      saveBtn.textContent = `Save minimums (${rows.length})`;
+      return;
+    }
+    showError('');
+    rows.forEach((r) => {
+      const key = minKey(r.item_code, r.variant_id);
+      if (r.min_qty === null) locationMinimums.delete(key); else locationMinimums.set(key, r.min_qty);
+    });
+    renderShelf();
+    document.getElementById('minSaveMsg').textContent = `Saved ${rows.length} minimum(s).`;
+  });
+}
+
 function setViewMode(mode) {
-  viewMode = mode === 'stock' ? 'stock' : 'map';
+  viewMode = mode === 'mins' && canEditLayout ? 'mins' : mode === 'stock' ? 'stock' : 'map';
   try { localStorage.setItem(VIEW_KEY, viewMode); } catch (err) { /* not remembered */ }
   renderShelf();
 }
@@ -367,7 +474,7 @@ function stockProducts() {
     // The rack's own label reads best ("Standard 2.5g 3mm glass"); a short code like "B4" doesn't.
     const title = (sp.label && sp.label.length > 4 ? sp.label : '') || spotTagText(sp) || sp.item_code;
     const units = spotSerials(sp);
-    return { ...g, title, units, count: units.length, onOrder: spotOnOrder(sp), reserved: spotReserved(sp).length, status: stockStatus(units.length, g.capacity) };
+    return { ...g, title, units, count: units.length, onOrder: spotOnOrder(sp), reserved: spotReserved(sp).length, min: minFor(sp), status: stockStatus(units.length, g.capacity, minFor(sp)) };
   });
 }
 
@@ -381,7 +488,7 @@ function stockCardHtml(p) {
     </div>
     ${sub || only ? `<div class="stock-sub">${escapeHtml(sub)}${only ? ` · <b>${escapeHtml(only)} only</b>` : ''}</div>` : ''}
     <div class="stock-main">
-      <span class="stock-count">${p.count}</span><span class="stock-unit">in stock</span>
+      <span class="stock-count">${p.count}</span><span class="stock-unit">in stock${p.min !== null ? ` · min ${p.min}` : ''}</span>
       ${p.count ? `<span class="pspot-colours">${colourChipsHtml(p.units)}</span>` : ''}
     </div>
     ${p.onOrder ? `<div class="stock-coming">+ ${p.onOrder} being built</div>` : ''}
@@ -511,15 +618,19 @@ function renderShelfSelect() {
 
 async function loadLocationSerials() {
   locationLedgerUnits = [];
-  if (!currentLocation) { locationSerials = []; locationReserved = []; locationOpenLines = []; return; }
+  if (!currentLocation) { locationSerials = []; locationReserved = []; locationOpenLines = []; locationMinimums = new Map(); return; }
   const usesLedger = shelves.some((sh) => sh.warehouse_id === currentLocation && (sh.spots || []).some((sp) => sp.count_source === 'ledger'));
-  const [serialRes, ledgerRes, openRes] = await Promise.all([
+  const [serialRes, ledgerRes, openRes, minRes] = await Promise.all([
     rpc('staff_list_production_location_serials', { p_warehouse_id: currentLocation }),
     usesLedger ? rpc('staff_list_production_location_ledger_qty', { p_warehouse_id: currentLocation }) : Promise.resolve({ data: [] }),
     // "+ N being built" on the stock list - quietly left out if it can't be read.
-    rpc('staff_list_production_open_qty', { p_warehouse_id: currentLocation })
+    rpc('staff_list_production_open_qty', { p_warehouse_id: currentLocation }),
+    // Minimums - quietly the old 1-2 left rule if supabase_production_shelf_minimums.sql isn't run yet.
+    rpc('staff_list_production_shelf_minimums', { p_warehouse_id: currentLocation })
   ]);
   locationOpenLines = openRes.error ? [] : (openRes.data || []);
+  locationMinimums = new Map((minRes.error ? [] : (minRes.data || [])).map((m) => [minKey(m.item_code, m.variant_id), Number(m.min_qty)]));
+  minimumsUnavailable = !!minRes.error;
   const allSerials = serialRes.error ? [] : (serialRes.data || []);
   locationSerials = allSerials.filter((s) => s.status !== 'RESERVED');
   locationReserved = allSerials.filter((s) => s.status === 'RESERVED');
@@ -1174,10 +1285,12 @@ function wireFloorDrag() {
   viewOnly = !(canEditLayout || session.isOrderMaker);
   let savedView = null;
   try { savedView = localStorage.getItem(VIEW_KEY); } catch (err) { /* default view */ }
-  viewMode = savedView === 'stock' || savedView === 'map' ? savedView : (viewOnly ? 'stock' : 'map');
+  viewMode = savedView === 'stock' || savedView === 'map' || (savedView === 'mins' && canEditLayout) ? savedView : (viewOnly ? 'stock' : 'map');
+  // Minimums list - only for those who can change them (the save RPC re-checks).
+  document.getElementById('minsViewBtn').classList.toggle('hidden', !canEditLayout);
   if (viewOnly) {
     document.getElementById('viewOnlyBadge').classList.remove('hidden');
-    document.getElementById('pageIntro').textContent = 'Live stock of every product at this location. Green = available, amber = low (1-2 left), red = out of stock. Tap a product to see its serial numbers.';
+    document.getElementById('pageIntro').textContent = 'Live stock of every product at this location. Green = available, amber = low (at or below its minimum, or 1-2 left when none is set), red = out of stock. Tap a product to see its serial numbers.';
   }
   document.querySelectorAll('.view-toggle [data-view]').forEach((b) => b.addEventListener('click', () => setViewMode(b.dataset.view)));
   setEditing(false);
