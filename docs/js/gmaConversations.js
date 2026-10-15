@@ -78,21 +78,41 @@ function formatRelativeTime(isoString) {
   return new Date(isoString).toLocaleDateString();
 }
 
+// The list loads 100 at a time; "Load more" at the bottom adds the next 100. Every reload (live
+// updates, pin, tag...) refetches all the pages already shown, so the extra rows don't disappear.
+// A new search/filter starts again from the first 100.
+const CONVERSATION_PAGE_SIZE = 100;
+let conversationPagesLoaded = 1;
+let conversationTotalCount = 0;
+let conversationFilterKey = '';
+
 async function loadConversations() {
   const listEl = document.getElementById('conversationListEl');
-  const { data, error } = await supabaseClient.rpc('admin_list_chatbot_conversations', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_page: 1,
-    p_page_size: 100,
-    p_search: conversationSearchTerm.trim() || null,
-    // Only sent when filtering, so the list still loads before supabase_gma_conversation_tags.sql is run.
-    ...(conversationTagFilter ? { p_tag_id: conversationTagFilter } : {}),
-    // Same for the All / Unread / Read pills (supabase_gma_conversation_mark_unread.sql).
-    ...(conversationReadFilter ? { p_read_filter: conversationReadFilter } : {}),
-    // And the mood filter (supabase_gma_conversation_mood.sql).
-    ...(conversationMoodFilter ? { p_mood: conversationMoodFilter } : {})
-  });
+  const filterKey = JSON.stringify([conversationSearchTerm.trim(), conversationTagFilter, conversationReadFilter, conversationMoodFilter]);
+  if (filterKey !== conversationFilterKey) {
+    conversationFilterKey = filterKey;
+    conversationPagesLoaded = 1;
+  }
+  const pageResults = await Promise.all(Array.from({ length: conversationPagesLoaded }, (_, i) =>
+    supabaseClient.rpc('admin_list_chatbot_conversations', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_page: i + 1,
+      p_page_size: CONVERSATION_PAGE_SIZE,
+      p_search: conversationSearchTerm.trim() || null,
+      // Only sent when filtering, so the list still loads before supabase_gma_conversation_tags.sql is run.
+      ...(conversationTagFilter ? { p_tag_id: conversationTagFilter } : {}),
+      // Same for the All / Unread / Read pills (supabase_gma_conversation_mark_unread.sql).
+      ...(conversationReadFilter ? { p_read_filter: conversationReadFilter } : {}),
+      // And the mood filter (supabase_gma_conversation_mood.sql).
+      ...(conversationMoodFilter ? { p_mood: conversationMoodFilter } : {})
+    })
+  ));
+  const error = pageResults.find((r) => r.error)?.error;
+  // A conversation can move between pages while they load - keep its first appearance only.
+  const seenPsids = new Set();
+  const data = pageResults.flatMap((r) => r.data || []).filter((c) => !seenPsids.has(c.psid) && seenPsids.add(c.psid));
+  conversationTotalCount = Number(pageResults[0]?.data?.[0]?.total_count ?? 0);
 
   if (error) {
     let message = error.message;
@@ -648,12 +668,28 @@ function renderConversationList() {
         </div>
       </div>
     `;
-  }).join('');
+  }).join('') + (conversationTotalCount > conversationPagesLoaded * CONVERSATION_PAGE_SIZE ? `
+      <div class="inbox-load-more">
+        <span class="inbox-load-more-count">Showing ${conversationPagesLoaded * CONVERSATION_PAGE_SIZE} of ${conversationTotalCount}</span>
+        <button type="button" class="btn btn-secondary btn-sm" id="conversationLoadMoreBtn">Load more</button>
+      </div>
+    ` : '');
 
   listEl.querySelectorAll('.inbox-conv-item').forEach((el) => {
     el.addEventListener('click', () => openConversation(el.dataset.psid));
   });
+  document.getElementById('conversationLoadMoreBtn')?.addEventListener('click', loadMoreConversations);
   ensureProfilePics(conversations);
+}
+
+async function loadMoreConversations(e) {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  const scrollTop = document.getElementById('conversationListEl').scrollTop;
+  conversationPagesLoaded++;
+  await loadConversations();
+  document.getElementById('conversationListEl').scrollTop = scrollTop;
 }
 
 function renderThreadHeader(conv) {

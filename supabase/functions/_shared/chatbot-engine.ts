@@ -1111,6 +1111,18 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'react_to_message',
+    description:
+      'Puts an emoji reaction on the customer\'s latest Messenger message, the way a person would tap ❤️ or 👍 on it. This is in addition to your normal text reply and never replaces it. Use it sparingly, at most once per customer message and only where a person naturally would: ❤️ for thanks, a kind word, a photo of their tank or fish, or when they confirm something (a booking, a payment sent, "ok noted"); 😆 for a joke. Don\'t react to plain questions, complaints, or angry or sad messages. A 😢 is fine for a fish that died, but always reply with words too. Only ❤️, 😆 and 😢 are allowed (never 👍, 😮 or 😠). This only works on Facebook Messenger. If the result says it isn\'t available, just carry on without mentioning it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reaction: { type: 'string', enum: ['love', 'smile', 'sad'], description: 'love = ❤️, smile = 😆, sad = 😢.' }
+      },
+      required: ['reaction']
+    }
+  },
+  {
     name: 'create_location_pin_link',
     description:
       'Creates a one-time link to our map page where the customer pins their exact delivery location (phone GPS, search, or tapping the map) and adds a landmark - the pin then comes back into this conversation as their "📍 My delivery location" message. Use it when a delivery is being arranged and you need their location: they ask how to send their location/pin, their address is vague or incomplete (no street/barangay, "near the church"), or a driver will need to find them. Don\'t use it if they already sent a "📍 My delivery location" message (unless they say it\'s wrong), and don\'t send it for pickup-only orders. Put the returned link in your reply exactly as given, with a short line asking them to pin their location there.',
@@ -1398,7 +1410,10 @@ export function buildSystemPrompt(
     '',
     'FORMATTING:',
     '- Messenger renders plain text only - no markdown (no **bold**, no [links](url)).',
-    '- Keep replies conversational and reasonably short, not bulleted essays.'
+    '- Keep replies conversational and reasonably short, not bulleted essays.',
+    '',
+    'REACTIONS (Messenger only):',
+    '- You can put an emoji reaction on the customer\'s message with react_to_message, the way a friendly shop assistant would. Use it occasionally, not on every message, and always send your normal text reply as well. Use ❤️ for a thank-you, a photo of their tank or fish, or when they confirm something; 😆 for a joke. Never use 👍 or 😮, use ❤️ instead. Don\'t react to plain questions, complaints or angry messages.'
   );
 
   if (storeInfo) {
@@ -2329,6 +2344,28 @@ export async function sendMessengerImage(psid: string, imageUrl: string, pageAcc
   return true;
 }
 
+// Backs the react_to_message tool - same Messenger sender_action 'react' as staff reactions
+// (chatbot-staff-reply's handleReact). Facebook rejected the name form ("love"), so the emoji is
+// tried first, with and without the U+FE0F variation selector.
+// The bot only gets ❤️ / 😆 / 😢 (owner's call - no 👍 or 😮, use ❤️ instead).
+export const REACTION_EMOJI: Record<string, string> = { love: '❤️', smile: '😆', sad: '😢' };
+
+export async function sendMessengerReaction(psid: string, mid: string, emoji: string, pageAccessToken: string, graphVersion: string): Promise<boolean> {
+  const url = `https://graph.facebook.com/${graphVersion}/me/messages?access_token=${pageAccessToken}`;
+  for (const value of [...new Set([emoji, emoji.replace(/️/g, '')])]) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: psid }, sender_action: 'react', payload: { message_id: mid, reaction: value } })
+    });
+    if (res.ok) return true;
+    const bodyText = await res.text();
+    console.error(`Messenger reaction failed (${res.status}): ${bodyText.slice(0, 300)}`);
+    if (!/reaction provided is invalid/i.test(bodyText)) return false;
+  }
+  return false;
+}
+
 // --- Order privacy --------------------------------------------------------------------------------
 // Per "dont let the customer see [other customers' data]": the order tools (get_order_status, the delivery
 // scheduling tools) only answer about orders that belong to THIS chat - otherwise anyone could type
@@ -2629,6 +2666,35 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const sent = await sendMessengerImage(psid, imageUrl, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION);
       if (sent) await logBotImage(supabase, psid, imageUrl);
       return sent ? 'Photo sent to the customer.' : 'Sending the photo failed - let the customer know and continue without it.';
+    }
+    case 'react_to_message': {
+      const reactionName = String(input.reaction ?? '').trim();
+      const emoji = REACTION_EMOJI[reactionName];
+      if (!emoji) return 'Unknown reaction - use love, smile or sad.';
+      if (simulate) return `SANDBOX MODE - no real reaction was sent. If this were live, the customer's latest message would get a ${emoji} reaction.`;
+      // Messenger only - the website widget, Portal Chat and Telegram have no reactions.
+      if (psid.includes(':')) return 'Reactions aren\'t available on this channel - carry on without one.';
+      if (!pageAccessToken) return 'Reactions are not configured right now - carry on without one.';
+
+      // The customer's latest Messenger message (extra photos are "<mid>#2"; Page comments are "comment:...").
+      const { data: row } = await supabase
+        .from('ChatbotMessages')
+        .select('Id, FacebookMessageId')
+        .eq('Psid', psid)
+        .eq('Role', 'user')
+        .not('FacebookMessageId', 'is', null)
+        .not('FacebookMessageId', 'like', 'comment:%')
+        .order('Id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const mid = String(row?.FacebookMessageId ?? '').split('#')[0];
+      if (!row || !mid) return 'There is no customer message to react to - carry on without one.';
+
+      const sent = await sendMessengerReaction(psid, mid, emoji, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION);
+      if (!sent) return 'The reaction could not be sent - carry on without it, don\'t mention it.';
+      // Shown on the message in GMA Conversations, same as a staff reaction.
+      await supabase.from('ChatbotMessages').update({ StaffReaction: emoji }).eq('Id', row.Id);
+      return `Reacted ${emoji} to the customer's message. Still send your normal text reply.`;
     }
     case 'create_location_pin_link': {
       // Same one-time link as GMA Conversations' 📍 button (sql/supabase_gma_location_pin.sql, docs/pin-location.html).

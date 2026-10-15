@@ -4,6 +4,10 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-15
 
+- **GMA Conversations: "Load more" button.** The list stopped at the newest 100 conversations, so older customers never showed. The bottom of the list now shows "Showing 100 of N" with a Load more button that adds 100 at a time. Live updates keep the extra pages loaded, and a new search or filter starts again from the first 100 ([gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html) `v=loadmore1`).
+
+- **AI bot can react to customer messages (Messenger).** New `react_to_message` tool (❤️ 😆 😢 only; no 👍 or 😮, ❤️ is used instead) reacts to the customer's latest message using the same Facebook call as staff reactions, and saves it as `StaffReaction` so it shows in GMA Conversations. A system-prompt rule keeps it occasional, alongside a normal reply. It's skipped on the website, Portal Chat and Telegram, and simulated in the sandbox ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
+
 - **Production Shelf Map shows reserved units.** Serials reserved for an order were invisible on the map (it only read IN_STOCK). Now each rack / stock card shows "+ n reserved" next to the count (count, Available / Low / Out still = free to sell), and the rack popup lists them with their order ([supabase_production_shelf_reserved.sql](sql/supabase_production_shelf_reserved.sql), [productionShelfMap.js](docs/js/productionShelfMap.js) `v=26`). Auto Order unchanged.
 
 - **Cancel Order on the online order card.** Super User / Production Manager / Sales User / Store Manager, open orders before To Ship, not walk-ins. Shows warnings first (makers / Production Done, open Production Order, payments to refund, reserved serials), asks for a required reason, cancels in Pancake first (status 6) then the portal; reserved serials are freed automatically; logged in OnlineOrderCancellations. Customer not messaged ([supabase_online_order_cancel.sql](sql/supabase_online_order_cancel.sql), [onlineOrders.js](docs/js/onlineOrders.js) `v=cancelorder1`).
