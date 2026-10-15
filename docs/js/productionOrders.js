@@ -835,7 +835,9 @@ async function loadCardSerials() {
       <td>${escapeHtml(s.item_code)}</td>
       <td>${escapeHtml(s.item_description || '')}</td>
       <td>${escapeHtml(s.location || '')}</td>
-      <td>${s.status === 'IN_STOCK' ? '<span class="badge badge-success">In Stock</span>' : `<span class="badge badge-neutral">${escapeHtml(s.status)}</span>`}</td>
+      <td>${s.status === 'IN_STOCK' ? '<span class="badge badge-success">In Stock</span>'
+        : s.status === 'RESERVED' ? '<span class="badge badge-warning" title="Held for the order this was built for">Reserved</span>'
+        : `<span class="badge badge-neutral">${escapeHtml(s.status)}</span>`}</td>
       <td>${escapeHtml(s.posted_at ? new Date(s.posted_at).toLocaleString() : '')}</td>
     </tr>`).join('');
   part.classList.remove('hidden');
@@ -1386,7 +1388,8 @@ async function printOrder() {
 // through js/labelPrinter.js, same as right after Post Output.
 async function printSerials() {
   showCardError('');
-  const serials = (await loadCardSerials()).filter((s) => s.status === 'IN_STOCK');
+  // RESERVED = output built for an order, held for it (sql/supabase_serial_order_reservation.sql) - still on hand.
+  const serials = (await loadCardSerials()).filter((s) => s.status === 'IN_STOCK' || s.status === 'RESERVED');
   if (!serials.length) { showCardError('No in-stock serials on this order to print.'); return; }
   if (!confirm(`Print ${serials.length} serial label(s) for ${openOrder.order_no}?`)) return;
   const result = await LabelPrinter.printSerialLabels(serials.map(serialToLabel));

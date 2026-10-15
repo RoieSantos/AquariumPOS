@@ -2,7 +2,8 @@
 // the right if there is available stocks per item? so the user can see if there are no stocks or have?".
 // Used by the Online / Walk-in and Advance Order cards (onlineOrders.js), Transfer Orders and Purchase
 // Orders. One call for all lines: staff_get_lines_stock_by_warehouse (sql/supabase_lines_stock_by_warehouse.sql)
-// - Item Ledger for regular items, IN_STOCK serials for Aquarium / Stand / Sump (same as Alice).
+// - Item Ledger for regular items, IN_STOCK serials for Aquarium / Stand / Sump (same as Alice); serials
+// RESERVED for an order are shown apart as "n reserved".
 //
 // Markup (the page owns it):
 //   <aside class="oc-factbox" id="...">
@@ -124,12 +125,17 @@
       const hereName = here ? here.warehouse_name : l.warehouse;
       const qty = l.warehouse ? (here ? Number(here.quantity) || 0 : 0) : rows.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
       if (qty <= 0) outCount++;
-      const badge = qty > 0
+      // Reserved = serials held for an order (sql/supabase_serial_order_reservation.sql) - on the shelf but
+      // not for sale, so not in the quantity.
+      const reserved = l.warehouse ? (here ? Number(here.reserved) || 0 : 0) : rows.reduce((s, r) => s + (Number(r.reserved) || 0), 0);
+      const reservedBadge = reserved > 0
+        ? ` <span class="badge badge-warning" title="Held for an order - can't be sold to anyone else">${fmtQty(reserved)} reserved</span>` : '';
+      const badge = (qty > 0
         ? `<span class="badge badge-success">${fmtQty(qty)}${l.warehouse ? ` at ${esc(hereName)}` : ' in stock'}</span>`
-        : `<span class="badge badge-danger">No stock${l.warehouse ? ` at ${esc(hereName)}` : ''}</span>`;
+        : `<span class="badge badge-danger">No stock${l.warehouse ? ` at ${esc(hereName)}` : ''}</span>`) + reservedBadge;
       const others = rows
-        .filter((r) => r !== here && ((Number(r.quantity) || 0) !== 0 || r.is_stock_warehouse))
-        .map((r) => `<span class="${(Number(r.quantity) || 0) > 0 ? 'isf-has' : ''}">${esc(r.warehouse_name)} ${fmtQty(r.quantity)}</span>`)
+        .filter((r) => r !== here && ((Number(r.quantity) || 0) !== 0 || (Number(r.reserved) || 0) !== 0 || r.is_stock_warehouse))
+        .map((r) => `<span class="${(Number(r.quantity) || 0) > 0 ? 'isf-has' : ''}">${esc(r.warehouse_name)} ${fmtQty(r.quantity)}${(Number(r.reserved) || 0) > 0 ? ` (+${fmtQty(r.reserved)} reserved)` : ''}</span>`)
         .join(' · ');
       const src = rows[0].source === 'serials' ? ' title="Counted from IN_STOCK serials"' : '';
       return `<li${src}>

@@ -252,7 +252,9 @@ namespace AquariumPOS
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Font = new Font("Arial", 9)
             };
-            cboStatusFilter.Items.AddRange(new object[] { "ALL", "IN_STOCK", "SOLD" });
+            // RESERVED = held for an order in the Web Portal (supabase_serial_order_reservation.sql) - never
+            // offered at a sale (GetAvailableSerials only takes IN_STOCK).
+            cboStatusFilter.Items.AddRange(new object[] { "ALL", "IN_STOCK", "RESERVED", "SOLD" });
             cboStatusFilter.SelectedIndex = 0;
             cboStatusFilter.SelectedIndexChanged += (_, _) => LoadSerials();
 

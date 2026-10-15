@@ -906,6 +906,10 @@ function isPortalOnlyOrder(o) {
   return /^AO-/i.test(String(o?.order_id || ''));
 }
 let shipSerialWarehouse = null; // order's branch while picking serials for a ship-from-stock order
+// Serials RESERVED for the order being shipped (sql/supabase_serial_order_reservation.sql) - pre-filled in
+// the picker, and the only reserved ones its search offers. Link = OrderID, or 'ADV-<TransactionNo>'.
+let shipReservedLink = null;
+let shipReservedSerials = [];
 
 function stockStatusFor(o) {
   const s = o ? stockStatusCache.get(String(o.order_id)) : null;
@@ -984,11 +988,20 @@ async function ensureStockStatus(o) {
 // Same as stockLinesSummary, as HTML with the SKU in bold so the picker notices it (sku from
 // supabase_online_order_stock_status_sku.sql; Item Code until that's run).
 function stockLinesHtml(s) {
-  return (s?.lines || []).map((l) => `${escapeHtml(l.description || l.item_code)} - SKU <b>${escapeHtml(l.sku || l.item_code || '-')}</b>: ${l.available}/${l.needed} in stock`).join('\n');
+  return (s?.lines || []).map((l) => `${escapeHtml(l.description || l.item_code)} - SKU <b>${escapeHtml(l.sku || l.item_code || '-')}</b>: ${l.available}/${l.needed} in stock${reservedNote(l)}`).join('\n');
 }
 
 function stockLinesSummary(s) {
-  return (s?.lines || []).map((l) => `${l.description || l.item_code}${l.variant_name ? ` (${l.variant_name})` : ''}: ${l.available}/${l.needed} in stock`).join('\n');
+  return (s?.lines || []).map((l) => `${l.description || l.item_code}${l.variant_name ? ` (${l.variant_name})` : ''}: ${l.available}/${l.needed} in stock${reservedNote(l)}`).join('\n');
+}
+
+// Units RESERVED for this order count as its stock (sql/supabase_serial_order_reservation.sql).
+function reservedNote(l) {
+  return Number(l.reserved) > 0 ? ` (${l.reserved} reserved for this order)` : '';
+}
+
+function reservedSerialBadge(s) {
+  return s.status === 'RESERVED' ? ' <span class="badge badge-warning" title="Held for this order - nobody else can pick it">Reserved</span>' : '';
 }
 
 function nextStepForStock(o) {
@@ -2743,7 +2756,7 @@ async function showLinkedSerials({ caption, orderLabel, load }, btn) {
   document.getElementById('linkedSerialsModalGrid').classList.toggle('hidden', !count);
   document.getElementById('linkedSerialsModalPrintBtn').disabled = !count;
   document.getElementById('linkedSerialsModalBody').innerHTML = linkedSerialsRows
-    .map((s) => `<tr><td><strong>${escapeHtml(s.serial_no || '')}</strong></td><td>${escapeHtml(s.item_code || '')}</td><td>${escapeHtml(s.description || '')}</td></tr>`)
+    .map((s) => `<tr><td><strong>${escapeHtml(s.serial_no || '')}</strong>${reservedSerialBadge(s)}</td><td>${escapeHtml(s.item_code || '')}</td><td>${escapeHtml(s.description || '')}</td></tr>`)
     .join('');
   document.getElementById('linkedSerialsModal').classList.remove('hidden');
 }
@@ -2772,7 +2785,7 @@ function showAdvanceSerials(no, btn) {
 // prefix: 'orderCard' or 'advanceCard' (the #<prefix>SerialsList / Empty / Count elements).
 function renderSerialsFactbox(prefix, rows, errorMessage, emptyText = 'No serials linked yet.') {
   document.getElementById(`${prefix}SerialsList`).innerHTML = rows
-    .map((s) => `<li><div class="oc-serial-no">${escapeHtml(s.serial_no || '')}</div>
+    .map((s) => `<li><div class="oc-serial-no">${escapeHtml(s.serial_no || '')}${reservedSerialBadge(s)}</div>
       <div class="oc-serial-item muted">${escapeHtml(s.item_code || '')}${s.description && s.description !== s.item_code ? ` · ${escapeHtml(s.description)}` : ''}</div></li>`)
     .join('');
   const empty = document.getElementById(`${prefix}SerialsEmpty`);
@@ -3351,6 +3364,26 @@ async function getOrderSerialRequirements(orderId) {
     .filter((r) => r.quantity_needed > 0);
 }
 
+// The order's reserved serials (built for it, or reserved in the Serial Tracker). Quietly none before
+// supabase_serial_order_reservation.sql is run (no ReservedForOrderId column yet).
+async function loadShipReservedSerials(link) {
+  shipReservedLink = link || null;
+  shipReservedSerials = [];
+  if (!shipReservedLink) return;
+  const { data, error } = await supabaseClient
+    .from('ItemSerialTracking')
+    .select('RunningSerialNo, SerialNo, ItemCode, VariantCode')
+    .eq('Status', 'RESERVED')
+    .eq('ReservedForOrderId', shipReservedLink)
+    .order('SerialNo');
+  if (error) {
+    console.warn('reserved serials:', error.message);
+    shipReservedLink = null; // search stays In Stock only
+    return;
+  }
+  shipReservedSerials = data || [];
+}
+
 // --- Serial picker modal (#shipSerialModal) ---------------------------------------------------
 // Reuses the .serial-tag-picker/.serial-tag-chip/.item-suggest-* styling and interaction pattern
 // Transfer Orders already established (js/transferOrders.js's searchAvailableSerialsForRow etc.) -
@@ -3409,8 +3442,8 @@ function renderShipSerialTagChips(picker) {
   const selected = getSelectedSerialsForShipPicker(picker);
   chipsEl.innerHTML = selected
     .map((s) => `
-      <span class="serial-tag-chip${s.isNew ? ' is-new' : ''}" data-running-serial-no="${s.runningSerialNo}" ${s.isNew ? 'title="Created and printed when the order ships"' : ''}>
-        ${s.isNew ? '&#65291; New serial' : escapeHtml(s.serialNo)}<span class="serial-tag-chip-remove" title="Remove">&times;</span>
+      <span class="serial-tag-chip${s.isNew ? ' is-new' : ''}" data-running-serial-no="${s.runningSerialNo}" ${s.isNew ? 'title="Created and printed when the order ships"' : s.isReserved ? 'title="Reserved for this order"' : ''}>
+        ${s.isNew ? '&#65291; New serial' : escapeHtml(s.serialNo)}${s.isReserved ? ' <span class="badge badge-warning" style="font-size:10px;">Reserved</span>' : ''}<span class="serial-tag-chip-remove" title="Remove">&times;</span>
       </span>
     `)
     .join('');
@@ -3443,9 +3476,10 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
 
   let query = supabaseClient
     .from('ItemSerialTracking')
-    .select('RunningSerialNo, SerialNo, ItemCode, VariantCode')
-    .eq('Status', 'IN_STOCK')
+    .select(shipReservedLink ? 'RunningSerialNo, SerialNo, ItemCode, VariantCode, Status, ReservedForOrderId' : 'RunningSerialNo, SerialNo, ItemCode, VariantCode, Status')
     .eq('ItemCode', itemCode);
+  // In Stock, plus units RESERVED for this order (another order's are dropped below).
+  query = shipReservedLink ? query.in('Status', ['IN_STOCK', 'RESERVED']) : query.eq('Status', 'IN_STOCK');
   query = variationId ? query.eq('VariantCode', variationId) : query.or('VariantCode.is.null,VariantCode.eq.');
   // Only offer serials physically at the staff member's own location - same reasoning as Transfer
   // Orders' identical restriction (searchAvailableSerialsForRow). Staff with no assigned warehouse
@@ -3471,7 +3505,8 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
 
   const selected = getSelectedSerialsForShipPicker(picker);
   const alreadySelected = new Set(selected.map((s) => s.runningSerialNo));
-  const available = (data || []).filter((s) => !alreadySelected.has(s.RunningSerialNo));
+  const available = (data || []).filter((s) => !alreadySelected.has(s.RunningSerialNo)
+    && (s.Status !== 'RESERVED' || s.ReservedForOrderId === shipReservedLink));
 
   if (available.length === 0) {
     dropdown.innerHTML = '<div class="item-suggest-empty muted">No available serials found.</div>';
@@ -3480,7 +3515,7 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
   }
 
   dropdown.innerHTML = available
-    .map((s) => `<div class="item-suggest-option" data-running-serial-no="${s.RunningSerialNo}" data-serial-no="${encodeURIComponent(s.SerialNo)}">${escapeHtml(s.SerialNo)}</div>`)
+    .map((s) => `<div class="item-suggest-option" data-running-serial-no="${s.RunningSerialNo}" data-serial-no="${encodeURIComponent(s.SerialNo)}" data-reserved="${s.Status === 'RESERVED' ? '1' : ''}">${escapeHtml(s.SerialNo)}${s.Status === 'RESERVED' ? ' <span class="badge badge-warning" style="font-size:10px;">Reserved for this order</span>' : ''}</div>`)
     .join('');
   dropdown.classList.remove('hidden');
 
@@ -3491,7 +3526,8 @@ async function searchAvailableSerialsForShipLine(lineEl, picker, searchText) {
       e.preventDefault();
       addSerialTagToShipPicker(picker, {
         runningSerialNo: Number(opt.dataset.runningSerialNo),
-        serialNo: decodeURIComponent(opt.dataset.serialNo)
+        serialNo: decodeURIComponent(opt.dataset.serialNo),
+        isReserved: opt.dataset.reserved === '1'
       });
       dropdown.classList.add('hidden');
       dropdown.innerHTML = '';
@@ -3538,14 +3574,23 @@ function renderShipSerialModal(requirements) {
     `)
     .join('');
 
+  // Units reserved for this order are pre-picked on their line (each used once).
+  const reservedPool = [...shipReservedSerials];
   container.querySelectorAll('.ship-serial-line').forEach((lineEl) => {
     const picker = lineEl.querySelector('.serial-tag-picker');
     wireShipSerialPicker(lineEl, picker);
+    const required = Math.max(0, Math.round(parseFloat(picker.dataset.required) || 0));
+    const variation = (lineEl.dataset.variationId || '').trim();
+    for (let i = reservedPool.length - 1; i >= 0 && getSelectedSerialsForShipPicker(picker).length < required; i--) {
+      const s = reservedPool[i];
+      if (s.ItemCode !== lineEl.dataset.itemCode || (s.VariantCode || '').trim() !== variation) continue;
+      reservedPool.splice(i, 1);
+      addSerialTagToShipPicker(picker, { runningSerialNo: s.RunningSerialNo, serialNo: s.SerialNo, isReserved: true });
+    }
     // Custom builds start pre-filled with "+ New serial" (see isCustomBuildItem) - removable if a
     // unit does have a serial already.
     if (shipAllowsNewSerials && isCustomBuildItem(lineEl.dataset.itemCode, lineEl.dataset.description)) {
-      const required = Math.max(0, Math.round(parseFloat(picker.dataset.required) || 0));
-      for (let i = 0; i < required; i++) addNewSerialPlaceholder(picker);
+      while (getSelectedSerialsForShipPicker(picker).length < required) addNewSerialPlaceholder(picker);
     }
   });
 }
@@ -3567,8 +3612,9 @@ let shipSerialModalResolve = null;
 
 function openShipSerialModal(requirements) {
   // Only custom builds on the order - nothing to pick, so no picker at all: every unit gets a new
-  // serial and its label prints once the status change goes through.
-  if (shipAllowsNewSerials && requirements.length && requirements.every((r) => isCustomBuildItem(r.item_code, r.description))) {
+  // serial and its label prints once the status change goes through. Not when units are reserved for
+  // the order - the picker shows them pre-picked.
+  if (shipAllowsNewSerials && !shipReservedSerials.length && requirements.length && requirements.every((r) => isCustomBuildItem(r.item_code, r.description))) {
     return Promise.resolve({
       running: [],
       fresh: requirements.map((r) => ({
@@ -3961,6 +4007,7 @@ async function handleToShipClick(orderId, toShipBtn, { readyToShip = false, from
     toShipBtn.disabled = false;
 
     if (requirements.length > 0) {
+      await loadShipReservedSerials(String(orderId));
       serialRunningNos = await openShipSerialModal(requirements);
       if (serialRunningNos === null) return; // cancelled - To Ship not sent at all
     }
@@ -7179,6 +7226,7 @@ async function collectAdvanceSerials(no) {
   // Only serials at the order's own branch (AdvanceOrders."Warehouse"); the server checks this too. An
   // order with no branch falls back to the staff member's own location, like an online To Ship.
   shipSerialWarehouse = advanceRowsByNo.get(String(no))?.warehouse || null;
+  await loadShipReservedSerials(`ADV-${no}`);
   const caption = document.querySelector('#shipSerialModal .bc-doc-caption');
   caption.textContent = `ADVANCE ORDER ${no}`;
   try {

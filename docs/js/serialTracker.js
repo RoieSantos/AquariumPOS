@@ -399,6 +399,10 @@ async function loadSerials() {
     CreatedAtUtc: r.created_at_utc,
     UpdatedAtUtc: r.updated_at_utc,
     UpdatedBy: r.updated_by,
+    // Only while RESERVED (supabase_serial_order_reservation.sql); undefined before that file is run.
+    ReservedForOrderId: r.reserved_for_order_id || null,
+    ReservedAtUtc: r.reserved_at_utc || null,
+    ReservedBy: r.reserved_by || null,
     Maker: null,
     Reprints: null
   }));
@@ -540,7 +544,9 @@ function renderSerials() {
   const sub = (text) => (text ? `<div class="muted" style="font-size:11px; line-height:1.3;">${text}</div>` : '');
   tbody.innerHTML = rows
     .map((r) => {
-      const soldTo = isAdvanceOrderLink(r.SoldOnlineOrderId)
+      const soldTo = r.Status === 'RESERVED' && r.ReservedForOrderId
+        ? `${escapeHtml(r.ReservedForOrderId)}${sub(`Reserved for ${isAdvanceOrderLink(r.ReservedForOrderId) ? 'advance' : 'online'} order`)}`
+        : isAdvanceOrderLink(r.SoldOnlineOrderId)
         ? `${escapeHtml(r.SoldOnlineOrderId)}${sub(`Advance order${r.SoldReceiptNo ? ' · ' + escapeHtml(r.SoldReceiptNo) : ''}`)}`
         : r.SoldReceiptNo
           ? `${escapeHtml(r.SoldReceiptNo)}${sub('POS receipt')}`
@@ -611,6 +617,13 @@ function updateSerialActionState() {
   setBtn('releaseSerialsBtn', canBulkFloat, bulkCount > 0);
   document.getElementById('floatSerialsLabel').textContent = `Mark Floating${countSuffix}`;
   document.getElementById('releaseSerialsLabel').textContent = `Release${countSuffix}`;
+
+  // Reserve for Order / Release Reservation: the ticked serials, else the selected row.
+  const targets = reservationTargets();
+  setBtn('reserveSerialsBtn', true, targets.some((t) => (t.Status || '').toUpperCase() === 'IN_STOCK'));
+  setBtn('unreserveSerialsBtn', canManageReservations(), targets.some((t) => (t.Status || '').toUpperCase() === 'RESERVED'));
+  document.getElementById('reserveSerialsLabel').textContent = `Reserve for Order${countSuffix}`;
+  document.getElementById('unreserveSerialsLabel').textContent = `Release Reservation${countSuffix}`;
   const selectAll = document.getElementById('selectAllSerials');
   selectAll.checked = visibleSerialNos.length > 0 && checkedSerialNos.size === visibleSerialNos.length;
   selectAll.indeterminate = checkedSerialNos.size > 0 && checkedSerialNos.size < visibleSerialNos.length;
@@ -656,6 +669,98 @@ async function bulkSetSerialStatus(status, btn) {
   await loadSerials();
 }
 
+// ---- Reserve for Order / Release Reservation (sql/supabase_serial_order_reservation.sql)
+// A reserved serial is held for one order: no picker offers it to anyone else (POS walk-ins included) and
+// that order's Ready to Ship picks it automatically. Reserve: any staff, for serials at their own
+// warehouse (the server checks); Release: Super User / Production Manager / Serial Admin.
+
+function canManageReservations() {
+  return isSuperUserSession() || isSerialAdmin || !!currentSession?.isProductionManager;
+}
+
+// The ticked rows, else the selected one.
+function reservationTargets() {
+  if (checkedSerialNos.size) return allSerials.filter((r) => checkedSerialNos.has(r.SerialNo));
+  const r = selectedSerialRow();
+  return r ? [r] : [];
+}
+
+function openReserveModal() {
+  const serials = reservationTargets().filter((r) => (r.Status || '').toUpperCase() === 'IN_STOCK').map((r) => r.SerialNo);
+  if (!serials.length) return;
+  document.getElementById('reserveSerialList').textContent = `${serials.length} In Stock serial${serials.length === 1 ? '' : 's'}: ${serials.slice(0, 8).join(', ')}${serials.length > 8 ? ` and ${serials.length - 8} more` : ''}`;
+  document.getElementById('reserveError').classList.add('hidden');
+  document.getElementById('reserveModal').classList.remove('hidden');
+  document.getElementById('reserveDocNo').focus();
+}
+
+function reservationResultText(results, verb) {
+  const changed = results.filter((x) => x.changed).length;
+  const skipped = results.filter((x) => !x.changed);
+  return `${verb}: ${changed} serial${changed === 1 ? '' : 's'}.`
+    + (skipped.length
+      ? `\n\nSkipped ${skipped.length}:\n` + skipped.slice(0, 15).map((x) => `${x.serial_no} - ${x.reason}`).join('\n')
+        + (skipped.length > 15 ? `\n...and ${skipped.length - 15} more` : '')
+      : '');
+}
+
+async function saveReserve(btn) {
+  const errorEl = document.getElementById('reserveError');
+  const docType = document.getElementById('reserveDocType').value;
+  const docNo = document.getElementById('reserveDocNo').value.trim();
+  const serials = reservationTargets().filter((r) => (r.Status || '').toUpperCase() === 'IN_STOCK').map((r) => r.SerialNo);
+  if (!docNo) {
+    errorEl.textContent = 'Enter the order no.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_reserve_serials_for_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_doc_type: docType,
+    p_doc_no: docNo,
+    p_serial_nos: serials
+  });
+  btn.disabled = false;
+  if (error) {
+    errorEl.textContent = /could not find the function|schema cache/i.test(error.message)
+      ? 'Reservations aren\'t set up yet - run sql/supabase_serial_order_reservation.sql.'
+      : error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  document.getElementById('reserveModal').classList.add('hidden');
+  document.getElementById('reserveDocNo').value = '';
+  checkedSerialNos.clear();
+  alert(reservationResultText(data || [], `Reserved for ${docType === 'advance' ? 'advance order' : 'order'} ${docNo}`));
+  await loadSerials();
+}
+
+async function releaseReservations(btn) {
+  const targets = reservationTargets().filter((r) => (r.Status || '').toUpperCase() === 'RESERVED');
+  if (!targets.length || !canManageReservations()) return;
+  const preview = targets.slice(0, 10).map((r) => `${r.SerialNo}${r.ReservedForOrderId ? ` (order ${r.ReservedForOrderId})` : ''}`).join('\n')
+    + (targets.length > 10 ? `\n...and ${targets.length - 10} more` : '');
+  if (!confirm(`Release ${targets.length} reservation${targets.length === 1 ? '' : 's'}?\n\n${preview}\n\n`
+    + 'They go back In Stock and can be sold to anyone again - the order loses its held unit.')) return;
+
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_release_serial_reservations', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_nos: targets.map((r) => r.SerialNo)
+  });
+  btn.disabled = false;
+  if (error) {
+    alert(`Could not release: ${error.message}`);
+    return;
+  }
+  checkedSerialNos.clear();
+  alert(reservationResultText(data || [], 'Released'));
+  await loadSerials();
+}
+
 function wireSerialListActions() {
   const tbody = document.getElementById('serialTableBody');
   tbody.addEventListener('click', (event) => {
@@ -697,6 +802,10 @@ function wireSerialListActions() {
   });
   document.getElementById('markInStockBtn').addEventListener('click', () => selectedSerialNo && markInStock(selectedSerialNo));
   document.getElementById('markSoldBtn').addEventListener('click', () => selectedSerialNo && markSold(selectedSerialNo));
+  document.getElementById('reserveSerialsBtn').addEventListener('click', openReserveModal);
+  document.getElementById('unreserveSerialsBtn').addEventListener('click', (e) => releaseReservations(e.currentTarget));
+  document.getElementById('closeReserveBtn').addEventListener('click', () => document.getElementById('reserveModal').classList.add('hidden'));
+  document.getElementById('saveReserveBtn').addEventListener('click', (e) => saveReserve(e.currentTarget));
   document.getElementById('floatSerialsBtn').addEventListener('click', (e) => bulkSetSerialStatus('FLOATING', e.currentTarget));
   document.getElementById('releaseSerialsBtn').addEventListener('click', (e) => bulkSetSerialStatus('IN_STOCK', e.currentTarget));
   document.getElementById('selectAllSerials').addEventListener('change', (e) => {
@@ -732,6 +841,9 @@ function openSerialCard(serialNo) {
       ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Advance order${r.SoldReceiptNo ? ', receipt ' + escapeHtml(r.SoldReceiptNo) : ''})</span>`
       : r.SoldReceiptNo ? `${escapeHtml(r.SoldReceiptNo)} <span class="muted">(POS receipt)</span>`
       : r.SoldOnlineOrderId ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Online order)</span>` : ''),
+    ...(r.Status === 'RESERVED' ? [field('Reserved For', r.ReservedForOrderId
+      ? `${escapeHtml(r.ReservedForOrderId)} <span class="muted">(${isAdvanceOrderLink(r.ReservedForOrderId) ? 'Advance' : 'Online'} order${r.ReservedAtUtc ? `, since ${escapeHtml(formatDateTime(r.ReservedAtUtc))}` : ''}${r.ReservedBy ? ` by ${escapeHtml(r.ReservedBy)}` : ''})</span>`
+      : '')] : []),
     field('Created', escapeHtml(formatDateTime(r.CreatedAtUtc))),
     field('Last Updated', `${escapeHtml(formatDateTime(r.UpdatedAtUtc))}${r.UpdatedBy ? ` <span class="muted">by ${escapeHtml(r.UpdatedBy)}</span>` : ''}`),
     field('Label Reprints', p && p.reprint_count ? `${p.reprint_count}&times; <span class="muted">(last ${escapeHtml(formatDateTime(p.last_reprinted_at))}${p.last_reprinted_by ? ` by ${escapeHtml(p.last_reprinted_by)}` : ''})</span>` : '')
@@ -858,6 +970,7 @@ function isSuperUserSession() {
 function canMarkInStock(r) {
   const statusUpper = (r.Status || '').toUpperCase();
   if (statusUpper === 'IN_STOCK') return false;
+  if (statusUpper === 'RESERVED') return false; // Release Reservation instead
   if (statusUpper === 'SOLD') return isSuperUserSession();
   return isSerialAdmin && isOwnWarehouseLocation(r.Location);
 }

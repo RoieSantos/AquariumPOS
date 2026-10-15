@@ -29,6 +29,8 @@
     <symbol id="ico-pin" viewBox="0 0 16 16"><path d="M8 14.5s-4.5-4.6-4.5-8a4.5 4.5 0 0 1 9 0c0 3.4-4.5 8-4.5 8z"/><circle cx="8" cy="6.5" r="1.6"/></symbol>
     <symbol id="ico-float" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M5.5 8h5"/></symbol>
     <symbol id="ico-sold" viewBox="0 0 16 16"><path d="M2.5 8.6 7.4 13.5 13.5 7.4V2.5H8.6z"/><circle cx="10.6" cy="5.4" r="1"/></symbol>
+    <symbol id="ico-lock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></symbol>
+    <symbol id="ico-unlock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7"/></symbol>
   </svg>
 
   <!-- Business Central list page (css/bc-list.css) - same shell as Online Orders, per "make the serial
@@ -67,6 +69,11 @@
            supabase_serial_bulk_floating.sql. Floating = can't be sold; Release puts them back In Stock. -->
       <button class="bc-cmd hidden" id="floatSerialsBtn" type="button" disabled title="Mark the ticked serials Floating so they can't be sold (Sold / In Transit ones are skipped)"><svg class="bc-ico"><use href="#ico-float"/></svg><span id="floatSerialsLabel">Mark Floating</span></button>
       <button class="bc-cmd hidden" id="releaseSerialsBtn" type="button" disabled title="Put the ticked Floating serials back In Stock"><svg class="bc-ico"><use href="#ico-done"/></svg><span id="releaseSerialsLabel">Release</span></button>
+      <!-- Hold In Stock serials for one order so nobody else (POS walk-ins included) can pick them -
+           supabase_serial_order_reservation.sql. Reserve: staff at the serial's warehouse; Release
+           Reservation: Super User / Production Manager / Serial Admin. -->
+      <button class="bc-cmd" id="reserveSerialsBtn" type="button" disabled title="Hold the ticked / selected In Stock serials for one order"><svg class="bc-ico"><use href="#ico-lock"/></svg><span id="reserveSerialsLabel">Reserve for Order</span></button>
+      <button class="bc-cmd hidden" id="unreserveSerialsBtn" type="button" disabled title="Put the ticked / selected Reserved serials back In Stock"><svg class="bc-ico"><use href="#ico-unlock"/></svg><span id="unreserveSerialsLabel">Release Reservation</span></button>
       <span class="bc-cmd-sep" id="adminCmdSep"></span>
       <button class="bc-cmd" id="refreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
       <a class="bc-cmd" href="inventory-summary.html"><svg class="bc-ico"><use href="#ico-list"/></svg>Inventory Summary</a>
@@ -196,6 +203,35 @@
     </div>
   </div>
 
+  <!-- Reserve for Order (js/serialTracker.js reserveSerials) -->
+  <div id="reserveModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="toolbar">
+        <h2 style="margin:0;">Reserve for Order</h2>
+        <button class="btn btn-secondary btn-sm" id="closeReserveBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <p class="muted" id="reserveSerialList" style="margin:0 0 12px;"></p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="reserveDocType">Order type</label>
+          <select id="reserveDocType">
+            <option value="online">Online / Walk-in order</option>
+            <option value="advance">Advance order</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="reserveDocNo">Order no.</label>
+          <input type="text" id="reserveDocNo" autocomplete="off" placeholder="e.g. 105852, AO-00040 or the advance Transaction No." />
+        </div>
+      </div>
+      <p class="muted" style="margin:12px 0 0; font-size:12px;">Reserved units can't be picked by anyone else - POS walk-in sales included - until that order ships, is cancelled, or the reservation is released. Its Ready to Ship picks them automatically.</p>
+      <div id="reserveError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveReserveBtn" type="button">Reserve</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Read-only Transfer Order preview - opened from the Source Doc. column, in-place so Serial
        Tracker stays the active tab instead of navigating away to transfer-orders.html /
        posted-transfer-orders.html. -->
@@ -259,7 +295,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/serialTracker.js?v=bc10"></script>
+  <script src="js/serialTracker.js?v=reserve1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
