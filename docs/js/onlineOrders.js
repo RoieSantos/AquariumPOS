@@ -7218,6 +7218,45 @@ function advanceRowsHtml(rows) {
     </tr>`).join('');
 }
 
+// Phone view of the Advance Orders tab (#advancePhoneCards) - same card look as the Online list's
+// (orderPhoneCardsHtml). Tap opens the Advance Order document, which carries the stage actions.
+function advancePhoneCardsHtml(rows) {
+  return rows.map((o) => {
+    const no = escapeHtml(o.transaction_no || '');
+    const status = advanceStatus(o);
+    const tone = status === 'New' ? 'todo' : phoneStatusTone(status);
+    const balance = Number(o.balance) || 0;
+    const parts = ADVANCE_PARTS
+      .filter((p) => o[`needs_${p}`] || o[`${p}_maker`])
+      .map((p) => {
+        const who = advanceMakerName(o, p);
+        const done = !!o[`${p}_done_at`];
+        return `<span class="oo-pc-part${done ? ' done' : ''}${who ? '' : ' none'}"><b>${p === 'tank' ? 'Tank' : 'Stand'}</b> ${escapeHtml(who || 'Not assigned')}${done ? ' &#10003;' : ''}</span>`;
+      }).join('');
+    const flags = advanceFlagsHtml(o);
+    const when = [o.order_date, formatTime12(o.order_time)].filter(Boolean).join(' · ');
+    return `
+      <article class="oo-pc tone-${tone}" data-open-advance="${no}" role="button" tabindex="0" aria-label="Open advance order ${no}">
+        <header class="oo-pc-head">
+          <span class="oo-pc-id">${no}</span>
+          <span class="oo-pc-status">${escapeHtml(status)}</span>
+          <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
+        </header>
+        <div class="oo-pc-customer">${escapeHtml(o.customer_name || 'No name on order')}</div>
+        <div class="oo-pc-meta">${escapeHtml(when)}${o.warehouse ? ` · ${escapeHtml(o.warehouse)}` : ''}${o.receipt_no ? ` · Receipt ${escapeHtml(o.receipt_no)}` : ''}</div>
+        ${o.shipped_at ? `<div class="oo-pc-due"><span class="oo-eta"><b>${dispatchDateHtml(o.shipped_at)}</b> <i>dispatched</i></span></div>` : ''}
+        ${flags ? `<div class="oo-pc-badges">${flags}</div>` : ''}
+        ${parts ? `<div class="oo-pc-parts">${parts}</div>` : ''}
+        <div class="oo-pc-pay">
+          <div><span>Net</span><b>${phonePeso(o.net_amount)}</b></div>
+          <div><span>Down</span><b>${phonePeso(o.downpayment)}</b></div>
+          <div class="${o.fully_paid || balance <= 0.005 ? 'clear' : 'due'}"><span>Balance</span><b>${o.fully_paid || balance <= 0.005 ? 'Paid' : phonePeso(balance)}</b></div>
+        </div>
+        ${o.order_description ? `<div class="oo-pc-note">${escapeHtml(o.order_description)}</div>` : ''}
+      </article>`;
+  }).join('');
+}
+
 function selectAdvanceRow(transactionNo) {
   selectedAdvanceNo = transactionNo ? String(transactionNo) : null;
   document.querySelectorAll('#advanceTableBody tr[data-advance-no]').forEach((tr) => {
@@ -7275,7 +7314,9 @@ function updateAdvanceListActions() {
 
 async function loadAdvanceOrders() {
   const tbody = document.getElementById('advanceTableBody');
+  const phoneCards = document.getElementById('advancePhoneCards');
   tbody.innerHTML = '<tr><td colspan="19" class="cell-msg">Loading...</td></tr>';
+  phoneCards.innerHTML = '<div class="oo-mc-empty">Loading...</div>';
   const thisGeneration = ++advanceLoadGeneration;
 
   const { data, error } = advanceStatusFilter === ADVANCE_TO_FOLLOW_FILTER
@@ -7295,6 +7336,7 @@ async function loadAdvanceOrders() {
 
   if (error) {
     tbody.innerHTML = `<tr><td colspan="19" class="cell-msg error-text">${escapeHtml(error.message)}${/function|schema cache/i.test(error.message) ? ' - run sql/supabase_advance_orders_drop_old_list_overload.sql (or sql/supabase_online_orders_list_sort.sql if the function is missing).' : ''}</td></tr>`;
+    phoneCards.innerHTML = `<div class="oo-mc-empty error-text">${escapeHtml(error.message)}</div>`;
     return;
   }
 
@@ -7303,6 +7345,9 @@ async function loadAdvanceOrders() {
   tbody.innerHTML = !data || data.length === 0
     ? `<tr><td colspan="19" class="cell-msg">No advance orders found${advanceStatusFilter ? ` in ${escapeHtml(advanceStatusFilter)}` : ''}.</td></tr>`
     : advanceRowsHtml(data);
+  phoneCards.innerHTML = !data || data.length === 0
+    ? `<div class="oo-mc-empty">No advance orders found${advanceStatusFilter ? ` in ${escapeHtml(advanceStatusFilter)}` : ''}.</div>`
+    : advancePhoneCardsHtml(data);
   updateAdvanceListActions();
   showListSerials('advance', selectedAdvanceNo, true); // re-read - e.g. serials just tagged at Ready to Ship
 
@@ -7883,6 +7928,20 @@ function wireAdvanceCard() {
   tbody.addEventListener('dblclick', (event) => {
     const tr = event.target.closest('tr[data-advance-no]');
     if (tr && !event.target.closest('a')) openAdvanceCard(tr.dataset.advanceNo);
+  });
+  // Phone cards: the whole card opens the advance order.
+  const phoneCards = document.getElementById('advancePhoneCards');
+  const openPhoneCard = (card) => { selectAdvanceRow(card.dataset.openAdvance); openAdvanceCard(card.dataset.openAdvance); };
+  phoneCards.addEventListener('click', (event) => {
+    if (event.target.closest('a')) return;
+    const card = event.target.closest('.oo-pc[data-open-advance]');
+    if (card) openPhoneCard(card);
+  });
+  phoneCards.addEventListener('keydown', (event) => {
+    const card = event.target.closest('.oo-pc[data-open-advance]');
+    if (!card || event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    openPhoneCard(card);
   });
 
   document.getElementById('advanceStatusBar').addEventListener('click', (event) => {

@@ -3262,4 +3262,21 @@ a.bc-cue:hover {
   .bc-doc .bc-cmdbar::-webkit-scrollbar { display: none; }
   #orderCardModal .oc-line-cards { display: grid; gap: 10px; }
   #orderCardModal .line-items-wrap { display: none; }
+
+  /* New and Advance Orders tabs: the same cards; their Confirm / Cancel and stage actions are on the
+     dialog / document a card opens, so the row-selection buttons go. */
+  :is(#newOrdersView, #advanceOrdersView) .oo-phone-cards { display: grid; gap: 10px; margin-top: 10px; }
+  :is(#newOrdersView, #advanceOrdersView) .bc-grid-wrap { display: none; }
+  #orderCmdbar :is(#newOpenBtn, #newConfirmBtn, #newCancelBtn, #advOpenBtn, #advAssignBtn, #advNextBtn,
+    #advSendBackBtn, #advStepBackBtn, .bc-cmd-sep) { display: none !important; }
+
+  /* New order detail: full screen, the Confirm / Cancel footer pinned at the bottom. */
+  #newOrderDialog { padding: 0; align-items: stretch; }
+  #newOrderDialog .bc-dialog { width: 100%; max-width: none !important; height: 100%; max-height: none; margin: 0; border-radius: 0; display: flex; flex-direction: column; }
+  #newOrderDialog .bc-dialog-body { flex: 1 1 auto; overflow-y: auto; }
+  #newOrderDialog .bc-dialog-foot { flex-wrap: wrap; gap: 8px; }
+  #newOrderDialog .bc-dialog-foot .bc-btn { flex: 1 1 calc(50% - 8px); min-height: 44px; }
+  #newOrderDialog .no-info-grid, #newOrderDialog .no-edit-grid { grid-template-columns: minmax(0, 1fr); }
 }
+.oo-pc-items { margin-top: 8px; font-size: 13.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.oo-pc-tel { color: var(--bc-link, #1560a8); font-weight: 600; text-decoration: none; white-space: nowrap; }

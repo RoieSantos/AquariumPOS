@@ -70,6 +70,20 @@ function initNewOrdersTab(eligible) {
     const row = event.target.closest('tr[data-new-order]');
     if (row) openNewOrderDialog(row.dataset.newOrder);
   });
+  // Phone cards: the whole card opens the order; the tel: link keeps its own tap.
+  const phoneCards = document.getElementById('newOrderPhoneCards');
+  const openPhoneCard = (card) => { selectNewOrderRow(card.dataset.openNew); openNewOrderDialog(card.dataset.openNew); };
+  phoneCards.addEventListener('click', (event) => {
+    if (event.target.closest('a')) return;
+    const card = event.target.closest('.oo-pc[data-open-new]');
+    if (card) openPhoneCard(card);
+  });
+  phoneCards.addEventListener('keydown', (event) => {
+    const card = event.target.closest('.oo-pc[data-open-new]');
+    if (!card || event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    openPhoneCard(card);
+  });
 
   document.getElementById('newOpenBtn').addEventListener('click', () => selectedNewOrderNo && openNewOrderDialog(selectedNewOrderNo));
   document.getElementById('newConfirmBtn').addEventListener('click', () => selectedNewOrderNo && confirmNewOrder(selectedNewOrderNo));
@@ -171,6 +185,7 @@ async function loadNewOrders() {
       ? 'The New tab isn\'t set up in the database yet - run sql/supabase_online_orders_new_tab.sql.'
       : error.message;
     body.innerHTML = `<tr><td colspan="11" class="cell-msg error-text">${escapeHtml(msg)}</td></tr>`;
+    document.getElementById('newOrderPhoneCards').innerHTML = `<div class="oo-mc-empty error-text">${escapeHtml(msg)}</div>`;
     return;
   }
 
@@ -199,6 +214,9 @@ async function loadNewOrders() {
           <td class="num">${newOrderMoney(balance)}</td>
         </tr>`;
     }).join('');
+  document.getElementById('newOrderPhoneCards').innerHTML = rows.length === 0
+    ? '<div class="oo-mc-empty">No new orders waiting to be confirmed.</div>'
+    : newOrderPhoneCardsHtml(rows);
   updateNewOrderActions();
 
   renderPaginationBar(
@@ -209,6 +227,38 @@ async function loadNewOrders() {
       onPageSizeChange: (size) => { newOrdersPageSize = size; newOrdersPage = 1; loadNewOrders(); }
     }
   );
+}
+
+// Phone view of the New tab (#newOrderPhoneCards) - same card look as the Online list's
+// (onlineOrders.js orderPhoneCardsHtml). Tap opens the order, where Confirm / Cancel live; the phone
+// number is a tap-to-call link.
+function newOrderPhoneCardsHtml(rows) {
+  return rows.map((o) => {
+    const no = escapeHtml(o.order_no);
+    const balance = Number(o.estimated_total || 0) - Number(o.amount_paid || 0);
+    const phone = (o.customer_phone || '').trim();
+    return `
+      <article class="oo-pc tone-todo" data-open-new="${no}" role="button" tabindex="0" aria-label="Open order ${no}">
+        <header class="oo-pc-head">
+          <span class="oo-pc-id">${no}</span>
+          <span class="oo-pc-status">New</span>
+          <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
+        </header>
+        <div class="oo-pc-customer">${escapeHtml(o.customer_name || 'No name on order')}</div>
+        <div class="oo-pc-meta">${escapeHtml(newOrderDate(o.created_at_utc))}${o.created_by ? ` · by ${escapeHtml(o.created_by)}` : ''}</div>
+        <div class="oo-pc-due">
+          <span class="oo-pc-handover">${/deliver/i.test(o.fulfillment_type || '') ? '&#128666;' : '&#127978;'} ${escapeHtml(o.fulfillment_type || '-')}</span>
+          ${o.location ? `<span>${escapeHtml(o.location)}</span>` : ''}
+          ${phone ? `<a class="oo-pc-tel" href="tel:${escapeHtml(phone.replace(/[^\d+]/g, ''))}">&#128222; ${escapeHtml(phone)}</a>` : ''}
+        </div>
+        ${o.items_summary ? `<div class="oo-pc-items">${escapeHtml(o.items_summary)}</div>` : ''}
+        <div class="oo-pc-pay">
+          <div><span>Total</span><b>${phonePeso(o.estimated_total)}</b></div>
+          <div><span>Paid</span><b>${phonePeso(o.amount_paid)}</b></div>
+          <div class="${balance > 0.005 ? 'due' : 'clear'}"><span>Balance</span><b>${balance > 0.005 ? phonePeso(balance) : 'Paid'}</b></div>
+        </div>
+      </article>`;
+  }).join('');
 }
 
 function selectNewOrderRow(orderNo) {
