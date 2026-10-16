@@ -25,6 +25,11 @@ function allStaffLinks(activeLabel) {
 // Renders the shared top navigation bar into <div id="topnav"></div>.
 // Requires: auth.js to be loaded first (for wireLogoutButton, getPortalSession).
 function renderTopNav(activeLabel) {
+  renderTopNavLinks(activeLabel);
+  mountTellMe();
+}
+
+function renderTopNavLinks(activeLabel) {
   const nav = document.getElementById('topnav');
   if (!nav) return;
 
@@ -379,6 +384,234 @@ function renderTopNav(activeLabel) {
       groupEl.querySelector('.topnav-group-toggle').setAttribute('aria-expanded', 'false');
     });
   });
+}
+
+// "Tell Me" page search, like Business Central's Alt+Q - per "can you let the user search a module..
+// same like business central". The search button + Alt+Q / Ctrl+K open a dialog that filters the
+// pages in the nav renderTopNavLinks just drew, so each role only ever finds the pages it can open
+// (no second permission list to keep in sync). Extra search words per page live in TELL_ME_KEYWORDS.
+const TELL_ME_KEYWORDS = {
+  'dashboard.html': 'home start main',
+  'my-payslips.html': 'salary pay slip payslip wages',
+  'transfer-orders.html': 'to move stock branch location transfer',
+  'posted-transfer-orders.html': 'to history transfer posted',
+  'online-orders.html': 'sales so customer order facebook messenger new assignments',
+  'advance-orders.html': 'reservation deposit',
+  'delivery.html': 'calendar schedule driver dispatch',
+  'delivery-quote.html': 'shipping fee rate',
+  'delivery-setup.html': 'shipping zones rates driver',
+  'stand-calculator.html': 'price quote cabinet',
+  'aquarium-calculator.html': 'price quote tank glass custom',
+  'repair-calculator.html': 'price quote fix leak',
+  'sticker-calculator.html': 'price quote decal',
+  'glass-cut-list.html': 'cutting glass panes',
+  'serial-tracker.html': 'serial number sn unit',
+  'inventory-summary.html': 'stock qty quantity available',
+  'stock-on-hand.html': 'stock qty quantity inventory available',
+  'shelf-map.html': 'bin rack location where',
+  'purchase-orders.html': 'po buy supplier vendor receive',
+  'posted-purchase-orders.html': 'po received history receipt',
+  'physical-inventory-journal.html': 'count stocktake adjust phys',
+  'defect-items.html': 'damaged broken return',
+  'item-ledger-entries.html': 'ile movements history stock',
+  'warehouse-setup.html': 'location branch store',
+  'item-setup.html': 'product items price card',
+  'variant-setup.html': 'size color option',
+  'category-setup.html': 'item group',
+  'vendor-setup.html': 'supplier',
+  'production-orders.html': 'build make tank stand finished',
+  'production-shelf-map.html': 'built units bin rack',
+  'maker-assignments.html': 'tank maker stand maker jobs',
+  'serial-inventory-journal.html': 'count serial stocktake',
+  'reports.html': 'sales report',
+  'top-selling-items.html': 'best sellers sales',
+  'sealant-sales-report.html': 'silicone black clear',
+  'category-sales-report.html': 'sales by category',
+  'customer-aquarium.html': 'customer tanks',
+  'order-timing-dashboard.html': 'speed turnaround',
+  'message-timing.html': 'reply response time',
+  'expense-entries.html': 'spending costs',
+  'expense-journal.html': 'spending costs post',
+  'business-bills.html': 'rent utilities bir sss dues',
+  'owner-funds.html': 'capital drawings loan',
+  'spending-report.html': 'purchases expenses costs',
+  'gl-entries.html': 'gl accounting ledger finance',
+  'payment-method-report.html': 'gcash cash bank collections',
+  'general-setup.html': 'settings company config',
+  'ai-bot-setup.html': 'alice chatbot',
+  'gma-conversations.html': 'messages inbox chat messenger',
+  'customers.html': 'contacts clients',
+  'ai-bot-sandbox.html': 'alice chatbot test',
+  'facebook-post-test.html': 'fb social',
+  'quick-post.html': 'facebook fb photo social',
+  'pricing-setup.html': 'prices rates',
+  'payment-methods.html': 'gcash cash bank tender',
+  'gl-setup.html': 'accounts chart accounting',
+  'user-setup.html': 'staff employees permissions accounts login',
+  'payroll.html': 'salary wages',
+  'payroll-setup.html': 'salary rates employees',
+  'payroll-timesheets.html': 'attendance hours time',
+  'payroll-ledger.html': 'salary history',
+  'payroll-spending-report.html': 'salary cost'
+};
+
+let tellMeEntries = [];
+
+function tellMeEscape(text) {
+  return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function tellMeRecent() {
+  try { return JSON.parse(localStorage.getItem('tellMeRecent') || '[]'); } catch (_) { return []; }
+}
+
+function tellMeRemember(href) {
+  try {
+    const list = [href].concat(tellMeRecent().filter((h) => h !== href)).slice(0, 5);
+    localStorage.setItem('tellMeRecent', JSON.stringify(list));
+  } catch (_) { /* private window - no recents, search still works */ }
+}
+
+function mountTellMe() {
+  const nav = document.getElementById('topnav');
+  const inner = nav && nav.querySelector('.topnav-inner');
+  if (!inner) return;
+
+  // Every link the nav drew for this user, with its menu group as the category.
+  const seen = new Set();
+  tellMeEntries = [];
+  inner.querySelectorAll('a.topnav-link').forEach((a) => {
+    const href = a.getAttribute('href');
+    if (!href || seen.has(href)) return;
+    seen.add(href);
+    const groupBtn = a.closest('.topnav-group')?.querySelector('.topnav-group-toggle');
+    const group = groupBtn ? groupBtn.firstChild.textContent.trim() : '';
+    const label = a.textContent.trim();
+    const keywords = TELL_ME_KEYWORDS[href.split('?')[0]] || '';
+    tellMeEntries.push({ href, label, group, haystack: `${label} ${group} ${keywords}`.toLowerCase() });
+  });
+  if (!tellMeEntries.length) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'topnav-search';
+  btn.title = 'Search pages (Alt+Q)';
+  btn.setAttribute('aria-label', 'Search pages');
+  btn.innerHTML = '<span aria-hidden="true">&#128269;</span><span class="topnav-search-label">Search</span><kbd>Alt+Q</kbd>';
+  btn.addEventListener('click', openTellMe);
+  inner.insertBefore(btn, inner.querySelector('.topnav-toggle') || inner.querySelector('.topnav-links'));
+
+  if (!window.__tellMeKeys) {
+    window.__tellMeKeys = true;
+    document.addEventListener('keydown', (event) => {
+      const altQ = event.altKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyQ';
+      const ctrlK = (event.ctrlKey || event.metaKey) && !event.altKey && event.code === 'KeyK';
+      if (!altQ && !ctrlK) return;
+      event.preventDefault();
+      openTellMe();
+    });
+  }
+}
+
+// Every query word must appear somewhere in the label / group / keywords (BC-style); a hit in the
+// page name itself ranks above a keyword-only hit.
+function tellMeSearch(query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) {
+    const recent = tellMeRecent();
+    const recentEntries = recent.map((h) => tellMeEntries.find((e) => e.href === h)).filter(Boolean);
+    return { recent: recentEntries, results: tellMeEntries.filter((e) => !recentEntries.includes(e)) };
+  }
+  const scored = [];
+  tellMeEntries.forEach((entry, index) => {
+    if (!words.every((w) => entry.haystack.includes(w))) return;
+    const label = entry.label.toLowerCase();
+    const initials = label.split(/[^a-z0-9]+/).filter(Boolean).map((p) => p[0]).join('');
+    let score = 0;
+    words.forEach((w) => {
+      if (w.length > 1 && w === initials) score += 40; // "po" -> Purchase Orders, "ile" -> Item Ledger Entries
+      else if (label.startsWith(w)) score += 30;
+      else if (new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(label)) score += 20;
+      else if (label.includes(w)) score += 10;
+    });
+    scored.push({ entry, score, index });
+  });
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
+  return { recent: [], results: scored.map((s) => s.entry) };
+}
+
+function openTellMe() {
+  let backdrop = document.getElementById('tellMeBackdrop');
+  if (backdrop) {
+    backdrop.querySelector('input').select();
+    return;
+  }
+
+  backdrop = document.createElement('div');
+  backdrop.id = 'tellMeBackdrop';
+  backdrop.className = 'tellme-backdrop';
+  backdrop.innerHTML = `
+    <div class="tellme-panel" role="dialog" aria-label="Tell me what you want to do">
+      <input type="text" class="tellme-input" placeholder="Tell me what you want to do" autocomplete="off" spellcheck="false" />
+      <div class="tellme-results" role="listbox"></div>
+      <div class="tellme-hint"><kbd>&uarr;</kbd><kbd>&darr;</kbd> to move &middot; <kbd>Enter</kbd> to open &middot; <kbd>Esc</kbd> to close</div>
+    </div>`;
+  document.body.appendChild(backdrop);
+
+  const input = backdrop.querySelector('.tellme-input');
+  const resultsEl = backdrop.querySelector('.tellme-results');
+  let shown = [];
+  let selected = 0;
+
+  const close = () => backdrop.remove();
+  const go = (entry, newTab) => {
+    if (!entry) return;
+    tellMeRemember(entry.href);
+    if (newTab) { window.open(entry.href, '_blank'); close(); }
+    else location.href = entry.href;
+  };
+
+  const row = (entry, i) => `
+    <a class="tellme-row${i === selected ? ' selected' : ''}" href="${tellMeEscape(entry.href)}" data-index="${i}" role="option">
+      <span class="tellme-row-label">${tellMeEscape(entry.label)}</span>
+      <span class="tellme-row-group">${tellMeEscape(entry.group)}</span>
+    </a>`;
+
+  function render() {
+    const { recent, results } = tellMeSearch(input.value);
+    shown = recent.concat(results);
+    if (selected >= shown.length) selected = Math.max(0, shown.length - 1);
+    let html = '';
+    if (recent.length) {
+      html += '<div class="tellme-heading">Recent</div>' + recent.map((e, i) => row(e, i)).join('');
+    }
+    if (results.length) {
+      html += `<div class="tellme-heading">${input.value.trim() ? 'Go to Pages' : 'All Pages'}</div>`
+        + results.map((e, i) => row(e, i + recent.length)).join('');
+    }
+    resultsEl.innerHTML = html || '<div class="tellme-empty">No pages match. Try another word.</div>';
+    const sel = resultsEl.querySelector('.tellme-row.selected');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+
+  input.addEventListener('input', () => { selected = 0; render(); });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') { event.preventDefault(); selected = Math.min(selected + 1, shown.length - 1); render(); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); selected = Math.max(selected - 1, 0); render(); }
+    else if (event.key === 'Enter') { event.preventDefault(); go(shown[selected], event.ctrlKey || event.metaKey); }
+    else if (event.key === 'Escape') { event.preventDefault(); close(); }
+  });
+  resultsEl.addEventListener('click', (event) => {
+    const a = event.target.closest('.tellme-row');
+    if (!a) return;
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1) return; // browser new tab
+    event.preventDefault();
+    go(shown[Number(a.dataset.index)], false);
+  });
+  backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) close(); });
+
+  render();
+  input.focus();
 }
 
 // Lazy-loads js/chat.js on first call rather than requiring every page's <script> list to include

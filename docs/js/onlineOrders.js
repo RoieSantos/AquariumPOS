@@ -7840,8 +7840,9 @@ async function collectAdvanceSerials(no) {
   const requirements = (data || []).filter((r) => (r.quantity_needed || 0) > 0);
   if (!requirements.length) return { running: [], fresh: [] };
 
-  // Only production creates serials (the server checks this too); a Super User can anywhere.
-  shipAllowsNewSerials = !!(currentSession.isSuperUser || currentSessionIsProductionWarehouse);
+  // Only production creates serials (the server checks this too); a Super User or Production Manager can
+  // anywhere (supabase_advance_order_new_serials_production_manager.sql).
+  shipAllowsNewSerials = !!(currentSession.isSuperUser || currentSession.isProductionManager || currentSessionIsProductionWarehouse);
   // Only serials at the order's own branch (AdvanceOrders."Warehouse"); the server checks this too. An
   // order with no branch falls back to the staff member's own location, like an online To Ship.
   shipSerialWarehouse = advanceRowsByNo.get(String(no))?.warehouse || null;

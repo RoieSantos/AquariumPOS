@@ -5435,6 +5435,19 @@ WHERE ISNULL(SentToOnline,0) = 0
                         if (root.TryGetProperty("success", out var ok) && ok.ValueKind == JsonValueKind.False)
                             issues.Add("Pancake says success=false (variation not found?): " + (body.Length > 200 ? body.Substring(0, 200) : body));
 
+                        // RS-0000002739: Pancake answers {"data":null,"success":true} for an id it has no
+                        // variation for - seen when the POS item holds the Pancake PRODUCT id (Items.VariationId
+                        // = ProductId) instead of the variation id. Previously fell through to the misleading
+                        // "no warehouse inventory" message below.
+                        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var dataNode) && dataNode.ValueKind == JsonValueKind.Null)
+                        {
+                            issues.Add($"Pancake has NO variation with id {variationId} - the POS item holds a wrong/stale id (often the PRODUCT id instead of the variation id). Re-sync items from Pancake or fix Items/Variant.VariationId.");
+                            problems++;
+                            sb.AppendLine("<< PROBLEM");
+                            foreach (var issue in issues) sb.AppendLine("      - " + issue);
+                            continue;
+                        }
+
                         // Any true is_* flag (is_hidden, is_removed, is_locked, ...) on the variation or its product.
                         void CollectFlags(JsonElement obj, string prefix)
                         {
@@ -8626,8 +8639,11 @@ END", conn, tx);
                         if (string.IsNullOrWhiteSpace(productId))
                             productId = getString(product, new[] { "product_id", "productId", "ProductId", "id", "ID" }).Trim();
 
+                        // custom_id first: on /products rows display_id is Pancake's internal running
+                        // number (966) and custom_id the real code (A-083) - reading display_id created the
+                        // numeric duplicate items behind RS-0000002739.
                         if (string.IsNullOrWhiteSpace(productDisplayId))
-                            productDisplayId = getString(product, new[] { "display_id", "displayId", "product_display_id", "productDisplayId", "product_display", "product_code", "code" }).Trim();
+                            productDisplayId = getString(product, new[] { "custom_id", "customId", "display_id", "displayId", "product_display_id", "productDisplayId", "product_display", "product_code", "code" }).Trim();
 
                         if (string.IsNullOrWhiteSpace(sku))
                             sku = getString(product, new[] { "sku", "SKU" }).Trim();
@@ -8722,6 +8738,11 @@ END", conn, tx);
                             if (variation.ValueKind != JsonValueKind.Object) continue;
                             AddMapping(variation, item, mappings, seen, getString);
                         }
+
+                        // A row with nested variations is a PRODUCT - its "id" is the product id, not a
+                        // variation id. Mapping it flat as well overwrote Items.VariationId with the
+                        // product id (Pancake answers data:null for it -> 500 on every order).
+                        continue;
                     }
 
                     // Also support flat variation rows.
