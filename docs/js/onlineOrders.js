@@ -7450,7 +7450,9 @@ async function loadAdvanceCardLines(transactionNo) {
   // Stock FactBox (js/itemStockFactbox.js) - each line's on-hand, the badge at the order's warehouse.
   ItemStockFactbox.setFulfilled(document.getElementById('advanceCardStockPart'), transactionNo,
     advanceFulfilledStatus(advanceRowsByNo.get(String(transactionNo))));
-  ItemStockFactbox.load(document.getElementById('advanceCardStockPart'), (data || []).map((l) => ({
+  // POS PAYMENT lines (CASH, GCASH...) are money received, not goods - kept out of the FactBox and totals.
+  const isPaymentLine = (l) => (l.type || '').toUpperCase() === 'PAYMENT';
+  ItemStockFactbox.load(document.getElementById('advanceCardStockPart'), (data || []).filter((l) => !isPaymentLine(l)).map((l) => ({
     item_code: l.item_no,
     label: l.description,
     warehouse: advanceRowsByNo.get(String(transactionNo))?.warehouse
@@ -7477,10 +7479,10 @@ async function loadAdvanceCardLines(transactionNo) {
 
   const canChange = canChangeAdvanceOrderLineItem(advanceRowsByNo.get(String(transactionNo)));
   tbody.innerHTML = lines.map((l) => `
-    <tr>
+    <tr${isPaymentLine(l) ? ' class="muted" title="Payment received - not counted in the line totals"' : ''}>
       <td>${escapeHtml(l.line_no ?? '')}</td>
       <td>${escapeHtml(l.type || '')}</td>
-      <td>${escapeHtml(l.item_no || '')}</td>
+      <td${l.category && l.category !== l.item_no ? ` title="POS category: ${escapeHtml(l.category)}"` : ''}>${escapeHtml(l.item_no || '')}</td>
       <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}${serialTagHtml(l.line_no)}${canChange && (l.type || '').toUpperCase() === 'ITEM' ? changeItemLinkHtml(l.line_no) : ''}</td>
       <td class="num">${l.quantity ?? ''}</td>
       <td class="num">${formatAdvanceMoney(l.price)}</td>
@@ -7489,7 +7491,8 @@ async function loadAdvanceCardLines(transactionNo) {
       <td class="num">${formatAdvanceMoney(l.net_amount)}</td>
     </tr>`).join('');
 
-  const sum = (key) => lines.reduce((total, l) => total + (Number(l[key]) || 0), 0);
+  const goodsLines = lines.filter((l) => !isPaymentLine(l));
+  const sum = (key) => goodsLines.reduce((total, l) => total + (Number(l[key]) || 0), 0);
   tfoot.innerHTML = `<tr>
     <td>Total</td><td></td><td></td><td></td><td class="num">${sum('quantity')}</td>
     <td></td><td class="num">${formatAdvanceMoney(sum('discount'))}</td>
