@@ -19,6 +19,9 @@
 // ItemStockFactbox.setAssigned(box, docKey, serialRows) - the document's linked serials ({ item_code }); an
 // item that already has one shows "Serial assigned to this order" instead of its stock badge, and isn't
 // counted as out. Matched by docKey (load's 3rd / loadDocument's docNo), so it can arrive before or after.
+// ItemStockFactbox.setFulfilled(box, docKey, statusLabel) - the order is Shipped / Delivered / Completed
+// (statusLabel, null = not): every line reads "Serials fully satisfied" / "Fulfilled", no "(n out)" and no
+// other-warehouse stock - per "if an order is delivered ... no need to show stock (out)". Same docKey rule.
 // ItemStockFactbox.loadSets(box, orderId) - Online orders: each SET's package parts with their serials.
 // ItemStockFactbox.clear(box, text) - placeholder while a document loads / has no lines.
 (function () {
@@ -135,6 +138,45 @@
     if (last && last.doc === String(docKey) && box._isfDoc === String(docKey)) render(box, last.list, last.data, last.error, last.sqlFile);
   }
 
+  function setFulfilled(box, docKey, statusLabel) {
+    if (!box) return;
+    box._isfFulfilled = statusLabel ? { doc: String(docKey), label: statusLabel } : null;
+    const last = box._isfLast;
+    if (last && last.doc === String(docKey) && box._isfDoc === String(docKey)) render(box, last.list, last.data, last.error, last.sqlFile);
+  }
+
+  function fulfilledLabel(box) {
+    const f = box._isfFulfilled;
+    return f && f.doc === box._isfDoc ? f.label : null;
+  }
+
+  // Shipped / Delivered / Completed order: the units are out the door, so stock no longer matters.
+  function renderFulfilled(box, list, rowsByKey, label) {
+    const { body, count } = parts(box);
+    const html = list.map((l) => {
+      const rows = rowsByKey.get(l.key);
+      if (!rows) return '';
+      const assigned = assignedCount(box, l.item_code);
+      const serialTracked = rows[0].source === 'serials';
+      const text = serialTracked
+        ? (assigned ? `${assigned === 1 ? 'Serial' : `${assigned} serials`} fully satisfied` : 'Serials fully satisfied')
+        : 'Fulfilled';
+      const name = rows[0].item_name;
+      return `<li class="isf-item isf-assigned">
+        <div class="isf-code">${esc(l.item_code)}${skuPill(rows[0].sku, l.item_code)}</div>
+        ${name ? `<div class="isf-name" title="${esc(name)}">${esc(name)}</div>` : ''}
+        ${l.label && l.label !== l.item_code && l.label !== name ? `<div class="isf-desc muted" title="${esc(l.label)}">${esc(l.label)}</div>` : ''}
+        <div class="isf-badges"><span class="badge badge-success">&#10003; ${text}</span></div>
+      </li>`;
+    }).join('');
+    body.innerHTML = `<p class="isf-note isf-fulfilled-note">&#10003; Order ${esc(label)} - serials fully satisfied, stock no longer needed.</p>`
+      + (html ? `<ul class="isf-list">${html}</ul>` : '');
+    if (count) {
+      count.textContent = '(fulfilled)';
+      count.classList.remove('isf-out');
+    }
+  }
+
   function assignedCount(box, itemCode) {
     const a = box._isfAssigned;
     if (!a || a.doc !== box._isfDoc) return 0;
@@ -156,6 +198,9 @@
       if (!rowsByKey.has(r.line_key)) rowsByKey.set(r.line_key, []);
       rowsByKey.get(r.line_key).push(r);
     });
+
+    const fulfilled = fulfilledLabel(box);
+    if (fulfilled) { renderFulfilled(box, list, rowsByKey, fulfilled); return; }
 
     let outCount = 0;
     let notStock = 0;
@@ -316,5 +361,5 @@
     }
   }
 
-  window.ItemStockFactbox = { load, loadDocument, setAssigned, loadSets, clear, wireListRows };
+  window.ItemStockFactbox = { load, loadDocument, setAssigned, setFulfilled, loadSets, clear, wireListRows };
 })();

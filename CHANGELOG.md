@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-16
 
+- **Stock FactBox on Shipped / Delivered / Completed orders reads "Serials fully satisfied"** instead of on-hand stock and "(n out)" - order card, advance card and both list FactBoxes; also flips right after Mark Shipped on an open card ([itemStockFactbox.js](docs/js/itemStockFactbox.js) `setFulfilled`, [onlineOrders.js](docs/js/onlineOrders.js), [bc-list.css](docs/css/bc-list.css) ?v=fulfilled1 on [online-orders.html](docs/online-orders.html)).
+
 - **Payment history on portal (AO-) orders** - "Show history" under the Payments list (New dialog + Online Orders card) lists every Added / Edited (old → new) / Deleted payment with who and when. Adds are now logged too (trigger on `AutomatedOrderPayments`, existing payments backfilled) ([supabase_ao_order_payment_history.sql](sql/supabase_ao_order_payment_history.sql), [onlineNewOrders.js](docs/js/onlineNewOrders.js) / [bc-list.css](docs/css/bc-list.css) ?v=payhist1).
 
 - **Online Orders card: record payments on Shipped / Delivered / Completed portal (AO-) orders** - the Payments editor no longer disappears after shipping (only Cancelled / Returned hide it), plus a "Settle balance ₱X" button that opens Add prefilled with the remaining balance; Edit / Delete allowed on those statuses too (still logged) ([supabase_ao_order_payment_closed_orders.sql](sql/supabase_ao_order_payment_closed_orders.sql), [onlineOrders.js](docs/js/onlineOrders.js) / [onlineNewOrders.js](docs/js/onlineNewOrders.js) / [bc-list.css](docs/css/bc-list.css) ?v=paysettle1 on [online-orders.html](docs/online-orders.html)).

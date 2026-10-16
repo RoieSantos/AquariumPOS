@@ -115,6 +115,18 @@ function orderDisplayStatus(o) {
   return status;
 }
 
+// Shipped / Delivered / Completed (walk-in picked up): the units are out, so the Stock FactBox reads
+// "Serials fully satisfied" instead of on-hand / "(n out)" (ItemStockFactbox.setFulfilled). null = not yet.
+const FULFILLED_STATUSES = ['Shipped', 'Delivered', 'Completed'];
+function orderFulfilledStatus(o) {
+  const s = o ? orderDisplayStatus(o) : '';
+  return FULFILLED_STATUSES.includes(s) ? s : null;
+}
+function advanceFulfilledStatus(o) {
+  const s = o ? advanceStatus(o) : '';
+  return FULFILLED_STATUSES.includes(s) ? s : null;
+}
+
 // Which tab is currently showing in the grouped (Online Order Staff) view, and the last set of
 // rows fetched for it - switching tabs just re-renders from this, no server round-trip needed
 // since loadOrders already fetches all 3 statuses (up to the 200-row cap) in one call.
@@ -2977,6 +2989,9 @@ function showListStock(kind, id, forceReload = false) {
   if (!id) { ItemStockFactbox.clear(box, 'Select an order to see its stock.'); return; }
   // the online row's branch name, so the badge never shows its LocationID (advance rows store the name)
   const warehouseName = kind === 'online' ? findFlatOrder(id)?.warehouse_name : null;
+  ItemStockFactbox.setFulfilled(box, id, kind === 'advance'
+    ? advanceFulfilledStatus(advanceRowsByNo.get(String(id)))
+    : orderFulfilledStatus(findFlatOrder(id)));
   listStockTimer = setTimeout(() => {
     ItemStockFactbox.loadDocument(box, kind, id, warehouseName);
     if (kind === 'online') ItemStockFactbox.loadSets(box, id); // SET lines: package parts + serials
@@ -5352,7 +5367,11 @@ function renderOrderCardAssignments() {
 function refreshOpenOrderCardHeader() {
   if (!openCardOrderId || document.getElementById('orderCardModal').classList.contains('hidden')) return;
   const o = findFlatOrder(openCardOrderId);
-  if (o) fillOrderCardHeader(o);
+  if (o) {
+    fillOrderCardHeader(o);
+    // e.g. just Marked Shipped: Stock reads "Serials fully satisfied" (re-drawn from its last data, no fetch)
+    ItemStockFactbox.setFulfilled(document.getElementById('orderCardStockPart'), openCardOrderId, orderFulfilledStatus(o));
+  }
   loadOrderCardStatusPhotos(openCardOrderId); // e.g. a photo just sent with Send Photo from the card
   loadOrderCardSerials(openCardOrderId); // e.g. serials just tagged at To Ship
 }
@@ -5550,6 +5569,7 @@ async function loadOrderCardLines(orderId) {
 // Stock FactBox (js/itemStockFactbox.js) - each line's on-hand, the badge at the order's own branch.
 function loadOrderCardStock(orderId) {
   const o = findFlatOrder(orderId);
+  ItemStockFactbox.setFulfilled(document.getElementById('orderCardStockPart'), orderId, orderFulfilledStatus(o));
   ItemStockFactbox.load(document.getElementById('orderCardStockPart'), cardLines.map((l) => ({
     item_code: l.item_code || l.product_display_id,
     variant_id: l.variation_id,
@@ -7396,6 +7416,8 @@ async function loadAdvanceCardLines(transactionNo) {
     return;
   }
   // Stock FactBox (js/itemStockFactbox.js) - each line's on-hand, the badge at the order's warehouse.
+  ItemStockFactbox.setFulfilled(document.getElementById('advanceCardStockPart'), transactionNo,
+    advanceFulfilledStatus(advanceRowsByNo.get(String(transactionNo))));
   ItemStockFactbox.load(document.getElementById('advanceCardStockPart'), (data || []).map((l) => ({
     item_code: l.item_no,
     label: l.description,

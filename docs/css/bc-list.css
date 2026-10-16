@@ -2941,6 +2941,7 @@ a.bc-cue:hover {
 .isf-loc b { font-weight: 600; }
 .isf-loc.isf-has { color: var(--success); border-color: currentColor; }
 .isf-note { margin: 8px 0 0; font-size: 11.5px; }
+.isf-note.isf-fulfilled-note { margin: 0 0 8px; color: var(--success, #107c10); font-weight: 600; }
 /* SET orders: the package's BOM parts and their serials (itemStockFactbox.js setSectionHtml). */
 .isf-set { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--bc-line); }
 .isf-set:first-child { margin-top: 0; padding-top: 0; border-top: none; }
