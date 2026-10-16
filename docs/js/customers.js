@@ -1,5 +1,6 @@
-// Customers page (super users only, same tier as GMA Conversations/AI Bot Sandbox - this data
-// carries Messenger PII) - browses public."ChatbotConversations" as the AI bot's CRM record: one
+// Customers page (Super Users + Conversations Access, same tier as GMA Conversations - this data
+// carries Messenger PII; RPCs check is_conversations_authorized, see
+// sql/supabase_gma_customers_conversations_access.sql) - browses public."ChatbotConversations" as the AI bot's CRM record: one
 // row per Facebook PSID. admin_list_gma_customers (sql/supabase_gma_customers_enriched.sql) fills
 // a contact the bot never captured from their latest order, then their Pancake customer, and says
 // which (phone_source / address_source). Business Central list layout (css/bc-list.css), same as
@@ -739,7 +740,7 @@ function wireCustomerCard() {
   currentSession = session;
   renderTopNav('Customers');
 
-  if (!session.isSuperUser) {
+  if (!session.isSuperUser && !session.isConversationsStaff) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
     return;
   }

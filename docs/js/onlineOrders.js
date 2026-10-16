@@ -1565,7 +1565,20 @@ async function saveWalkinCustomer() {
 // Any open delivery order, Pancake ones included - per "if an order id is detected in the portal..
 // change the details to the portal directly no need to change the pancake". The portal's value is kept
 // over every Pancake sync (supabase_online_order_shipping_details_sync.sql step 0); Pancake isn't changed.
+// Walk-ins too, For Delivery or not - per "on the order card.. can we add it there?" They're Shipped in
+// Pancake from the start, so they stay editable until picked up / delivered / cancelled / returned
+// (sql/supabase_order_card_delivery_fee_walkin_advance.sql re-checks).
 function canEditCardDeliveryFee(o) {
+  if (!o || hidePrices() || myAssignmentsLocked) return false;
+  const status = (o.status || '').trim().toLowerCase();
+  if (o.received_at_shop) {
+    return !o.picked_up_at && !['delivered', 'cancelled', 'canceled', 'returned', 'returning'].includes(status);
+  }
+  return canEditCardShippingDetails(o);
+}
+
+// Shipping Address / Contact No. keep the original rule: open online delivery orders only.
+function canEditCardShippingDetails(o) {
   if (!o || hidePrices() || myAssignmentsLocked || !o.for_delivery) return false;
   return !['shipped', 'delivered', 'completed', 'cancelled', 'canceled', 'returned', 'returning']
     .includes((o.status || '').trim().toLowerCase());
@@ -1775,7 +1788,7 @@ async function saveCardDeliveryFee() {
 // Delivery tab's Shipping Address / Shipping Contact Number - per "can we apply that to the Address
 // too? add a new field Shipping address, Shipping contact number". Read via
 // admin_get_order_shipping_details (ShippingPhone isn't in the list); editable on the same orders as the
-// fee (canEditCardDeliveryFee - any open delivery order, Pancake ones included). Hidden from maker-only accounts.
+// fee (canEditCardShippingDetails - any open delivery order, Pancake ones included). Hidden from maker-only accounts.
 // The inputs aren't refilled on a refresh of the same order, so typing isn't wiped (same as the fee).
 async function fillShippingFields(o) {
   const show = !hidePrices();
@@ -1784,7 +1797,7 @@ async function fillShippingFields(o) {
   if (!show) return;
 
   const key = String(o.order_id);
-  const editable = canEditCardDeliveryFee(o);
+  const editable = canEditCardShippingDetails(o);
   const addressEdit = document.getElementById('ocShippingAddressEdit');
   document.getElementById('ocShippingAddress').classList.toggle('hidden', editable);
   document.getElementById('ocShippingPhone').classList.toggle('hidden', editable);
@@ -7268,6 +7281,62 @@ function fillAdvanceCard(o) {
   updateAdvanceCardActions(o);
 }
 
+// Delivery Fee on the advance card - per "on the order card.. can we add it there?". Portal only
+// (AdvanceOrderProduction.DeliveryFee, sql/supabase_order_card_delivery_fee_walkin_advance.sql), copied
+// onto the order's delivery stops; the driver collects Balance + fee. Same people as Assign.
+async function loadAdvanceCardDeliveryFee(transactionNo) {
+  const row = document.getElementById('acDeliveryFeeRow');
+  const collectRow = document.getElementById('acToCollectRow');
+  const show = canAssignOrders() && !hidePrices();
+  row.classList.toggle('hidden', !show);
+  collectRow.classList.add('hidden');
+  if (!show) return;
+  setCardText('acDeliveryFee', '');
+  document.getElementById('acDeliveryFeeEdit').classList.add('hidden');
+
+  const { data, error } = await advanceRpc('staff_get_advance_order_delivery_fee', { p_no: transactionNo });
+  if (openAdvanceNo !== String(transactionNo)) return;
+  if (error) {
+    setCardText('acDeliveryFee', error.message.includes('staff_get_advance_order_delivery_fee')
+      ? 'Not set up yet - run sql/supabase_order_card_delivery_fee_walkin_advance.sql.'
+      : error.message);
+    return;
+  }
+  const r = (data || [])[0] || {};
+  const fee = Number(r.delivery_fee) || 0;
+  const editable = !r.delivered;
+  setCardText('acDeliveryFee', fee ? fee.toFixed(2) : '');
+  document.getElementById('acDeliveryFee').classList.toggle('hidden', editable);
+  document.getElementById('acDeliveryFeeEdit').classList.toggle('hidden', !editable);
+  document.getElementById('acDeliveryFeeInput').value = fee ? fee.toFixed(2) : '';
+
+  const balance = Number(advanceRowsByNo.get(String(transactionNo))?.balance) || 0;
+  collectRow.classList.toggle('hidden', !fee);
+  setCardText('acToCollect', fee ? `${(balance + fee).toFixed(2)} (balance + fee)` : '');
+}
+
+async function saveAdvanceCardDeliveryFee() {
+  const no = openAdvanceNo;
+  if (!no) return;
+  const raw = document.getElementById('acDeliveryFeeInput').value.trim();
+  const fee = raw === '' ? 0 : parseFloat(raw);
+  if (!(fee >= 0)) {
+    alert('Enter a delivery fee of 0 or more.');
+    return;
+  }
+  const btn = document.getElementById('acDeliveryFeeSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const { error } = await advanceRpc('staff_set_advance_order_delivery_fee', { p_no: no, p_delivery_fee: fee });
+  btn.disabled = false;
+  btn.textContent = 'Save';
+  if (error) {
+    alert(error.message);
+    return;
+  }
+  if (openAdvanceNo === no) loadAdvanceCardDeliveryFee(no);
+}
+
 function fillAdvanceCardToFollow(transactionNo) {
   const el = document.getElementById('advanceCardToFollowBadge');
   if (!el) return;
@@ -7299,6 +7368,7 @@ function openAdvanceCard(transactionNo) {
   }
   loadAdvanceCardLines(openAdvanceNo);
   loadAdvanceCardRework(openAdvanceNo);
+  loadAdvanceCardDeliveryFee(openAdvanceNo);
   renderSerialsFactbox('advanceCard', []); // clear the previous order's while loading
   loadAdvanceCardSerials(openAdvanceNo);
 }
@@ -7600,6 +7670,8 @@ async function printAdvanceSerialLabels(no, btn) {
 
 function wireAdvanceCard() {
   applyAdvanceCardMaximized(readStoredFlag(ADVANCE_CARD_MAXIMIZED_KEY, false));
+  // Here, not in wireOrderCard - the Advance tab's init returns before that runs.
+  document.getElementById('acDeliveryFeeSaveBtn').addEventListener('click', saveAdvanceCardDeliveryFee);
   document.getElementById('advanceCardMaximizeBtn').addEventListener('click', () => {
     const next = !document.getElementById('advanceCardModal').classList.contains('modal-maximized');
     writeStoredFlag(ADVANCE_CARD_MAXIMIZED_KEY, next);

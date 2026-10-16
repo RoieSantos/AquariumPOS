@@ -756,6 +756,18 @@
               <div class="bc-doc-field"><label>Balance</label><div class="bc-doc-value" id="acBalance"></div></div>
               <div class="bc-doc-field"><label>Fully Paid</label><div class="bc-doc-value" id="acFullyPaid"></div></div>
               <div class="bc-doc-field"><label>Date Paid</label><div class="bc-doc-value" id="acDatePaid"></div></div>
+              <!-- Portal-only fee (AdvanceOrderProduction.DeliveryFee) - js/onlineOrders.js saveAdvanceCardDeliveryFee,
+                   sql/supabase_order_card_delivery_fee_walkin_advance.sql. Copied onto its delivery stops. -->
+              <div class="bc-doc-field hidden" id="acDeliveryFeeRow"><label for="acDeliveryFeeInput">Delivery Fee</label>
+                <div class="bc-doc-value">
+                  <span id="acDeliveryFee"></span>
+                  <span class="oc-walkin-customer hidden" id="acDeliveryFeeEdit">
+                    <input type="number" id="acDeliveryFeeInput" min="0" step="0.01" placeholder="0.00" />
+                    <button type="button" class="bc-cmd" id="acDeliveryFeeSaveBtn">Save</button>
+                  </span>
+                </div>
+              </div>
+              <div class="bc-doc-field hidden" id="acToCollectRow"><label>To Collect on Delivery</label><div class="bc-doc-value" id="acToCollect"></div></div>
             </div>
           </div>
         </details>
@@ -1194,8 +1206,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=tabsync1"></script>
-  <script src="js/nav.js?v=owner1"></script>
+  <script src="js/auth.js?v=custconv1"></script>
+  <script src="js/nav.js?v=custconv1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
@@ -1208,7 +1220,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/onlineOrders.js?v=outstanding1"></script>
+  <script src="js/onlineOrders.js?v=cardfee2"></script>
   <script src="js/onlineNewOrders.js?v=pay1"></script>
   <script src="js/pwa.js"></script>
 </body>

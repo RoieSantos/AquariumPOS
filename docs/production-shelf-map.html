@@ -160,6 +160,58 @@
     .min-table .stock-pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: #fff; background: #1f8a4c; }
     .min-table tr.st-low .stock-pill { background: #b7701a; }
     .min-table tr.st-out .stock-pill { background: #c0392b; }
+    /* Forecast (sql/supabase_production_forecast.sql): Use buttons, days of stock shorter than the build lead time. */
+    .min-table .min-use { padding: 1px 8px; font-size: 12px; margin-left: 4px; }
+    .min-table td.cover-short { color: #c0392b; font-weight: 700; }
+    .stock-cover { font-size: 12px; color: var(--muted-text, #5b6b80); }
+    .stock-cover.short { color: #c0392b; font-weight: 700; }
+    /* Forecast view (js/productionShelfMap.js renderForecast) - series + status colours validated for CVD / contrast. */
+    .fc-root { --fc-actual: #2a78d6; --fc-forecast: #eb6834; --fc-good: #0ca30c; --fc-warn: #fab219; --fc-crit: #d03b3b;
+      --fc-grid: rgba(27, 53, 94, .10); --fc-hover: rgba(29, 79, 145, .06); display: flex; flex-direction: column; gap: 14px; }
+    :root[data-theme="dark"] .fc-root { --fc-actual: #3987e5; --fc-forecast: #d95926; --fc-grid: rgba(230, 241, 255, .10); --fc-hover: rgba(91, 155, 232, .10); }
+    .fc-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+    .fc-kpis-sm { margin-top: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+    .fc-kpi { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border: 1px solid var(--panel-border, #e0e6ee); border-radius: 10px; background: var(--panel-bg, #fff); min-width: 0; }
+    .fc-kpi-label { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+    .fc-kpi-value { font-size: 24px; font-weight: 700; color: var(--text-main); line-height: 1.2; }
+    .fc-kpis-sm .fc-kpi-value { font-size: 18px; }
+    .fc-kpi-sub { font-size: 12px; color: var(--text-muted); }
+    .fc-kpi-crit { border-left: 6px solid var(--fc-crit); }
+    .fc-card { padding: 14px 16px; border: 1px solid var(--panel-border, #e0e6ee); border-radius: 10px; background: var(--panel-bg, #fff); min-width: 0; }
+    .fc-card h3 { margin: 0 0 4px; font-size: 16px; color: var(--text-main); }
+    .fc-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+    .fc-card-head select { width: auto; max-width: min(100%, 380px); }
+    .fc-note { margin: 0 0 8px; font-size: 13px; }
+    .fc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+    .fc-key { display: inline-flex; align-items: center; gap: 6px; }
+    .fc-swatch { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 3px; font-style: normal; font-size: 10px; font-weight: 700; color: #fff; }
+    .fc-swatch.fc-st-good { background: var(--fc-good); } .fc-swatch.fc-st-warn { background: var(--fc-warn); color: #3a2a00; } .fc-swatch.fc-st-crit { background: var(--fc-crit); }
+    .fc-swatch.fc-faded { background: var(--text-muted); opacity: .35; }
+    .fc-swatch.fc-actual { background: var(--fc-actual); }
+    .fc-line { display: inline-block; width: 18px; border-top: 2px dashed var(--fc-forecast); }
+    .fc-tick { display: inline-block; width: 2px; height: 14px; background: var(--text-main); }
+    .fc-chart { position: relative; min-width: 0; }
+    .fc-svg { width: 100%; overflow: hidden; }
+    .fc-svg svg { display: block; }
+    .fc-chart path.fc-st-good { fill: var(--fc-good); } .fc-chart path.fc-st-warn { fill: var(--fc-warn); } .fc-chart path.fc-st-crit { fill: var(--fc-crit); }
+    .fc-chart path.fc-faded-fill { opacity: .35; }
+    .fc-chart .fc-actual-fill { fill: var(--fc-actual); }
+    .fc-chart .fc-grid { stroke: var(--fc-grid); stroke-width: 1; }
+    .fc-chart .fc-base { stroke: var(--text-muted); stroke-width: 1; opacity: .6; }
+    .fc-chart .fc-lead { stroke: var(--text-main); stroke-width: 2; }
+    .fc-chart .fc-now { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+    .fc-chart .fc-forecast { stroke: var(--fc-forecast); stroke-width: 2; stroke-dasharray: 6 4; }
+    .fc-chart .fc-cross { stroke: var(--text-muted); stroke-width: 1; }
+    .fc-chart .fc-hit { fill: transparent; cursor: pointer; }
+    .fc-chart .fc-hit.on { fill: var(--fc-hover); }
+    .fc-chart text { font-size: 12px; font-family: inherit; }
+    .fc-chart .fc-axis { fill: var(--text-muted); }
+    .fc-chart .fc-label { fill: var(--text-main); }
+    .fc-chart .fc-value { fill: var(--text-main); font-weight: 700; }
+    .fc-tip { position: absolute; z-index: 5; pointer-events: none; max-width: 300px; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45;
+      background: var(--panel-bg, #fff); color: var(--text-main); border: 1px solid var(--panel-border, #c9d3e0); box-shadow: 0 4px 14px rgba(20, 40, 80, .18); }
+    .fc-table { margin-top: 10px; font-size: 13px; }
+    .fc-table summary { cursor: pointer; color: var(--text-muted); }
     .stock-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
     .stock-filter { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--panel-border, #c9d3e0); border-radius: 999px; background: var(--panel-bg, #fff); color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
     .stock-filter b { font-size: 14px; }
@@ -222,6 +274,8 @@
         <span class="view-toggle" role="group" aria-label="View">
           <button type="button" data-view="stock">Stock list</button>
           <button type="button" data-view="map">Floor map</button>
+          <!-- Demand forecast charts (supabase_production_forecast.sql) - read only, everyone. -->
+          <button type="button" data-view="forecast">Forecast</button>
           <!-- Minimum stock to maintain per product (supabase_production_shelf_minimums.sql) - managers only. -->
           <button type="button" data-view="mins" id="minsViewBtn" class="hidden">Minimums</button>
         </span>
@@ -352,9 +406,9 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=tabsync1"></script>
-  <script src="js/nav.js?v=owner1"></script>
-  <script src="js/productionShelfMap.js?v=27"></script>
+  <script src="js/auth.js?v=custconv1"></script>
+  <script src="js/nav.js?v=custconv1"></script>
+  <script src="js/productionShelfMap.js?v=29"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

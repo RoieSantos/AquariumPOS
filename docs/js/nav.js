@@ -259,13 +259,13 @@ function renderTopNav(activeLabel) {
     admin.push({ href: 'general-setup.html', label: 'General Setup' });
     admin.push({ href: 'ai-bot-setup.html', label: 'AI Bot Setup' });
   }
-  // Conversations Access sees GMA Conversations even without full Super User - same
-  // "isSuperUser || is<Flag>" gate the page itself enforces in its own init().
+  // Conversations Access sees GMA Conversations + Customers even without full Super User - same
+  // "isSuperUser || is<Flag>" gate the pages themselves enforce in their own init().
   if (isSuperUser || isConversationsStaff) {
     admin.push({ href: 'gma-conversations.html', label: 'Conversations' });
+    admin.push({ href: 'customers.html', label: 'Customers' });
   }
   if (isSuperUser) {
-    admin.push({ href: 'customers.html', label: 'Customers' });
     admin.push({ href: 'ai-bot-sandbox.html', label: 'AI Bot Sandbox' });
     // Prototype automated Facebook posting (supabase/functions/facebook-page-post).
     admin.push({ href: 'facebook-post-test.html', label: 'Facebook Post Test' });

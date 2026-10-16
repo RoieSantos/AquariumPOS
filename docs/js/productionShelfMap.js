@@ -254,6 +254,38 @@ function minFor(spot) {
   return v === undefined ? null : v;
 }
 
+// Nightly demand forecast per product at currentLocation, keyed like minimums
+// (sql/supabase_production_forecast.sql). Empty if that SQL isn't run yet - nothing else depends on it.
+let locationForecast = new Map();
+let forecastComputedAt = null;
+function forecastFor(spot) {
+  if (!spot?.item_code) return null;
+  return locationForecast.get(minKey(spot.item_code, spot.variant_id)) || null;
+}
+function isForecastable(fc) {
+  return !!fc && fc.weekly_demand > 0 && (fc.pattern === 'smooth' || fc.pattern === 'intermittent');
+}
+// Days the stock on hand lasts at the forecast rate - null when there's no forecastable demand.
+function daysOfCover(count, fc) {
+  return isForecastable(fc) ? Math.floor(count / (fc.weekly_demand / 7)) : null;
+}
+function fmtRate(n) {
+  const v = Number(n) || 0;
+  return v >= 10 ? String(Math.round(v)) : v.toFixed(1).replace(/\.0$/, '');
+}
+function forecastTip(fc) {
+  if (!fc) return '';
+  const lead = fc.lead_time_source === 'default' ? 'default setting' : `median of finished production orders (${fc.lead_time_source})`;
+  const why = fc.pattern === 'new' ? 'too new' : fc.pattern === 'rare' ? 'sells too rarely' : 'no sales';
+  return [
+    `Sells ~${fmtRate(fc.weekly_demand)}/week (${fc.method}) - sold in ${fc.weeks_sold} of the last ${fc.weeks_in_window} week(s), ${Number(fc.units_in_window)} unit(s)`,
+    `Build lead time ${fc.lead_time_days} day(s) - ${lead}; reviewed every ${fc.review_days} day(s)`,
+    fc.suggested_min !== null
+      ? `Suggested min ${fc.suggested_min} = what sells in ${fc.lead_time_days + fc.review_days} days + safety stock`
+      : `No suggestion - ${why} to forecast; set it by hand`
+  ].join('\n');
+}
+
 // Units of the spot's aquarium still to be built on Open / Released production orders here.
 function spotOnOrder(spot) {
   if (!spot?.item_code) return 0;
@@ -348,12 +380,14 @@ function renderShelf() {
     return;
   }
   const mins = viewMode === 'mins' && !draft;
-  const stock = (viewMode === 'stock' || mins) && !draft;
+  const fcView = viewMode === 'forecast' && !draft;
+  const stock = (viewMode === 'stock' || mins || fcView) && !draft;
   document.getElementById('zoomControls').classList.toggle('hidden', stock || currentLayout() !== 'floor');
   document.getElementById('shelfField').classList.toggle('hidden', stock);
   document.getElementById('legend').classList.toggle('hidden', stock);
-  document.querySelectorAll('.view-toggle [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === (mins ? 'mins' : stock ? 'stock' : 'map')));
-  if (mins) renderMinimums(body);
+  document.querySelectorAll('.view-toggle [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === (fcView ? 'forecast' : mins ? 'mins' : stock ? 'stock' : 'map')));
+  if (fcView) renderForecast(body);
+  else if (mins) renderMinimums(body);
   else if (stock) renderStock(body);
   else if (currentLayout() === 'floor') renderFloor(body);
   else renderGrid(body);
@@ -379,12 +413,17 @@ function renderMinimums(body) {
     return;
   }
   const below = products.filter((p) => p.min !== null && p.count <= p.min).length;
+  const suggestable = products.filter((p) => p.fc && p.fc.suggested_min !== null && p.fc.suggested_min !== p.min).length;
+  const anyFc = locationForecast.values().next().value;
   body.innerHTML = `
     <div class="min-head">
       <p class="muted" style="margin:0;">Set how many of each product to keep in stock at this location. A product shows <b>Low stock</b> once it's at or below its minimum.
-        Leave blank to use the default (low at 1-2 left). ${below ? `<b>${below}</b> product(s) are at or below their minimum now.` : ''}</p>
+        Leave blank to use the default (low at 1-2 left). ${below ? `<b>${below}</b> product(s) are at or below their minimum now.` : ''}
+        ${anyFc ? `<br><b>Suggested</b> = what sells during build lead time + ${anyFc.review_days}-day review, plus safety stock - from this location's sales history, updated nightly (last ${escapeHtml(new Date(forecastComputedAt).toLocaleString())}). Hover for details; nothing changes until you press Use, then Save.` : ''}</p>
       <div class="min-actions">
         <span class="muted" id="minSaveMsg"></span>
+        ${anyFc ? '<button class="btn btn-secondary btn-sm" id="refreshFcBtn" type="button" title="Recalculate the forecast from the latest sales now">Recalculate</button>' : ''}
+        ${suggestable ? `<button class="btn btn-secondary btn-sm" id="useAllSugBtn" type="button">Use all suggestions (${suggestable})</button>` : ''}
         <button class="btn btn-primary btn-sm" id="saveMinsBtn" type="button" disabled>Save minimums</button>
       </div>
     </div>
@@ -392,7 +431,9 @@ function renderMinimums(body) {
       <table class="min-table">
         <thead><tr>
           <th>Product</th><th class="num">In stock</th><th class="num">Being built</th><th class="num">Rack capacity</th>
-          <th class="num">Minimum</th><th class="num">To build</th><th>Status</th>
+          <th class="num" title="Forecast units sold per week at this location">Sells / wk</th>
+          <th class="num" title="How many days the stock in hand lasts at that rate">Days of stock</th>
+          <th class="num">Suggested</th><th class="num">Minimum</th><th class="num">To build</th><th>Status</th>
         </tr></thead>
         <tbody>
           ${products.map((p, i) => {
@@ -404,6 +445,11 @@ function renderMinimums(body) {
               <td class="num">${p.count}</td>
               <td class="num">${p.onOrder || ''}</td>
               <td class="num">${p.capacity || ''}</td>
+              <td class="num" title="${escapeHtml(forecastTip(p.fc))}">${p.fc ? fmtRate(p.fc.weekly_demand) : ''}${p.fc && !isForecastable(p.fc) ? `<div class="muted" style="font-size:11px;">${escapeHtml(p.fc.pattern)}</div>` : ''}</td>
+              <td class="num${p.cover !== null && p.cover < p.fc.lead_time_days ? ' cover-short' : ''}">${p.cover !== null ? p.cover : ''}</td>
+              <td class="num" title="${escapeHtml(forecastTip(p.fc))}">${p.fc && p.fc.suggested_min !== null
+                ? `<b>${p.fc.suggested_min}</b>${p.fc.suggested_min !== p.min ? ` <button type="button" class="btn btn-secondary btn-sm min-use" data-idx="${i}">Use</button>` : ''}`
+                : ''}</td>
               <td class="num"><input type="number" class="min-input" data-idx="${i}" min="0" step="1" inputmode="numeric"
                 value="${p.min === null ? '' : p.min}" data-orig="${p.min === null ? '' : p.min}" placeholder="1-2" /></td>
               <td class="num">${toBuild ? `<b>${toBuild}</b>` : toBuild === 0 ? '0' : ''}</td>
@@ -423,6 +469,35 @@ function renderMinimums(body) {
     saveBtn.disabled = n === 0;
     saveBtn.textContent = n ? `Save minimums (${n})` : 'Save minimums';
   }));
+  // Use = copy the suggestion into the Minimum box; still needs Save.
+  const useSuggestion = (el) => {
+    el.value = String(products[Number(el.dataset.idx)].fc.suggested_min);
+    el.dispatchEvent(new Event('input'));
+  };
+  body.querySelectorAll('.min-use').forEach((btn) => btn.addEventListener('click', () => {
+    useSuggestion(body.querySelector(`.min-input[data-idx="${btn.dataset.idx}"]`));
+  }));
+  document.getElementById('useAllSugBtn')?.addEventListener('click', () => {
+    body.querySelectorAll('.min-input').forEach((el) => {
+      const p = products[Number(el.dataset.idx)];
+      if (p.fc && p.fc.suggested_min !== null && p.fc.suggested_min !== p.min) useSuggestion(el);
+    });
+  });
+  document.getElementById('refreshFcBtn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Recalculating...';
+    const { error } = await rpc('admin_refresh_production_forecast', {});
+    if (error) {
+      showError(error.message);
+      btn.disabled = false;
+      btn.textContent = 'Recalculate';
+      return;
+    }
+    showError('');
+    await loadLocationSerials();
+    renderShelf();
+  });
   saveBtn.addEventListener('click', async () => {
     const rows = changed().map((el) => {
       const p = products[Number(el.dataset.idx)];
@@ -450,8 +525,286 @@ function renderMinimums(body) {
   });
 }
 
+// ---------------------------------------------------------------- Forecast view
+// Per "can you show me a graphical report for this forecast .. a chart perhaps". Read only, for anyone
+// who can open the page (sql/supabase_production_forecast.sql):
+//   1. Days of stock vs build time - one bar per forecast product, shortest first: solid = stock in
+//      hand, faded = units already being built; the tick is the build lead time. Coloured by status
+//      (with icon + label): runs out before a build is ready / order soon / enough.
+//   2. Weekly sales - the picked product's weekly units sold, then its forecast for the next weeks.
+// Plain SVG, sized to the screen and redrawn on resize.
+const FC_FUTURE_WEEKS = 8;
+const FC_DAYS_CAP = 60;
+const FC_STATUS = {
+  crit: { icon: '✕', label: 'Runs out before a new build is ready' },
+  warn: { icon: '!', label: 'Order soon' },
+  good: { icon: '✓', label: 'Enough stock' }
+};
+let forecastPick = null; // minKey of the product in the weekly chart
+
+function fcRows() {
+  return stockProducts().filter((p) => p.fc).map((p) => {
+    const daily = p.fc.weekly_demand / 7;
+    const total = isForecastable(p.fc) ? Math.floor((p.count + p.onOrder) / daily) : null;
+    const st = total === null ? null
+      : total < p.fc.lead_time_days ? 'crit'
+      : total < p.fc.lead_time_days + p.fc.review_days ? 'warn' : 'good';
+    return { ...p, key: minKey(p.spot.item_code, p.spot.variant_id), totalCover: total, st };
+  });
+}
+
+function svgEl(tag, attrs) {
+  return `<${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`;
+}
+// A bar with only its data end rounded (r px), the other end square on the baseline.
+function hBarPath(x, y, w, h, r) {
+  if (w <= 0) return '';
+  r = Math.min(r, w, h / 2);
+  return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`;
+}
+function vBarPath(x, base, w, h, r) {
+  if (h <= 0) return '';
+  r = Math.min(r, h, w / 2);
+  const top = base - h;
+  return `M${x},${base}V${top + r}Q${x},${top} ${x + r},${top}H${x + w - r}Q${x + w},${top} ${x + w},${top + r}V${base}Z`;
+}
+// Round axis maximum + step (1/2/5 x 10^n), ~4 gridlines, whole units.
+function niceScale(maxVal) {
+  const raw = Math.max(maxVal, 1) / 4;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = Math.max(1, [1, 2, 5, 10].map((m) => m * pow).find((s) => s >= raw));
+  return { step, max: Math.ceil(Math.max(maxVal, 1) / step) * step };
+}
+function fcShortDate(d) {
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+function fcTipShow(chart, html, evt) {
+  const tip = chart.querySelector('.fc-tip');
+  tip.innerHTML = html;
+  tip.classList.remove('hidden');
+  const box = chart.getBoundingClientRect();
+  let left = evt.clientX - box.left + 14;
+  if (left + tip.offsetWidth > box.width) left = evt.clientX - box.left - tip.offsetWidth - 14;
+  tip.style.left = `${Math.max(0, left)}px`;
+  tip.style.top = `${Math.max(0, evt.clientY - box.top - tip.offsetHeight - 10)}px`;
+}
+function fcTipHide(chart) {
+  chart.querySelector('.fc-tip')?.classList.add('hidden');
+}
+
+function renderForecast(body) {
+  body.classList.remove('floor-mode');
+  const findEl = document.getElementById('findResult');
+  findEl.textContent = '';
+  if (!locationForecast.size) {
+    body.innerHTML = '<p class="muted">No forecast for this location yet - run sql/supabase_production_forecast.sql (it then updates every night).</p>';
+    return;
+  }
+  const all = fcRows();
+  const shown = all.filter((p) => !findTerm || spotMatches(p.spot, findTerm));
+  const ranked = shown.filter((p) => p.totalCover !== null)
+    .sort((a, b) => a.totalCover - b.totalCover || b.fc.weekly_demand - a.fc.weekly_demand);
+  if (!all.some((p) => p.key === forecastPick)) {
+    const first = ranked[0] || [...all].sort((a, b) => b.fc.weekly_demand - a.fc.weekly_demand)[0];
+    forecastPick = first ? first.key : null;
+  }
+  const crit = ranked.filter((p) => p.st === 'crit').length;
+  const perWeek = all.reduce((n, p) => n + (isForecastable(p.fc) ? p.fc.weekly_demand : 0), 0);
+  const tile = (label, value, sub, cls = '') => `<div class="fc-kpi ${cls}"><span class="fc-kpi-label">${label}</span><span class="fc-kpi-value">${value}</span>${sub ? `<span class="fc-kpi-sub">${sub}</span>` : ''}</div>`;
+  const statusKey = (k) => `<span class="fc-key"><i class="fc-swatch fc-st-${k}">${FC_STATUS[k].icon}</i>${FC_STATUS[k].label}</span>`;
+  const picks = [...all].sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
+
+  body.innerHTML = `
+    <div class="fc-root">
+      <div class="fc-kpis">
+        ${tile('Products forecast', ranked.length, `of ${all.length} on the racks here`)}
+        ${tile('Run out before a build', crit, 'stock + being built lasts less than the build lead time', crit ? 'fc-kpi-crit' : '')}
+        ${tile('Sells per week', fmtRate(perWeek), 'all forecast products here')}
+        ${tile('Forecast updated', forecastComputedAt ? escapeHtml(new Date(forecastComputedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) : '-',
+          `${forecastComputedAt ? escapeHtml(new Date(forecastComputedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })) + ' · ' : ''}every night, from order history`)}
+      </div>
+      <section class="fc-card">
+        <h3>Days of stock vs build time</h3>
+        <p class="muted fc-note">How many days each product lasts at its forecast sales rate, shortest first. Faded = units already being built; the tick is the build lead time. Tap a bar to see that product's weekly sales below.</p>
+        <div class="fc-legend">${statusKey('crit')}${statusKey('warn')}${statusKey('good')}
+          <span class="fc-key"><i class="fc-swatch fc-faded"></i>Being built</span>
+          <span class="fc-key"><i class="fc-tick"></i>Build lead time</span></div>
+        <div class="fc-chart" id="fcCoverChart"><div class="fc-tip hidden"></div><div class="fc-svg"></div></div>
+        ${shown.length > ranked.length ? `<p class="muted fc-note">${shown.length - ranked.length} product(s) not shown - they sell too rarely, are too new, or haven't sold yet (see Minimums).</p>` : ''}
+      </section>
+      <section class="fc-card">
+        <div class="fc-card-head">
+          <h3>Weekly sales</h3>
+          <select id="fcPick" aria-label="Product">${picks.map((p) => `<option value="${escapeHtml(p.key)}"${p.key === forecastPick ? ' selected' : ''}>${escapeHtml(p.title)}</option>`).join('')}</select>
+        </div>
+        <div class="fc-legend">
+          <span class="fc-key"><i class="fc-swatch fc-actual"></i>Units sold per week</span>
+          <span class="fc-key"><i class="fc-line"></i>Forecast per week</span>
+        </div>
+        <div class="fc-chart" id="fcWeeklyChart"><div class="fc-tip hidden"></div><div class="fc-svg"></div></div>
+        <div class="fc-kpis fc-kpis-sm" id="fcPickStats"></div>
+        <details class="fc-table"><summary>Show as table</summary><div id="fcPickTable"></div></details>
+      </section>
+    </div>`;
+
+  drawCoverChart(document.getElementById('fcCoverChart'), ranked);
+  drawPicked(all);
+  document.getElementById('fcPick').addEventListener('change', (e) => {
+    forecastPick = e.target.value;
+    drawPicked(all);
+  });
+}
+
+function drawPicked(all) {
+  const p = all.find((x) => x.key === forecastPick);
+  const chart = document.getElementById('fcWeeklyChart');
+  const stats = document.getElementById('fcPickStats');
+  const table = document.getElementById('fcPickTable');
+  if (!p) { chart.querySelector('.fc-svg').innerHTML = '<p class="muted">Pick a product.</p>'; stats.innerHTML = ''; table.innerHTML = ''; return; }
+  document.getElementById('fcPick').value = p.key;
+  drawWeeklyChart(chart, p);
+  const tile = (label, value, sub = '') => `<div class="fc-kpi"><span class="fc-kpi-label">${label}</span><span class="fc-kpi-value">${value}</span>${sub ? `<span class="fc-kpi-sub">${sub}</span>` : ''}</div>`;
+  stats.innerHTML = [
+    tile('In stock', p.count, p.onOrder ? `+ ${p.onOrder} being built` : ''),
+    tile('Sells / week', fmtRate(p.fc.weekly_demand), isForecastable(p.fc) ? escapeHtml(p.fc.method) : escapeHtml(p.fc.pattern)),
+    tile('Days of stock', p.cover !== null ? p.cover : '-', p.totalCover !== null && p.onOrder ? `${p.totalCover} with being built` : ''),
+    tile('Build lead time', `${p.fc.lead_time_days} d`, p.fc.lead_time_source === 'default' ? 'default setting' : `from ${escapeHtml(p.fc.lead_time_source)} orders`),
+    tile('Suggested min', p.fc.suggested_min !== null ? p.fc.suggested_min : '-', p.min !== null ? `current min ${p.min}` : 'no minimum set')
+  ].join('');
+  const start = p.fc.series_start ? new Date(`${p.fc.series_start}T00:00:00`) : null;
+  table.innerHTML = start && p.fc.weekly_series.length
+    ? `<table class="min-table"><thead><tr><th>Week of</th><th class="num">Units sold</th></tr></thead><tbody>
+        ${p.fc.weekly_series.map((v, i) => `<tr><td>${fcShortDate(new Date(start.getTime() + i * 7 * 86400000))}</td><td class="num">${v}</td></tr>`).join('')}
+        <tr><td><b>Forecast, each coming week</b></td><td class="num"><b>${fmtRate(p.fc.weekly_demand)}</b></td></tr></tbody></table>`
+    : '<p class="muted">No sales in the forecast window.</p>';
+}
+
+function drawCoverChart(chart, rows) {
+  const holder = chart.querySelector('.fc-svg');
+  if (!rows.length) { holder.innerHTML = '<p class="muted">No product here sells often enough to forecast yet.</p>'; return; }
+  const W = Math.max(320, holder.clientWidth || 640);
+  const labelW = Math.min(210, Math.round(W * 0.34));
+  const right = 64, top = 24, rowH = 28, barH = 14; // right: room for the "✓ 60+ d" label
+  const plotW = W - labelW - right;
+  const maxDays = Math.min(FC_DAYS_CAP, Math.max(14, ...rows.map((p) => Math.max(p.totalCover, p.fc.lead_time_days + p.fc.review_days))));
+  const x = (d) => labelW + (Math.min(d, maxDays) / maxDays) * plotW;
+  const H = top + rows.length * rowH + 6;
+  const maxChars = Math.floor((labelW - 10) / 6.6);
+  const parts = [];
+  const tickStep = 7 * Math.max(1, Math.ceil(44 / ((plotW * 7) / maxDays))); // whole weeks, labels >= 44px apart
+  for (let t = 0; t <= maxDays; t += tickStep) {
+    parts.push(svgEl('line', { x1: x(t), x2: x(t), y1: top - 4, y2: H - 6, class: 'fc-grid' }));
+    parts.push(`<text x="${x(t)}" y="${top - 10}" class="fc-axis" text-anchor="middle">${t === 0 ? '0' : `${t} d`}</text>`);
+  }
+  rows.forEach((p, i) => {
+    const y = top + i * rowH + (rowH - barH) / 2;
+    const name = p.title.length > maxChars ? `${p.title.slice(0, maxChars - 1)}…` : p.title;
+    parts.push(`<text x="${labelW - 10}" y="${y + barH / 2 + 4}" class="fc-label" text-anchor="end">${escapeHtml(name)}</text>`);
+    const own = Math.min(p.cover, maxDays);
+    const total = Math.min(p.totalCover, maxDays);
+    const ownEnd = x(own);
+    if (total > own && x(total) - ownEnd > 3) {
+      if (own > 0) parts.push(`<path d="M${x(0)},${y}H${ownEnd}V${y + barH}H${x(0)}Z" class="fc-st-${p.st}"/>`);
+      parts.push(`<path d="${hBarPath(own > 0 ? ownEnd + 2 : x(0), y, x(total) - (own > 0 ? ownEnd + 2 : x(0)), barH, 4)}" class="fc-st-${p.st} fc-faded-fill"/>`);
+    } else if (own > 0) {
+      parts.push(`<path d="${hBarPath(x(0), y, ownEnd - x(0), barH, 4)}" class="fc-st-${p.st}"/>`);
+    }
+    parts.push(svgEl('line', { x1: x(p.fc.lead_time_days), x2: x(p.fc.lead_time_days), y1: y - 4, y2: y + barH + 4, class: 'fc-lead' }));
+    const lbl = p.totalCover >= maxDays ? `${maxDays}+ d` : `${p.totalCover} d`;
+    parts.push(`<text x="${Math.max(x(total), x(p.fc.lead_time_days)) + 6}" y="${y + barH / 2 + 4}" class="fc-value">${FC_STATUS[p.st].icon} ${lbl}</text>`);
+    parts.push(svgEl('rect', { x: 0, y: top + i * rowH, width: W, height: rowH, class: 'fc-hit', 'data-i': i }));
+  });
+  holder.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Days of stock per product vs build lead time">${parts.join('')}</svg>`;
+  const svg = holder.querySelector('svg');
+  svg.addEventListener('mousemove', (e) => {
+    const i = e.target.dataset?.i;
+    svg.querySelectorAll('.fc-hit.on').forEach((r) => r.classList.remove('on'));
+    if (i === undefined) { fcTipHide(chart); return; }
+    e.target.classList.add('on');
+    const p = rows[Number(i)];
+    fcTipShow(chart, `<b>${escapeHtml(p.title)}</b><br>
+      ${FC_STATUS[p.st].icon} ${FC_STATUS[p.st].label}<br>
+      In stock ${p.count}${p.onOrder ? ` (+ ${p.onOrder} being built)` : ''} · sells ~${fmtRate(p.fc.weekly_demand)}/wk<br>
+      Lasts ~${p.cover} day(s)${p.onOrder ? `, ${p.totalCover} with being built` : ''} · build takes ${p.fc.lead_time_days} day(s)<br>
+      Suggested min ${p.fc.suggested_min ?? '-'} · current min ${p.min ?? 'not set'}`, e);
+  });
+  svg.addEventListener('mouseleave', () => {
+    svg.querySelectorAll('.fc-hit.on').forEach((r) => r.classList.remove('on'));
+    fcTipHide(chart);
+  });
+  svg.addEventListener('click', (e) => {
+    const i = e.target.dataset?.i;
+    if (i === undefined) return;
+    forecastPick = rows[Number(i)].key;
+    drawPicked(fcRows());
+    document.getElementById('fcWeeklyChart').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
+function drawWeeklyChart(chart, p) {
+  const holder = chart.querySelector('.fc-svg');
+  const series = p.fc.weekly_series || [];
+  const start = p.fc.series_start ? new Date(`${p.fc.series_start}T00:00:00`) : null;
+  if (!series.length || !start) { holder.innerHTML = '<p class="muted">No sales in the forecast window for this product.</p>'; return; }
+  const W = Math.max(320, holder.clientWidth || 640);
+  const H = 250, left = 40, right = 64, top = 16, bottom = 30;
+  const plotW = W - left - right, plotH = H - top - bottom;
+  const n = series.length, total = n + FC_FUTURE_WEEKS;
+  const step = plotW / total;
+  const barW = Math.max(2, Math.min(24, step - 2));
+  const level = p.fc.weekly_demand;
+  const scale = niceScale(Math.max(...series, level));
+  const y = (v) => top + plotH - (v / scale.max) * plotH;
+  const weekDate = (i) => new Date(start.getTime() + i * 7 * 86400000);
+  const parts = [];
+  for (let t = 0; t <= scale.max; t += scale.step) {
+    parts.push(svgEl('line', { x1: left, x2: W - right, y1: y(t), y2: y(t), class: t === 0 ? 'fc-base' : 'fc-grid' }));
+    parts.push(`<text x="${left - 8}" y="${y(t) + 4}" class="fc-axis" text-anchor="end">${t}</text>`);
+  }
+  const every = Math.max(1, Math.ceil(64 / step));
+  for (let i = 0; i < total; i += every) {
+    parts.push(`<text x="${left + i * step + step / 2}" y="${H - 10}" class="fc-axis" text-anchor="middle">${fcShortDate(weekDate(i))}</text>`);
+  }
+  series.forEach((v, i) => {
+    if (v > 0) parts.push(`<path d="${vBarPath(left + i * step + (step - barW) / 2, y(0), barW, y(0) - y(v), 4)}" class="fc-actual-fill"/>`);
+  });
+  const nowX = left + n * step;
+  parts.push(svgEl('line', { x1: nowX, x2: nowX, y1: top, y2: y(0), class: 'fc-now' }));
+  parts.push(`<text x="${nowX + 6}" y="${top + 10}" class="fc-axis">Next ${FC_FUTURE_WEEKS} weeks</text>`);
+  if (level > 0) {
+    parts.push(svgEl('line', { x1: nowX, x2: W - right, y1: y(level), y2: y(level), class: 'fc-forecast' }));
+    parts.push(`<text x="${W - right + 6}" y="${y(level) + 4}" class="fc-value">~${fmtRate(level)}/wk</text>`);
+  }
+  parts.push(svgEl('line', { x1: 0, x2: 0, y1: top, y2: y(0), class: 'fc-cross hidden' }));
+  for (let i = 0; i < total; i += 1) {
+    parts.push(svgEl('rect', { x: left + i * step, y: top, width: step, height: plotH, class: 'fc-hit', 'data-i': i }));
+  }
+  holder.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Weekly units sold and forecast for ${escapeHtml(p.title)}">${parts.join('')}</svg>`;
+  const svg = holder.querySelector('svg');
+  const cross = svg.querySelector('.fc-cross');
+  svg.addEventListener('mousemove', (e) => {
+    const i = e.target.dataset?.i;
+    if (i === undefined) { cross.classList.add('hidden'); fcTipHide(chart); return; }
+    const k = Number(i);
+    const cx = left + k * step + step / 2;
+    cross.setAttribute('x1', cx);
+    cross.setAttribute('x2', cx);
+    cross.classList.remove('hidden');
+    fcTipShow(chart, `<b>Week of ${fcShortDate(weekDate(k))}</b><br>${k < n ? `Sold ${series[k]}` : `Forecast ~${fmtRate(level)}`}`, e);
+  });
+  svg.addEventListener('mouseleave', () => { cross.classList.add('hidden'); fcTipHide(chart); });
+}
+
+// Charts are drawn to the screen width - redraw when it changes.
+let fcResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (viewMode !== 'forecast') return;
+  clearTimeout(fcResizeTimer);
+  fcResizeTimer = setTimeout(() => renderShelf(), 150);
+});
+
 function setViewMode(mode) {
-  viewMode = mode === 'mins' && canEditLayout ? 'mins' : mode === 'stock' ? 'stock' : 'map';
+  viewMode = mode === 'mins' && canEditLayout ? 'mins' : mode === 'forecast' ? 'forecast' : mode === 'stock' ? 'stock' : 'map';
   try { localStorage.setItem(VIEW_KEY, viewMode); } catch (err) { /* not remembered */ }
   renderShelf();
 }
@@ -474,7 +827,8 @@ function stockProducts() {
     // The rack's own label reads best ("Standard 2.5g 3mm glass"); a short code like "B4" doesn't.
     const title = (sp.label && sp.label.length > 4 ? sp.label : '') || spotTagText(sp) || sp.item_code;
     const units = spotSerials(sp);
-    return { ...g, title, units, count: units.length, onOrder: spotOnOrder(sp), reserved: spotReserved(sp).length, min: minFor(sp), status: stockStatus(units.length, g.capacity, minFor(sp)) };
+    const fc = forecastFor(sp);
+    return { ...g, title, units, count: units.length, onOrder: spotOnOrder(sp), reserved: spotReserved(sp).length, min: minFor(sp), fc, cover: daysOfCover(units.length, fc), status: stockStatus(units.length, g.capacity, minFor(sp)) };
   });
 }
 
@@ -493,6 +847,7 @@ function stockCardHtml(p) {
     </div>
     ${p.onOrder ? `<div class="stock-coming">+ ${p.onOrder} being built</div>` : ''}
     ${p.reserved ? `<div>${reservedTagHtml(p.reserved)}</div>` : ''}
+    ${p.cover !== null ? `<div class="stock-cover${p.cover < p.fc.lead_time_days ? ' short' : ''}" title="${escapeHtml(forecastTip(p.fc))}">≈ ${p.cover} day(s) of stock · sells ~${fmtRate(p.fc.weekly_demand)}/wk</div>` : ''}
   </div>`;
 }
 
@@ -618,16 +973,24 @@ function renderShelfSelect() {
 
 async function loadLocationSerials() {
   locationLedgerUnits = [];
-  if (!currentLocation) { locationSerials = []; locationReserved = []; locationOpenLines = []; locationMinimums = new Map(); return; }
+  if (!currentLocation) { locationSerials = []; locationReserved = []; locationOpenLines = []; locationMinimums = new Map(); locationForecast = new Map(); forecastComputedAt = null; return; }
   const usesLedger = shelves.some((sh) => sh.warehouse_id === currentLocation && (sh.spots || []).some((sp) => sp.count_source === 'ledger'));
-  const [serialRes, ledgerRes, openRes, minRes] = await Promise.all([
+  const [serialRes, ledgerRes, openRes, minRes, fcRes] = await Promise.all([
     rpc('staff_list_production_location_serials', { p_warehouse_id: currentLocation }),
     usesLedger ? rpc('staff_list_production_location_ledger_qty', { p_warehouse_id: currentLocation }) : Promise.resolve({ data: [] }),
     // "+ N being built" on the stock list - quietly left out if it can't be read.
     rpc('staff_list_production_open_qty', { p_warehouse_id: currentLocation }),
     // Minimums - quietly the old 1-2 left rule if supabase_production_shelf_minimums.sql isn't run yet.
-    rpc('staff_list_production_shelf_minimums', { p_warehouse_id: currentLocation })
+    rpc('staff_list_production_shelf_minimums', { p_warehouse_id: currentLocation }),
+    // Forecast - quietly left out if supabase_production_forecast.sql isn't run yet.
+    rpc('staff_list_production_forecast', { p_warehouse_id: currentLocation })
   ]);
+  const fcRows = fcRes.error ? [] : (fcRes.data || []);
+  locationForecast = new Map(fcRows.map((f) => [minKey(f.item_code, f.variant_id), {
+    ...f, weekly_demand: Number(f.weekly_demand) || 0, suggested_min: f.suggested_min === null ? null : Number(f.suggested_min),
+    weekly_series: (f.weekly_series || []).map((v) => Number(v) || 0)
+  }]));
+  forecastComputedAt = fcRows.reduce((a, f) => (!a || f.computed_at_utc > a ? f.computed_at_utc : a), null);
   locationOpenLines = openRes.error ? [] : (openRes.data || []);
   locationMinimums = new Map((minRes.error ? [] : (minRes.data || [])).map((m) => [minKey(m.item_code, m.variant_id), Number(m.min_qty)]));
   minimumsUnavailable = !!minRes.error;
@@ -1285,7 +1648,7 @@ function wireFloorDrag() {
   viewOnly = !(canEditLayout || session.isOrderMaker);
   let savedView = null;
   try { savedView = localStorage.getItem(VIEW_KEY); } catch (err) { /* default view */ }
-  viewMode = savedView === 'stock' || savedView === 'map' || (savedView === 'mins' && canEditLayout) ? savedView : (viewOnly ? 'stock' : 'map');
+  viewMode = savedView === 'stock' || savedView === 'map' || savedView === 'forecast' || (savedView === 'mins' && canEditLayout) ? savedView : (viewOnly ? 'stock' : 'map');
   // Minimums list - only for those who can change them (the save RPC re-checks).
   document.getElementById('minsViewBtn').classList.toggle('hidden', !canEditLayout);
   if (viewOnly) {
