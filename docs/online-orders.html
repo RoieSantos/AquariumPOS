@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=factpay1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=phone1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -189,6 +189,9 @@
         </aside>
 
         <section class="bc-main">
+          <!-- Phone view of this list (js/onlineOrders.js orderPhoneCardsHtml): one tappable card per order
+               instead of the 25-column grid - css/bc-list.css swaps them below 760px. -->
+          <div class="oo-phone-cards" id="orderPhoneCards"><div class="oo-mc-empty">Loading...</div></div>
           <div class="bc-grid-wrap" id="orderGridWrap">
             <table class="bc-grid oo-grid" data-resize-key="online-orders-v7">
               <thead>
@@ -1230,7 +1233,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=fulfilled1"></script>
-  <script src="js/onlineOrders.js?v=aoitemno1"></script>
+  <script src="js/onlineOrders.js?v=phone1"></script>
   <script src="js/onlineNewOrders.js?v=payhist1"></script>
   <script src="js/pwa.js"></script>
 </body>

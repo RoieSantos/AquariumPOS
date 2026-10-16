@@ -3140,3 +3140,126 @@ a.bc-cue:hover {
   border-top: 2px solid var(--text-muted, #8a8f98);
 }
 #setAssemblyModalSets .set-comp-list > .set-comp:first-child { border-top-color: var(--bc-line, #d0d0d0); border-top-width: 1px; }
+
+/* ---------------------------------------------------------------------------
+   Online Orders on a phone (online-orders.html #orderPhoneCards, js/onlineOrders.js
+   orderPhoneCardsHtml) - per "a better view on my order list in my phone": below 760px the Online /
+   Walk-in grid becomes one tappable card per order, the status tabs a swipeable chip strip, and the
+   Online Order document opens full screen with its lines as cards.
+   --------------------------------------------------------------------------- */
+.oo-phone-cards { display: none; }
+
+/* Status tone per card: left stripe + status pill. */
+.oo-pc { --tone: #2f6fb7; --tone-bg: #e5eefb; --tone-fg: #1d4f8f; }
+.oo-pc.tone-todo { --tone: #c26a00; --tone-bg: #fff1dc; --tone-fg: #8a4b00; }
+.oo-pc.tone-assigned { --tone: #6b4fbb; --tone-bg: #eee8fb; --tone-fg: #4d3591; }
+.oo-pc.tone-pdone { --tone: #0f8a7e; --tone-bg: #dcf4f0; --tone-fg: #0b6158; }
+.oo-pc.tone-ship { --tone: #c98a00; --tone-bg: #fff4d6; --tone-fg: #7f5700; }
+.oo-pc.tone-shipped { --tone: #3a5ccc; --tone-bg: #e4e9fb; --tone-fg: #2a429a; }
+.oo-pc.tone-done { --tone: #1e7d3a; --tone-bg: #dff3e4; --tone-fg: #1e6b34; }
+.oo-pc.tone-cancel { --tone: #9aa3ae; --tone-bg: #eef0f2; --tone-fg: #5f6b7a; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .oo-pc { --tone-bg: #1e3350; --tone-fg: #9cc3f5; }
+  :root:not([data-theme="light"]) .oo-pc.tone-todo { --tone-bg: #3d2a12; --tone-fg: #f3b46b; }
+  :root:not([data-theme="light"]) .oo-pc.tone-assigned { --tone-bg: #2c2347; --tone-fg: #c3b2f2; }
+  :root:not([data-theme="light"]) .oo-pc.tone-pdone { --tone-bg: #12352f; --tone-fg: #7fdacd; }
+  :root:not([data-theme="light"]) .oo-pc.tone-ship { --tone-bg: #3a3012; --tone-fg: #f1cc6b; }
+  :root:not([data-theme="light"]) .oo-pc.tone-shipped { --tone-bg: #1f2a4d; --tone-fg: #a9bbf5; }
+  :root:not([data-theme="light"]) .oo-pc.tone-done { --tone-bg: #1f3a27; --tone-fg: #8fd6a4; }
+  :root:not([data-theme="light"]) .oo-pc.tone-cancel { --tone-bg: #262d38; --tone-fg: #9aa3ae; }
+}
+:root[data-theme="dark"] .oo-pc { --tone-bg: #1e3350; --tone-fg: #9cc3f5; }
+:root[data-theme="dark"] .oo-pc.tone-todo { --tone-bg: #3d2a12; --tone-fg: #f3b46b; }
+:root[data-theme="dark"] .oo-pc.tone-assigned { --tone-bg: #2c2347; --tone-fg: #c3b2f2; }
+:root[data-theme="dark"] .oo-pc.tone-pdone { --tone-bg: #12352f; --tone-fg: #7fdacd; }
+:root[data-theme="dark"] .oo-pc.tone-ship { --tone-bg: #3a3012; --tone-fg: #f1cc6b; }
+:root[data-theme="dark"] .oo-pc.tone-shipped { --tone-bg: #1f2a4d; --tone-fg: #a9bbf5; }
+:root[data-theme="dark"] .oo-pc.tone-done { --tone-bg: #1f3a27; --tone-fg: #8fd6a4; }
+:root[data-theme="dark"] .oo-pc.tone-cancel { --tone-bg: #262d38; --tone-fg: #9aa3ae; }
+
+.oo-pc {
+  position: relative; overflow: hidden; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  padding: 12px 14px 12px 17px; border: 1px solid var(--bc-line, #d9dee5); border-radius: 12px;
+  background: var(--bc-surface, #fff); box-shadow: 0 1px 3px rgba(16, 36, 64, .06);
+  transition: background-color .12s;
+}
+.oo-pc::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--tone); }
+.oo-pc:active { background: var(--bc-hover, #f3f2f1); }
+.oo-pc:focus-visible { outline: 2px solid var(--bc-link, #1560a8); outline-offset: 2px; }
+.oo-pc.tone-cancel .oo-pc-customer, .oo-pc.tone-cancel .oo-pc-id { opacity: .7; }
+.oo-pc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oo-pc-id { font-size: 17px; font-weight: 700; color: var(--bc-link, #1560a8); margin-right: auto; }
+.oo-pc-status { padding: 3px 10px; border-radius: 999px; background: var(--tone-bg); color: var(--tone-fg); font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.oo-pc-customer { margin-top: 4px; font-size: 16px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.oo-pc-meta { margin-top: 2px; font-size: 13px; color: var(--bc-muted, #5f6b7a); }
+.oo-pc-due { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 8px; font-size: 14px; }
+.oo-pc-handover { font-weight: 600; white-space: nowrap; }
+.oo-pc-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.oo-pc-parts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.oo-pc-part { padding: 3px 9px; border-radius: 8px; border: 1px solid var(--bc-line, #d9dee5); font-size: 12.5px; }
+.oo-pc-part b { font-weight: 600; color: var(--bc-muted, #5f6b7a); margin-right: 2px; }
+.oo-pc-part.done { border-color: #7cc292; color: #1e6b34; }
+.oo-pc-part.none { border-style: dashed; color: var(--bc-muted, #5f6b7a); }
+.oo-pc-pay { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--bc-line, #eef1f5); }
+.oo-pc-pay > div { display: flex; flex-direction: column; min-width: 0; }
+.oo-pc-pay span { font-size: 11.5px; color: var(--bc-muted, #5f6b7a); text-transform: uppercase; letter-spacing: .03em; }
+.oo-pc-pay b { font-size: 14px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oo-pc-pay .due b { color: #b42318; }
+.oo-pc-pay .clear b { color: #1e7d3a; }
+.oo-pc-note { margin-top: 8px; padding: 7px 10px; border-radius: 8px; background: #fff8e1; font-size: 13px; line-height: 1.35; max-height: 4.2em; overflow: hidden; }
+.oo-pc-note .oo-pos-desc-list { min-width: 0; max-width: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .oo-pc-note { background: #3a3218; }
+  :root:not([data-theme="light"]) .oo-pc-pay .due b { color: #f28b82; }
+  :root:not([data-theme="light"]) .oo-pc-pay .clear b, :root:not([data-theme="light"]) .oo-pc-part.done { color: #8fd6a4; }
+}
+:root[data-theme="dark"] .oo-pc-note { background: #3a3218; }
+:root[data-theme="dark"] .oo-pc-pay .due b { color: #f28b82; }
+:root[data-theme="dark"] .oo-pc-pay .clear b, :root[data-theme="dark"] .oo-pc-part.done { color: #8fd6a4; }
+
+/* Lines on the order document as cards: price row, Change link, order total. */
+.oc-lc-price { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--bc-line, #eef1f5); font-size: 13px; color: var(--bc-muted, #5f6b7a); }
+.oc-lc-price b { font-size: 15px; color: var(--text-main); font-variant-numeric: tabular-nums; }
+.oc-lc-change { margin-top: 4px; }
+.oc-lc-total { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 14px; border-radius: 10px; background: var(--bc-surface-2, #faf9f8); border: 1px solid var(--bc-line, #e1dfdd); font-weight: 600; }
+.oc-lc-total b { font-size: 17px; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) {
+  /* The list: cards instead of the grid; the action bar keeps only what works without a selected row
+     (every order action is on the document a card opens). */
+  #flatOrdersView .oo-phone-cards { display: grid; gap: 10px; margin-top: 10px; }
+  #flatOrdersView #orderGridWrap { display: none; }
+  #orderCmdbar :is(#openOrderBtn, #listSendPhotoBtn, #listSendMessageBtn, #listToShipBtn, #listAssignBtn,
+    #listNextStepBtn, #listSendBackBtn, #listProductionDoneBtn, #deleteSelectedOrdersBtn) { display: none !important; }
+  .bc-ile .bc-cmdbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .bc-ile .bc-cmdbar::-webkit-scrollbar { display: none; }
+
+  /* Online / Walk-in / Advance switch and the status tabs: one swipeable row of big chips. */
+  .bc-ile .order-scope-tabs { gap: 18px; overflow-x: auto; scrollbar-width: none; }
+  .bc-ile .order-scope-tabs .bc-tab { font-size: 16px; white-space: nowrap; }
+  .bc-ile .status-summary-bar {
+    position: sticky; top: 0; z-index: 5; flex-wrap: nowrap; gap: 8px; overflow-x: auto;
+    margin: 8px 0 0; padding: 6px 0 8px; border-bottom: none; scrollbar-width: none;
+    background: var(--page-bg, #f4f7fb);
+  }
+  .bc-ile .status-summary-bar::-webkit-scrollbar, .bc-ile .order-scope-tabs::-webkit-scrollbar { display: none; }
+  .bc-ile .status-summary-pill {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; margin: 0;
+    padding: 6px 12px; border: 1px solid var(--bc-line); border-radius: 999px; background: var(--bc-surface);
+    color: var(--text-main); font-size: 14px; font-weight: 600; white-space: nowrap;
+  }
+  .bc-ile .status-summary-pill.active { background: var(--bc-link); border-color: var(--bc-link); color: #fff; }
+  .bc-ile .status-summary-pill.active .status-summary-count { background: rgba(255, 255, 255, .22); border-color: transparent; color: #fff; }
+
+  /* The Online Order / Advance Order document fills the screen; header and actions stay reachable. */
+  #orderCardModal, #advanceCardModal { padding: 0; align-items: stretch; }
+  #orderCardModal .modal-panel.bc-doc, #advanceCardModal .modal-panel.bc-doc {
+    width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border-radius: 0; overflow-y: auto;
+  }
+  #orderCardModal .bc-doc-head, #advanceCardModal .bc-doc-head { position: sticky; top: 0; z-index: 3; background: var(--bc-surface); }
+  #orderCardMaximizeBtn, #advanceCardMaximizeBtn { display: none; }
+  .bc-doc .bc-cmdbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .bc-doc .bc-cmdbar::-webkit-scrollbar { display: none; }
+  #orderCardModal .oc-line-cards { display: grid; gap: 10px; }
+  #orderCardModal .line-items-wrap { display: none; }
+}

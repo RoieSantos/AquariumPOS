@@ -2547,6 +2547,73 @@ function orderRowsHtml(orders) {
     .join('');
 }
 
+// Phone view of the Online / Walk-in list (#orderPhoneCards) - per "i want a better view on my order
+// list in my phone.. can see all statuses of orders and the details of orders". Same rows as the grid,
+// one tappable card each (status colour, customer, handover + due date, makers, payment); css/bc-list.css
+// shows it instead of the 25-column grid below 760px. Tap opens the Online Order document.
+function phonePeso(value) {
+  return '₱' + (Number(value) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function phoneStatusTone(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'cancelled' || s === 'canceled' || s === 'returned') return 'cancel';
+  if (s === 'delivered' || s === 'completed') return 'done';
+  if (s === 'shipped') return 'shipped';
+  if (s === 'to ship') return 'ship';
+  if (s === 'production done') return 'pdone';
+  if (s === 'assigned') return 'assigned';
+  if (s === 'to assign') return 'todo';
+  return 'open';
+}
+
+function orderPhoneCardsHtml(orders) {
+  return orders.map((o) => {
+    const id = escapeHtml(o.order_id);
+    const status = listDisplayStatus(o);
+    const tone = phoneStatusTone(status);
+    const closed = ['done', 'shipped', 'cancel'].includes(tone);
+    const when = [o.order_date, formatTime12(o.order_time)].filter(Boolean).join(' · ');
+    // Open orders count down to the due date; once it's out the door, when it left.
+    const due = closed
+      ? (o.dispatched_at ? `<span class="oo-eta"><b>${dispatchDateHtml(o.dispatched_at)}</b> <i>dispatched</i></span>` : '<span class="oo-eta none">-</span>')
+      : etaHtml(o.estimated_delivery_date);
+    const parts = neededProductionRoles(o).map((role) => {
+      const field = MAKER_ROLES[role].field;
+      const who = o[`assigned_${field}_name`] || o[`assigned_${field}`];
+      const done = !!o.production_done?.[role];
+      return `<span class="oo-pc-part${done ? ' done' : ''}${who ? '' : ' none'}"><b>${role === 'tank' ? 'Tank' : 'Stand'}</b> ${escapeHtml(who || 'Not assigned')}${done ? ' &#10003;' : ''}</span>`;
+    });
+    if (o.assigned_dispatcher) {
+      parts.push(`<span class="oo-pc-part"><b>Dispatch</b> ${escapeHtml(o.assigned_dispatcher_name || o.assigned_dispatcher)}</span>`);
+    }
+    const balance = Number(o.balance) || 0;
+    const pay = hidePrices() ? '' : `
+        <div class="oo-pc-pay">
+          <div><span>Total</span><b>${phonePeso(o.money_to_collect)}</b></div>
+          <div><span>Paid</span><b>${phonePeso(o.amount_paid)}</b></div>
+          <div class="${balance > 0.005 && tone !== 'cancel' ? 'due' : 'clear'}"><span>Balance</span><b>${balance > 0.005 ? phonePeso(balance) : 'Paid'}</b></div>
+        </div>`;
+    const badges = [otherBranchBadgeHtml(o), glassBadgeHtml(o), customBadgeHtml(o), gmaBadgeHtml(o), prodOrderBadgeHtml(o), releaseBadgeHtml(o)].filter((b) => b && b.trim()).join(' ');
+    const note = noteCellHtml(o);
+    return `
+      <article class="oo-pc tone-${tone}" data-open-order="${id}" role="button" tabindex="0" aria-label="Open order ${id}">
+        <header class="oo-pc-head">
+          <span class="oo-pc-id">#${id}</span>
+          <span class="oo-pc-status">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)}
+          <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
+        </header>
+        <div class="oo-pc-customer">${escapeHtml(o.customer_name || 'No name on order')}</div>
+        <div class="oo-pc-meta">${escapeHtml(when)}${o.warehouse_name || o.location_id ? ` · ${escapeHtml(o.warehouse_name || o.location_id)}` : ''}</div>
+        <div class="oo-pc-due"><span class="oo-pc-handover">${o.for_delivery ? '&#128666; Delivery' : '&#127978; Pickup'}</span>${due}</div>
+        ${badges ? `<div class="oo-pc-badges">${badges}</div>` : ''}
+        ${parts.length ? `<div class="oo-pc-parts">${parts.join('')}</div>` : ''}
+        ${pay}
+        ${note ? `<div class="oo-pc-note">${note}</div>` : ''}
+      </article>`;
+  }).join('');
+}
+
 // Stacked card for the grouped (Online Order Staff / mobile) view - one order's info as
 // label/value rows instead of a wide table, so nothing gets clipped or forces horizontal
 // scrolling on a phone. The "To Ship" button is only shown once an order is 'Printed' (same rule
@@ -5091,6 +5158,21 @@ function selectOrderRow(orderId) {
 }
 
 function wireOrderListActions() {
+  // Phone cards: the whole card opens the order; badge links (Glass / GMA drill-downs) keep their own.
+  const phoneCards = document.getElementById('orderPhoneCards');
+  const openPhoneCard = (card) => { selectOrderRow(card.dataset.openOrder); openOrderCard(card.dataset.openOrder); };
+  phoneCards.addEventListener('click', (event) => {
+    if (event.target.closest('a')) return;
+    const card = event.target.closest('.oo-pc[data-open-order]');
+    if (card) openPhoneCard(card);
+  });
+  phoneCards.addEventListener('keydown', (event) => {
+    const card = event.target.closest('.oo-pc[data-open-order]');
+    if (!card || event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    openPhoneCard(card);
+  });
+
   const tbody = document.getElementById('orderTableBody');
   tbody.addEventListener('click', (event) => {
     const openLink = event.target.closest('[data-open-order]');
@@ -5475,16 +5557,22 @@ function hidePrices() {
 function renderOrderCardLineCards() {
   const box = document.getElementById('orderCardLineCards');
   if (!box) return;
-  if (!isMakerFocus()) { box.innerHTML = ''; return; }
   // Per "I want the maker to see the item / description / SKU / quantity": the Pancake line name is
-  // the Item, its spec note the Description.
-  box.innerHTML = cardLines.map((l) => makerLineCardHtml({
+  // the Item, its spec note the Description. Rendered for everyone: css/bc-list.css shows these cards
+  // instead of the wide lines table on a phone (makers: every width), with prices unless hidePrices.
+  const canChange = !isMakerFocus() && canChangeOnlineOrderLineItem(findFlatOrder(openCardOrderId));
+  const priced = !hidePrices();
+  box.innerHTML = (cardLines.map((l) => makerLineCardHtml({
     item: l.description || l.item_code,
     description: l.note,
     sku: lineSku(l),
     qty: l.quantity ?? '',
-    extra: `<div class="oc-lc-attach">${cardAttachmentCellHtml(l.line_id)}</div>`
-  })).join('') || '<div class="oo-mc-empty">No line items found for this order.</div>';
+    extra: (priced && lineAmount(l) !== null ? `<div class="oc-lc-price"><span>${phonePeso(l.price)} each${Number(l.discount) ? ` · less ${phonePeso(l.discount)}` : ''}</span><b>${phonePeso(lineAmount(l))}</b></div>` : '')
+      + (canChange && l.line_id ? `<div class="oc-lc-change">${changeItemLinkHtml(l.line_id)}</div>` : '')
+      + `<div class="oc-lc-attach">${cardAttachmentCellHtml(l.line_id)}</div>`
+  })).join('') + (cardLines.length && priced && !isMakerFocus()
+    ? `<div class="oc-lc-total"><span>${cardLines.reduce((n, l) => n + (Number(l.quantity) || 0), 0)} item(s)</span><b>${phonePeso(cardLines.reduce((n, l) => n + (lineAmount(l) || 0), 0))}</b></div>`
+    : '')) || '<div class="oo-mc-empty">No line items found for this order.</div>';
 }
 
 // One line for a maker: Item + big Qty, then labelled Description / SKU (shared by the online order
@@ -5722,13 +5810,15 @@ async function saveChangeItem() {
 function wireChangeItemDialog() {
   if (changeItemWired) return;
   changeItemWired = true;
-  document.getElementById('orderCardLinesBody').addEventListener('click', (e) => {
+  const onOnlineChangeClick = (e) => {
     const btn = e.target.closest('[data-change-line]');
     const l = btn && cardLines.find((x) => String(x.line_id) === btn.dataset.changeLine);
     if (!l || !openCardOrderId) return;
     openChangeItemDialog({ kind: 'online', orderNo: openCardOrderId, lineId: l.line_id, variationId: l.variation_id,
       itemCode: l.item_code || l.product_display_id, description: l.description });
-  });
+  };
+  document.getElementById('orderCardLinesBody').addEventListener('click', onOnlineChangeClick);
+  document.getElementById('orderCardLineCards').addEventListener('click', onOnlineChangeClick); // phone line cards
   document.getElementById('advanceCardLinesBody').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-change-line]');
     const l = btn && advanceCardLines.find((x) => String(x.line_no) === btn.dataset.changeLine);
@@ -6500,6 +6590,7 @@ async function loadOrders(search, status) {
       document.getElementById('groupedOrdersList').innerHTML = `<p class="error-text">${error.message}</p>`;
     } else {
       document.getElementById('orderTableBody').innerHTML = `<tr><td colspan="25" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById('orderPhoneCards').innerHTML = `<div class="oo-mc-empty error-text">${escapeHtml(error.message)}</div>`;
     }
     return;
   }
@@ -6564,6 +6655,9 @@ async function loadOrders(search, status) {
   tbody.innerHTML = rows.length === 0
     ? `<tr><td colspan="25" class="cell-msg">${myAssignmentsOnly ? 'Nothing to do right now - no open work is assigned to you.' : 'No online orders found.'}</td></tr>`
     : orderRowsHtml(rows);
+  document.getElementById('orderPhoneCards').innerHTML = rows.length === 0
+    ? '<div class="oo-mc-empty">No orders found.</div>'
+    : orderPhoneCardsHtml(rows);
   updateCheckedOrdersState();
 
   renderPaginationBar(
@@ -6935,13 +7029,18 @@ function wireOrderFilters() {
     if (!document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
   });
 
-  let filterPaneOpen = true;
-  document.getElementById('filterPaneBtn').addEventListener('click', () => {
-    filterPaneOpen = !filterPaneOpen;
+  // On a phone the filter pane starts closed - it would otherwise stack above the order cards.
+  let filterPaneOpen = !window.matchMedia('(max-width: 760px)').matches;
+  const applyFilterPane = () => {
     document.getElementById('filterPane').classList.toggle('hidden', !filterPaneOpen);
     document.getElementById('flatOrdersView').classList.toggle('no-filterpane', !filterPaneOpen);
     document.getElementById('filterPaneBtn').setAttribute('aria-pressed', filterPaneOpen ? 'true' : 'false');
     fitGridToViewport();
+  };
+  applyFilterPane();
+  document.getElementById('filterPaneBtn').addEventListener('click', () => {
+    filterPaneOpen = !filterPaneOpen;
+    applyFilterPane();
   });
   window.addEventListener('resize', fitGridToViewport);
 }
