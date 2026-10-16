@@ -119,6 +119,30 @@
               <tbody id="dayStopsTableBody"></tbody>
             </table>
           </div>
+          <!-- Money the driver collected at the door this day (js/delivery.js renderDayCollections,
+               sql/supabase_delivery_driver_collections.sql) - With driver until a Super User marks it Remitted. -->
+          <div id="dayCollectionsSection" class="hidden" style="margin:16px 0;">
+            <div class="toolbar" style="margin-bottom:6px;">
+              <h3 style="margin:0;">Collections <span class="muted" id="dayCollectionsSummary" style="font-size:13px; font-weight:400;"></span></h3>
+              <button class="btn btn-primary btn-sm hidden" id="remitAllCollectionsBtn" type="button">Mark all Remitted</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Order</th>
+                    <th class="num">Collected</th>
+                    <th>Method</th>
+                    <th>Collected By</th>
+                    <th>On the order</th>
+                    <th>Money</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="dayCollectionsBody"></tbody>
+              </table>
+            </div>
+          </div>
           <!-- When this panel is opened for TODAY, #dayMap also shows a driver pin with a
                live/stale/stopped status badge - see the same renderDayMap/plotDriverMarkers logic
                noted on #driverRouteMap above. -->
@@ -288,6 +312,24 @@
   <input type="file" id="markDonePhotoInput" accept="image/*" capture="environment" class="hidden" />
   <!-- Same flow, but picks an existing photo from the phone's gallery (no capture = file picker). -->
   <input type="file" id="markDoneGalleryInput" accept="image/*" class="hidden" />
+  <!-- Driver: money collected at the door (js/delivery.js openCollectModal / saveCollection). -->
+  <div id="collectModal" class="modal-backdrop hidden">
+    <div class="modal-panel driver-detail-panel">
+      <h2 style="margin:0 0 4px;">&#128176; Payment Collected</h2>
+      <p class="muted" id="collectOrderLabel" style="margin:0 0 12px;"></p>
+      <label for="collectAmountInput">Amount collected</label>
+      <input type="number" id="collectAmountInput" step="0.01" min="0" inputmode="decimal" style="width:100%; font-size:18px; padding:10px;" />
+      <label for="collectMethodSelect" style="margin-top:10px; display:block;">Paid via</label>
+      <select id="collectMethodSelect" style="width:100%; font-size:16px; padding:8px;"></select>
+      <label for="collectReferenceInput" style="margin-top:10px; display:block;">Reference <span class="muted">(GCash / bank ref no., optional)</span></label>
+      <input type="text" id="collectReferenceInput" maxlength="200" style="width:100%; padding:8px;" />
+      <p id="collectError" class="error-text hidden" style="margin:10px 0 0;"></p>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="btn btn-success" id="collectSaveBtn" type="button" style="flex:1; padding:12px;">Save</button>
+        <button class="btn btn-secondary" id="collectCancelBtn" type="button" style="flex:1;">Cancel</button>
+      </div>
+    </div>
+  </div>
   <div id="markDoneTipModal" class="modal-backdrop hidden">
     <div class="modal-panel driver-detail-panel" style="text-align:center;">
       <div style="font-size:40px;">&#128248;</div>
@@ -321,7 +363,7 @@
   <script src="js/pushNotifications.js?v=3"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/delivery.js?v=portalown1"></script>
+  <script src="js/delivery.js?v=collect1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

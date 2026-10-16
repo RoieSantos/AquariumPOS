@@ -483,6 +483,8 @@ async function renderDriverRouteView(dateKey) {
           ${s.route_name ? `<div class="driver-stop-route muted">&#128666; Route: ${s.route_name}</div>` : ''}
           ${s.notes ? `<div class="driver-stop-notes muted">&#128221; Note: ${s.notes}</div>` : ''}
           ${s.note_print ? `<div class="driver-stop-notes muted">&#128204; Delivery Note: ${s.note_print}</div>` : ''}
+          <div class="driver-stop-collections" data-collect-for="${s.stop_id}"></div>
+          ${Number(s.balance) > 0 ? `<button type="button" class="btn btn-primary driver-collect-btn" data-collect-stop-id="${s.stop_id}" style="width:100%; margin-top:10px;">&#128176; Record Payment Collected</button>` : ''}
           <div class="driver-stop-done" data-done-for="${s.stop_id}" style="margin-top:10px;">
             <button type="button" class="btn btn-success driver-mark-done-btn" data-done-stop-id="${s.stop_id}" style="width:100%;">&#9989; Mark Done</button>
           </div>
@@ -490,9 +492,265 @@ async function renderDriverRouteView(dateKey) {
       `;
     }).join('');
     loadStopCompletions(stops.map((s) => s.stop_id));
+    loadDriverCollections(stops.map((s) => s.stop_id));
   }
 
   await renderDayMap(stops, dateKey, 'driverRouteMap');
+}
+
+// --- Driver collections ----------------------------------------------------------------------
+// Per "the driver is receiving money sometimes on the delivery.. how can we fullfill it from the
+// system" - "Record Payment Collected" on a stop with a balance: amount (prefilled with the balance),
+// method, reference. staff_record_delivery_collection (sql/supabase_delivery_driver_collections.sql)
+// saves it and puts it on the order right away (Pancake via the POS Online Pay logic, AO- orders on
+// their payments; advance orders are recorded only - the POS takes it at Pay In Full). The money then
+// reads "With driver" until a Super User marks it Remitted on the day's Collections list.
+// collectId is made once per modal and reused on Save retries, so a lost reply can't record it twice.
+let collectStopId = null;
+let collectId = null;
+let collectBusy = false;
+let collectMethodsPromise = null;
+
+function newCollectionId() {
+  if (window.crypto?.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = Math.random() * 16 | 0;
+    return (ch === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function pesoAmount(value) {
+  return `&#8369;${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function loadCollectMethods() {
+  if (!collectMethodsPromise) {
+    collectMethodsPromise = supabaseClient.rpc('staff_list_delivery_payment_methods', {
+      p_username: currentSession.username,
+      p_password: currentSession.password
+    }).then(({ data, error }) => {
+      if (error) { collectMethodsPromise = null; throw error; }
+      return data || [];
+    });
+  }
+  return collectMethodsPromise;
+}
+
+async function fetchCollections(stopIds) {
+  if (!stopIds.length) return [];
+  const { data, error } = await supabaseClient.rpc('staff_list_delivery_collections', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_stop_ids: stopIds
+  });
+  // Before supabase_delivery_driver_collections.sql is run the RPC doesn't exist - show nothing.
+  if (error) return [];
+  return data || [];
+}
+
+// "On the order" status, shared by the driver card and the day's Collections list.
+function collectionApplyHtml(c) {
+  if (c.apply_status === 'Applied') {
+    const feePart = Number(c.amount) - Number(c.applied_amount || 0);
+    return `<span class="badge badge-success" title="${escapeHtmlText(c.applied_in || '')}">&#9989; On the order</span>`
+      + (feePart > 0.004 ? ` <span class="muted" style="font-size:12px;">(${pesoAmount(feePart)} delivery fee - stop only)</span>` : '');
+  }
+  if (c.apply_status === 'Record only') {
+    return '<span class="badge badge-warning" title="Advance order - its balance is in the POS">Pay In Full in the POS</span>';
+  }
+  return `<span class="badge badge-danger">Not on the order yet</span>${c.apply_error ? `<div class="error-text" style="font-size:12px;">${escapeHtmlText(c.apply_error)}</div>` : ''}`;
+}
+
+function collectionMoneyHtml(c) {
+  if (!c.remitted_at_utc) return '<span class="badge badge-warning">With driver</span>';
+  const when = new Date(c.remitted_at_utc).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `<span class="badge badge-success">Remitted</span> <span class="muted" style="font-size:12px;">${escapeHtmlText(c.remitted_by || '')} &middot; ${when}</span>`;
+}
+
+async function loadDriverCollections(stopIds) {
+  const rows = await fetchCollections(stopIds);
+  const byStop = new Map();
+  rows.forEach((c) => {
+    if (!byStop.has(c.stop_id)) byStop.set(c.stop_id, []);
+    byStop.get(c.stop_id).push(c);
+  });
+  document.querySelectorAll('.driver-stop-collections[data-collect-for]').forEach((el) => {
+    const list = byStop.get(el.dataset.collectFor) || [];
+    el.innerHTML = list.map((c) => {
+      const when = new Date(c.collected_at_utc).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return `<div class="driver-stop-collection" style="margin-top:8px; padding:8px; border-radius:6px; background:rgba(16,124,16,0.08);">
+          <div><b>&#128181; Collected ${pesoAmount(c.amount)}</b> &middot; ${escapeHtmlText(c.method_name || '')}${c.reference ? ` <span class="muted">(${escapeHtmlText(c.reference)})</span>` : ''}</div>
+          <div class="muted" style="font-size:12px;">${escapeHtmlText(c.collected_by || '')} &middot; ${when}</div>
+          <div style="margin-top:4px;">${collectionApplyHtml(c)} ${collectionMoneyHtml(c)}</div>
+          ${c.apply_status === 'Failed' ? `<button type="button" class="btn btn-secondary btn-sm driver-collect-retry-btn" data-retry-collection-id="${c.collection_id}" style="width:100%; margin-top:6px;">Try again</button>` : ''}
+        </div>`;
+    }).join('');
+  });
+}
+
+function setCollectError(message) {
+  const el = document.getElementById('collectError');
+  el.textContent = message || '';
+  el.classList.toggle('hidden', !message);
+}
+
+async function openCollectModal(stopId) {
+  const stop = (stopsByDate[driverDate] || []).find((s) => s.stop_id === stopId);
+  if (!stop) return;
+  collectStopId = stopId;
+  collectId = newCollectionId();
+  document.getElementById('collectOrderLabel').textContent =
+    `${stop.order_id || ''} · ${stop.customer_name || ''} · balance ₱${Number(stop.balance || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  document.getElementById('collectAmountInput').value = Number(stop.balance) > 0 ? Number(stop.balance).toFixed(2) : '';
+  document.getElementById('collectReferenceInput').value = '';
+  setCollectError('');
+  const select = document.getElementById('collectMethodSelect');
+  select.innerHTML = '<option value="">Loading...</option>';
+  document.getElementById('collectModal').classList.remove('hidden');
+  try {
+    const methods = await loadCollectMethods();
+    select.innerHTML = methods.map((m) => `<option value="${escapeHtmlText(m.code)}">${escapeHtmlText(m.name)}</option>`).join('');
+  } catch (err) {
+    select.innerHTML = '<option value="CASH">Cash</option>';
+    setCollectError(/schema cache|could not find the function|does not exist/i.test(err.message || '')
+      ? 'Payment collection isn\'t set up yet - run sql/supabase_delivery_driver_collections.sql.'
+      : `Could not load payment methods: ${err.message}`);
+  }
+}
+
+function closeCollectModal() {
+  if (collectBusy) return;
+  document.getElementById('collectModal').classList.add('hidden');
+  collectStopId = null;
+  collectId = null;
+}
+
+async function reloadDriverDay() {
+  const viewed = new Date(`${driverDate}T00:00:00`);
+  await loadMonthStops(viewed.getFullYear(), viewed.getMonth());
+  await renderDriverRouteView(driverDate);
+}
+
+async function saveCollection() {
+  if (collectBusy || !collectStopId) return;
+  const amount = parseFloat(document.getElementById('collectAmountInput').value);
+  const method = document.getElementById('collectMethodSelect').value;
+  if (!(amount > 0)) { setCollectError('Enter the amount collected.'); return; }
+  if (!method) { setCollectError('Pick how they paid.'); return; }
+  const btn = document.getElementById('collectSaveBtn');
+  collectBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  setCollectError('');
+  const { data, error } = await supabaseClient.rpc('staff_record_delivery_collection', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_collection_id: collectId,
+    p_stop_id: collectStopId,
+    p_amount: amount,
+    p_method_code: method,
+    p_reference: document.getElementById('collectReferenceInput').value.trim() || null
+  });
+  collectBusy = false;
+  btn.disabled = false;
+  btn.textContent = 'Save';
+  if (error) {
+    // Same collectId on the next Save - if this one did reach the server it isn't recorded twice.
+    setCollectError(`Not saved: ${error.message}`);
+    return;
+  }
+  const r = (data || [])[0];
+  closeCollectModal();
+  if (r && r.apply_status === 'Failed') {
+    alert(`The payment is saved as collected, but it could not be put on the order yet:\n${r.apply_error || ''}\n\nTap "Try again" on the stop later.`);
+  }
+  await reloadDriverDay();
+}
+
+async function retryCollection(collectionId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Trying...'; }
+  const { data, error } = await supabaseClient.rpc('staff_retry_delivery_collection', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_collection_id: collectionId
+  });
+  const r = (data || [])[0];
+  if (error || (r && r.apply_status === 'Failed')) {
+    alert(`Still not on the order: ${error ? error.message : r.apply_error || ''}`);
+  }
+}
+
+function wireDriverCollections() {
+  document.getElementById('driverStopCards').addEventListener('click', async (e) => {
+    const collectBtn = e.target.closest('.driver-collect-btn');
+    if (collectBtn) { openCollectModal(collectBtn.dataset.collectStopId); return; }
+    const retryBtn = e.target.closest('.driver-collect-retry-btn');
+    if (retryBtn) {
+      await retryCollection(retryBtn.dataset.retryCollectionId, retryBtn);
+      await reloadDriverDay();
+    }
+  });
+  document.getElementById('collectSaveBtn').addEventListener('click', saveCollection);
+  document.getElementById('collectCancelBtn').addEventListener('click', closeCollectModal);
+}
+
+// Office: the day's collections under the stops table - Retry for Failed ones, Super Users mark
+// them Remitted once the driver hands the money over.
+async function renderDayCollections(dateKey, stops) {
+  const section = document.getElementById('dayCollectionsSection');
+  const rows = await fetchCollections(stops.map((s) => s.stop_id));
+  if (selectedDateKey !== dateKey) return; // another day opened meanwhile
+  section.classList.toggle('hidden', !rows.length);
+  if (!rows.length) return;
+  const isSuper = !!currentSession.isSuperUser;
+  const withDriver = rows.filter((c) => !c.remitted_at_utc);
+  const withDriverTotal = withDriver.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const total = rows.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  document.getElementById('dayCollectionsSummary').innerHTML =
+    `${pesoAmount(total)} collected${withDriver.length ? ` &middot; ${pesoAmount(withDriverTotal)} still with driver` : ' &middot; all remitted'}`;
+  const remitAllBtn = document.getElementById('remitAllCollectionsBtn');
+  remitAllBtn.classList.toggle('hidden', !isSuper || withDriver.length < 2);
+  remitAllBtn.onclick = () => remitCollections(withDriver.map((c) => c.collection_id), withDriverTotal, dateKey, stops);
+  document.getElementById('dayCollectionsBody').innerHTML = rows.map((c) => {
+    const stop = stops.find((s) => s.stop_id === c.stop_id);
+    const when = new Date(c.collected_at_utc).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return `<tr>
+        <td>${escapeHtmlText(c.order_ref || '')}<br><span class="muted">${escapeHtmlText(stop?.customer_name || '')}</span></td>
+        <td class="num"><b>${pesoAmount(c.amount)}</b></td>
+        <td>${escapeHtmlText(c.method_name || '')}${c.reference ? `<br><span class="muted">${escapeHtmlText(c.reference)}</span>` : ''}</td>
+        <td>${escapeHtmlText(c.collected_by || '')}<br><span class="muted">${when}</span></td>
+        <td>${collectionApplyHtml(c)}</td>
+        <td>${collectionMoneyHtml(c)}</td>
+        <td>
+          ${c.apply_status === 'Failed' ? `<button class="btn btn-secondary btn-sm" type="button" data-retry-collection-id="${c.collection_id}">Retry</button>` : ''}
+          ${isSuper && !c.remitted_at_utc ? `<button class="btn btn-primary btn-sm" type="button" data-remit-collection-id="${c.collection_id}">Mark Remitted</button>` : ''}
+        </td>
+      </tr>`;
+  }).join('');
+  document.querySelectorAll('#dayCollectionsBody button[data-retry-collection-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await retryCollection(btn.dataset.retryCollectionId, btn);
+      await renderMonth(currentYear, currentMonth);
+      showDayDetail(dateKey);
+    });
+  });
+  document.querySelectorAll('#dayCollectionsBody button[data-remit-collection-id]').forEach((btn) => {
+    const c = rows.find((x) => x.collection_id === btn.dataset.remitCollectionId);
+    btn.addEventListener('click', () => remitCollections([c.collection_id], Number(c.amount), dateKey, stops));
+  });
+}
+
+async function remitCollections(ids, total, dateKey, stops) {
+  if (!ids.length) return;
+  const amountText = `₱${Number(total).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  if (!confirm(`Mark ${ids.length === 1 ? 'this collection' : `${ids.length} collections`} (${amountText}) as remitted - the driver handed the money to the office?`)) return;
+  const { error } = await supabaseClient.rpc('admin_remit_delivery_collections', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_collection_ids: ids
+  });
+  if (error) { alert(`Could not mark remitted: ${error.message}`); return; }
+  await renderDayCollections(dateKey, stops);
 }
 
 // Per "show in the view the actual balance of the customer ? show Fully paid if they are fully paid
@@ -1119,6 +1377,7 @@ function showDayDetail(dateKey) {
     });
   });
 
+  renderDayCollections(dateKey, stops);
   renderDayMap(stops, dateKey);
 }
 
@@ -2583,6 +2842,7 @@ function wireToolbarAndModal() {
     document.getElementById('calendarView').classList.add('hidden');
     wireDriverRouteNav();
     wireMarkDone();
+    wireDriverCollections();
     await renderDriverRouteView(toDateKey(today));
 
     // Reload the day when the driver comes back to the app (e.g. after a route-change

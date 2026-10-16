@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=fulfilled1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=factpay1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -233,7 +233,12 @@
 
         <!-- Serials FactBox: the selected row's linked serials (js/onlineOrders.js showListSerials,
              staff_get_online_order_serial_labels). Hidden below 1280px like every BC list FactBox. -->
-        <aside class="bc-factbox" id="orderListFactbox" aria-label="Stock and Serials">
+        <aside class="bc-factbox" id="orderListFactbox" aria-label="Payment, Stock and Serials">
+          <!-- Payment: the selected row's balance, read off the row itself (js/onlineOrders.js showListPayment). -->
+          <div class="bc-fact" id="orderListPaymentFact">
+            <div class="bc-fact-title">Payment <span class="muted" id="orderListPaymentStatus"></span></div>
+            <div class="bc-fact-body" id="orderListPaymentBody"><p class="bc-fact-empty">Select an order to see its balance.</p></div>
+          </div>
           <!-- Stock: the selected row's lines with on-hand per warehouse (js/itemStockFactbox.js loadDocument). -->
           <div class="bc-fact" id="orderListStockFact">
             <div class="bc-fact-title">Stock <span class="muted" data-isf-count></span></div>
@@ -321,7 +326,12 @@
         <!-- Serials FactBox: the selected advance order's linked serials (js/onlineOrders.js showListSerials,
              staff_get_advance_order_serial_labels). no-factbox is dropped in initAdvanceOrdersView; this
              Serials part is hidden there for view-only Store Managers (they still get Stock). -->
-        <aside class="bc-factbox" id="advanceListFactbox" aria-label="Stock and Serials">
+        <aside class="bc-factbox" id="advanceListFactbox" aria-label="Payment, Stock and Serials">
+          <!-- Payment: the selected row's balance, read off the row itself (js/onlineOrders.js showListPayment). -->
+          <div class="bc-fact" id="advanceListPaymentFact">
+            <div class="bc-fact-title">Payment <span class="muted" id="advanceListPaymentStatus"></span></div>
+            <div class="bc-fact-body" id="advanceListPaymentBody"><p class="bc-fact-empty">Select an order to see its balance.</p></div>
+          </div>
           <!-- Stock: the selected row's lines with on-hand per warehouse (js/itemStockFactbox.js loadDocument) -
                shown to everyone; the Serials part is hidden for view-only Store Managers. -->
           <div class="bc-fact" id="advanceListStockFact">
@@ -1220,7 +1230,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=fulfilled1"></script>
-  <script src="js/onlineOrders.js?v=fulfilled1"></script>
+  <script src="js/onlineOrders.js?v=factpay1"></script>
   <script src="js/onlineNewOrders.js?v=payhist1"></script>
   <script src="js/pwa.js"></script>
 </body>

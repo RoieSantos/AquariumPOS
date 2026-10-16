@@ -2972,6 +2972,37 @@ async function loadAdvanceCardSerials(no) {
   ItemStockFactbox.setAssigned(document.getElementById('advanceCardStockPart'), no, error ? [] : data);
 }
 
+// Payment part of the list FactBox - per "in the factbox can we show if the order has balance?". Read
+// straight off the selected row (no fetch), so it follows every list refresh. Hidden with the prices
+// (hidePrices - Maker focus / price columns hidden).
+function showListPayment(kind, id) {
+  const prefix = kind === 'advance' ? 'advanceList' : 'orderList';
+  const fact = document.getElementById(`${prefix}PaymentFact`);
+  if (!fact) return;
+  fact.classList.toggle('hidden', hidePrices());
+  const body = document.getElementById(`${prefix}PaymentBody`);
+  const status = document.getElementById(`${prefix}PaymentStatus`);
+  const o = !id ? null : kind === 'advance' ? advanceRowsByNo.get(String(id)) : findFlatOrder(id);
+  if (!o) {
+    status.textContent = '';
+    status.className = 'muted';
+    body.innerHTML = '<p class="bc-fact-empty">Select an order to see its balance.</p>';
+    return;
+  }
+  const known = o.balance !== null && o.balance !== undefined && o.balance !== '';
+  const balance = Number(o.balance) || 0;
+  status.textContent = !known ? '' : balance > 0 ? '· With Balance' : '· Paid in full';
+  status.className = balance > 0 ? 'oc-fact-balance-due' : 'muted';
+  const rows = kind === 'advance'
+    ? [['Net Amount', o.net_amount], ['Downpayment', o.downpayment]]
+    : [['To Collect', o.money_to_collect], ['Discount', o.discount], ['Amount Paid', o.amount_paid]];
+  rows.push(['Balance', o.balance]);
+  body.innerHTML = `<dl class="bc-facts">${rows.map(([label, v]) => {
+    const text = v === null || v === undefined || v === '' ? '<span class="muted">-</span>' : `₱${Number(v).toFixed(2)}`;
+    return `<dt>${label}</dt><dd${label === 'Balance' && balance > 0 ? ' class="oc-fact-balance-due"' : ''}>${text}</dd>`;
+  }).join('')}</dl>`;
+}
+
 // Stock part of the list FactBox - the selected row's lines with their on-hand per warehouse
 // (js/itemStockFactbox.js loadDocument, staff_get_document_stock_by_warehouse). Same 250ms settle and
 // hidden-FactBox skip as the Serials part below.
@@ -3007,6 +3038,7 @@ let listSerialsKey = null;
 let listSerialsTimer = null;
 
 function showListSerials(kind, id, forceReload = false) {
+  showListPayment(kind, id);
   showListStock(kind, id, forceReload);
   if (kind === 'advance' && !canAssignOrders()) return; // view-only Store Managers: Serials part hidden, Stock only
   const prefix = kind === 'advance' ? 'advanceList' : 'orderList';

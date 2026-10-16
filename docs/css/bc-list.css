@@ -2591,6 +2591,10 @@ a.bc-cue:hover {
 .bc-doc .bc-doc-value.oc-balance-due { color: #b42318; font-weight: 700; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bc-doc .bc-doc-value.oc-balance-due { color: #ff8a80; } }
 :root[data-theme="dark"] .bc-doc .bc-doc-value.oc-balance-due { color: #ff8a80; }
+/* Same red on the list FactBox's Payment part (onlineOrders.js showListPayment). */
+.bc-fact .oc-fact-balance-due { color: #b42318; font-weight: 700; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bc-fact .oc-fact-balance-due { color: #ff8a80; } }
+:root[data-theme="dark"] .bc-fact .oc-fact-balance-due { color: #ff8a80; }
 
 /* ---- Send back for rework (Online Orders) ---- */
 .oo-rework { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 9px; background: #fde7e4; color: #9a2d2d; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
