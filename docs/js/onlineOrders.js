@@ -1734,26 +1734,29 @@ async function saveCardBranch() {
   }
 }
 
-// A portal order (AO-, made by Confirm Order) that's still open, on an account that sees prices - its
-// delivery fee and payments can still be changed from the card (the server re-checks).
-function isOpenPortalOrder(o) {
+// A portal order (AO-, made by Confirm Order) on an account that sees prices, whose payments can still
+// be added / fixed - every status except Cancelled / Returned. Per "once the order is shipped or delivered ... there are floating payments that not yet
+// fulfilled can a user manually fulfill it?" - a balance collected on delivery (COD) or paid after
+// shipping has to be recordable, so Shipped / Delivered / Completed stay open here
+// (sql/supabase_ao_order_payment_closed_orders.sql relaxes the server check to match).
+function isPayablePortalOrder(o) {
   if (!o || hidePrices() || myAssignmentsLocked) return false;
   if (!String(o.order_id || '').startsWith('AO-')) return false;
-  return !['shipped', 'delivered', 'completed', 'cancelled', 'canceled', 'returned', 'returning']
-    .includes((o.status || '').trim().toLowerCase());
+  return !['cancelled', 'canceled', 'returned', 'returning'].includes((o.status || '').trim().toLowerCase());
 }
 
 // Payment tab: the AO order's payments with Edit / Delete / Add (renderAoPayments, js/onlineNewOrders.js) -
 // per "can we also let the user to modify the payment in the order even though its new and confirmed".
+// getBalance feeds the "Settle balance" shortcut (records the remaining balance in one click).
 function renderOrderCardAoPayments(o) {
-  const show = isOpenPortalOrder(o) && typeof renderAoPayments === 'function';
+  const show = isPayablePortalOrder(o) && typeof renderAoPayments === 'function';
   document.getElementById('ocAoPaymentsBlock').classList.toggle('hidden', !show);
   if (!show) return;
   const orderId = String(o.order_id);
   renderAoPayments(document.getElementById('ocAoPayments'), orderId, async () => {
     await refreshCurrentOrders();
     if (openCardOrderId === orderId) loadOrderCardPaymentMethods(orderId);
-  });
+  }, { getBalance: () => Number(findFlatOrder(orderId)?.balance) || 0 });
 }
 
 async function saveCardDeliveryFee() {

@@ -646,7 +646,9 @@ async function cancelNewOrder(orderNo) {
 // Orders card's Payment tab (onlineOrders.js renderOrderCardAoPayments). Lists AutomatedOrderPayments
 // with Edit / Delete, plus Add payment (admin_add_automated_order_payment). Edit / Delete:
 // sql/supabase_ao_order_payment_edit.sql (New + open confirmed portal orders only, every change logged).
-// onChanged runs after a save so the caller can refresh its totals.
+// "Show history" lists every Add / Edit / Delete with who and when (aoPayHistoryHtml).
+// onChanged runs after a save so the caller can refresh its totals. opts.getBalance (Online Orders card)
+// adds a "Settle balance" button that opens Add prefilled with the remaining balance.
 
 const AO_PAY_METHODS = ['Cash', 'GCash', 'BDO', 'Metrobank', 'Bank Transfer', 'Other'];
 
@@ -655,10 +657,11 @@ function aoPayMethodOptions(selected) {
   return list.map((m) => `<option value="${escapeHtml(m)}"${m === (selected || 'Cash') ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('');
 }
 
-function aoPayFormHtml(p) {
+function aoPayFormHtml(p, prefillAmount) {
+  const amount = p ? Number(p.amount) : prefillAmount;
   return `
     <div class="ao-pay-form">
-      <input type="number" step="0.01" class="ao-pay-amount" placeholder="Amount" value="${p ? escapeHtml(String(Number(p.amount))) : ''}">
+      <input type="number" step="0.01" class="ao-pay-amount" placeholder="Amount" value="${amount ? escapeHtml(String(amount)) : ''}">
       <select class="ao-pay-method">${aoPayMethodOptions(p?.method)}</select>
       <input type="text" class="ao-pay-ref" placeholder="Reference (optional)" maxlength="200" value="${escapeHtml(p?.reference || '')}">
       <button type="button" class="bc-btn bc-btn-primary ao-pay-save" data-pay-save="${p ? p.payment_id : 'new'}">Save</button>
@@ -685,12 +688,58 @@ function aoPayRender(container) {
           <button type="button" class="ao-pay-link is-danger" data-pay-delete="${p.payment_id}">Delete</button>
         </div>
       </div>`).join('');
+  const balance = st.getBalance ? Math.round(st.getBalance() * 100) / 100 : 0;
   container.innerHTML = `
     ${rows || '<div class="ao-pay-msg">No payments recorded yet.</div>'}
     ${st.editingId === 'new'
-      ? `<div class="ao-pay-row is-editing">${aoPayFormHtml(null)}</div>`
-      : '<button type="button" class="ao-pay-add" data-pay-add>+ Add payment</button>'}`;
+      ? `<div class="ao-pay-row is-editing">${aoPayFormHtml(null, st.prefillAmount)}</div>`
+      : `<div class="ao-pay-add-row">
+          <button type="button" class="ao-pay-add" data-pay-add>+ Add payment</button>
+          ${balance > 0 ? `<button type="button" class="ao-pay-add ao-pay-settle" data-pay-settle>Settle balance ${newOrderMoney(balance)}</button>` : ''}
+        </div>`}
+    ${aoPayHistoryHtml(st)}`;
   container.querySelector('.ao-pay-row.is-editing .ao-pay-amount')?.focus();
+}
+
+// Payment history - per "can you put a history who change the payments?". Every Add / Edit / Delete with
+// who and when, newest first (AutomatedOrderPaymentChanges, sql/supabase_ao_order_payment_history.sql).
+function aoPayHistoryText(amount, method, reference) {
+  return `${escapeHtml(method || '')} ${newOrderMoney(amount)}${reference ? ` (${escapeHtml(reference)})` : ''}`;
+}
+
+function aoPayHistoryHtml(st) {
+  const count = st.history ? st.history.length : 0;
+  const toggle = `<button type="button" class="ao-pay-history-toggle" data-pay-history>${st.historyOpen ? 'Hide' : 'Show'} history${count ? ` (${count})` : ''}</button>`;
+  if (!st.historyOpen) return toggle;
+  if (st.historyError) return `${toggle}<div class="ao-pay-msg error-text">${escapeHtml(st.historyError)}</div>`;
+  if (!st.history) return `${toggle}<div class="ao-pay-msg">Loading history...</div>`;
+  if (!count) return `${toggle}<div class="ao-pay-msg">No payment changes recorded yet.</div>`;
+  const items = st.history.map((h) => {
+    const what = h.action === 'Add'
+      ? `<span class="ao-pay-hist-tag is-add">Added</span> ${aoPayHistoryText(h.new_amount, h.new_method, h.new_reference)}`
+      : h.action === 'Delete'
+        ? `<span class="ao-pay-hist-tag is-delete">Deleted</span> ${aoPayHistoryText(h.old_amount, h.old_method, h.old_reference)}`
+        : `<span class="ao-pay-hist-tag is-edit">Edited</span> ${aoPayHistoryText(h.old_amount, h.old_method, h.old_reference)} &rarr; ${aoPayHistoryText(h.new_amount, h.new_method, h.new_reference)}`;
+    const when = h.changed_at_utc ? new Date(h.changed_at_utc).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+    return `<div class="ao-pay-hist-row">
+        <div>${what}</div>
+        <div class="ao-pay-sub">${when}${h.changed_by ? ` by ${escapeHtml(h.changed_by)}` : ''}</div>
+      </div>`;
+  }).join('');
+  return `${toggle}<div class="ao-pay-hist">${items}</div>`;
+}
+
+async function aoPayLoadHistory(container) {
+  const st = container._aoPay;
+  const { data, error } = await supabaseClient.rpc('admin_list_automated_order_payment_changes', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: st.orderNo
+  });
+  if (container._aoPay !== st) return;
+  st.historyError = error ? `Could not load the history: ${error.message}` : null;
+  st.history = data || [];
+  aoPayRender(container);
 }
 
 async function aoPayLoad(container) {
@@ -705,6 +754,7 @@ async function aoPayLoad(container) {
   st.error = error ? error.message : null;
   st.payments = data || [];
   aoPayRender(container);
+  if (st.historyOpen) aoPayLoadHistory(container); // a save just added a history row
 }
 
 async function aoPaySave(container, target) {
@@ -728,8 +778,9 @@ async function aoPaySave(container, target) {
     return;
   }
   st.editingId = null;
+  st.prefillAmount = null;
+  if (st.onChanged) await st.onChanged(); // refresh the caller's totals first so Settle balance is current
   await aoPayLoad(container);
-  if (st.onChanged) st.onChanged();
 }
 
 async function aoPayDelete(container, paymentId) {
@@ -745,12 +796,12 @@ async function aoPayDelete(container, paymentId) {
     alert(`Could not delete the payment: ${error.message}`);
     return;
   }
+  if (st.onChanged) await st.onChanged();
   await aoPayLoad(container);
-  if (st.onChanged) st.onChanged();
 }
 
-function renderAoPayments(container, orderNo, onChanged) {
-  container._aoPay = { orderNo, onChanged, payments: [], editingId: null, error: null };
+function renderAoPayments(container, orderNo, onChanged, opts = {}) {
+  container._aoPay = { orderNo, onChanged, getBalance: opts.getBalance || null, prefillAmount: null, payments: [], editingId: null, error: null, historyOpen: false, history: null, historyError: null };
   container.innerHTML = '<div class="ao-pay-msg">Loading payments...</div>';
   if (!container.dataset.aoPayBound) {
     container.dataset.aoPayBound = '1';
@@ -759,9 +810,15 @@ function renderAoPayments(container, orderNo, onChanged) {
       if (!st) return;
       const t = event.target.closest('button');
       if (!t) return;
-      if (t.dataset.payAdd !== undefined) { st.editingId = 'new'; aoPayRender(container); }
+      if (t.dataset.payAdd !== undefined) { st.editingId = 'new'; st.prefillAmount = null; aoPayRender(container); }
+      else if (t.dataset.paySettle !== undefined) { st.editingId = 'new'; st.prefillAmount = Math.round(st.getBalance() * 100) / 100; aoPayRender(container); }
       else if (t.dataset.payEdit) { st.editingId = Number(t.dataset.payEdit); aoPayRender(container); }
-      else if (t.dataset.payCancel !== undefined) { st.editingId = null; aoPayRender(container); }
+      else if (t.dataset.payCancel !== undefined) { st.editingId = null; st.prefillAmount = null; aoPayRender(container); }
+      else if (t.dataset.payHistory !== undefined) {
+        st.historyOpen = !st.historyOpen;
+        aoPayRender(container);
+        if (st.historyOpen) aoPayLoadHistory(container);
+      }
       else if (t.dataset.payDelete) aoPayDelete(container, Number(t.dataset.payDelete));
       else if (t.dataset.paySave) aoPaySave(container, t);
     });

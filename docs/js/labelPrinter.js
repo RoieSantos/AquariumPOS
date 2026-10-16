@@ -18,7 +18,7 @@
 // printing never just stops working.
 //
 // Usage: LabelPrinter.init(session) once, then
-//   await LabelPrinter.printSerialLabels([{ serialNo, itemCode, description }])  -> { via, message }
+//   await LabelPrinter.printSerialLabels([{ serialNo, itemCode, description, tag? }])  -> { via, message }
 (function () {
   const QZ_SRC = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2.4/qz-tray.js';
   const JSBARCODE_SRC = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js';
@@ -178,7 +178,8 @@
     y += mm(3.9 * k);
     // Item code and SKU share one line to keep the barcode tall: "AQ-042 · SKU: 12345".
     const sku = L.showSku && label.sku && label.sku !== label.itemCode ? `SKU: ${label.sku}` : '';
-    const codeLine = [L.showItemCode ? label.itemCode : '', sku].filter(Boolean).join('  ·  ');
+    // label.tag (e.g. "REPLACEMENT" - sql/supabase_serial_replacement.sql) leads the line, always shown.
+    const codeLine = [label.tag || '', L.showItemCode ? label.itemCode : '', sku].filter(Boolean).join('  ·  ');
     if (codeLine) {
       ctx.font = font(2.6, true);
       let text = codeLine;

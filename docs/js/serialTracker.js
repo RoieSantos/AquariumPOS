@@ -11,6 +11,11 @@ let currentSession = null;
 function isAdvanceOrderLink(value) {
   return /^ADV-/i.test(String(value || ''));
 }
+
+// Replacement serials carry their RPL- number in SourceDocumentNo (sql/supabase_serial_replacement.sql).
+function isReplacementSerial(r) {
+  return /^RPL-/i.test(String(r?.SourceDocumentNo || ''));
+}
 let isProductionWarehouseUser = true; // unrestricted unless resolveIsProductionWarehouse says otherwise
 let isSerialAdmin = false; // StaffUsers."SerialAdmin" - gates the Location edit control below
 let canReprintLabels = false; // Super User / Production Manager - per-row Reprint (js/labelPrinter.js)
@@ -20,6 +25,7 @@ let urlVariantFilter = null; // ?variant= from an Inventory Summary deep link - 
 let serialSearchDebounceHandle = null;
 let selectedSerialNo = null; // the selected list row - the action bar works on it (BC list, same as Online Orders)
 let canBulkFloat = false; // Super User - tick column + Mark Floating / Release (admin_bulk_set_serial_status)
+let canCreateReplacement = false; // Super User - New Replacement (admin_create_replacement_serial)
 const checkedSerialNos = new Set(); // ticked for bulk Mark Floating / Release
 let visibleSerialNos = []; // rows currently in the list, for the tick-all box
 
@@ -552,7 +558,9 @@ function renderSerials() {
           ? `${escapeHtml(r.SoldReceiptNo)}${sub('POS receipt')}`
           : r.SoldOnlineOrderId
             ? `${escapeHtml(r.SoldOnlineOrderId)}${sub('Online order')}`
-            : '<span class="muted">-</span>';
+            : isReplacementSerial(r)
+              ? `${escapeHtml(r.SourceDocumentNo)}${sub('Replacement')}`
+              : '<span class="muted">-</span>';
       return `
       <tr class="clickable-row${r.SerialNo === selectedSerialNo ? ' selected' : ''}" data-serial="${encodeURIComponent(r.SerialNo)}">
         ${canBulkFloat ? `<td><input type="checkbox" class="serial-tick" aria-label="Tick ${escapeHtml(r.SerialNo)}"${checkedSerialNos.has(r.SerialNo) ? ' checked' : ''} /></td>` : ''}
@@ -608,7 +616,8 @@ function updateSerialActionState() {
       ? 'Only a Super User can put a Sold serial back In Stock' : 'Mark the selected serial In Stock');
   setBtn('markSoldBtn', isSerialAdmin, !!r && isOwnWarehouseLocation(r.Location) && (r.Status || '').toUpperCase() === 'IN_STOCK',
     'Mark the selected In Stock serial Sold (own warehouse only)');
-  document.getElementById('adminCmdSep').classList.toggle('hidden', !(canReprintLabels || isSerialAdmin || canMarkAnySold || canBulkFloat));
+  document.getElementById('newReplacementBtn').classList.toggle('hidden', !canCreateReplacement);
+  document.getElementById('adminCmdSep').classList.toggle('hidden', !(canReprintLabels || isSerialAdmin || canMarkAnySold || canBulkFloat || canCreateReplacement));
 
   // Mark Floating / Release: the ticked serials, else the selected row.
   const bulkCount = checkedSerialNos.size || (r ? 1 : 0);
@@ -840,7 +849,9 @@ function openSerialCard(serialNo) {
     field('Sold To', isAdvanceOrderLink(r.SoldOnlineOrderId)
       ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Advance order${r.SoldReceiptNo ? ', receipt ' + escapeHtml(r.SoldReceiptNo) : ''})</span>`
       : r.SoldReceiptNo ? `${escapeHtml(r.SoldReceiptNo)} <span class="muted">(POS receipt)</span>`
-      : r.SoldOnlineOrderId ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Online order)</span>` : ''),
+      : r.SoldOnlineOrderId ? `${escapeHtml(r.SoldOnlineOrderId)} <span class="muted">(Online order)</span>`
+      : isReplacementSerial(r) ? `${escapeHtml(r.SourceDocumentNo)} <span class="muted">(Replacement)</span>` : ''),
+    ...(isReplacementSerial(r) ? [`<div id="serialCardReplacement" style="display:contents;">${field('Replacement', '<span class="muted">Loading...</span>')}</div>`] : []),
     ...(r.Status === 'RESERVED' ? [field('Reserved For', r.ReservedForOrderId
       ? `${escapeHtml(r.ReservedForOrderId)} <span class="muted">(${isAdvanceOrderLink(r.ReservedForOrderId) ? 'Advance' : 'Online'} order${r.ReservedAtUtc ? `, since ${escapeHtml(formatDateTime(r.ReservedAtUtc))}` : ''}${r.ReservedBy ? ` by ${escapeHtml(r.ReservedBy)}` : ''})</span>`
       : '')] : []),
@@ -857,6 +868,154 @@ function openSerialCard(serialNo) {
   });
   document.getElementById('serialCardModal').classList.remove('hidden');
   loadSerialHistory(r.SerialNo);
+  if (isReplacementSerial(r)) loadSerialReplacement(r.SerialNo);
+}
+
+// Customer / returned unit / reason of a replacement serial (staff_get_serial_replacement).
+async function loadSerialReplacement(serialNo) {
+  const { data, error } = await supabaseClient.rpc('staff_get_serial_replacement', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_no: serialNo
+  });
+  const box = document.getElementById('serialCardReplacement');
+  if (!box || document.getElementById('serialCardTitle').textContent !== serialNo) return;
+  const rep = !error && Array.isArray(data) ? data[0] : null;
+  if (!rep) { box.innerHTML = ''; return; }
+  const field = (label, html) => `<div class="form-row"><label>${label}</label><div>${html || '<span class="muted">-</span>'}</div></div>`;
+  box.innerHTML = [
+    field('Replaced For', `${escapeHtml(rep.customer_name)}${rep.customer_contact ? ` <span class="muted">(${escapeHtml(rep.customer_contact)})</span>` : ''}`),
+    field('Returned Unit', escapeHtml(rep.original_reference)),
+    field('Reason', escapeHtml(rep.reason)),
+    field('Replaced By', `${escapeHtml(rep.created_by)} <span class="muted">${escapeHtml(formatDateTime(rep.created_at))}${rep.took_from_stock ? ` · 1 taken out of stock at ${escapeHtml(rep.warehouse_name)}` : ''}</span>`)
+  ].join('');
+}
+
+// ---- New Replacement (sql/supabase_serial_replacement.sql) - Super User only. A brand-new unit given
+// to a customer in place of a returned one (often a pre-system sale with no serial): creates its serial
+// SOLD under an RPL- number and prints the label tagged "REPLACEMENT".
+
+let replacementItemResults = [];
+let replacementItemCode = null;
+let replacementHasVariants = false;
+let replacementSearchHandle = null;
+
+function rpcAuth(extra) {
+  return { p_admin_username: currentSession.username, p_admin_password: currentSession.password, ...extra };
+}
+
+async function openReplacementModal() {
+  if (!canCreateReplacement) return;
+  if (!warehouseOptions.length) await loadWarehouseOptionsOnce();
+  ['replacementItemInput', 'replacementCustomer', 'replacementContact', 'replacementOriginal', 'replacementReason']
+    .forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('replacementTakeFromStock').checked = false;
+  document.getElementById('replacementItemList').innerHTML = '';
+  document.getElementById('replacementVariantRow').classList.add('hidden');
+  document.getElementById('replacementVariantSelect').innerHTML = '';
+  document.getElementById('replacementError').classList.add('hidden');
+  replacementItemCode = null;
+  replacementHasVariants = false;
+
+  const wh = document.getElementById('replacementWarehouse');
+  wh.innerHTML = '<option value="">Select a location...</option>'
+    + warehouseOptions.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)}</option>`).join('');
+  const own = warehouseOptions.find((w) => w.name.trim().toLowerCase() === (currentSession.warehouseName || '').trim().toLowerCase());
+  if (own) wh.value = own.id;
+
+  document.getElementById('replacementModal').classList.remove('hidden');
+  document.getElementById('replacementItemInput').focus();
+}
+
+async function searchReplacementItems() {
+  const text = document.getElementById('replacementItemInput').value.trim();
+  if (!text) { replacementItemResults = []; document.getElementById('replacementItemList').innerHTML = ''; return; }
+  const { data, error } = await supabaseClient.rpc('admin_list_items', rpcAuth({ p_search: text, p_page: 1, p_page_size: 20 }));
+  if (error) { console.error('admin_list_items failed:', error); return; }
+  replacementItemResults = (data || []).map((i) => ({ code: i.code, name: i.name || i.description || i.code }));
+  document.getElementById('replacementItemList').innerHTML = replacementItemResults
+    .map((i) => `<option value="${escapeHtml(i.code)}">${escapeHtml(i.name)}</option>`).join('');
+}
+
+async function resolveReplacementItem() {
+  const typed = document.getElementById('replacementItemInput').value.trim();
+  const match = replacementItemResults.find((i) => i.code === typed);
+  const row = document.getElementById('replacementVariantRow');
+  const select = document.getElementById('replacementVariantSelect');
+  replacementItemCode = match ? match.code : null;
+  replacementHasVariants = false;
+  row.classList.add('hidden');
+  select.innerHTML = '';
+  if (!replacementItemCode) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_list_variants', rpcAuth({
+    p_search: null, p_main_item_code: replacementItemCode, p_page: 1, p_page_size: 200
+  }));
+  if (error) { console.error('admin_list_variants failed:', error); return; }
+  if (replacementItemCode !== match.code) return;
+  const variants = data || [];
+  if (!variants.length) return;
+  replacementHasVariants = true;
+  select.innerHTML = '<option value="">Select a variant...</option>' + variants
+    .map((v) => `<option value="${escapeHtml(v.variation_id)}">${escapeHtml(v.variant_name || v.sku || v.variation_id)}</option>`).join('');
+  if (variants.length === 1) select.value = variants[0].variation_id;
+  row.classList.remove('hidden');
+}
+
+async function saveReplacement(btn) {
+  const errorEl = document.getElementById('replacementError');
+  const fail = (text) => { errorEl.textContent = text; errorEl.classList.remove('hidden'); };
+  errorEl.classList.add('hidden');
+
+  const variantId = document.getElementById('replacementVariantSelect').value;
+  const warehouseId = document.getElementById('replacementWarehouse').value;
+  const customer = document.getElementById('replacementCustomer').value.trim();
+  const reason = document.getElementById('replacementReason').value.trim();
+  const takeFromStock = document.getElementById('replacementTakeFromStock').checked;
+  if (!replacementItemCode) return fail('Pick the item from the suggestions.');
+  if (replacementHasVariants && !variantId) return fail('This item has variants - pick which one.');
+  if (!warehouseId) return fail('Pick the location the unit is given out from.');
+  if (!customer) return fail("Enter the customer's name.");
+  if (!reason) return fail('Enter a reason.');
+  const whName = document.getElementById('replacementWarehouse').selectedOptions[0]?.textContent || '';
+  if (!confirm(`Create a replacement serial for ${replacementItemCode} (${customer})?`
+    + (takeFromStock ? `\n\n1 unit will be taken out of stock at ${whName}.` : ''))) return;
+
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_create_replacement_serial', rpcAuth({
+    p_item_code: replacementItemCode,
+    p_variant_id: variantId || null,
+    p_warehouse_id: warehouseId,
+    p_customer_name: customer,
+    p_customer_contact: document.getElementById('replacementContact').value.trim() || null,
+    p_original_reference: document.getElementById('replacementOriginal').value.trim() || null,
+    p_reason: reason,
+    p_take_from_stock: takeFromStock
+  }));
+  btn.disabled = false;
+  if (error) {
+    return fail(/could not find the function|schema cache/i.test(error.message)
+      ? "Replacements aren't set up yet - run sql/supabase_serial_replacement.sql."
+      : error.message);
+  }
+  const created = Array.isArray(data) ? data[0] : data;
+  document.getElementById('replacementModal').classList.add('hidden');
+
+  let printNote = '';
+  try {
+    const result = await LabelPrinter.printSerialLabels([{
+      serialNo: created.serial_no, itemCode: created.item_code, description: created.item_description, tag: 'REPLACEMENT'
+    }]);
+    printNote = result.message;
+  } catch (err) {
+    printNote = `Could not print the label (${err?.message || err}) - use Reprint Label.`;
+  }
+  alert(`Created ${created.serial_no} (${created.document_no}).\n\n${printNote}`);
+
+  document.getElementById('searchInput').value = created.serial_no;
+  document.getElementById('statusFilter').value = '';
+  await loadSerials();
+  selectSerialRow(created.serial_no);
 }
 
 // ---- Serial history (sql/supabase_serial_history.sql): every status / location / order change, who
@@ -996,7 +1155,8 @@ async function reprintSerialLabel(serialNo, btn) {
   btn.disabled = true;
   try {
     const result = await LabelPrinter.printSerialLabels([{
-      serialNo: row.SerialNo, itemCode: row.ItemCode, description: row.ItemDescription, sku: row.VariantSku || undefined
+      serialNo: row.SerialNo, itemCode: row.ItemCode, description: row.ItemDescription, sku: row.VariantSku || undefined,
+      tag: isReplacementSerial(row) ? 'REPLACEMENT' : undefined
     }]);
     if (result.via !== 'qz') console.info('Serial label:', result.message);
     if (result.via !== 'none') await logSerialReprint(row);
@@ -1114,6 +1274,7 @@ async function markSold(serialNo) {
   isSerialAdmin = !!session.isSerialAdmin;
   canReprintLabels = !!(session.isSuperUser || session.isProductionManager) && !!window.LabelPrinter;
   canBulkFloat = !!session.isSuperUser;
+  canCreateReplacement = !!session.isSuperUser && !!window.LabelPrinter;
   document.getElementById('selectAllHead').classList.toggle('hidden', !canBulkFloat);
   if (canReprintLabels) LabelPrinter.init(session);
 
@@ -1170,6 +1331,16 @@ async function markSold(serialNo) {
     document.getElementById('editLocationModal').classList.add('hidden')
   );
   document.getElementById('saveEditLocationBtn').addEventListener('click', saveEditLocation);
+  document.getElementById('newReplacementBtn').addEventListener('click', openReplacementModal);
+  document.getElementById('closeReplacementBtn').addEventListener('click', () =>
+    document.getElementById('replacementModal').classList.add('hidden')
+  );
+  document.getElementById('saveReplacementBtn').addEventListener('click', (e) => saveReplacement(e.currentTarget));
+  document.getElementById('replacementItemInput').addEventListener('input', () => {
+    clearTimeout(replacementSearchHandle);
+    replacementSearchHandle = setTimeout(async () => { await searchReplacementItems(); resolveReplacementItem(); }, 250);
+  });
+  document.getElementById('replacementItemInput').addEventListener('change', resolveReplacementItem);
   document.getElementById('openTransferModuleBtn').addEventListener('click', () => {
     if (!currentViewTransferDocNo) return;
     const page = currentViewTransferIsPosted ? 'posted-transfer-orders.html' : 'transfer-orders.html';

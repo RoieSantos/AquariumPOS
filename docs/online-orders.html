@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=sky1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=skuname1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=payhist1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -563,7 +563,7 @@
               <div class="bc-doc-field"><label>Balance</label><div class="bc-doc-value" id="ocBalance"></div></div>
             </div>
           </div>
-          <!-- Open portal (AO-) orders: the payments themselves, editable (js/onlineOrders.js
+          <!-- Portal (AO-) orders, any status but Cancelled / Returned: the payments themselves, editable (js/onlineOrders.js
                renderOrderCardAoPayments -> onlineNewOrders.js renderAoPayments). -->
           <div class="oc-ao-payments hidden" id="ocAoPaymentsBlock">
             <div class="oc-ao-payments-head">Payments</div>
@@ -1220,8 +1220,8 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/onlineOrders.js?v=cardfee2"></script>
-  <script src="js/onlineNewOrders.js?v=pay1"></script>
+  <script src="js/onlineOrders.js?v=paysettle1"></script>
+  <script src="js/onlineNewOrders.js?v=payhist1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

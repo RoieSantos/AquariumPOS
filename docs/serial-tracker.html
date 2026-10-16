@@ -31,6 +31,7 @@
     <symbol id="ico-sold" viewBox="0 0 16 16"><path d="M2.5 8.6 7.4 13.5 13.5 7.4V2.5H8.6z"/><circle cx="10.6" cy="5.4" r="1"/></symbol>
     <symbol id="ico-lock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></symbol>
     <symbol id="ico-unlock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7"/></symbol>
+    <symbol id="ico-swap" viewBox="0 0 16 16"><path d="M2.5 5.5h10l-2.5-2.5"/><path d="M13.5 10.5h-10l2.5 2.5"/></symbol>
   </svg>
 
   <!-- Business Central list page (css/bc-list.css) - same shell as Online Orders, per "make the serial
@@ -74,6 +75,9 @@
            Reservation: Super User / Production Manager / Serial Admin. -->
       <button class="bc-cmd" id="reserveSerialsBtn" type="button" disabled title="Hold the ticked / selected In Stock serials for one order"><svg class="bc-ico"><use href="#ico-lock"/></svg><span id="reserveSerialsLabel">Reserve for Order</span></button>
       <button class="bc-cmd hidden" id="unreserveSerialsBtn" type="button" disabled title="Put the ticked / selected Reserved serials back In Stock"><svg class="bc-ico"><use href="#ico-unlock"/></svg><span id="unreserveSerialsLabel">Release Reservation</span></button>
+      <!-- Super User only: a brand-new serial for a unit given in place of a returned one -
+           admin_create_replacement_serial, supabase_serial_replacement.sql. -->
+      <button class="bc-cmd hidden" id="newReplacementBtn" type="button" title="Create a serial (and print its label) for a brand-new unit given to a customer as a replacement"><svg class="bc-ico"><use href="#ico-swap"/></svg>New Replacement</button>
       <span class="bc-cmd-sep" id="adminCmdSep"></span>
       <button class="bc-cmd" id="refreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
       <a class="bc-cmd" href="inventory-summary.html"><svg class="bc-ico"><use href="#ico-list"/></svg>Inventory Summary</a>
@@ -236,6 +240,59 @@
     </div>
   </div>
 
+  <!-- New Replacement (js/serialTracker.js saveReplacement) - Super User only. -->
+  <div id="replacementModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:560px; width:95vw;">
+      <div class="toolbar">
+        <h2 style="margin:0;">New Replacement Serial</h2>
+        <button class="btn btn-secondary btn-sm" id="closeReplacementBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <p class="muted" style="margin:0 0 12px; font-size:12px;">For a brand-new unit given to a customer in place of the one they returned. Creates a new serial (Sold, linked to an RPL- number) and prints its label with "REPLACEMENT" on it.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="replacementItemInput">Item</label>
+          <input type="text" id="replacementItemInput" list="replacementItemList" autocomplete="off" placeholder="Type to search, e.g. AQ-042" />
+          <datalist id="replacementItemList"></datalist>
+        </div>
+        <div class="form-row hidden" id="replacementVariantRow">
+          <label for="replacementVariantSelect">Variant</label>
+          <select id="replacementVariantSelect"></select>
+        </div>
+        <div class="form-row">
+          <label for="replacementWarehouse">Given out from</label>
+          <select id="replacementWarehouse"></select>
+        </div>
+        <div class="form-row">
+          <label for="replacementCustomer">Customer name</label>
+          <input type="text" id="replacementCustomer" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="replacementContact">Contact no.</label>
+          <input type="text" id="replacementContact" autocomplete="off" placeholder="Optional" />
+        </div>
+        <div class="form-row">
+          <label for="replacementOriginal">Returned unit</label>
+          <input type="text" id="replacementOriginal" autocomplete="off" placeholder="Optional - old receipt no., date bought, size..." />
+        </div>
+        <div class="form-row">
+          <label for="replacementReason">Reason</label>
+          <input type="text" id="replacementReason" autocomplete="off" placeholder="e.g. Warranty - cracked glass" />
+        </div>
+        <div class="form-row">
+          <label></label>
+          <label style="display:flex; gap:6px; align-items:flex-start; font-weight:normal;">
+            <input type="checkbox" id="replacementTakeFromStock" style="margin-top:3px;" />
+            <span>Take 1 out of stock at this location <span class="muted">(Item Ledger Negative Adjmt.) - tick if the new unit came from the counted stock</span></span>
+          </label>
+        </div>
+      </div>
+      <div id="replacementError" class="error-text hidden"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-success" id="saveReplacementBtn" type="button">Create &amp; Print Label</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Read-only Transfer Order preview - opened from the Source Doc. column, in-place so Serial
        Tracker stays the active tab instead of navigating away to transfer-orders.html /
        posted-transfer-orders.html. -->
@@ -298,8 +355,8 @@
   <script src="js/nav.js?v=custconv1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/labelPrinter.js?v=3"></script>
-  <script src="js/serialTracker.js?v=history1"></script>
+  <script src="js/labelPrinter.js?v=4"></script>
+  <script src="js/serialTracker.js?v=replace1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
