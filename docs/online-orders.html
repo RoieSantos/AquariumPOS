@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=navwide1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=phone2" />
+  <link rel="stylesheet" href="css/bc-list.css?v=lineedit3" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -589,7 +589,7 @@
         </details>
 
         <div class="bc-doc-part">
-          <div class="bc-doc-part-head">Lines</div>
+          <div class="bc-doc-part-head">Lines <button type="button" class="bc-link oc-lines-history-btn hidden" id="ocLinesHistoryBtn" title="Who changed what on these lines">Edit History</button></div>
           <!-- Walk-ins and POS-made online orders: the cashier's POS order description (Pancake order note, js/onlineOrders.js
                renderPosDescription, sql/supabase_walkin_order_pos_description.sql). -->
           <div class="oc-pos-desc hidden" id="ocPosDescription"></div>
@@ -981,6 +981,7 @@
       </div>
       <div class="bc-dialog-body">
         <p class="bc-lede">Tick the part(s) that need rework. They go back to the maker's list with your reason.</p>
+        <p id="sendBackAfterSalesNote" class="bc-lede hidden"><b>After-sales rework.</b> The order stays <span id="sendBackAfterSalesStatus"></span> - nothing changes in Pancake or the delivery. It's back on the maker's list until they mark it Production Done.</p>
         <div id="sendBackParts" class="oo-sb-parts"></div>
         <div class="bc-field oo-sb-reason">
           <label for="sendBackReason">Reason</label>
@@ -997,6 +998,47 @@
   </div>
 
   <!-- Change a line's item / variant - Super Users (sql/supabase_order_line_change_variant.sql). -->
+  <div id="lineEditDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="lineEditTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">ORDER LINE</div>
+          <h2 id="lineEditTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeLineEditBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <div id="lineEditFields">
+          <p class="bc-lede">A new Quantity or Unit Price moves Money to Collect and Balance. Your name is saved in the line's history.</p>
+          <div class="bc-field">
+            <label for="lineEditQty">Quantity</label>
+            <input type="number" id="lineEditQty" step="any" min="0" inputmode="decimal" />
+          </div>
+          <div class="bc-field">
+            <label for="lineEditDescription">Description</label>
+            <input type="text" id="lineEditDescription" maxlength="500" autocomplete="off" />
+          </div>
+          <div class="bc-field" id="lineEditPriceField">
+            <label for="lineEditPrice">Unit Price</label>
+            <input type="number" id="lineEditPrice" step="0.01" min="0" inputmode="decimal" />
+          </div>
+          <div class="bc-field">
+            <label for="lineEditNote">Note</label>
+            <textarea id="lineEditNote" rows="5" maxlength="2000"></textarea>
+          </div>
+        </div>
+        <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted); margin-top:8px;">HISTORY</div>
+        <div id="lineEditHistory" style="max-height:240px; overflow:auto;"></div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="lineEditError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveLineEditBtn" type="button">Save</button>
+        <button class="bc-btn" id="cancelLineEditBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="changeItemDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="changeItemTitle">
       <div class="bc-dialog-head">
@@ -1237,7 +1279,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=fulfilled1"></script>
-  <script src="js/onlineOrders.js?v=pmserial1"></script>
+  <script src="js/onlineOrders.js?v=lineedit3"></script>
   <script src="js/onlineNewOrders.js?v=phone2"></script>
   <script src="js/pwa.js"></script>
 </body>

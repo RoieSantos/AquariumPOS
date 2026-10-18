@@ -400,10 +400,24 @@ function isProductionDone(o) {
   return needed.length > 0 && needed.every((role) => o.production_done?.[role]);
 }
 
-function canChangeProduction(o) {
+function isProductionOpen(o) {
   // Walk-ins are Shipped in Pancake from the start - open while their portal stage is.
   if (o?.walkin_stage) return ['To Assign', 'Assigned', 'Production Done'].includes(o.walkin_stage);
   return ['confirmed', 'submitted', 'printed', 'assigned'].includes((o?.status || '').trim().toLowerCase());
+}
+
+// After-sales rework (supabase_online_order_after_sales_rework.sql): a Shipped / Delivered / Received
+// order (never Cancelled) can still be sent back, and is reopened for its maker while that rework is open.
+function isClosedForReworkOnly(o) {
+  return !isProductionOpen(o) && ['shipped', 'delivered', '2', 'received', '3'].includes((o?.status || '').trim().toLowerCase());
+}
+
+function hasOpenAfterSalesRework(o) {
+  return isClosedForReworkOnly(o) && Object.keys(o.rework || {}).some((role) => !o.production_done?.[role]);
+}
+
+function canChangeProduction(o) {
+  return isProductionOpen(o) || hasOpenAfterSalesRework(o);
 }
 
 // Status shown in the list / card: 'Production Done' once every part is done (display only - the
@@ -2248,26 +2262,45 @@ function doneParts(o) {
   return neededProductionRoles(o).filter((role) => o.production_done?.[role]);
 }
 
+// Parts the Send Back dialog offers: in production, the parts marked done (as before). After-sales
+// (Shipped / Delivered...), any part with a maker assigned and no open rework yet - older orders may
+// never have had a done mark.
+function sendBackParts(o) {
+  if (!o) return [];
+  if (isProductionOpen(o)) return doneParts(o);
+  if (!isClosedForReworkOnly(o)) return [];
+  return neededProductionRoles(o).filter((role) => o[`assigned_${MAKER_ROLES[role].field}`]
+    && !(o.rework?.[role] && !o.production_done?.[role]));
+}
+
 function updateSendBackButton(btnId, o) {
   const btn = document.getElementById(btnId);
   btn.classList.toggle('hidden', !canAssignOrders());
-  btn.disabled = !o || !doneParts(o).length || !canChangeProduction(o);
+  const parts = sendBackParts(o);
+  btn.disabled = !parts.length;
   btn.title = !o ? 'Select an order'
-    : !doneParts(o).length ? 'No part of this order has been marked done yet'
-    : !canChangeProduction(o) ? `This order is already ${o.status}`
-    : 'Send finished parts back to the maker for rework';
+    : parts.length ? (isProductionOpen(o) ? 'Send finished parts back to the maker for rework'
+      : `After-sales rework - send a part back to its maker (the order stays ${o.status})`)
+    : isClosedForReworkOnly(o) ? 'Every part is already sent back, or has no maker assigned'
+    : !isProductionOpen(o) ? `This order is already ${o.status}`
+    : 'No part of this order has been marked done yet';
 }
 
 function openSendBackDialog(orderId) {
   const o = findFlatOrder(orderId);
-  if (!o || !doneParts(o).length) return;
+  const parts = sendBackParts(o);
+  if (!parts.length) return;
   sendBackOrderId = String(o.order_id);
   document.getElementById('sendBackTitle').textContent = `${o.order_id}${o.customer_name ? ' · ' + o.customer_name : ''}`;
-  document.getElementById('sendBackParts').innerHTML = doneParts(o).map((role) => {
-    const d = o.production_done[role];
-    const when = d.done_at ? new Date(d.done_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  document.getElementById('sendBackAfterSalesNote').classList.toggle('hidden', isProductionOpen(o));
+  document.getElementById('sendBackAfterSalesStatus').textContent = o.status || '';
+  document.getElementById('sendBackParts').innerHTML = parts.map((role) => {
+    const d = o.production_done?.[role];
+    const field = MAKER_ROLES[role].field;
+    const who = d ? (d.done_by_name || d.done_by) : (o[`assigned_${field}_name`] || o[`assigned_${field}`]);
+    const when = d?.done_at ? new Date(d.done_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
     return `<label class="oo-sb-part"><input type="checkbox" value="${role}" />
-      <span><b>${escapeHtml(MAKER_ROLES[role].label)}</b> - ${escapeHtml(d.done_by_name || d.done_by)}<small>${when ? 'Done ' + escapeHtml(when) : ''}</small></span></label>`;
+      <span><b>${escapeHtml(MAKER_ROLES[role].label)}</b> - ${escapeHtml(who || '')}<small>${when ? 'Done ' + escapeHtml(when) : d ? '' : 'Not marked done'}</small></span></label>`;
   }).join('');
   document.getElementById('sendBackReason').value = '';
   document.getElementById('sendBackError').classList.add('hidden');
@@ -5562,6 +5595,7 @@ function renderOrderCardLineCards() {
   // instead of the wide lines table on a phone (makers: every width), with prices unless hidePrices.
   const canChange = !isMakerFocus() && canChangeOnlineOrderLineItem(findFlatOrder(openCardOrderId));
   const priced = !hidePrices();
+  const canEditText = canEditOnlineOrderLineText(findFlatOrder(openCardOrderId));
   box.innerHTML = (cardLines.map((l) => makerLineCardHtml({
     item: l.description || l.item_code,
     description: l.note,
@@ -5569,6 +5603,7 @@ function renderOrderCardLineCards() {
     qty: l.quantity ?? '',
     extra: (priced && lineAmount(l) !== null ? `<div class="oc-lc-price"><span>${phonePeso(l.price)} each${Number(l.discount) ? ` · less ${phonePeso(l.discount)}` : ''}</span><b>${phonePeso(lineAmount(l))}</b></div>` : '')
       + (canChange && l.line_id ? `<div class="oc-lc-change">${changeItemLinkHtml(l.line_id)}</div>` : '')
+      + lineEditInfoHtml(l, canEditText, true)
       + `<div class="oc-lc-attach">${cardAttachmentCellHtml(l.line_id)}</div>`
   })).join('') + (cardLines.length && priced && !isMakerFocus()
     ? `<div class="oc-lc-total"><span>${cardLines.reduce((n, l) => n + (Number(l.quantity) || 0), 0)} item(s)</span><b>${phonePeso(cardLines.reduce((n, l) => n + (lineAmount(l) || 0), 0))}</b></div>`
@@ -5621,18 +5656,25 @@ function renderOrderCardLines() {
 
   const priceCell = (v) => (hidePrices() ? '' : `<td class="num">${money(v)}</td>`);
   const canChange = canChangeOnlineOrderLineItem(findFlatOrder(openCardOrderId));
-  tbody.innerHTML = cardLines.map((l) => `
-    <tr>
+  const canEditText = canEditOnlineOrderLineText(findFlatOrder(openCardOrderId));
+  const canEditQty = canEditOnlineOrderLineQty(findFlatOrder(openCardOrderId));
+  // Super User / Sales User: Description, Quantity, Unit Price and Note are editable cells (BC style, see
+  // "Edit order lines" below).
+  tbody.innerHTML = cardLines.map((l) => {
+    const editable = canEditText && !!l.line_id;
+    return `
+    <tr${editable ? ' class="oc-line-editable"' : ''}>
       <td>${escapeHtml(l.item_code || l.product_display_id)}</td>
       <td><b>${escapeHtml(lineSku(l))}</b></td>
-      <td style="white-space:normal;">${escapeHtml(l.description)}${canChange && l.line_id ? changeItemLinkHtml(l.line_id) : ''}</td>
-      <td class="num">${l.quantity ?? ''}</td>
-      ${priceCell(l.price)}
+      <td style="white-space:normal;">${editable ? lineInputHtml(l, 'description') : escapeHtml(l.description)}${canChange && l.line_id ? changeItemLinkHtml(l.line_id) : ''}</td>
+      <td class="num">${editable && canEditQty ? lineInputHtml(l, 'quantity') : (l.quantity ?? '')}</td>
+      ${editable && !hidePrices() ? `<td class="num">${lineInputHtml(l, 'price')}</td>` : priceCell(l.price)}
       ${priceCell(l.discount)}
       ${priceCell(lineAmount(l))}
-      <td style="white-space:normal;">${escapeHtml(l.note)}</td>
+      <td style="white-space:normal;">${editable ? lineInputHtml(l, 'note') : escapeHtml(l.note)}${lineEditInfoHtml(l, canEditText, false)}</td>
       <td style="white-space:normal;">${cardAttachmentCellHtml(l.line_id)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   renderOrderCardLineCards();
 
@@ -5648,6 +5690,8 @@ async function loadOrderCardLines(orderId) {
   const myGeneration = ++orderCardLoadGeneration;
   const tbody = document.getElementById('orderCardLinesBody');
   cardLines = [];
+  cardLineEdits = [];
+  renderLinesHistoryButton();
   cardAttachmentsByLineId = {};
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines from Pancake...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
@@ -5658,17 +5702,20 @@ async function loadOrderCardLines(orderId) {
   renderSerialsFactbox('orderCard', []); // clear the previous order's while loading
   ItemStockFactbox.clear(document.getElementById('orderCardStockPart'), 'Loading...');
 
-  const [linesRes] = await Promise.all([
+  const [linesRes, lineEdits] = await Promise.all([
     supabaseClient.rpc('admin_get_online_order_detail_live', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
       p_order_id: orderId
     }),
+    loadOrderCardLineEdits(orderId),
     loadOrderCardAttachments(orderId, false),
     loadOrderCardStatusPhotos(orderId),
     loadOrderCardSerials(orderId)
   ]);
   if (myGeneration !== orderCardLoadGeneration) return;
+  cardLineEdits = lineEdits;
+  renderLinesHistoryButton();
 
   if (linesRes.error) {
     // Usually Pancake's live API being slow for a moment, not a session problem - offer a retry.
@@ -5833,6 +5880,314 @@ function wireChangeItemDialog() {
   document.getElementById('saveChangeItemBtn').addEventListener('click', saveChangeItem);
   document.getElementById('cancelChangeItemBtn').addEventListener('click', closeChangeItemDialog);
   document.getElementById('closeChangeItemBtn').addEventListener('click', closeChangeItemDialog);
+}
+
+// ---------------------------------------------------------------- Edit order lines (Business Central style)
+// Per "can you allow a sales user change the note and details of the order lines.. but add a history who
+// last change it" / "can we edit same way the business central do? i need to edit unit price too" /
+// "is it possible we edit the quantity too?" - for Super Users and Sales Users, Description, Quantity (before
+// To Ship), Unit Price and Note are editable cells in the Lines grid. Each
+// cell saves when you leave it (Tab / Enter / click away); Esc puts the saved value back. Pushed to Pancake
+// (portal-only orders locally), a price change moves Money to Collect / Balance, and every change is logged
+// (sql/supabase_online_order_line_edit.sql). Each line shows who last edited it; History lists every edit
+// (incl. Change Item swaps) for everyone - per line, or the whole order via "Edit History" on the Lines
+// header. Phone line cards use the Edit dialog instead.
+const LINE_EDIT_LOCKED_STATUSES = ['shipped', 'delivered', 'completed', 'received', 'canceled', 'cancelled',
+  'returned', 'returning', 'deleted'];
+let cardLineEdits = []; // staff_list_online_order_line_edits rows for the open order, newest first
+let lineEditCtx = null; // phone Edit dialog: { orderNo, lineId }
+let lineEditWired = false;
+let lineSaveChain = Promise.resolve(); // saves run one after another (each rebuilds the Pancake order)
+
+function canEditOnlineOrderLineText(o) {
+  return !!(currentSession?.isSuperUser || currentSession?.isSalesUser) && !isMakerFocus() && !!o
+    && !o.walkin_stage && !LINE_EDIT_LOCKED_STATUSES.includes((o.status || '').trim().toLowerCase());
+}
+
+// Quantity also locks at To Ship - stock and serials are taken from then on (the server re-checks).
+const LINE_QTY_LOCKED_STATUSES = ['to ship', 'packing', 'packed', 'in-transit', 'pending transfer'];
+function canEditOnlineOrderLineQty(o) {
+  return canEditOnlineOrderLineText(o) && !LINE_QTY_LOCKED_STATUSES.includes((o.status || '').trim().toLowerCase());
+}
+
+function lineEditsFor(lineId) {
+  return cardLineEdits.filter((e) => String(e.line_no) === String(lineId));
+}
+
+// "Edited by Maria · 10/18/2026, 2:05 PM" + History (and Edit on the phone cards), under the line.
+function lineEditInfoHtml(l, canEdit, withEditButton) {
+  if (!l.line_id) return '';
+  const last = lineEditsFor(l.line_id)[0];
+  const parts = [];
+  if (last) parts.push(`<span class="oc-line-edited" title="Last change: ${escapeHtml(last.field)}">Edited by ${escapeHtml(last.changed_by_name || last.changed_by)} · ${escapeHtml(new Date(last.changed_at_utc).toLocaleString())}</span>`);
+  if (canEdit && withEditButton) parts.push(`<button type="button" class="bc-link" data-edit-line="${escapeHtml(String(l.line_id))}" title="Edit this line">Edit</button>`);
+  if (last) parts.push(`<button type="button" class="bc-link" data-line-history="${escapeHtml(String(l.line_id))}">History</button>`);
+  return parts.length ? `<div class="oc-line-edit-info">${parts.join(' ')}</div>` : '';
+}
+
+function lineQtyText(v) {
+  return v === null || v === undefined || v === '' ? '' : String(Number(v));
+}
+
+function linePriceText(v) {
+  return v === null || v === undefined || v === '' ? '' : (Number(v) || 0).toFixed(2);
+}
+
+// An editable grid cell (Description / Unit Price / Note).
+function lineInputHtml(l, field) {
+  const attrs = `class="oc-line-input${field === 'price' || field === 'quantity' ? ' num' : ''}" data-line-id="${escapeHtml(String(l.line_id))}" data-line-field="${field}"`;
+  if (field === 'note') return `<textarea ${attrs} rows="2" maxlength="2000">${escapeHtml(l.note || '')}</textarea>`;
+  if (field === 'price') return `<input type="number" step="0.01" min="0" ${attrs} value="${escapeHtml(linePriceText(l.price))}" />`;
+  if (field === 'quantity') return `<input type="number" step="any" min="0" ${attrs} value="${escapeHtml(lineQtyText(l.quantity))}" />`;
+  return `<input type="text" maxlength="500" ${attrs} value="${escapeHtml(l.description || '')}" />`;
+}
+
+function savedLineValue(l, field) {
+  if (field === 'price') return linePriceText(l.price);
+  if (field === 'quantity') return lineQtyText(l.quantity);
+  return l[field] || '';
+}
+
+async function loadOrderCardLineEdits(orderId) {
+  const { data, error } = await supabaseClient.rpc('staff_list_online_order_line_edits', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderId)
+  });
+  if (error) {
+    // Quietly nothing until supabase_online_order_line_edit.sql is run.
+    console.warn('staff_list_online_order_line_edits:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+// Re-render the Lines grid without losing the cell being typed in (its unsaved text and caret stay).
+function rerenderOrderCardLinesKeepFocus() {
+  const active = document.activeElement;
+  const keep = active?.matches?.('.oc-line-input')
+    ? { lineId: active.dataset.lineId, field: active.dataset.lineField, value: active.value,
+        start: active.selectionStart, end: active.selectionEnd }
+    : null;
+  renderOrderCardLines();
+  if (!keep) return;
+  const el = document.querySelector(`#orderCardLinesBody .oc-line-input[data-line-id="${CSS.escape(keep.lineId)}"][data-line-field="${keep.field}"]`);
+  if (!el) return;
+  el.value = keep.value;
+  el.focus();
+  try { el.setSelectionRange(keep.start, keep.end); } catch { /* number inputs have no caret API */ }
+}
+
+// Save one or more fields of a line ({ description?, note?, price?, quantity? }); the other fields are sent as saved.
+// Returns true when saved (or nothing changed), false on an error (already shown).
+async function saveOrderLine(lineId, patch) {
+  const orderNo = openCardOrderId;
+  const l = cardLines.find((x) => String(x.line_id) === String(lineId));
+  if (!l || !orderNo) return false;
+  const hasPrice = Object.prototype.hasOwnProperty.call(patch, 'price');
+  const hasQty = Object.prototype.hasOwnProperty.call(patch, 'quantity');
+  const { data, error } = await supabaseClient.rpc('staff_edit_online_order_line', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: String(orderNo),
+    p_line_id: String(lineId),
+    p_description: patch.description ?? l.description ?? '',
+    p_note: patch.note ?? l.note ?? '',
+    p_price: hasPrice ? Number(patch.price) : null,
+    p_quantity: hasQty ? Number(patch.quantity) : null
+  });
+  if (error) {
+    if (/Nothing changed/i.test(error.message)) return true;
+    alert(`Could not save the line:\n${error.message}${/function|schema cache/i.test(error.message) ? '\n\nRun sql/supabase_online_order_line_edit.sql.' : ''}`);
+    return false;
+  }
+  if (openCardOrderId !== orderNo) return true;
+
+  if (patch.description !== undefined && data?.description_kept !== false) l.description = patch.description.trim() || l.description;
+  if (patch.note !== undefined) l.note = patch.note.trim();
+  if (hasPrice && data?.price_kept !== false) l.price = Math.round(Number(patch.price) * 100) / 100;
+  if (hasQty) l.quantity = Number(patch.quantity);
+  if (hasPrice || hasQty) {
+    l.gross_amount = (Number(l.price) || 0) * (Number(l.quantity) || 0);
+    if (l.net_amount !== null && l.net_amount !== undefined && l.net_amount !== '') l.net_amount = l.gross_amount - (Number(l.discount) || 0);
+  }
+  cardLineEdits = await loadOrderCardLineEdits(orderNo);
+  if (openCardOrderId !== orderNo) return true;
+  rerenderOrderCardLinesKeepFocus();
+  if (data?.note_changed) loadOrderCardGlassTanks(); // the glass cut reads the spec note
+  renderLinesHistoryButton();
+  if (data?.quantity_changed) loadOrderCardStock(orderNo); // Stock FactBox shows the new quantity
+  if (Number(data?.money_delta)) refreshCurrentOrders(); // Money to Collect / Balance moved with price / qty
+
+  const notes = [];
+  if (data?.description_changed && data?.description_kept === false) notes.push('Pancake kept this product\'s own name, so the Description did not change - put the detail in the Note instead.');
+  if (data?.price_changed && data?.price_kept === false) notes.push('Pancake kept this product\'s own price, so the Unit Price did not change - change it in Pancake.');
+  if (data?.resynced === false) notes.push('Pancake has the change, but the portal could not re-read the order yet - Refresh in a minute.');
+  if (notes.length) alert(notes.join('\n\n'));
+  return true;
+}
+
+function queueLineSave(fn) {
+  lineSaveChain = lineSaveChain.then(fn, fn);
+  return lineSaveChain;
+}
+
+// A grid cell lost focus with a new value: validate, save, then show the saved value either way.
+function onLineCellChange(el) {
+  const lineId = el.dataset.lineId;
+  const field = el.dataset.lineField;
+  const l = cardLines.find((x) => String(x.line_id) === String(lineId));
+  if (!l) return;
+  const value = el.value;
+  if (value.trim() === savedLineValue(l, field).trim()) return;
+  if (field === 'price' && (value.trim() === '' || !(Number(value) >= 0))) {
+    alert('Unit Price must be a number, 0 or more.');
+    el.value = savedLineValue(l, field);
+    return;
+  }
+  if (field === 'quantity' && !(Number(value) > 0)) {
+    alert('Quantity must be more than 0.');
+    el.value = savedLineValue(l, field);
+    return;
+  }
+  if (field === 'description' && !value.trim()) {
+    el.value = savedLineValue(l, field); // a line always has a Description
+    return;
+  }
+  el.classList.add('is-saving');
+  queueLineSave(async () => {
+    const ok = await saveOrderLine(lineId, { [field]: value });
+    const cell = document.querySelector(`#orderCardLinesBody .oc-line-input[data-line-id="${CSS.escape(String(lineId))}"][data-line-field="${field}"]`);
+    if (!cell) return;
+    cell.classList.remove('is-saving');
+    if (!ok && document.activeElement !== cell) cell.value = savedLineValue(l, field);
+  });
+}
+
+function onLineCellKeydown(e) {
+  const el = e.target;
+  if (!el.matches('.oc-line-input')) return;
+  if (e.key === 'Escape') {
+    const l = cardLines.find((x) => String(x.line_id) === String(el.dataset.lineId));
+    if (l) el.value = savedLineValue(l, el.dataset.lineField);
+    el.blur();
+    e.preventDefault();
+    e.stopPropagation(); // don't close the order card
+  } else if (e.key === 'Enter' && !e.shiftKey) {
+    // Like BC: Enter commits and moves to the next editable cell (Shift+Enter = new line in a Note).
+    e.preventDefault();
+    const cells = [...document.querySelectorAll('#orderCardLinesBody .oc-line-input')];
+    const next = cells[cells.indexOf(el) + 1];
+    if (next) next.focus(); else el.blur();
+  }
+}
+
+// ---- Phone line cards: Edit dialog (Description / Unit Price / Note) and History (read-only).
+// "Edit History" on the Lines header - every line's edits on this order, shown once there are any.
+function renderLinesHistoryButton() {
+  const btn = document.getElementById('ocLinesHistoryBtn');
+  if (!btn) return;
+  btn.textContent = `Edit History (${cardLineEdits.length})`;
+  btn.classList.toggle('hidden', !cardLineEdits.length);
+}
+
+function lineLabel(lineId) {
+  const l = cardLines.find((x) => String(x.line_id) === String(lineId));
+  return l ? (l.item_code || l.product_display_id || l.description || `Line ${lineId}`) : `Line ${lineId} (removed)`;
+}
+
+// lineId null = the whole order's history (read-only, with a Line column).
+function openLineEditDialog(lineId, readOnly) {
+  if (!openCardOrderId) return;
+  const whole = lineId === null;
+  const l = whole ? null : cardLines.find((x) => String(x.line_id) === String(lineId));
+  if (!whole && !l) return;
+  const o = findFlatOrder(openCardOrderId);
+  const editable = !whole && !readOnly && canEditOnlineOrderLineText(o);
+  lineEditCtx = whole ? null : { orderNo: openCardOrderId, lineId: l.line_id };
+  document.getElementById('lineEditTitle').textContent = whole
+    ? `Order ${openCardOrderId} · all lines`
+    : `Order ${openCardOrderId} · ${l.item_code || l.product_display_id || 'Line'}`;
+  document.getElementById('lineEditFields').classList.toggle('hidden', !editable);
+  document.getElementById('saveLineEditBtn').classList.toggle('hidden', !editable);
+  document.getElementById('lineEditError').classList.add('hidden');
+  const edits = whole ? cardLineEdits : lineEditsFor(l.line_id);
+  document.getElementById('lineEditHistory').innerHTML = edits.length
+    ? `<table class="bc-grid"><thead><tr><th>When</th><th>Who</th>${whole ? '<th>Line</th>' : ''}<th>Field</th><th>Was</th><th>Now</th></tr></thead><tbody>${edits.map((e) => `
+        <tr><td>${escapeHtml(new Date(e.changed_at_utc).toLocaleString())}</td>
+          <td>${escapeHtml(e.changed_by_name || e.changed_by)}</td>${whole ? `<td>${escapeHtml(lineLabel(e.line_no))}</td>` : ''}<td>${escapeHtml(e.field)}</td>
+          <td style="white-space:normal;">${escapeHtml(e.old_value || '-')}</td>
+          <td style="white-space:normal;">${escapeHtml(e.new_value || '-')}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="muted">No edits yet.</div>';
+  document.getElementById('lineEditDialog').classList.remove('hidden');
+  if (!editable) return;
+  const qtyEl = document.getElementById('lineEditQty');
+  qtyEl.value = lineQtyText(l.quantity);
+  qtyEl.disabled = !canEditOnlineOrderLineQty(o);
+  qtyEl.title = qtyEl.disabled ? 'The quantity can only be changed before To Ship' : '';
+  document.getElementById('lineEditDescription').value = l.description || '';
+  document.getElementById('lineEditPrice').value = linePriceText(l.price);
+  document.getElementById('lineEditPriceField').classList.toggle('hidden', hidePrices());
+  document.getElementById('lineEditNote').value = l.note || '';
+}
+
+function closeLineEditDialog() {
+  lineEditCtx = null;
+  document.getElementById('lineEditDialog').classList.add('hidden');
+}
+
+async function saveLineEditDialog() {
+  const ctx = lineEditCtx;
+  if (!ctx) return;
+  const errorEl = document.getElementById('lineEditError');
+  const patch = {
+    description: document.getElementById('lineEditDescription').value,
+    note: document.getElementById('lineEditNote').value
+  };
+  if (!hidePrices()) {
+    const price = document.getElementById('lineEditPrice').value.trim();
+    if (price === '' || !(Number(price) >= 0)) {
+      errorEl.textContent = 'Unit Price must be a number, 0 or more.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    patch.price = price;
+  }
+  const qtyEl = document.getElementById('lineEditQty');
+  if (!qtyEl.disabled) {
+    if (!(Number(qtyEl.value) > 0)) {
+      errorEl.textContent = 'Quantity must be more than 0.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    patch.quantity = qtyEl.value;
+  }
+  const btn = document.getElementById('saveLineEditBtn');
+  btn.disabled = true;
+  errorEl.classList.add('hidden');
+  const ok = await queueLineSave(() => saveOrderLine(ctx.lineId, patch));
+  btn.disabled = false;
+  if (ok) closeLineEditDialog();
+}
+
+function wireLineEditDialog() {
+  if (lineEditWired) return;
+  lineEditWired = true;
+  const onClick = (e) => {
+    const edit = e.target.closest('[data-edit-line]');
+    if (edit) return openLineEditDialog(edit.dataset.editLine, false);
+    const hist = e.target.closest('[data-line-history]');
+    if (hist) openLineEditDialog(hist.dataset.lineHistory, true);
+  };
+  const body = document.getElementById('orderCardLinesBody');
+  body.addEventListener('click', onClick);
+  body.addEventListener('change', (e) => { if (e.target.matches('.oc-line-input')) onLineCellChange(e.target); });
+  body.addEventListener('keydown', onLineCellKeydown);
+  document.getElementById('orderCardLineCards').addEventListener('click', onClick); // phone line cards
+  document.getElementById('ocLinesHistoryBtn').addEventListener('click', () => openLineEditDialog(null, true));
+  document.getElementById('saveLineEditBtn').addEventListener('click', saveLineEditDialog);
+  document.getElementById('cancelLineEditBtn').addEventListener('click', closeLineEditDialog);
+  document.getElementById('closeLineEditBtn').addEventListener('click', closeLineEditDialog);
 }
 
 // Walk-in POS description - per "in the walk-in orders can you sync over the descriptions from local
@@ -8175,6 +8530,7 @@ async function initAdvanceOrdersView() {
   wireNextStepButtons();
   wireOrderCardAttachments();
   wireChangeItemDialog();
+  wireLineEditDialog();
   // Swipe-down-to-refresh (js/pullToRefresh.js) - re-runs whatever's currently on screen, same
   // as the search/status filters' own reload, so a refresh mid-search doesn't clear it.
   if (window.initPullToRefresh) initPullToRefresh(refreshCurrentOrders);

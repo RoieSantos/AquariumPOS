@@ -3221,6 +3221,22 @@ a.bc-cue:hover {
 .oc-lc-price { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--bc-line, #eef1f5); font-size: 13px; color: var(--bc-muted, #5f6b7a); }
 .oc-lc-price b { font-size: 15px; color: var(--text-main); font-variant-numeric: tabular-nums; }
 .oc-lc-change { margin-top: 4px; }
+/* Editable Lines grid cells (BC style): flat until hovered / focused, saved on leaving the cell. */
+.oc-line-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 3px 6px; font: inherit; color: inherit;
+  background: transparent; border: 1px solid transparent; border-radius: 3px; }
+.oc-line-editable:hover .oc-line-input { border-color: var(--bc-line, #c8c6c4); }
+.oc-line-input:focus { outline: none; border-color: var(--bc-accent, #0f6cbd); background: var(--bg-card, #fff); box-shadow: 0 0 0 1px var(--bc-accent, #0f6cbd); }
+.oc-line-input.num { text-align: right; min-width: 96px; font-variant-numeric: tabular-nums; }
+textarea.oc-line-input { min-width: 220px; resize: vertical; line-height: 1.35; }
+.oc-line-input.is-saving { opacity: .55; background: repeating-linear-gradient(90deg, transparent 0 6px, rgba(15, 108, 189, .08) 6px 12px); }
+#lineEditPrice, #lineEditQty { width: 100%; }
+.oc-lines-history-btn { margin-left: 10px; font-size: 12px; font-weight: 400; }
+/* Edit line: "Edited by X · when" + Edit / History links under the note. */
+.oc-line-edit-info { margin-top: 4px; font-size: 12px; color: var(--bc-muted, #5f6b7a); }
+.oc-line-edit-info .bc-link { font-size: 12px; margin-left: 6px; }
+.oc-line-edited { font-style: italic; }
+#lineEditNote { width: 100%; resize: vertical; font: inherit; }
+#lineEditDescription { width: 100%; }
 .oc-lc-total { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 14px; border-radius: 10px; background: var(--bc-surface-2, #faf9f8); border: 1px solid var(--bc-line, #e1dfdd); font-weight: 600; }
 .oc-lc-total b { font-size: 17px; font-variant-numeric: tabular-nums; }
 
