@@ -351,8 +351,8 @@
                 <label for="newFromWarehouse">From Warehouse</label>
                 <div>
                   <input type="text" id="newFromWarehouse" autocomplete="off" disabled />
-                  <!-- Super-user-only picker (js/transferOrders.js setupSuperUserWarehousePickers) -
-                       replaces the locked input above so a super user can do any branch-to-branch transfer. -->
+                  <!-- Super User / Production Manager / no-warehouse picker (js/transferOrders.js setupWarehousePickers) -
+                       replaces the locked input above so they can do any branch-to-branch transfer. -->
                   <select id="newFromWarehouseSelect" class="hidden"></select>
                   <input type="hidden" id="newFromWarehouseId" value="" />
                 </div>
@@ -432,7 +432,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/transferOrders.js?v=liststock1"></script>
+  <script src="js/transferOrders.js?v=whpick1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

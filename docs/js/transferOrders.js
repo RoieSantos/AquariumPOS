@@ -2231,7 +2231,8 @@ async function searchVariantsForRow(row, searchText, page = 1) {
 }
 
 // From/To Warehouse are locked (disabled inputs, per direct request) for everyone except super
-// users - for them setupSuperUserWarehousePickers swaps in a <select> per side so they can create
+// users / Production Managers / no-warehouse staff - for them setupWarehousePickers swaps in a
+// <select> per side so they can create
 // any branch-to-branch transfer. Everyone else only ever gets values from these two functions.
 
 // Auto-picks a preferred From Warehouse the way the desktop's ApplyPreferredFromWarehouse does:
@@ -2252,20 +2253,26 @@ async function applyPreferredFromWarehouse(useProductionCategory) {
   refreshNewTransferGeneralSummary();
 }
 
-// Super users get a full warehouse list on both sides (pre-selected with the same defaults
-// everyone else gets locked to). Picking one writes straight through to the locked text input +
-// hidden ID, so saveNewTransfer and the rest of the page read exactly the same fields as before.
-async function setupSuperUserWarehousePickers() {
-  const isSuperUser = !!currentSession?.isSuperUser;
+// Super users, Production Managers, and staff with no assigned warehouse (access to all - their
+// To Warehouse would otherwise be blank and the order unsaveable) get a full warehouse list on both
+// sides (pre-selected with the same defaults everyone else gets locked to). Picking one writes
+// straight through to the locked text input + hidden ID, so saveNewTransfer and the rest of the
+// page read exactly the same fields as before.
+function canPickTransferWarehouses() {
+  return !!(currentSession?.isSuperUser || currentSession?.isProductionManager || !currentSession?.warehouseName);
+}
+
+async function setupWarehousePickers() {
+  const canPick = canPickTransferWarehouses();
   const sides = [
     ['newFromWarehouseSelect', 'newFromWarehouse', 'newFromWarehouseId'],
     ['newToWarehouseSelect', 'newToWarehouse', 'newToWarehouseId']
   ];
   sides.forEach(([selectId, inputId]) => {
-    document.getElementById(selectId).classList.toggle('hidden', !isSuperUser);
-    document.getElementById(inputId).classList.toggle('hidden', isSuperUser);
+    document.getElementById(selectId).classList.toggle('hidden', !canPick);
+    document.getElementById(inputId).classList.toggle('hidden', canPick);
   });
-  if (!isSuperUser) return;
+  if (!canPick) return;
 
   const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
     p_admin_username: currentSession.username,
@@ -2541,7 +2548,7 @@ async function openNewTransferModal() {
   // just resolved against Supabase instead of local SQL.
   await applyPreferredFromWarehouse(false);
   document.getElementById('newToWarehouseId').value = await resolveWarehouseIdByName(currentSession?.warehouseName);
-  await setupSuperUserWarehousePickers();
+  await setupWarehousePickers();
   document.getElementById('newNo').value = await generateTransferNo();
   refreshNewTransferGeneralSummary();
 }

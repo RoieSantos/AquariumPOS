@@ -3160,6 +3160,44 @@
       flex-direction: column;
       gap: 8px;
     }
+    /* Wholesale pricing switch + minimum meter (Create / Edit Order). */
+    .wholesale-toggle {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .wholesale-toggle small {
+      font-weight: 500;
+      color: var(--text-muted, #61738f);
+    }
+    .wholesale-meter {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      background: #e7f6ee;
+      color: #166534;
+    }
+    .wholesale-meter.is-short {
+      background: #fdf0e1;
+      color: #9a3412;
+    }
+    .wholesale-chip {
+      display: inline-block;
+      margin-left: 4px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      font-weight: 600;
+      background: #e7f6ee;
+      color: #166534;
+      vertical-align: middle;
+    }
     .order-lines-empty {
       text-align: center;
       padding: 18px 10px;
@@ -4252,7 +4290,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=tellme1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=dayoff1"></script>
+  <script src="js/gmaConversations.js?v=wholesale1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

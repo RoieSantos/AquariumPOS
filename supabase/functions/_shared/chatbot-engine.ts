@@ -1185,7 +1185,8 @@ export const TOOLS: Anthropic.Tool[] = [
             required: ['item_code', 'quantity']
           }
         },
-        notes: { type: 'string', description: 'Optional - anything else staff should know about this order as a whole (not item-specific - use each item\'s own notes for that).' }
+        notes: { type: 'string', description: 'Optional - anything else staff should know about this order as a whole (not item-specific - use each item\'s own notes for that).' },
+        pricing: { type: 'string', enum: ['retail', 'wholesale'], description: 'retail (default) or wholesale - wholesale ONLY when the customer chose wholesale pricing (WHOLESALE PRICING rule). The server prices each eligible item at its wholesale price and refuses if the wholesale items total under the PHP 5,000 minimum - never pass a price yourself.' }
       },
       required: ['customer_name', 'customer_phone', 'fulfillment_type', 'location', 'items']
     }
@@ -1214,7 +1215,8 @@ export const TOOLS: Anthropic.Tool[] = [
           }
         },
         change_summary: { type: 'string', description: 'One short line on what the customer asked to change, e.g. "Qty of AQ-013 2 -> 1, added a Black Paint stand" - goes to staff and the order notes.' },
-        apply: { type: 'boolean', description: 'false = quote only, nothing changes (always do this first). true = only after the customer confirmed the quote: updates a draft order, or sends the change request to staff for a confirmed one.' }
+        apply: { type: 'boolean', description: 'false = quote only, nothing changes (always do this first). true = only after the customer confirmed the quote: updates a draft order, or sends the change request to staff for a confirmed one.' },
+        pricing: { type: 'string', enum: ['retail', 'wholesale'], description: 'Optional - leave it out to keep the order\'s current pricing. Pass it only when the customer switches between retail and wholesale (e.g. dropped under the PHP 5,000 wholesale minimum and chose retail).' }
       },
       required: ['order_no', 'items', 'change_summary', 'apply']
     }
@@ -1416,7 +1418,7 @@ export function buildSystemPrompt(
     '- ASK about it: when a customer shows buying interest in an INDIVIDUAL Aquarium, Stand, or Sump Filtration item specifically (asks its price, asks what\'s available in that line, or is heading toward ordering one) - NOT a Set/bundle/package - and it hasn\'t come up yet in this conversation, ask once whether they\'re buying at RETAIL or WHOLESALE pricing, and mention the ₱5,000 minimum (e.g. "Retail or wholesale po ito? Note na ang wholesale ay may minimum na ₱5,000 per transaction."). Ask only once per conversation - don\'t repeat it once they\'ve answered, and don\'t ask for things wholesale doesn\'t apply to (see SCOPE above, plus delivery fees, order status, general questions). If they don\'t answer and just keep asking prices, quote retail. Asking for wholesale pricing is NOT a discount request - handle it here, not with the DISCOUNTS / PRICE CHANGES decline.',
     '- RETAIL (or no answer): quote the regular price, as always. Don\'t bring up wholesale_price figures for retail buyers.',
     '- WHOLESALE: quote each item\'s wholesale_price (from search_items) instead of the regular price - this will only ever be populated for individual Aquarium/Stand/Sump Filtration items (see SCOPE above). If a customer asks about a Set/bundle/package instead, always quote its own listed price only - never its wholesale_price even if one happens to be present on that row, and don\'t count it toward the ₱5,000 minimum. Wholesale only applies when the transaction\'s wholesale-priced individual items add up to at least ₱5,000 - add up quantity x wholesale_price yourself for the items they want and tell them the total. If it\'s under ₱5,000, wholesale doesn\'t apply yet: say how far short they are, and let them choose to add more items to reach the minimum or go with regular retail pricing - never apply wholesale prices to a transaction below the minimum, and never make an exception even if they insist. Only wholesale-priced items count toward the minimum; an item with no wholesale price (or a Set/bundle) is at its regular price and doesn\'t count toward the ₱5,000.',
-    '- WHOLESALE ORDERS: create_order always records the regular retail price and cannot record a wholesale price - so for a wholesale order NEVER call create_order (the receipt would show the wrong prices). Once the customer confirms the items and quantities, call escalate_to_staff with a self-contained reason (items, quantities, the wholesale prices quoted, the wholesale total, and any name/contact/address they gave) and tell them plainly a team member will finalize their wholesale order and confirm payment with them in this conversation. Still save their name/number/address with save_customer_info as usual.',
+    '- WHOLESALE ORDERS: place them with create_order like any other order (same payment-proof and other PLACING ORDERS rules), passing pricing "wholesale". The system then prices each eligible item at its wholesale price by itself and keeps everything else (no wholesale price, Sets, custom builds) at retail - never pass a price for a catalog item. It refuses to save when the wholesale-priced items come to under PHP 5,000: tell the customer how far short they are and let them add items or go retail (then call create_order again with pricing "retail"). The result\'s lines show the prices actually recorded - use those in the receipt, and say it is at wholesale pricing. For modify_order, leave pricing out to keep the order\'s own pricing; if a change drops a wholesale order under the minimum, it is refused the same way - offer to add items or switch it to retail (pricing "retail"). Retail buyers: always pricing "retail" (or leave it out).',
     '- A search_items result\'s wholesale_price will be null for almost everything (any item outside Aquarium/Stand/Sump Filtration, or one in those categories with no wholesale price actually set) - if a wholesale customer asks about an item where it\'s null, say plainly that item doesn\'t have wholesale pricing available (regular price applies), don\'t guess or estimate one.',
     '- Never mention or estimate an item\'s Cost (what the store pays for it) under any circumstance, wholesale question or not - that field is never given to you and must never be invented.',
     '',
@@ -2429,6 +2431,9 @@ const STAFF_PSID_PREFIXES = ['portal-chat:', 'telegram:'];
 
 // ORDER POLICIES: "Any change to an order after it is confirmed costs PHP 150" (modify_order's change requests).
 const ORDER_CHANGE_FEE = 150;
+// Wholesale pricing minimum per transaction (WHOLESALE PRICING rule) - sum of quantity x wholesale
+// price over the wholesale-priced lines only. Enforced in buildBotOrderLines.
+const WHOLESALE_MIN_TOTAL = 5000;
 
 // Short order-policy note sent in the chat with every new order's receipt (the bot's create_order reply and
 // the payment-screenshot receipt in facebook-messenger-webhook) - per "yes please can you add that?" (send the
@@ -2601,7 +2606,14 @@ type BotOrderLine = { CategoryCode: string | null; ItemCode: string | null; Item
 
 // The order lines for create_order / modify_order, priced and variant-checked server-side. Returns an
 // error string (relayed to the model) when an item can't be ordered as given.
-async function buildBotOrderLines(supabase: SupabaseClient, items: BotOrderItemInput[]): Promise<{ orderLines: BotOrderLine[]; estimatedTotal: number } | string> {
+// wholesale = true prices each eligible line (category IsWholesaleApplicable + a WholesalePrice set -
+// same gate as public_search_items) at its wholesale price, and refuses when those lines come to less
+// than WHOLESALE_MIN_TOTAL. Everything else on the order (no wholesale price, Sets, CUSTOM-*) stays retail.
+async function buildBotOrderLines(
+  supabase: SupabaseClient,
+  items: BotOrderItemInput[],
+  opts: { wholesale?: boolean } = {}
+): Promise<{ orderLines: BotOrderLine[]; estimatedTotal: number; wholesaleTotal: number; wholesaleLineCount: number } | string> {
   // Item name/price are ALWAYS looked up from the real catalog here, never trusted from the
   // model - an AI-guessed item_code or price is exactly the kind of input that needs
   // independent server-side verification, same discipline as every other order-creation path
@@ -2638,13 +2650,15 @@ async function buildBotOrderLines(supabase: SupabaseClient, items: BotOrderItemI
   const codes = [...new Set(catalogCodedItems.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
   if (codes.length === 0 && customItems.length === 0) return 'Cannot save the order - no valid item_code values were given.';
 
-  type CatalogItem = { Code: string; Name: string; RetailPrice: number | null; Price: number | null; CategoryCode: string | null };
+  type CatalogItem = { Code: string; Name: string; RetailPrice: number | null; Price: number | null; CategoryCode: string | null; WholesalePrice: number | null };
   const catalogByCode = new Map<string, CatalogItem>();
+  // Item code -> wholesale price, only for wholesale-eligible items (filled when opts.wholesale).
+  const wholesalePriceByCode = new Map<string, number>();
 
   if (codes.length > 0) {
     const { data: catalogItems, error: itemsError } = await supabase
       .from('Items')
-      .select('Code, Name, RetailPrice, Price, CategoryCode')
+      .select('Code, Name, RetailPrice, Price, CategoryCode, WholesalePrice')
       .in('Code', codes)
       .eq('IsActive', true);
     if (itemsError) return `Could not validate items: ${itemsError.message}`;
@@ -2652,6 +2666,23 @@ async function buildBotOrderLines(supabase: SupabaseClient, items: BotOrderItemI
     const unknownCodes = codes.filter((c) => !catalogByCode.has(c));
     if (unknownCodes.length > 0) {
       return `These item_code value(s) don't match a real, active catalog item: ${unknownCodes.join(', ')}. Use search_items or list_items_in_category to find the correct code - never invent one.`;
+    }
+
+    if (opts.wholesale) {
+      const categoryCodes = [...new Set([...catalogByCode.values()].map((c) => String(c.CategoryCode ?? '').trim()).filter(Boolean))];
+      const { data: categoryRows, error: categoriesError } = categoryCodes.length
+        ? await supabase.from('Categories').select('Code, IsWholesaleApplicable').in('Code', categoryCodes)
+        : { data: [], error: null };
+      if (categoriesError) return `Could not check wholesale pricing: ${categoriesError.message}`;
+      const eligibleCategories = new Set(
+        ((categoryRows ?? []) as Array<{ Code: string; IsWholesaleApplicable: boolean | null }>)
+          .filter((c) => c.IsWholesaleApplicable === true)
+          .map((c) => String(c.Code).trim())
+      );
+      for (const c of catalogByCode.values()) {
+        const wp = Number(c.WholesalePrice);
+        if (eligibleCategories.has(String(c.CategoryCode ?? '').trim()) && wp > 0) wholesalePriceByCode.set(c.Code, wp);
+      }
     }
   }
 
@@ -2709,6 +2740,8 @@ async function buildBotOrderLines(supabase: SupabaseClient, items: BotOrderItemI
   // and the push already refuses and shows the error then (PancakeSyncStatus 'Failed').
 
   let estimatedTotal = 0;
+  let wholesaleTotal = 0;
+  let wholesaleLineCount = 0;
   const orderLines = items.map((it) => {
     const tag = String(it.item_code ?? '').trim().toUpperCase();
     const quantity = Math.max(1, Math.trunc(Number(it.quantity) || 1));
@@ -2727,7 +2760,12 @@ async function buildBotOrderLines(supabase: SupabaseClient, items: BotOrderItemI
     }
 
     const catalogItem = catalogByCode.get(String(it.item_code ?? '').trim())!;
-    const price = Number(catalogItem.RetailPrice ?? catalogItem.Price ?? 0);
+    const wholesalePrice = wholesalePriceByCode.get(catalogItem.Code);
+    const price = wholesalePrice ?? Number(catalogItem.RetailPrice ?? catalogItem.Price ?? 0);
+    if (wholesalePrice != null) {
+      wholesaleTotal += quantity * wholesalePrice;
+      wholesaleLineCount++;
+    }
     estimatedTotal += quantity * price;
     return {
       CategoryCode: catalogItem.CategoryCode,
@@ -2740,7 +2778,17 @@ async function buildBotOrderLines(supabase: SupabaseClient, items: BotOrderItemI
     };
   });
 
-  return { orderLines, estimatedTotal };
+  if (opts.wholesale) {
+    if (wholesaleLineCount === 0) {
+      return 'Cannot save the order at wholesale - none of these items has a wholesale price (only individual Aquarium / Stand / Sump Filtration items with one set qualify; Sets and custom builds never do). Tell the customer this order is at regular retail pricing, and place it with pricing "retail" once they agree.';
+    }
+    if (wholesaleTotal < WHOLESALE_MIN_TOTAL) {
+      const short = WHOLESALE_MIN_TOTAL - wholesaleTotal;
+      return `Cannot save the order at wholesale - the wholesale-priced items come to PHP ${wholesaleTotal.toFixed(2)}, below the PHP ${WHOLESALE_MIN_TOTAL.toFixed(2)} wholesale minimum (short by PHP ${short.toFixed(2)}). Tell the customer how much short they are and let them choose: add more wholesale-eligible items to reach the minimum, or go with regular retail pricing (pricing "retail"). Never place it at wholesale below the minimum.`;
+    }
+  }
+
+  return { orderLines, estimatedTotal, wholesaleTotal, wholesaleLineCount };
 }
 
 export async function executeTool(params: ExecuteToolParams): Promise<string> {
@@ -2996,9 +3044,10 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       // prompt rules carry the same "ask, don't assume" responsibility for the general conversation
       // path (when this tool is reached without going through a payment screenshot).
 
-      const built = await buildBotOrderLines(supabase, items);
+      const wholesale = String(input.pricing ?? '').trim().toLowerCase() === 'wholesale';
+      const built = await buildBotOrderLines(supabase, items, { wholesale });
       if (typeof built === 'string') return built;
-      const { orderLines, estimatedTotal } = built;
+      const { orderLines, estimatedTotal, wholesaleTotal } = built;
 
       const { data: orderNoData, error: orderNoError } = await supabase.rpc('_next_no_series_number', {
         p_series_code: 'AUTOMATED-ORDER',
@@ -3014,7 +3063,9 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         CustomerEmail: customerEmail || null,
         FulfillmentType: fulfillmentType,
         DeliveryAddress: fulfillmentType === 'Delivery' ? deliveryAddress : null,
-        Notes: notes || null,
+        Notes: [wholesale ? `[WHOLESALE pricing - wholesale items PHP ${wholesaleTotal.toFixed(2)}, min PHP ${WHOLESALE_MIN_TOTAL}]` : '', notes]
+          .filter(Boolean).join('\n') || null,
+        IsWholesale: wholesale,
         Status: 'New',
         EstimatedTotal: estimatedTotal,
         Location: location,
@@ -3055,6 +3106,8 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         ok: true,
         orderNo,
         estimatedTotal,
+        pricing: wholesale ? 'wholesale' : 'retail',
+        lines: orderLines.map((l) => ({ item: l.ItemName, quantity: l.Quantity, price: l.Price })),
         status: 'Saved - waiting for staff to review and confirm',
         // Portal-rendered receipt (docs/online-order-receipt.html), NOT Pancake's own order_link -
         // per direct decision, never share that. See the PLACING ORDERS rule - share this AND ask
@@ -3081,7 +3134,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
 
       const { data: order, error: orderError } = await supabase
         .from('AutomatedOrders')
-        .select('OrderNo, Status, PancakeSyncStatus, PancakeReceiptNo, EstimatedTotal, DeliveryFee, CustomerName, Notes')
+        .select('OrderNo, Status, PancakeSyncStatus, PancakeReceiptNo, EstimatedTotal, DeliveryFee, CustomerName, Notes, IsWholesale')
         .or(`OrderNo.eq.${orderNo},PancakeReceiptNo.eq.${orderNo}`)
         .limit(1)
         .maybeSingle();
@@ -3091,9 +3144,13 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         return JSON.stringify({ ok: false, reason: `Order ${order.OrderNo} is ${order.Status} and can't be changed.` });
       }
 
-      const built = await buildBotOrderLines(supabase, items);
+      // Keeps the order's own pricing (retail / wholesale) unless the customer switches it.
+      const pricingInput = String(input.pricing ?? '').trim().toLowerCase();
+      const wholesale = pricingInput === 'wholesale' || pricingInput === 'retail' ? pricingInput === 'wholesale' : order.IsWholesale === true;
+      const built = await buildBotOrderLines(supabase, items, { wholesale });
       if (typeof built === 'string') return built.replace(/Cannot save the order/g, 'Cannot change the order');
       const { orderLines, estimatedTotal: itemsTotal } = built;
+      const pricingLabel = wholesale ? 'wholesale' : 'retail';
       const deliveryFee = Number(order.DeliveryFee) || 0;
       const isDraft = order.PancakeSyncStatus === 'Not Pushed';
       const receiptUrl = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(order.OrderNo)}`;
@@ -3108,6 +3165,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
           ok: true,
           mode: 'draft',
           orderNo: order.OrderNo,
+          pricing: pricingLabel,
           previousTotal: Number(order.EstimatedTotal) || 0,
           itemsTotal,
           deliveryFee,
@@ -3131,9 +3189,10 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         if (oldIds.length) await supabase.from('AutomatedOrderLines').delete().eq('OrderNo', order.OrderNo).in('EntryNo', oldIds);
 
         const stamp = new Date().toISOString();
-        const changeNote = `[${botStaffName(psid)} changed the order ${stamp.slice(0, 10)}: ${changeSummary || 'items updated'}]`;
+        const changeNote = `[${botStaffName(psid)} changed the order ${stamp.slice(0, 10)}: ${changeSummary || 'items updated'}${wholesale !== (order.IsWholesale === true) ? ` - now ${pricingLabel.toUpperCase()} pricing` : ''}]`;
         await supabase.from('AutomatedOrders').update({
           EstimatedTotal: newTotal,
+          IsWholesale: wholesale,
           Notes: [String(order.Notes ?? '').trim(), changeNote].filter(Boolean).join('\n').slice(0, 2000),
           UpdatedAtUtc: stamp,
           // The customer re-confirms the changed order (same "Reply YES" flow as create_order).
@@ -3157,6 +3216,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         ok: true,
         mode: 'change_request',
         orderNo: order.OrderNo,
+        pricing: pricingLabel,
         currentTotal,
         itemsTotal,
         deliveryFee,
@@ -3177,7 +3237,7 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         .eq('Psid', psid);
       await supabase.rpc('_telegram_send_message', {
         p_text: `Order change request - ${order.OrderNo} (${order.CustomerName ?? ''}, status ${live?.Status ?? order.Status ?? '?'}, PSID ${psid}).\n`
-          + `Asked: ${changeSummary || '-'}\nNew items: ${lineSummary}\n`
+          + `Asked: ${changeSummary || '-'}\nNew items (${pricingLabel.toUpperCase()} pricing): ${lineSummary}\n`
           + `Quoted: items PHP ${itemsTotal.toFixed(2)} + delivery PHP ${deliveryFee.toFixed(2)} + change fee PHP ${ORDER_CHANGE_FEE} = PHP ${newTotal.toFixed(2)} (was PHP ${currentTotal.toFixed(2)}, paid PHP ${amountPaid.toFixed(2)}).\n`
           + 'Apply it on the Online Order card (Lines) if it can still be changed, then confirm with the customer.'
       });

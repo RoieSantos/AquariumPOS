@@ -2329,6 +2329,19 @@ async function editOrder(orderNo, btn) {
     variation_id: l.variation_id || null
   }));
 
+  // Saved pricing flag + which lines are already on their wholesale price.
+  editingOrderWasWholesale = (await loadWholesaleInfo(orderNo)) === true;
+  newOrderWholesale = editingOrderWasWholesale;
+  if (newOrderWholesale) {
+    newOrderLines.forEach((line) => {
+      const info = wholesaleInfoByCode.get(line.item_code);
+      if (info && Math.abs(line.price - info.wholesale_price) < 0.005) {
+        line.wholesale_applied = true;
+        line.retail_price = info.retail_price;
+      }
+    });
+  }
+
   activeCustomerTab = 'create';
   renderCustomerPanel(conversationOrdersConv);
 }
@@ -2573,6 +2586,14 @@ let newOrderLines = [];
 // edited - switches renderCreateOrderTab/submitNewOrder into "edit an existing order" mode instead
 // of "create a new order". Null in the normal create flow.
 let editingOrder = null;
+// Wholesale pricing switch (sql/supabase_bot_order_wholesale_pricing.sql) - on: eligible lines
+// (Aquarium/Stand/Sump with a wholesale price) carry their wholesale price, and the order must reach
+// WHOLESALE_MIN_TOTAL on those lines. Lines keep retail_price so switching off restores it.
+const WHOLESALE_MIN_TOTAL = 5000;
+let newOrderWholesale = false;
+let editingOrderWasWholesale = false;
+const wholesaleInfoByCode = new Map(); // item code -> { wholesale_price, retail_price }, eligible only
+const wholesaleCheckedCodes = new Set(); // codes already looked up (eligible or not)
 let lineNoteModalIndex = null;
 let productSearchDebounce = null;
 let productSearchResultsCache = [];
@@ -2655,6 +2676,11 @@ function renderCreateOrderTab(conv) {
         </svg>
         Products
       </div>
+      <label class="wholesale-toggle">
+        <input type="checkbox" id="newOrderWholesale">
+        <span>Wholesale pricing</span>
+        <small>Aquarium / Stand / Sump only &middot; min &#8369;${WHOLESALE_MIN_TOTAL.toLocaleString()}</small>
+      </label>
       <div class="product-search-wrap">
         <input type="text" id="productSearchInput" placeholder="Search product by name...">
         <div id="productSearchResults" class="product-search-results hidden"></div>
@@ -2679,6 +2705,7 @@ function renderCreateOrderTab(conv) {
       </div>
 
       <div class="order-lines-list" id="newOrderLinesBody"></div>
+      <div class="wholesale-meter hidden" id="newOrderWholesaleMeter"></div>
     </div>
 
     <div class="form-group og-payment">
@@ -2746,12 +2773,18 @@ function renderCreateOrderTab(conv) {
     prefillCreateOrderFromCustomer(conv);
   }
 
+  const wholesaleInput = document.getElementById('newOrderWholesale');
+  wholesaleInput.checked = newOrderWholesale;
+  wholesaleInput.addEventListener('change', () => setNewOrderWholesale(wholesaleInput.checked));
+
   document.getElementById('newOrderClearBtn')?.addEventListener('click', () => {
     newOrderLines = [];
+    newOrderWholesale = false;
     renderCreateOrderTab(conv);
   });
   document.getElementById('cancelEditOrderBtn')?.addEventListener('click', () => {
     editingOrder = null;
+    newOrderWholesale = false;
     newOrderLines = [];
     activeCustomerTab = 'info';
     renderCustomerPanel(conv);
@@ -3019,6 +3052,77 @@ function addOrderLineFromProduct(item, variant) {
   if (searchInput) searchInput.value = '';
   document.getElementById('productSearchResults')?.classList.add('hidden');
   renderNewOrderLines();
+  if (newOrderWholesale) applyWholesalePrices();
+}
+
+// Looks up wholesale prices for any line item codes not checked yet (staff_get_item_wholesale_prices).
+// p_order_no also returns that order's saved flag (edit mode). Returns that flag, or null.
+async function loadWholesaleInfo(orderNo = null) {
+  const codes = [...new Set(newOrderLines.map((l) => l.item_code).filter((c) => c && !wholesaleCheckedCodes.has(c)))];
+  if (codes.length === 0 && !orderNo) return null;
+  const { data, error } = await supabaseClient.rpc('staff_get_item_wholesale_prices', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_codes: codes,
+    p_order_no: orderNo
+  });
+  if (error) {
+    console.warn('Wholesale prices unavailable:', error.message);
+    return null;
+  }
+  codes.forEach((c) => wholesaleCheckedCodes.add(c));
+  (data?.items || []).forEach((it) => wholesaleInfoByCode.set(it.code, {
+    wholesale_price: Number(it.wholesale_price) || 0,
+    retail_price: Number(it.retail_price) || 0
+  }));
+  return data?.is_wholesale ?? null;
+}
+
+// Puts every eligible line on its wholesale price (switch on) - lines added later get it from
+// addOrderLineFromProduct. A line staff already re-priced by hand while on wholesale is left alone.
+async function applyWholesalePrices() {
+  await loadWholesaleInfo();
+  if (!newOrderWholesale) return;
+  newOrderLines.forEach((line) => {
+    const info = wholesaleInfoByCode.get(line.item_code);
+    if (!info || line.wholesale_applied) return;
+    line.retail_price = line.price;
+    line.price = info.wholesale_price;
+    line.wholesale_applied = true;
+  });
+  renderNewOrderLines();
+}
+
+function setNewOrderWholesale(on) {
+  newOrderWholesale = on;
+  if (on) {
+    applyWholesalePrices();
+    return;
+  }
+  newOrderLines.forEach((line) => {
+    if (!line.wholesale_applied) return;
+    line.price = line.retail_price ?? wholesaleInfoByCode.get(line.item_code)?.retail_price ?? line.price;
+    line.wholesale_applied = false;
+  });
+  renderNewOrderLines();
+}
+
+function newOrderWholesaleTotal() {
+  return newOrderLines.filter((l) => l.wholesale_applied).reduce((sum, l) => sum + l.price * l.quantity, 0);
+}
+
+function updateWholesaleMeter() {
+  const meterEl = document.getElementById('newOrderWholesaleMeter');
+  if (!meterEl) return;
+  meterEl.classList.toggle('hidden', !newOrderWholesale);
+  if (!newOrderWholesale) return;
+  const total = newOrderWholesaleTotal();
+  const short = WHOLESALE_MIN_TOTAL - total;
+  const peso = (n) => `&#8369;${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  meterEl.classList.toggle('is-short', short > 0);
+  meterEl.innerHTML = newOrderLines.some((l) => l.wholesale_applied)
+    ? `Wholesale items ${peso(total)} of ${peso(WHOLESALE_MIN_TOTAL)} minimum${short > 0 ? ` &middot; short by <strong>${peso(short)}</strong>` : ' &middot; minimum reached'}`
+    : 'No wholesale-priced items yet - only individual Aquarium / Stand / Sump items with a wholesale price qualify (not Sets or custom builds).';
 }
 
 let variantPickerProduct = null;
@@ -3103,7 +3207,7 @@ function renderNewOrderLines() {
   bodyEl.innerHTML = newOrderLines.map((line, index) => `
     <div class="order-line-card" data-row="${index}">
       <div class="order-line-top">
-        <div class="order-line-name">${escapeHtml(line.item_name)}</div>
+        <div class="order-line-name">${escapeHtml(line.item_name)}${line.wholesale_applied ? ' <span class="wholesale-chip">Wholesale</span>' : ''}</div>
         <button type="button" class="line-note-btn${line.note ? ' has-note' : ''}" data-index="${index}" title="${line.note ? escapeHtml(line.note) : 'Add a note'}">&#9998;</button>
         <button type="button" class="line-remove-btn" title="Remove this item" data-index="${index}">
           <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -3205,6 +3309,7 @@ function updateOrderTotal() {
   if (!totalEl) return;
   const total = newOrderLines.reduce((sum, line) => sum + (line.price * line.quantity), 0) + newOrderDeliveryFee();
   totalEl.textContent = total.toFixed(2);
+  updateWholesaleMeter();
 }
 
 // Delivery Fee box (Delivery only - Pickup always counts/saves 0, same as the server).
@@ -3889,6 +3994,17 @@ async function submitNewOrder() {
 
   const fulfillment = document.getElementById('newOrderFulfillment').value;
   const submitBtn = document.getElementById('newOrderSubmitBtn');
+
+  // Same rule as the bot (and admin_set_automated_order_wholesale): no wholesale below the minimum.
+  if (newOrderWholesale) {
+    const short = WHOLESALE_MIN_TOTAL - newOrderWholesaleTotal();
+    if (short > 0) {
+      errorEl.textContent = `Wholesale needs at least PHP ${WHOLESALE_MIN_TOTAL.toLocaleString()} of wholesale-priced items - short by PHP ${short.toFixed(2)}. Add items, or turn off Wholesale pricing for retail.`;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+  }
+
   submitBtn.disabled = true;
 
   const commonFields = {
@@ -3901,7 +4017,7 @@ async function submitNewOrder() {
     p_delivery_address: fulfillment === 'Delivery' ? document.getElementById('newOrderDeliveryAddress').value.trim() : null,
     p_notes: document.getElementById('newOrderNotes').value.trim() || null,
     p_location: document.getElementById('newOrderLocation').value,
-    p_lines: newOrderLines,
+    p_lines: newOrderLines.map(({ retail_price, wholesale_applied, ...line }) => line),
     p_delivery_fee: newOrderDeliveryFee()
   };
 
@@ -3922,6 +4038,23 @@ async function submitNewOrder() {
   }
 
   const result = (data || [])[0];
+
+  // Pricing flag - only sent when it's wholesale or changed, so a plain retail order never needs it.
+  const wholesaleChanged = editingOrder ? newOrderWholesale !== editingOrderWasWholesale : newOrderWholesale;
+  if (result && wholesaleChanged) {
+    const { data: flagData, error: flagError } = await supabaseClient.rpc('admin_set_automated_order_wholesale', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_no: result.order_no,
+      p_is_wholesale: newOrderWholesale
+    });
+    const flag = (flagData || [])[0];
+    if (flagError || !flag?.success) {
+      alert(`Order ${result.order_no} was saved with these prices, but its wholesale flag could not be set: ${flagError?.message || flag?.message || 'unknown error'}.`);
+    }
+  }
+  newOrderWholesale = false;
+  editingOrderWasWholesale = false;
 
   const payAmount = parseFloat(document.getElementById('newOrderPayAmount').value);
   if (result && payAmount > 0) {
