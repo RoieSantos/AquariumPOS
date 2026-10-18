@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-18
+
+- **Mondays blocked again on the delivery calendars - production day off, Super Users can override.** Delivery page and Conversations Delivery Calendar show Mondays as "Day Off"; non-Super Users can't assign/book/offer them, enforced server-side in admin_create_delivery_stop / admin_move_delivery_stop / admin_book_delivery_from_pin ([supabase_delivery_block_monday_superuser.sql](sql/supabase_delivery_block_monday_superuser.sql)); JS cache `v=dayoff1`. Bot already skips Mondays.
+
 ## 2026-10-17
 
 - **Advance Orders: a Sales User on All Warehouses (blank warehouse) now sees every branch**, view-only. Before, a blank warehouse matched no order, so the tab was empty. Sales Users with a warehouse, Store Managers and Conversations staff are unchanged ([supabase_advance_orders_sales_user_all_branches.sql](sql/supabase_advance_orders_sales_user_all_branches.sql)).

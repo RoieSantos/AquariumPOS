@@ -878,6 +878,7 @@
     .dcal-cell:hover { border-color: var(--primary); }
     .dcal-cell.is-blank { visibility: hidden; }
     .dcal-cell.is-past { opacity: 0.45; }
+    .dcal-cell.is-dayoff { background: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(128, 128, 128, 0.14) 6px, rgba(128, 128, 128, 0.14) 7px); }
     .dcal-cell.is-today { box-shadow: inset 0 0 0 2px var(--primary); }
     .dcal-cell.is-selected { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
     .dcal-num { font-weight: 700; font-size: 13px; }
@@ -4251,7 +4252,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=tellme1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=prefill1"></script>
+  <script src="js/gmaConversations.js?v=dayoff1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

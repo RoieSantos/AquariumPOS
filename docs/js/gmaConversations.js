@@ -6693,6 +6693,7 @@ const DCAL_BUSY_LEVELS = [
   { max: 4, cls: 'is-busy' },
   { max: Infinity, cls: 'is-full' }
 ];
+const DCAL_DAY_OFF_DOW = 1; // Monday - production day off, Super User only (see renderDeliveryCalendarDay)
 
 let dcalMonth = null;                 // Date - first day of the month shown
 let dcalSelectedKey = null;
@@ -6912,10 +6913,12 @@ function renderDeliveryCalendar() {
     if (key < todayKey) classes.push('is-past');
     if (key === todayKey) classes.push('is-today');
     if (key === dcalSelectedKey) classes.push('is-selected');
+    const dayOff = date.getDay() === DCAL_DAY_OFF_DOW;
+    if (dayOff) classes.push('is-dayoff');
     html += `
-      <button type="button" class="${classes.join(' ')}" data-dcal-date="${key}">
+      <button type="button" class="${classes.join(' ')}" data-dcal-date="${key}"${dayOff ? ' title="Production day off - only a Super User can book"' : ''}>
         <span class="dcal-num">${day}</span>
-        <span class="dcal-count">${stops.length ? `${stops.length} stop${stops.length === 1 ? '' : 's'}` : 'Open'}</span>
+        <span class="dcal-count">${stops.length ? `${stops.length} stop${stops.length === 1 ? '' : 's'}` : (dayOff ? 'Day Off' : 'Open')}</span>
         ${route?.route_name ? `<span class="dcal-tag" title="Fixed route">${escapeHtml(route.route_name)}</span>` : ''}
         ${vendors.length ? `<span class="dcal-tag" title="${escapeHtml(vendors.join(', '))}">${vendors.length} vendor</span>` : ''}
       </button>`;
@@ -6930,8 +6933,12 @@ function renderDeliveryCalendarDay(key) {
   const stops = dcalStopsByDate[key] || [];
   const route = dcalRouteByDow?.[date.getDay()];
   const vendors = dcalDayVendors(key, date.getDay());
-  const isPast = key < dcalTodayKey();
+  // Per "block the monday.. its production day off.. only super user can" - a Monday can't be offered
+  // or booked unless you're a Super User (admin_book_delivery_from_pin checks it too).
+  const dayOff = date.getDay() === DCAL_DAY_OFF_DOW;
+  const cannotBook = key < dcalTodayKey() || (dayOff && !currentSession?.isSuperUser);
   const meta = [
+    dayOff ? `<strong>Production day off</strong>${currentSession?.isSuperUser ? ' - Super User override' : ' - only a Super User can book a Monday'}` : '',
     route?.route_name ? `Fixed route: ${escapeHtml(route.route_name)}` : '',
     route?.warehouse_names?.length ? `Warehouses: ${escapeHtml(route.warehouse_names.join(', '))}` : '',
     vendors.length ? `Vendor stops: ${escapeHtml(vendors.join(', '))}` : ''
@@ -6942,10 +6949,10 @@ function renderDeliveryCalendarDay(key) {
     <div class="dcal-day-head">
       <div class="dcal-day-title">${date.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
         &middot; ${stops.length ? `${stops.length} stop${stops.length === 1 ? '' : 's'} booked` : 'no stops booked yet'}</div>
-      ${isPast || dcalBookingPin ? '' : '<button type="button" class="btn btn-primary btn-sm" id="dcalOfferBtn">Offer this date</button>'}
+      ${cannotBook || dcalBookingPin ? '' : '<button type="button" class="btn btn-primary btn-sm" id="dcalOfferBtn">Offer this date</button>'}
     </div>
     ${meta.length ? `<div class="dcal-day-meta">${meta.join(' &middot; ')}</div>` : ''}
-    ${dcalBookingPin && !isPast ? dcalBookingFormHtml() : ''}
+    ${dcalBookingPin && !cannotBook ? dcalBookingFormHtml() : ''}
     ${stops.map((s) => `
       <div class="dcal-stop">
         <div class="dcal-stop-main">

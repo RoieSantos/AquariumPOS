@@ -80,15 +80,21 @@ function toDateKey(date) {
   return `${y}-${m}-${d}`;
 }
 
-// Day of the week with no delivery (Date.getDay(): 0 = Sunday ... 1 = Monday), or -1 for none. Was 1
-// (no truck on Mondays) - now -1 per "can you allow now schedule in calendar even if monday"; the
-// server-side Monday checks were taken out too (sql/supabase_delivery_allow_monday.sql). Set back to 1
-// (and re-run the older delivery SQL) to block Mondays again.
-const NO_DELIVERY_DAY_OF_WEEK = -1;
+// Production day off (Date.getDay(): 0 = Sunday ... 1 = Monday). Per "block the monday on our
+// calendar.. its production day off so we cannot schedule on monday.. only super user can" - every
+// Monday shows "Day Off" on the calendar, and only a Super User can still put a stop on it (server
+// side too: sql/supabase_delivery_block_monday_superuser.sql).
+const NO_DELIVERY_DAY_OF_WEEK = 1;
+const DAY_OFF_MESSAGE = 'Mondays are production day off - only a Super User can schedule a delivery on a Monday.';
 
-function isBlockedDeliveryDateKey(dateKey) {
+function isDayOffDateKey(dateKey) {
   if (!dateKey) return false;
   return new Date(`${dateKey}T00:00:00`).getDay() === NO_DELIVERY_DAY_OF_WEEK;
+}
+
+// Blocked = a day off AND the user isn't a Super User (they can override).
+function isBlockedDeliveryDateKey(dateKey) {
+  return isDayOffDateKey(dateKey) && !currentSession?.isSuperUser;
 }
 
 // GOOGLE_MAPS_API_KEY lives in public.PortalSettings (edited from general-setup.html), not
@@ -361,7 +367,8 @@ function renderCalendarGrid(year, month) {
     // pickup/drop counts as a stop for the day the same way an order does, whether it came from
     // the weekly recurring Delivery Setup route or a per-date tag (getDayVendorCodes dedupes the
     // two), so a day with vendors only still lights up as a day with stops.
-    const vendorCodes = !isNoDelivery ? getDayVendorCodes(key) : [];
+    // Still listed on a day off - a Super User may have booked one there anyway.
+    const vendorCodes = getDayVendorCodes(key);
 
     const classes = ['delivery-day-cell'];
     if (stops.length > 0 || vendorCodes.length > 0) classes.push('has-stops');
@@ -382,7 +389,7 @@ function renderCalendarGrid(year, month) {
     html += `
       <div class="${classes.join(' ')}" data-date="${key}">
         <div class="delivery-day-number">${day}</div>
-        ${isNoDelivery ? '<span class="badge badge-neutral">No Delivery</span>' : ''}
+        ${isNoDelivery ? '<span class="badge badge-neutral" title="Production day off - only a Super User can schedule">Day Off</span>' : ''}
         ${fixedRoute && fixedRoute.route_name ? `<span class="badge badge-purple" title="Fixed route for this day">${fixedRoute.route_name}</span>` : ''}
         ${fixedCount > 0 ? `<span class="badge badge-glass" title="${fixedCount} fixed Warehouse stop${fixedCount === 1 ? '' : 's'} for this day">${fixedCount} Fixed</span>` : ''}
         ${vendorCodes.length > 0 ? `<span class="badge badge-vendor" title="${vendorNames.join(', ')}">${vendorCodes.length} Vendor stop${vendorCodes.length === 1 ? '' : 's'}</span>` : ''}
@@ -456,10 +463,11 @@ async function renderDriverRouteView(dateKey) {
 
   const stops = stopsByDate[dateKey] || [];
   const cardsEl = document.getElementById('driverStopCards');
-  const vendorCardsHtml = isBlockedDeliveryDateKey(dateKey) ? '' : vendorStopCardsHtml(dateKey);
+  const vendorCardsHtml = vendorStopCardsHtml(dateKey);
 
-  if (isBlockedDeliveryDateKey(dateKey)) {
-    cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No deliveries today - the store truck does not run on Mondays.</p>';
+  // A day off still shows any stops a Super User booked on it - only an empty one gets the notice.
+  if (isDayOffDateKey(dateKey) && stops.length === 0 && !vendorCardsHtml) {
+    cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No deliveries today - Monday is production day off.</p>';
   } else if (stops.length === 0 && !vendorCardsHtml) {
     cardsEl.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No stops scheduled for this day.</p>';
   } else {
@@ -1136,8 +1144,6 @@ function fixedRouteRowHtml(dateKey) {
 // table, mirroring vendorStopCardsHtml on the Driver Route View. Address/contact come from
 // vendorByCode (loadVendorLookup), the same source the map markers use.
 function vendorStopRowsHtml(dateKey) {
-  if (isBlockedDeliveryDateKey(dateKey)) return '';
-
   const dow = new Date(`${dateKey}T00:00:00`).getDay();
   const weeklyRoute = routeScheduleByDayOfWeek[dow];
   const weeklyCodes = new Set(weeklyRoute?.vendor_codes || []);
@@ -1211,7 +1217,7 @@ function renderDateVendorsSection(dateKey) {
 
   const assignBtn = document.getElementById('assignVendorBtn');
   assignBtn.disabled = availableVendors.length === 0 || isBlockedDeliveryDateKey(dateKey);
-  assignBtn.title = isBlockedDeliveryDateKey(dateKey) ? 'Mondays are not available for delivery.' : '';
+  assignBtn.title = isBlockedDeliveryDateKey(dateKey) ? DAY_OFF_MESSAGE : '';
 }
 
 async function assignDateVendor(dateKey) {
@@ -2014,7 +2020,7 @@ function updateConfirmAssignButtonState() {
   const confirmBtn = document.getElementById('confirmAssignBtn');
 
   if (isBlockedDeliveryDateKey(dateKey)) {
-    errorEl.textContent = 'Mondays are not available for delivery - pick a different date.';
+    errorEl.textContent = DAY_OFF_MESSAGE;
     errorEl.classList.remove('hidden');
     confirmBtn.disabled = true;
     return;
@@ -2650,7 +2656,7 @@ async function confirmAssign() {
   }
 
   if (isBlockedDeliveryDateKey(deliveryDate)) {
-    errorEl.textContent = 'Mondays are not available for delivery - pick a different date.';
+    errorEl.textContent = DAY_OFF_MESSAGE;
     errorEl.classList.remove('hidden');
     return;
   }
