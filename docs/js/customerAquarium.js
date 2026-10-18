@@ -1,5 +1,6 @@
 // Customer Aquarium page logic.
-// Tables: CompleteAquariumSetHeader ("PackageName" PK, "PackagePrice", "VariantID")
+// Tables: CompleteAquariumSetHeader ("PackageName" PK, "PackagePrice", "VariantID", "SetCode", "Description",
+// "SellOnline" - a trigger mirrors each package to its SET catalog item, supabase_aquarium_sets_portal_owned.sql)
 // CompleteAquariumSetLine ("EntryNo" PK, "PackageName" FK, "ItemNo", "ItemName", "Quantity", "Price")
 
 let editingPackageName = null;
@@ -53,7 +54,7 @@ async function loadPackages() {
         <td class="num">${formatMoney(t.total)}</td>
         <td class="num"><strong>${formatMoney(price)}</strong>${price === 0 ? ' <span class="save-neg">(not set)</span>' : ''}</td>
         <td class="num">${savesCell}</td>
-        <td class="variant-cell" title="${escapeHtml(r.VariantID)}">${escapeHtml(r.VariantID)}</td>
+        <td class="variant-cell">${escapeHtml(r.SetCode || '-')}<span class="online-badge${r.SellOnline === false ? ' off' : ''}">${r.SellOnline === false ? 'POS only' : 'Online'}</span></td>
         <td><button class="btn btn-secondary btn-sm edit-pkg-btn" data-pkg="${encodeURIComponent(r.PackageName || '')}" type="button">Edit</button></td>
       </tr>`;
     })
@@ -229,6 +230,9 @@ function openNewPackage() {
   document.getElementById('pkgName').disabled = false;
   document.getElementById('pkgPrice').value = '';
   document.getElementById('pkgVariantId').value = '';
+  document.getElementById('pkgSetCode').value = '';
+  document.getElementById('pkgDescription').value = '';
+  document.getElementById('pkgSellOnline').checked = true;
   document.getElementById('pkgLinesBody').innerHTML = '';
   document.getElementById('packageError').classList.add('hidden');
   document.getElementById('deletePackageBtn').classList.add('hidden');
@@ -260,6 +264,9 @@ async function openEditPackage(packageName) {
   document.getElementById('pkgName').value = headerData.PackageName || '';
   document.getElementById('pkgPrice').value = headerData.PackagePrice ?? '';
   document.getElementById('pkgVariantId').value = headerData.VariantID || '';
+  document.getElementById('pkgSetCode').value = headerData.SetCode || '';
+  document.getElementById('pkgDescription').value = headerData.Description || '';
+  document.getElementById('pkgSellOnline').checked = headerData.SellOnline !== false;
   setRequiredParts(headerData);
 
   const { data: lineData, error: lineError } = await supabaseClient
@@ -321,6 +328,9 @@ async function savePackage() {
     await upsertRow('CompleteAquariumSetHeader', { PackageName: name }, {
       PackagePrice: price,
       VariantID: variantId || null,
+      // Portal-owned sets: the DB trigger copies these (and the price) onto the set's catalog item.
+      Description: document.getElementById('pkgDescription').value.trim() || null,
+      SellOnline: document.getElementById('pkgSellOnline').checked,
       ...readRequiredParts(),
       UpdatedDate: new Date().toISOString()
     });

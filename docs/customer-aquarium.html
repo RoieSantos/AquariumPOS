@@ -58,6 +58,11 @@
     .pkg-required-boxes { display: flex; flex-wrap: wrap; gap: 8px 20px; }
     .pkg-required-boxes label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--text-main); cursor: pointer; }
     .pkg-required-boxes input { width: 18px; height: 18px; }
+    .pkg-sell-online { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; font-weight: 600; color: var(--text-main); cursor: pointer; }
+    .pkg-sell-online input { width: 18px; height: 18px; }
+    #pkgDescription { width: 100%; font: inherit; resize: vertical; }
+    .online-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; background: rgba(46, 160, 67, .18); color: #3fb950; }
+    .online-badge.off { background: rgba(139, 148, 158, .18); color: var(--muted-text, #8b949e); }
     .pkg-footer { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; margin-top: 18px; }
     .pkg-footer .right { display: flex; gap: 10px; margin-left: auto; }
   </style>
@@ -70,7 +75,7 @@
       <h1>Customer Aquarium Packages</h1>
       <button class="btn btn-primary" id="newPackageBtn" type="button">+ New Package</button>
     </div>
-    <p class="muted">Complete aquarium set packages sold via POS. This page is the only place to add or edit them - every POS terminal pulls them down within 5 minutes (or right away with Settings &gt; Aquarium Set &gt; Sync from Portal). Item No. must match the POS item code.</p>
+    <p class="muted">Complete aquarium set packages. This page is the only place to add or edit them - no Pancake product needed. Every POS terminal pulls them down within 5 minutes (or right away with Settings &gt; Aquarium Set &gt; Sync from Portal), and sets marked Online are sold on the website, by Alice and from the Conversations set picker at the Package Price. Item No. must match the POS item code.</p>
 
     <div class="table-wrap">
       <table class="pkg-list">
@@ -81,7 +86,7 @@
             <th class="num">Items Total</th>
             <th class="num">Package Price</th>
             <th class="num">Customer Saves</th>
-            <th>Variant ID</th>
+            <th>Set Code</th>
             <th></th>
           </tr>
         </thead>
@@ -110,10 +115,22 @@
           <input type="number" id="pkgPrice" step="0.01" min="0" placeholder="0.00" />
         </div>
         <div class="form-row">
-          <label for="pkgVariantId">Variant ID (Pancake SET product - optional)</label>
-          <input type="text" id="pkgVariantId" placeholder="Leave blank for walk-in only" />
+          <label for="pkgSetCode">Set Code</label>
+          <input type="text" id="pkgSetCode" disabled placeholder="Assigned when you save" />
+        </div>
+        <div class="form-row">
+          <label for="pkgVariantId">Pancake Variant ID (old sets only - leave blank)</label>
+          <input type="text" id="pkgVariantId" placeholder="Not needed - sets no longer use Pancake" />
         </div>
       </div>
+
+      <!-- Portal-owned sets (supabase_aquarium_sets_portal_owned.sql): saving creates/updates the set's
+           catalog item, so the website, Alice and the Conversations set picker sell it as-is. -->
+      <div class="form-row" style="margin-top:12px;">
+        <label for="pkgDescription">Description (what the customer sees - website, Alice, Conversations)</label>
+        <textarea id="pkgDescription" rows="5" maxlength="1000" placeholder="e.g. 15 Gallons Topfilter Set&#10;1pc 15G aquarium 3mm glass&#10;1pc Dual stand&#10;Poseidon top filter, lights, filter wool, Safe Start"></textarea>
+      </div>
+      <label class="pkg-sell-online"><input type="checkbox" id="pkgSellOnline" checked /> Sell online (website, Alice and the Conversations set picker). Unticked = POS only.</label>
 
       <div class="pkg-required">
         <div class="pkg-required-title">Required at the POS</div>
@@ -186,7 +203,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=systests1"></script>
-  <script src="js/customerAquarium.js?v=reqparts1"></script>
+  <script src="js/customerAquarium.js?v=portalsets1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

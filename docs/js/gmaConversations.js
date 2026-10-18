@@ -7298,6 +7298,97 @@ async function insertPriceList(kind) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+// Share an Aquarium Set - per "the sets can we also share it on the conversations? i mean manually?".
+// Same list Alice's list_aquarium_sets reads (public_list_aquarium_sets, price-0 sets left out the same
+// way), so staff and the bot quote the same sets. Per "is this set coming from customer aquarium setup?":
+// the contents come from the set's Customer Aquarium package (its parts + the parts the store picks);
+// only a set with no package falls back to its Description. Price = the item price orders charge.
+let setPickerSets = [];
+
+function setTitle(set) {
+  // The item name tells the sets apart (size, glass, overhead/undersump) - a Description's first line
+  // doesn't always ("150 Gallons Aquarium w/ Rubber Matt" on both 150G sets). Tidy its code style.
+  return String(set.name || set.code).replace(/COMPETE/gi, 'COMPLETE').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function setShareText(set) {
+  const peso = `₱${Number(set.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  let descLines = String(set.description || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // A first line like "100Gallons Overhead Complete Setup" just repeats the title.
+  if (descLines.length > 1 && /\bset(up)?\b/i.test(descLines[0])) descLines = descLines.slice(1);
+  let body = '';
+  if ((set.includes || []).length > 0) {
+    const parts = set.includes.map((p) => `• ${Number(p.qty) > 1 ? `${Number(p.qty)}pcs ` : ''}${p.item}`);
+    (set.store_selected || []).forEach((p) => parts.push(`• ${p}`));
+    body = `Includes:\n${parts.join('\n')}`;
+  } else if (descLines.length > 1) {
+    body = descLines.map((l) => (/^[*•\-]/.test(l) || /^all you need/i.test(l) ? l : `• ${l}`)).join('\n');
+  }
+  const notIncluded = (set.not_included || []).length
+    ? `\nNot included in this set: ${set.not_included.join(', ')} (available as an add-on).`
+    : '';
+  const packageNote = /cannot remove|can't remove/i.test(body) ? '' : '\n*Sold as a complete package - items inside the set cannot be removed or swapped.';
+  return `🐠 ${setTitle(set)}\nPackage price: ${peso}\n\n${body}${notIncluded}${packageNote}\n[split]\nWould you like to get this set? 😊 We can check availability and delivery for you.`;
+}
+
+function insertTextIntoReply(text) {
+  const input = document.getElementById('replyInput');
+  input.value = input.value.trim() ? `${input.value.trimEnd()}\n${text}` : text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  autoResizeReplyInput();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function closeSetPicker() {
+  document.getElementById('setPickerModal').classList.add('hidden');
+}
+
+async function openSetPicker() {
+  if (!selectedPsid) return;
+  const listEl = document.getElementById('setPickerList');
+  listEl.innerHTML = '<div class="inbox-empty-state">Loading...</div>';
+  document.getElementById('setPickerModal').classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('public_list_aquarium_sets');
+  if (error) {
+    listEl.innerHTML = `<div class="inbox-empty-state error-text">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  setPickerSets = (data || [])
+    .filter((s) => Number(s.price) > 0)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }));
+  if (setPickerSets.length === 0) {
+    listEl.innerHTML = '<div class="inbox-empty-state">No aquarium sets with a price found.</div>';
+    return;
+  }
+  listEl.innerHTML = setPickerSets.map((s, index) => `
+      <div class="variant-picker-row" data-index="${index}">
+        <div class="variant-picker-row-info">
+          <div class="variant-picker-row-name">${escapeHtml(setTitle(s))}</div>
+          <div class="variant-picker-row-sku">${escapeHtml(s.code)}</div>
+        </div>
+        <div class="variant-picker-row-meta">
+          <div class="variant-picker-row-price">₱${Number(s.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+        </div>
+      </div>
+    `).join('');
+  listEl.querySelectorAll('.variant-picker-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      insertTextIntoReply(setShareText(setPickerSets[parseInt(row.dataset.index, 10)]));
+      closeSetPicker();
+    });
+  });
+}
+
+function insertAllSetsList() {
+  if (setPickerSets.length === 0) return;
+  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const list = setPickerSets.map((s) => `• ${setTitle(s)} - ${peso(s.price)}`).join('\n');
+  insertTextIntoReply(`Here are our ready-made Aquarium Complete Setup Sets (package price, all-in):\n${list}\n[split]\nWhich size are you looking at? 😊 Tell us and we'll send you the full inclusions of that set.`);
+  closeSetPicker();
+}
+
 // Delivery quote window - per "add a button there delivery quote.. a small delivery quote window that will
 // help the staff quote price of delivery". Same official formula as Vic (delivery-fee-from-pin Edge
 // Function -> computeDeliveryQuote / computeLalamoveQuote), to a typed address or the customer's latest
@@ -7619,6 +7710,12 @@ function initDeliveryCalendar() {
       setPriceListMenuOpen(false);
       insertPriceList(kind);
     }));
+  document.getElementById('openSetPickerBtn').addEventListener('click', () => {
+    setPriceListMenuOpen(false);
+    openSetPicker();
+  });
+  document.getElementById('insertAllSetsBtn').addEventListener('click', insertAllSetsList);
+  document.getElementById('closeSetPickerBtn').addEventListener('click', closeSetPicker);
   // Composer Quote menu - each item opens its calculator in 'reply' mode (Put in reply).
   const quoteMenuBtn = document.getElementById('openQuoteMenuBtn');
   const quoteMenu = document.getElementById('quoteMenuEl');
