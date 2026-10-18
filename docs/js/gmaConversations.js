@@ -7231,6 +7231,69 @@ async function insertLocationPinLink() {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+// Price list menu: the retail (public_list_order_items, the same list Alice's list_items_in_category reads)
+// or wholesale (public_list_wholesale_items, Alice's list_wholesale_prices) price of every active Aquarium /
+// Stand / Sump item, put into the reply box for staff to check and send. One [split] per category -
+// chatbot-staff-reply sends each as its own message (Messenger's 2000-char cap).
+const PRICE_LIST_CATEGORIES = [
+  { code: 'AQUARIUM', title: '🐠 AQUARIUMS' },
+  { code: 'STAND', title: '🪵 STANDS' },
+  { code: 'SUMP', title: '💧 SUMP FILTRATION' }
+];
+
+async function insertPriceList(kind) {
+  if (!selectedPsid) return;
+  const wholesale = kind === 'wholesale';
+  const btn = document.getElementById('insertPriceListBtn');
+  btn.disabled = true;
+  // Rows normalised to { name, price, category }.
+  let rows;
+  let loadError = null;
+  if (wholesale) {
+    const { data, error } = await supabaseClient.rpc('public_list_wholesale_items');
+    loadError = error;
+    rows = (data || []).map((it) => ({ name: it.name, price: it.wholesale_price, category: it.category_code }));
+  } else {
+    const results = await Promise.all(PRICE_LIST_CATEGORIES.map((c) =>
+      supabaseClient.rpc('public_list_order_items', { p_category_code: c.code })));
+    loadError = results.find((r) => r.error)?.error || null;
+    rows = results.flatMap((r, i) => (r.data || []).map((it) => ({ name: it.name, price: it.price, category: PRICE_LIST_CATEGORIES[i].code })));
+  }
+  btn.disabled = false;
+
+  if (loadError) {
+    alert(`Couldn't load the price list: ${loadError.message}`);
+    return;
+  }
+
+  const label = wholesale ? 'Wholesale Price' : 'Retail Price';
+  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const sections = PRICE_LIST_CATEGORIES.map((c) => {
+    const items = rows
+      .filter((it) => it.category === c.code && Number(it.price) > 0)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }));
+    if (items.length === 0) return null;
+    return `${c.title} - ${label}\n${items.map((it) => `• ${it.name} - ${peso(it.price)}`).join('\n')}`;
+  }).filter(Boolean);
+
+  if (sections.length === 0) {
+    alert(`No Aquarium / Stand / Sump items with a ${label.toLowerCase()} found.`);
+    return;
+  }
+
+  // Wholesale terms: same rule as Alice's WHOLESALE PRICING / WHOLESALE_MIN_TOTAL.
+  const intro = wholesale
+    ? `Here is our wholesale price list for aquariums, stands and sump filtration. Wholesale pricing applies with a minimum of ₱${WHOLESALE_MIN_TOTAL.toLocaleString()} per transaction on these items (individual pieces only - not Sets/packages or custom builds).`
+    : 'Here is our retail price list for aquariums, stands and sump filtration:';
+  const text = `${intro}\n[split]\n${sections.join('\n[split]\n')}`;
+  const input = document.getElementById('replyInput');
+  input.value = input.value.trim() ? `${input.value.trimEnd()}\n${text}` : text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  autoResizeReplyInput();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 // Delivery quote window - per "add a button there delivery quote.. a small delivery quote window that will
 // help the staff quote price of delivery". Same official formula as Vic (delivery-fee-from-pin Edge
 // Function -> computeDeliveryQuote / computeLalamoveQuote), to a typed address or the customer's latest
@@ -7532,6 +7595,26 @@ function initDeliveryCalendar() {
   initDeliveryCalendar();
   initDeliveryQuote();
   document.getElementById('sendLocationPinBtn').addEventListener('click', insertLocationPinLink);
+  // Price list menu (Retail / Wholesale) - same open/close behaviour as the Quote menu below.
+  const priceListBtn = document.getElementById('insertPriceListBtn');
+  const priceListMenu = document.getElementById('priceListMenuEl');
+  const setPriceListMenuOpen = (open) => {
+    priceListMenu.classList.toggle('hidden', !open);
+    priceListBtn.classList.toggle('active', open);
+    priceListBtn.setAttribute('aria-expanded', String(open));
+  };
+  priceListBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setPriceListMenuOpen(priceListMenu.classList.contains('hidden'));
+  });
+  document.addEventListener('click', (e) => {
+    if (!priceListMenu.classList.contains('hidden') && !priceListMenu.contains(e.target)) setPriceListMenuOpen(false);
+  });
+  [['insertRetailPriceListBtn', 'retail'], ['insertWholesalePriceListBtn', 'wholesale']].forEach(([id, kind]) =>
+    document.getElementById(id).addEventListener('click', () => {
+      setPriceListMenuOpen(false);
+      insertPriceList(kind);
+    }));
   // Composer Quote menu - each item opens its calculator in 'reply' mode (Put in reply).
   const quoteMenuBtn = document.getElementById('openQuoteMenuBtn');
   const quoteMenu = document.getElementById('quoteMenuEl');

@@ -283,17 +283,26 @@ begin
     where n.nspname = 'public' and p.proname = 'admin_list_online_orders'
   loop
     v_def := pg_get_functiondef(r.oid);
-    if v_def ilike '%_online_order_my_rework_reopened%' then
+    if v_def ilike '%after-sales rework%' then
       raise notice 'admin_list_online_orders (oid %) already has after-sales rework - left as is.', r.oid;
       continue;
     end if;
+    -- Inline (no helper call per row) - the helper version timed out on makers' lists
+    -- (supabase_online_order_after_sales_rework_speed_fix.sql).
     v_new := regexp_replace(
       v_def,
       '(and\s+lower\(trim\(coalesce\(o\."Status",\s*''''\)\)\)\s+in\s+\(''to ship'',\s*''packing'',\s*''packed''\)\)\s*\)\s*)else\s+false',
       E'\\1-- After-sales rework (supabase_online_order_after_sales_rework.sql): a Shipped / Delivered order\n'
         || E'            -- is back on its maker''s list while a part of theirs is sent back and not re-done.\n'
         || E'            when p_admin_username in (o."AssignedTankMaker", o."AssignedStandMaker")\n'
-        || E'              and public._online_order_my_rework_reopened(o."OrderID", p_admin_username) then true\n'
+        || E'              and lower(trim(coalesce(o."Status", \'\'))) in (\'shipped\', \'delivered\', \'2\', \'received\', \'3\')\n'
+        || E'              and exists (select 1 from public."OnlineOrderProductionRework" ar\n'
+        || E'                          where ar."OrderID" = o."OrderID"\n'
+        || E'                            and ((ar."Role" = \'tank\' and o."AssignedTankMaker" = p_admin_username)\n'
+        || E'                              or (ar."Role" = \'stand\' and o."AssignedStandMaker" = p_admin_username))\n'
+        || E'                            and not exists (select 1 from public."OnlineOrderProductionDone" ad\n'
+        || E'                                            where ad."OrderID" = ar."OrderID" and ad."Role" = ar."Role"\n'
+        || E'                                              and ad."DoneAtUtc" > ar."SentBackAtUtc")) then true\n'
         || '            else false',
       'i');
     if v_new <> v_def then
@@ -344,7 +353,7 @@ notify pgrst, 'reload schema';
 -- already had an open rework, which now show on that maker's list.
 select 'function'::text as section, p.proname::text as name,
        case p.proname
-         when 'admin_list_online_orders' then p.prosrc ilike '%_online_order_my_rework_reopened%'
+         when 'admin_list_online_orders' then p.prosrc ilike '%after-sales rework%'
          when 'admin_list_maker_assignments' then p.prosrc ilike '%after-sales rework%'
          when 'admin_send_back_online_order_production' then p.prosrc ilike '%After-sales rework%'
          when 'staff_set_online_order_production_done' then p.prosrc ilike '%v_reopened%'
