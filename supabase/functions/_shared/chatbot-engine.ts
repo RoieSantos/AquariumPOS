@@ -1191,6 +1191,35 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'modify_order',
+    description:
+      'Changes the items of an order this customer already placed (an AO-xxxxx order from this chat) and re-quotes it - add/remove items, change quantities, swap a product or variant, or change a custom build (re-run compute_aquarium_quote / compute_sticker_quote first and pass its new price). Prices are re-read from the catalog server-side. ALWAYS call it first with apply=false: that only returns the new quote (new total, what was paid, the balance, and for a confirmed order the PHP 150 change fee) and changes nothing - show the customer what changes and the new total, and ask them to confirm. Only after they clearly say yes, call it again with exactly the same items and apply=true. Result "mode": "draft" = staff haven\'t confirmed the order yet, so apply=true updates it right away (then share the new receiptUrl and ask them to confirm like a new order); "change_request" = the order is already confirmed (production may have started), so apply=true does NOT change it - it sends the change to staff, who apply it and confirm with the customer. See the CHANGING AN ORDER rules.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_no: { type: 'string', description: 'The order to change (e.g. AO-00084) - the one created in this chat. Ask which one if they have several.' },
+        items: {
+          type: 'array',
+          description: 'The COMPLETE new list of items for the order (not just the changed ones) - every line that should be on the order after the change, same rules as create_order\'s items: item_code from a prior search_items / list_items_in_category result in this conversation, or the literal "CUSTOM-AQUARIUM" / "CUSTOM-STAND" / "CUSTOM-STICKER" with custom_price and notes. Items not listed here are removed from the order.',
+          items: {
+            type: 'object',
+            properties: {
+              item_code: { type: 'string', description: 'A real catalog code, or "CUSTOM-AQUARIUM" / "CUSTOM-STAND" / "CUSTOM-STICKER".' },
+              quantity: { type: 'integer' },
+              variant: { type: 'string', description: 'REQUIRED when the product comes in more than one option (e.g. "Black Sealant", "White Paint") - same as create_order.' },
+              custom_price: { type: 'number', description: 'REQUIRED for CUSTOM-* lines: the exact per-piece price from the latest compute_aquarium_quote / compute_sticker_quote in this conversation (keep the old price only if that build didn\'t change). Never a number you work out yourself.' },
+              notes: { type: 'string', description: 'Per-item note. REQUIRED for CUSTOM-* lines: the full spec as now confirmed (dimensions, glass, sealant, stand, sticker type/size...). Keep an unchanged line\'s existing note.' }
+            },
+            required: ['item_code', 'quantity']
+          }
+        },
+        change_summary: { type: 'string', description: 'One short line on what the customer asked to change, e.g. "Qty of AQ-013 2 -> 1, added a Black Paint stand" - goes to staff and the order notes.' },
+        apply: { type: 'boolean', description: 'false = quote only, nothing changes (always do this first). true = only after the customer confirmed the quote: updates a draft order, or sends the change request to staff for a confirmed one.' }
+      },
+      required: ['order_no', 'items', 'change_summary', 'apply']
+    }
+  },
+  {
     name: 'schedule_follow_up',
     description:
       'Schedule a proactive follow-up message to be sent to this customer later, on Messenger, with no action needed from them first. Use this ONLY right after telling the customer in your reply that you will check back with them (e.g. "I\'ll follow up tomorrow once we confirm stock" or "let me check back with you in a bit") - never schedule one silently without saying so.',
@@ -1362,13 +1391,20 @@ export function buildSystemPrompt(
     '- If the conversation already shows an existing order, don\'t assume a new payment or a new item discussion belongs to that same order OR is automatically a new one - ASK the customer which it is (e.g. "Is this for your existing order, or a new one?") and only call create_order for a second order after they clearly say it\'s a new/separate purchase. If they mean the existing order, don\'t call create_order at all - just let them know staff will apply it/follow up.',
     '- A custom-built aquarium/stand (see the custom quote rules above) CAN go through create_order too, not just staff manual processing - it is NOT a reason to fall back to sharing payment details for manual handling. For that line, set item_code to the literal "CUSTOM-AQUARIUM" or "CUSTOM-STAND", custom_price to the EXACT total the customer already confirmed from your earlier compute_aquarium_quote call (never a number you calculate or round yourself), and notes to the full confirmed build spec (dimensions, unit, glass thickness, tempered/rimless, sealant color, and stand tubular size/layers if a stand is included) - that note is what tells staff/the workshop what to actually build, so never leave it vague or blank.',
     '- A custom accessory/sticker/panel quoted with compute_sticker_quote (a loose sticker, a background add-on for a ready-made set, an acrylic sump cover, glass, plywood, rubber matting, etc.) CAN go through create_order too. For that line, set item_code to the literal "CUSTOM-STICKER", quantity to the number of pieces, custom_price to the EXACT compute_sticker_quote totalPrice for ONE piece (never a number you calculate or round yourself), and notes to the full confirmed spec (type, length x width with unit, thickness if any, tempered/repair if any, what it is for). A sticker ON a custom tank (sticker_background/sticker_bottom in compute_aquarium_quote) is already inside the CUSTOM-AQUARIUM total - do not add a separate CUSTOM-STICKER line for it.',
-    '- After a successful create_order call, your reply IS the customer\'s receipt - there is no separate automatic message for this path, so compose all of the following yourself: (1) their order number (e.g. "Order No: AO-00008"), (2) a quick recap of what was ordered (items/qty) and the total, (3) the result\'s receiptUrl, introduced as their order receipt (e.g. "Here\'s your receipt: {receiptUrl}") - NEVER share a Pancake order_link, only this receiptUrl, (4) explicitly ask them to confirm everything above is correct, e.g. "Is everything correct? Reply YES to confirm." Do not skip the confirmation ask - staff treat that reply as the customer confirming the order. Also say our team will review and confirm the order shortly - never say it is already confirmed/processed on our side.',
+    '- After a successful create_order call, your reply IS the customer\'s receipt - there is no separate automatic message for this path, so compose all of the following yourself: (1) their order number (e.g. "Order No: AO-00008"), (2) a quick recap of what was ordered (items/qty) and the total, (3) the result\'s receiptUrl, introduced as their order receipt (e.g. "Here\'s your receipt: {receiptUrl}") - NEVER share a Pancake order_link, only this receiptUrl, (4) the result\'s policyNote, word for word, on its own line just before the confirmation ask (the order policies - every new order gets it), (5) explicitly ask them to confirm everything above is correct, e.g. "Is everything correct? Reply YES to confirm." Do not skip the policy note or the confirmation ask - staff treat that reply as the customer confirming the order. Also say our team will review and confirm the order shortly - never say it is already confirmed/processed on our side.',
     '',
     'ORDER POLICIES (same text as the Order Confirmation receipt, docs/online-order-receipt.html - keep both in sync):',
     '- Once an order is confirmed, the order confirmation is the final basis for the products the customer will receive.',
     '- Any change to an order after it is confirmed costs PHP 150.',
     '- Items must be claimed within 30 days from the date of order confirmation. After that, unclaimed items are charged a PHP 250 per day storage fee until pickup. If an item stays unclaimed for 40 days or more, RS Pet Stop may cancel the order without refund and resell the item.',
     '- Mention these when they are relevant (a customer asking to change a confirmed order, asking how long we can hold their order, or asking about storage/pickup deadlines) - don\'t recite them unprompted in every reply.',
+    '',
+    'CHANGING AN ORDER (modify_order):',
+    '- When a customer wants to change an order they already placed in this chat (add or remove items, change a quantity, a different product or color, a different custom size/spec), use modify_order - never create_order for a change, and never just promise staff will do it if modify_order can.',
+    '- Work out the COMPLETE new item list first: keep every unchanged line exactly as it is (same item_code, variant, custom_price, notes), and change only what they asked. For a changed custom tank/stand/sticker, re-run compute_aquarium_quote / compute_sticker_quote with the new spec and use that new price. Ask about anything unclear (which variant, how many) before quoting.',
+    '- Step 1: call modify_order with apply=false. Tell the customer, briefly: what changes, the new total, and - if they already paid - the remaining balance (if they paid more than the new total, say staff will sort out the difference; never promise a refund yourself). For a confirmed order (mode "change_request"), also say plainly that the change costs PHP 150 per our order policy (already included in the new total) and that staff still have to check it isn\'t already in production. Ask them to confirm.',
+    '- Step 2: only after a clear yes, call modify_order again with the same items and apply=true. Draft order: it\'s updated - recap it, share the new receiptUrl and ask them to confirm (Reply YES), like a new order. Confirmed order: the request went to staff and the order is NOT changed yet - say our team will update it and confirm with them here; never say it\'s already changed.',
+    '- If they change their mind before saying yes, nothing was changed - no need to undo anything. Cancelling a whole order, or anything about an order that\'s already shipped/delivered, is for staff: escalate it.',
     '',
     'DISCOUNTS / PRICE CHANGES:',
     '- If a customer asks for a discount, a lower price, price matching, or otherwise tries to negotiate a price, politely decline yourself - do not escalate to staff for this alone. Explain, in your own friendly words, that all prices are system-generated and you don\'t have permission to apply a discount or change a price. Stay warm and helpful about everything else in the conversation - this is just a firm, final no on the price itself.',
@@ -2391,6 +2427,18 @@ export async function sendMessengerReaction(psid: string, mid: string, emoji: st
 // Staff channels (Portal Chat, Telegram) and the sandbox stay unrestricted.
 const STAFF_PSID_PREFIXES = ['portal-chat:', 'telegram:'];
 
+// ORDER POLICIES: "Any change to an order after it is confirmed costs PHP 150" (modify_order's change requests).
+const ORDER_CHANGE_FEE = 150;
+
+// Short order-policy note sent in the chat with every new order's receipt (the bot's create_order reply and
+// the payment-screenshot receipt in facebook-messenger-webhook) - per "yes please can you add that?" (send the
+// policy via Vic, not only on the receipt page). Keep in step with ORDER POLICIES in buildSystemPrompt and
+// docs/js/orderDocument.js.
+export const ORDER_POLICY_NOTE =
+  `📝 Please note: once your order is confirmed, any change to it costs ₱${ORDER_CHANGE_FEE}. ` +
+  'Items must be claimed within 30 days of confirmation - after that there\'s a ₱250/day storage fee, ' +
+  'and unclaimed items after 40 days may be cancelled without refund.';
+
 // The bot's name as the order's creator / Sales Staff on invoices and receipts: website Alice, else Vic.
 function botStaffName(psid: string): string {
   return psid.startsWith('web:') ? 'Alice' : 'Vic';
@@ -2546,6 +2594,153 @@ export interface ExecuteToolParams {
   simulate?: boolean;
   pageAccessToken?: string;
   graphVersion?: string;
+}
+
+type BotOrderItemInput = { item_code?: string; quantity?: number; variant?: string; custom_price?: number; notes?: string };
+type BotOrderLine = { CategoryCode: string | null; ItemCode: string | null; ItemName: string; Quantity: number; Price: number; Notes: string | null; VariationId?: string | null };
+
+// The order lines for create_order / modify_order, priced and variant-checked server-side. Returns an
+// error string (relayed to the model) when an item can't be ordered as given.
+async function buildBotOrderLines(supabase: SupabaseClient, items: BotOrderItemInput[]): Promise<{ orderLines: BotOrderLine[]; estimatedTotal: number } | string> {
+  // Item name/price are ALWAYS looked up from the real catalog here, never trusted from the
+  // model - an AI-guessed item_code or price is exactly the kind of input that needs
+  // independent server-side verification, same discipline as every other order-creation path
+  // in this codebase (see sql/supabase_submit_automated_order_price_validation.sql's header).
+  //
+  // EXCEPT a custom-built aquarium/stand ("CUSTOM-AQUARIUM"/"CUSTOM-STAND"), which has no real
+  // catalog price to verify against - its price comes from the customer-confirmed
+  // compute_aquarium_quote result already relayed in this conversation (custom_price), same
+  // trust level that tool's own number already carries. This line is still tagged to a REAL
+  // Items row (matching docs/js/orderNow.js's own customer-facing wizard convention - see
+  // ItemCode: null / CategoryCode: 'CUSTOM-AQUARIUM' there and _push_automated_order_to_pancake's
+  // Name-based fallback match), just with its price/spec supplied here instead of read from
+  // that row's own (placeholder) RetailPrice/Price. CUSTOM-STICKER is the same idea for a
+  // compute_sticker_quote line (orderNow.js's 'Custom Accessory/Sticker' convention).
+  const CUSTOM_ITEM_CODES = new Set(['CUSTOM-AQUARIUM', 'CUSTOM-STAND', 'CUSTOM-STICKER']);
+  const CUSTOM_ITEM_NAMES: Record<string, string> = {
+    'CUSTOM-AQUARIUM': 'Custom Aquarium',
+    'CUSTOM-STAND': 'Custom Stand',
+    'CUSTOM-STICKER': 'Custom Accessory/Sticker'
+  };
+  const customItems = items.filter((it) => CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
+  const catalogCodedItems = items.filter((it) => !CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
+
+  for (const it of customItems) {
+    const tag = String(it.item_code ?? '').trim().toUpperCase();
+    if (!(Number(it.custom_price) > 0)) {
+      return `Cannot save the order - ${tag} needs a custom_price greater than 0 (the price already confirmed via ${tag === 'CUSTOM-STICKER' ? 'compute_sticker_quote' : 'compute_aquarium_quote'}).`;
+    }
+    if (!String(it.notes ?? '').trim()) {
+      return `Cannot save the order - ${tag} needs a notes value with the full confirmed spec (${tag === 'CUSTOM-STICKER' ? 'type, size, thickness, etc.' : 'dimensions, glass thickness, etc.'}).`;
+    }
+  }
+
+  const codes = [...new Set(catalogCodedItems.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
+  if (codes.length === 0 && customItems.length === 0) return 'Cannot save the order - no valid item_code values were given.';
+
+  type CatalogItem = { Code: string; Name: string; RetailPrice: number | null; Price: number | null; CategoryCode: string | null };
+  const catalogByCode = new Map<string, CatalogItem>();
+
+  if (codes.length > 0) {
+    const { data: catalogItems, error: itemsError } = await supabase
+      .from('Items')
+      .select('Code, Name, RetailPrice, Price, CategoryCode')
+      .in('Code', codes)
+      .eq('IsActive', true);
+    if (itemsError) return `Could not validate items: ${itemsError.message}`;
+    for (const it of (catalogItems ?? []) as CatalogItem[]) catalogByCode.set(it.Code, it);
+    const unknownCodes = codes.filter((c) => !catalogByCode.has(c));
+    if (unknownCodes.length > 0) {
+      return `These item_code value(s) don't match a real, active catalog item: ${unknownCodes.join(', ')}. Use search_items or list_items_in_category to find the correct code - never invent one.`;
+    }
+  }
+
+  // Resolve each catalog line's variant (color/option) to a real Variants."VariationId", stored
+  // on AutomatedOrderLines."VariationId" so _push_automated_order_to_pancake tags that exact
+  // variation. Without it the push falls back to Items."VariationId" - one representative
+  // variation per product - which is how AO-00029 (Black Sealant requested, only in the line
+  // note) went to Pancake as Clear Sealant. A product with 2+ variants is refused until the
+  // option is given, rather than silently defaulting.
+  const variationIdByItem = new Map<object, string>();
+  if (codes.length > 0) {
+    const { data: variantRows, error: variantsError } = await supabase
+      .from('Variants')
+      .select('VariationId, MainItemCode, SKU')
+      .in('MainItemCode', codes);
+    if (variantsError) return `Could not validate item variants: ${variantsError.message}`;
+
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    // "AQ-024-BlackSealant" -> "Black Sealant" (same derivation as stock_by_variant's option -
+    // see sql/supabase_chatbot_stock_variant_option.sql).
+    const optionLabel = (sku: string | null, code: string, variationId: string) => {
+      if (!sku) return variationId;
+      const rest = sku.toUpperCase().startsWith(code.toUpperCase() + '-') ? sku.slice(code.length + 1) : sku;
+      return rest.replace(/([a-z])([A-Z])/g, '$1 $2').trim() || sku;
+    };
+
+    for (const it of catalogCodedItems) {
+      const code = String(it.item_code ?? '').trim();
+      const variants = ((variantRows ?? []) as Array<{ VariationId: string; MainItemCode: string; SKU: string | null }>)
+        .filter((v) => v.MainItemCode === code)
+        .map((v) => ({ id: v.VariationId, sku: v.SKU ?? '', option: optionLabel(v.SKU, code, v.VariationId) }));
+      if (variants.length === 0) continue;
+      if (variants.length === 1) {
+        variationIdByItem.set(it, variants[0].id);
+        continue;
+      }
+
+      const itemName = catalogByCode.get(code)?.Name ?? code;
+      const optionList = variants.map((v) => `${v.option} (${v.sku || v.id})`).join(', ');
+      const wanted = normalize(String(it.variant ?? ''));
+      if (!wanted) {
+        return `Cannot save the order - ${itemName} (${code}) comes in more than one option: ${optionList}. Confirm with the customer which one they want, then pass it as that item's variant.`;
+      }
+      const exact = variants.filter((v) => normalize(v.sku) === wanted || normalize(v.option) === wanted);
+      const matches = exact.length > 0 ? exact : variants.filter((v) => normalize(v.option).includes(wanted));
+      if (matches.length !== 1) {
+        return `Cannot save the order - "${it.variant}" doesn't match exactly one option of ${itemName} (${code}). Its options are: ${optionList}. Pass one of these as the variant.`;
+      }
+      variationIdByItem.set(it, matches[0].id);
+    }
+  }
+
+  // No check here that the CUSTOM-* placeholder Items rows exist: the bot no longer pushes to
+  // Pancake (see the insert below), so a missing row only matters when staff push the order -
+  // and the push already refuses and shows the error then (PancakeSyncStatus 'Failed').
+
+  let estimatedTotal = 0;
+  const orderLines = items.map((it) => {
+    const tag = String(it.item_code ?? '').trim().toUpperCase();
+    const quantity = Math.max(1, Math.trunc(Number(it.quantity) || 1));
+
+    if (CUSTOM_ITEM_CODES.has(tag)) {
+      const price = Number(it.custom_price) || 0;
+      estimatedTotal += quantity * price;
+      return {
+        CategoryCode: tag,
+        ItemCode: null,
+        ItemName: CUSTOM_ITEM_NAMES[tag],
+        Quantity: quantity,
+        Price: price,
+        Notes: String(it.notes ?? '').trim() || null
+      };
+    }
+
+    const catalogItem = catalogByCode.get(String(it.item_code ?? '').trim())!;
+    const price = Number(catalogItem.RetailPrice ?? catalogItem.Price ?? 0);
+    estimatedTotal += quantity * price;
+    return {
+      CategoryCode: catalogItem.CategoryCode,
+      ItemCode: catalogItem.Code,
+      ItemName: catalogItem.Name,
+      Quantity: quantity,
+      Price: price,
+      Notes: String(it.notes ?? '').trim() || null,
+      VariationId: variationIdByItem.get(it) ?? null
+    };
+  });
+
+  return { orderLines, estimatedTotal };
 }
 
 export async function executeTool(params: ExecuteToolParams): Promise<string> {
@@ -2801,143 +2996,9 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       // prompt rules carry the same "ask, don't assume" responsibility for the general conversation
       // path (when this tool is reached without going through a payment screenshot).
 
-      // Item name/price are ALWAYS looked up from the real catalog here, never trusted from the
-      // model - an AI-guessed item_code or price is exactly the kind of input that needs
-      // independent server-side verification, same discipline as every other order-creation path
-      // in this codebase (see sql/supabase_submit_automated_order_price_validation.sql's header).
-      //
-      // EXCEPT a custom-built aquarium/stand ("CUSTOM-AQUARIUM"/"CUSTOM-STAND"), which has no real
-      // catalog price to verify against - its price comes from the customer-confirmed
-      // compute_aquarium_quote result already relayed in this conversation (custom_price), same
-      // trust level that tool's own number already carries. This line is still tagged to a REAL
-      // Items row (matching docs/js/orderNow.js's own customer-facing wizard convention - see
-      // ItemCode: null / CategoryCode: 'CUSTOM-AQUARIUM' there and _push_automated_order_to_pancake's
-      // Name-based fallback match), just with its price/spec supplied here instead of read from
-      // that row's own (placeholder) RetailPrice/Price. CUSTOM-STICKER is the same idea for a
-      // compute_sticker_quote line (orderNow.js's 'Custom Accessory/Sticker' convention).
-      const CUSTOM_ITEM_CODES = new Set(['CUSTOM-AQUARIUM', 'CUSTOM-STAND', 'CUSTOM-STICKER']);
-      const CUSTOM_ITEM_NAMES: Record<string, string> = {
-        'CUSTOM-AQUARIUM': 'Custom Aquarium',
-        'CUSTOM-STAND': 'Custom Stand',
-        'CUSTOM-STICKER': 'Custom Accessory/Sticker'
-      };
-      const customItems = items.filter((it) => CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
-      const catalogCodedItems = items.filter((it) => !CUSTOM_ITEM_CODES.has(String(it.item_code ?? '').trim().toUpperCase()));
-
-      for (const it of customItems) {
-        const tag = String(it.item_code ?? '').trim().toUpperCase();
-        if (!(Number(it.custom_price) > 0)) {
-          return `Cannot place the order - ${tag} needs a custom_price greater than 0 (the price already confirmed via ${tag === 'CUSTOM-STICKER' ? 'compute_sticker_quote' : 'compute_aquarium_quote'}).`;
-        }
-        if (!String(it.notes ?? '').trim()) {
-          return `Cannot place the order - ${tag} needs a notes value with the full confirmed spec (${tag === 'CUSTOM-STICKER' ? 'type, size, thickness, etc.' : 'dimensions, glass thickness, etc.'}).`;
-        }
-      }
-
-      const codes = [...new Set(catalogCodedItems.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
-      if (codes.length === 0 && customItems.length === 0) return 'Cannot place the order - no valid item_code values were given.';
-
-      type CatalogItem = { Code: string; Name: string; RetailPrice: number | null; Price: number | null; CategoryCode: string | null };
-      const catalogByCode = new Map<string, CatalogItem>();
-
-      if (codes.length > 0) {
-        const { data: catalogItems, error: itemsError } = await supabase
-          .from('Items')
-          .select('Code, Name, RetailPrice, Price, CategoryCode')
-          .in('Code', codes)
-          .eq('IsActive', true);
-        if (itemsError) return `Could not validate items: ${itemsError.message}`;
-        for (const it of (catalogItems ?? []) as CatalogItem[]) catalogByCode.set(it.Code, it);
-        const unknownCodes = codes.filter((c) => !catalogByCode.has(c));
-        if (unknownCodes.length > 0) {
-          return `These item_code value(s) don't match a real, active catalog item: ${unknownCodes.join(', ')}. Use search_items or list_items_in_category to find the correct code - never invent one.`;
-        }
-      }
-
-      // Resolve each catalog line's variant (color/option) to a real Variants."VariationId", stored
-      // on AutomatedOrderLines."VariationId" so _push_automated_order_to_pancake tags that exact
-      // variation. Without it the push falls back to Items."VariationId" - one representative
-      // variation per product - which is how AO-00029 (Black Sealant requested, only in the line
-      // note) went to Pancake as Clear Sealant. A product with 2+ variants is refused until the
-      // option is given, rather than silently defaulting.
-      const variationIdByItem = new Map<object, string>();
-      if (codes.length > 0) {
-        const { data: variantRows, error: variantsError } = await supabase
-          .from('Variants')
-          .select('VariationId, MainItemCode, SKU')
-          .in('MainItemCode', codes);
-        if (variantsError) return `Could not validate item variants: ${variantsError.message}`;
-
-        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-        // "AQ-024-BlackSealant" -> "Black Sealant" (same derivation as stock_by_variant's option -
-        // see sql/supabase_chatbot_stock_variant_option.sql).
-        const optionLabel = (sku: string | null, code: string, variationId: string) => {
-          if (!sku) return variationId;
-          const rest = sku.toUpperCase().startsWith(code.toUpperCase() + '-') ? sku.slice(code.length + 1) : sku;
-          return rest.replace(/([a-z])([A-Z])/g, '$1 $2').trim() || sku;
-        };
-
-        for (const it of catalogCodedItems) {
-          const code = String(it.item_code ?? '').trim();
-          const variants = ((variantRows ?? []) as Array<{ VariationId: string; MainItemCode: string; SKU: string | null }>)
-            .filter((v) => v.MainItemCode === code)
-            .map((v) => ({ id: v.VariationId, sku: v.SKU ?? '', option: optionLabel(v.SKU, code, v.VariationId) }));
-          if (variants.length === 0) continue;
-          if (variants.length === 1) {
-            variationIdByItem.set(it, variants[0].id);
-            continue;
-          }
-
-          const itemName = catalogByCode.get(code)?.Name ?? code;
-          const optionList = variants.map((v) => `${v.option} (${v.sku || v.id})`).join(', ');
-          const wanted = normalize(String(it.variant ?? ''));
-          if (!wanted) {
-            return `Cannot place the order - ${itemName} (${code}) comes in more than one option: ${optionList}. Confirm with the customer which one they want, then pass it as that item's variant.`;
-          }
-          const exact = variants.filter((v) => normalize(v.sku) === wanted || normalize(v.option) === wanted);
-          const matches = exact.length > 0 ? exact : variants.filter((v) => normalize(v.option).includes(wanted));
-          if (matches.length !== 1) {
-            return `Cannot place the order - "${it.variant}" doesn't match exactly one option of ${itemName} (${code}). Its options are: ${optionList}. Pass one of these as the variant.`;
-          }
-          variationIdByItem.set(it, matches[0].id);
-        }
-      }
-
-      // No check here that the CUSTOM-* placeholder Items rows exist: the bot no longer pushes to
-      // Pancake (see the insert below), so a missing row only matters when staff push the order -
-      // and the push already refuses and shows the error then (PancakeSyncStatus 'Failed').
-
-      let estimatedTotal = 0;
-      const orderLines = items.map((it) => {
-        const tag = String(it.item_code ?? '').trim().toUpperCase();
-        const quantity = Math.max(1, Math.trunc(Number(it.quantity) || 1));
-
-        if (CUSTOM_ITEM_CODES.has(tag)) {
-          const price = Number(it.custom_price) || 0;
-          estimatedTotal += quantity * price;
-          return {
-            CategoryCode: tag,
-            ItemCode: null,
-            ItemName: CUSTOM_ITEM_NAMES[tag],
-            Quantity: quantity,
-            Price: price,
-            Notes: String(it.notes ?? '').trim() || null
-          };
-        }
-
-        const catalogItem = catalogByCode.get(String(it.item_code ?? '').trim())!;
-        const price = Number(catalogItem.RetailPrice ?? catalogItem.Price ?? 0);
-        estimatedTotal += quantity * price;
-        return {
-          CategoryCode: catalogItem.CategoryCode,
-          ItemCode: catalogItem.Code,
-          ItemName: catalogItem.Name,
-          Quantity: quantity,
-          Price: price,
-          Notes: String(it.notes ?? '').trim() || null,
-          VariationId: variationIdByItem.get(it) ?? null
-        };
-      });
+      const built = await buildBotOrderLines(supabase, items);
+      if (typeof built === 'string') return built;
+      const { orderLines, estimatedTotal } = built;
 
       const { data: orderNoData, error: orderNoError } = await supabase.rpc('_next_no_series_number', {
         p_series_code: 'AUTOMATED-ORDER',
@@ -2998,8 +3059,129 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         // Portal-rendered receipt (docs/online-order-receipt.html), NOT Pancake's own order_link -
         // per direct decision, never share that. See the PLACING ORDERS rule - share this AND ask
         // for confirmation in your reply, don't just mention the order number.
-        receiptUrl: `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`
+        receiptUrl: `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`,
+        // Sent word for word before the confirmation ask (PLACING ORDERS receipt rule).
+        policyNote: ORDER_POLICY_NOTE
       });
+    }
+    case 'modify_order': {
+      // Per "can vic ai bot do modify order too? and requote accordingly". A draft (staff haven't clicked
+      // Confirm Order yet - PancakeSyncStatus 'Not Pushed') is changed right away and re-confirmed like a new
+      // order. A confirmed order is already in Online Orders (production / stock may be moving), so the bot
+      // only quotes it (+ the PHP 150 change fee, ORDER POLICIES) and sends the change to staff, who apply
+      // it with the Online Orders line editing (sql/supabase_online_order_line_edit.sql).
+      const orderNo = String(input.order_no ?? '').trim();
+      const changeSummary = String(input.change_summary ?? '').trim().slice(0, 500);
+      const apply = input.apply === true;
+      const items = Array.isArray(input.items) ? (input.items as BotOrderItemInput[]) : [];
+      if (!orderNo) return 'No order_no provided - ask the customer which order they want to change.';
+      if (!/^[A-Za-z0-9-]+$/.test(orderNo)) return `"${orderNo}" isn't a valid order number - ask the customer for it again (e.g. AO-00084).`;
+      if (items.length === 0) return 'Cannot change the order - pass the complete new list of items (at least one). To cancel the whole order, escalate to staff instead.';
+      if (!(await orderBelongsToChat(supabase, psid, [orderNo], simulate))) return ORDER_NOT_VERIFIED_RESULT;
+
+      const { data: order, error: orderError } = await supabase
+        .from('AutomatedOrders')
+        .select('OrderNo, Status, PancakeSyncStatus, PancakeReceiptNo, EstimatedTotal, DeliveryFee, CustomerName, Notes')
+        .or(`OrderNo.eq.${orderNo},PancakeReceiptNo.eq.${orderNo}`)
+        .limit(1)
+        .maybeSingle();
+      if (orderError) return `Could not look up the order: ${orderError.message}`;
+      if (!order) return `Order ${orderNo} isn't an order from a chat, so it can't be changed here - escalate to staff with what the customer wants changed.`;
+      if (['Completed', 'Cancelled'].includes(String(order.Status ?? ''))) {
+        return JSON.stringify({ ok: false, reason: `Order ${order.OrderNo} is ${order.Status} and can't be changed.` });
+      }
+
+      const built = await buildBotOrderLines(supabase, items);
+      if (typeof built === 'string') return built.replace(/Cannot save the order/g, 'Cannot change the order');
+      const { orderLines, estimatedTotal: itemsTotal } = built;
+      const deliveryFee = Number(order.DeliveryFee) || 0;
+      const isDraft = order.PancakeSyncStatus === 'Not Pushed';
+      const receiptUrl = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(order.OrderNo)}`;
+      const lineSummary = orderLines.map((l) => `${l.ItemName}${l.Notes ? ` (${l.Notes})` : ''} x${l.Quantity} @ PHP ${l.Price.toFixed(2)}`).join('; ');
+
+      const { data: payRows } = await supabase.from('AutomatedOrderPayments').select('Amount').eq('OrderNo', order.OrderNo);
+      let amountPaid = ((payRows ?? []) as Array<{ Amount: number }>).reduce((n, p) => n + (Number(p.Amount) || 0), 0);
+
+      if (isDraft) {
+        const newTotal = itemsTotal + deliveryFee;
+        const quote = {
+          ok: true,
+          mode: 'draft',
+          orderNo: order.OrderNo,
+          previousTotal: Number(order.EstimatedTotal) || 0,
+          itemsTotal,
+          deliveryFee,
+          newTotal,
+          amountPaid,
+          balance: newTotal - amountPaid,
+          newLines: orderLines.map((l) => ({ item: l.ItemName, quantity: l.Quantity, price: l.Price, notes: l.Notes }))
+        };
+        if (!apply) {
+          return JSON.stringify({ ...quote, applied: false, next: 'Nothing changed yet. Show the customer the new item list and newTotal (and the balance if they already paid - a negative balance means they paid more than the new total; staff will sort out the difference), ask them to confirm, then call modify_order again with apply=true.' });
+        }
+        if (simulate) return `SANDBOX MODE - order ${order.OrderNo} was not changed. If this were live its items would be replaced and the new total would be PHP ${newTotal.toFixed(2)}.`;
+
+        // New lines first, then the old ones - a failed insert never leaves the order empty.
+        const { data: oldLines } = await supabase.from('AutomatedOrderLines').select('EntryNo').eq('OrderNo', order.OrderNo);
+        const { error: insertError } = await supabase
+          .from('AutomatedOrderLines')
+          .insert(orderLines.map((l) => ({ ...l, OrderNo: order.OrderNo })));
+        if (insertError) return `Could not change the order (${insertError.message}) - nothing was changed. Tell the customer staff will update it.`;
+        const oldIds = ((oldLines ?? []) as Array<{ EntryNo: number }>).map((l) => l.EntryNo);
+        if (oldIds.length) await supabase.from('AutomatedOrderLines').delete().eq('OrderNo', order.OrderNo).in('EntryNo', oldIds);
+
+        const stamp = new Date().toISOString();
+        const changeNote = `[${botStaffName(psid)} changed the order ${stamp.slice(0, 10)}: ${changeSummary || 'items updated'}]`;
+        await supabase.from('AutomatedOrders').update({
+          EstimatedTotal: newTotal,
+          Notes: [String(order.Notes ?? '').trim(), changeNote].filter(Boolean).join('\n').slice(0, 2000),
+          UpdatedAtUtc: stamp,
+          // The customer re-confirms the changed order (same "Reply YES" flow as create_order).
+          ReceiptConfirmationRequestedAtUtc: stamp
+        }).eq('OrderNo', order.OrderNo);
+
+        return JSON.stringify({ ...quote, applied: true, receiptUrl, policyNote: ORDER_POLICY_NOTE, next: 'The order is updated. Recap the new items and newTotal (and balance), share receiptUrl as their updated receipt, add policyNote word for word on its own line, and ask them to confirm everything is correct (Reply YES). Staff still review and confirm it.' });
+      }
+
+      // Confirmed order: quote + change request only.
+      const liveId = String(order.PancakeReceiptNo ?? '').trim() || order.OrderNo;
+      const { data: live } = await supabase.from('OnlineOrders').select('Status, MoneyToCollect, AmountPaid').eq('OrderID', liveId).maybeSingle();
+      const liveStatus = String(live?.Status ?? '').trim().toLowerCase();
+      if (['shipped', 'delivered', 'completed', 'received', 'canceled', 'cancelled', 'returned', 'returning'].includes(liveStatus)) {
+        return JSON.stringify({ ok: false, reason: `Order ${order.OrderNo} is already ${live?.Status}, so it can't be changed anymore. If something is wrong with what they received, escalate to staff.` });
+      }
+      if (live?.AmountPaid != null) amountPaid = Number(live.AmountPaid) || 0;
+      const currentTotal = live?.MoneyToCollect != null ? Number(live.MoneyToCollect) || 0 : Number(order.EstimatedTotal) || 0;
+      const newTotal = itemsTotal + deliveryFee + ORDER_CHANGE_FEE;
+      const quote = {
+        ok: true,
+        mode: 'change_request',
+        orderNo: order.OrderNo,
+        currentTotal,
+        itemsTotal,
+        deliveryFee,
+        changeFee: ORDER_CHANGE_FEE,
+        newTotal,
+        amountPaid,
+        balance: newTotal - amountPaid,
+        newLines: orderLines.map((l) => ({ item: l.ItemName, quantity: l.Quantity, price: l.Price, notes: l.Notes }))
+      };
+      if (!apply) {
+        return JSON.stringify({ ...quote, applied: false, next: `Nothing changed yet. This order is already confirmed, so per ORDER POLICIES the change costs PHP ${ORDER_CHANGE_FEE} (already in newTotal). Show the new items, the change fee and newTotal (and balance), mention staff need to check it's not already in production, and ask them to confirm. Only then call modify_order again with apply=true.` });
+      }
+      if (simulate) return `SANDBOX MODE - no change request was sent. If this were live, staff would be asked to change order ${order.OrderNo} to: ${lineSummary} (new total PHP ${newTotal.toFixed(2)} incl. the PHP ${ORDER_CHANGE_FEE} change fee).`;
+
+      await supabase
+        .from('ChatbotConversations')
+        .update({ Status: 'Escalated', EscalatedAtUtc: new Date().toISOString(), EscalationCheckinSentAtUtc: null })
+        .eq('Psid', psid);
+      await supabase.rpc('_telegram_send_message', {
+        p_text: `Order change request - ${order.OrderNo} (${order.CustomerName ?? ''}, status ${live?.Status ?? order.Status ?? '?'}, PSID ${psid}).\n`
+          + `Asked: ${changeSummary || '-'}\nNew items: ${lineSummary}\n`
+          + `Quoted: items PHP ${itemsTotal.toFixed(2)} + delivery PHP ${deliveryFee.toFixed(2)} + change fee PHP ${ORDER_CHANGE_FEE} = PHP ${newTotal.toFixed(2)} (was PHP ${currentTotal.toFixed(2)}, paid PHP ${amountPaid.toFixed(2)}).\n`
+          + 'Apply it on the Online Order card (Lines) if it can still be changed, then confirm with the customer.'
+      });
+      return JSON.stringify({ ...quote, applied: false, changeRequested: true, next: 'Sent to staff - the order is NOT changed yet. Tell the customer their change request (with the quoted newTotal incl. the change fee) is with our team, who will check it can still be changed (not already in production), update the order and confirm with them here.' });
     }
     case 'schedule_follow_up': {
       if (!followUpSettings?.CommittedEnabled) {

@@ -57,7 +57,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import {
-  DEFAULT_GRAPH_VERSION, REVIEW_GUIDE_IMAGE_URL, buildCurrentTimeLine, buildFacebookPageLine, buildSystemPrompt,
+  DEFAULT_GRAPH_VERSION, ORDER_POLICY_NOTE, REVIEW_GUIDE_IMAGE_URL, buildCurrentTimeLine, buildFacebookPageLine, buildSystemPrompt,
   containsReviewLink, logBotImage, runChatbotTurn, sendMessengerImage
 } from '../_shared/chatbot-engine.ts';
 import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
@@ -745,6 +745,8 @@ function buildOrderPaymentAck(orderSummary: OrderSummary, paymentLine: string): 
         `💳 Payment: ${paymentLine}\n` +
         `📌 Balance remaining: ₱${orderSummary.balance.toFixed(2)}\n` +
         receiptLinkLine + '\n' +
+        // Order policies in the chat itself too, not only on the receipt page (chatbot-engine.ts ORDER_POLICY_NOTE).
+        ORDER_POLICY_NOTE + '\n\n' +
         'Is everything above correct? Reply YES to confirm so our team can finalize your order. \u{1F60A}'
     };
   }
