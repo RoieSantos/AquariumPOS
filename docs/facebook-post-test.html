@@ -71,7 +71,7 @@
 
   <div class="page">
     <h1>Facebook Post Test</h1>
-    <p class="muted">Prototype: upload a photo, let AI write the caption, edit it, then post it to the RSPetStop GMA Facebook Page. Use <strong>Schedule</strong> to test safely - the post waits in Meta Business Suite &gt; Planner, where you can check or delete it before it goes live. Only visible to super users.</p>
+    <p class="muted">Prototype: upload a photo, let AI write the caption, edit it, then post it to the RSPetStop GMA and/or RS Pet Stop (Amaya) Facebook Page. Use <strong>Schedule</strong> to test safely - the post waits in Meta Business Suite &gt; Planner, where you can check or delete it before it goes live. Only visible to super users.</p>
 
     <div id="notAuthorizedBox" class="hidden">
       <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
@@ -130,6 +130,11 @@
         </div>
 
         <div class="fbpost-mode">
+          <span>Post to:</span>
+          <label><input type="checkbox" id="fbPageGma" checked /> GMA Page</label>
+          <label><input type="checkbox" id="fbPageAmaya" /> RS Pet Stop (Amaya) Page</label>
+        </div>
+        <div class="fbpost-mode">
           <label><input type="radio" name="fbMode" value="schedule" checked /> Schedule (safe test)</label>
           <label><input type="radio" name="fbMode" value="now" /> Publish now</label>
         </div>
@@ -155,7 +160,7 @@
   <script src="js/nav.js?v=systests1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/facebookPostTest.js?v=auto1"></script>
+  <script src="js/facebookPostTest.js?v=pages1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

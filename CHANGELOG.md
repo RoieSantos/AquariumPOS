@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-18
 
+- **POS set dialog: item pictures.** Each row shows a thumbnail of the chosen item (its Pancake picture from the choice or `dbo.Items.Images`). It updates when the cashier picks a different variant or accessory, and clicking it opens a 520px preview. [MainForm.cs](MainForm.cs) (`PromptForAquariumSetAccessorySelection`).
+
+- **POS set dialog redesigned.** Blue header with package name, price and qty; grouped sections (Included in this set / Lighting / Filter media / Extras). A colour bar on each row shows green = chosen, amber = required but empty, grey = optional. Media rows are one line each with a ✕ clear, and the footer shows "N required parts still to choose" next to a green **Add to Sale** button. Selection logic is unchanged. [MainForm.cs](MainForm.cs) (`PromptForAquariumSetAccessorySelection`).
+
+- **Facebook Post Test: pick GMA, Amaya, or both Pages.** New "Post to" checkboxes. The `post` action of [facebook-page-post](supabase/functions/facebook-page-post/index.ts) now takes an optional `pages` list (default GMA, so Quick Post is unchanged) and reports each Page's result separately. [facebook-post-test.html](docs/facebook-post-test.html), `facebookPostTest.js?v=pages1`. Needs the Edge Function redeployed.
+
 - **POS set dialog: Aquarium and Stand start blank.** When a set is punched, the Aquarium and Stand rows no longer pre-fill a default variant. They show "Click Select to choose the variant", and OK is blocked until one is picked, so a default sealant/paint can't be sold by accident. [MainForm.cs](MainForm.cs) (`BuildAquariumVariantSelectionState`).
 
 - **SET packages: per-package required parts.** New "Required at the POS" checkboxes (Sump / Stand / Lights / Pump / Pipe) on the Customer Aquarium editor. The POS set dialog only forces the ticked ones, and unticked slots show "Optional - leave blank". All default to required, so existing packages are unchanged. Flags sync to the POS with the packages. [supabase_aquarium_set_required_parts.sql](sql/supabase_aquarium_set_required_parts.sql), [MainForm.cs](MainForm.cs), [CompleteAquariumSetData.cs](CompleteAquariumSetData.cs), [OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs), `customerAquarium.js?v=reqparts1`.

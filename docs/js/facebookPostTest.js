@@ -41,6 +41,10 @@ function renderPhoto() {
   preview.classList.remove('hidden');
 }
 
+function pageLabel(page) {
+  return page === 'amaya' ? 'RS Pet Stop (Amaya)' : 'GMA';
+}
+
 function callPostFunction(payload) {
   return callFacebookPostFunction(currentSession, photoBase64, payload);
 }
@@ -109,6 +113,15 @@ async function postToFacebook() {
     return;
   }
 
+  const pages = [];
+  if (document.getElementById('fbPageGma').checked) pages.push('gma');
+  if (document.getElementById('fbPageAmaya').checked) pages.push('amaya');
+  if (!pages.length) {
+    showError('Tick at least one Page to post to.');
+    return;
+  }
+  const pageNames = pages.map(pageLabel).join(' and ');
+
   const mode = document.querySelector('input[name="fbMode"]:checked').value;
   let scheduledAtUnix = null;
   if (mode === 'schedule') {
@@ -118,7 +131,7 @@ async function postToFacebook() {
       return;
     }
     scheduledAtUnix = Math.floor(new Date(value).getTime() / 1000);
-  } else if (!confirm('Publish this post on the GMA Facebook Page right now? Everyone following the Page will see it.')) {
+  } else if (!confirm(`Publish this post on the ${pageNames} Facebook Page${pages.length > 1 ? 's' : ''} right now? Everyone following ${pages.length > 1 ? 'them' : 'the Page'} will see it.`)) {
     return;
   }
 
@@ -126,20 +139,30 @@ async function postToFacebook() {
   btn.disabled = true;
   btn.textContent = 'Posting...';
   try {
-    const result = await callPostFunction({ action: 'post', caption, scheduled_at_unix: scheduledAtUnix });
+    const result = await callPostFunction({ action: 'post', caption, scheduled_at_unix: scheduledAtUnix, pages });
     const resultEl = document.getElementById('fbResultEl');
-    if (result.scheduled) {
-      resultEl.textContent = `Scheduled for ${new Date(scheduledAtUnix * 1000).toLocaleString()}. Check it in Meta Business Suite > Planner (photo id ${result.photo_id}).`;
-    } else {
-      resultEl.innerHTML = 'Posted! ';
-      if (result.post_url) {
-        const link = document.createElement('a');
-        link.href = result.post_url;
-        link.target = '_blank';
-        link.rel = 'noopener';
-        link.textContent = 'View the post on Facebook';
-        resultEl.appendChild(link);
+    resultEl.textContent = '';
+    // One line per Page; an older function (not redeployed yet) has no results and posted GMA only.
+    const rows = result.results || [{ page: 'gma', ok: true, photo_id: result.photo_id, post_url: result.post_url }];
+    for (const r of rows) {
+      const line = document.createElement('div');
+      if (!r.ok) {
+        line.textContent = `${pageLabel(r.page)} Page: failed - ${r.error}`;
+        line.className = 'error-text';
+      } else if (result.scheduled) {
+        line.textContent = `${pageLabel(r.page)} Page: scheduled for ${new Date(scheduledAtUnix * 1000).toLocaleString()}. Check it in Meta Business Suite > Planner (photo id ${r.photo_id}).`;
+      } else {
+        line.textContent = `${pageLabel(r.page)} Page: posted! `;
+        if (r.post_url) {
+          const link = document.createElement('a');
+          link.href = r.post_url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = 'View the post on Facebook';
+          line.appendChild(link);
+        }
       }
+      resultEl.appendChild(line);
     }
     resultEl.classList.remove('hidden');
   } catch (err) {

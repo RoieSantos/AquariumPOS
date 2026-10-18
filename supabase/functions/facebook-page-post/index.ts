@@ -398,12 +398,30 @@ Deno.serve(async (req) => {
       }
     }
 
-    try {
-      const posted = await postPhotoToFacebook(bytes!, mediaType, caption, scheduledAt);
-      return jsonResponse({ ok: true, scheduled: scheduledAt != null, photo_id: posted.photoId, post_id: posted.postId, post_url: posted.postUrl });
-    } catch (err) {
-      return jsonResponse({ error: errorText(err) }, 502);
+    // `pages` (Facebook Post Test's Page picker): 'gma', 'amaya', or both. Missing = GMA only, so
+    // Quick Post is unchanged. Each Page gets its own POST; one failing doesn't stop the other.
+    const requested = Array.isArray(body.pages) ? body.pages.map((p) => String(p).toLowerCase()) : ['gma'];
+    const pages = (['gma', 'amaya'] as PostPage[]).filter((p) => requested.includes(p));
+    if (!pages.length) return jsonResponse({ error: 'Pick at least one Page (gma / amaya).' }, 400);
+
+    const results: { page: PostPage; ok: boolean; photo_id?: string | null; post_id?: string | null; post_url?: string | null; error?: string }[] = [];
+    for (const page of pages) {
+      try {
+        const posted = await postPhotoToFacebook(bytes!, mediaType, caption, scheduledAt, page);
+        results.push({ page, ok: true, photo_id: posted.photoId, post_id: posted.postId, post_url: posted.postUrl });
+      } catch (err) {
+        results.push({ page, ok: false, error: errorText(err) });
+      }
     }
+
+    const first = results.find((r) => r.ok);
+    if (!first) {
+      return jsonResponse({ error: results.map((r) => `${r.page === 'amaya' ? 'Amaya' : 'GMA'} Page: ${r.error}`).join(' '), results }, 502);
+    }
+    return jsonResponse({
+      ok: true, scheduled: scheduledAt != null, results,
+      photo_id: first.photo_id, post_id: first.post_id, post_url: first.post_url
+    });
   }
 
   if (action === 'mark_done') {

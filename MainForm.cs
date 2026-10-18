@@ -2295,29 +2295,32 @@ INSERT INTO CardProcessingFeeLog (
         {
             using (var dialog = new Form())
             {
-                dialog.Text = $"{packageName} Accessories";
+                // Palette shared with the Web Portal (styles.css) so the set dialog looks like the same system.
+                var brandBlue = Color.FromArgb(29, 79, 145);
+                var textMain = Color.FromArgb(27, 53, 94);
+                var textMuted = Color.FromArgb(97, 115, 143);
+                var borderColor = Color.FromArgb(215, 224, 239);
+                var surfaceColor = Color.FromArgb(244, 247, 251);
+                var doneGreen = Color.FromArgb(30, 154, 89);
+                var needAmber = Color.FromArgb(230, 126, 34);
+                var optionalGrey = Color.FromArgb(199, 211, 230);
+
+                dialog.Text = $"{packageName} - Aquarium Set";
                 dialog.StartPosition = FormStartPosition.CenterParent;
                 dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
                 dialog.MinimizeBox = false;
                 dialog.MaximizeBox = false;
                 dialog.ShowInTaskbar = false;
-                dialog.ClientSize = new Size(860, 760);
+                dialog.ClientSize = new Size(880, 780);
+                dialog.BackColor = Color.White;
+                dialog.Font = new Font("Segoe UI", 10F, FontStyle.Regular);
 
                 var contentPanel = new Panel
                 {
                     Dock = DockStyle.Fill,
                     AutoScroll = true,
+                    BackColor = Color.White,
                     Padding = new Padding(0, 0, 0, 10)
-                };
-
-                var instructionsLabel = new Label
-                {
-                    Text = "Review included products and choose variants or accessories for this complete setup.",
-                    Left = 24,
-                    Top = 18,
-                    Width = 560,
-                    Height = 24,
-                    Font = new Font("Arial", 11, FontStyle.Bold)
                 };
 
                 AquariumAccessoryChoice? selectedLight = null;
@@ -2351,63 +2354,236 @@ INSERT INTO CardProcessingFeeLog (
 
                 void MarkOptional(TextBox pickerTextBox, bool required)
                 {
-                    if (!required)
+                    pickerTextBox.PlaceholderText = required
+                        ? "Required - click Choose"
+                        : "Optional - leave blank if not part of this set";
+                }
+
+                const int statusBarLeft = 20;
+                const int labelLeft = 34;
+                const int labelWidth = 120;
+                const int thumbLeft = 160;
+                const int thumbSize = 40;
+                const int pickerTextLeft = 208;
+                const int pickerTextWidth = 420;
+                const int quantityLeft = 640;
+                const int quantityWidth = 76;
+                const int actionButtonLeft = 728;
+                const int actionButtonWidth = 120;
+                const int standardRowSpacing = 54;
+                const int mediaRowSpacing = 54;
+
+                // Item pictures (the first Pancake image, synced into dbo.Items.Images / the choices' Images).
+                var itemImageCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                string ResolveImageRef(string? images, string? itemCode)
+                {
+                    string imageRef = ExtractFirstImageReference(images);
+                    if (!string.IsNullOrWhiteSpace(imageRef) || string.IsNullOrWhiteSpace(itemCode))
                     {
-                        pickerTextBox.PlaceholderText = "Optional - leave blank if not part of this set";
+                        return imageRef ?? string.Empty;
+                    }
+
+                    string code = itemCode.Trim();
+                    if (itemImageCache.TryGetValue(code, out var cached))
+                    {
+                        return cached;
+                    }
+
+                    string found = string.Empty;
+                    try
+                    {
+                        using var conn = new SqlConnection(connectionString);
+                        conn.Open();
+                        using var cmd = new SqlCommand("SELECT TOP 1 ISNULL(Images, '') FROM dbo.Items WHERE Code = @Code", conn);
+                        cmd.Parameters.AddWithValue("@Code", code);
+                        found = ExtractFirstImageReference(cmd.ExecuteScalar()?.ToString()) ?? string.Empty;
+                    }
+                    catch
+                    {
+                        // Older installs without Items.Images - just no picture.
+                    }
+
+                    itemImageCache[code] = found;
+                    return found;
+                }
+
+                void LoadImageInto(PictureBox pictureBox, string imageRef)
+                {
+                    pictureBox.Image = null;
+                    if (string.IsNullOrWhiteSpace(imageRef))
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        if (Uri.TryCreate(imageRef, UriKind.Absolute, out var uri)
+                            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                        {
+                            pictureBox.LoadAsync(imageRef);
+                            return;
+                        }
+
+                        string path = Path.IsPathRooted(imageRef) ? imageRef : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, imageRef);
+                        if (File.Exists(path))
+                        {
+                            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read);
+                            pictureBox.Image = Image.FromStream(fs);
+                        }
+                    }
+                    catch
+                    {
+                        pictureBox.Image = null;
                     }
                 }
 
-                const int labelLeft = 24;
-                const int labelWidth = 116;
-                const int pickerTextLeft = 150;
-                const int pickerTextWidth = 445;
-                const int quantityLeft = 605;
-                const int quantityWidth = 82;
-                const int actionButtonLeft = 700;
-                const int actionButtonWidth = 120;
-                const int standardRowSpacing = 54;
-                const int mediaRowSpacing = 74;
-
-                var itemHeaderLabel = new Label
+                void ShowLargePicture(string title, string imageRef)
                 {
-                    Text = "Item",
-                    Left = pickerTextLeft,
-                    Top = 46,
-                    Width = pickerTextWidth,
-                    Height = 20,
-                    Font = new Font("Arial", 9, FontStyle.Bold),
-                    ForeColor = Color.DimGray
-                };
+                    using var preview = new Form
+                    {
+                        Text = title,
+                        StartPosition = FormStartPosition.CenterParent,
+                        FormBorderStyle = FormBorderStyle.FixedDialog,
+                        MinimizeBox = false,
+                        MaximizeBox = false,
+                        ShowInTaskbar = false,
+                        ClientSize = new Size(520, 520),
+                        BackColor = Color.White
+                    };
+                    var big = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White };
+                    preview.Controls.Add(big);
+                    preview.Shown += (s, e) => LoadImageInto(big, imageRef);
+                    preview.KeyPreview = true;
+                    preview.KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) preview.Close(); };
+                    preview.ShowDialog(dialog);
+                }
 
-                var quantityHeaderLabel = new Label
+                Label CreateColumnHeader(string text, int left, int width, ContentAlignment align)
                 {
-                    Text = "Qty",
-                    Left = quantityLeft,
-                    Top = 46,
-                    Width = quantityWidth,
-                    Height = 20,
-                    TextAlign = ContentAlignment.TopCenter,
-                    Font = new Font("Arial", 9, FontStyle.Bold),
-                    ForeColor = Color.DimGray
-                };
+                    var header = new Label
+                    {
+                        Text = text,
+                        Left = left,
+                        Top = 14,
+                        Width = width,
+                        Height = 18,
+                        TextAlign = align,
+                        Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                        ForeColor = textMuted
+                    };
+                    contentPanel.Controls.Add(header);
+                    return header;
+                }
 
-                var actionHeaderLabel = new Label
+                CreateColumnHeader("PART", labelLeft, labelWidth, ContentAlignment.TopLeft);
+                CreateColumnHeader("ITEM", pickerTextLeft, pickerTextWidth, ContentAlignment.TopLeft);
+                CreateColumnHeader("QTY", quantityLeft, quantityWidth, ContentAlignment.TopCenter);
+
+                int top = 40;
+
+                // Status of every row (green = chosen, amber = required but empty, grey = optional and
+                // empty) - drives each row's left colour bar and the footer's "still to choose" summary.
+                var rowStatuses = new List<(TextBox Box, Panel Bar, Label Label, bool Required)>();
+                Label? footerSummaryLabel = null;
+
+                void UpdateFooterSummary()
                 {
-                    Text = "Action",
-                    Left = actionButtonLeft,
-                    Top = 46,
-                    Width = actionButtonWidth,
-                    Height = 20,
-                    TextAlign = ContentAlignment.TopCenter,
-                    Font = new Font("Arial", 9, FontStyle.Bold),
-                    ForeColor = Color.DimGray
-                };
+                    if (footerSummaryLabel == null)
+                    {
+                        return;
+                    }
 
-                contentPanel.Controls.Add(itemHeaderLabel);
-                contentPanel.Controls.Add(quantityHeaderLabel);
-                contentPanel.Controls.Add(actionHeaderLabel);
+                    int missing = rowStatuses.Count(r => r.Required && string.IsNullOrWhiteSpace(r.Box.Text));
+                    int chosen = rowStatuses.Count(r => !string.IsNullOrWhiteSpace(r.Box.Text));
+                    footerSummaryLabel.Text = missing > 0
+                        ? $"{missing} required part{(missing == 1 ? "" : "s")} still to choose  ·  {chosen} chosen"
+                        : $"All required parts chosen  ·  {chosen} item{(chosen == 1 ? "" : "s")} in this set";
+                    footerSummaryLabel.ForeColor = missing > 0 ? needAmber : doneGreen;
+                }
 
-                int top = 68;
+                var thumbTips = new ToolTip();
+
+                // imageSource returns (Images value, item code) for whatever is currently chosen in the row.
+                void RegisterRow(TextBox textBox, Label rowLabel, bool required, Func<(string? Images, string? ItemCode)> imageSource)
+                {
+                    var bar = new Panel
+                    {
+                        Left = statusBarLeft,
+                        Top = textBox.Top - 6,
+                        Width = 5,
+                        Height = thumbSize
+                    };
+                    contentPanel.Controls.Add(bar);
+                    rowStatuses.Add((textBox, bar, rowLabel, required));
+
+                    var thumb = new PictureBox
+                    {
+                        Left = thumbLeft,
+                        Top = textBox.Top - 6,
+                        Width = thumbSize,
+                        Height = thumbSize,
+                        SizeMode = PictureBoxSizeMode.Zoom,
+                        BorderStyle = BorderStyle.FixedSingle,
+                        BackColor = surfaceColor
+                    };
+                    contentPanel.Controls.Add(thumb);
+                    string currentImageRef = string.Empty;
+                    thumb.Click += (s, e) =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(currentImageRef))
+                        {
+                            ShowLargePicture($"{rowLabel.Text} - {textBox.Text}", currentImageRef);
+                        }
+                    };
+
+                    void Refresh()
+                    {
+                        bool filled = !string.IsNullOrWhiteSpace(textBox.Text);
+                        bar.BackColor = filled ? doneGreen : required ? needAmber : optionalGrey;
+                        rowLabel.ForeColor = !filled && !required ? textMuted : textMain;
+
+                        var (images, itemCode) = filled ? imageSource() : (null, null);
+                        string imageRef = filled ? ResolveImageRef(images, itemCode) : string.Empty;
+                        if (!string.Equals(imageRef, currentImageRef, StringComparison.Ordinal))
+                        {
+                            currentImageRef = imageRef;
+                            LoadImageInto(thumb, imageRef);
+                        }
+                        thumb.Cursor = string.IsNullOrWhiteSpace(imageRef) ? Cursors.Default : Cursors.Hand;
+                        thumbTips.SetToolTip(thumb, string.IsNullOrWhiteSpace(imageRef) ? "No picture" : "Click to enlarge");
+
+                        UpdateFooterSummary();
+                    }
+
+                    textBox.TextChanged += (s, e) => Refresh();
+                    Refresh();
+                }
+
+                void CreateSectionHeader(string text)
+                {
+                    top += 6;
+                    var header = new Label
+                    {
+                        Text = text.ToUpperInvariant(),
+                        Left = statusBarLeft,
+                        Top = top,
+                        Width = 400,
+                        Height = 20,
+                        Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                        ForeColor = brandBlue
+                    };
+                    var rule = new Panel
+                    {
+                        Left = statusBarLeft,
+                        Top = top + 22,
+                        Width = actionButtonLeft + actionButtonWidth - statusBarLeft,
+                        Height = 1,
+                        BackColor = borderColor
+                    };
+                    contentPanel.Controls.Add(header);
+                    contentPanel.Controls.Add(rule);
+                    top += 34;
+                }
 
                 Label CreateLabel(string text, int y)
                 {
@@ -2415,10 +2591,12 @@ INSERT INTO CardProcessingFeeLog (
                     {
                         Text = text,
                         Left = labelLeft,
-                        Top = y + 6,
+                        Top = y + 5,
                         Width = labelWidth,
-                        Height = 28,
-                        Font = new Font("Arial", 10, FontStyle.Bold)
+                        Height = 24,
+                        AutoEllipsis = true,
+                        Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                        ForeColor = textMain
                     };
 
                     contentPanel.Controls.Add(label);
@@ -2432,10 +2610,11 @@ INSERT INTO CardProcessingFeeLog (
                         Left = pickerTextLeft,
                         Top = y,
                         Width = pickerTextWidth,
-                        Height = 32,
                         ReadOnly = true,
-                        BackColor = Color.White,
-                        Font = new Font("Arial", 10, FontStyle.Regular)
+                        BorderStyle = BorderStyle.FixedSingle,
+                        BackColor = surfaceColor,
+                        ForeColor = textMain,
+                        Font = new Font("Segoe UI", 10.5F, FontStyle.Regular)
                     };
 
                     contentPanel.Controls.Add(textBox);
@@ -2449,13 +2628,13 @@ INSERT INTO CardProcessingFeeLog (
                         Left = quantityLeft,
                         Top = y,
                         Width = quantityWidth,
-                        Height = 32,
                         Minimum = 1,
                         Maximum = 999,
                         Value = 1,
                         DecimalPlaces = 0,
+                        BorderStyle = BorderStyle.FixedSingle,
                         TextAlign = HorizontalAlignment.Center,
-                        Font = new Font("Arial", 10, FontStyle.Regular)
+                        Font = new Font("Segoe UI", 10.5F, FontStyle.Regular)
                     };
 
                     contentPanel.Controls.Add(quantityUpDown);
@@ -2466,16 +2645,19 @@ INSERT INTO CardProcessingFeeLog (
                 {
                     var button = new Button
                     {
-                        Text = "Select",
+                        Text = "Choose",
                         Left = actionButtonLeft,
                         Top = y - 1,
                         Width = actionButtonWidth,
-                        Height = 34,
-                        BackColor = Color.SteelBlue,
+                        Height = 32,
+                        BackColor = brandBlue,
                         ForeColor = Color.White,
-                        Font = new Font("Arial", 10, FontStyle.Bold),
+                        FlatStyle = FlatStyle.Flat,
+                        Cursor = Cursors.Hand,
+                        Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
                         UseVisualStyleBackColor = false
                     };
+                    button.FlatAppearance.BorderSize = 0;
                     button.Click += (s, e) => onClick();
                     contentPanel.Controls.Add(button);
                     return button;
@@ -2488,7 +2670,7 @@ INSERT INTO CardProcessingFeeLog (
                         return;
                     }
 
-                    CreateLabel(variantState.FieldLabel, y);
+                    var rowLabel = CreateLabel(variantState.FieldLabel, y);
                     var textBox = CreateReadOnlyPickerTextBox(y);
                     var quantityUpDown = CreateQuantityUpDown(y);
                     quantityUpDown.Value = Math.Max(quantityUpDown.Minimum, Math.Min(quantityUpDown.Maximum, variantState.Quantity));
@@ -2520,13 +2702,21 @@ INSERT INTO CardProcessingFeeLog (
 
                     if (!variantState.HasVariantOptions)
                     {
+                        // Nothing to choose - shown as part of the set rather than a dead button.
                         selectButton.Enabled = false;
-                        selectButton.BackColor = Color.Gray;
+                        selectButton.Text = "Included";
+                        selectButton.BackColor = optionalGrey;
+                    }
+                    else if (variantState.SelectedVariant == null && variantState.RequiresExplicitVariantChoice)
+                    {
+                        selectButton.Text = "Choose variant";
                     }
 
+                    RegisterRow(textBox, rowLabel, true, () => (variantState.SelectedVariant?.Images, string.IsNullOrWhiteSpace(variantState.SelectedVariant?.ItemCode) ? variantState.SourceLine.ItemNo : variantState.SelectedVariant!.ItemCode));
                     y += standardRowSpacing;
                 }
 
+                CreateSectionHeader("Included in this set");
                 foreach (var variantState in variantSelectionStates)
                 {
                     CreateVariantSelectionRow(variantState, ref top);
@@ -2537,9 +2727,10 @@ INSERT INTO CardProcessingFeeLog (
 
                 if (!hasSumpRow)
                 {
-                    CreateLabel("Sump", top);
+                    var sumpLabel = CreateLabel("Sump", top);
                     var sumpTextBox = CreateReadOnlyPickerTextBox(top);
                     MarkOptional(sumpTextBox, packageRules.RequireSump);
+                    RegisterRow(sumpTextBox, sumpLabel, packageRules.RequireSump, () => (selectedOptionalSump?.Images, selectedOptionalSump?.ItemCode));
                     optionalSumpQtyUpDown = CreateQuantityUpDown(top);
                     CreatePickerButton(top, () =>
                     {
@@ -2557,9 +2748,10 @@ INSERT INTO CardProcessingFeeLog (
 
                 if (!hasStandRow)
                 {
-                    CreateLabel("Stand", top);
+                    var standLabel = CreateLabel("Stand", top);
                     var standTextBox = CreateReadOnlyPickerTextBox(top);
                     MarkOptional(standTextBox, packageRules.RequireStand);
+                    RegisterRow(standTextBox, standLabel, packageRules.RequireStand, () => (selectedOptionalStand?.Images, selectedOptionalStand?.ItemCode));
                     optionalStandQtyUpDown = CreateQuantityUpDown(top);
                     CreatePickerButton(top, () =>
                     {
@@ -2575,11 +2767,13 @@ INSERT INTO CardProcessingFeeLog (
                     top += standardRowSpacing;
                 }
 
-                CreateLabel("Lights", top);
+                CreateSectionHeader("Lighting");
+                var lightsLabel = CreateLabel("Lights", top);
                 var lightsTextBox = CreateReadOnlyPickerTextBox(top);
                 MarkOptional(lightsTextBox, packageRules.RequireLights);
                 var lightsQtyUpDown = CreateQuantityUpDown(top);
                 ApplyAccessoryDefault(lightDefaults, ref selectedLight, lightsTextBox, lightsQtyUpDown);
+                RegisterRow(lightsTextBox, lightsLabel, packageRules.RequireLights, () => (selectedLight?.Images, selectedLight?.ItemCode));
                 CreatePickerButton(top, () =>
                 {
                     var choice = PromptForAquariumAccessoryItemSelection("Lights", "LIGHT", "LIGHTS", "LIGHT");
@@ -2593,13 +2787,13 @@ INSERT INTO CardProcessingFeeLog (
                 });
                 top += standardRowSpacing;
 
-                CreateLabel("Medias", top);
-                top += standardRowSpacing;
+                CreateSectionHeader("Filter media (optional)");
 
                 for (int mediaIndex = 0; mediaIndex < selectedMedias.Length; mediaIndex++)
                 {
-                    CreateLabel($"Media {mediaIndex + 1}", top);
+                    var mediaLabel = CreateLabel($"Media {mediaIndex + 1}", top);
                     var mediaTextBox = CreateReadOnlyPickerTextBox(top);
+                    mediaTextBox.PlaceholderText = "Optional";
                     var mediaQtyUpDown = CreateQuantityUpDown(top);
                     if (mediaIndex < mediaDefaults.Count)
                     {
@@ -2608,8 +2802,10 @@ INSERT INTO CardProcessingFeeLog (
                         mediaTextBox.Text = mediaDefault.Choice?.DisplayText ?? string.Empty;
                         mediaQtyUpDown.Value = Math.Max(mediaQtyUpDown.Minimum, Math.Min(mediaQtyUpDown.Maximum, mediaDefault.Quantity));
                     }
+                    int imageRowIndex = mediaIndex;
+                    RegisterRow(mediaTextBox, mediaLabel, false, () => (selectedMedias[imageRowIndex]?.Images, selectedMedias[imageRowIndex]?.ItemCode));
                     int capturedIndex = mediaIndex;
-                    CreatePickerButton(top, () =>
+                    var mediaChooseButton = CreatePickerButton(top, () =>
                     {
                         var choice = PromptForAquariumAccessoryItemSelection($"Media {capturedIndex + 1}", "MEDIA", "MEDIA", "MEDIAS", "FILTERMEDIA", "FILTER MEDIA", "FILTERMEDIAS", "FILTER MEDIAS");
                         if (choice == null)
@@ -2621,18 +2817,24 @@ INSERT INTO CardProcessingFeeLog (
                         mediaTextBox.Text = choice.DisplayText;
                     });
 
+                    // Clear sits beside Choose (one row per media) instead of on a second line under it.
+                    mediaChooseButton.Width = actionButtonWidth - 38;
                     var clearButton = new Button
                     {
-                        Text = "Clear",
-                        Left = actionButtonLeft,
-                        Top = top + 38,
-                        Width = actionButtonWidth,
-                        Height = 28,
-                        BackColor = Color.Gray,
-                        ForeColor = Color.White,
-                        Font = new Font("Arial", 9, FontStyle.Bold),
+                        Text = "✕",
+                        Left = actionButtonLeft + actionButtonWidth - 32,
+                        Top = top - 1,
+                        Width = 32,
+                        Height = 32,
+                        BackColor = surfaceColor,
+                        ForeColor = textMuted,
+                        FlatStyle = FlatStyle.Flat,
+                        Cursor = Cursors.Hand,
+                        Font = new Font("Segoe UI", 10F, FontStyle.Bold),
                         UseVisualStyleBackColor = false
                     };
+                    clearButton.FlatAppearance.BorderColor = borderColor;
+                    new ToolTip().SetToolTip(clearButton, "Clear this media");
                     clearButton.Click += (s, e) =>
                     {
                         selectedMedias[capturedIndex] = null;
@@ -2645,10 +2847,13 @@ INSERT INTO CardProcessingFeeLog (
                     top += mediaRowSpacing;
                 }
 
-                CreateLabel("Mesh Bag", top);
+                CreateSectionHeader("Extras");
+                var meshBagLabel = CreateLabel("Mesh Bag", top);
                 var meshBagTextBox = CreateReadOnlyPickerTextBox(top);
+                meshBagTextBox.PlaceholderText = "Optional";
                 var meshBagQtyUpDown = CreateQuantityUpDown(top);
                 ApplyAccessoryDefault(meshBagDefaults, ref selectedMeshBag, meshBagTextBox, meshBagQtyUpDown);
+                RegisterRow(meshBagTextBox, meshBagLabel, false, () => (selectedMeshBag?.Images, selectedMeshBag?.ItemCode));
                 CreatePickerButton(top, () =>
                 {
                     var choice = PromptForAquariumAccessoryItemSelection("Mesh Bag", "MESH", "MESH BAG", "MESHBAG", "BAG");
@@ -2662,11 +2867,12 @@ INSERT INTO CardProcessingFeeLog (
                 });
                 top += standardRowSpacing;
 
-                CreateLabel("Pump", top);
+                var pumpLabel = CreateLabel("Pump", top);
                 var pumpTextBox = CreateReadOnlyPickerTextBox(top);
                 MarkOptional(pumpTextBox, packageRules.RequirePump);
                 var pumpQtyUpDown = CreateQuantityUpDown(top);
                 ApplyAccessoryDefault(pumpDefaults, ref selectedPump, pumpTextBox, pumpQtyUpDown);
+                RegisterRow(pumpTextBox, pumpLabel, packageRules.RequirePump, () => (selectedPump?.Images, selectedPump?.ItemCode));
                 CreatePickerButton(top, () =>
                 {
                     var choice = PromptForAquariumAccessoryItemSelection("Pump", "PUMP", "PUMP", "PUMPS");
@@ -2680,11 +2886,12 @@ INSERT INTO CardProcessingFeeLog (
                 });
                 top += standardRowSpacing;
 
-                CreateLabel("Pipe", top);
+                var pipeLabel = CreateLabel("Pipe", top);
                 var pipeTextBox = CreateReadOnlyPickerTextBox(top);
                 MarkOptional(pipeTextBox, packageRules.RequirePipe);
                 var pipeQtyUpDown = CreateQuantityUpDown(top);
                 ApplyAccessoryDefault(pipeDefaults, ref selectedPipe, pipeTextBox, pipeQtyUpDown);
+                RegisterRow(pipeTextBox, pipeLabel, packageRules.RequirePipe, () => (selectedPipe?.Images, selectedPipe?.ItemCode));
                 CreatePickerButton(top, () =>
                 {
                     var choice = PromptForAquariumAccessoryItemSelection("Pipe", "PIPE", "PIPE", "PIPES", "PVC");
@@ -2697,53 +2904,117 @@ INSERT INTO CardProcessingFeeLog (
                     pipeTextBox.Text = choice.DisplayText;
                 });
 
+                top += standardRowSpacing;
+
+                // Header banner: package name, price and what to do.
+                var headerPanel = new Panel
+                {
+                    Dock = DockStyle.Top,
+                    Height = 84,
+                    BackColor = brandBlue
+                };
+                var headerTitle = new Label
+                {
+                    Text = packageName,
+                    Left = 20,
+                    Top = 12,
+                    Width = 840,
+                    Height = 32,
+                    AutoEllipsis = true,
+                    Font = new Font("Segoe UI", 16F, FontStyle.Bold),
+                    ForeColor = Color.White
+                };
+                var headerSubtitle = new Label
+                {
+                    Text = $"₱{packageRules.PackagePrice:N2} per set  ·  Qty {setQuantity}  ·  Choose the Aquarium and Stand variants, check the parts, then Add to Sale.",
+                    Left = 20,
+                    Top = 48,
+                    Width = 840,
+                    Height = 22,
+                    AutoEllipsis = true,
+                    Font = new Font("Segoe UI", 9.5F, FontStyle.Regular),
+                    ForeColor = Color.FromArgb(220, 232, 248)
+                };
+                headerPanel.Controls.Add(headerTitle);
+                headerPanel.Controls.Add(headerSubtitle);
+
                 var footerPanel = new Panel
                 {
                     Dock = DockStyle.Bottom,
-                    Height = 58,
-                    Padding = new Padding(20, 8, 20, 8)
+                    Height = 64,
+                    BackColor = surfaceColor
+                };
+                var footerRule = new Panel
+                {
+                    Dock = DockStyle.Top,
+                    Height = 1,
+                    BackColor = borderColor
+                };
+
+                footerSummaryLabel = new Label
+                {
+                    Left = 20,
+                    Top = 22,
+                    Width = 520,
+                    Height = 22,
+                    AutoEllipsis = true,
+                    Font = new Font("Segoe UI", 10F, FontStyle.Bold)
                 };
 
                 var okButton = new Button
                 {
-                    Text = "OK",
-                    Width = 110,
-                    Height = 32,
-                    Top = 8,
-                    Font = new Font("Arial", 10, FontStyle.Bold)
+                    Text = "Add to Sale",
+                    Width = 150,
+                    Height = 38,
+                    Top = 13,
+                    BackColor = doneGreen,
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    Cursor = Cursors.Hand,
+                    Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                    UseVisualStyleBackColor = false
                 };
+                okButton.FlatAppearance.BorderSize = 0;
 
                 var cancelButton = new Button
                 {
                     Text = "Cancel",
                     DialogResult = DialogResult.Cancel,
                     Width = 110,
-                    Height = 32,
-                    Top = 8,
-                    Font = new Font("Arial", 10, FontStyle.Bold)
+                    Height = 38,
+                    Top = 13,
+                    BackColor = Color.White,
+                    ForeColor = textMain,
+                    FlatStyle = FlatStyle.Flat,
+                    Cursor = Cursors.Hand,
+                    Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                    UseVisualStyleBackColor = false
                 };
+                cancelButton.FlatAppearance.BorderColor = borderColor;
 
-                void CenterFooterButtons()
+                void PlaceFooterButtons()
                 {
-                    const int gap = 14;
-                    int totalWidth = okButton.Width + gap + cancelButton.Width;
-                    int startLeft = Math.Max(20, (footerPanel.ClientSize.Width - totalWidth) / 2);
-                    okButton.Left = startLeft;
-                    cancelButton.Left = okButton.Right + gap;
+                    const int gap = 10;
+                    okButton.Left = footerPanel.ClientSize.Width - 20 - okButton.Width;
+                    cancelButton.Left = okButton.Left - gap - cancelButton.Width;
                 }
 
-                footerPanel.Resize += (s, e) => CenterFooterButtons();
-                CenterFooterButtons();
+                footerPanel.Resize += (s, e) => PlaceFooterButtons();
+                PlaceFooterButtons();
 
+                footerPanel.Controls.Add(footerRule);
+                footerPanel.Controls.Add(footerSummaryLabel);
                 footerPanel.Controls.Add(okButton);
                 footerPanel.Controls.Add(cancelButton);
+                UpdateFooterSummary();
 
                 dialog.AcceptButton = okButton;
                 dialog.CancelButton = cancelButton;
-                contentPanel.Controls.Add(instructionsLabel);
-                contentPanel.AutoScrollMinSize = new Size(0, top + 120);
+                contentPanel.AutoScrollMinSize = new Size(0, top + 20);
+                // Fill first, then the docked edges (WinForms docks in reverse add order).
                 dialog.Controls.Add(contentPanel);
                 dialog.Controls.Add(footerPanel);
+                dialog.Controls.Add(headerPanel);
 
                 AquariumAccessorySelectionResult? selectionResult = null;
                 okButton.Click += (s, e) =>
