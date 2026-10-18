@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class CustomersViewForm : Form
+    public class CustomersViewForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataTable customersTable = new DataTable();

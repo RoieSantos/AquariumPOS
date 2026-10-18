@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class ProductionStatusForm : Form
+    public class ProductionStatusForm : ThemedForm
     {
     private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataGridView dataGridView;
@@ -175,7 +175,7 @@ namespace AquariumPOS
         }
     }
 
-    public class ProductionStatusEditDialog : Form
+    public class ProductionStatusEditDialog : ThemedForm
     {
     public string Code => codeTextBox.Text.Trim();
     public string Description => descriptionTextBox.Text.Trim();

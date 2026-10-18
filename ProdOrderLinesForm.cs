@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class ProdOrderLinesForm : Form
+    public class ProdOrderLinesForm : ThemedForm
     {
     private readonly string connectionString = GlobalSettings.ConnectionString;
         private ListView aquariumListView, standListView;

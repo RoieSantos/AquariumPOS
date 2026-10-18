@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class AdvanceOrderLinesForm : Form
+    public class AdvanceOrderLinesForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataGridView linesGridView;
@@ -412,7 +412,7 @@ namespace AquariumPOS
 
         private void ShowSyncDetailsDialog(string details)
         {
-            using var dlg = new Form
+            using var dlg = new ThemedForm
             {
                 Text = $"Sync Details - {resolvedReceiptNo}",
                 Size = new Size(700, 500),

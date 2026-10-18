@@ -118,7 +118,7 @@ function renderLineRows(lines) {
   const tbody = document.getElementById('lineTableBody');
 
   if (!lines || lines.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">No employees on this run.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">No employees on this run.</td></tr>';
     document.getElementById('lineTableFoot').innerHTML = '';
     selectedLineId = null;
     updateLineActionState();
@@ -127,11 +127,14 @@ function renderLineRows(lines) {
 
   const hasDaysWorked = (l) => l.days_worked !== null && l.days_worked !== undefined;
   const unitLabel = (l) => l.pay_type === 'Hourly' ? 'hr' : 'day';
+  // payment_method is already defaulted to Cash server-side, same rule as the funding requirement.
+  const methodBadge = (m) => `<span class="badge ${m === 'Digital' ? 'badge-primary' : 'badge-success'}">${m || 'Cash'}</span>`;
 
   tbody.innerHTML = lines
     .map((l) => `
       <tr data-line-row="${l.line_id}" class="${l.line_id === selectedLineId ? 'selected' : ''}">
         <td><a href="#" class="bc-link" data-line-id="${l.line_id}" title="Open this payroll line">${l.display_name || l.username}</a></td>
+        <td>${methodBadge(l.payment_method)}</td>
         <td class="num">${formatCurrency(l.base_pay)}</td>
         <td class="num">${hasDaysWorked(l) ? `${formatCurrency(l.daily_rate)}/${unitLabel(l)}` : '<span class="muted">-</span>'}</td>
         <td class="num">${hasDaysWorked(l) ? `${formatDays(l.days_worked)} ${unitLabel(l)}${l.pay_type === 'Hourly' ? 's' : '(s)'}` : '<span class="muted">-</span>'}</td>
@@ -144,7 +147,7 @@ function renderLineRows(lines) {
 
   const sum = (field) => lines.reduce((s, l) => s + (Number(l[field]) || 0), 0);
   document.getElementById('lineTableFoot').innerHTML = `<tr>
-    <td>Total (${lines.length} employee${lines.length === 1 ? '' : 's'})</td>
+    <td>Total (${lines.length} employee${lines.length === 1 ? '' : 's'})</td><td></td>
     <td class="num">${formatCurrency(sum('base_pay'))}</td><td></td><td></td>
     <td class="num">${formatCurrency(sum('additions_total'))}</td>
     <td class="num">${formatCurrency(sum('deductions_total'))}</td>
@@ -192,7 +195,7 @@ async function loadRun() {
 
 async function loadLines() {
   const tbody = document.getElementById('lineTableBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="cell-msg">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_run_lines', {
     p_admin_username: currentSession.username,
@@ -201,7 +204,7 @@ async function loadLines() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7" class="cell-msg error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="cell-msg error-text">${error.message}</td></tr>`;
     return;
   }
 

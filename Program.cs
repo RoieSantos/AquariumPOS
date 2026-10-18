@@ -13,6 +13,7 @@ namespace AquariumPOS
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            UiTheme.Init();
             Application.Run(new LoginForm());
         }
     }

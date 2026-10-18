@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class OnlineOrderLinesForm : Form
+    public class OnlineOrderLinesForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private readonly string orderId;

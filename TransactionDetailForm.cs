@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public partial class TransactionDetailForm : Form
+    public partial class TransactionDetailForm : ThemedForm
     {
         private TextBox txtStoreNo;
         private TextBox txtPOSTerminalNo;

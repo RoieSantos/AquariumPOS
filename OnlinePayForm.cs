@@ -23,7 +23,7 @@ namespace AquariumPOS
     /// rows the old Online Orders PAY wrote, so the cash drawer / EOD still balance) and the receipt printed.
     /// No internet = no payment. See sql/supabase_pos_online_pay.sql.
     /// </summary>
-    public class OnlinePayForm : Form
+    public class OnlinePayForm : ThemedForm
     {
         private sealed class OrderLine
         {
@@ -369,7 +369,7 @@ namespace AquariumPOS
 
             while (remaining > 0m)
             {
-                using var dlg = new Form
+                using var dlg = new ThemedForm
                 {
                     Text = "Enter Tender Amount",
                     StartPosition = FormStartPosition.CenterParent,

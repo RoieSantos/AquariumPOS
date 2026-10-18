@@ -9,7 +9,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class ItemVariantSalesWorksheetForm : Form
+    public class ItemVariantSalesWorksheetForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private readonly string documentNo;

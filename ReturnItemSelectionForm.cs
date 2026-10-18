@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class ReturnItemSelectionForm : Form
+    public class ReturnItemSelectionForm : ThemedForm
     {
         public class ReturnItem
         {

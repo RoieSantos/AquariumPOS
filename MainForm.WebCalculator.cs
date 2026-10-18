@@ -421,7 +421,7 @@ namespace AquariumPOS
 
     /// <summary>WebView2 window hosting a bundled portal calculator page - the Aquarium Calculator or the
     /// Custom Sticker &amp; Panel Calculator (see MainForm.ShowWebCalculatorOrClassic).</summary>
-    public class WebAquariumCalculatorForm : Form
+    public class WebAquariumCalculatorForm : ThemedForm
     {
         public static string RootFolder => Path.Combine(AppContext.BaseDirectory, "WebCalculator");
         private const string HostName = "pos-calculator.local";

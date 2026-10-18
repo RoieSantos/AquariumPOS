@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class TransferOrderLinesForm : Form
+    public class TransferOrderLinesForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private readonly TransferOrderData.DocumentTableContext documentContext;
@@ -1093,7 +1093,7 @@ namespace AquariumPOS
             public decimal? QuantityInStock { get; init; }
         }
 
-        private sealed class TransferItemDropdownForm : Form
+        private sealed class TransferItemDropdownForm : ThemedForm
         {
             private readonly TextBox txtSearch;
             private readonly ListBox listBox;
@@ -1617,7 +1617,7 @@ ORDER BY ISNULL(NULLIF(v.VariantName, ''), ISNULL(NULLIF(variantItem.[Descriptio
                 : variantInfo.VariantName;
         }
 
-        private sealed class TransferItemLookupDialog : Form
+        private sealed class TransferItemLookupDialog : ThemedForm
         {
             private readonly string connectionString;
             private readonly bool useProductionCategory;

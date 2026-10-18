@@ -17,7 +17,7 @@ namespace AquariumPOS
     /// - Auto-saves those flag changes to DB
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public class WarehouseSetupForm : Form
+    public class WarehouseSetupForm : ThemedForm
     {
         private static readonly string[] EditableColumnNames = new[]
         {

@@ -4,7 +4,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public partial class PaymentEntryForm : Form
+    public partial class PaymentEntryForm : ThemedForm
     {
         public string TenderType { get; private set; } = "";
         public decimal Amount { get; private set; } = 0;

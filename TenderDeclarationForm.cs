@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 namespace AquariumPOS
 {
-    public class TenderDeclarationForm : Form
+    public class TenderDeclarationForm : ThemedForm
     {
         private Dictionary<decimal, TextBox> denominationInputs = new Dictionary<decimal, TextBox>();
         private Dictionary<decimal, Label> denominationTotalLabels = new Dictionary<decimal, Label>();

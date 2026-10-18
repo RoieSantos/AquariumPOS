@@ -15,7 +15,7 @@ namespace AquariumPOS
     /// - For SqlCommandBuilder to generate INSERT/UPDATE/DELETE the table should have a primary key.
     /// - This implementation is intentionally small and generic to avoid depending on a fixed schema.
     /// </summary>
-    public class EmployeeSetupForm : Form
+    public class EmployeeSetupForm : ThemedForm
     {
         private DataGridView dgv = new DataGridView();
         private Button btnAdd = new Button();

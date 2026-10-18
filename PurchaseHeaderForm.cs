@@ -8,7 +8,7 @@ using System.Runtime.Versioning;
 namespace AquariumPOS
 {
     [SupportedOSPlatform("windows")]
-    public class PurchaseHeaderForm : Form
+    public class PurchaseHeaderForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataGridView grid = null!;

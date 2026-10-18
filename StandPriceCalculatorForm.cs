@@ -14,7 +14,7 @@ namespace AquariumPOS
     /// - All dimensions are integer input fields (units left to user: mm/cm/inches depending on shop conventions).
     /// These assumptions can be adjusted in CalculatePrice() easily.
     /// </summary>
-    public class StandPriceCalculatorForm : Form
+    public class StandPriceCalculatorForm : ThemedForm
     {
         private readonly bool selectionOnly;
 

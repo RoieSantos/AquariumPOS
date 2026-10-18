@@ -11,7 +11,7 @@ using System.Windows.Forms;
 namespace AquariumPOS
 {
     [SupportedOSPlatform("windows")]
-    public class PurchaseOrdersForm : Form
+    public class PurchaseOrdersForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
 
@@ -375,7 +375,7 @@ namespace AquariumPOS
             }
 
             // Show category selection dialog
-            var dlg = new Form { Text = "Select Categories", Size = new Size(420, 420), StartPosition = FormStartPosition.CenterParent };
+            var dlg = new ThemedForm { Text = "Select Categories", Size = new Size(420, 420), StartPosition = FormStartPosition.CenterParent };
             var clb = new CheckedListBox { Dock = DockStyle.Top, Height = 300, CheckOnClick = true };
             clb.Items.AddRange(categories.ToArray());
             var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 56, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };

@@ -11,7 +11,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public partial class TransactionListForm : Form
+    public partial class TransactionListForm : ThemedForm
     {
     // Optional initial receipt number to filter on when the form loads
     public string InitialReceiptNo { get; set; } = string.Empty;
@@ -1242,7 +1242,7 @@ namespace AquariumPOS
                 }
 
                 // Simple selection form
-                using (var picker = new Form())
+                using (var picker = new ThemedForm())
                 {
                     picker.Text = "Select Tender Type";
                     picker.StartPosition = FormStartPosition.CenterParent;
@@ -1977,7 +1977,7 @@ namespace AquariumPOS
             try
             {
                 // Create a new form to display cash float entry lines
-                Form floatLinesForm = new Form();
+                Form floatLinesForm = new ThemedForm();
                 floatLinesForm.Text = $"Cash Float Entry Lines - Receipt: {receiptNo}";
                 floatLinesForm.Size = new Size(1000, 600);
                 floatLinesForm.StartPosition = FormStartPosition.CenterParent;
@@ -2154,7 +2154,7 @@ namespace AquariumPOS
                 Text = $"Grand Total: {grandTotal:C2}"
             };
 
-            Form tenderDeclForm = new Form
+            Form tenderDeclForm = new ThemedForm
             {
                 Text = $"Tender Declaration Lines for Receipt {receiptNo}",
                 Size = new Size(700, 500)
@@ -2169,7 +2169,7 @@ namespace AquariumPOS
             try
             {
                 // Create a new form to display item history
-                Form itemHistoryForm = new Form();
+                Form itemHistoryForm = new ThemedForm();
                 itemHistoryForm.Text = $"Item History - Receipt: {receiptNo} (Viewed by: {CurrentUser.Username ?? "Unknown"})";
                 itemHistoryForm.Size = new Size(1200, 650);
                 itemHistoryForm.StartPosition = FormStartPosition.CenterParent;
@@ -2600,7 +2600,7 @@ namespace AquariumPOS
         // and the request body sit on separate tabs, and Copy copies both.
         private void ShowSyncDetails(string title, string summary, string details, string? payload = null, string? itemCheck = null)
         {
-            using var dlg = new Form
+            using var dlg = new ThemedForm
             {
                 Text = title,
                 Size = new Size(820, 520),

@@ -8,7 +8,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class CompleteAquariumSetLineForm : Form
+    public class CompleteAquariumSetLineForm : ThemedForm
     {
         internal enum LookupPreference
         {
@@ -626,7 +626,7 @@ ORDER BY EntryNo", connectionString);
         }
     }
 
-    internal sealed class CompleteAquariumSetItemLookupDialog : Form
+    internal sealed class CompleteAquariumSetItemLookupDialog : ThemedForm
     {
         private readonly string connectionString;
         private readonly TextBox txtSearch;

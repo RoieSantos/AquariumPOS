@@ -13,7 +13,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class OnlineOrdersForm : Form
+    public class OnlineOrdersForm : ThemedForm
     {
         private const string OnlineSetPackageMapTable = "dbo.OnlineOrderSetPackageMap";
         private readonly string connectionString = GlobalSettings.ConnectionString;
@@ -2632,7 +2632,7 @@ END
                 return null;
             }
 
-            using var dialog = new Form
+            using var dialog = new ThemedForm
             {
                 Text = "Select Order Serial",
                 StartPosition = FormStartPosition.CenterParent,
@@ -2976,7 +2976,7 @@ WHEN NOT MATCHED THEN
             packageName = string.Empty;
             string selectedPackageName = string.Empty;
 
-            using var dialog = new Form();
+            using var dialog = new ThemedForm();
             dialog.Text = "Map SET Line To BOM Package";
             dialog.StartPosition = FormStartPosition.CenterParent;
             dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -4148,7 +4148,7 @@ WHERE Code = @Code
 
                     while (remaining > 0m)
                     {
-                        using var dlg = new Form
+                        using var dlg = new ThemedForm
                         {
                             Text = "Enter Tender Amount",
                             StartPosition = FormStartPosition.CenterParent,

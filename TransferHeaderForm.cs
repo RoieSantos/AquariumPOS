@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class TransferHeaderForm : Form
+    public class TransferHeaderForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private readonly TransferOrderData.DocumentTableContext documentContext;

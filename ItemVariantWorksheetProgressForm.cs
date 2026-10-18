@@ -13,7 +13,7 @@ namespace AquariumPOS
     /// stage plus a running elapsed-time counter to keep the user informed
     /// while they wait.
     /// </summary>
-    internal sealed class ItemVariantWorksheetProgressForm : Form
+    internal sealed class ItemVariantWorksheetProgressForm : ThemedForm
     {
         private readonly Label statusLabel;
         private readonly Label elapsedLabel;

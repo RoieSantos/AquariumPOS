@@ -10,7 +10,7 @@ using System.Threading.Tasks;
 
 namespace AquariumPOS
 {
-    public class ProductSerialTrackingForm : Form
+    public class ProductSerialTrackingForm : ThemedForm
     {
         public sealed class AvailableSerialRecord
         {

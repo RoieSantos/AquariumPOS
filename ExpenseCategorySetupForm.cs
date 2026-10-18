@@ -9,7 +9,7 @@ using OfficeOpenXml.Style;
 
 namespace AquariumPOS
 {
-    public class ExpenseCategorySetupForm : Form
+    public class ExpenseCategorySetupForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
 
@@ -605,7 +605,7 @@ VALUES (@code, @description, @inStoreItems, @floatExpense)", connection);
         {
             bool isEdit = !string.IsNullOrWhiteSpace(existingCode);
 
-            var dialog = new Form
+            var dialog = new ThemedForm
             {
                 Text = isEdit ? "Edit Expense Category" : "Add Expense Category",
             Size = new Size(420, 320),

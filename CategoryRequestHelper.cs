@@ -61,7 +61,7 @@ namespace AquariumPOS
                 return null;
             }
 
-            using var dlg = new Form();
+            using var dlg = new ThemedForm();
             dlg.Text = "Generate Request";
             dlg.StartPosition = FormStartPosition.CenterParent;
             dlg.FormBorderStyle = FormBorderStyle.FixedDialog;

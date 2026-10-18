@@ -7,7 +7,7 @@ using System.Data.SqlClient;
 
 namespace AquariumPOS
 {
-    public partial class TenderTypesForm : Form
+    public partial class TenderTypesForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
 
@@ -333,7 +333,7 @@ namespace AquariumPOS
         {
             bool isEdit = !string.IsNullOrEmpty(existingCode);
 
-            var dialog = new Form
+            var dialog = new ThemedForm
             {
                 Text = isEdit ? "Edit Tender Type" : "Add Tender Type",
                 Size = new Size(420, 290),

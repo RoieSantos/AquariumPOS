@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class ProductionOrdersForm : Form
+    public class ProductionOrdersForm : ThemedForm
 
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
@@ -540,7 +540,7 @@ namespace AquariumPOS
                 }
 
                 // Show status selection dialog
-                var statusForm = new Form
+                var statusForm = new ThemedForm
                 {
                     Text = "Change Order Status",
                     // Larger, more readable dialog

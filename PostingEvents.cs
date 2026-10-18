@@ -3167,7 +3167,7 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
             };
 
             IWin32Window? owner = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
-            using var previewForm = new Form
+            using var previewForm = new ThemedForm
             {
                 Text = "Expense Report Preview",
                 StartPosition = FormStartPosition.CenterParent,
@@ -3423,7 +3423,7 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
             };
 
             IWin32Window? owner = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
-            using var previewForm = new Form
+            using var previewForm = new ThemedForm
             {
                 Text = "Item Variant Sales Report Preview",
                 StartPosition = FormStartPosition.CenterParent,
@@ -3726,7 +3726,7 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                 e.HasMorePages = false;
             };
 
-            using var previewForm = new Form
+            using var previewForm = new ThemedForm
             {
                 Text = "Month End Sales Preview",
                 StartPosition = FormStartPosition.CenterParent,

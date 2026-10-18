@@ -30,7 +30,7 @@ namespace AquariumPOS
         public decimal Amount { get; set; }
         public DateTime PaymentTime { get; set; }
     }
-    public partial class MainForm : Form
+    public partial class MainForm : ThemedForm
     {
         // Auto logout / inactivity timer (seconds)
         private System.Windows.Forms.Timer inactivityTimer = null!;
@@ -1017,7 +1017,7 @@ INSERT INTO CardProcessingFeeLog (
             this.Text = $"Aquarium POS System - {AppVersionText}";
             this.Size = new Size(1200, 800);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.BackColor = Color.LightBlue;
+            this.BackColor = UiTheme.PageBg;
             this.WindowState = FormWindowState.Maximized;
         }
 
@@ -1311,12 +1311,12 @@ INSERT INTO CardProcessingFeeLog (
 
         private void CreateHeaderPanel()
         {
+            // Navy top bar, same as the portal's #topnav (UiTheme.Primary).
             headerPanel = new Panel
             {
                 Dock = DockStyle.Top,
                 Height = 100,
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle
+                BackColor = UiTheme.Primary
             };
 
             // Add logo PictureBox (class-level so other methods can access it)
@@ -1328,8 +1328,7 @@ INSERT INTO CardProcessingFeeLog (
                 Location = new Point(10, 10),
                 Size = new Size(100, 60),
                 SizeMode = PictureBoxSizeMode.Zoom,
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle
+                BackColor = Color.White
             };
 
             // Try to load logo from file, if not found show placeholder
@@ -1385,17 +1384,20 @@ INSERT INTO CardProcessingFeeLog (
             var titleLabel = new Label
             {
                 Text = GlobalSettings.CompanyName,
-                ForeColor = Color.DarkSlateBlue,
-                Location = new Point(120, 45),
-                Size = new Size(400, 25)
+                ForeColor = Color.White,
+                Font = UiTheme.UiFont(14, FontStyle.Bold),
+                Location = new Point(120, 34),
+                Size = new Size(400, 30),
+                AutoEllipsis = true
             };
 
             var subtitleLabel = new Label
             {
                 Text = GlobalSettings.CompanyTagline,
-                ForeColor = Color.Gray,
-                Location = new Point(120, 70),
-                Size = new Size(400, 18)
+                ForeColor = UiTheme.NavText,
+                Location = new Point(120, 66),
+                Size = new Size(400, 20),
+                AutoEllipsis = true
             };
 
             // Build version (stamped at compile time, see GenerateBuildInfo in AquariumPOS.csproj)
@@ -1405,7 +1407,7 @@ INSERT INTO CardProcessingFeeLog (
             var versionLabel = new Label
             {
                 Text = $"v{BuildInfo.Version} ({BuildInfo.Commit}{(BuildInfo.Dirty ? "*" : "")})",
-                ForeColor = BuildInfo.Dirty ? Color.DarkOrange : Color.DimGray,
+                ForeColor = BuildInfo.Dirty ? Color.FromArgb(245, 194, 107) : UiTheme.NavText,
                 Font = new Font("Arial", 8, FontStyle.Regular),
                 Location = new Point(120, 12),
                 Size = new Size(240, 16),
@@ -1766,6 +1768,12 @@ INSERT INTO CardProcessingFeeLog (
                 showItemsButton, transactionListButton, advanceOrdersButton, transPaymentEntryButton, categoryMgmtButton
             });
 
+            // One calm look for every header button (portal top-nav style) instead of a colour each.
+            foreach (Control c in rightButtonsPanel.Controls)
+                UiTheme.SetRole(c, UiRole.Nav);
+            foreach (var b in new[] { headerSyncButton, headerCustomerSyncButton, headerDeliveryTrackingButton, headerCustomersButton })
+                UiTheme.SetRole(b, UiRole.Nav);
+
             // Add controls: left logo/title and right-side grouped management buttons
             headerPanel.Controls.AddRange(new Control[] {
                 logoPictureBox, titleLabel, subtitleLabel, versionLabel, rightButtonsPanel, headerSyncButton, headerCustomerSyncButton, headerDeliveryTrackingButton, headerCustomersButton
@@ -1948,7 +1956,7 @@ INSERT INTO CardProcessingFeeLog (
                 return null;
             }
 
-            using (var dlg = new Form())
+            using (var dlg = new ThemedForm())
             {
                 dlg.Text = "Select Salesperson";
                 dlg.StartPosition = FormStartPosition.CenterParent;
@@ -2070,7 +2078,7 @@ INSERT INTO CardProcessingFeeLog (
                 return null;
             }
 
-            using (var dlg = new Form())
+            using (var dlg = new ThemedForm())
             {
                 dlg.Text = "Select Aquarium Set";
                 dlg.StartPosition = FormStartPosition.CenterParent;
@@ -2293,7 +2301,7 @@ INSERT INTO CardProcessingFeeLog (
 
         private AquariumAccessorySelectionResult? PromptForAquariumSetAccessorySelection(string packageName, List<CompleteAquariumSetData.PackageLine> packageLines, int setQuantity)
         {
-            using (var dialog = new Form())
+            using (var dialog = new ThemedForm())
             {
                 // Palette shared with the Web Portal (styles.css) so the set dialog looks like the same system.
                 var brandBlue = Color.FromArgb(29, 79, 145);
@@ -2439,7 +2447,7 @@ INSERT INTO CardProcessingFeeLog (
 
                 void ShowLargePicture(string title, string imageRef)
                 {
-                    using var preview = new Form
+                    using var preview = new ThemedForm
                     {
                         Text = title,
                         StartPosition = FormStartPosition.CenterParent,
@@ -3815,7 +3823,7 @@ WHERE Code IN ({string.Join(", ", parameters)})";
                 return null;
             }
 
-            using (var dlg = new Form())
+            using (var dlg = new ThemedForm())
             {
                 dlg.Text = $"Select {fieldLabel}";
                 dlg.StartPosition = FormStartPosition.CenterParent;
@@ -4271,7 +4279,7 @@ ORDER BY i.[Description], i.[Name], i.Code";
 
         private void OnlineOrdersButton_Click(object? sender, EventArgs e)
         {
-            using var dlg = new Form
+            using var dlg = new ThemedForm
             {
                 Text = "Online Orders",
                 StartPosition = FormStartPosition.CenterParent,
@@ -4450,18 +4458,18 @@ ORDER BY i.[Description], i.[Name], i.Code";
                 Dock = DockStyle.None,
                 Location = new Point(0, 100), // below headerPanel (height 100)
                 Size = new Size(this.ClientSize.Width - 480, this.ClientSize.Height - 340), // leave space for totalPanel (width 480) and buttonPanel (height 240)
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
             };
 
             Label salesLabel = new Label
             {
-                Text = "CURRENT SALE",
-                Font = new Font("Arial", 14, FontStyle.Bold),
-                ForeColor = Color.DarkBlue,
+                Text = "Current sale",
+                Font = UiTheme.UiFont(13, FontStyle.Bold),
+                ForeColor = UiTheme.TextMain,
                 Dock = DockStyle.Top,
-                Height = 35
+                Height = 42,
+                Padding = new Padding(12, 0, 0, 0),
+                TextAlign = ContentAlignment.MiddleLeft
             };
 
             salesListView = new ListView
@@ -4469,9 +4477,10 @@ ORDER BY i.[Description], i.[Name], i.Code";
                 Dock = DockStyle.Fill,
                 View = View.Details,
                 FullRowSelect = true,
-                GridLines = true,
+                GridLines = false,
+                BorderStyle = BorderStyle.None,
                 HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                Font = new Font("Arial", 10)
+                Font = UiTheme.UiFont(11)
             };
 
             // Add columns with dynamic sizing so they adapt to the resized totals panel
@@ -4497,6 +4506,7 @@ ORDER BY i.[Description], i.[Name], i.Code";
             // Add controls in order: label (top), then listview (fills remaining)
             salesPanel.Controls.Add(salesListView);
             salesPanel.Controls.Add(salesLabel);
+            UiTheme.MakeCard(salesPanel);
             // If you want paymentsLabel, paymentsListView, remainingBalanceLabel visible, dock/bottom them as needed
             // Example:
             // paymentsLabel.Dock = DockStyle.Bottom;
@@ -4514,17 +4524,15 @@ ORDER BY i.[Description], i.[Name], i.Code";
             totalPanel = new Panel
             {
                 Dock = DockStyle.Right,
-                Width = 480, // reduced from 640 to make totals panel smaller
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle
+                Width = 480 // reduced from 640 to make totals panel smaller
             };
 
             Label totalsLabel = new Label
             {
-                Text = "TOTALS",
-                Font = new Font("Arial", 16, FontStyle.Bold),
-                ForeColor = Color.DarkBlue,
-                Location = new Point(10, 10),
+                Text = "Totals",
+                Font = UiTheme.UiFont(14, FontStyle.Bold),
+                ForeColor = UiTheme.TextMain,
+                Location = new Point(20, 18),
                 Size = new Size(420, 30)
             };
 
@@ -4559,10 +4567,10 @@ ORDER BY i.[Description], i.[Name], i.Code";
             grandTotalLabel = new Label
             {
                 Text = "Grand Total: 0.00",
-                Font = new Font("Arial", 16, FontStyle.Bold),
-                ForeColor = Color.DarkRed,
-                Location = new Point(20, 180),
-                Size = new Size(420, 35)
+                Font = UiTheme.UiFont(18, FontStyle.Bold),
+                ForeColor = UiTheme.Primary,
+                Location = new Point(20, 178),
+                Size = new Size(420, 40)
             };
 
             // Discount button
@@ -4582,12 +4590,14 @@ ORDER BY i.[Description], i.[Name], i.Code";
             {
                 Text = "DownPayment",
                 Location = new Point(240, 230), // Beside Apply Discount
-                Size = new Size(220, 40),
+                Size = new Size(200, 40),        // right edge lines up with CHECKOUT
                 BackColor = Color.DarkOrange,
                 ForeColor = Color.White,
                 Font = new Font("Arial", 11, FontStyle.Bold),
                 Tag = "DOWNPAYMENT"
             };
+            UiTheme.SetRole(discountButton, UiRole.Secondary);
+            UiTheme.SetRole(downPaymentButton, UiRole.Secondary);
             downPaymentButton.Click += (s, e) =>
             {
                 checkoutButton.Text = "POST";
@@ -4615,9 +4625,9 @@ ORDER BY i.[Description], i.[Name], i.Code";
                 Text = "CHECKOUT",
                 Location = new Point(20, 300),
                 Size = new Size(420, 60),
-                BackColor = Color.Green,
+                BackColor = Color.Green,   // UiTheme keeps the state colours: green sale, amber POST, red exchange
                 ForeColor = Color.White,
-                Font = new Font("Arial", 16, FontStyle.Bold),
+                Font = UiTheme.UiFont(16, FontStyle.Bold),
                 Tag = "SALES"
             };
             checkoutButton.Click += (s, e) =>
@@ -4687,6 +4697,7 @@ ORDER BY i.[Description], i.[Name], i.Code";
                 totalsLabel, totalLabel, discountLabel, paymentsLabel, grandTotalLabel,
                 discountButton, downPaymentButton, checkoutButton, salesPersonDisplayLabel, tenderTypesPanel
             });
+            UiTheme.MakeCard(totalPanel);
             this.Controls.Add(totalPanel);
         }
 
@@ -4803,7 +4814,7 @@ END", connection);
 
             try
             {
-                var tableForm = new Form
+                var tableForm = new ThemedForm
                 {
                     Text = "Glass Pricing Setup",
                     Size = new Size(760, 430),
@@ -4866,7 +4877,7 @@ END", connection);
                         decimal.TryParse(row.Cells["PricePerSqFt"].Value?.ToString(), out currentPrice);
                         string currentTurnAroundDays = row.Cells["TurnAroundDays"].Value?.ToString() ?? string.Empty;
 
-                        var editForm = new Form
+                        var editForm = new ThemedForm
                         {
                             Text = $"Edit {uom} {units}",
                             Size = new Size(420, 240),
@@ -5941,7 +5952,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                     }
                 }
 
-                var categoryForm = new Form
+                var categoryForm = new ThemedForm
                 {
                     Text = "Category Management",
                     Size = new Size(1180, 760),
@@ -6059,7 +6070,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         if (gridE.ColumnIndex == dataGridView.Columns["Edit"].Index)
                         {
                             // Edit category
-                            var editForm = new Form
+                            var editForm = new ThemedForm
                             {
                                 Text = "Edit Category",
                                 Size = new Size(460, 400),
@@ -6634,7 +6645,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 //     createTableCmd.ExecuteNonQuery();
                 // }
 
-                var itemsForm = new Form
+                var itemsForm = new ThemedForm
                 {
                     Text = "Items Management",
                     Size = new Size(1400, 700),
@@ -6855,7 +6866,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
         private void ShowItemEditForm(string itemCode, Action refreshCallback)
         {
             var isNewItem = string.IsNullOrEmpty(itemCode);
-            var editForm = new Form
+            var editForm = new ThemedForm
             {
                 Text = isNewItem ? "Add New Item" : "Edit Item",
                 Size = new Size(600, 720),
@@ -7343,12 +7354,11 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
             buttonPanel = new Panel
             {
                 Dock = DockStyle.Bottom,
-                Height = 240,
-                BackColor = Color.LightGray,
-                BorderStyle = BorderStyle.FixedSingle
+                Height = 240
             };
             // Make panel scrollable and responsive
             buttonPanel.AutoScroll = true;
+            UiTheme.MakeCard(buttonPanel);
             // Create category-based button grid
             CreateCategoryButtons();
             // Rebuild buttons on resize so the grid remains responsive
@@ -7524,6 +7534,13 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                     Margin = new Padding(2),
                     MinimumSize = new Size(0, buttonHeight)
                 };
+                // Portal look instead of a colour per button: categories = light tiles, destructive
+                // actions = soft red, everything else = plain white buttons.
+                string cat = data.Category?.ToString() ?? "";
+                UiTheme.SetRole(button,
+                    (data.Type?.ToString() ?? "") == "Category" ? UiRole.Tile
+                    : cat is "VoidTransaction" or "VoidLine" or "Logoff" ? UiRole.DangerSoft
+                    : UiRole.Secondary);
                 button.Click += ButtonGrid_Click;
                 grid.Controls.Add(button, currentCol, currentRow);
                 if (isSettings)
@@ -7758,7 +7775,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
 
         private void ShowReportsDialog()
         {
-            var reportsForm = new Form
+            var reportsForm = new ThemedForm
             {
                 Text = "Reports",
                 Size = new Size(520, 455),
@@ -7864,7 +7881,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
 
         private void ShowReportDateRangeDialog(string reportTitle, Action<DateTime, DateTime> onConfirm)
         {
-            var dialog = new Form
+            var dialog = new ThemedForm
             {
                 Text = reportTitle,
                 Size = new Size(460, 260),
@@ -7957,7 +7974,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
 
         private void ShowMonthPickerReportDialog(string reportTitle, Action<DateTime, DateTime> onConfirm)
         {
-            var dialog = new Form
+            var dialog = new ThemedForm
             {
                 Text = reportTitle,
                 Size = new Size(460, 210),
@@ -8045,7 +8062,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                 GlobalSettings.ConnectionString,
                 currentWarehouse?.Id,
                 currentWarehouse?.Name);
-            var dialog = new Form
+            var dialog = new ThemedForm
             {
                 Text = "Month End Generation Worksheet",
                 Size = new Size(760, 280),
@@ -8270,7 +8287,7 @@ ORDER BY Code", conn);
         {
             bool isExistingItemExpense = !string.IsNullOrWhiteSpace(itemCode);
 
-            var descForm = new Form
+            var descForm = new ThemedForm
             {
                 Text = "Record Expense",
                 Size = new Size(900, 900),
@@ -8528,7 +8545,7 @@ ORDER BY Code", conn);
                         {
                             try
                             {
-                                using (var tenderForm = new Form()
+                                using (var tenderForm = new ThemedForm()
                                 {
                                     Text = "Select Tender Type",
                                     Size = new Size(760, 260),
@@ -8651,7 +8668,7 @@ ORDER BY Code", conn);
         private void ShowIncomeDialog()
         {
             // First form - Amount input for Income
-            var amountForm = new Form
+            var amountForm = new ThemedForm
             {
                 Text = "Record Income",
                 Size = new Size(900, 400),
@@ -8734,7 +8751,7 @@ ORDER BY Code", conn);
 
         private void ShowIncomeDescriptionDialog(decimal amount, string? prefillDescription = null, string? itemCode = null)
         {
-            var descForm = new Form
+            var descForm = new ThemedForm
             {
                 Text = "Record Income",
                 Size = new Size(900, 600),
@@ -8815,7 +8832,7 @@ ORDER BY Code", conn);
                     // After adding income line, prompt user to select tender type and record payment
                     try
                     {
-                        using (var tenderForm = new Form()
+                        using (var tenderForm = new ThemedForm()
                         {
                             Text = "Select Tender Type",
                             Size = new Size(760, 260),
@@ -8933,7 +8950,7 @@ ORDER BY Code", conn);
 
         private void ShowSelectExistingItemForExpense()
         {
-            var selectForm = new Form
+            var selectForm = new ThemedForm
             {
                 Text = "Select Existing Item",
                 Size = new Size(900, 600),
@@ -9101,7 +9118,7 @@ ORDER BY Code", conn);
 
         private void ShowSettingsDialog()
         {
-            var settingsForm = new Form
+            var settingsForm = new ThemedForm
             {
                 Text = "Settings",
                 Size = new Size(860, 660),
@@ -9629,7 +9646,7 @@ ORDER BY Code", conn);
 
         private void ShowWholesaleSetupDialog(IWin32Window? owner = null)
         {
-            var wholesaleForm = new Form
+            var wholesaleForm = new ThemedForm
             {
                 Text = "Wholesale Setup",
                 Size = new Size(980, 640),
@@ -10299,7 +10316,7 @@ END", connection);
         {
             try
             {
-                var setupForm = new Form
+                var setupForm = new ThemedForm
                 {
                     Text = "General Setup",
                     Size = new Size(460, 280),
@@ -10427,7 +10444,7 @@ END", connection);
         private void ShowCustomAquariumDialog()
         {
             // Create custom aquarium form
-            var customForm = new Form
+            var customForm = new ThemedForm
             {
                 Text = "Custom Aquarium Calculator",
                 StartPosition = FormStartPosition.CenterParent,
@@ -13475,7 +13492,7 @@ END", connection);
 
         private void ShowCustomStickersDialog()
         {
-            var f = new Form
+            var f = new ThemedForm
             {
                 Text = "Custom Stickers",
                 Size = new Size(700, 480),
@@ -13895,7 +13912,7 @@ END", connection);
                     catch { }
 
                     // Create product selection form
-                    var productForm = new Form
+                    var productForm = new ThemedForm
                     {
                         Text = $"{categoryDescription} Products",
                         Size = new Size(1080, 620),
@@ -14171,7 +14188,7 @@ END", connection);
                     catch { }
 
                     // Create sales items form
-                    var salesForm = new Form
+                    var salesForm = new ThemedForm
                     {
                         Text = "Select Items for Sale",
                         Size = new Size(1140, 650),
@@ -14530,7 +14547,7 @@ END", connection);
                                 dynamic itemData = selectedItem.Tag;
 
                                 // Ask for quantity
-                                var qtyForm = new Form
+                                var qtyForm = new ThemedForm
                                 {
                                     Text = "Select Quantity",
                                     Size = new Size(560, 230),
@@ -14935,7 +14952,7 @@ END", connection);
                     createTableCmd.ExecuteNonQuery();
                 }
 
-                var itemsForm = new Form
+                var itemsForm = new ThemedForm
                 {
                     Text = "Item Management",
                     Size = new Size(1400, 700),
@@ -15456,7 +15473,7 @@ ORDER BY VariantName, ItemCode", connection);
 
             SaleVariantSelection? selected = null;
 
-            using var form = new Form
+            using var form = new ThemedForm
             {
                 Text = "Choose Variant",
                 Size = new Size(820, 520),
@@ -16552,7 +16569,7 @@ END", connection);
                 return null;
             }
 
-            using var dialog = new Form
+            using var dialog = new ThemedForm
             {
                 Text = "Select Item Serial",
                 StartPosition = FormStartPosition.CenterParent,
@@ -17125,7 +17142,7 @@ END", connection);
             paymentsLabel.Text = $"Payments: -{totalPaid:F2}";
             paymentsLabel.Visible = true;
             grandTotalLabel.Text = $"Grand Total: {grandTotal:F2}";
-            grandTotalLabel.ForeColor = Color.DarkRed;
+            grandTotalLabel.ForeColor = UiTheme.Primary;
             // If there are expense lines pending, change Checkout button to POST and tag accordingly
             bool hasExpense = salesListView.Items.Cast<ListViewItem>().Any(i => i.Tag?.ToString() == "EXPENSE");
             bool hasIncome = salesListView.Items.Cast<ListViewItem>().Any(i => i.Tag?.ToString() == "INCOME");
@@ -17281,7 +17298,7 @@ END", connection);
             string baseDescription = RemoveSerialTagFromSaleDescription(selectedItem.Text);
 
             // Create quantity change dialog
-            var qtyForm = new Form
+            var qtyForm = new ThemedForm
             {
                 Text = "Change Quantity",
                 Size = new Size(350, 200),
@@ -17503,7 +17520,7 @@ END", connection);
             decimal.TryParse(selectedItem.SubItems[2].Text.Replace("?", ""), out unitPrice);
             decimal currentItemTotal = GetListViewItemTotal(selectedItem);
 
-            var priceForm = new Form
+            var priceForm = new ThemedForm
             {
                 Text = "Change Price",
                 Size = new Size(380, 220),
@@ -18356,7 +18373,7 @@ END", connection);
 
                     if (hasCashPayment)
                     {
-                        var changeForm = new Form
+                        var changeForm = new ThemedForm
                         {
                             Text = "Change Due",
                             Size = new Size(560, 260),
@@ -19433,7 +19450,7 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
             }
 
             // Show discount options
-            var discountForm = new Form
+            var discountForm = new ThemedForm
             {
                 Text = "Apply Discount",
                 Size = new Size(380, 300),
@@ -20447,7 +20464,7 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
             {
                 CreateInventoryTables(); // Ensure tables exist
 
-                var ledgerForm = new Form
+                var ledgerForm = new ThemedForm
                 {
                     Text = "Inventory Ledger - Item Movement History",
                     Size = new Size(1950, 700),
@@ -22132,7 +22149,7 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
         {
             try
             {
-                var settingsForm = new Form
+                var settingsForm = new ThemedForm
                 {
                     Text = "Printer Settings",
                     Size = new Size(920, 620),
@@ -22927,7 +22944,7 @@ ORDER BY [Name]", conn);
 
         private void ShowCashFloatHistory()
         {
-            var floatHistoryForm = new Form
+            var floatHistoryForm = new ThemedForm
             {
                 Text = "Cash Float History",
                 Size = new Size(1200, 700),
@@ -23272,7 +23289,7 @@ ORDER BY [Name]", conn);
                 // Best-effort; the form still works without the column present (Warehouse selection just won't persist).
             }
 
-            var userSetupForm = new Form
+            var userSetupForm = new ThemedForm
             {
                 Text = "User Setup Management",
                 Size = new Size(1000, 600),
@@ -23835,7 +23852,7 @@ ORDER BY [Name]", conn);
 
         public void ShowTransPaymentEntryForm(string receiptNo)
         {
-            var paymentEntryForm = new Form
+            var paymentEntryForm = new ThemedForm
             {
                 Text = "Transaction Payment Entries",
                 Size = new Size(1200, 700),
@@ -24195,7 +24212,7 @@ ORDER BY [Name]", conn);
 
         private void ShowEndOfDayDialog()
         {
-            var eodForm = new Form
+            var eodForm = new ThemedForm
             {
                 Text = "End of Day Report",
                 Size = new Size(1000, 700),
@@ -24379,7 +24396,7 @@ ORDER BY [Name]", conn);
 
         private void ShowCashDeclarationDialog()
         {
-            var cashDeclForm = new Form
+            var cashDeclForm = new ThemedForm
             {
                 Text = "Cash Declaration - End of Day",
                 Size = new Size(800, 600),

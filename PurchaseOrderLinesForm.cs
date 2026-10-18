@@ -6,7 +6,7 @@ using System.Data.SqlClient;
 
 namespace AquariumPOS
 {
-    public class PurchaseOrderLinesForm : Form
+    public class PurchaseOrderLinesForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataGridView grid = null!;

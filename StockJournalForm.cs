@@ -8,7 +8,7 @@ using System.Collections.Generic;
 
 namespace AquariumPOS
 {
-    public class StockJournalForm : Form
+    public class StockJournalForm : ThemedForm
     {
         private DataGridView dgv;
         private Button btnAddRow;

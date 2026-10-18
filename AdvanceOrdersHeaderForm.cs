@@ -8,7 +8,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class AdvanceOrdersHeaderForm : Form
+    public class AdvanceOrdersHeaderForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataGridView dataGridView;
@@ -304,7 +304,7 @@ namespace AquariumPOS
 
         private void ShowSyncDetailsDialog(string receiptNo, string details)
         {
-            using var dlg = new Form
+            using var dlg = new ThemedForm
             {
                 Text = $"Sync Details - {receiptNo}",
                 Size = new Size(700, 500),
@@ -425,7 +425,7 @@ namespace AquariumPOS
 
                 if (tenders.Count > 0)
                 {
-                    using (var tenderForm = new Form())
+                    using (var tenderForm = new ThemedForm())
                     {
                         tenderForm.Text = "Select Tender Type";
                         tenderForm.Size = new Size(300, 400);
@@ -1130,7 +1130,7 @@ GROUP BY s.ItemCode, ISNULL(s.VariantCode, '')", conn);
             if (availableSerials == null || availableSerials.Count == 0)
                 return null;
 
-            using var dialog = new Form
+            using var dialog = new ThemedForm
             {
                 Text = "Select Item Serial",
                 StartPosition = FormStartPosition.CenterParent,

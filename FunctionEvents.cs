@@ -92,7 +92,7 @@ namespace AquariumPOS
         // Prompts for customer name before posting
         public static string PromptForCustomerName(Form? owner = null, string? initialCustomerName = null)
         {
-            using (var customerForm = new Form())
+            using (var customerForm = new ThemedForm())
             {
                 customerForm.Text = "Enter Customer Name";
                 customerForm.Size = new System.Drawing.Size(700, 400);
@@ -195,7 +195,7 @@ namespace AquariumPOS
         // Prompts for order description before posting
         public static string PromptForOrderDescription(Form? owner = null, string? initialOrderDescription = null)
         {
-            using (var descForm = new Form())
+            using (var descForm = new ThemedForm())
             {
                 descForm.Text = "Enter Order Description";
                 descForm.Size = new System.Drawing.Size(900, 500);

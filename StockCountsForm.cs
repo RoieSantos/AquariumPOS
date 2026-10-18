@@ -8,7 +8,7 @@ using System.Collections.Generic;
 
 namespace AquariumPOS
 {
-    public class StockCountsForm : Form
+    public class StockCountsForm : ThemedForm
     {
         private DataGridView dgv = null!;
         private TextBox txtSearch = null!;

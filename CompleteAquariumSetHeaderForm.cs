@@ -8,7 +8,7 @@ using OfficeOpenXml;
 
 namespace AquariumPOS
 {
-    public class CompleteAquariumSetHeaderForm : Form
+    public class CompleteAquariumSetHeaderForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private DataGridView grid = null!;
@@ -692,7 +692,7 @@ WHEN NOT MATCHED THEN
         }
     }
 
-    internal sealed class CompleteAquariumSetHeaderEditDialog : Form
+    internal sealed class CompleteAquariumSetHeaderEditDialog : ThemedForm
     {
         private readonly TextBox txtPackageName;
         private readonly NumericUpDown nudPackagePrice;

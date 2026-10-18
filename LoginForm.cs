@@ -6,7 +6,7 @@ using System.Collections.Generic;
 
 namespace AquariumPOS
 {
-    public partial class LoginForm : Form
+    public partial class LoginForm : ThemedForm
     {
         private string GetLocalIPAddress()
         {

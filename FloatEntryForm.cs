@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class FloatEntryForm : Form
+    public class FloatEntryForm : ThemedForm
     {
     private readonly string connectionString = GlobalSettings.ConnectionString;
         private Label? titleLabel;

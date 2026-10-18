@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public class VariantsViewForm : Form
+    public class VariantsViewForm : ThemedForm
     {
         private readonly string connectionString;
         private readonly DataGridView productsGrid;

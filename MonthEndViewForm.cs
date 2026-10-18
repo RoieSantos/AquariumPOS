@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace AquariumPOS
 {
-    public sealed class MonthEndViewForm : Form
+    public sealed class MonthEndViewForm : ThemedForm
     {
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private readonly DataGridView headerGrid;
@@ -544,7 +544,7 @@ namespace AquariumPOS
                 }
             }
 
-            using var dialog = new Form
+            using var dialog = new ThemedForm
             {
                 Text = $"Confirm {(string.IsNullOrWhiteSpace(preview.ActionType) ? "Adjustment" : preview.ActionType)} Request",
                 StartPosition = FormStartPosition.CenterParent,
