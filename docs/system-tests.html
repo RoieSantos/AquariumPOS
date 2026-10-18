@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>System Tests - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navwide1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .st-suite { margin-bottom: 16px; }
+    .st-suite-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+    .st-suite-title { font-weight: 700; font-size: 1.05rem; }
+    .st-suite-desc { font-size: 0.9rem; margin-top: 2px; }
+    .st-message { color: var(--danger); font-size: 0.85rem; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+    .st-skip .st-message { color: var(--neutral); }
+    .st-ms { color: var(--neutral); font-size: 0.85rem; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>System Tests</h1>
+    <p class="muted">Checks that existing features still work after a change: calculator prices and safety rules, page access per role, Alice (the AI bot) quoting the same prices as the website, wholesale rules, delivery fees, order statuses, inventory, background jobs, and that every page, database function and Edge Function the portal uses is in place. Read-only, so running it never changes any data. <strong>Fail</strong> = broken now; <strong>Warning</strong> = worth a look. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <button class="btn btn-primary" id="runAllBtn" type="button">Run tests</button>
+          <select id="suiteKindSelect" aria-label="Which tests">
+            <option value="all">All tests</option>
+            <option value="logic">Logic only (instant)</option>
+            <option value="live">Live data only</option>
+          </select>
+          <label class="muted" style="margin:0; display:flex; gap:6px; align-items:center;">
+            <input type="checkbox" id="onlyFailuresCheck" /> Show only failures
+          </label>
+          <button class="btn btn-secondary hidden" id="copyFailuresBtn" type="button">Copy failures</button>
+        </div>
+      </div>
+
+      <div id="runSummary"></div>
+      <div id="suitesContainer"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=custconv1"></script>
+  <script src="js/nav.js?v=systests1"></script>
+  <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sumponly1"></script>
+  <script src="js/systemTests.js?v=2"></script>
+  <!-- Test suites - each registers itself with SystemTests.suite(...). Add new files here. -->
+  <script src="tests/calculatorTests.js?v=1"></script>
+  <script src="tests/accessTests.js?v=1"></script>
+  <script src="tests/liveChecks.js?v=2"></script>
+  <script src="tests/databaseChecks.js?v=2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

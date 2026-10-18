@@ -1210,6 +1210,11 @@ INSERT INTO CardProcessingFeeLog (
                 // Items" button (RunManualProductSyncAsync) runs the same pull on demand.
                 try { await OnlinefunctionsEvents.SyncItemWholesalePricesFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
 
+                // Also Supabase -> desktop - aquarium SET packages are maintained on the Web Portal's
+                // Customer Aquarium page now; this mirrors them into the local tables the POS reads when a
+                // set is punched (Settings > Aquarium Set is read-only, with its own "Sync from Portal").
+                try { await OnlinefunctionsEvents.SyncAquariumSetPackagesFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
                 // Also Supabase -> desktop - Glass/Stand-Tubular/Sticker pricing, centralized so the
                 // Web Portal's Pricing Setup page is the one place staff edit these now instead of
                 // separately here and on the two web calculators (see

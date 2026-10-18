@@ -20,7 +20,15 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
-import { buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import {
+  buildBotOrderLines,
+  buildCurrentTimeLine,
+  buildSystemPrompt,
+  computeAquariumQuote,
+  computeRepairQuote,
+  computeStickerQuote,
+  runChatbotTurn
+} from '../_shared/chatbot-engine.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 20;
@@ -61,16 +69,20 @@ Deno.serve(async (req) => {
   let adminUsername: string;
   let adminPassword: string;
   let message: string;
+  let toolTest: { name: string; input: Record<string, unknown> } | null = null;
   try {
     const body = await req.json();
     adminUsername = String(body.admin_username ?? '');
     adminPassword = String(body.admin_password ?? '');
     message = String(body.message ?? '');
-    if (!adminUsername || !adminPassword || !message.trim()) {
+    if (body.tool_test && typeof body.tool_test === 'object') {
+      toolTest = { name: String(body.tool_test.name ?? ''), input: (body.tool_test.input ?? {}) as Record<string, unknown> };
+    }
+    if (!adminUsername || !adminPassword || (!toolTest && !message.trim())) {
       throw new Error('missing field');
     }
   } catch {
-    return jsonResponse({ error: 'Body must be JSON: { admin_username, admin_password, message }.' }, 400);
+    return jsonResponse({ error: 'Body must be JSON: { admin_username, admin_password, message } or { admin_username, admin_password, tool_test: { name, input } }.' }, 400);
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -81,6 +93,32 @@ Deno.serve(async (req) => {
   });
   if (authError || !authorized) {
     return jsonResponse({ error: 'Not authorized.' }, 401);
+  }
+
+  // Tool-test mode - backs docs/system-tests.html's "Website calculator vs Alice" checks. Runs ONE
+  // read-only pricing tool exactly as the bot would (same chatbot-engine.ts code, live pricing
+  // tables) and returns its raw result - no Claude call, nothing written to ChatbotSandboxMessages.
+  // Only read-only tools are allowed here.
+  if (toolTest) {
+    const runners: Record<string, (input: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
+      compute_aquarium_quote: (input) => computeAquariumQuote(supabase, input),
+      compute_sticker_quote: (input) => computeStickerQuote(supabase, input),
+      compute_repair_quote: (input) => computeRepairQuote(supabase, input),
+      // The pricing / wholesale-minimum step of create_order, without saving any order.
+      build_order_lines: async (input) => {
+        const built = await buildBotOrderLines(supabase, Array.isArray(input.items) ? input.items : [], { wholesale: input.pricing === 'wholesale' });
+        return typeof built === 'string' ? { ok: false, error: built } : { ok: true, ...built };
+      }
+    };
+    const run = runners[toolTest.name];
+    if (!run) {
+      return jsonResponse({ error: `tool_test only supports: ${Object.keys(runners).join(', ')}.` }, 400);
+    }
+    try {
+      return jsonResponse({ ok: true, tool: toolTest.name, result: await run(toolTest.input) });
+    } catch (err) {
+      return jsonResponse({ error: err instanceof Error ? err.message : 'Tool test failed.' }, 500);
+    }
   }
 
   const { error: insertErr } = await supabase

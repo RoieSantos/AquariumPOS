@@ -54,7 +54,8 @@ namespace AquariumPOS
             btnEdit = CreateButton("Edit", Color.DarkOrange, BtnEdit_Click);
             btnDelete = CreateButton("Delete", Color.Firebrick, BtnDelete_Click);
             btnLines = CreateButton("Lines", Color.SteelBlue, (s, e) => OpenSelectedLines());
-            btnSync = CreateButton("Sync", Color.MediumSlateBlue, BtnSync_Click);
+            btnSync = CreateButton("Sync from Portal", Color.MediumSlateBlue, BtnSync_Click);
+            btnSync.Width = 150;
             btnExport = CreateButton("Export", Color.SeaGreen, BtnExport_Click);
             btnImport = CreateButton("Import", Color.Teal, BtnImport_Click);
             btnRefresh = CreateButton("Refresh", Color.RoyalBlue, (s, e) => LoadData());
@@ -68,10 +69,25 @@ namespace AquariumPOS
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false
             };
-            buttonPanel.Controls.AddRange(new Control[] { btnAdd, btnEdit, btnDelete, btnLines, btnSync, btnExport, btnImport, btnRefresh, btnClose });
+            // Add/Edit/Delete/Import are left off on purpose: the Web Portal owns these packages now and
+            // SyncAquariumSetPackagesFromSupabaseAsync overwrites the local tables, so a local edit would be
+            // lost within 5 minutes. Lines opens read-only.
+            buttonPanel.Controls.AddRange(new Control[] { btnLines, btnSync, btnExport, btnRefresh, btnClose });
+
+            var portalNotice = new Label
+            {
+                Text = "Packages are managed in the Web Portal (Reports > Customer Aquarium). This is a read-only copy, refreshed every 5 minutes or with Sync from Portal.",
+                Dock = DockStyle.Top,
+                Height = 40,
+                Padding = new Padding(8, 4, 8, 4),
+                BackColor = Color.LightYellow,
+                ForeColor = Color.DarkSlateGray,
+                Font = new Font("Arial", 9, FontStyle.Bold)
+            };
 
             Controls.Add(grid);
             Controls.Add(buttonPanel);
+            Controls.Add(portalNotice);
         }
 
         private Button CreateButton(string text, Color backColor, EventHandler onClick)
@@ -334,21 +350,15 @@ WHERE PackageName = @PackageName", connection);
                 {
                     EnsureTables();
 
-                    int syncedProducts = await OnlinefunctionsEvents.SyncUpProductsAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(true);
-                    try
-                    {
-                        await OnlinefunctionsEvents.SyncProductVariationsAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(true);
-                    }
-                    catch
-                    {
-                        // Best effort: SET header sync can still proceed from Items even if variant sync fails.
-                    }
-
-                    int importedPackages = SyncSetPackagesFromItems();
+                    // Packages are owned by the Web Portal (Customer Aquarium page) now - this pulls them on
+                    // demand instead of waiting for the 5-minute MasterDataSyncTimer. It replaced the old
+                    // "create headers from SET items" import (SyncSetPackagesFromItems), whose rows would just
+                    // be deleted by the next pull since they don't exist on the portal.
+                    int changedPackages = await OnlinefunctionsEvents.SyncAquariumSetPackagesFromSupabaseAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(true);
                     LoadData();
 
                     MessageBox.Show(this,
-                        $"Cloud sync completed.\n\nProducts synced: {syncedProducts:N0}\nSET packages imported/updated: {importedPackages:N0}",
+                        $"Pulled SET packages from the Web Portal.\n\nPackages added/changed/removed: {changedPackages:N0}",
                         "Sync Complete",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
@@ -677,7 +687,7 @@ WHEN NOT MATCHED THEN
                 return;
             }
 
-            using var form = new CompleteAquariumSetLineForm(packageName);
+            using var form = new CompleteAquariumSetLineForm(packageName, readOnly: true);
             form.ShowDialog(this);
         }
     }

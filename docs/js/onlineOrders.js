@@ -1999,19 +1999,24 @@ async function markOrderShippedWhole(o, btn) {
 // order at most ONCE (supabase_online_order_ship_post.sql, supabase_online_order_ship_post_amaya.sql).
 // Facebook failing never undoes the Shipped status. No photo (Proof Photos switched off in General
 // Setup) -> no post.
-function shipPostPageName(o) {
-  const branch = o?.warehouse_name || '';
-  if (/gma/i.test(branch)) return 'GMA Facebook Page';
-  if (/amaya/i.test(branch)) return 'RS Pet Stop Facebook Page';
+// Advance orders too (per "i want it to advance orders too if possible"): `advance` = o is an advance
+// row, posted as order_id 'ADV-<no>' by its "Warehouse" branch - by a Dispatcher or whoever may mark it
+// Shipped (Super User / Production Manager) - sql/supabase_advance_order_ship_post.sql.
+function shipPostPageName(branch) {
+  if (/gma/i.test(branch || '')) return 'GMA Facebook Page';
+  if (/amaya/i.test(branch || '')) return 'RS Pet Stop Facebook Page';
   return null;
 }
 
-async function postShipPhotoToFacebook(o) {
+async function postShipPhotoToFacebook(o, advance = false) {
   const photo = lastProofPhoto;
   lastProofPhoto = null;
-  const pageName = shipPostPageName(o);
-  if (!(currentSession?.staffRoles || []).includes('Dispatcher') || !pageName) return;
-  if (!photo || photo.refId !== String(o.order_id) || photo.label !== 'Released - Shipped') return;
+  const refId = String(advance ? o.transaction_no : o.order_id);
+  const pageName = shipPostPageName(advance ? o.warehouse : o.warehouse_name);
+  const canPost = (currentSession?.staffRoles || []).includes('Dispatcher')
+    || (advance && (currentSession?.isSuperUser || currentSession?.isProductionManager));
+  if (!canPost || !pageName) return;
+  if (!photo || photo.refId !== refId || photo.label !== 'Released - Shipped') return;
 
   let imageBase64;
   showSendStatusBanner(`Shipped! Posting the photo to the ${pageName}...`);
@@ -2033,7 +2038,7 @@ async function postShipPhotoToFacebook(o) {
   // Try Again only re-sends this request; the server refuses a second post of the same order.
   for (;;) {
     try {
-      await callFacebookPostFunction(currentSession, imageBase64, { action: 'post_ship', order_id: String(o.order_id) });
+      await callFacebookPostFunction(currentSession, imageBase64, { action: 'post_ship', order_id: advance ? `ADV-${refId}` : refId });
       showSendStatusBanner(`✅ Posted to the ${pageName}.`);
       setTimeout(hideSendStatusBanner, 3000);
       return;
@@ -7005,6 +7010,7 @@ async function loadOrders(search, status) {
   if (myAssignmentsOnly) renderMyAssignmentCards(rows);
   loadMyProductionOrderCards();
   loadMyAdvanceOrderCards();
+  loadDispatcherAdvanceShipCards();
 
   const tbody = document.getElementById('orderTableBody');
   tbody.innerHTML = rows.length === 0
@@ -7217,7 +7223,7 @@ let myOnlineAssignmentCount = 0;
 let myProductionOrderCount = 0;
 function setMyAssignmentsCount(count) {
   if (count != null) myOnlineAssignmentCount = Number(count) || 0;
-  document.getElementById('myAssignmentsCount').textContent = String(myOnlineAssignmentCount + myProductionOrderCount + myAdvanceOrderCount);
+  document.getElementById('myAssignmentsCount').textContent = String(myOnlineAssignmentCount + myProductionOrderCount + myAdvanceOrderCount + myAdvanceShipCount);
 }
 
 // Tab buttons for the grouped (Online Order Staff) view - switching tabs re-renders from the
@@ -7449,6 +7455,7 @@ let advanceAssignNo = null;
 let advanceSendBackNo = null;
 let selectedAdvanceNo = null; // the list's selected row - what the action bar works on
 let myAdvanceOrderCount = 0;
+let myAdvanceShipCount = 0; // Dispatcher's To Ship advance orders (loadDispatcherAdvanceShipCards)
 // TO FOLLOW (supabase_advance_order_to_follow.sql): fully paid, not shipped, and a serial-tracked unit
 // still has no serial - e.g. the POS's Paid-in-Full Advance Orders for out-of-stock tanks. Not a
 // production stage: the "To Follow" pill filters on staff_get_advance_orders_to_follow instead.
@@ -8151,6 +8158,7 @@ async function setAdvanceStage(no, stage, btn) {
     btn.disabled = false;
     if (error) window.alert(error.message);
     await refreshAdvanceAfterAction(no);
+    if (!error && stage === 'Shipped') await postShipPhotoToFacebook(o, true);
     return;
   }
 
@@ -8401,6 +8409,91 @@ async function handleAdvanceDoneClick(btn) {
     }
   }
   loadMyAdvanceOrderCards();
+}
+
+// ---- Dispatchers: To Ship advance orders under My Assignments - per "if the order is advance order will
+// it show on the dispatcher my assignments" / "yes please i want that". Same rule as online orders: every
+// To Ship advance order of their branch (all branches if their account has none), with Mark Shipped
+// (proof photo, then the Facebook auto-post - postShipPhotoToFacebook). sql/supabase_advance_order_dispatcher_ship.sql.
+let dispatcherAdvanceRowsByNo = new Map();
+
+async function loadDispatcherAdvanceShipCards() {
+  const box = document.getElementById('myAdvanceShipCards');
+  if (!box) return;
+  if (!myAssignmentsOnly || !(currentSession.staffRoles || []).includes('Dispatcher')) {
+    box.classList.add('hidden');
+    return;
+  }
+  const { data, error } = await advanceRpc('staff_list_dispatcher_advance_orders', {});
+  // Quietly skipped until supabase_advance_order_dispatcher_ship.sql has been run.
+  if (error) { console.warn('staff_list_dispatcher_advance_orders:', error.message); box.classList.add('hidden'); return; }
+  const rows = data || [];
+  dispatcherAdvanceRowsByNo = new Map(rows.map((o) => [String(o.transaction_no), o]));
+  myAdvanceShipCount = rows.length;
+  setMyAssignmentsCount(null);
+  if (!myAssignmentsOnly || !rows.length) { box.classList.add('hidden'); return; }
+  document.querySelectorAll('#myAssignmentCards .oo-mc-empty, #orderTableBody .cell-msg').forEach((el) => {
+    el.textContent = 'No online orders to ship - see the Advance Orders below.';
+  });
+
+  box.innerHTML = `<h3 class="oo-prod-cards-title">Advance Orders - To Ship</h3>` + rows.map((o) => {
+    const lines = Array.isArray(o.lines) ? o.lines : [];
+    const balance = Number(o.balance) || 0;
+    return `
+      <article class="oo-mc oo-prod-mc" data-adv-ship-no="${escapeHtml(o.transaction_no)}">
+        <header class="oo-mc-head">
+          <span class="oo-mc-id">${escapeHtml(o.transaction_no)}</span>
+          <span class="oo-mc-status">To Ship</span>
+        </header>
+        <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
+        ${o.order_description ? `<div class="oo-mc-line"><span>Order</span>${escapeHtml(o.order_description)}</div>` : ''}
+        <div class="oo-mc-line"><span>Receipt</span>${escapeHtml(o.receipt_no || '-')} · ${escapeHtml(o.order_date || '')}</div>
+        <div class="oo-mc-line"><span>Branch</span>${escapeHtml(o.warehouse || '-')}</div>
+        ${balance > 0.009 ? `<div class="oo-mc-line"><span>Balance</span><b>${formatAdvanceMoney(balance)}</b> - collect on delivery</div>` : ''}
+        <table class="oo-prod-lines">
+          <thead><tr><th>Item</th><th class="num">Qty</th></tr></thead>
+          <tbody>${lines.map((l) => `<tr><td>${escapeHtml(l.description || '')}</td><td class="num"><b>${formatProdQty(l.quantity)}</b></td></tr>`).join('')
+            || '<tr><td colspan="2" class="oo-prod-none">No lines.</td></tr>'}</tbody>
+        </table>
+        <div class="oo-mc-actions">
+          <button type="button" class="oo-mc-btn primary" data-adv-ship="${escapeHtml(o.transaction_no)}">&#128666; Mark Shipped</button>
+        </div>
+      </article>`;
+  }).join('');
+  box.classList.remove('hidden');
+
+  if (!box.dataset.wired) {
+    box.dataset.wired = '1';
+    box.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-adv-ship]');
+      if (btn) handleDispatcherAdvanceShipClick(btn);
+    });
+  }
+}
+
+async function handleDispatcherAdvanceShipClick(btn) {
+  const no = btn.dataset.advShip;
+  const o = dispatcherAdvanceRowsByNo.get(no);
+  if (!o) return;
+  const ok = await confirmWithPhoto({
+    caption: 'MARK SHIPPED',
+    title: `${no}${o.customer_name ? ' · ' + o.customer_name : ''}`,
+    message: 'Mark this advance order Shipped (released to the customer)?\n\nTake a photo of what is leaving first.',
+    confirmLabel: 'Yes, Mark Shipped',
+    tone: 'is-done',
+    refId: no,
+    label: 'Released - Shipped'
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  const { error } = await advanceRpc('staff_set_advance_order_stage', { p_no: no, p_stage: 'Shipped' });
+  btn.disabled = false;
+  if (error) {
+    window.alert(`Could not mark ${no} Shipped: ${error.message}`);
+    return;
+  }
+  await loadDispatcherAdvanceShipCards();
+  await postShipPhotoToFacebook(o, true);
 }
 
 function fitAdvanceGridToViewport() {

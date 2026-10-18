@@ -30,7 +30,9 @@
 //       Posts the watermarked ship photo with the Dispatch caption (the item only), ONCE per order:
 //       claims the order first (service_claim_order_ship_post), which also checks it is Shipped and
 //       picks the Page by its branch - GMA -> GMA Page, Amaya -> RS Pet Stop Page. The order is
-//       already Shipped before this is called.
+//       already Shipped before this is called. An advance order is order_id 'ADV-<TransactionNo>'
+//       (supabase_advance_order_ship_post.sql): its branch is AdvanceOrders."Warehouse", and a
+//       Production Manager (who marks advance orders Shipped) may post it too.
 //
 // Facebook is only ever called by 'post', 'post_stop' and 'post_ship', once per request, with no
 // automatic retry - and nothing calls this function on a timer; every call is a staff tap.
@@ -360,7 +362,10 @@ Deno.serve(async (req) => {
     .select('"SuperUser", "WarehouseName", "StaffRoles", "ProductionMember", "StoreManager", "SalesUser", "DeliveryTeam"')
     .eq('Username', adminUsername).maybeSingle();
   const isDispatcher = ((staff?.StaffRoles as string[] | null) ?? []).includes('Dispatcher');
-  const allowed = action === 'post_ship' ? (staff?.SuperUser || isDispatcher) : (staff?.SuperUser || staff?.DeliveryTeam);
+  const isProductionManager = ((staff?.StaffRoles as string[] | null) ?? []).includes('ProductionManager');
+  const allowed = action === 'post_ship'
+    ? (staff?.SuperUser || isDispatcher || (/^ADV-/i.test(orderId) && isProductionManager))
+    : (staff?.SuperUser || staff?.DeliveryTeam);
   if (!allowed) return jsonResponse({ error: 'Not authorized to post.' }, 403);
 
   let bytes: Uint8Array | null = null;

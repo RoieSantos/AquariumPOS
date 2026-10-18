@@ -7755,6 +7755,307 @@ WHEN NOT MATCHED THEN
             return updatedCount;
         }
 
+        /// <summary>
+        /// Supabase -> desktop: mirrors the Web Portal's aquarium SET packages (Customer Aquarium page,
+        /// public."CompleteAquariumSetHeader" / "CompleteAquariumSetLine") into the local
+        /// dbo.CompleteAquariumSet* tables that the POS reads when a set is punched. The Portal is the only
+        /// place packages are maintained now - the POS Setup screen is read-only - so local packages missing
+        /// from the Portal are deleted, and changed prices / BOM lines are overwritten.
+        /// One-time seed: the first run on each terminal (no row in dbo.CompleteAquariumSetPortalSync yet)
+        /// uploads that terminal's local packages that the Portal doesn't have, so packages that were only
+        /// ever made in the POS aren't wiped by the first mirror. After that, deleting a package on the
+        /// Portal deletes it here too.
+        /// Safety: an empty Portal response is never mirrored (it would wipe every local package).
+        /// Both tables are anon read/write (supabase_web_portal_rls_policies.sql), so no RPC is needed.
+        /// Only packages that actually differ are written. Returns the number of packages added, changed
+        /// or removed locally.
+        /// </summary>
+        public static async Task<int> SyncAquariumSetPackagesFromSupabaseAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(60);
+
+            string endpointUrl = GlobalSettings.ItemsSupabaseEndpoint?.Trim() ?? string.Empty;
+            int restIndex = endpointUrl.IndexOf("/rest/v1/", StringComparison.OrdinalIgnoreCase);
+            if (restIndex < 0)
+                throw new InvalidOperationException("ItemsSupabaseEndpoint is not a Supabase REST URL.");
+            string restBase = endpointUrl.Substring(0, restIndex) + "/rest/v1/";
+
+            CompleteAquariumSetData.EnsureTablesExist(GlobalSettings.ConnectionString);
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+
+            var portalHeaders = new List<CompleteAquariumSetData.PackageHeader>();
+            foreach (var row in await GetAquariumSetRowsAsync(http, restBase + "CompleteAquariumSetHeader?select=PackageName,PackagePrice,VariantID&order=PackageName").ConfigureAwait(false))
+            {
+                string name = GetJsonString(row, "PackageName").Trim();
+                if (name.Length == 0) continue;
+                portalHeaders.Add(new CompleteAquariumSetData.PackageHeader
+                {
+                    PackageName = name,
+                    PackagePrice = GetJsonDecimal(row, "PackagePrice"),
+                    VariantID = GetJsonString(row, "VariantID").Trim()
+                });
+            }
+
+            var portalLines = new List<CompleteAquariumSetData.PackageLine>();
+            foreach (var row in await GetAquariumSetRowsAsync(http, restBase + "CompleteAquariumSetLine?select=PackageName,ItemNo,ItemName,Quantity,Price&order=EntryNo").ConfigureAwait(false))
+            {
+                portalLines.Add(new CompleteAquariumSetData.PackageLine
+                {
+                    PackageName = GetJsonString(row, "PackageName").Trim(),
+                    ItemNo = GetJsonString(row, "ItemNo").Trim(),
+                    ItemName = GetJsonString(row, "ItemName").Trim(),
+                    Quantity = GetJsonDecimal(row, "Quantity"),
+                    Price = GetJsonDecimal(row, "Price")
+                });
+            }
+
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+
+            using (var markerCmd = new SqlCommand(@"
+IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'CompleteAquariumSetPortalSync')
+    CREATE TABLE dbo.CompleteAquariumSetPortalSync (
+        Id INT NOT NULL PRIMARY KEY,
+        SeededAtUtc DATETIME2 NOT NULL CONSTRAINT DF_CompleteAquariumSetPortalSync_SeededAtUtc DEFAULT SYSUTCDATETIME()
+    );", conn))
+            {
+                markerCmd.ExecuteNonQuery();
+            }
+
+            var localHeaders = new Dictionary<string, CompleteAquariumSetData.PackageHeader>(StringComparer.OrdinalIgnoreCase);
+            using (var cmd = new SqlCommand("SELECT PackageName, PackagePrice, ISNULL(VariantID, '') AS VariantID FROM dbo.CompleteAquariumSetHeader", conn))
+            using (var reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    string name = reader["PackageName"]?.ToString()?.Trim() ?? string.Empty;
+                    if (name.Length == 0) continue;
+                    localHeaders[name] = new CompleteAquariumSetData.PackageHeader
+                    {
+                        PackageName = name,
+                        PackagePrice = reader["PackagePrice"] != DBNull.Value ? Convert.ToDecimal(reader["PackagePrice"]) : 0m,
+                        VariantID = reader["VariantID"]?.ToString()?.Trim() ?? string.Empty
+                    };
+                }
+            }
+
+            var localLines = new Dictionary<string, List<CompleteAquariumSetData.PackageLine>>(StringComparer.OrdinalIgnoreCase);
+            using (var cmd = new SqlCommand("SELECT PackageName, ItemNo, ISNULL(ItemName, '') AS ItemName, Quantity, Price FROM dbo.CompleteAquariumSetLine ORDER BY PackageName, EntryNo", conn))
+            using (var reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    string name = reader["PackageName"]?.ToString()?.Trim() ?? string.Empty;
+                    if (!localLines.TryGetValue(name, out var list))
+                        localLines[name] = list = new List<CompleteAquariumSetData.PackageLine>();
+                    list.Add(new CompleteAquariumSetData.PackageLine
+                    {
+                        PackageName = name,
+                        ItemNo = reader["ItemNo"]?.ToString()?.Trim() ?? string.Empty,
+                        ItemName = reader["ItemName"]?.ToString()?.Trim() ?? string.Empty,
+                        Quantity = reader["Quantity"] != DBNull.Value ? Convert.ToDecimal(reader["Quantity"]) : 0m,
+                        Price = reader["Price"] != DBNull.Value ? Convert.ToDecimal(reader["Price"]) : 0m
+                    });
+                }
+            }
+
+            bool seeded;
+            using (var cmd = new SqlCommand("SELECT COUNT(*) FROM dbo.CompleteAquariumSetPortalSync", conn))
+                seeded = Convert.ToInt32(cmd.ExecuteScalar() ?? 0) > 0;
+
+            if (!seeded)
+            {
+                var portalNames = new HashSet<string>(portalHeaders.Select(h => h.PackageName), StringComparer.OrdinalIgnoreCase);
+                var missing = localHeaders.Values.Where(h => !portalNames.Contains(h.PackageName)).ToList();
+                if (missing.Count > 0)
+                {
+                    var missingLines = missing
+                        .SelectMany(h => localLines.TryGetValue(h.PackageName, out var l) ? l : new List<CompleteAquariumSetData.PackageLine>())
+                        .Where(l => l.ItemNo.Length > 0)
+                        .ToList();
+
+                    // Header first - the Portal's line table has an FK to it.
+                    await PostAquariumSetRowsAsync(http, restBase + "CompleteAquariumSetHeader?on_conflict=PackageName",
+                        missing.Select(h => (object)new { h.PackageName, h.PackagePrice, VariantID = h.VariantID.Length > 0 ? h.VariantID : null }),
+                        "resolution=ignore-duplicates,return=minimal").ConfigureAwait(false);
+                    if (missingLines.Count > 0)
+                    {
+                        await PostAquariumSetRowsAsync(http, restBase + "CompleteAquariumSetLine",
+                            missingLines.Select(l => (object)new { l.PackageName, l.ItemNo, ItemName = l.ItemName.Length > 0 ? l.ItemName : null, l.Quantity, l.Price }),
+                            "return=minimal").ConfigureAwait(false);
+                    }
+
+                    portalHeaders.AddRange(missing);
+                    portalLines.AddRange(missingLines);
+                }
+
+                using var markCmd = new SqlCommand("INSERT INTO dbo.CompleteAquariumSetPortalSync (Id) VALUES (1)", conn);
+                markCmd.ExecuteNonQuery();
+            }
+
+            // Never mirror an empty Portal - that would delete every local package.
+            if (portalHeaders.Count == 0)
+                return 0;
+
+            var portalLinesByPackage = portalLines
+                .Where(l => l.PackageName.Length > 0)
+                .GroupBy(l => l.PackageName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            static bool SameLines(List<CompleteAquariumSetData.PackageLine> a, List<CompleteAquariumSetData.PackageLine> b)
+            {
+                if (a.Count != b.Count) return false;
+                for (int i = 0; i < a.Count; i++)
+                {
+                    if (!string.Equals(a[i].ItemNo, b[i].ItemNo, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(a[i].ItemName, b[i].ItemName, StringComparison.Ordinal)
+                        || a[i].Quantity != b[i].Quantity
+                        || a[i].Price != b[i].Price)
+                        return false;
+                }
+                return true;
+            }
+
+            int changed = 0;
+            using var tx = conn.BeginTransaction();
+
+            var portalNameSet = new HashSet<string>(portalHeaders.Select(h => h.PackageName), StringComparer.OrdinalIgnoreCase);
+            foreach (var local in localHeaders.Values.Where(h => !portalNameSet.Contains(h.PackageName)))
+            {
+                // Lines first - older installs may not have the ON DELETE CASCADE FK.
+                using var delLines = new SqlCommand("DELETE FROM dbo.CompleteAquariumSetLine WHERE PackageName = @PackageName", conn, tx);
+                delLines.Parameters.AddWithValue("@PackageName", local.PackageName);
+                delLines.ExecuteNonQuery();
+                using var delHeader = new SqlCommand("DELETE FROM dbo.CompleteAquariumSetHeader WHERE PackageName = @PackageName", conn, tx);
+                delHeader.Parameters.AddWithValue("@PackageName", local.PackageName);
+                delHeader.ExecuteNonQuery();
+                changed++;
+            }
+
+            foreach (var portal in portalHeaders.GroupBy(h => h.PackageName, StringComparer.OrdinalIgnoreCase).Select(g => g.First()))
+            {
+                var wantLines = portalLinesByPackage.TryGetValue(portal.PackageName, out var pl) ? pl : new List<CompleteAquariumSetData.PackageLine>();
+                var haveLines = localLines.TryGetValue(portal.PackageName, out var ll) ? ll : new List<CompleteAquariumSetData.PackageLine>();
+                bool exists = localHeaders.TryGetValue(portal.PackageName, out var local);
+                bool headerSame = exists
+                    && local!.PackagePrice == portal.PackagePrice
+                    && string.Equals(local.VariantID, portal.VariantID, StringComparison.OrdinalIgnoreCase);
+                bool linesSame = SameLines(haveLines, wantLines);
+                if (headerSame && linesSame) continue;
+
+                if (!headerSame)
+                {
+                    using var upsert = new SqlCommand(@"
+MERGE dbo.CompleteAquariumSetHeader AS target
+USING (SELECT @PackageName AS PackageName, @PackagePrice AS PackagePrice, @VariantID AS VariantID) AS source
+ON target.PackageName = source.PackageName
+WHEN MATCHED THEN
+    UPDATE SET PackagePrice = source.PackagePrice, VariantID = NULLIF(source.VariantID, ''), UpdatedDate = GETDATE()
+WHEN NOT MATCHED THEN
+    INSERT (PackageName, PackagePrice, VariantID) VALUES (source.PackageName, source.PackagePrice, NULLIF(source.VariantID, ''));", conn, tx);
+                    upsert.Parameters.AddWithValue("@PackageName", portal.PackageName);
+                    upsert.Parameters.AddWithValue("@PackagePrice", portal.PackagePrice);
+                    upsert.Parameters.AddWithValue("@VariantID", portal.VariantID);
+                    upsert.ExecuteNonQuery();
+                }
+
+                if (!linesSame)
+                {
+                    using var delLines = new SqlCommand("DELETE FROM dbo.CompleteAquariumSetLine WHERE PackageName = @PackageName", conn, tx);
+                    delLines.Parameters.AddWithValue("@PackageName", portal.PackageName);
+                    delLines.ExecuteNonQuery();
+
+                    foreach (var line in wantLines)
+                    {
+                        using var ins = new SqlCommand(
+                            "INSERT INTO dbo.CompleteAquariumSetLine (PackageName, ItemNo, ItemName, Quantity, Price) VALUES (@PackageName, @ItemNo, NULLIF(@ItemName, ''), @Quantity, @Price)",
+                            conn, tx);
+                        ins.Parameters.AddWithValue("@PackageName", portal.PackageName);
+                        ins.Parameters.AddWithValue("@ItemNo", line.ItemNo);
+                        ins.Parameters.AddWithValue("@ItemName", line.ItemName);
+                        ins.Parameters.AddWithValue("@Quantity", line.Quantity);
+                        ins.Parameters.AddWithValue("@Price", line.Price);
+                        ins.ExecuteNonQuery();
+                    }
+                }
+
+                changed++;
+            }
+
+            tx.Commit();
+            return changed;
+        }
+
+        // GET every row of a Portal set table, paging past PostgREST's 1000-row cap.
+        private static async Task<List<JsonElement>> GetAquariumSetRowsAsync(HttpClient http, string url)
+        {
+            const int pageSize = 1000;
+            var rows = new List<JsonElement>();
+            for (int offset = 0; ; offset += pageSize)
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, $"{url}&limit={pageSize}&offset={offset}");
+                req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+                req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+
+                using var resp = await http.SendAsync(req).ConfigureAwait(false);
+                string respText = string.Empty;
+                try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+                if (!resp.IsSuccessStatusCode)
+                    throw new HttpRequestException($"SET packages fetch failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+                using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                    throw new HttpRequestException($"SET packages fetch returned unexpected JSON: {respText}");
+
+                int count = 0;
+                foreach (var row in doc.RootElement.EnumerateArray())
+                {
+                    count++;
+                    if (row.ValueKind == JsonValueKind.Object)
+                        rows.Add(row.Clone());
+                }
+                if (count < pageSize)
+                    return rows;
+            }
+        }
+
+        private static async Task PostAquariumSetRowsAsync(HttpClient http, string url, IEnumerable<object> rows, string prefer)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+            req.Headers.TryAddWithoutValidation("Prefer", prefer);
+            req.Content = new StringContent(JsonSerializer.Serialize(rows.ToList()), Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                string respText = string.Empty;
+                try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+                throw new HttpRequestException($"SET packages upload failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+            }
+        }
+
+        private static string GetJsonString(JsonElement row, string name)
+        {
+            if (!row.TryGetProperty(name, out var prop)) return string.Empty;
+            return prop.ValueKind switch
+            {
+                JsonValueKind.String => prop.GetString() ?? string.Empty,
+                JsonValueKind.Number => prop.GetRawText(),
+                _ => string.Empty
+            };
+        }
+
+        private static decimal GetJsonDecimal(JsonElement row, string name)
+        {
+            if (!row.TryGetProperty(name, out var prop)) return 0m;
+            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDecimal(out var d)) return Math.Round(d, 2);
+            if (prop.ValueKind == JsonValueKind.String && decimal.TryParse(prop.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return Math.Round(s, 2);
+            return 0m;
+        }
+
         // ---------------------------------------------------------------------------------------
         // Centralized Glass/Stand-Tubular/Sticker pricing (see supabase_pricing_setup_tables.sql) -
         // per direct request to stop these prices being hardcoded/duplicated separately in the

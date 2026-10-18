@@ -2609,7 +2609,9 @@ type BotOrderLine = { CategoryCode: string | null; ItemCode: string | null; Item
 // wholesale = true prices each eligible line (category IsWholesaleApplicable + a WholesalePrice set -
 // same gate as public_search_items) at its wholesale price, and refuses when those lines come to less
 // than WHOLESALE_MIN_TOTAL. Everything else on the order (no wholesale price, Sets, CUSTOM-*) stays retail.
-async function buildBotOrderLines(
+// Exported for chatbot-sandbox-reply's tool_test mode (docs/system-tests.html wholesale checks) - it
+// only reads Items/Categories/Variants, so it's safe to run on its own.
+export async function buildBotOrderLines(
   supabase: SupabaseClient,
   items: BotOrderItemInput[],
   opts: { wholesale?: boolean } = {}

@@ -280,6 +280,9 @@ function renderTopNavLinks(activeLabel) {
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
     admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
+    // Read-only regression checks - calculator prices/safety rules, live pricing tables, website
+    // calculator vs Alice price match (docs/tests/*.js).
+    admin.push({ href: 'system-tests.html', label: 'System Tests' });
   }
   // Payroll Officer (supabase_staff_users_payroll_officer_field.sql) sees these three even
   // without full Super User - same "isSuperUser || isPayrollOfficer" gate each payroll page itself
@@ -448,6 +451,7 @@ const TELL_ME_KEYWORDS = {
   'payment-methods.html': 'gcash cash bank tender',
   'gl-setup.html': 'accounts chart accounting',
   'user-setup.html': 'staff employees permissions accounts login',
+  'system-tests.html': 'test check broken regression health',
   'payroll.html': 'salary wages',
   'payroll-setup.html': 'salary rates employees',
   'payroll-timesheets.html': 'attendance hours time',

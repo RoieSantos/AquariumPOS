@@ -20,6 +20,9 @@ namespace AquariumPOS
 
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private readonly string packageName;
+        // Packages are owned by the Web Portal now (SyncAquariumSetPackagesFromSupabaseAsync) - the
+        // Setup screen opens this read-only, since a local edit would be overwritten on the next pull.
+        private readonly bool readOnly;
 
         private Label lblTitle = null!;
         private Label lblPackagePrice = null!;
@@ -36,9 +39,10 @@ namespace AquariumPOS
         private SqlDataAdapter adapter = null!;
         private BindingSource binding = new BindingSource();
 
-        public CompleteAquariumSetLineForm(string packageName)
+        public CompleteAquariumSetLineForm(string packageName, bool readOnly = false)
         {
             this.packageName = packageName ?? string.Empty;
+            this.readOnly = readOnly;
 
             Text = "Complete Aquarium Set Line";
             Size = new Size(980, 620);
@@ -46,6 +50,15 @@ namespace AquariumPOS
             BackColor = Color.White;
 
             InitializeComponent();
+            if (readOnly)
+            {
+                Text += " (read-only - edit on the Web Portal)";
+                grid.ReadOnly = true;
+                btnAdd.Visible = false;
+                btnLookup.Visible = false;
+                btnDelete.Visible = false;
+                btnSave.Visible = false;
+            }
             EnsureTables();
             LoadHeaderDetails();
             LoadData();
@@ -441,7 +454,7 @@ ORDER BY EntryNo", connectionString);
 
         private void Grid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+            if (readOnly || e.RowIndex < 0 || e.ColumnIndex < 0)
             {
                 return;
             }
@@ -456,7 +469,7 @@ ORDER BY EntryNo", connectionString);
 
         private void Grid_KeyDown(object? sender, KeyEventArgs e)
         {
-            if (e.KeyCode != Keys.F4)
+            if (readOnly || e.KeyCode != Keys.F4)
             {
                 return;
             }
