@@ -12,6 +12,14 @@ namespace AquariumPOS
             public decimal PackagePrice { get; init; }
             public string VariantID { get; init; } = string.Empty;
 
+            // Which slots the POS set dialog forces the cashier to fill (Customer Aquarium page toggles,
+            // supabase_aquarium_set_required_parts.sql). Default true = the old always-required behavior.
+            public bool RequireSump { get; init; } = true;
+            public bool RequireStand { get; init; } = true;
+            public bool RequireLights { get; init; } = true;
+            public bool RequirePump { get; init; } = true;
+            public bool RequirePipe { get; init; } = true;
+
             public string DisplayText => $"{PackageName} ({PackagePrice:N2})";
         }
 
@@ -53,6 +61,17 @@ IF COL_LENGTH('CompleteAquariumSetHeader', 'VariantID') IS NULL
 BEGIN
     ALTER TABLE dbo.CompleteAquariumSetHeader ADD VariantID NVARCHAR(200) NULL;
 END
+
+IF COL_LENGTH('CompleteAquariumSetHeader', 'RequireSump') IS NULL
+    ALTER TABLE dbo.CompleteAquariumSetHeader ADD RequireSump BIT NOT NULL CONSTRAINT DF_CompleteAquariumSetHeader_RequireSump DEFAULT 1;
+IF COL_LENGTH('CompleteAquariumSetHeader', 'RequireStand') IS NULL
+    ALTER TABLE dbo.CompleteAquariumSetHeader ADD RequireStand BIT NOT NULL CONSTRAINT DF_CompleteAquariumSetHeader_RequireStand DEFAULT 1;
+IF COL_LENGTH('CompleteAquariumSetHeader', 'RequireLights') IS NULL
+    ALTER TABLE dbo.CompleteAquariumSetHeader ADD RequireLights BIT NOT NULL CONSTRAINT DF_CompleteAquariumSetHeader_RequireLights DEFAULT 1;
+IF COL_LENGTH('CompleteAquariumSetHeader', 'RequirePump') IS NULL
+    ALTER TABLE dbo.CompleteAquariumSetHeader ADD RequirePump BIT NOT NULL CONSTRAINT DF_CompleteAquariumSetHeader_RequirePump DEFAULT 1;
+IF COL_LENGTH('CompleteAquariumSetHeader', 'RequirePipe') IS NULL
+    ALTER TABLE dbo.CompleteAquariumSetHeader ADD RequirePipe BIT NOT NULL CONSTRAINT DF_CompleteAquariumSetHeader_RequirePipe DEFAULT 1;
 
 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'CompleteAquariumSetLine')
 BEGIN
@@ -141,6 +160,12 @@ WHERE [Code] = @ItemNo", connection);
             return true;
         }
 
+        private static bool ReadFlag(SqlDataReader reader, string column)
+        {
+            var value = reader[column];
+            return value == DBNull.Value || Convert.ToBoolean(value);
+        }
+
         public static List<PackageHeader> GetPackageHeaders(string connectionString)
         {
             var packages = new List<PackageHeader>();
@@ -149,7 +174,8 @@ WHERE [Code] = @ItemNo", connection);
             connection.Open();
 
             using var command = new SqlCommand(@"
-SELECT PackageName, PackagePrice, ISNULL(VariantID, '') AS VariantID
+SELECT PackageName, PackagePrice, ISNULL(VariantID, '') AS VariantID,
+       RequireSump, RequireStand, RequireLights, RequirePump, RequirePipe
 FROM dbo.CompleteAquariumSetHeader
 ORDER BY PackageName", connection);
 
@@ -160,7 +186,12 @@ ORDER BY PackageName", connection);
                 {
                     PackageName = reader["PackageName"]?.ToString()?.Trim() ?? string.Empty,
                     PackagePrice = reader["PackagePrice"] != DBNull.Value ? Convert.ToDecimal(reader["PackagePrice"]) : 0m,
-                    VariantID = reader["VariantID"]?.ToString()?.Trim() ?? string.Empty
+                    VariantID = reader["VariantID"]?.ToString()?.Trim() ?? string.Empty,
+                    RequireSump = ReadFlag(reader, "RequireSump"),
+                    RequireStand = ReadFlag(reader, "RequireStand"),
+                    RequireLights = ReadFlag(reader, "RequireLights"),
+                    RequirePump = ReadFlag(reader, "RequirePump"),
+                    RequirePipe = ReadFlag(reader, "RequirePipe")
                 });
             }
 

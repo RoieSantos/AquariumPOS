@@ -7785,7 +7785,9 @@ WHEN NOT MATCHED THEN
             using var http = new HttpClient { Timeout = timeout.Value };
 
             var portalHeaders = new List<CompleteAquariumSetData.PackageHeader>();
-            foreach (var row in await GetAquariumSetRowsAsync(http, restBase + "CompleteAquariumSetHeader?select=PackageName,PackagePrice,VariantID&order=PackageName").ConfigureAwait(false))
+            // select=* rather than a column list so a Supabase without the Require* columns yet
+            // (supabase_aquarium_set_required_parts.sql not run) still syncs - missing flags read as required.
+            foreach (var row in await GetAquariumSetRowsAsync(http, restBase + "CompleteAquariumSetHeader?select=*&order=PackageName").ConfigureAwait(false))
             {
                 string name = GetJsonString(row, "PackageName").Trim();
                 if (name.Length == 0) continue;
@@ -7793,7 +7795,12 @@ WHEN NOT MATCHED THEN
                 {
                     PackageName = name,
                     PackagePrice = GetJsonDecimal(row, "PackagePrice"),
-                    VariantID = GetJsonString(row, "VariantID").Trim()
+                    VariantID = GetJsonString(row, "VariantID").Trim(),
+                    RequireSump = GetJsonFlag(row, "RequireSump"),
+                    RequireStand = GetJsonFlag(row, "RequireStand"),
+                    RequireLights = GetJsonFlag(row, "RequireLights"),
+                    RequirePump = GetJsonFlag(row, "RequirePump"),
+                    RequirePipe = GetJsonFlag(row, "RequirePipe")
                 });
             }
 
@@ -7824,20 +7831,10 @@ IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Compl
             }
 
             var localHeaders = new Dictionary<string, CompleteAquariumSetData.PackageHeader>(StringComparer.OrdinalIgnoreCase);
-            using (var cmd = new SqlCommand("SELECT PackageName, PackagePrice, ISNULL(VariantID, '') AS VariantID FROM dbo.CompleteAquariumSetHeader", conn))
-            using (var reader = cmd.ExecuteReader())
+            foreach (var header in CompleteAquariumSetData.GetPackageHeaders(GlobalSettings.ConnectionString))
             {
-                while (reader.Read())
-                {
-                    string name = reader["PackageName"]?.ToString()?.Trim() ?? string.Empty;
-                    if (name.Length == 0) continue;
-                    localHeaders[name] = new CompleteAquariumSetData.PackageHeader
-                    {
-                        PackageName = name,
-                        PackagePrice = reader["PackagePrice"] != DBNull.Value ? Convert.ToDecimal(reader["PackagePrice"]) : 0m,
-                        VariantID = reader["VariantID"]?.ToString()?.Trim() ?? string.Empty
-                    };
-                }
+                if (header.PackageName.Length > 0)
+                    localHeaders[header.PackageName] = header;
             }
 
             var localLines = new Dictionary<string, List<CompleteAquariumSetData.PackageLine>>(StringComparer.OrdinalIgnoreCase);
@@ -7940,7 +7937,12 @@ IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Compl
                 bool exists = localHeaders.TryGetValue(portal.PackageName, out var local);
                 bool headerSame = exists
                     && local!.PackagePrice == portal.PackagePrice
-                    && string.Equals(local.VariantID, portal.VariantID, StringComparison.OrdinalIgnoreCase);
+                    && string.Equals(local.VariantID, portal.VariantID, StringComparison.OrdinalIgnoreCase)
+                    && local.RequireSump == portal.RequireSump
+                    && local.RequireStand == portal.RequireStand
+                    && local.RequireLights == portal.RequireLights
+                    && local.RequirePump == portal.RequirePump
+                    && local.RequirePipe == portal.RequirePipe;
                 bool linesSame = SameLines(haveLines, wantLines);
                 if (headerSame && linesSame) continue;
 
@@ -7948,15 +7950,26 @@ IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Compl
                 {
                     using var upsert = new SqlCommand(@"
 MERGE dbo.CompleteAquariumSetHeader AS target
-USING (SELECT @PackageName AS PackageName, @PackagePrice AS PackagePrice, @VariantID AS VariantID) AS source
+USING (SELECT @PackageName AS PackageName, @PackagePrice AS PackagePrice, @VariantID AS VariantID,
+              @RequireSump AS RequireSump, @RequireStand AS RequireStand, @RequireLights AS RequireLights,
+              @RequirePump AS RequirePump, @RequirePipe AS RequirePipe) AS source
 ON target.PackageName = source.PackageName
 WHEN MATCHED THEN
-    UPDATE SET PackagePrice = source.PackagePrice, VariantID = NULLIF(source.VariantID, ''), UpdatedDate = GETDATE()
+    UPDATE SET PackagePrice = source.PackagePrice, VariantID = NULLIF(source.VariantID, ''),
+               RequireSump = source.RequireSump, RequireStand = source.RequireStand, RequireLights = source.RequireLights,
+               RequirePump = source.RequirePump, RequirePipe = source.RequirePipe, UpdatedDate = GETDATE()
 WHEN NOT MATCHED THEN
-    INSERT (PackageName, PackagePrice, VariantID) VALUES (source.PackageName, source.PackagePrice, NULLIF(source.VariantID, ''));", conn, tx);
+    INSERT (PackageName, PackagePrice, VariantID, RequireSump, RequireStand, RequireLights, RequirePump, RequirePipe)
+    VALUES (source.PackageName, source.PackagePrice, NULLIF(source.VariantID, ''), source.RequireSump, source.RequireStand,
+            source.RequireLights, source.RequirePump, source.RequirePipe);", conn, tx);
                     upsert.Parameters.AddWithValue("@PackageName", portal.PackageName);
                     upsert.Parameters.AddWithValue("@PackagePrice", portal.PackagePrice);
                     upsert.Parameters.AddWithValue("@VariantID", portal.VariantID);
+                    upsert.Parameters.AddWithValue("@RequireSump", portal.RequireSump);
+                    upsert.Parameters.AddWithValue("@RequireStand", portal.RequireStand);
+                    upsert.Parameters.AddWithValue("@RequireLights", portal.RequireLights);
+                    upsert.Parameters.AddWithValue("@RequirePump", portal.RequirePump);
+                    upsert.Parameters.AddWithValue("@RequirePipe", portal.RequirePipe);
                     upsert.ExecuteNonQuery();
                 }
 
@@ -8046,6 +8059,13 @@ WHEN NOT MATCHED THEN
                 JsonValueKind.Number => prop.GetRawText(),
                 _ => string.Empty
             };
+        }
+
+        // Missing / null = true (required), so a package without the setting keeps the old behavior.
+        private static bool GetJsonFlag(JsonElement row, string name)
+        {
+            if (!row.TryGetProperty(name, out var prop)) return true;
+            return prop.ValueKind != JsonValueKind.False;
         }
 
         private static decimal GetJsonDecimal(JsonElement row, string name)

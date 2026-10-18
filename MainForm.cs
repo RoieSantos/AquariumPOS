@@ -2343,6 +2343,20 @@ INSERT INTO CardProcessingFeeLog (
                 var pumpDefaults = BuildAccessoryDefaultState(packageLines, setQuantity, "PUMP", "PUMP", "PUMPS");
                 var pipeDefaults = BuildAccessoryDefaultState(packageLines, setQuantity, "PIPE", "PIPE", "PIPES", "PVC");
 
+                // Per-package required slots, set on the portal's Customer Aquarium page (e.g. a top-filter set
+                // has no Sump / Pump / Pipe). A package without the settings keeps every slot required.
+                var packageRules = CompleteAquariumSetData.GetPackageHeaders(connectionString)
+                    .FirstOrDefault(header => string.Equals(header.PackageName, packageName, StringComparison.OrdinalIgnoreCase))
+                    ?? new CompleteAquariumSetData.PackageHeader();
+
+                void MarkOptional(TextBox pickerTextBox, bool required)
+                {
+                    if (!required)
+                    {
+                        pickerTextBox.PlaceholderText = "Optional - leave blank if not part of this set";
+                    }
+                }
+
                 const int labelLeft = 24;
                 const int labelWidth = 116;
                 const int pickerTextLeft = 150;
@@ -2478,9 +2492,19 @@ INSERT INTO CardProcessingFeeLog (
                     var textBox = CreateReadOnlyPickerTextBox(y);
                     var quantityUpDown = CreateQuantityUpDown(y);
                     quantityUpDown.Value = Math.Max(quantityUpDown.Minimum, Math.Min(quantityUpDown.Maximum, variantState.Quantity));
-                    textBox.Text = variantState.SelectedVariant != null
-                        ? BuildAquariumVariantPickerText(variantState.SelectedVariant)
-                        : (string.IsNullOrWhiteSpace(variantState.SourceLine.ItemName) ? variantState.SourceLine.ItemNo : variantState.SourceLine.ItemName);
+                    if (variantState.SelectedVariant == null && variantState.RequiresExplicitVariantChoice)
+                    {
+                        // Left blank on purpose - the cashier must click Select and pick the variant.
+                        textBox.Text = string.Empty;
+                        string baseName = string.IsNullOrWhiteSpace(variantState.SourceLine.ItemName) ? variantState.SourceLine.ItemNo : variantState.SourceLine.ItemName;
+                        textBox.PlaceholderText = $"Click Select to choose the variant ({baseName})";
+                    }
+                    else
+                    {
+                        textBox.Text = variantState.SelectedVariant != null
+                            ? BuildAquariumVariantPickerText(variantState.SelectedVariant)
+                            : (string.IsNullOrWhiteSpace(variantState.SourceLine.ItemName) ? variantState.SourceLine.ItemNo : variantState.SourceLine.ItemName);
+                    }
 
                     var selectButton = CreatePickerButton(y, () =>
                     {
@@ -2515,6 +2539,7 @@ INSERT INTO CardProcessingFeeLog (
                 {
                     CreateLabel("Sump", top);
                     var sumpTextBox = CreateReadOnlyPickerTextBox(top);
+                    MarkOptional(sumpTextBox, packageRules.RequireSump);
                     optionalSumpQtyUpDown = CreateQuantityUpDown(top);
                     CreatePickerButton(top, () =>
                     {
@@ -2534,6 +2559,7 @@ INSERT INTO CardProcessingFeeLog (
                 {
                     CreateLabel("Stand", top);
                     var standTextBox = CreateReadOnlyPickerTextBox(top);
+                    MarkOptional(standTextBox, packageRules.RequireStand);
                     optionalStandQtyUpDown = CreateQuantityUpDown(top);
                     CreatePickerButton(top, () =>
                     {
@@ -2551,6 +2577,7 @@ INSERT INTO CardProcessingFeeLog (
 
                 CreateLabel("Lights", top);
                 var lightsTextBox = CreateReadOnlyPickerTextBox(top);
+                MarkOptional(lightsTextBox, packageRules.RequireLights);
                 var lightsQtyUpDown = CreateQuantityUpDown(top);
                 ApplyAccessoryDefault(lightDefaults, ref selectedLight, lightsTextBox, lightsQtyUpDown);
                 CreatePickerButton(top, () =>
@@ -2637,6 +2664,7 @@ INSERT INTO CardProcessingFeeLog (
 
                 CreateLabel("Pump", top);
                 var pumpTextBox = CreateReadOnlyPickerTextBox(top);
+                MarkOptional(pumpTextBox, packageRules.RequirePump);
                 var pumpQtyUpDown = CreateQuantityUpDown(top);
                 ApplyAccessoryDefault(pumpDefaults, ref selectedPump, pumpTextBox, pumpQtyUpDown);
                 CreatePickerButton(top, () =>
@@ -2654,6 +2682,7 @@ INSERT INTO CardProcessingFeeLog (
 
                 CreateLabel("Pipe", top);
                 var pipeTextBox = CreateReadOnlyPickerTextBox(top);
+                MarkOptional(pipeTextBox, packageRules.RequirePipe);
                 var pipeQtyUpDown = CreateQuantityUpDown(top);
                 ApplyAccessoryDefault(pipeDefaults, ref selectedPipe, pipeTextBox, pipeQtyUpDown);
                 CreatePickerButton(top, () =>
@@ -2731,31 +2760,31 @@ INSERT INTO CardProcessingFeeLog (
                         return;
                     }
 
-                    if (selectedLight == null)
+                    if (packageRules.RequireLights && selectedLight == null)
                     {
                         MessageBox.Show(dialog, "Please select the Lights item.", "Aquarium Set", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
-                    if (!hasSumpRow && selectedOptionalSump == null)
+                    if (packageRules.RequireSump && !hasSumpRow && selectedOptionalSump == null)
                     {
                         MessageBox.Show(dialog, "Please select the Sump item.", "Aquarium Set", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
-                    if (!hasStandRow && selectedOptionalStand == null)
+                    if (packageRules.RequireStand && !hasStandRow && selectedOptionalStand == null)
                     {
                         MessageBox.Show(dialog, "Please select the Stand item.", "Aquarium Set", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
-                    if (selectedPump == null)
+                    if (packageRules.RequirePump && selectedPump == null)
                     {
                         MessageBox.Show(dialog, "Please select the Pump item.", "Aquarium Set", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
-                    if (selectedPipe == null)
+                    if (packageRules.RequirePipe && selectedPipe == null)
                     {
                         MessageBox.Show(dialog, "Please select the Pipe item.", "Aquarium Set", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
@@ -2826,13 +2855,23 @@ INSERT INTO CardProcessingFeeLog (
                     {
                         AddSelectedAccessoryLine(selectedOptionalStand, optionalStandQtyUpDown?.Value ?? 1m);
                     }
-                    AddSelectedAccessoryLine(selectedLight, lightsQtyUpDown.Value);
+                    // Lights / Pump / Pipe can be left blank when the package marks them optional.
+                    if (selectedLight != null)
+                    {
+                        AddSelectedAccessoryLine(selectedLight, lightsQtyUpDown.Value);
+                    }
                     if (selectedMeshBag != null)
                     {
                         AddSelectedAccessoryLine(selectedMeshBag, meshBagQtyUpDown.Value);
                     }
-                    AddSelectedAccessoryLine(selectedPump, pumpQtyUpDown.Value);
-                    AddSelectedAccessoryLine(selectedPipe, pipeQtyUpDown.Value);
+                    if (selectedPump != null)
+                    {
+                        AddSelectedAccessoryLine(selectedPump, pumpQtyUpDown.Value);
+                    }
+                    if (selectedPipe != null)
+                    {
+                        AddSelectedAccessoryLine(selectedPipe, pipeQtyUpDown.Value);
+                    }
 
                     for (int mediaIndex = 0; mediaIndex < selectedMedias.Length; mediaIndex++)
                     {
@@ -2932,12 +2971,18 @@ INSERT INTO CardProcessingFeeLog (
             string itemName = string.IsNullOrWhiteSpace(sourceLine.ItemName) ? itemCode : sourceLine.ItemName;
             string mainItemCode = ResolveAquariumVariantMainItemCode(itemCode, itemName);
             var variants = LoadSaleVariants(mainItemCode, sourceLine.Price);
-            var matchedVariant = FindDefaultAquariumVariantSelection(variants, itemCode, itemName);
+            string fieldLabel = BuildAquariumVariantFieldLabel(sourceLine);
+            // Aquarium and Stand start blank so the cashier picks the variant the customer actually wants
+            // (sealant colour, paint) - a pre-filled default was easy to OK past and sold the wrong unit.
+            // OK is blocked until one is picked (RequiresExplicitVariantChoice). Other rows keep their default.
+            bool forceVariantChoice = string.Equals(fieldLabel, "Aquarium", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fieldLabel, "Stand", StringComparison.OrdinalIgnoreCase);
+            var matchedVariant = forceVariantChoice ? null : FindDefaultAquariumVariantSelection(variants, itemCode, itemName);
             var fallbackCategoryCode = itemCategories.TryGetValue(itemCode, out var existingCategoryCode) ? existingCategoryCode : string.Empty;
 
             return new AquariumVariantSelectionState
             {
-                FieldLabel = BuildAquariumVariantFieldLabel(sourceLine),
+                FieldLabel = fieldLabel,
                 SourceLine = sourceLine,
                 Quantity = Decimal.ToInt32(totalQuantity),
                 HasVariantOptions = variants.Count > 0,

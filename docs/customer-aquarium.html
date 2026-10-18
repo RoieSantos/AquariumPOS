@@ -12,6 +12,55 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .pkg-item-hits { position: fixed; z-index: 2000; max-height: 280px; overflow-y: auto; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 8px; box-shadow: var(--shadow); color: var(--text-main); }
+    .pkg-item-hits.hidden { display: none; }
+    .pkg-item-hit { padding: 8px 12px; cursor: pointer; font-size: 14px; border-bottom: 1px solid var(--panel-border); }
+    .pkg-item-hit:last-child { border-bottom: none; }
+    .pkg-item-hit[data-i]:hover { background: var(--page-bg); }
+
+    /* Package list */
+    .pkg-list td { vertical-align: middle; }
+    .pkg-list .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pkg-list .pkg-name-cell { font-weight: 600; color: var(--text-main); }
+    .pkg-list .variant-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-muted); }
+    .save-pos { color: var(--success); font-weight: 600; }
+    .save-neg { color: var(--danger); font-weight: 600; }
+
+    /* Package editor */
+    .pkg-modal { max-width: 1080px; }
+    .pkg-modal h2 { margin: 0; overflow-wrap: anywhere; }
+    .pkg-modal .form-row input { width: 100%; font-size: 15px; }
+    .pkg-lines-wrap { overflow-x: auto; border: 1px solid var(--panel-border); border-radius: 8px; }
+    .pkg-lines { table-layout: fixed; min-width: 760px; }
+    .pkg-lines th, .pkg-lines td { padding: 8px 10px; }
+    .pkg-lines th { font-size: 13px; }
+    .pkg-lines input { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 14px; color: var(--text-main); }
+    .pkg-lines .col-no { width: 130px; }
+    .pkg-lines .col-qty { width: 80px; }
+    .pkg-lines .col-price { width: 120px; }
+    .pkg-lines .col-amount { width: 120px; }
+    .pkg-lines .col-remove { width: 48px; }
+    .pkg-lines .pkg-qty, .pkg-lines .pkg-price { text-align: right; }
+    .pkg-lines .pkg-amount { text-align: right; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-main); }
+    .pkg-lines .num-head { text-align: right; }
+    .pkg-remove-btn { width: 32px; height: 32px; padding: 0; border-radius: 6px; font-size: 18px; line-height: 1; }
+
+    .pkg-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+    .pkg-tile { border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 14px; background: var(--page-bg); }
+    .pkg-tile .label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+    .pkg-tile .value { font-size: 22px; font-weight: 700; color: var(--text-main); margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .pkg-tile .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .pkg-tile.is-good .value { color: var(--success); }
+    .pkg-tile.is-bad .value { color: var(--danger); }
+    .pkg-required { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--panel-border); border-radius: 8px; background: var(--page-bg); }
+    .pkg-required-title { font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
+    .pkg-required-boxes { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+    .pkg-required-boxes label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--text-main); cursor: pointer; }
+    .pkg-required-boxes input { width: 18px; height: 18px; }
+    .pkg-footer { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; margin-top: 18px; }
+    .pkg-footer .right { display: flex; gap: 10px; margin-left: auto; }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>
@@ -24,17 +73,20 @@
     <p class="muted">Complete aquarium set packages sold via POS. This page is the only place to add or edit them - every POS terminal pulls them down within 5 minutes (or right away with Settings &gt; Aquarium Set &gt; Sync from Portal). Item No. must match the POS item code.</p>
 
     <div class="table-wrap">
-      <table>
+      <table class="pkg-list">
         <thead>
           <tr>
             <th>Package Name</th>
-            <th>Price</th>
+            <th class="num">Items</th>
+            <th class="num">Items Total</th>
+            <th class="num">Package Price</th>
+            <th class="num">Customer Saves</th>
             <th>Variant ID</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="packageTableBody">
-          <tr><td colspan="4" class="muted">Loading...</td></tr>
+          <tr><td colspan="7" class="muted">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -42,7 +94,7 @@
 
   <!-- Package editor modal -->
   <div id="packageModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
+    <div class="modal-panel pkg-modal">
       <div class="toolbar">
         <h2 id="packageModalTitle">New Package</h2>
         <button class="btn btn-secondary btn-sm" id="closePackageModalBtn" type="button">Close</button>
@@ -51,32 +103,49 @@
       <div class="form-grid">
         <div class="form-row">
           <label for="pkgName">Package Name</label>
-          <input type="text" id="pkgName" />
+          <input type="text" id="pkgName" placeholder="e.g. 15g Topfilter Package" />
         </div>
         <div class="form-row">
-          <label for="pkgPrice">Package Price</label>
-          <input type="number" id="pkgPrice" step="0.01" min="0" />
+          <label for="pkgPrice">Package Price (what the customer pays)</label>
+          <input type="number" id="pkgPrice" step="0.01" min="0" placeholder="0.00" />
         </div>
         <div class="form-row">
-          <label for="pkgVariantId">Variant ID</label>
-          <input type="text" id="pkgVariantId" />
+          <label for="pkgVariantId">Variant ID (Pancake SET product - optional)</label>
+          <input type="text" id="pkgVariantId" placeholder="Leave blank for walk-in only" />
+        </div>
+      </div>
+
+      <div class="pkg-required">
+        <div class="pkg-required-title">Required at the POS</div>
+        <div class="muted" style="font-size:13px; margin-bottom:8px;">Ticked = the cashier must pick it before the set can be punched. Untick parts this set doesn't come with (e.g. a top-filter set has no Sump / Pump / Pipe).</div>
+        <div class="pkg-required-boxes">
+          <label><input type="checkbox" id="reqSump" checked /> Sump</label>
+          <label><input type="checkbox" id="reqStand" checked /> Stand</label>
+          <label><input type="checkbox" id="reqLights" checked /> Lights</label>
+          <label><input type="checkbox" id="reqPump" checked /> Pump</label>
+          <label><input type="checkbox" id="reqPipe" checked /> Pipe</label>
         </div>
       </div>
 
       <div class="section-divider"></div>
       <div class="toolbar">
         <h3 style="margin:0;">Package Items</h3>
-        <button class="btn btn-secondary btn-sm" id="addPkgLineBtn" type="button">+ Add Item</button>
+        <button class="btn btn-primary btn-sm" id="addPkgLineBtn" type="button">+ Add Item</button>
       </div>
+      <p class="muted" style="margin:4px 0 10px;">Type 2+ letters in Item No. or Item Name to search; picking an item fills its code, name and retail price.</p>
 
-      <div class="table-wrap">
-        <table class="line-items-table">
+      <div class="pkg-lines-wrap">
+        <table class="pkg-lines">
+          <colgroup>
+            <col class="col-no" /><col /><col class="col-qty" /><col class="col-price" /><col class="col-amount" /><col class="col-remove" />
+          </colgroup>
           <thead>
             <tr>
               <th>Item No.</th>
               <th>Item Name</th>
-              <th>Qty</th>
-              <th>Price</th>
+              <th class="num-head">Qty</th>
+              <th class="num-head">Price</th>
+              <th class="num-head">Amount</th>
               <th></th>
             </tr>
           </thead>
@@ -84,10 +153,30 @@
         </table>
       </div>
 
+      <div class="pkg-summary">
+        <div class="pkg-tile">
+          <div class="label">Items total (regular price)</div>
+          <div class="value" id="pkgItemsTotal">0.00</div>
+          <div class="sub" id="pkgItemsCount">0 items</div>
+        </div>
+        <div class="pkg-tile">
+          <div class="label">Package price</div>
+          <div class="value" id="pkgPriceShown">0.00</div>
+          <div class="sub"><a href="#" id="useItemsTotalBtn">Use items total</a></div>
+        </div>
+        <div class="pkg-tile" id="pkgSavingsTile">
+          <div class="label">Customer saves</div>
+          <div class="value" id="pkgSavings">0.00</div>
+          <div class="sub" id="pkgSavingsPct">&nbsp;</div>
+        </div>
+      </div>
+
       <div id="packageError" class="error-text hidden"></div>
-      <div class="toolbar" style="margin-top:16px; justify-content:flex-end;">
+      <div class="pkg-footer">
         <button class="btn btn-danger hidden" id="deletePackageBtn" type="button">Delete Package</button>
-        <button class="btn btn-success" id="savePackageBtn" type="button">Save Package</button>
+        <div class="right">
+          <button class="btn btn-success" id="savePackageBtn" type="button">Save Package</button>
+        </div>
       </div>
     </div>
   </div>
@@ -97,7 +186,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=systests1"></script>
-  <script src="js/customerAquarium.js"></script>
+  <script src="js/customerAquarium.js?v=reqparts1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

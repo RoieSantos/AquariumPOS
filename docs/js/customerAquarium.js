@@ -12,32 +12,51 @@ function formatMoney(value) {
 
 async function loadPackages() {
   const tbody = document.getElementById('packageTableBody');
-  tbody.innerHTML = '<tr><td colspan="4" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
 
-  const { data, error } = await supabaseClient
-    .from('CompleteAquariumSetHeader')
-    .select('*')
-    .order('PackageName', { ascending: true });
+  const [{ data, error }, { data: lineData }] = await Promise.all([
+    supabaseClient.from('CompleteAquariumSetHeader').select('*').order('PackageName', { ascending: true }),
+    supabaseClient.from('CompleteAquariumSetLine').select('PackageName, Quantity, Price')
+  ]);
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="4" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">No packages found. Click "New Package" to create one.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">No packages found. Click "New Package" to create one.</td></tr>';
     return;
   }
 
+  // Items total per package = sum of Qty x Price (the regular price of everything in the set).
+  const totals = new Map();
+  (lineData || []).forEach((l) => {
+    const t = totals.get(l.PackageName) || { count: 0, total: 0 };
+    t.count += 1;
+    t.total += (Number(l.Quantity) || 0) * (Number(l.Price) || 0);
+    totals.set(l.PackageName, t);
+  });
+
   tbody.innerHTML = data
-    .map((r) => `
+    .map((r) => {
+      const t = totals.get(r.PackageName) || { count: 0, total: 0 };
+      const price = Number(r.PackagePrice) || 0;
+      const saves = t.total - price;
+      const savesCell = t.total > 0
+        ? `<span class="${saves >= 0 ? 'save-pos' : 'save-neg'}">${formatMoney(saves)}</span> <span class="muted">(${Math.round((saves / t.total) * 100)}%)</span>`
+        : '<span class="muted">-</span>';
+      return `
       <tr>
-        <td>${r.PackageName || ''}</td>
-        <td>${formatMoney(r.PackagePrice)}</td>
-        <td>${r.VariantID || ''}</td>
+        <td class="pkg-name-cell">${escapeHtml(r.PackageName)}${optionalPartsText(r) ? `<div class="muted" style="font-size:12px; font-weight:400;">${escapeHtml(optionalPartsText(r))}</div>` : ''}</td>
+        <td class="num">${t.count}</td>
+        <td class="num">${formatMoney(t.total)}</td>
+        <td class="num"><strong>${formatMoney(price)}</strong>${price === 0 ? ' <span class="save-neg">(not set)</span>' : ''}</td>
+        <td class="num">${savesCell}</td>
+        <td class="variant-cell" title="${escapeHtml(r.VariantID)}">${escapeHtml(r.VariantID)}</td>
         <td><button class="btn btn-secondary btn-sm edit-pkg-btn" data-pkg="${encodeURIComponent(r.PackageName || '')}" type="button">Edit</button></td>
-      </tr>
-    `)
+      </tr>`;
+    })
     .join('');
 
   tbody.querySelectorAll('.edit-pkg-btn').forEach((btn) => {
@@ -49,17 +68,161 @@ function addPkgLineRow(line) {
   const tbody = document.getElementById('pkgLinesBody');
   const row = document.createElement('tr');
   row.innerHTML = `
-    <td><input type="text" class="pkg-item-no" value="${line?.ItemNo ? String(line.ItemNo).replace(/"/g, '&quot;') : ''}" /></td>
-    <td><input type="text" class="pkg-item-name" value="${line?.ItemName ? String(line.ItemName).replace(/"/g, '&quot;') : ''}" /></td>
-    <td><input type="number" class="pkg-qty" min="0" step="0.01" value="${line?.Quantity ?? 1}" /></td>
+    <td><input type="text" class="pkg-item-no" value="${escapeHtml(line?.ItemNo)}" /></td>
+    <td><input type="text" class="pkg-item-name" value="${escapeHtml(line?.ItemName)}" title="${escapeHtml(line?.ItemName)}" /></td>
+    <td><input type="number" class="pkg-qty" min="0" step="1" value="${line?.Quantity ?? 1}" /></td>
     <td><input type="number" class="pkg-price" min="0" step="0.01" value="${line?.Price ?? 0}" /></td>
-    <td><button type="button" class="btn btn-danger btn-sm remove-pkg-line-btn">Remove</button></td>
+    <td class="pkg-amount">0.00</td>
+    <td><button type="button" class="btn btn-danger pkg-remove-btn" title="Remove item" aria-label="Remove item">&times;</button></td>
   `;
-  row.querySelector('.remove-pkg-line-btn').addEventListener('click', () => row.remove());
+  row.querySelector('.pkg-remove-btn').addEventListener('click', () => { row.remove(); recalcPkgTotals(); });
+  row.querySelector('.pkg-qty').addEventListener('input', recalcPkgTotals);
+  row.querySelector('.pkg-price').addEventListener('input', recalcPkgTotals);
+  const nameInput = row.querySelector('.pkg-item-name');
+  nameInput.addEventListener('input', () => { nameInput.title = nameInput.value; });
+  attachItemLookup(row, row.querySelector('.pkg-item-no'));
+  attachItemLookup(row, nameInput);
   tbody.appendChild(row);
+  recalcPkgTotals();
+}
+
+// Live line Amounts + the summary tiles (items total, package price, customer savings).
+function recalcPkgTotals() {
+  let total = 0;
+  let count = 0;
+  document.querySelectorAll('#pkgLinesBody tr').forEach((row) => {
+    const qtyEl = row.querySelector('.pkg-qty');
+    if (!qtyEl) return;
+    const amount = (parseFloat(qtyEl.value) || 0) * (parseFloat(row.querySelector('.pkg-price').value) || 0);
+    row.querySelector('.pkg-amount').textContent = formatMoney(amount);
+    if (row.querySelector('.pkg-item-no').value.trim()) count += 1;
+    total += amount;
+  });
+
+  const price = parseFloat(document.getElementById('pkgPrice').value) || 0;
+  const saves = total - price;
+  document.getElementById('pkgItemsTotal').textContent = formatMoney(total);
+  document.getElementById('pkgItemsCount').textContent = `${count} item${count === 1 ? '' : 's'}`;
+  document.getElementById('pkgPriceShown').textContent = formatMoney(price);
+  document.getElementById('pkgSavings').textContent = formatMoney(saves);
+
+  const tile = document.getElementById('pkgSavingsTile');
+  tile.classList.toggle('is-good', price > 0 && saves > 0);
+  tile.classList.toggle('is-bad', price > 0 && saves < 0);
+  document.getElementById('pkgSavingsPct').textContent = price <= 0
+    ? 'Set a package price'
+    : total > 0
+      ? (saves >= 0 ? `${Math.round((saves / total) * 100)}% off the regular price` : 'Package costs MORE than the items')
+      : '';
+}
+
+// ---------------------------------------------------------------- item lookup
+// Typing in Item No. or Item Name searches Items (staff_search_items, code or name) and picking a hit
+// fills both - the POS needs Item No. to be the real item code to explode the set and load variants.
+
+let itemLookupTimer = null;
+let itemLookupSeq = 0;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function itemHitsBox() {
+  let box = document.getElementById('pkgItemHits');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'pkgItemHits';
+    box.className = 'pkg-item-hits hidden';
+    document.body.appendChild(box);
+  }
+  return box;
+}
+
+function hideItemHits() {
+  itemHitsBox().classList.add('hidden');
+}
+
+function attachItemLookup(row, input) {
+  input.setAttribute('autocomplete', 'off');
+  input.placeholder = 'Search item...';
+  input.addEventListener('input', () => {
+    clearTimeout(itemLookupTimer);
+    const term = input.value.trim();
+    if (term.length < 2) { hideItemHits(); return; }
+    itemLookupTimer = setTimeout(() => runItemLookup(row, input, term), 250);
+  });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideItemHits(); });
+  // Delay so a click on a hit lands before the list disappears.
+  input.addEventListener('blur', () => setTimeout(hideItemHits, 200));
+}
+
+async function runItemLookup(row, input, term) {
+  const seq = ++itemLookupSeq;
+  // Same search as GMA Conversations' product picker: active items, every word must match code /
+  // name / variant, and it returns the retail price (staff_search_items has no price).
+  const { data, error } = await supabaseClient.rpc('staff_search_items_wildcard', { p_query: term });
+  if (seq !== itemLookupSeq || document.activeElement !== input) return;
+
+  const box = itemHitsBox();
+  const hits = error ? [] : (data || []).slice(0, 15);
+  box.innerHTML = error
+    ? `<div class="pkg-item-hit muted">Search failed: ${escapeHtml(error.message)}</div>`
+    : hits.length === 0
+      ? '<div class="pkg-item-hit muted">No items found.</div>'
+      : hits.map((h, i) =>
+        `<div class="pkg-item-hit" data-i="${i}"><strong>${escapeHtml(h.code)}</strong> - ${escapeHtml(h.name)}` +
+        `<span class="muted"> (${escapeHtml(h.category_code || 'no category')}) &middot; ${formatMoney(h.price ?? 0)}</span></div>`
+      ).join('');
+
+  // Fixed to the input so the modal's scrolling table can't clip it.
+  const rect = input.getBoundingClientRect();
+  box.style.left = `${rect.left}px`;
+  box.style.top = `${rect.bottom + 2}px`;
+  box.style.minWidth = `${Math.max(rect.width, 360)}px`;
+  box.classList.remove('hidden');
+
+  box.querySelectorAll('.pkg-item-hit[data-i]').forEach((el) => {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const hit = hits[Number(el.dataset.i)];
+      row.querySelector('.pkg-item-no').value = hit.code || '';
+      row.querySelector('.pkg-item-name').value = hit.name || '';
+      row.querySelector('.pkg-price').value = Number(hit.price ?? 0);
+      row.querySelector('.pkg-item-name').title = hit.name || '';
+      hideItemHits();
+      recalcPkgTotals();
+      row.querySelector('.pkg-qty').focus();
+    });
+  });
+}
+
+// "Required at the POS" checkboxes <-> CompleteAquariumSetHeader.Require* (supabase_aquarium_set_required_parts.sql).
+// Missing / null = required, matching the POS's default.
+const REQUIRED_PARTS = [
+  { id: 'reqSump', column: 'RequireSump', label: 'Sump' },
+  { id: 'reqStand', column: 'RequireStand', label: 'Stand' },
+  { id: 'reqLights', column: 'RequireLights', label: 'Lights' },
+  { id: 'reqPump', column: 'RequirePump', label: 'Pump' },
+  { id: 'reqPipe', column: 'RequirePipe', label: 'Pipe' }
+];
+
+function setRequiredParts(header) {
+  REQUIRED_PARTS.forEach((p) => { document.getElementById(p.id).checked = header?.[p.column] !== false; });
+}
+
+function readRequiredParts() {
+  const out = {};
+  REQUIRED_PARTS.forEach((p) => { out[p.column] = document.getElementById(p.id).checked; });
+  return out;
+}
+
+function optionalPartsText(header) {
+  const optional = REQUIRED_PARTS.filter((p) => header?.[p.column] === false).map((p) => p.label);
+  return optional.length ? `Optional at POS: ${optional.join(', ')}` : '';
 }
 
 function openNewPackage() {
+  setRequiredParts(null);
   editingPackageName = null;
   document.getElementById('packageModalTitle').textContent = 'New Package';
   document.getElementById('pkgName').value = '';
@@ -80,7 +243,7 @@ async function openEditPackage(packageName) {
   document.getElementById('deletePackageBtn').classList.remove('hidden');
   document.getElementById('packageModal').classList.remove('hidden');
   document.getElementById('pkgName').disabled = true;
-  document.getElementById('pkgLinesBody').innerHTML = '<tr><td colspan="5" class="muted">Loading...</td></tr>';
+  document.getElementById('pkgLinesBody').innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
 
   const { data: headerData, error: headerError } = await supabaseClient
     .from('CompleteAquariumSetHeader')
@@ -97,6 +260,7 @@ async function openEditPackage(packageName) {
   document.getElementById('pkgName').value = headerData.PackageName || '';
   document.getElementById('pkgPrice').value = headerData.PackagePrice ?? '';
   document.getElementById('pkgVariantId').value = headerData.VariantID || '';
+  setRequiredParts(headerData);
 
   const { data: lineData, error: lineError } = await supabaseClient
     .from('CompleteAquariumSetLine')
@@ -116,6 +280,7 @@ async function openEditPackage(packageName) {
   } else {
     lineData.forEach((l) => addPkgLineRow(l));
   }
+  recalcPkgTotals();
 }
 
 async function savePackage() {
@@ -156,6 +321,7 @@ async function savePackage() {
     await upsertRow('CompleteAquariumSetHeader', { PackageName: name }, {
       PackagePrice: price,
       VariantID: variantId || null,
+      ...readRequiredParts(),
       UpdatedDate: new Date().toISOString()
     });
 
@@ -216,7 +382,22 @@ async function deletePackage() {
   document.getElementById('closePackageModalBtn').addEventListener('click', () =>
     document.getElementById('packageModal').classList.add('hidden')
   );
-  document.getElementById('addPkgLineBtn').addEventListener('click', () => addPkgLineRow());
+  document.getElementById('addPkgLineBtn').addEventListener('click', () => {
+    addPkgLineRow();
+    const rows = document.querySelectorAll('#pkgLinesBody .pkg-item-no');
+    rows[rows.length - 1]?.focus();
+  });
+  document.getElementById('pkgPrice').addEventListener('input', recalcPkgTotals);
+  document.getElementById('useItemsTotalBtn').addEventListener('click', (e) => {
+    e.preventDefault();
+    let total = 0;
+    document.querySelectorAll('#pkgLinesBody tr').forEach((row) => {
+      const qtyEl = row.querySelector('.pkg-qty');
+      if (qtyEl) total += (parseFloat(qtyEl.value) || 0) * (parseFloat(row.querySelector('.pkg-price').value) || 0);
+    });
+    document.getElementById('pkgPrice').value = total.toFixed(2);
+    recalcPkgTotals();
+  });
   document.getElementById('savePackageBtn').addEventListener('click', savePackage);
   document.getElementById('deletePackageBtn').addEventListener('click', deletePackage);
 
