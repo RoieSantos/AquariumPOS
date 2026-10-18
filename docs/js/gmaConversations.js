@@ -7285,7 +7285,11 @@ async function insertPriceList(kind) {
   const intro = wholesale
     ? `Here is our wholesale price list for aquariums, stands and sump filtration. Wholesale pricing applies with a minimum of ₱${WHOLESALE_MIN_TOTAL.toLocaleString()} per transaction on these items (individual pieces only - not Sets/packages or custom builds).`
     : 'Here is our retail price list for aquariums, stands and sump filtration:';
-  const text = `${intro}\n[split]\n${sections.join('\n[split]\n')}`;
+  // Closing line - its own message, asks for an easy next step.
+  const closing = wholesale
+    ? `Which items and how many pieces are you planning to get? Send us your list and we'll total it for you and check it meets the ₱${WHOLESALE_MIN_TOTAL.toLocaleString()} wholesale minimum.`
+    : "Which size are you looking at? 😊 Just tell us and we'll check availability and delivery for you. We also do custom sizes if you don't see what you need.";
+  const text = `${intro}\n[split]\n${sections.join('\n[split]\n')}\n[split]\n${closing}`;
   const input = document.getElementById('replyInput');
   input.value = input.value.trim() ? `${input.value.trimEnd()}\n${text}` : text;
   input.dispatchEvent(new Event('input', { bubbles: true }));

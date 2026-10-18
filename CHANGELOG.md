@@ -4,7 +4,9 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-18
 
-- **Conversations: "Price list" menu** (price-tag icon in the reply toolbar) - **Retail** or **Wholesale** price of every active priced Aquarium / Stand / Sump item into the reply box, one message per category via `[split]`, for staff to check and send; the wholesale list states the ₱5,000 minimum and the individual-items-only rule ([gmaConversations.js](docs/js/gmaConversations.js), cache `?v=pricelist2`). No SQL - reuses `public_list_order_items` / `public_list_wholesale_items`.
+- **Read-only check: Aquarium / Stand / Sump items whose retail price list would show a stale POS RetailPrice** instead of the Item Setup Price ([supabase_check_price_list_retail_override.sql](sql/supabase_check_price_list_retail_override.sql)).
+
+- **Conversations: "Price list" menu** (price-tag icon in the reply toolbar) - **Retail** or **Wholesale** price of every active priced Aquarium / Stand / Sump item into the reply box, one message per category via `[split]`, for staff to check and send; the wholesale list states the ₱5,000 minimum and the individual-items-only rule; each ends with its own closing message - retail: "Which size are you looking at? ... custom sizes", wholesale: "Which items and how many pieces ... ₱5,000 wholesale minimum" ([gmaConversations.js](docs/js/gmaConversations.js), cache `?v=pricelist4`). No SQL - reuses `public_list_order_items` / `public_list_wholesale_items`.
 
 - **URGENT fix: makers' My Assignments timed out** ("canceling statement due to statement timeout") after the after-sales rework change - its check called a helper function for every Delivered order the maker ever had. Now an inline status test + one indexed lookup ([supabase_online_order_after_sales_rework_speed_fix.sql](sql/supabase_online_order_after_sales_rework_speed_fix.sql)); the original file now inserts the fast version on re-run.
 
