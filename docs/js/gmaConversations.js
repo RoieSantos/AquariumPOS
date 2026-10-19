@@ -728,7 +728,7 @@ function renderThreadHeader(conv) {
       <button class="btn btn-secondary btn-sm" id="markUnreadBtn" type="button" title="Mark as unread for everyone and close it - goes bold again until someone opens it">
         ✉<span class="inbox-hdr-btn-label"> Unread</span>
       </button>
-      <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button" title="${conv.is_paused ? 'Resume AI' : 'Pause AI'}">
+      <button class="btn ${conv.is_paused ? 'btn-success' : 'btn-secondary'} btn-sm" id="togglePauseBtn" type="button" title="${currentSession?.isSuperUser ? (conv.is_paused ? 'Resume AI' : 'Pause AI') : 'Only a Super User can pause or resume the AI'}"${currentSession?.isSuperUser ? '' : ' disabled style="opacity:.55; cursor:not-allowed;"'}>
         ${conv.is_paused ? '▶' : '⏸'}<span class="inbox-hdr-btn-label"> ${conv.is_paused ? 'Resume AI' : 'Pause AI'}</span>
       </button>
       <button type="button" class="inbox-mobile-info-btn" id="threadInfoBtn" aria-label="Customer info and orders">
@@ -785,7 +785,9 @@ async function togglePin(conv) {
   if (fresh && conv.psid === selectedPsid) renderThreadHeader(fresh);
 }
 
+// Super User only (supabase_gma_pause_ai_superuser_only.sql) - the button is disabled for other staff.
 async function togglePause(conv) {
+  if (!currentSession?.isSuperUser) return;
   const btn = document.getElementById('togglePauseBtn');
   btn.disabled = true;
   const nextPaused = !conv.is_paused;
@@ -4099,16 +4101,19 @@ async function submitNewOrder() {
   }
 }
 
-// SuperUser-only: sends "Human Agent test" to the open conversation with the HUMAN_AGENT tag forced
-// (chatbot-staff-reply's force_human_agent) - the App Dashboard's Human Agent test call, without
-// waiting for a customer to fall outside the 24h window. Shows Facebook's exact result in the reply
-// error line. Before Meta approves the feature it only succeeds to app admins/testers.
+// SuperUser-only: sends whatever is typed in the reply box (or "Human Agent test" if it's empty) to
+// the open conversation with the HUMAN_AGENT tag forced (chatbot-staff-reply's force_human_agent) -
+// the App Dashboard's Human Agent test call, without waiting for a customer to fall outside the 24h
+// window. Shows Facebook's exact result in the reply error line. Before Meta approves the feature it
+// only succeeds to app admins/testers.
 async function testHumanAgent() {
   const psid = selectedPsid;
   if (!psid || !currentSession?.isSuperUser) return;
   const btn = document.getElementById('testHumanAgentBtn');
   const statusEl = document.getElementById('replyErrorEl');
-  if (!confirm('Send "Human Agent test" to this conversation using the HUMAN_AGENT tag?\n\nUse your own conversation (app admin/tester) - it fails for customers until Meta approves Human Agent.')) return;
+  const input = document.getElementById('replyInput');
+  const message = input.value.trim() || 'Human Agent test';
+  if (!confirm(`Send this message using the HUMAN_AGENT tag?\n\n"${message}"\n\nUse your own conversation (app admin/tester) - it fails for customers until Meta approves Human Agent.`)) return;
 
   btn.disabled = true;
   statusEl.classList.remove('hidden');
@@ -4125,7 +4130,7 @@ async function testHumanAgent() {
         admin_username: currentSession.username,
         admin_password: currentSession.password,
         psid,
-        message: 'Human Agent test',
+        message,
         images: [],
         force_human_agent: true
       })
@@ -4134,6 +4139,10 @@ async function testHumanAgent() {
     statusEl.textContent = response.ok
       ? 'Human Agent test sent. The App Dashboard counter can take up to 24h to update.'
       : `Human Agent test failed: ${result.error || response.status}`;
+    if (response.ok && input.value.trim() === message) {
+      input.value = '';
+      autoResizeReplyInput();
+    }
     if (selectedPsid === psid) await loadMessages(psid);
   } catch (err) {
     statusEl.textContent = `Human Agent test failed: ${err instanceof Error ? err.message : 'network error'}`;
