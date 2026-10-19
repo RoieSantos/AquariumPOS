@@ -2,6 +2,13 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-19
+
+- **Vic emergency cover.** AI Bot Setup has a new "Emergency cover" box: "Turn bot on now" for 1-24 hours makes Vic answer Messenger even outside the schedule hours, then the normal schedule takes over again by itself. There's also a Stop button. New [supabase_chatbot_bot_cover.sql](sql/supabase_chatbot_bot_cover.sql) (`BotCoverUntilUtc` + `admin_set_chatbot_bot_cover`). [bot-schedule.ts](supabase/functions/_shared/bot-schedule.ts) honours it, and the [facebook-messenger-webhook](supabase/functions/facebook-messenger-webhook/index.ts) schedule reads now use `select('*')` so a missing column can't make the bot always-on. [aiBotSetup.js](docs/js/aiBotSetup.js) `v=botcover1`. Not deployed yet.
+
+- GMA Conversations: brought back the SuperUser-only **Test Human Agent** button (now an icon in the reply toolbar, since the old top toolbar is gone). It sends a `HUMAN_AGENT`-tagged test message to the open chat so Meta's Human Agent API call counter registers before App Review ([gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html)). `?v=hagent1`.
+- Facebook token health check now reports which Meta app issued each token and warns when it isn't `FACEBOOK_APP_ID`. A test send made with another app's token never counts on our App Dashboard, which explains a Human Agent counter stuck at 0 ([facebook-token-health/index.ts](supabase/functions/facebook-token-health/index.ts), [databaseChecks.js](docs/tests/databaseChecks.js)). `?v=3`.
+
 ## 2026-10-18
 
 - **Aquarium sets are now portal-owned (no Pancake product needed).** Each Customer Aquarium package gets a Set Code (SET-007…), a customer Description and a "Sell online" toggle. A trigger mirrors it to a SET catalog item at the Package Price, so the website, Alice, Conversations and Online Orders sell it. Pancake receives set lines as one-time products (the push function is patched in place), and `_resolve_set_package` matches by Set Code first. The migration takes over the AS-xxx Pancake sets (item price kept, AS items hidden), deletes empty duplicate packages, and puts the 15g Topfilter Package online. The POS is unchanged. [supabase_aquarium_sets_portal_owned.sql](sql/supabase_aquarium_sets_portal_owned.sql), [customer-aquarium.html](docs/customer-aquarium.html), `customerAquarium.js?v=portalsets1`.

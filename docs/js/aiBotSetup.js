@@ -33,6 +33,7 @@ async function loadAiSettings() {
   document.getElementById('defaultLocationInput').value = (info && info['DefaultLocation']) || 'GMA';
   document.getElementById('commentAutoReplyEnabledInput').checked = !info || info['CommentAutoReplyEnabled'] !== false;
   renderBotSchedule(info);
+  renderBotCover(info && info['BotCoverUntilUtc']);
   renderMoodSettings(info);
 }
 
@@ -135,7 +136,55 @@ function isWithinSchedule(enabled, schedule, now = new Date()) {
   return !!(yesterday.on && ys !== null && ye !== null && ye <= ys && minute < ye);
 }
 
+// Emergency cover (ChatbotAiSettings.BotCoverUntilUtc, supabase_chatbot_bot_cover.sql) - turns the
+// bot on now regardless of the schedule, until it expires. _shared/bot-schedule.ts honours it too.
+let botCoverUntil = null;
+let botCoverTimer = null;
+
+function renderBotCover(untilUtc) {
+  const until = untilUtc ? new Date(untilUtc) : null;
+  botCoverUntil = until && until.getTime() > Date.now() ? until : null;
+  const statusEl = document.getElementById('botCoverStatus');
+  document.getElementById('stopBotCoverBtn').classList.toggle('hidden', !botCoverUntil);
+  document.getElementById('startBotCoverBtn').textContent = botCoverUntil ? 'Extend from now' : 'Turn bot on now';
+  statusEl.textContent = botCoverUntil
+    ? `🚨 Bot is covering until ${botCoverUntil.toLocaleString('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', hour: 'numeric', minute: '2-digit' })}.`
+    : 'No emergency cover - the schedule above is in charge.';
+  statusEl.style.color = botCoverUntil ? 'var(--warning, #b45309)' : '';
+  clearTimeout(botCoverTimer);
+  if (botCoverUntil) botCoverTimer = setTimeout(() => renderBotCover(null), botCoverUntil.getTime() - Date.now());
+  updateBotScheduleNow();
+}
+
+async function setBotCover(hours) {
+  const errorEl = document.getElementById('botCoverError');
+  const buttons = [document.getElementById('startBotCoverBtn'), document.getElementById('stopBotCoverBtn')];
+  errorEl.classList.add('hidden');
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    const { data, error } = await supabaseClient.rpc('admin_set_chatbot_bot_cover', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_hours: hours
+    });
+    if (error) {
+      errorEl.textContent = error.code === 'PGRST202'
+        ? 'Emergency cover needs sql/supabase_chatbot_bot_cover.sql to be run first.'
+        : error.message;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    renderBotCover(data);
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
 function updateBotScheduleNow() {
+  if (botCoverUntil && botCoverUntil.getTime() > Date.now()) {
+    document.getElementById('botScheduleNow').textContent = 'Emergency cover is on - the bot is answering right now, whatever the schedule says.';
+    return;
+  }
   const on = isWithinSchedule(document.getElementById('botScheduleEnabledInput').checked, readBotSchedule());
   document.getElementById('botScheduleNow').textContent = on
     ? 'With these settings, the bot is answering right now.'
@@ -461,6 +510,8 @@ async function updateCapabilityGapStatus(id, status) {
   document.getElementById('saveAiSettingsBtn').addEventListener('click', saveAiSettings);
   document.getElementById('commentAutoReplyEnabledInput').addEventListener('change', saveCommentAutoReply);
   document.getElementById('saveBotScheduleBtn').addEventListener('click', saveBotSchedule);
+  document.getElementById('startBotCoverBtn').addEventListener('click', () => setBotCover(Number(document.getElementById('botCoverHoursInput').value)));
+  document.getElementById('stopBotCoverBtn').addEventListener('click', () => setBotCover(0));
   document.getElementById('saveMoodSettingsBtn').addEventListener('click', saveMoodSettings);
   document.getElementById('botScheduleEnabledInput').addEventListener('change', updateBotScheduleNow);
   document.getElementById('botScheduleDays').addEventListener('input', updateBotScheduleNow);

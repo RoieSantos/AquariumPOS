@@ -12,8 +12,12 @@ function toMinutes(hhmm: string | undefined): number | null {
 // True when the bot may auto-reply right now. Schedule off (or never set) = always on.
 // Days are index 0 = Sunday; a window whose end is at/before its start runs past midnight, so
 // yesterday's overnight window is checked too.
+// Emergency cover (BotCoverUntilUtc, sql/supabase_chatbot_bot_cover.sql) wins over the schedule
+// until it expires.
 export function isWithinBotSchedule(aiSettings: Record<string, unknown> | null | undefined, timeZone: string, now = new Date()): boolean {
   if (!aiSettings || aiSettings.BotScheduleEnabled !== true) return true;
+  const coverUntil = Date.parse(String(aiSettings.BotCoverUntilUtc ?? ''));
+  if (coverUntil > now.getTime()) return true;
   const schedule = aiSettings.BotSchedule as ScheduleDay[] | null | undefined;
   if (!Array.isArray(schedule) || schedule.length !== 7) return true;
 

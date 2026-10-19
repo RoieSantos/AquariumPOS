@@ -1042,7 +1042,7 @@ async function processMessage(
 
   // Schedule hours (AI Bot Setup, supabase_chatbot_bot_schedule.sql): outside them the bot stays
   // silent - the message is already saved/broadcast above, so staff answer it from Conversations.
-  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('BotScheduleEnabled, BotSchedule').eq('Id', 1).maybeSingle();
+  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle();
   if (!isWithinBotSchedule(scheduleSettings, STORE_TIMEZONE)) return;
 
   // Reply to a pending "is this payment for your existing order, or a new one?" question (asked
@@ -1426,7 +1426,7 @@ async function handleAutoResume(
   }
 
   // Off schedule hours: still switch the bot back on, but don't answer the waiting customer now.
-  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('BotScheduleEnabled, BotSchedule').eq('Id', 1).maybeSingle();
+  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle();
   const inSchedule = isWithinBotSchedule(scheduleSettings, STORE_TIMEZONE);
 
   for (const conv of (claimed ?? []) as Array<{ Psid: string; PageId: string | null; CustomerName: string | null }>) {
@@ -1497,7 +1497,7 @@ async function handlePinSubmitted(
     await supabase.from('ChatbotConversations').update({ IsPaused: false, AutoResumeAtUtc: null }).eq('Psid', psid);
     await broadcastGmaEvent(supabase, psid);
   }
-  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('BotScheduleEnabled, BotSchedule').eq('Id', 1).maybeSingle();
+  const { data: scheduleSettings } = await supabase.from('ChatbotAiSettings').select('*').eq('Id', 1).maybeSingle();
   if (!isWithinBotSchedule(scheduleSettings, STORE_TIMEZONE)) return;
 
   const pageAccessToken = getPageAccessToken(conv.PageId);

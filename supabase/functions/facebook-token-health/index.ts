@@ -46,11 +46,11 @@ async function graphGet(path: string, params: Record<string, string>, graphVersi
   }
 }
 
-async function checkToken(t: TokenToCheck, appToken: string | null, graphVersion: string) {
+async function checkToken(t: TokenToCheck, appToken: string | null, graphVersion: string, expectedAppId: string | null) {
   const result: Record<string, unknown> = {
     label: t.label, purpose: t.purpose, configured: Boolean(t.token), valid: false,
     page_id: t.pageId ?? null, page_name: null, page_matches: null, scopes: [], missing_scopes: [], expires_at: null,
-    data_access_expires_at: null, error: null
+    data_access_expires_at: null, app_id: null, app_name: null, app_matches: null, error: null
   };
   if (!t.token) {
     result.error = 'Secret not set.';
@@ -70,6 +70,11 @@ async function checkToken(t: TokenToCheck, appToken: string | null, graphVersion
     result.expires_at = data.expires_at ? new Date(data.expires_at * 1000).toISOString() : 'never';
     result.data_access_expires_at = data.data_access_expires_at ? new Date(data.data_access_expires_at * 1000).toISOString() : null;
     if (data.is_valid === false) result.error = data.error?.message || 'Facebook says this token is no longer valid.';
+    // Which Meta app issued the token - App Dashboard usage counters (e.g. Human Agent's API calls)
+    // only count calls made with that app's tokens.
+    result.app_id = data.app_id ? String(data.app_id) : null;
+    result.app_name = data.application ?? null;
+    result.app_matches = expectedAppId && result.app_id ? result.app_id === expectedAppId : null;
   }
 
   // The Page itself - also proves the token can actually be used, even if debug_token was refused.
@@ -132,6 +137,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  const results = await Promise.all(tokens.map((t) => checkToken(t, appToken, graphVersion)));
-  return jsonResponse({ tokens: results });
+  const results = await Promise.all(tokens.map((t) => checkToken(t, appToken, graphVersion, appId || null)));
+  return jsonResponse({ tokens: results, expected_app_id: appId || null });
 });

@@ -104,6 +104,25 @@
       </div>
 
       <div class="form-row" style="margin-top:16px;">
+        <label style="margin:0;">Emergency cover</label>
+        <span class="muted" style="font-size:12px; display:block; margin-top:4px;">No staff available? Turn the Messenger bot on right now, even outside the schedule hours. When the time runs out, the normal schedule takes over again by itself.</span>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px;">
+          <select id="botCoverHoursInput" style="width:auto;">
+            <option value="1">1 hour</option>
+            <option value="2">2 hours</option>
+            <option value="4" selected>4 hours</option>
+            <option value="8">8 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24">24 hours</option>
+          </select>
+          <button class="btn btn-danger" id="startBotCoverBtn" type="button">Turn bot on now</button>
+          <button class="btn btn-secondary hidden" id="stopBotCoverBtn" type="button">Stop cover</button>
+        </div>
+        <div id="botCoverStatus" class="muted" style="font-size:12px; margin-top:6px;"></div>
+        <div id="botCoverError" class="error-text hidden"></div>
+      </div>
+
+      <div class="form-row" style="margin-top:16px;">
         <label style="display:flex; align-items:center; gap:6px;">
           <input type="checkbox" id="moodEnabledInput" style="width:auto;" />
           <span>Customer mood (Conversations)</span>
@@ -324,7 +343,7 @@
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=systests1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
-  <script src="js/aiBotSetup.js?v=mood1"></script>
+  <script src="js/aiBotSetup.js?v=botcover1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

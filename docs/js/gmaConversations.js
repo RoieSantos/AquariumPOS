@@ -4099,6 +4099,49 @@ async function submitNewOrder() {
   }
 }
 
+// SuperUser-only: sends "Human Agent test" to the open conversation with the HUMAN_AGENT tag forced
+// (chatbot-staff-reply's force_human_agent) - the App Dashboard's Human Agent test call, without
+// waiting for a customer to fall outside the 24h window. Shows Facebook's exact result in the reply
+// error line. Before Meta approves the feature it only succeeds to app admins/testers.
+async function testHumanAgent() {
+  const psid = selectedPsid;
+  if (!psid || !currentSession?.isSuperUser) return;
+  const btn = document.getElementById('testHumanAgentBtn');
+  const statusEl = document.getElementById('replyErrorEl');
+  if (!confirm('Send "Human Agent test" to this conversation using the HUMAN_AGENT tag?\n\nUse your own conversation (app admin/tester) - it fails for customers until Meta approves Human Agent.')) return;
+
+  btn.disabled = true;
+  statusEl.classList.remove('hidden');
+  statusEl.textContent = 'Sending Human Agent test...';
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/chatbot-staff-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        psid,
+        message: 'Human Agent test',
+        images: [],
+        force_human_agent: true
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    statusEl.textContent = response.ok
+      ? 'Human Agent test sent. The App Dashboard counter can take up to 24h to update.'
+      : `Human Agent test failed: ${result.error || response.status}`;
+    if (selectedPsid === psid) await loadMessages(psid);
+  } catch (err) {
+    statusEl.textContent = `Human Agent test failed: ${err instanceof Error ? err.message : 'network error'}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // "Advise reply": asks AI (supabase/functions/chatbot-suggest-reply) for the best next reply based
 // on the conversation and puts it in the reply box - nothing is sent until staff press Enter.
 // Whatever staff already typed is sent along as guidance ("decline the discount politely") and is
@@ -7785,6 +7828,11 @@ function initDeliveryCalendar() {
   });
   updateComposerState(); // start folded on the phone
   const adviseBtn = document.getElementById('adviseReplyBtn');
+  if (session.isSuperUser) {
+    const testHumanAgentBtn = document.getElementById('testHumanAgentBtn');
+    testHumanAgentBtn.classList.remove('hidden');
+    testHumanAgentBtn.addEventListener('click', testHumanAgent);
+  }
   if (session.isSuperUser) {
     adviseBtn.addEventListener('click', adviseReply);
   } else {

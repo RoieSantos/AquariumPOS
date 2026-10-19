@@ -60,8 +60,9 @@
       if (status === 404) throw new Error('facebook-token-health is not deployed yet.');
       if (status !== 200 || !Array.isArray(body.tokens)) throw new Error(`facebook-token-health failed (${status}): ${body.error || 'no response'}`);
       return body.tokens.map((tk) => ({
-        name: tk.label + (tk.page_name ? ` - ${tk.page_name}` : ''),
+        name: tk.label + (tk.page_name ? ` - ${tk.page_name}` : '') + (tk.app_id ? ` (app: ${tk.app_name || '?'} ${tk.app_id})` : ''),
         fn: (a) => {
+          if (tk.app_matches === false) a.warn(`Token was issued by a different Meta app (${tk.app_name || '?'} ${tk.app_id}) than FACEBOOK_APP_ID (${body.expected_app_id}) - its calls count on that app's dashboard, not ours.`);
           a.ok(tk.configured, `${tk.error || 'Secret not set.'} (Supabase > Edge Functions > Secrets)`);
           a.ok(tk.valid, `Facebook rejected the token: ${tk.error || 'invalid'} - generate a new Page token.`);
           a.ok(tk.page_matches !== false, `Token belongs to a different Page (${tk.page_name || '?'}) than the Page ID secret says.`);
