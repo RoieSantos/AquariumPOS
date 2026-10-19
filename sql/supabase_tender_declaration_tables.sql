@@ -14,9 +14,12 @@
 -- Keyed by Warehouse + EODID: the EODID (EOD-RS000000001...) is a per-POS-machine running number, so
 -- two stores can have the same one.
 --
--- Same access model as Expenses (supabase_expense_entry_tables.sql): RLS on with no policies, the
--- desktop writes with its secret key, and the portal reads only through the super-user-only
--- (is_admin_authorized) functions below.
+-- Access: RLS on with NO policies and no table grants - nobody reads or writes the tables directly.
+--   * The POS writes through pos_upsert_tender_declaration (security definer, WRITE-ONLY - returns
+--     nothing). Store PCs often have no AQUARIUMPOS_SUPABASE_SERVICE_ROLE_KEY set and push as anon,
+--     and a direct table write was refused ("new row violates row-level security policy"); an anon
+--     table policy would also have let anyone holding the public key READ the cash data.
+--   * The portal reads only through the super-user-only (is_admin_authorized) functions below.
 --
 -- Safe to re-run.
 
@@ -61,15 +64,79 @@ create index if not exists "IX_TenderDeclarationHeader_DeclDate" on public."Tend
 alter table public."TenderDeclarationHeader" enable row level security;
 alter table public."TenderDeclarationLines" enable row level security;
 
--- Same grants as the Expense Entry sync tables: RLS stays on with no policies, so only the
--- desktop's secret key (bypasses RLS) can actually read or write rows.
+-- No direct table access at all (see the header note) - writes go through pos_upsert_tender_declaration.
 revoke all on public."TenderDeclarationHeader" from anon, authenticated;
 revoke all on public."TenderDeclarationLines" from anon, authenticated;
-grant select, insert, update on public."TenderDeclarationHeader" to anon, authenticated;
-grant select, insert, update on public."TenderDeclarationLines" to anon, authenticated;
 
 comment on table public."TenderDeclarationHeader" is 'Posted POS Tender Declarations (end-of-day cash count), one row per Warehouse + EODID. Variance = DeclaredCash - ExpectedCash (negative = Short).';
 comment on table public."TenderDeclarationLines" is 'Denominations counted on a posted POS Tender Declaration (copy of local dbo.TenderDeclLines).';
+
+-- ---------------------------------------------------------------------------
+-- POS write path (OnlinefunctionsEvents.SyncTenderDeclarationToSupabaseAsync). Write-only: upserts the
+-- header and replaces that declaration's lines, returns nothing. p_header / p_lines use the table's
+-- own column names as JSON keys.
+
+drop function if exists public.pos_upsert_tender_declaration(jsonb, jsonb);
+
+create or replace function public.pos_upsert_tender_declaration(p_header jsonb, p_lines jsonb default '[]'::jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  h public."TenderDeclarationHeader";
+begin
+  h := jsonb_populate_record(null::public."TenderDeclarationHeader", p_header);
+
+  if nullif(trim(coalesce(h."Warehouse", '')), '') is null then
+    raise exception 'Warehouse is required.';
+  end if;
+  if coalesce(h."EODID", '') !~ '^EOD-RS[0-9]{9}$' then
+    raise exception 'Invalid EODID.';
+  end if;
+
+  insert into public."TenderDeclarationHeader" as t (
+    "Warehouse", "EODID", "ReceiptNo", "UserID", "DeclDate", "DeclTime",
+    "FloatAmount", "CashSales", "CashIncome", "CashExpense", "ExpectedCash", "DeclaredCash", "Variance",
+    "AdvanceCollections", "SalesByTender", "FromHistoryUpload", "SyncedAtUtc"
+  ) values (
+    h."Warehouse", h."EODID", h."ReceiptNo", h."UserID", h."DeclDate", h."DeclTime",
+    coalesce(h."FloatAmount", 0), coalesce(h."CashSales", 0), coalesce(h."CashIncome", 0), coalesce(h."CashExpense", 0),
+    coalesce(h."ExpectedCash", 0), coalesce(h."DeclaredCash", 0), coalesce(h."Variance", 0),
+    coalesce(h."AdvanceCollections", 0), coalesce(h."SalesByTender", '{}'::jsonb), coalesce(h."FromHistoryUpload", false),
+    coalesce(h."SyncedAtUtc", now())
+  )
+  on conflict ("Warehouse", "EODID") do update set
+    "ReceiptNo" = excluded."ReceiptNo",
+    "UserID" = excluded."UserID",
+    "DeclDate" = excluded."DeclDate",
+    "DeclTime" = excluded."DeclTime",
+    "FloatAmount" = excluded."FloatAmount",
+    "CashSales" = excluded."CashSales",
+    "CashIncome" = excluded."CashIncome",
+    "CashExpense" = excluded."CashExpense",
+    "ExpectedCash" = excluded."ExpectedCash",
+    "DeclaredCash" = excluded."DeclaredCash",
+    "Variance" = excluded."Variance",
+    "AdvanceCollections" = excluded."AdvanceCollections",
+    "SalesByTender" = excluded."SalesByTender",
+    -- A live post stays "live" even if the history button re-sends it later.
+    "FromHistoryUpload" = t."FromHistoryUpload" and excluded."FromHistoryUpload",
+    "SyncedAtUtc" = excluded."SyncedAtUtc";
+
+  delete from public."TenderDeclarationLines"
+  where "Warehouse" = h."Warehouse" and "EODID" = h."EODID";
+
+  insert into public."TenderDeclarationLines" ("Warehouse", "EODID", "EntryNo", "LineNo", "ReceiptNo", "Denomination", "Qty", "TotalAmount", "SyncedAtUtc")
+  select h."Warehouse", h."EODID", l."EntryNo", l."LineNo", l."ReceiptNo", l."Denomination", coalesce(l."Qty", 0), coalesce(l."TotalAmount", 0), coalesce(l."SyncedAtUtc", now())
+  from jsonb_populate_recordset(null::public."TenderDeclarationLines", coalesce(p_lines, '[]'::jsonb)) l
+  where l."EntryNo" is not null and l."Denomination" is not null;
+end;
+$$;
+
+revoke all on function public.pos_upsert_tender_declaration(jsonb, jsonb) from public;
+grant execute on function public.pos_upsert_tender_declaration(jsonb, jsonb) to anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- Portal: list (super users only).

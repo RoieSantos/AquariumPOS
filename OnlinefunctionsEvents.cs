@@ -4576,31 +4576,11 @@ ORDER BY ID", connection))
             }
         }
 
-        // Bulk upsert (PostgREST "merge-duplicates") - one request for many rows, used by the
-        // Tender Declaration sync so a history upload of hundreds of declarations stays fast.
-        private static async Task UpsertJsonWithHeadersAsync(string endpointUrl, string onConflict, string payloadJson, TimeSpan timeout)
-        {
-            string url = endpointUrl + (endpointUrl.Contains("?") ? "&" : "?") + "on_conflict=" + Uri.EscapeDataString(onConflict);
-            using var http = new HttpClient { Timeout = timeout };
-            using var req = new HttpRequestMessage(HttpMethod.Post, url);
-            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
-            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
-            req.Headers.TryAddWithoutValidation("Prefer", "resolution=merge-duplicates,return=minimal");
-            req.Content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
-
-            using var resp = await http.SendAsync(req).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
-            {
-                string respText = string.Empty;
-                try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
-                throw new HttpRequestException($"Supabase upsert failed for '{endpointUrl}': {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
-            }
-        }
-
         /// <summary>
         /// Sends one posted Tender Declaration to Supabase (TenderDeclarationHeader / TenderDeclarationLines -
-        /// see supabase_tender_declaration_tables.sql). Keyed by Warehouse + EODID (EODIDs are a per-machine
-        /// running number, so two stores can share one), upserted so re-sending is always safe.
+        /// see supabase_tender_declaration_tables.sql) through the write-only pos_upsert_tender_declaration RPC,
+        /// which works whether this PC pushes as anon or with the service-role key. Keyed by Warehouse + EODID
+        /// (EODIDs are a per-machine running number, so two stores can share one); re-sending is always safe.
         ///
         /// Must run AFTER FunctionEvents.UpdateEODIDForAllTables has stamped the day with this EODID: the
         /// cash figures come from FunctionEvents.GetTenderDeclSummary(eodId) - the same numbers the printed
@@ -4615,10 +4595,9 @@ ORDER BY ID", connection))
                 throw new ArgumentException("eodId is required.", nameof(eodId));
             eodId = eodId.Trim();
 
-            string headerEndpoint = GlobalSettings.TenderDeclarationHeaderSupabaseEndpoint?.Trim() ?? string.Empty;
-            string lineEndpoint = GlobalSettings.TenderDeclarationLinesSupabaseEndpoint?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(headerEndpoint) || string.IsNullOrWhiteSpace(lineEndpoint))
-                throw new InvalidOperationException("Tender Declaration Supabase endpoints are not configured.");
+            string rpcEndpoint = GlobalSettings.TenderDeclarationUpsertRpcEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(rpcEndpoint))
+                throw new InvalidOperationException("TenderDeclarationUpsertRpcEndpoint is not configured.");
 
             string warehouse = string.IsNullOrWhiteSpace(warehouseName) ? Environment.MachineName : warehouseName.Trim();
             string syncedAtUtc = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
@@ -4721,9 +4700,8 @@ ORDER BY [LineNo], EntryNo", connection))
                 };
             }
 
-            await UpsertJsonWithHeadersAsync(headerEndpoint, "Warehouse,EODID", JsonSerializer.Serialize(new[] { header }), timeout.Value).ConfigureAwait(false);
-            if (lines.Count > 0)
-                await UpsertJsonWithHeadersAsync(lineEndpoint, "Warehouse,EODID,EntryNo", JsonSerializer.Serialize(lines), timeout.Value).ConfigureAwait(false);
+            string payload = JsonSerializer.Serialize(new Dictionary<string, object?> { ["p_header"] = header, ["p_lines"] = lines });
+            await PostJsonWithHeadersAsync(rpcEndpoint, payload, timeout.Value).ConfigureAwait(false);
         }
 
         /// <summary>
