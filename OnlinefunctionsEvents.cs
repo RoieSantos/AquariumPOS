@@ -4576,6 +4576,196 @@ ORDER BY ID", connection))
             }
         }
 
+        // Bulk upsert (PostgREST "merge-duplicates") - one request for many rows, used by the
+        // Tender Declaration sync so a history upload of hundreds of declarations stays fast.
+        private static async Task UpsertJsonWithHeadersAsync(string endpointUrl, string onConflict, string payloadJson, TimeSpan timeout)
+        {
+            string url = endpointUrl + (endpointUrl.Contains("?") ? "&" : "?") + "on_conflict=" + Uri.EscapeDataString(onConflict);
+            using var http = new HttpClient { Timeout = timeout };
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+            req.Headers.TryAddWithoutValidation("Prefer", "resolution=merge-duplicates,return=minimal");
+            req.Content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                string respText = string.Empty;
+                try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { }
+                throw new HttpRequestException($"Supabase upsert failed for '{endpointUrl}': {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+            }
+        }
+
+        /// <summary>
+        /// Sends one posted Tender Declaration to Supabase (TenderDeclarationHeader / TenderDeclarationLines -
+        /// see supabase_tender_declaration_tables.sql). Keyed by Warehouse + EODID (EODIDs are a per-machine
+        /// running number, so two stores can share one), upserted so re-sending is always safe.
+        ///
+        /// Must run AFTER FunctionEvents.UpdateEODIDForAllTables has stamped the day with this EODID: the
+        /// cash figures come from FunctionEvents.GetTenderDeclSummary(eodId) - the same numbers the printed
+        /// receipt shows.
+        ///   Header <- dbo.TransactionHeader WHERE Type = 'TenderDecl' AND EODID = @eodId (cashier, date, receipt)
+        ///   Lines  <- dbo.TenderDeclLines WHERE EODID = @eodId (one row per denomination counted)
+        /// </summary>
+        public static async Task SyncTenderDeclarationToSupabaseAsync(string eodId, string? warehouseName, bool fromHistoryUpload = false, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(30);
+            if (string.IsNullOrWhiteSpace(eodId))
+                throw new ArgumentException("eodId is required.", nameof(eodId));
+            eodId = eodId.Trim();
+
+            string headerEndpoint = GlobalSettings.TenderDeclarationHeaderSupabaseEndpoint?.Trim() ?? string.Empty;
+            string lineEndpoint = GlobalSettings.TenderDeclarationLinesSupabaseEndpoint?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(headerEndpoint) || string.IsNullOrWhiteSpace(lineEndpoint))
+                throw new InvalidOperationException("Tender Declaration Supabase endpoints are not configured.");
+
+            string warehouse = string.IsNullOrWhiteSpace(warehouseName) ? Environment.MachineName : warehouseName.Trim();
+            string syncedAtUtc = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
+
+            Dictionary<string, object?> header;
+            var lines = new List<Dictionary<string, object?>>();
+
+            using (var connection = new SqlConnection(GlobalSettings.ConnectionString))
+            {
+                connection.Open();
+
+                string? receiptNo = null, userId = null, declTime = null;
+                DateTime? declDate = null;
+                decimal? headerAmount = null;
+                using (var cmd = new SqlCommand(@"
+SELECT TOP 1 ReceiptNo, [Date], [Time], UserID, NetAmount
+FROM dbo.TransactionHeader
+WHERE Type = 'TenderDecl' AND EODID = @EODID
+ORDER BY TransactionNo DESC", connection))
+                {
+                    cmd.Parameters.AddWithValue("@EODID", eodId);
+                    using var rdr = cmd.ExecuteReader();
+                    if (rdr.Read())
+                    {
+                        receiptNo = rdr["ReceiptNo"] == DBNull.Value ? null : Convert.ToString(rdr["ReceiptNo"]);
+                        declDate = rdr["Date"] == DBNull.Value ? null : Convert.ToDateTime(rdr["Date"]);
+                        declTime = rdr["Time"] == DBNull.Value ? null : Convert.ToString(rdr["Time"]);
+                        userId = rdr["UserID"] == DBNull.Value ? null : Convert.ToString(rdr["UserID"]);
+                        headerAmount = rdr["NetAmount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["NetAmount"]);
+                    }
+                }
+
+                decimal declared = 0m;
+                using (var cmd = new SqlCommand(@"
+SELECT EntryNo, [LineNo], ReceiptNo, Denomination, Qty, TotalAmount, CreatedDate, [Date], [Time]
+FROM dbo.TenderDeclLines
+WHERE EODID = @EODID
+ORDER BY [LineNo], EntryNo", connection))
+                {
+                    cmd.Parameters.AddWithValue("@EODID", eodId);
+                    using var rdr = cmd.ExecuteReader();
+                    while (rdr.Read())
+                    {
+                        decimal total = rdr["TotalAmount"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["TotalAmount"]);
+                        declared += total;
+                        receiptNo ??= rdr["ReceiptNo"] == DBNull.Value ? null : Convert.ToString(rdr["ReceiptNo"]);
+                        if (declDate == null && rdr["CreatedDate"] != DBNull.Value)
+                            declDate = Convert.ToDateTime(rdr["CreatedDate"]);
+                        declTime ??= rdr["Time"] == DBNull.Value ? null : Convert.ToString(rdr["Time"]);
+
+                        lines.Add(new Dictionary<string, object?>
+                        {
+                            ["Warehouse"] = warehouse,
+                            ["EODID"] = eodId,
+                            ["EntryNo"] = Convert.ToInt32(rdr["EntryNo"]),
+                            ["LineNo"] = rdr["LineNo"] == DBNull.Value ? null : Convert.ToInt32(rdr["LineNo"]),
+                            ["ReceiptNo"] = rdr["ReceiptNo"] == DBNull.Value ? null : Convert.ToString(rdr["ReceiptNo"]),
+                            ["Denomination"] = rdr["Denomination"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["Denomination"]),
+                            ["Qty"] = rdr["Qty"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["Qty"]),
+                            ["TotalAmount"] = total,
+                            ["SyncedAtUtc"] = syncedAtUtc
+                        });
+                    }
+                }
+
+                if (receiptNo == null && lines.Count == 0)
+                    throw new InvalidOperationException($"No Tender Declaration found for EODID '{eodId}'.");
+
+                if (lines.Count == 0 && headerAmount.HasValue)
+                    declared = headerAmount.Value;
+
+                var summary = FunctionEvents.GetTenderDeclSummary(connection, eodId);
+                var salesByTender = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (tender, amount) in summary.SalesByTender)
+                {
+                    string key = string.IsNullOrWhiteSpace(tender) ? "(blank)" : tender.Trim();
+                    salesByTender[key] = (salesByTender.TryGetValue(key, out var existing) ? existing : 0m) + amount;
+                }
+
+                header = new Dictionary<string, object?>
+                {
+                    ["Warehouse"] = warehouse,
+                    ["EODID"] = eodId,
+                    ["ReceiptNo"] = receiptNo,
+                    ["UserID"] = userId,
+                    ["DeclDate"] = declDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    ["DeclTime"] = declTime,
+                    ["FloatAmount"] = summary.Float,
+                    ["CashSales"] = summary.CashSales,
+                    ["CashIncome"] = summary.CashIncome,
+                    ["CashExpense"] = summary.CashExpense,
+                    ["ExpectedCash"] = summary.ExpectedCash,
+                    ["DeclaredCash"] = declared,
+                    // Declared - Expected: negative = Short, positive = Over.
+                    ["Variance"] = declared - summary.ExpectedCash,
+                    ["AdvanceCollections"] = summary.AdvanceCollections,
+                    ["SalesByTender"] = salesByTender,
+                    ["FromHistoryUpload"] = fromHistoryUpload,
+                    ["SyncedAtUtc"] = syncedAtUtc
+                };
+            }
+
+            await UpsertJsonWithHeadersAsync(headerEndpoint, "Warehouse,EODID", JsonSerializer.Serialize(new[] { header }), timeout.Value).ConfigureAwait(false);
+            if (lines.Count > 0)
+                await UpsertJsonWithHeadersAsync(lineEndpoint, "Warehouse,EODID,EntryNo", JsonSerializer.Serialize(lines), timeout.Value).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// One-time upload of every past Tender Declaration on this machine (Settings > UPLOAD TENDER DECL
+        /// HISTORY). Safe to re-run - each declaration is upserted. Returns (sent, failed, first error).
+        /// </summary>
+        public static async Task<(int Sent, int Failed, string? FirstError)> UploadAllTenderDeclarationsAsync(string? warehouseName, IProgress<string>? progress = null)
+        {
+            var eodIds = new List<string>();
+            using (var connection = new SqlConnection(GlobalSettings.ConnectionString))
+            {
+                connection.Open();
+                using var cmd = new SqlCommand(@"
+SELECT EODID FROM dbo.TransactionHeader WHERE Type = 'TenderDecl' AND ISNULL(EODID, '') <> ''
+UNION
+SELECT EODID FROM dbo.TenderDeclLines WHERE ISNULL(EODID, '') <> ''
+ORDER BY EODID", connection);
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                    eodIds.Add(Convert.ToString(rdr["EODID"]) ?? string.Empty);
+            }
+
+            int sent = 0, failed = 0;
+            string? firstError = null;
+            for (int i = 0; i < eodIds.Count; i++)
+            {
+                progress?.Report($"Uploading {i + 1} of {eodIds.Count} ({eodIds[i]})...");
+                try
+                {
+                    await SyncTenderDeclarationToSupabaseAsync(eodIds[i], warehouseName, fromHistoryUpload: true).ConfigureAwait(false);
+                    sent++;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    firstError ??= $"{eodIds[i]}: {ex.Message}";
+                }
+            }
+
+            return (sent, failed, firstError);
+        }
+
         /// <summary>
         /// Create an online purchase order from local stock-count adjustments.
         ///

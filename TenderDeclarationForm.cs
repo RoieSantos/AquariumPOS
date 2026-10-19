@@ -312,7 +312,7 @@ namespace AquariumPOS
                             cmd.Parameters.AddWithValue("@EntryNo", nextEntryNo);
                             cmd.Parameters.AddWithValue("@Date", date);
                             cmd.Parameters.AddWithValue("@Time", time);
-                            cmd.Parameters.AddWithValue("@UserID", "admin");
+                            cmd.Parameters.AddWithValue("@UserID", CurrentUser.Username ?? "admin");
                             cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
                             cmd.Parameters.AddWithValue("@LineNo", lineNo);
                             cmd.Parameters.AddWithValue("@Denomination", coinDenominations[i]);
@@ -341,7 +341,7 @@ namespace AquariumPOS
                             cmd.Parameters.AddWithValue("@EntryNo", nextEntryNo);
                             cmd.Parameters.AddWithValue("@Date", date);
                             cmd.Parameters.AddWithValue("@Time", time);
-                            cmd.Parameters.AddWithValue("@UserID", "admin");
+                            cmd.Parameters.AddWithValue("@UserID", CurrentUser.Username ?? "admin");
                             cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
                             cmd.Parameters.AddWithValue("@LineNo", lineNo);
                             cmd.Parameters.AddWithValue("@Denomination", noteDenominations[i]);
@@ -375,6 +375,27 @@ namespace AquariumPOS
                         // Print X Report after tender declaration
                         AquariumPOS.PostingEvents.PrintXReport(receiptNo);
                         FunctionEvents.UpdateEODIDForAllTables(connection, eodID);
+
+                        // Send to the portal (Supabase) now that the day is stamped with this EODID. Done
+                        // before closing (not in the background) since the PC is often shut down right after
+                        // end-of-day; a failure only warns - the declaration is already posted locally and can
+                        // be re-sent with Settings > UPLOAD TENDER DECL HISTORY.
+                        try
+                        {
+                            Cursor.Current = Cursors.WaitCursor;
+                            string warehouseName = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString)?.Name ?? string.Empty;
+                            OnlinefunctionsEvents.SyncTenderDeclarationToSupabaseAsync(eodID, warehouseName, timeout: TimeSpan.FromSeconds(20))
+                                .GetAwaiter().GetResult();
+                        }
+                        catch (Exception syncEx)
+                        {
+                            MessageBox.Show($"Tender declaration posted, but it could not be sent to the portal: {syncEx.Message}\n\nIt can be re-sent later from Settings > UPLOAD TENDER DECL HISTORY.",
+                                          "Portal Sync Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
+                        finally
+                        {
+                            Cursor.Current = Cursors.Default;
+                        }
                     }
                     else
                     {

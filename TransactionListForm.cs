@@ -2837,7 +2837,7 @@ namespace AquariumPOS
                         var mainForm = Application.OpenForms.OfType<MainForm>().FirstOrDefault();
                         if (mainForm != null)
                         {
-                            mainForm.Invoke(new Action(() => mainForm.PrintTenderDeclReceipt(receiptNo)));
+                            mainForm.Invoke(new Action(() => mainForm.PrintTenderDeclReceipt(receiptNo, reprint: true)));
                         }
                         else
                         {

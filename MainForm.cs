@@ -9532,12 +9532,55 @@ ORDER BY Code", conn);
                     }
 
                     // Call existing print method
-                    PrintTenderDeclReceipt(selectedReceipt.Trim());
+                    PrintTenderDeclReceipt(selectedReceipt.Trim(), reprint: true);
                     MessageBox.Show("Reprint request sent to printer.", "Reprint", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Failed to reprint tender declaration: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
+            // One-time (safe to re-run) upload of every past Tender Declaration to the portal -
+            // also how a declaration whose live portal sync failed gets re-sent.
+            var uploadTenderDeclHistoryButton = new Button
+            {
+                Text = "UPLOAD TENDER DECL HISTORY",
+                Dock = DockStyle.Top,
+                Height = 40,
+                BackColor = Color.DarkSlateGray,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            uploadTenderDeclHistoryButton.Click += async (s, e) =>
+            {
+                var confirm = MessageBox.Show(
+                    "Send every Tender Declaration on this POS to the portal?\n\nAlready-uploaded ones are just updated, so this is safe to run again.",
+                    "Upload Tender Declarations", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (confirm != DialogResult.Yes) return;
+
+                string originalText = uploadTenderDeclHistoryButton.Text;
+                uploadTenderDeclHistoryButton.Enabled = false;
+                try
+                {
+                    string warehouseName = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString)?.Name ?? string.Empty;
+                    var progress = new Progress<string>(msg => uploadTenderDeclHistoryButton.Text = msg);
+                    var (sent, failed, firstError) = await Task.Run(() => OnlinefunctionsEvents.UploadAllTenderDeclarationsAsync(warehouseName, progress));
+
+                    string message = $"Uploaded {sent} tender declaration(s) to the portal.";
+                    if (failed > 0)
+                        message += $"\n\n{failed} failed. First error:\n{firstError}";
+                    MessageBox.Show(message, "Upload Tender Declarations", MessageBoxButtons.OK,
+                        failed > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Upload failed: {ex.Message}", "Upload Tender Declarations", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    uploadTenderDeclHistoryButton.Text = originalText;
+                    uploadTenderDeclHistoryButton.Enabled = true;
                 }
             };
 
@@ -9635,6 +9678,7 @@ ORDER BY Code", conn);
             settingsForm.Controls.Add(clearEODForDateButton);
             // Reprint tender declaration button
             settingsForm.Controls.Add(reprintTenderDeclButton);
+            settingsForm.Controls.Add(uploadTenderDeclHistoryButton);
             // Add Reports button under Delete Trans
             settingsForm.Controls.Add(reportsButton);
             settingsForm.Controls.Add(userSetupTopButton);
@@ -18479,7 +18523,7 @@ END", connection);
                 }
 
                 // Then post commission as a separate EXPENSE line (second)
-                // Commission = sum((effectiveRetail - WholesalePrice) for Aquarium/Stand items) + Change.
+                // Commission = sum((actual net selling - WholesalePrice) for AQUARIUM/STAND/SUMP category items) + Change.
                 if (HasSalesPersonSelected())
                 {
                     decimal changeDue = Math.Max(0m, totalPaid - (currentTotal - currentDiscount));
@@ -18957,73 +19001,84 @@ GROUP BY LTRIM(RTRIM(ISNULL(VariationId, '')))", conn))
                 : (currentSalesPersonCode ?? string.Empty);
         }
 
+        private static readonly string[] CommissionableCategories = { "AQUARIUM", "STAND", "SUMP" };
+
+        // One commissionable sale line: actual net selling amount (line price x qty, less its share of the
+        // sale discount - same split ProcessInventoryEntries posts to ItemLedgerEntry) minus wholesale x qty.
+        private sealed record CommissionLine(string Code, string Name, int Qty, decimal NetSelling, decimal Wholesale, decimal Commission);
+
+        private List<CommissionLine> GetCommissionLines()
+        {
+            // Commissionable = item category AQUARIUM / STAND / SUMP (Items.CategoryCode, falling back to the
+            // sale line's category column), with a WholesalePrice > 0 on the Items record.
+            var result = new List<CommissionLine>();
+
+            decimal discountRate = currentDiscount > 0 && currentTotal > 0 ? currentDiscount / currentTotal : 0m;
+
+            using (var connection = new SqlConnection(connectionString))
+            {
+                connection.Open();
+
+                foreach (ListViewItem li in salesListView.Items)
+                {
+                    // Skip non-sale lines
+                    if (li.Tag?.ToString() == "PAYMENT") continue;
+                    if (li.Tag?.ToString() == "EXPENSE") continue;
+                    if (li.Tag?.ToString() == "INCOME") continue;
+                    if (li.Tag?.ToString() == ReturnLineTag) continue;
+
+                    string code = li.SubItems.Count > 5 ? (li.SubItems[5].Text ?? string.Empty) : string.Empty;
+                    if (string.IsNullOrWhiteSpace(code)) continue;
+
+                    int qty = 0;
+                    if (li.SubItems.Count > 1)
+                        int.TryParse(li.SubItems[1].Text, out qty);
+                    if (qty <= 0) continue;
+
+                    if (li.SubItems.Count <= 2 || !decimal.TryParse(li.SubItems[2].Text.Replace("?", ""), out decimal unitPrice))
+                        continue;
+
+                    decimal wholesale = 0m;
+                    string category = li.SubItems.Count > 4 ? (li.SubItems[4].Text ?? string.Empty) : string.Empty;
+
+                    using (var cmd = new SqlCommand(@"SELECT WholesalePrice, CategoryCode FROM Items WHERE Code = @code", connection))
+                    {
+                        cmd.Parameters.AddWithValue("@code", code);
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            if (r.Read())
+                            {
+                                wholesale = r["WholesalePrice"] != DBNull.Value ? Convert.ToDecimal(r["WholesalePrice"]) : 0m;
+                                string dbCategory = r["CategoryCode"] != DBNull.Value ? (r["CategoryCode"].ToString() ?? string.Empty) : string.Empty;
+                                if (!string.IsNullOrWhiteSpace(dbCategory))
+                                    category = dbCategory;
+                            }
+                        }
+                    }
+
+                    if (!CommissionableCategories.Contains(category.Trim(), StringComparer.OrdinalIgnoreCase)) continue;
+                    if (wholesale <= 0m) continue;
+
+                    decimal itemTotal = unitPrice * qty;
+                    decimal netSelling = itemTotal - itemTotal * discountRate;
+                    decimal lineCommission = decimal.Round(netSelling - wholesale * qty, 2);
+                    if (lineCommission <= 0m) continue;
+
+                    result.Add(new CommissionLine(code, li.Text ?? string.Empty, qty, netSelling, wholesale, lineCommission));
+                }
+            }
+
+            return result;
+        }
+
         private decimal CalculateCommissionExpenseAmount(decimal changeAmount)
         {
-            // Commission computation:
-            // - Aquarium, Stand, and Sump (wholesale vs retail) difference
-            // - plus Change
-            // Notes/assumptions:
-            // 1) We treat items with Category == "AQUARIUM" (from ListView subitem[4] in this app) as commissionable.
-            // 2) We also treat items whose description/name contains "STAND" or "SUMP" as commissionable.
-            // 3) We use Items.WholesalePrice and Items.RetailPrice; missing values default to 0.
-
+            // Commission = sum(actual net selling - wholesale) for AQUARIUM / STAND / SUMP lines + Change.
             decimal commission = 0m;
 
             try
             {
-                using (var connection = new SqlConnection(connectionString))
-                {
-                    connection.Open();
-
-                    foreach (ListViewItem li in salesListView.Items)
-                    {
-                        // Skip non-sale lines
-                        if (li.Tag?.ToString() == "PAYMENT") continue;
-                        if (li.Tag?.ToString() == "EXPENSE") continue;
-                        if (li.Tag?.ToString() == "INCOME") continue;
-                        if (li.Tag?.ToString() == ReturnLineTag) continue;
-
-                        string category = li.SubItems.Count > 4 ? (li.SubItems[4].Text ?? string.Empty) : string.Empty;
-                        string code = li.SubItems.Count > 5 ? (li.SubItems[5].Text ?? string.Empty) : string.Empty;
-                        string name = li.Text ?? string.Empty;
-
-                        bool isAquarium = string.Equals(category?.Trim(), "AQUARIUM", StringComparison.OrdinalIgnoreCase);
-                        bool isStand = name.IndexOf("STAND", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isSump = name.IndexOf("SUMP", StringComparison.OrdinalIgnoreCase) >= 0;
-
-                        if (!isAquarium && !isStand && !isSump) continue;
-                        if (string.IsNullOrWhiteSpace(code)) continue;
-
-                        int qty = 1;
-                        if (li.SubItems.Count > 1)
-                            int.TryParse(li.SubItems[1].Text, out qty);
-                        // If qty is zero/invalid, do not show it on the commission receipt.
-                        if (qty <= 0) continue;
-
-                        decimal wholesale = 0m;
-                        decimal retail = 0m;
-
-                        using (var cmd = new SqlCommand(@"SELECT WholesalePrice, RetailPrice FROM Items WHERE Code = @code", connection))
-                        {
-                            cmd.Parameters.AddWithValue("@code", code);
-                            using (var r = cmd.ExecuteReader())
-                            {
-                                if (r.Read())
-                                {
-                                    wholesale = r["WholesalePrice"] != DBNull.Value ? Convert.ToDecimal(r["WholesalePrice"]) : 0m;
-                                    retail = r["RetailPrice"] != DBNull.Value ? Convert.ToDecimal(r["RetailPrice"]) : 0m;
-                                }
-                            }
-                        }
-
-                        if (wholesale <= 0m) continue;
-
-                        // Commission base: RetailPrice minus WholesalePrice
-                        decimal diff = (retail - wholesale) * qty;
-                        if (diff > 0)
-                            commission += diff;
-                    }
-                }
+                commission = GetCommissionLines().Sum(l => l.Commission);
             }
             catch (Exception ex)
             {
@@ -19047,68 +19102,22 @@ GROUP BY LTRIM(RTRIM(ISNULL(VariationId, '')))", conn))
 
             try
             {
-                using (var connection = new SqlConnection(connectionString))
+                // Same lines/amounts CalculateCommissionExpenseAmount sums, so the printout always matches.
+                foreach (var cl in GetCommissionLines())
                 {
-                    connection.Open();
+                    // Keep descriptions short for 58mm print; include code so it can be audited.
+                    string desc = $"{cl.Code} {cl.Name} (Sold-WS)";
 
-                    foreach (ListViewItem li in salesListView.Items)
-                    {
-                        // Skip non-sale lines
-                        if (li.Tag?.ToString() == "PAYMENT") continue;
-                        if (li.Tag?.ToString() == "EXPENSE") continue;
-                        if (li.Tag?.ToString() == "INCOME") continue;
-                        if (li.Tag?.ToString() == ReturnLineTag) continue;
-
-                        string category = li.SubItems.Count > 4 ? (li.SubItems[4].Text ?? string.Empty) : string.Empty;
-                        string code = li.SubItems.Count > 5 ? (li.SubItems[5].Text ?? string.Empty) : string.Empty;
-                        string name = li.Text ?? string.Empty;
-
-                        bool isAquarium = string.Equals(category?.Trim(), "AQUARIUM", StringComparison.OrdinalIgnoreCase);
-                        bool isStand = name.IndexOf("STAND", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isSump = name.IndexOf("SUMP", StringComparison.OrdinalIgnoreCase) >= 0;
-                        if (!isAquarium && !isStand && !isSump) continue;
-                        if (string.IsNullOrWhiteSpace(code)) continue;
-
-                        int qty = 1;
-                        if (li.SubItems.Count > 1)
-                            int.TryParse(li.SubItems[1].Text, out qty);
-                        if (qty <= 0) qty = 1;
-
-                        decimal wholesale = 0m;
-                        decimal retail = 0m;
-
-                        using (var cmd = new SqlCommand(@"SELECT WholesalePrice, RetailPrice FROM Items WHERE Code = @code", connection))
-                        {
-                            cmd.Parameters.AddWithValue("@code", code);
-                            using (var r = cmd.ExecuteReader())
-                            {
-                                if (r.Read())
-                                {
-                                    wholesale = r["WholesalePrice"] != DBNull.Value ? Convert.ToDecimal(r["WholesalePrice"]) : 0m;
-                                    retail = r["RetailPrice"] != DBNull.Value ? Convert.ToDecimal(r["RetailPrice"]) : 0m;
-                                }
-                            }
-                        }
-
-                        if (wholesale <= 0m) continue;
-
-                        decimal itemCommission = (retail - wholesale) * qty;
-                        if (itemCommission <= 0m) continue;
-
-                        // Keep descriptions short for 58mm print; include code so it can be audited.
-                        string desc = $"{code} {name} (Retail-WS)";
-
-                        var lvi = new ListViewItem(desc);
-                        lvi.SubItems.Add(qty.ToString());
-                        lvi.SubItems.Add($"{decimal.Round(itemCommission, 2):F2}");
-                        lvi.SubItems.Add($"{decimal.Round(itemCommission, 2):F2}");
-                        lvi.SubItems.Add("EXPENSE");
-                        // For printing, show the actual originating item code in the Code column.
-                        // (Posting still uses INC_EXP in ItemLedgerEntry to avoid depending on an Items row.)
-                        lvi.SubItems.Add(code);
-                        lvi.Tag = "EXPENSE";
-                        lines.Add(lvi);
-                    }
+                    var lvi = new ListViewItem(desc);
+                    lvi.SubItems.Add(cl.Qty.ToString());
+                    lvi.SubItems.Add($"{cl.Commission:F2}");
+                    lvi.SubItems.Add($"{cl.Commission:F2}");
+                    lvi.SubItems.Add("EXPENSE");
+                    // For printing, show the actual originating item code in the Code column.
+                    // (Posting still uses INC_EXP in ItemLedgerEntry to avoid depending on an Items row.)
+                    lvi.SubItems.Add(cl.Code);
+                    lvi.Tag = "EXPENSE";
+                    lines.Add(lvi);
                 }
             }
             catch (Exception ex)
@@ -21166,7 +21175,7 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
 
         // Printing Methods
 
-        public void PrintTenderDeclReceipt(string receiptNo)
+        public void PrintTenderDeclReceipt(string receiptNo, bool reprint = false)
         {
             // Generate only the tender declaration receipt content
             var receipt = new System.Text.StringBuilder();
@@ -21243,139 +21252,44 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
                         receipt.AppendLine();
                     }
 
-                    // Show total sales by tender type (source: TransPaymentEntry only)
+                    // Totals come from FunctionEvents.GetTenderDeclSummary - the same figures the portal sync
+                    // stores. While posting, the day is still open (rows not yet stamped); on a reprint, use
+                    // this declaration's own EODID so it shows that day, not today's running totals.
+                    string? summaryEodId = null;
+                    if (reprint)
+                    {
+                        using var eodCmd = new SqlCommand("SELECT TOP 1 EODID FROM TenderDeclLines WHERE ReceiptNo = @ReceiptNo AND ISNULL(EODID, '') <> ''", conn);
+                        eodCmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                        summaryEodId = eodCmd.ExecuteScalar()?.ToString();
+                    }
+                    var summary = FunctionEvents.GetTenderDeclSummary(conn, summaryEodId);
+
                     receipt.AppendLine();
                     receipt.AppendLine("SALES BY TENDER TYPE:");
                     receipt.AppendLine(line);
-                    // Query direct totals from TransPaymentEntry (do not join TransactionHeader)
-                    string tenderTypeQuery = @"
-                        SELECT TenderTypeCode, SUM(Amount) AS Total
-                        FROM TransPaymentEntry
-                        WHERE (EODID IS NULL OR EODID = '')
-                        GROUP BY TenderTypeCode";
-                    decimal totalSalesCash = 0;
-                    using (var tenderCmd = new SqlCommand(tenderTypeQuery, conn))
-                    {
-                        using (var tenderReader = tenderCmd.ExecuteReader())
-                        {
-                            receipt.AppendLine($"{"Tender Type",-11} {"Total",-15}");
-                            while (tenderReader.Read())
-                            {
-                                string tenderType = tenderReader["TenderTypeCode"].ToString() ?? "";
-                                decimal tenderTotal = tenderReader["Total"] != DBNull.Value ? Convert.ToDecimal(tenderReader["Total"]) : 0;
-                                if (tenderType.Equals("CASH", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    totalSalesCash += tenderTotal;
-                                }
-
-                                receipt.AppendLine($"{tenderType,-8} P{tenderTotal,-14:F2}");
-                            }
-                        }
-                    }
+                    receipt.AppendLine($"{"Tender Type",-11} {"Total",-15}");
+                    foreach (var (tenderType, tenderTotal) in summary.SalesByTender)
+                        receipt.AppendLine($"{tenderType,-8} P{tenderTotal,-14:F2}");
 
                     receipt.AppendLine();
                     receipt.AppendLine("ADVANCE ORDER COLLECTIONS:");
                     receipt.AppendLine(line);
+                    receipt.AppendLine($"{"Tender Type",-11} {"Total",-15}");
+                    foreach (var (tenderType, tenderTotal) in summary.AdvanceByTender)
+                        receipt.AppendLine($"{tenderType,-8} P{tenderTotal,-14:F2}");
+                    receipt.AppendLine($"ADV COLLECT P{summary.AdvanceCollections,-14:F2}");
 
-                    string advanceCollectionQuery = @"
-                        SELECT te.TenderTypeCode, SUM(te.Amount) AS Total
-                        FROM TransPaymentEntry te
-                        WHERE (te.EODID IS NULL OR te.EODID = '')
-                          AND EXISTS (
-                              SELECT 1
-                              FROM AdvanceOrderHeader ah
-                              WHERE ah.ReceiptNo = te.ReceiptNo
-                          )
-                        GROUP BY te.TenderTypeCode
-                        ORDER BY te.TenderTypeCode";
-                    decimal totalAdvanceCollections = 0m;
-                    using (var advanceCmd = new SqlCommand(advanceCollectionQuery, conn))
-                    {
-                        using (var advanceReader = advanceCmd.ExecuteReader())
-                        {
-                            receipt.AppendLine($"{"Tender Type",-11} {"Total",-15}");
-                            while (advanceReader.Read())
-                            {
-                                string tenderType = advanceReader["TenderTypeCode"].ToString() ?? "";
-                                decimal tenderTotal = advanceReader["Total"] != DBNull.Value ? Convert.ToDecimal(advanceReader["Total"]) : 0m;
-                                totalAdvanceCollections += tenderTotal;
-                                receipt.AppendLine($"{tenderType,-8} P{tenderTotal,-14:F2}");
-                            }
-                        }
-                    }
-                    receipt.AppendLine($"ADV COLLECT P{totalAdvanceCollections,-14:F2}");
-
-                    // Only count expenses that were paid with CASH (check TransPaymentEntry for TenderTypeCode = 'CASH')
-                    string expenseQuery = @"
-                        SELECT SUM(th.Price)
-                        FROM TransactionHeader th
-                        INNER JOIN TransPaymentEntry te ON te.ReceiptNo = th.ReceiptNo
-                        WHERE th.Type = 'EXPENSE'
-                        AND (th.EODID IS NULL OR th.EODID = '')
-                        AND (te.EODID IS NULL OR te.EODID = '')
-                        AND te.TenderTypeCode = 'CASH'";
-                    decimal totalExpense = 0;
-                    using (var expenseCmd = new SqlCommand(expenseQuery, conn))
-                    {
-                        var result = expenseCmd.ExecuteScalar();
-                        if (result != null && result != DBNull.Value)
-                        {
-                            totalExpense = Convert.ToDecimal(result);
-                        }
-                    }
-
-
-                    // Show discrepancy
-                    // Calculate total Float_Entry
-                    decimal totalFloatEntry = 0;
-                    string floatEntryQuery = @"SELECT SUM(TotalAmount) FROM CashFloatLines WHERE (EODID IS NULL OR EODID = '')";
-                    using (var floatCmd = new SqlCommand(floatEntryQuery, conn))
-                    {
-                        var result = floatCmd.ExecuteScalar();
-                        if (result != null && result != DBNull.Value)
-                        {
-                            totalFloatEntry = Convert.ToDecimal(result);
-                        }
-                    }
-
-                    //MessageBox.Show($"Print Tender types declared {totalFloatEntry}");
                     receipt.AppendLine(line);
                     receipt.AppendLine("TOTALS");
                     receipt.AppendLine(line);
-                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "Float:", totalFloatEntry));
-                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "Sales by Cash:", totalSalesCash - totalExpense));
-                    // Income should come from TransPaymentEntry (TenderTypeCode='CASH') where the TransactionHeader.Type = 'INCOME'
-                    decimal income = 0m;
-                    try
-                    {
-                        string incomeQuery = @"
-                            SELECT SUM(te.Amount)
-                            FROM TransPaymentEntry te
-                            INNER JOIN TransactionHeader th ON th.ReceiptNo = te.ReceiptNo
-                            WHERE te.TenderTypeCode = 'CASH' AND th.Type = 'INCOME'
-                            AND (te.EODID IS NULL OR te.EODID = '')
-                            AND (th.EODID IS NULL OR th.EODID = '')";
-                        using (var incomeCmd = new SqlCommand(incomeQuery, conn))
-                        {
-                            var incRes = incomeCmd.ExecuteScalar();
-                            if (incRes != null && incRes != DBNull.Value)
-                                income = Convert.ToDecimal(incRes);
-                        }
-                    }
-                    catch
-                    {
-                        income = 0m; // fallback on error
-                    }
-
-                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "INCOME:", income));
+                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "Float:", summary.Float));
+                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "Sales by Cash:", summary.CashSales));
+                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "INCOME:", summary.CashIncome));
                     // Show expense and declared as negative values (print the negative sign with the number)
-                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "Expense:", -totalExpense));
+                    receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "Expense:", -summary.CashExpense));
                     receipt.AppendLine(string.Format("{0,-12} P{1:F2}", "Cash Declared:", -declaredCash));
-                    // receipt.AppendLine(string.Format("{0,-25} ?{1:N2}", "Discrepancy:", discrepancy));
-                    // Compute discrepancy after income has been retrieved
-                    decimal discrepancy = totalFloatEntry + totalSalesCash - totalExpense + income - totalExpense - declaredCash;
+                    decimal discrepancy = summary.ExpectedCash - declaredCash;
 
-                    // Debug: show intermediate values so the user can trace calculations (formatted for readability)
                     string discrepancyWord = discrepancy < 0 ? "Over" : (discrepancy > 0 ? "Short" : "");
                     receipt.AppendLine(string.Format("{0,-0} P{1:F2} {2}", ":", discrepancy, discrepancyWord));
                 }

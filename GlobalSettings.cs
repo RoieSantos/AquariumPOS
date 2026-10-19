@@ -163,6 +163,9 @@ namespace AquariumPOS
         // aggregated Expense Report endpoints above. See supabase_expense_entry_tables.sql.
         public static string ExpenseEntryHeaderSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/ExpenseEntryHeader";
         public static string ExpenseEntryLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/ExpenseEntryLines";
+        // Posted Tender Declarations (TenderDeclarationForm) - see supabase_tender_declaration_tables.sql.
+        public static string TenderDeclarationHeaderSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/TenderDeclarationHeader";
+        public static string TenderDeclarationLinesSupabaseEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/TenderDeclarationLines";
         // Master data (Warehouses/Items) - synced one-way, desktop -> Supabase, via the same
         // secret-key POST/PATCH-if-exists pattern as the other endpoints above. Not exposed to
         // the Web Portal's anon key (see supabase_warehouses_items_tables.sql).

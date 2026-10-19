@@ -246,6 +246,8 @@ function renderTopNavLinks(activeLabel) {
     reports.push({ href: 'message-timing.html', label: 'Message Timing' });
     reports.push({ href: 'expense-entries.html', label: 'Expenses' });
     reports.push({ href: 'expense-journal.html', label: 'Expense Journal' });
+    // POS end-of-day cash counts + Short/Over (supabase_tender_declaration_tables.sql).
+    reports.push({ href: 'tender-declarations.html', label: 'Tender Declarations' });
     // Recurring must-pay bills - rent, utilities, BIR, SSS... (supabase_business_bills.sql).
     reports.push({ href: 'business-bills.html', label: 'Bills & Dues' });
     // Owner's money in / out - capital, owner loans, drawings (supabase_owner_funds.sql).
@@ -435,6 +437,7 @@ const TELL_ME_KEYWORDS = {
   'message-timing.html': 'reply response time',
   'expense-entries.html': 'spending costs',
   'expense-journal.html': 'spending costs post',
+  'tender-declarations.html': 'cash count eod short over drawer cashier',
   'business-bills.html': 'rent utilities bir sss dues',
   'owner-funds.html': 'capital drawings loan',
   'spending-report.html': 'purchases expenses costs',

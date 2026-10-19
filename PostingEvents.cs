@@ -4019,6 +4019,7 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                     SELECT th.Description, SUM(th.Quantity * -1) as TotalQty, SUM(th.GrossAmount) as TotalAmount
                     FROM ItemLedgerEntry th
                     WHERE  (th.EODID IS NULL OR th.EODID = '')
+                      AND th.DocumentType IN ('SALES', 'REFUND', 'REVERSAL')
                     " + excludeOnlineOrderItemsFilter + @"
                     GROUP BY th.Description, th.GrossAmount
                     ORDER BY th.Description", connection);
@@ -4050,7 +4051,8 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                 content.AppendLine($"Total Sales: ₱{totalSales:N2}");
                 content.AppendLine();
 
-                // PAYMENTS TENDERED
+                // PAYMENTS TENDERED (Expense / Income postings also write a CASH payment row on their own
+                // receipt - not customer payments, so excluded here; they have their own sections below)
                 content.AppendLine("PAYMENTS TENDERED:");
                 content.AppendLine(new string('-', GlobalSettings.ReceiptWidth));
 
@@ -4059,6 +4061,10 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                     SELECT tp.TenderTypeCode, SUM(tp.Amount) as TotalAmount, COUNT(*) as Count
                     FROM TransPaymentEntry tp
                     WHERE (tp.EODID IS NULL OR tp.EODID = '')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM TransactionHeader x
+                          WHERE x.ReceiptNo = tp.ReceiptNo AND x.Type IN ('EXPENSE', 'INCOME')
+                      )
                     GROUP BY tp.TenderTypeCode
                     ORDER BY tp.TenderTypeCode", connection);
 
@@ -4203,8 +4209,25 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                     content.AppendLine("No expenses recorded today.");
                 }
 
+                // Cash-paid expenses only (tagged CASH) - this is what the Tender Declaration deducts from
+                // the drawer; in-store item / commission expenses appear above but take no cash.
+                decimal cashExpenses = 0m;
+                var cashExpensesCmd = new SqlCommand(@"
+                    SELECT ISNULL(SUM(te.Amount), 0)
+                    FROM TransPaymentEntry te
+                    WHERE te.TenderTypeCode = 'CASH'
+                      AND (te.EODID IS NULL OR te.EODID = '')
+                      AND EXISTS (
+                          SELECT 1 FROM TransactionHeader th
+                          WHERE th.ReceiptNo = te.ReceiptNo AND th.Type = 'EXPENSE'
+                      )", connection);
+                var cashExpensesObj = cashExpensesCmd.ExecuteScalar();
+                if (cashExpensesObj != null && cashExpensesObj != DBNull.Value)
+                    cashExpenses = Convert.ToDecimal(cashExpensesObj);
+
                 content.AppendLine(new string('-', GlobalSettings.ReceiptWidth));
                 content.AppendLine($"Total Expenses: ₱{totalExpenses:F2}");
+                content.AppendLine($"Cash Expenses:  ₱{cashExpenses:F2}");
                 content.AppendLine();
 
                 // INCOME TOTALS

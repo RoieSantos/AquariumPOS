@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tender Declarations - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navwide1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Tender Declarations</h1>
+    <p class="muted">Cashiers' end-of-day cash counts from the POS, with the Short / Over against expected cash. Only visible to super users.</p>
+
+    <!-- Not authorized -->
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <!-- Session created before login captured the password - a fresh login fixes it. -->
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="toolbar" style="flex-wrap:wrap; gap:12px;">
+        <input type="text" id="searchInput" placeholder="Search EOD ID, receipt, cashier or warehouse..." style="max-width:320px;" />
+        <label class="muted">From <input type="date" id="fromInput" /></label>
+        <label class="muted">To <input type="date" id="toInput" /></label>
+        <select id="resultSelect">
+          <option value="">All results</option>
+          <option value="short">Short only</option>
+          <option value="over">Over only</option>
+          <option value="balanced">Balanced only</option>
+        </select>
+      </div>
+
+      <div class="stat-card-grid">
+        <div class="stat-card"><div class="stat-label">Declarations</div><div class="stat-value" id="statCount">-</div></div>
+        <div class="stat-card stat-cancelled"><div class="stat-label">Total Short</div><div class="stat-value" id="statShort">-</div></div>
+        <div class="stat-card stat-shipped"><div class="stat-label">Total Over</div><div class="stat-value" id="statOver">-</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>EOD ID</th>
+              <th>Warehouse</th>
+              <th>Cashier</th>
+              <th>Expected Cash</th>
+              <th>Declared Cash</th>
+              <th>Short / Over</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="declTableBody">
+            <tr><td colspan="9" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="declPaginationBar"></div>
+    </div>
+  </div>
+
+  <!-- Declaration detail -->
+  <div id="detailModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:720px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;" id="detailTitle">Tender Declaration</h2>
+        <button class="btn" type="button" id="detailCloseBtn">Close</button>
+      </div>
+      <p class="muted" id="detailMeta"></p>
+
+      <h3>Cash Count</h3>
+      <div class="table-wrap">
+        <table>
+          <tbody id="detailSummaryBody"></tbody>
+        </table>
+      </div>
+
+      <h3>Customer Payments by Tender</h3>
+      <div class="table-wrap">
+        <table>
+          <tbody id="detailTenderBody"></tbody>
+        </table>
+      </div>
+
+      <h3>Denominations Counted</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Denomination</th><th>Qty</th><th>Total</th></tr></thead>
+          <tbody id="detailLinesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=custconv1"></script>
+  <script src="js/nav.js?v=tenderdecl1"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/tenderDeclarations.js?v=tenderdecl1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

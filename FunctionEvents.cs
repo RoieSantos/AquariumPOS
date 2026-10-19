@@ -87,6 +87,100 @@ namespace AquariumPOS
                 }
             }
         }
+        // Cash figures behind a Tender Declaration's Short/Over. One source for the printed receipt,
+        // the Supabase sync and the history upload, so the portal always matches the paper.
+        public sealed class TenderDeclSummary
+        {
+            public decimal Float { get; set; }
+            public decimal CashSales { get; set; }
+            public decimal CashIncome { get; set; }
+            public decimal CashExpense { get; set; }
+            public decimal AdvanceCollections { get; set; }
+            // Customer payments by tender type (Expense / Income receipts excluded).
+            public List<(string Tender, decimal Amount)> SalesByTender { get; } = new List<(string, decimal)>();
+            public List<(string Tender, decimal Amount)> AdvanceByTender { get; } = new List<(string, decimal)>();
+
+            // Expected drawer cash = float + cash sales + cash income - cash expenses (each counted once).
+            public decimal ExpectedCash => Float + CashSales + CashIncome - CashExpense;
+        }
+
+        // eodId null/blank = the still-open day (rows not yet stamped - used while posting a declaration);
+        // otherwise the rows already stamped with that EODID (reprints, sync, history upload).
+        public static TenderDeclSummary GetTenderDeclSummary(SqlConnection connection, string? eodId)
+        {
+            bool open = string.IsNullOrWhiteSpace(eodId);
+            string Scope(string alias) => open
+                ? $"({alias}.EODID IS NULL OR {alias}.EODID = '')"
+                : $"{alias}.EODID = @EODID";
+
+            var summary = new TenderDeclSummary();
+
+            SqlCommand Cmd(string sql)
+            {
+                var cmd = new SqlCommand(sql, connection);
+                if (!open) cmd.Parameters.AddWithValue("@EODID", eodId!.Trim());
+                return cmd;
+            }
+
+            decimal Scalar(string sql)
+            {
+                using var cmd = Cmd(sql);
+                var result = cmd.ExecuteScalar();
+                return result != null && result != DBNull.Value ? Convert.ToDecimal(result) : 0m;
+            }
+
+            void ReadTenders(string sql, List<(string, decimal)> into)
+            {
+                using var cmd = Cmd(sql);
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                {
+                    string tender = rdr["TenderTypeCode"]?.ToString() ?? string.Empty;
+                    decimal amount = rdr["Total"] != DBNull.Value ? Convert.ToDecimal(rdr["Total"]) : 0m;
+                    into.Add((tender, amount));
+                }
+            }
+
+            // Expense / Income postings write a CASH payment row on their own receipt - not sales.
+            ReadTenders($@"
+                SELECT tp.TenderTypeCode, SUM(tp.Amount) AS Total
+                FROM TransPaymentEntry tp
+                WHERE {Scope("tp")}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM TransactionHeader x
+                      WHERE x.ReceiptNo = tp.ReceiptNo AND x.Type IN ('EXPENSE', 'INCOME')
+                  )
+                GROUP BY tp.TenderTypeCode", summary.SalesByTender);
+            summary.CashSales = summary.SalesByTender
+                .Where(t => string.Equals(t.Tender?.Trim(), "CASH", StringComparison.OrdinalIgnoreCase))
+                .Sum(t => t.Amount);
+
+            ReadTenders($@"
+                SELECT te.TenderTypeCode, SUM(te.Amount) AS Total
+                FROM TransPaymentEntry te
+                WHERE {Scope("te")}
+                  AND EXISTS (SELECT 1 FROM AdvanceOrderHeader ah WHERE ah.ReceiptNo = te.ReceiptNo)
+                GROUP BY te.TenderTypeCode
+                ORDER BY te.TenderTypeCode", summary.AdvanceByTender);
+            summary.AdvanceCollections = summary.AdvanceByTender.Sum(t => t.Amount);
+
+            // Cash-tagged expenses / incomes: sum the CASH payment rows themselves (one per line).
+            summary.CashExpense = Scalar($@"
+                SELECT SUM(te.Amount)
+                FROM TransPaymentEntry te
+                WHERE te.TenderTypeCode = 'CASH' AND {Scope("te")}
+                  AND EXISTS (SELECT 1 FROM TransactionHeader th WHERE th.ReceiptNo = te.ReceiptNo AND th.Type = 'EXPENSE')");
+            summary.CashIncome = Scalar($@"
+                SELECT SUM(te.Amount)
+                FROM TransPaymentEntry te
+                WHERE te.TenderTypeCode = 'CASH' AND {Scope("te")}
+                  AND EXISTS (SELECT 1 FROM TransactionHeader th WHERE th.ReceiptNo = te.ReceiptNo AND th.Type = 'INCOME')");
+
+            summary.Float = Scalar($"SELECT SUM(cf.TotalAmount) FROM CashFloatLines cf WHERE {Scope("cf")}");
+
+            return summary;
+        }
+
         public static readonly string connectionString = GlobalSettings.ConnectionString;
 
         // Prompts for customer name before posting
