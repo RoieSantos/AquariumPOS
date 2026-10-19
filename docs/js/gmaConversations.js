@@ -4101,14 +4101,14 @@ async function submitNewOrder() {
   }
 }
 
-// SuperUser-only: sends whatever is typed in the reply box (or "Human Agent test" if it's empty) to
+// Super User / Sales User only: sends whatever is typed in the reply box (or "Human Agent test" if it's empty) to
 // the open conversation with the HUMAN_AGENT tag forced (chatbot-staff-reply's force_human_agent) -
 // the App Dashboard's Human Agent test call, without waiting for a customer to fall outside the 24h
 // window. Shows Facebook's exact result in the reply error line. Before Meta approves the feature it
 // only succeeds to app admins/testers.
 async function testHumanAgent() {
   const psid = selectedPsid;
-  if (!psid || !currentSession?.isSuperUser) return;
+  if (!psid || !(currentSession?.isSuperUser || currentSession?.isSalesUser)) return;
   const btn = document.getElementById('testHumanAgentBtn');
   const statusEl = document.getElementById('replyErrorEl');
   const input = document.getElementById('replyInput');
@@ -7837,7 +7837,7 @@ function initDeliveryCalendar() {
   });
   updateComposerState(); // start folded on the phone
   const adviseBtn = document.getElementById('adviseReplyBtn');
-  if (session.isSuperUser) {
+  if (session.isSuperUser || session.isSalesUser) { // Test Human Agent: Super User + Sales User
     const testHumanAgentBtn = document.getElementById('testHumanAgentBtn');
     testHumanAgentBtn.classList.remove('hidden');
     testHumanAgentBtn.addEventListener('click', testHumanAgent);
