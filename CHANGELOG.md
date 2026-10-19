@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-20
+
+- **Repair orders get a repair caption.** Repair Calculator / POS repair lines are tagged `[Repair]` so ship / delivery captions say e.g. "36x18x18in aquarium - front panel replaced" / "resealed" and never "new" or "bagong gawa" (even for the Production angle). [facebook-page-post/index.ts](supabase/functions/facebook-page-post/index.ts). Deployed.
+
 ## 2026-10-19
 
 - **POS: required reason when Short / Over.** After the count is saved, if declared cash ≠ expected the cashier must type a reason (no cancel); it's stored in the TenderDecl header Description, printed on the receipt and sent to the portal (`VarianceReason` column, shown + searchable on Tender Declarations). [TenderDeclarationForm.cs](TenderDeclarationForm.cs), [MainForm.cs](MainForm.cs), [OnlinefunctionsEvents.cs](OnlinefunctionsEvents.cs), [supabase_tender_declaration_tables.sql](sql/supabase_tender_declaration_tables.sql), [tenderDeclarations.js](docs/js/tenderDeclarations.js) (`v=tenderreason1`).
@@ -18,7 +22,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 - **Added a read-only "why is this chat still paused" check** - lists every paused conversation with its reason (timer running / expired / manual pause / stuck with no timer) plus the auto-resume setting. [supabase_gma_paused_conversations_check.sql](sql/supabase_gma_paused_conversations_check.sql).
 - **Facebook auto-post captions now name the ordered items.** Ship (Dispatch) and Delivery Done posts read the order's lines (online / advance / order-now) and tell the caption writer to say e.g. "36x18x18in custom aquarium", "36x18in 2-layer custom stand", or a standard item's short name - item names only, no prices or customer info. [facebook-page-post/index.ts](supabase/functions/facebook-page-post/index.ts) (`orderItemsText`). Deployed.
 - **Captions also give the sealant / paint colour** ("with black sealant", "white-painted stand"), read from the line name, SKU (e.g. `AQ-029-BlackSealant`) or spec note - plain words, never the raw SKU. [facebook-page-post/index.ts](supabase/functions/facebook-page-post/index.ts) (`specColor`).
-- **Captions always name key build options** when present - stand: stainless steel, cabinet, canopy; aquarium: rimless, low-iron, tempered - and skip small ones (holes, dividers, stickers, filtration parts). POS "Aquarium Build" lines now count as custom aquarium. Colour + options changes not deployed yet.
+- **Captions always name key build options** when present - stand: stainless steel, cabinet, canopy; aquarium: rimless, low-iron, tempered - and skip small ones (holes, dividers, stickers, filtration parts). POS "Aquarium Build" lines now count as custom aquarium. Deployed 2026-10-20.
 
 - **Diagnostic: conversations per Facebook Page.** Read-only [supabase_gma_conversations_page_check.sql](sql/supabase_gma_conversations_page_check.sql) lists conversations/messages per PageId and customer names on 2+ Pages, to check whether the second Page's messages reach the webhook.
 - **Pause AI / Resume AI is Super User only.** In GMA Conversations the button stays visible (so staff can see the state) but is greyed out for non-Super Users, and [supabase_gma_pause_ai_superuser_only.sql](sql/supabase_gma_pause_ai_superuser_only.sql) makes `admin_set_chatbot_conversation_paused` refuse anyone else. Staff replies still auto-pause and the auto-resume timer still runs. [gmaConversations.js](docs/js/gmaConversations.js) `v=pausesu1`.

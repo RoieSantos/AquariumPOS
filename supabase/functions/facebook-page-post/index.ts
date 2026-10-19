@@ -183,7 +183,11 @@ async function orderItemsText(supabase: SupabaseClient, ref: OrderRef): Promise<
       const isTank = /aquarium|tank/i.test(l.name);
       let kind = 'Item';
       let name = l.name.slice(0, 140);
-      if (isCustom && isStand) {
+      // Repair Calculator lines ("Repair - Panel Replacement (...)", "Repair - Resealing/Leak Repair
+      // (...)") and the POS's "CUSTOM REPAIR - GLASS" - checked first, so a repair is never a new build.
+      if (/repair|reseal|panel replacement/i.test(l.name)) {
+        kind = 'Repair';
+      } else if (isCustom && isStand) {
         kind = 'Custom stand';
         // Aquarium + stand orders name the stand without its top size - it's in the note.
         const top = l.note.match(/(?:stand top =|Top size \(L x W\):)\s*([\d.]+\s*x\s*[\d.]+\s*in)/i)?.[1];
@@ -259,6 +263,7 @@ async function writeCaption(
 - Custom aquarium: say it is a custom aquarium with its size, e.g. "36x18x18in custom aquarium" (glass thickness may be added).
 - Custom stand: say it is a custom stand with its size and number of layers, e.g. "36x18in 2-layer custom stand".
 - Standard aquarium or other item: its name as given, shortened - drop item codes; no long descriptions.
+- Repair: say it is a repair of the customer's aquarium with the tank size and what was done, e.g. "Repaired! 36x18x18in aquarium - front panel replaced" or "36x18x18in aquarium resealed - leak fixed". NEVER call a repair new, freshly built, made to order or "bagong gawa" - this overrides the example caption and the angle below. Invite others to message us for aquarium repairs.
 - When a sealant or paint colour is listed, include it in plain words, e.g. "with black sealant", "white-painted stand".
 - Always include these when the item's name has them: for a stand - stainless steel (instead of a paint colour), cabinet, canopy; for an aquarium - rimless, low-iron, tempered. E.g. "36x18x18in rimless low-iron custom aquarium with black sealant, on a 2-layer stainless steel stand with cabinet".
 - Leave out the smaller build details (holes, dividers, high strip, filtration parts, stickers, tubular size, height).
@@ -268,7 +273,7 @@ async function writeCaption(
     systemPrompt += `\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`;
   }
   // Last, so neither the example caption nor the standing directions can override it.
-  systemPrompt += `\n\nREQUIRED angle for this post, based on who took the photo (this overrides the example caption and any opening line above):\n${angle.instruction}`;
+  systemPrompt += `\n\nREQUIRED angle for this post, based on who took the photo (this overrides the example caption and any opening line above):\n${angle.instruction}${items && /\[Repair\]/.test(items) ? '\nThis order is a REPAIR: keep this angle\'s opening and framing, but describe the work as a repair of the customer\'s tank - never as new or freshly built.' : ''}`;
 
   const anthropic = new Anthropic({ apiKey: anthropicApiKey });
   const response = await anthropic.messages.create({
