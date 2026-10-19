@@ -365,11 +365,22 @@ namespace AquariumPOS
                     }
 
 
+                    // Short / Over: the count above is already saved, so the cashier only sees the result now
+                    // (and can't change the count to match). Any difference needs a reason, which is kept in
+                    // the TenderDecl header's Description, printed on the receipt and sent to the portal.
+                    string headerDescription = "";
+                    decimal variance = totalDeclared - FunctionEvents.GetTenderDeclSummary(connection, null).ExpectedCash;
+                    if (variance != 0m)
+                    {
+                        string reason = PromptForVarianceReason(variance);
+                        headerDescription = $"Tender Declaration | {(variance < 0 ? "Short" : "Over")} {Math.Abs(variance):F2} | {VarianceReasonPrefix}{reason}";
+                    }
+
                     // Call WriteSalesTransactionHeader with type = 'TenderDecl'
                     var mainForm = this.Owner as AquariumPOS.MainForm;
                     if (mainForm != null)
                     {
-                        mainForm.WriteSalesTransactionHeader(receiptNo, "TenderDecl", totalDeclared, eodID, "");
+                        mainForm.WriteSalesTransactionHeader(receiptNo, "TenderDecl", totalDeclared, eodID, headerDescription);
                         // Print receipt after tender declaration
                         mainForm.PrintTenderDeclReceipt(receiptNo);
                         // Print X Report after tender declaration
@@ -418,6 +429,94 @@ namespace AquariumPOS
                 MessageBox.Show($"Error posting tender declaration: {ex.Message}", "Error",
                               MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        // Marks where the cashier's reason starts inside TransactionHeader.Description
+        // (read back by GetVarianceReason for the receipt and the portal sync).
+        public const string VarianceReasonPrefix = "Reason: ";
+
+        public static string GetVarianceReason(string? description)
+        {
+            if (string.IsNullOrWhiteSpace(description)) return string.Empty;
+            int at = description.IndexOf(VarianceReasonPrefix, StringComparison.Ordinal);
+            return at < 0 ? string.Empty : description.Substring(at + VarianceReasonPrefix.Length).Trim();
+        }
+
+        // Required reason when the drawer is Short or Over. No Cancel / close button - the declaration is
+        // already saved, so the cashier must explain the difference before it finishes.
+        private string PromptForVarianceReason(decimal variance)
+        {
+            bool isShort = variance < 0;
+            string word = isShort ? "SHORT" : "OVER";
+
+            using var form = new ThemedForm
+            {
+                Text = $"Cash {word} - Reason Required",
+                Size = new Size(760, 380),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                ControlBox = false,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var title = new Label
+            {
+                Text = $"Your cash is {word} by P{Math.Abs(variance):F2}",
+                Font = new Font("Arial", 20, FontStyle.Bold),
+                ForeColor = isShort ? Color.DarkRed : Color.DarkOrange,
+                Location = new Point(24, 20),
+                Size = new Size(700, 40)
+            };
+            var prompt = new Label
+            {
+                Text = "Please explain why (required):",
+                Font = new Font("Arial", 14),
+                Location = new Point(24, 70),
+                Size = new Size(700, 30)
+            };
+            var reasonBox = new TextBox
+            {
+                Multiline = true,
+                MaxLength = 200, // TransactionHeader.Description is NVARCHAR(255)
+                Font = new Font("Arial", 14),
+                Location = new Point(24, 105),
+                Size = new Size(700, 130),
+                ScrollBars = ScrollBars.Vertical
+            };
+            var okButton = new Button
+            {
+                Text = "SAVE REASON",
+                Enabled = false,
+                Location = new Point(24, 255),
+                Size = new Size(220, 55),
+                BackColor = Color.Green,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 14, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat
+            };
+            var hint = new Label
+            {
+                Text = "At least 5 characters.",
+                Font = new Font("Arial", 11),
+                ForeColor = Color.Gray,
+                Location = new Point(260, 272),
+                Size = new Size(300, 25)
+            };
+
+            reasonBox.TextChanged += (s, e) => okButton.Enabled = reasonBox.Text.Trim().Length >= 5;
+            okButton.Click += (s, e) => { form.DialogResult = DialogResult.OK; form.Close(); };
+            // Keep the dialog open until a reason is saved (Alt+F4 etc.).
+            form.FormClosing += (s, e) =>
+            {
+                if (form.DialogResult != DialogResult.OK) e.Cancel = true;
+            };
+
+            form.Controls.AddRange(new Control[] { title, prompt, reasonBox, okButton, hint });
+            form.ShowDialog(this);
+
+            // Single line so the receipt / portal show it cleanly.
+            return string.Join(" ", reasonBox.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)).Trim();
         }
 
         private void TenderDeclarationForm_KeyDown(object? sender, KeyEventArgs e)

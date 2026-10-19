@@ -21292,6 +21292,21 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
 
                     string discrepancyWord = discrepancy < 0 ? "Over" : (discrepancy > 0 ? "Short" : "");
                     receipt.AppendLine(string.Format("{0,-0} P{1:F2} {2}", ":", discrepancy, discrepancyWord));
+
+                    // Cashier's Short / Over reason (TenderDeclarationForm.PromptForVarianceReason).
+                    using (var reasonCmd = new SqlCommand("SELECT TOP 1 Description FROM TransactionHeader WHERE ReceiptNo = @ReceiptNo AND Type = 'TenderDecl' ORDER BY TransactionNo DESC", conn))
+                    {
+                        reasonCmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                        string varianceReason = TenderDeclarationForm.GetVarianceReason(reasonCmd.ExecuteScalar()?.ToString());
+                        if (!string.IsNullOrWhiteSpace(varianceReason))
+                        {
+                            receipt.AppendLine("Reason:");
+                            // Wrap to the receipt width.
+                            int width = Math.Max(20, line.Length);
+                            for (int i = 0; i < varianceReason.Length; i += width)
+                                receipt.AppendLine(varianceReason.Substring(i, Math.Min(width, varianceReason.Length - i)));
+                        }
+                    }
                 }
             }
             catch { }

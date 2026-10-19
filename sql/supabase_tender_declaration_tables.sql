@@ -59,6 +59,9 @@ create table if not exists public."TenderDeclarationLines" (
         references public."TenderDeclarationHeader" ("Warehouse", "EODID") on delete cascade
 );
 
+-- Cashier's reason when the drawer is Short / Over (required by the POS whenever Variance <> 0).
+alter table public."TenderDeclarationHeader" add column if not exists "VarianceReason" varchar(255);
+
 create index if not exists "IX_TenderDeclarationHeader_DeclDate" on public."TenderDeclarationHeader" ("DeclDate" desc);
 
 alter table public."TenderDeclarationHeader" enable row level security;
@@ -98,12 +101,12 @@ begin
 
   insert into public."TenderDeclarationHeader" as t (
     "Warehouse", "EODID", "ReceiptNo", "UserID", "DeclDate", "DeclTime",
-    "FloatAmount", "CashSales", "CashIncome", "CashExpense", "ExpectedCash", "DeclaredCash", "Variance",
+    "FloatAmount", "CashSales", "CashIncome", "CashExpense", "ExpectedCash", "DeclaredCash", "Variance", "VarianceReason",
     "AdvanceCollections", "SalesByTender", "FromHistoryUpload", "SyncedAtUtc"
   ) values (
     h."Warehouse", h."EODID", h."ReceiptNo", h."UserID", h."DeclDate", h."DeclTime",
     coalesce(h."FloatAmount", 0), coalesce(h."CashSales", 0), coalesce(h."CashIncome", 0), coalesce(h."CashExpense", 0),
-    coalesce(h."ExpectedCash", 0), coalesce(h."DeclaredCash", 0), coalesce(h."Variance", 0),
+    coalesce(h."ExpectedCash", 0), coalesce(h."DeclaredCash", 0), coalesce(h."Variance", 0), h."VarianceReason",
     coalesce(h."AdvanceCollections", 0), coalesce(h."SalesByTender", '{}'::jsonb), coalesce(h."FromHistoryUpload", false),
     coalesce(h."SyncedAtUtc", now())
   )
@@ -119,6 +122,7 @@ begin
     "ExpectedCash" = excluded."ExpectedCash",
     "DeclaredCash" = excluded."DeclaredCash",
     "Variance" = excluded."Variance",
+    "VarianceReason" = excluded."VarianceReason",
     "AdvanceCollections" = excluded."AdvanceCollections",
     "SalesByTender" = excluded."SalesByTender",
     -- A live post stays "live" even if the history button re-sends it later.
@@ -169,6 +173,7 @@ returns table(
   expected_cash numeric,
   declared_cash numeric,
   variance numeric,
+  variance_reason text,
   advance_collections numeric,
   sales_by_tender jsonb,
   from_history_upload boolean,
@@ -196,7 +201,7 @@ begin
     select
       h."Warehouse"::text, h."EODID"::text, h."ReceiptNo"::text, h."UserID"::text, h."DeclDate", h."DeclTime"::text,
       h."FloatAmount", h."CashSales", h."CashIncome", h."CashExpense", h."ExpectedCash", h."DeclaredCash",
-      h."Variance", h."AdvanceCollections", h."SalesByTender", h."FromHistoryUpload", h."SyncedAtUtc",
+      h."Variance", h."VarianceReason"::text, h."AdvanceCollections", h."SalesByTender", h."FromHistoryUpload", h."SyncedAtUtc",
       count(*) over(),
       coalesce(sum(case when h."Variance" < 0 then -h."Variance" else 0 end) over(), 0),
       coalesce(sum(case when h."Variance" > 0 then h."Variance" else 0 end) over(), 0)
@@ -216,6 +221,7 @@ begin
         or h."ReceiptNo" ilike '%' || v_search || '%'
         or h."UserID" ilike '%' || v_search || '%'
         or h."Warehouse" ilike '%' || v_search || '%'
+        or h."VarianceReason" ilike '%' || v_search || '%'
       )
     order by h."DeclDate" desc nulls last, h."EODID" desc
     limit v_page_size offset (v_page - 1) * v_page_size;

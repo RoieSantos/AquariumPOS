@@ -49,7 +49,9 @@ function renderRows(rows) {
       <td>${escapeHtml(r.user_id)}</td>
       <td>${formatMoney(r.expected_cash)}</td>
       <td>${formatMoney(r.declared_cash)}</td>
-      <td>${varianceBadge(r.variance)}</td>
+      <td>${varianceBadge(r.variance)}${r.variance_reason
+        ? `<div class="muted" style="font-size:12px; max-width:260px;">${escapeHtml(r.variance_reason)}</div>`
+        : (Number(r.variance || 0) !== 0 ? '<div class="muted" style="font-size:12px;">No reason given</div>' : '')}</td>
       <td><a href="#" data-row="${i}" class="view-link">View</a></td>
     </tr>
   `).join('');
@@ -119,7 +121,10 @@ async function openDetail(row) {
   document.getElementById('detailSummaryBody').innerHTML =
     summaryRows.map(([label, value, bold]) =>
       `<tr><td>${label}</td><td style="text-align:right;">${bold ? '<strong>' : ''}${formatMoney(value)}${bold ? '</strong>' : ''}</td></tr>`).join('') +
-    `<tr><td><strong>Result</strong></td><td style="text-align:right;">${varianceBadge(row.variance)}</td></tr>`;
+    `<tr><td><strong>Result</strong></td><td style="text-align:right;">${varianceBadge(row.variance)}</td></tr>` +
+    (Number(row.variance || 0) !== 0
+      ? `<tr><td><strong>Cashier's reason</strong></td><td>${row.variance_reason ? escapeHtml(row.variance_reason) : '<span class="muted">No reason given</span>'}</td></tr>`
+      : '');
 
   const tenders = Object.entries(row.sales_by_tender || {});
   document.getElementById('detailTenderBody').innerHTML = (tenders.length

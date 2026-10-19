@@ -4609,11 +4609,11 @@ ORDER BY ID", connection))
             {
                 connection.Open();
 
-                string? receiptNo = null, userId = null, declTime = null;
+                string? receiptNo = null, userId = null, declTime = null, varianceReason = null;
                 DateTime? declDate = null;
                 decimal? headerAmount = null;
                 using (var cmd = new SqlCommand(@"
-SELECT TOP 1 ReceiptNo, [Date], [Time], UserID, NetAmount
+SELECT TOP 1 ReceiptNo, [Date], [Time], UserID, NetAmount, Description
 FROM dbo.TransactionHeader
 WHERE Type = 'TenderDecl' AND EODID = @EODID
 ORDER BY TransactionNo DESC", connection))
@@ -4627,6 +4627,7 @@ ORDER BY TransactionNo DESC", connection))
                         declTime = rdr["Time"] == DBNull.Value ? null : Convert.ToString(rdr["Time"]);
                         userId = rdr["UserID"] == DBNull.Value ? null : Convert.ToString(rdr["UserID"]);
                         headerAmount = rdr["NetAmount"] == DBNull.Value ? null : Convert.ToDecimal(rdr["NetAmount"]);
+                        varianceReason = TenderDeclarationForm.GetVarianceReason(rdr["Description"] == DBNull.Value ? null : Convert.ToString(rdr["Description"]));
                     }
                 }
 
@@ -4693,6 +4694,7 @@ ORDER BY [LineNo], EntryNo", connection))
                     ["DeclaredCash"] = declared,
                     // Declared - Expected: negative = Short, positive = Over.
                     ["Variance"] = declared - summary.ExpectedCash,
+                    ["VarianceReason"] = string.IsNullOrWhiteSpace(varianceReason) ? null : varianceReason,
                     ["AdvanceCollections"] = summary.AdvanceCollections,
                     ["SalesByTender"] = salesByTender,
                     ["FromHistoryUpload"] = fromHistoryUpload,
