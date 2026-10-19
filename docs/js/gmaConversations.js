@@ -126,7 +126,10 @@ async function loadConversations() {
   }
 
   const previousSelected = conversations.find((c) => c.psid === selectedPsid);
-  conversations = data || [];
+  // Show the customer's real Facebook name everywhere in the inbox (sql/supabase_gma_conversation_facebook_name.sql)
+  // - CustomerName is the CRM/order name the bot, auto-fill and Customer Card change, which confused
+  // staff. That name stays as crm_name for prefilling new orders.
+  conversations = (data || []).map((c) => ({ ...c, crm_name: c.customer_name, customer_name: c.facebook_name || c.customer_name }));
   // Unread view: opening a conversation marks it read, so the next reload would drop it - keep the
   // one that's open in the list until staff move on (like Messenger's Unread tab).
   if (conversationReadFilter && previousSelected && !conversations.some((c) => c.psid === selectedPsid)) {
@@ -2769,9 +2772,9 @@ function renderCreateOrderTab(conv) {
       document.getElementById('newOrderDeliveryFee').value = Number(editingOrder.delivery_fee || 0) > 0 ? Number(editingOrder.delivery_fee).toFixed(2) : '';
     }
   } else {
-    // Prefilled from their Facebook profile name (ChatbotConversations.CustomerName - see
-    // fetchFacebookProfileName in the webhook), not authoritative - staff can still edit it.
-    document.getElementById('newOrderCustomerName').value = conv.customer_name || '';
+    // Prefilled from the CRM name (ChatbotConversations.CustomerName - the name they gave for orders,
+    // else their Facebook name), not authoritative - staff can still edit it.
+    document.getElementById('newOrderCustomerName').value = conv.crm_name || conv.customer_name || '';
     prefillCreateOrderFromCustomer(conv);
   }
 

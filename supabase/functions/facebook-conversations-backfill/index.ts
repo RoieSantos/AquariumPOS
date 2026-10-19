@@ -43,7 +43,8 @@
 // feature in this codebase, no stored session.
 //
 // Name resolution: every run (and the lighter { mode: 'names_only' } run behind the page's "Fetch
-// Names" button) also fills ChatbotConversations.CustomerName for any row still missing one - the
+// Names" button) also fills ChatbotConversations.FacebookName (what the inbox shows) and a blank
+// CustomerName for any row still missing one - the
 // live webhook only looks a name up when that customer sends a NEW message, so conversations from
 // before pages_messaging was approved stayed as raw PSIDs forever. Tries the User Profile API
 // first (needs the separate Business Asset User Profile Access feature), then the Conversations
@@ -53,8 +54,14 @@
 // Deploy: supabase functions deploy facebook-conversations-backfill --project-ref hymcmesqgpliyyeghpgq
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { getPageAccessToken } from '../_shared/page-tokens.ts';
 
 const DEFAULT_GRAPH_VERSION = 'v21.0';
+// Name lookups stop this long after the request started, safely under the Edge Function wall-clock
+// limit (a full-inbox names_only run hit it - 504); the participant-list scan gets the first part.
+const NAME_TIME_BUDGET_MS = 100_000;
+const PARTICIPANT_SCAN_BUDGET_MS = 40_000;
+const NAME_LOOKUP_CONCURRENCY = 6;
 const CONVERSATIONS_PER_PAGE = 25;
 const MESSAGES_PER_CONVERSATION = 100;
 const MAX_CONVERSATION_PAGES = 40;
@@ -128,11 +135,11 @@ async function fetchProfileName(psid: string, pageAccessToken: string, graphVers
 
 // Participant names from /me/conversations, without the message payload - used by names_only mode
 // as the fallback source (the full import collects these while it walks the threads anyway).
-async function fetchParticipantNames(pageId: string, pageAccessToken: string, graphVersion: string): Promise<Map<string, string>> {
+async function fetchParticipantNames(pageId: string, pageAccessToken: string, graphVersion: string, stopAt: number): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   let url: string | null = `https://graph.facebook.com/${graphVersion}/me/conversations?fields=participants&limit=100&access_token=${pageAccessToken}`;
   let pages = 0;
-  while (url && pages < MAX_CONVERSATION_PAGES) {
+  while (url && pages < MAX_CONVERSATION_PAGES && Date.now() < stopAt) {
     pages++;
     const res = await fetch(url);
     if (!res.ok) break;
@@ -165,31 +172,70 @@ async function resolveMissingNames(
   participantNames: Map<string, string>,
   pageId: string,
   pageAccessToken: string,
-  graphVersion: string
-): Promise<{ namesMissing: number; namesResolved: number; nameError: string | null }> {
-  const { data: rows } = await supabase
+  graphVersion: string,
+  deadline: number
+): Promise<{ namesMissing: number; namesResolved: number; namesRemaining: number; nameError: string | null }> {
+  // Rows missing their Facebook name (FacebookName, sql/supabase_gma_conversation_facebook_name.sql -
+  // the name the inbox shows, separate from the CRM/order CustomerName) or with no name at all.
+  // Falls back to the CustomerName-only check if that SQL isn't run yet.
+  let hasFacebookNameColumn = true;
+  let { data: rows, error: rowsError } = await supabase
     .from('ChatbotConversations')
-    .select('Psid')
-    .or('CustomerName.is.null,CustomerName.eq.');
-  const missing = (rows || []) as Array<{ Psid: string }>;
+    .select('Psid, PageId, CustomerName')
+    .or('FacebookName.is.null,FacebookName.eq.,CustomerName.is.null,CustomerName.eq.')
+    .order('LastMessageAtUtc', { ascending: false, nullsFirst: false });
+  if (rowsError) {
+    hasFacebookNameColumn = false;
+    ({ data: rows } = await supabase
+      .from('ChatbotConversations')
+      .select('Psid, PageId, CustomerName')
+      .or('CustomerName.is.null,CustomerName.eq.')
+      .order('LastMessageAtUtc', { ascending: false, nullsFirst: false }));
+  }
+  // Messenger PSIDs only - website-widget chats (PageId 'website') have no Facebook name.
+  const missing = ((rows || []) as Array<{ Psid: string; PageId: string | null; CustomerName: string | null }>)
+    .filter((r) => r.PageId !== 'website' && /^\d+$/.test(r.Psid));
   let namesResolved = 0;
+  let namesTried = 0;
   let nameError: string | null = null;
 
-  for (const row of missing) {
-    // Profile API first - each call also counts toward the Business Asset User Profile Access
-    // test calls Meta's App Review wants to see - then the participant-name fallbacks.
-    const profile = await fetchProfileName(row.Psid, pageAccessToken, graphVersion);
-    if (profile.error) console.error(`Profile lookup failed for psid ${row.Psid}: ${profile.error}`);
-    let name = profile.name || participantNames.get(row.Psid) || null;
-    if (!name) name = await fetchThreadParticipantName(row.Psid, pageId, pageAccessToken, graphVersion);
+  const resolveOne = async (row: { Psid: string; PageId: string | null; CustomerName: string | null }) => {
+    // Each Page's own token (FACEBOOK_PAGE_TOKENS) - another Page's token can't see its customers.
+    const rowPageId = row.PageId || pageId;
+    const token = getPageAccessToken(rowPageId) || pageAccessToken;
+    // Participant list first (already fetched, no extra call), then the Profile API - which also
+    // counts toward the Business Asset User Profile Access test calls Meta's App Review wants to see.
+    let name = participantNames.get(row.Psid) || null;
     if (!name) {
-      nameError = nameError || profile.error;
-      continue;
+      const profile = await fetchProfileName(row.Psid, token, graphVersion);
+      if (profile.error) console.error(`Profile lookup failed for psid ${row.Psid}: ${profile.error}`);
+      name = profile.name || (await fetchThreadParticipantName(row.Psid, rowPageId, token, graphVersion));
+      if (!name) {
+        nameError = nameError || profile.error;
+        return;
+      }
     }
-    const { error } = await supabase.from('ChatbotConversations').update({ CustomerName: name }).eq('Psid', row.Psid);
+    // CustomerName is only filled when blank - a name the customer/staff gave for orders is kept.
+    const update: Record<string, unknown> = hasFacebookNameColumn ? { FacebookName: name } : {};
+    if (!String(row.CustomerName || '').trim()) {
+      update.CustomerName = name;
+      update.CustomerNameSource = 'FacebookProfile';
+    }
+    const { error } = await supabase.from('ChatbotConversations').update(update).eq('Psid', row.Psid);
     if (!error) namesResolved++;
-  }
-  return { namesMissing: missing.length, namesResolved, nameError };
+  };
+
+  // A few lookups at a time, and stop before the Edge Function wall-clock limit (it 504'd on a
+  // full inbox) - anything left is reported as namesRemaining; just run it again for the rest.
+  let next = 0;
+  await Promise.all(Array.from({ length: NAME_LOOKUP_CONCURRENCY }, async () => {
+    while (next < missing.length && Date.now() < deadline) {
+      const row = missing[next++];
+      namesTried++;
+      await resolveOne(row);
+    }
+  }));
+  return { namesMissing: missing.length, namesResolved, namesRemaining: missing.length - namesTried, nameError };
 }
 
 Deno.serve(async (req) => {
@@ -237,8 +283,9 @@ Deno.serve(async (req) => {
 
   if (namesOnly) {
     try {
-      const participantNames = await fetchParticipantNames(pageId, pageAccessToken, graphVersion);
-      return jsonResponse({ ok: true, ...(await resolveMissingNames(supabase, participantNames, pageId, pageAccessToken, graphVersion)) });
+      const startedAt = Date.now();
+      const participantNames = await fetchParticipantNames(pageId, pageAccessToken, graphVersion, startedAt + PARTICIPANT_SCAN_BUDGET_MS);
+      return jsonResponse({ ok: true, ...(await resolveMissingNames(supabase, participantNames, pageId, pageAccessToken, graphVersion, startedAt + NAME_TIME_BUDGET_MS)) });
     } catch (err) {
       return jsonResponse({ error: err instanceof Error ? err.message : 'Unexpected error.' }, 500);
     }
@@ -341,7 +388,9 @@ Deno.serve(async (req) => {
       url = typeof next === 'string' ? next : null;
     }
 
-    const names = await resolveMissingNames(supabase, participantNames, pageId, pageAccessToken, graphVersion);
+    // The full import has usually used most of the time already - names get a short window, and
+    // names_only runs (or the next import) pick up the rest.
+    const names = await resolveMissingNames(supabase, participantNames, pageId, pageAccessToken, graphVersion, Date.now() + 30_000);
 
     return jsonResponse({
       ok: true,

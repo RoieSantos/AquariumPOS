@@ -1021,13 +1021,21 @@ async function processMessage(
 
   // Backfills CustomerName for both brand-new conversations and older ones that predate this
   // column - runs regardless of pause state so a paused conversation still gets a name attached.
-  if (!convState?.CustomerName) {
+  // FacebookName (sql/supabase_gma_conversation_facebook_name.sql) is what the inbox shows - only
+  // ever this lookup's result, since CustomerName gets replaced by the CRM/order name. Read on its own
+  // so a missing column (SQL not run yet) can't break convState / the pause check below.
+  const { data: fbRow, error: fbError } = await supabase.from('ChatbotConversations').select('FacebookName').eq('Psid', psid).maybeSingle();
+  const needsFacebookName = !fbError && !fbRow?.FacebookName;
+  if (!convState?.CustomerName || needsFacebookName) {
     const fetchedName =
       (await fetchFacebookProfileName(psid, pageAccessToken, graphVersion)) ||
       (await fetchConversationParticipantName(psid, pageId, pageAccessToken, graphVersion));
     if (fetchedName) {
-      await supabase.from('ChatbotConversations').update({ CustomerName: fetchedName }).eq('Psid', psid);
-      if (convState) convState.CustomerName = fetchedName;
+      if (needsFacebookName) await supabase.from('ChatbotConversations').update({ FacebookName: fetchedName }).eq('Psid', psid);
+      if (!convState?.CustomerName) {
+        await supabase.from('ChatbotConversations').update({ CustomerName: fetchedName, CustomerNameSource: 'FacebookProfile' }).eq('Psid', psid);
+        if (convState) convState.CustomerName = fetchedName;
+      }
     }
   }
 

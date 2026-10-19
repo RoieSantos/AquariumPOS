@@ -132,14 +132,87 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// Per "if the order is custom tank say aquarium with the dimension, if custom stand then say the
+// dimension with layers, standard aquarium say the Description (not the long one)": the order's own
+// item lines, so ship / delivery captions say what was actually ordered. Only the line's item name
+// (Pancake / POS / order-now line name - custom builds already carry size, glass and layers in it)
+// plus, for a custom stand whose name has no top size, the "stand top" size from its spec note.
+// Per "can we include the Sku or the sealant and paint color": the sealant / paint colour, read from
+// the name, the SKU (standard items, e.g. "AQ-029-BlackSealant") or the spec note ("Sealant: Black",
+// "BLACK PAINT") - passed as plain words, never the raw SKU code.
+// Never prices or anything else from the order. '' when there are no lines or the lookup fails.
+type OrderRef = { orderId?: string | null; advanceNo?: string | null; automatedNo?: string | null };
+const SIZE_PATTERN = /\d+(\.\d+)?\s*(in|"|cm)?\s*[x×]\s*\d+(\.\d+)?/i;
+const SEALANT_COLORS = 'clear|black|white';
+const PAINT_COLORS = 'black|white|gr[ae]y|silver|gold|brown|blue|red|green';
+
+// "Black sealant" / "BlackSealant" / "Sealant: Black" / "Sealant color - Black" -> "black".
+function specColor(text: string, word: string, colors: string): string | null {
+  const m = text.match(new RegExp(`(${colors})[\\s_-]*${word}`, 'i'))
+    || text.match(new RegExp(`${word}\\s*(?:colou?r)?\\s*[:=-]?\\s*(${colors})\\b`, 'i'));
+  return m ? m[1].toLowerCase() : null;
+}
+
+async function orderItemsText(supabase: SupabaseClient, ref: OrderRef): Promise<string> {
+  let lines: Array<{ name: string; sku: string; note: string; qty: number }> = [];
+  const toLine = (name: unknown, sku: unknown, note: unknown, qty: unknown) =>
+    ({ name: String(name ?? '').trim(), sku: String(sku ?? ''), note: String(note ?? ''), qty: Number(qty) || 1 });
+  try {
+    if (ref.orderId) {
+      const { data } = await supabase.from('OnlineOrderLines').select('"Description", "ItemCode", "Note", "Quantity"').eq('OrderID', ref.orderId);
+      lines = (data ?? []).map((r) => toLine(r.Description, r.ItemCode, r.Note, r.Quantity));
+    } else if (ref.advanceNo) {
+      const { data } = await supabase.from('AdvanceOrderLines').select('"Description", "No", "Quantity"').eq('TransactionNo', ref.advanceNo);
+      lines = (data ?? []).map((r) => toLine(r.Description, r.No, '', r.Quantity));
+    } else if (ref.automatedNo) {
+      const { data } = await supabase.from('AutomatedOrderLines').select('"ItemName", "ItemCode", "Quantity"').eq('OrderNo', ref.automatedNo);
+      lines = (data ?? []).map((r) => toLine(r.ItemName, r.ItemCode, '', r.Quantity));
+    }
+  } catch (err) {
+    console.error(`Order items lookup failed: ${errorText(err)}`);
+    return '';
+  }
+
+  return lines
+    .filter((l) => l.name && l.qty > 0)
+    .slice(0, 8)
+    .map((l) => {
+      // The POS keeps a custom tank's glass / sealant / low-iron / rimless on an "Aquarium Build" line.
+      const isCustom = /custom|aquarium build/i.test(l.name);
+      const isStand = /stand(?!ard)/i.test(l.name);
+      const isTank = /aquarium|tank/i.test(l.name);
+      let kind = 'Item';
+      let name = l.name.slice(0, 140);
+      if (isCustom && isStand) {
+        kind = 'Custom stand';
+        // Aquarium + stand orders name the stand without its top size - it's in the note.
+        const top = l.note.match(/(?:stand top =|Top size \(L x W\):)\s*([\d.]+\s*x\s*[\d.]+\s*in)/i)?.[1];
+        if (top && !SIZE_PATTERN.test(name)) name += ` - top ${top}`;
+      } else if (isCustom && isTank) {
+        kind = 'Custom aquarium';
+      } else if (isTank && !isStand) {
+        kind = 'Standard aquarium';
+      }
+      const specText = `${l.name} ${l.sku} ${l.note}`;
+      const extras: string[] = [];
+      const sealant = isStand ? null : specColor(specText, 'sealant', SEALANT_COLORS);
+      const paint = /stainless/i.test(specText) ? null : specColor(specText, 'paint', PAINT_COLORS);
+      if (sealant) extras.push(`sealant: ${sealant}`);
+      if (paint) extras.push(`paint: ${paint}`);
+      return `- [${kind}] ${name}${extras.length ? ` (${extras.join(', ')})` : ''}${l.qty > 1 ? ` (qty ${l.qty})` : ''}`;
+    })
+    .join('\n');
+}
+
 // Every caption is grounded in the real business (General Setup's CompanyInfo + AI Bot Setup's
 // Store Info, the same facts Alice uses) AND the photo. Standing caption directions come from
 // AI Bot Setup > Facebook Posts (supabase_facebook_post_settings.sql) - optional, the table may not
 // exist yet. Throws on failure.
 // `branchOverride` (post_ship): the order's branch instead of the poster's own StaffUsers branch.
+// `items` (post_ship / post_stop): orderItemsText - what the order actually is.
 async function writeCaption(
   supabase: SupabaseClient, staff: Staff, context: string, notes: string, imageBase64: string, mediaType: string,
-  branchOverride?: string | null
+  branchOverride?: string | null, items?: string
 ): Promise<{ caption: string; angle: string; branch: string | null }> {
   const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!anthropicApiKey) throw new Error('Missing the ANTHROPIC_API_KEY secret.');
@@ -180,6 +253,16 @@ async function writeCaption(
     if (branch?.Address) branchFacts.push(`- Branch address: ${branch.Address}`);
     if (branch?.ContactNo) branchFacts.push(`- Branch contact: ${branch.ContactNo}`);
     systemPrompt += `\nThe photo was taken at this branch - mention the branch name, and prefer its contact number over the main one:\n${branchFacts.join('\n')}`;
+  }
+  if (items) {
+    systemPrompt += `\n\nItems in this order (from the order record - use them to say exactly what this is instead of guessing from the photo; this is the one exception to keeping it high level):\n${items}\nHow to name them - short and informative, in the first line or two:
+- Custom aquarium: say it is a custom aquarium with its size, e.g. "36x18x18in custom aquarium" (glass thickness may be added).
+- Custom stand: say it is a custom stand with its size and number of layers, e.g. "36x18in 2-layer custom stand".
+- Standard aquarium or other item: its name as given, shortened - drop item codes; no long descriptions.
+- When a sealant or paint colour is listed, include it in plain words, e.g. "with black sealant", "white-painted stand".
+- Always include these when the item's name has them: for a stand - stainless steel (instead of a paint colour), cabinet, canopy; for an aquarium - rimless, low-iron, tempered. E.g. "36x18x18in rimless low-iron custom aquarium with black sealant, on a 2-layer stainless steel stand with cabinet".
+- Leave out the smaller build details (holes, dividers, high strip, filtration parts, stickers, tubular size, height).
+- Name only the main items (aquariums, stands, sumps); skip small accessories unless nothing else is listed. Never give prices.`;
   }
   if (directions) {
     systemPrompt += `\n\nStore owner's standing directions (always follow these; they override the style rules above):\n${directions}`;
@@ -492,9 +575,11 @@ Deno.serve(async (req) => {
     const shipPage: PostPage = shipClaim.page === 'amaya' ? 'amaya' : 'gma';
     let shipCaption = '';
     try {
-      // No order details go to the AI - the Dispatch caption is about the item in the photo only
-      // (plus the order's branch name/contact, so an Amaya post names Amaya).
-      shipCaption = (await writeCaption(supabase, staff, 'ship', '', imageBase64, mediaType, shipClaim.warehouse_name)).caption;
+      // Only the order's item names go to the AI (orderItemsText) - no customer, address or price -
+      // plus the order's branch name/contact, so an Amaya post names Amaya.
+      const advanceNo = /^ADV-/i.test(orderId) ? orderId.slice(4) : null;
+      const shipItems = await orderItemsText(supabase, advanceNo ? { advanceNo } : { orderId });
+      shipCaption = (await writeCaption(supabase, staff, 'ship', '', imageBase64, mediaType, shipClaim.warehouse_name, shipItems)).caption;
       const posted = await postPhotoToFacebook(bytes!, mediaType, shipCaption, null, shipPage);
       await finishShip({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption: shipCaption });
       return jsonResponse({ ok: true, status: 'posted', page: shipPage, caption: shipCaption, post_url: posted.postUrl });
@@ -513,6 +598,13 @@ Deno.serve(async (req) => {
   const { data: stopRow } = await supabase.from('DeliveryStops').select('*').eq('StopID', stopId).maybeSingle();
   // City only (deliveryCity) - the caption writer never sees the full address.
   const city = stopRow ? await deliveryCity(supabase, stopRow) : null;
+  const stopItems = stopRow
+    ? await orderItemsText(supabase, {
+      orderId: stopRow.OrderID as string | null,
+      advanceNo: stopRow.AdvanceTransactionNo as string | null,
+      automatedNo: stopRow.AutomatedOrderNo as string | null
+    })
+    : '';
 
   const results: Array<{ page: PostPage; status: string; post_url?: string | null; caption?: string | null; error?: string }> = [];
   for (const page of ['gma', 'amaya'] as PostPage[]) {
@@ -560,7 +652,7 @@ Deno.serve(async (req) => {
       const { data: branchRow } = await supabase.from('Warehouses').select('"Name"')
         .ilike('Name', page === 'amaya' ? '%Amaya%' : '%GMA%').order('Name').limit(1).maybeSingle();
       caption = (await writeCaption(supabase, staff, 'delivery_done', city ? `Delivered to: ${city}` : '',
-        bytesToBase64(photoForPost.bytes), 'image/jpeg', (branchRow?.Name as string | undefined) ?? null)).caption;
+        bytesToBase64(photoForPost.bytes), 'image/jpeg', (branchRow?.Name as string | undefined) ?? null, stopItems)).caption;
       const posted = await postPhotoToFacebook(photoForPost.bytes, 'image/jpeg', caption, null, page);
       // Record the post right away - this is what stops a second post to this Page.
       await finish({ postId: posted.postId ?? posted.photoId, postUrl: posted.postUrl, caption });

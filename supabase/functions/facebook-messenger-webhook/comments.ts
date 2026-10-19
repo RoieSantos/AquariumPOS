@@ -334,6 +334,8 @@ async function logDmConversation(
   await supabase.from('ChatbotConversations').upsert({ Psid: psid, PageId: pageId }, { onConflict: 'Psid', ignoreDuplicates: true });
   if (fromName) {
     await supabase.from('ChatbotConversations').update({ CustomerName: fromName }).eq('Psid', psid).is('CustomerName', null);
+    // The commenter's Facebook name - shown in the inbox (sql/supabase_gma_conversation_facebook_name.sql).
+    await supabase.from('ChatbotConversations').update({ FacebookName: fromName }).eq('Psid', psid).is('FacebookName', null);
   }
 
   const postSnippet = typeof post?.message === 'string' && post.message.trim() ? ` (post: "${post.message.trim().slice(0, 120)}")` : '';
