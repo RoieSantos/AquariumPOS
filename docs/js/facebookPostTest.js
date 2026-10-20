@@ -85,11 +85,17 @@ async function writeCaption() {
   btn.disabled = true;
   btn.textContent = 'Writing...';
   try {
+    // "Test with an order": same caption the Dispatch / Delivery Done auto-post writes for that order.
+    const testOrderId = document.getElementById('fbTestOrderId').value.trim();
     const result = await callPostFunction({
       action: 'caption',
-      notes: document.getElementById('fbNotesInput').value.trim()
+      notes: document.getElementById('fbNotesInput').value.trim(),
+      ...(testOrderId ? { order_id: testOrderId, context: document.getElementById('fbTestContext').value } : {})
     });
     document.getElementById('fbCaptionInput').value = result.caption || '';
+    const itemsEl = document.getElementById('fbTestItems');
+    itemsEl.textContent = testOrderId ? `Order items the AI read:\n${result.items || '(none found for this order)'}` : '';
+    itemsEl.classList.toggle('hidden', !testOrderId);
     // The angle comes from the poster's role/branch (see posterAngle in facebook-page-post).
     const writtenAs = [result.angle, result.branch].filter(Boolean).join(' · ');
     document.getElementById('fbWrittenAs').textContent = writtenAs ? `Written as: ${writtenAs}` : '';

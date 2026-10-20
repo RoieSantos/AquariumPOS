@@ -119,6 +119,18 @@
           <span class="muted" style="font-size:12px; display:block; margin-bottom:4px;">One-off facts like this item's price or promo. Instructions the AI should always follow go in <a href="ai-bot-setup.html">AI Bot Setup</a> &gt; Facebook Posts.</span>
           <textarea id="fbNotesInput" rows="2" placeholder="e.g. 60-gallon tank with stand, ₱12,500, free delivery within GMA this week"></textarea>
         </div>
+        <div>
+          <label for="fbTestOrderId">Test with an order (optional)</label>
+          <span class="muted" style="font-size:12px; display:block; margin-bottom:4px;">Writes the caption the Dispatch / Delivery Done auto-post would write for this order - nothing is posted unless you click Post below.</span>
+          <div class="fbpost-row">
+            <input type="text" id="fbTestOrderId" placeholder="e.g. AO-00079, 112043, ADV-123" />
+            <select id="fbTestContext">
+              <option value="ship">Dispatch (Release / Ship)</option>
+              <option value="delivery_done">Delivery Done</option>
+            </select>
+          </div>
+          <pre id="fbTestItems" class="muted hidden" style="font-size:12px; white-space:pre-wrap; margin:6px 0 0;"></pre>
+        </div>
         <div class="fbpost-row">
           <button class="btn btn-secondary" id="fbCaptionBtn" type="button">Write Caption with AI</button>
           <span id="fbWrittenAs" class="muted" style="font-size:12px;"></span>
@@ -160,7 +172,7 @@
   <script src="js/nav.js?v=tenderdecl1"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
-  <script src="js/facebookPostTest.js?v=pages1"></script>
+  <script src="js/facebookPostTest.js?v=ordertest1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

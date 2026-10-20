@@ -142,7 +142,24 @@ function bytesToBase64(bytes: Uint8Array): string {
 // "BLACK PAINT") - passed as plain words, never the raw SKU code.
 // Never prices or anything else from the order. '' when there are no lines or the lookup fails.
 type OrderRef = { orderId?: string | null; advanceNo?: string | null; automatedNo?: string | null };
-const SIZE_PATTERN = /\d+(\.\d+)?\s*(in|"|cm)?\s*[x×]\s*\d+(\.\d+)?/i;
+// "36x18x18in", "36 x 18 in", "16L x 10W x 11H inches".
+const SIZE_PATTERN = /\d+(\.\d+)?\s*(in|"|cm|[LWH])?\s*[x×]\s*\d+(\.\d+)?/i;
+
+// Per AO-00079 ("CUSTOM-AQUARIUM (CI-005 - ...)" with the size only in the note "16L x 10W x 11H
+// inches 3mm CLEAR SEALANT , RIMLESS additional note : pakilinis po..."): the build spec from a line's
+// note, for lines whose name has no size. Cut at the customer's own instructions (additional note /
+// remarks / special instructions) so those never reach the caption; Drawing links and URLs dropped.
+function noteSpec(note: string): string {
+  const spec = note
+    .split(/\b(?:additional\s+notes?|special\s+(?:notes?|instructions?)|customer\s+notes?|remarks?)\b/i)[0]
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s && !/^drawing:/i.test(s) && !/https?:\/\//i.test(s) && !/^custom (aquarium|stand)/i.test(s))
+    .join(' / ')
+    .replace(/\s+,/g, ',')
+    .trim();
+  return spec.length > 220 ? `${spec.slice(0, 220)}...` : spec;
+}
 const SEALANT_COLORS = 'clear|black|white';
 const PAINT_COLORS = 'black|white|gr[ae]y|silver|gold|brown|blue|red|green';
 
@@ -165,8 +182,9 @@ async function orderItemsText(supabase: SupabaseClient, ref: OrderRef): Promise<
       const { data } = await supabase.from('AdvanceOrderLines').select('"Description", "No", "Quantity"').eq('TransactionNo', ref.advanceNo);
       lines = (data ?? []).map((r) => toLine(r.Description, r.No, '', r.Quantity));
     } else if (ref.automatedNo) {
-      const { data } = await supabase.from('AutomatedOrderLines').select('"ItemName", "ItemCode", "Quantity"').eq('OrderNo', ref.automatedNo);
-      lines = (data ?? []).map((r) => toLine(r.ItemName, r.ItemCode, '', r.Quantity));
+      // select('*'): "Notes" only exists once supabase_gma_conversation_order_line_notes.sql has been run.
+      const { data } = await supabase.from('AutomatedOrderLines').select('*').eq('OrderNo', ref.automatedNo);
+      lines = (data ?? []).map((r) => toLine(r.ItemName, r.ItemCode, r.Notes, r.Quantity));
     }
   } catch (err) {
     console.error(`Order items lookup failed: ${errorText(err)}`);
@@ -197,7 +215,12 @@ async function orderItemsText(supabase: SupabaseClient, ref: OrderRef): Promise<
       } else if (isTank && !isStand) {
         kind = 'Standard aquarium';
       }
-      const specText = `${l.name} ${l.sku} ${l.note}`;
+      // A tank (custom or standard) whose name has no size: its spec is in the note.
+      if (kind !== 'Item' && kind !== 'Custom stand' && !SIZE_PATTERN.test(name)) {
+        const spec = noteSpec(l.note);
+        if (spec) name += ` - spec: ${spec}`;
+      }
+      const specText = `${l.name} ${l.sku} ${noteSpec(l.note)}`;
       const extras: string[] = [];
       const sealant = isStand ? null : specColor(specText, 'sealant', SEALANT_COLORS);
       const paint = /stainless/i.test(specText) ? null : specColor(specText, 'paint', PAINT_COLORS);
@@ -265,7 +288,8 @@ async function writeCaption(
 - Standard aquarium or other item: its name as given, shortened - drop item codes; no long descriptions.
 - Repair: say it is a repair of the customer's aquarium with the tank size and what was done, e.g. "Repaired! 36x18x18in aquarium - front panel replaced" or "36x18x18in aquarium resealed - leak fixed". NEVER call a repair new, freshly built, made to order or "bagong gawa" - this overrides the example caption and the angle below. Invite others to message us for aquarium repairs.
 - When a sealant or paint colour is listed, include it in plain words, e.g. "with black sealant", "white-painted stand".
-- Always include these when the item's name has them: for a stand - stainless steel (instead of a paint colour), cabinet, canopy; for an aquarium - rimless, low-iron, tempered. E.g. "36x18x18in rimless low-iron custom aquarium with black sealant, on a 2-layer stainless steel stand with cabinet".
+- An item's "spec" is its build sheet - take the size and options from it (e.g. "16L x 10W x 11H inches 3mm CLEAR SEALANT, RIMLESS" -> "16x10x11in rimless custom aquarium with clear sealant"). Drop item codes like "CI-005".
+- Always include these when the item's name or spec has them: for a stand - stainless steel (instead of a paint colour), cabinet, canopy; for an aquarium - rimless, low-iron, tempered. E.g. "36x18x18in rimless low-iron custom aquarium with black sealant, on a 2-layer stainless steel stand with cabinet".
 - Leave out the smaller build details (holes, dividers, high strip, filtration parts, stickers, tubular size, height).
 - Name only the main items (aquariums, stands, sumps); skip small accessories unless nothing else is listed. Never give prices.`;
   }
@@ -467,8 +491,18 @@ Deno.serve(async (req) => {
 
   if (action === 'caption') {
     try {
-      const result = await writeCaption(supabase, staff, String(body.context ?? ''), String(body.notes ?? '').trim(), imageBase64, mediaType);
-      return jsonResponse({ ok: true, ...result });
+      // Facebook Post Test "Test with an order": order_id + context 'ship' / 'delivery_done' writes the
+      // caption those auto-posts would write for that order (same orderItemsText), without posting.
+      // Returns `items` so the tester can see exactly what the caption writer was given.
+      let items = '';
+      if (orderId) {
+        const advanceNo = /^ADV-/i.test(orderId) ? orderId.slice(4) : null;
+        items = await orderItemsText(supabase, advanceNo ? { advanceNo } : { orderId });
+        // A draft order-now order (not yet confirmed into Online Orders) only has AutomatedOrderLines.
+        if (!items && /^AO-/i.test(orderId)) items = await orderItemsText(supabase, { automatedNo: orderId });
+      }
+      const result = await writeCaption(supabase, staff, String(body.context ?? ''), String(body.notes ?? '').trim(), imageBase64, mediaType, null, items);
+      return jsonResponse({ ok: true, ...result, items: orderId ? items : undefined });
     } catch (err) {
       return jsonResponse({ error: `Caption failed: ${errorText(err)}` }, 500);
     }
