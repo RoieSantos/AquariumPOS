@@ -4,6 +4,13 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-20
 
+- **Disk IO budget fix: skip no-op sync updates.** Items/Variants/customer cron syncs and the POS's 5-minute advance-order push rewrote every row every run (~15 GB of writes in 16 days) even when only `SyncedAtUtc` changed. A `zz_skip_noop_sync_update` BEFORE UPDATE trigger now cancels those writes on Items, Variants, OnlineCustomers, AdvanceOrders/Lines/Payments, OnlineOrderLines (not OnlineOrders - its rotation needs SyncedAtUtc). [supabase_skip_noop_sync_updates.sql](sql/supabase_skip_noop_sync_updates.sql).
+
+- **Read-only Disk IO budget check** (Supabase "about to deplete its Disk IO Budget" warning): top disk-reading/writing queries, tables by disk reads / full scans / churn, cron job time over 24h, log table sizes, cache hit ratio. [supabase_diagnose_disk_io.sql](sql/supabase_diagnose_disk_io.sql).
+
+- **Fixed false "last ran never" on System Tests > Background jobs.** The latest-run lookup sorted `start_time desc` (nulls first), so a leftover run row with no start time hid 10k real runs of item-ledger-sales-posting / process-pending-automated-orders. Now `nulls last`. [supabase_system_checks.sql](sql/supabase_system_checks.sql).
+- **Read-only check for the two "never ran" cron jobs** (item-ledger-sales-posting, process-pending-automated-orders): job settings, 7-day run log, hung sessions, and queue backlog. [supabase_diagnose_stuck_cron_jobs.sql](sql/supabase_diagnose_stuck_cron_jobs.sql).
+- **System Tests: Repair calculator vs Alice no longer fails blindly.** The hidden Repair Calculator frame now gets 30s, checks once more before timing out (background-tab timer throttling could fail it even when ready), and the failure says *why* (redirected / file:// / script missing / pricing RPC never returned). [liveChecks.js](docs/tests/liveChecks.js), cache bump in [system-tests.html](docs/system-tests.html).
 - **Repair orders get a repair caption.** Repair Calculator / POS repair lines are tagged `[Repair]` so ship / delivery captions say e.g. "36x18x18in aquarium - front panel replaced" / "resealed" and never "new" or "bagong gawa" (even for the Production angle). [facebook-page-post/index.ts](supabase/functions/facebook-page-post/index.ts). Deployed.
 
 ## 2026-10-19

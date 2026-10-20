@@ -370,7 +370,9 @@ begin
         select d.status, d.start_time, d.return_message
         from cron.job_run_details d
         where d.jobid = j.jobid
-        order by d.start_time desc
+        -- nulls last: a leftover run row with no start_time sorts FIRST in a plain desc, which made a
+        -- job running every minute show as "last ran never".
+        order by d.start_time desc nulls last
         limit 1
       ) last_run on true
       where j.active

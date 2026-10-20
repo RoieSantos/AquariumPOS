@@ -218,18 +218,57 @@
   // ---- Repairs: the real Repair Calculator page (in a hidden frame) vs Alice's compute_repair_quote ----
   // Loaded the way Conversations embeds it (?embed=gma), so no second login check runs inside it.
   let repairFramePromise = null;
+  function repairFrameReady(frame) {
+    try {
+      return Boolean(frame.contentDocument && frame.contentDocument.getElementById('repairSummaryTotalValue'));
+    } catch {
+      return false;
+    }
+  }
+
+  // Why the frame isn't ready, for the failure message (instead of a bare "did not load").
+  function repairFrameState(frame, loaded) {
+    if (!loaded) return 'the page never finished loading';
+    let doc;
+    let win;
+    try {
+      doc = frame.contentDocument;
+      win = frame.contentWindow;
+    } catch {
+      doc = null;
+    }
+    if (!doc || !win) return 'its document is not readable (opened from file:// or another origin? open System Tests from the portal URL)';
+    const path = win.location.pathname.split('/').pop();
+    if (path !== 'repair-calculator.html') return `it redirected to ${path}`;
+    if (!win.CustomAquariumCalculator) return 'custom-aquarium-calculator.js did not load';
+    if (!win.supabaseClient) return 'the Supabase client did not load';
+    const error = doc.getElementById('repairError');
+    if (error && !error.classList.contains('hidden') && error.textContent.trim()) return error.textContent.trim();
+    return 'its live pricing (public_get_glass_pricing / public_get_repair_pricing_setup) never came back';
+  }
+
   function loadRepairFrame() {
     if (!repairFramePromise) {
       repairFramePromise = new Promise((resolve, reject) => {
         const frame = document.createElement('iframe');
         frame.style.cssText = 'position:absolute;width:1px;height:1px;left:-9999px;border:0;';
         frame.src = 'repair-calculator.html?embed=gma';
-        const timeout = setTimeout(() => reject(new Error('Repair Calculator page did not load within 20s.')), 20000);
+        let loaded = false;
+        let poll = null;
+        const timeout = setTimeout(() => {
+          clearInterval(poll);
+          // A background tab throttles timers, so the timeout can fire in the same tick as a poll
+          // that would have succeeded - check once more before failing.
+          if (repairFrameReady(frame)) return resolve(frame);
+          const why = repairFrameState(frame, loaded);
+          frame.remove();
+          reject(new Error(`Repair Calculator page not ready after 30s - ${why}.`));
+        }, 30000);
         frame.addEventListener('load', () => {
+          loaded = true;
           // Ready once its live pricing has loaded and it drew its first summary.
-          const poll = setInterval(() => {
-            const doc = frame.contentDocument;
-            if (doc && doc.getElementById('repairSummaryTotalValue')) {
+          poll = setInterval(() => {
+            if (repairFrameReady(frame)) {
               clearInterval(poll);
               clearTimeout(timeout);
               resolve(frame);
