@@ -3045,8 +3045,9 @@ function showAdvanceSerials(no, btn) {
 // prefix: 'orderCard' or 'advanceCard' (the #<prefix>SerialsList / Empty / Count elements).
 function renderSerialsFactbox(prefix, rows, errorMessage, emptyText = 'No serials linked yet.') {
   document.getElementById(`${prefix}SerialsList`).innerHTML = rows
-    .map((s) => `<li><div class="oc-serial-no">${escapeHtml(s.serial_no || '')}${reservedSerialBadge(s)}</div>
-      <div class="oc-serial-item muted">${escapeHtml(s.item_code || '')}${s.description && s.description !== s.item_code ? ` · ${escapeHtml(s.description)}` : ''}</div></li>`)
+    .map((s) => `<li data-serial="${escapeHtml(s.serial_no || '')}"><div class="oc-serial-no">${escapeHtml(s.serial_no || '')}${reservedSerialBadge(s)}</div>
+      <div class="oc-serial-item muted">${escapeHtml(s.item_code || '')}${s.description && s.description !== s.item_code ? ` · ${escapeHtml(s.description)}` : ''}</div>
+      <div class="oc-serial-maker hidden"></div></li>`)
     .join('');
   const empty = document.getElementById(`${prefix}SerialsEmpty`);
   empty.textContent = !errorMessage ? emptyText
@@ -3055,6 +3056,29 @@ function renderSerialsFactbox(prefix, rows, errorMessage, emptyText = 'No serial
       : `Could not load serials: ${errorMessage}`;
   empty.classList.toggle('hidden', rows.length > 0);
   document.getElementById(`${prefix}SerialsCount`).textContent = rows.length ? `(${rows.length})` : '';
+  if (rows.length) fillSerialMakers(prefix, rows.map((s) => s.serial_no).filter(Boolean));
+}
+
+// "Made by <maker>" under each serial - per "in the serials on orders can you show who is the maker for that
+// serial". Same lookup as the Serial Tracker's Maker column (sql/supabase_serial_tracker_maker.sql): the
+// Production Order's Tank / Stand Maker, or the order's Assigned maker for a "+ New serial". Serials with
+// no known maker (desktop-created, purchased) show nothing. Filled in after the list renders, so it never
+// holds the list up; matched by data-serial, so a newer list rendered meanwhile is left alone.
+async function fillSerialMakers(prefix, serialNos) {
+  const { data, error } = await supabaseClient.rpc('staff_get_serial_makers', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_serial_nos: serialNos
+  });
+  if (error) { console.warn('staff_get_serial_makers:', error.message); return; }
+  const list = document.getElementById(`${prefix}SerialsList`);
+  (data || []).forEach((m) => {
+    const li = [...list.querySelectorAll('li[data-serial]')].find((el) => el.dataset.serial === m.serial_no);
+    const cell = li?.querySelector('.oc-serial-maker');
+    if (!cell) return;
+    cell.innerHTML = `${m.part === 'stand' ? 'Stand' : 'Tank'} maker: <b>${escapeHtml(m.maker_name || 'Not assigned')}</b>`;
+    cell.classList.remove('hidden');
+  });
 }
 
 async function loadOrderCardSerials(orderId) {

@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-20
 
+- **Order Serials FactBox: who made each serial.** Under each serial on Online / Walk-in / Advance orders (list FactBox + order card): "Tank maker: <name>" / "Stand maker: <name>", from the existing `staff_get_serial_makers` (same as the Serial Tracker's Maker column). No SQL. [onlineOrders.js](docs/js/onlineOrders.js) `v=serialmaker1`, [bc-list.css](docs/css/bc-list.css).
 - **Facebook Post Test: "Test with an order".** Enter an order no. (AO-00079, 112043, ADV-123) + Dispatch / Delivery Done and Write Caption shows the caption that auto-post would write, plus the order items the AI read - nothing posts unless Post is clicked. `caption` action takes `order_id`. [facebook-post-test.html](docs/facebook-post-test.html), [facebookPostTest.js](docs/js/facebookPostTest.js) `v=ordertest1`, [facebook-page-post/index.ts](supabase/functions/facebook-page-post/index.ts).
 
 - **Delivery captions also read draft order-now line notes** (`AutomatedOrderLines.Notes`), so a delivery stop on a not-yet-confirmed AO gets the size/spec too. [facebook-page-post/index.ts](supabase/functions/facebook-page-post/index.ts). Deployed.

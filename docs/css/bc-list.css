@@ -2897,6 +2897,7 @@ a.bc-cue:hover {
 .oc-fact-serials li:first-child { border-top: none; padding-top: 0; }
 .oc-fact-serials .oc-serial-no { font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
 .oc-fact-serials .oc-serial-item { font-size: 11.5px; }
+.oc-fact-serials .oc-serial-maker { font-size: 11.5px; color: var(--bc-text, inherit); margin-top: 1px; }
 .oc-fact-order { font-size: 12px; margin-bottom: 6px; }
 .oc-fact-order:empty { display: none; }
 /* In the list FactBox the box runs the grid's full height - let the list use it. */
