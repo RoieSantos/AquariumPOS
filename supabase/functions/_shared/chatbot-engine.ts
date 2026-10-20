@@ -1072,7 +1072,8 @@ export const TOOLS: Anthropic.Tool[] = [
         unit: { type: 'string', enum: ['Inches', 'cm', 'mm', 'ft'], description: 'Defaults to Inches if not specified.' },
         thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm', '18mm', '19mm'], description: 'Only used for Rubber Matting (3/6/10/12mm), Glass (3/6/10/12mm, or 19mm = 3/4 inch glass) or Marine Plywood/Laminated Plywood (6/18mm only). Defaults to 6mm if that type needs a thickness and none is given.' },
         is_repair: { type: 'boolean', description: 'Only for type=Glass: true if this is a repair/resurfacing job on existing glass rather than a fresh install - priced at 2.5x the normal rate.' },
-        is_tempered: { type: 'boolean', description: 'Only for type=Glass: true if the customer wants tempered glass - priced at 2x the normal glass rate.' }
+        is_tempered: { type: 'boolean', description: 'Only for type=Glass: true if the customer wants tempered glass - priced at 2x the normal glass rate.' },
+        color: { type: 'string', enum: ['Black', 'White', 'Blue'], description: 'Only for Plain Sticker, Tiles Sticker and Acrylic - the only colors offered are Black, White and Blue. Doesn\'t change the price. Pass it if the customer already said; before ordering one of these types you MUST have it (ask "Black, White or Blue?").' }
       },
       required: ['type', 'length', 'width']
     }
@@ -1110,6 +1111,18 @@ export const TOOLS: Anthropic.Tool[] = [
         item_code: { type: 'string', description: 'The item\'s code, from search_items or list_items_in_category.' }
       },
       required: ['item_code']
+    }
+  },
+  {
+    name: 'send_sticker_color_sample',
+    description:
+      'Sends sample photos of a sticker color (Black, White or Blue - the only colors for Plain Sticker, Tiles Sticker and Acrylic) to the customer on Messenger: real tanks/pieces we\'ve done in that color. Same rule as send_item_image: offer first ("want me to send sample photos?") and only call this after they say yes. To show all three colors, call it once per color.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        color: { type: 'string', enum: ['Black', 'White', 'Blue'], description: 'Which color\'s samples to send.' }
+      },
+      required: ['color']
     }
   },
   {
@@ -1180,7 +1193,7 @@ export const TOOLS: Anthropic.Tool[] = [
               quantity: { type: 'integer' },
               variant: { type: 'string', description: 'REQUIRED when the product comes in more than one option (e.g. aquariums/sumps: "Black Sealant" or "Clear Sealant"; stands: "Black Paint" or "White Paint") - the option the customer actually chose, or its SKU (e.g. "AQ-024-BlackSealant"). Never leave the chosen color only in notes - this field is what tags the right variant in Pancake. If you don\'t know which option they want, ask before ordering. Ignored for CUSTOM-AQUARIUM/CUSTOM-STAND/CUSTOM-STICKER.' },
               custom_price: { type: 'number', description: 'REQUIRED when item_code is "CUSTOM-AQUARIUM", "CUSTOM-STAND" or "CUSTOM-STICKER", ignored otherwise: the exact price PER PIECE already confirmed with the customer in THIS conversation - for CUSTOM-AQUARIUM/CUSTOM-STAND the compute_aquarium_quote total (aquariumDrawingUrl\'s totalPrice, or the stand-only price), for CUSTOM-STICKER the compute_sticker_quote totalPrice for one piece (put the number of pieces in quantity). Never a number you calculate, estimate, or round yourself.' },
-              notes: { type: 'string', description: 'Optional per-item note. REQUIRED when item_code is "CUSTOM-AQUARIUM", "CUSTOM-STAND" or "CUSTOM-STICKER": the full spec exactly as confirmed with the customer - for a tank/stand: dimensions, glass thickness, tempered/rimless, sealant color, stand tubular size/layers; for a sticker: type (e.g. Plain Sticker, Tiles Sticker, Acrylic, Glass), length x width with unit, thickness if any, tempered/repair if any, and what it is for. This is what tells staff/the workshop what to actually make, since the product tag alone doesn\'t carry it.' }
+              notes: { type: 'string', description: 'Optional per-item note. REQUIRED when item_code is "CUSTOM-AQUARIUM", "CUSTOM-STAND" or "CUSTOM-STICKER": the full spec exactly as confirmed with the customer - for a tank/stand: dimensions, glass thickness, tempered/rimless, sealant color, stand tubular size/layers; for a sticker: type (e.g. Plain Sticker, Tiles Sticker, Acrylic, Glass), "Color: Black/White/Blue" for Plain Sticker/Tiles Sticker/Acrylic (required), length x width with unit, thickness if any, tempered/repair if any, and what it is for. This is what tells staff/the workshop what to actually make, since the product tag alone doesn\'t carry it.' }
             },
             required: ['item_code', 'quantity']
           }
@@ -1392,7 +1405,7 @@ export function buildSystemPrompt(
     '- Never call create_order on a verbal promise to pay "later" or "after" - only once payment proof has actually been sent and acknowledged earlier in this same conversation.',
     '- If the conversation already shows an existing order, don\'t assume a new payment or a new item discussion belongs to that same order OR is automatically a new one - ASK the customer which it is (e.g. "Is this for your existing order, or a new one?") and only call create_order for a second order after they clearly say it\'s a new/separate purchase. If they mean the existing order, don\'t call create_order at all - just let them know staff will apply it/follow up.',
     '- A custom-built aquarium/stand (see the custom quote rules above) CAN go through create_order too, not just staff manual processing - it is NOT a reason to fall back to sharing payment details for manual handling. For that line, set item_code to the literal "CUSTOM-AQUARIUM" or "CUSTOM-STAND", custom_price to the EXACT total the customer already confirmed from your earlier compute_aquarium_quote call (never a number you calculate or round yourself), and notes to the full confirmed build spec (dimensions, unit, glass thickness, tempered/rimless, sealant color, and stand tubular size/layers if a stand is included) - that note is what tells staff/the workshop what to actually build, so never leave it vague or blank.',
-    '- A custom accessory/sticker/panel quoted with compute_sticker_quote (a loose sticker, a background add-on for a ready-made set, an acrylic sump cover, glass, plywood, rubber matting, etc.) CAN go through create_order too. For that line, set item_code to the literal "CUSTOM-STICKER", quantity to the number of pieces, custom_price to the EXACT compute_sticker_quote totalPrice for ONE piece (never a number you calculate or round yourself), and notes to the full confirmed spec (type, length x width with unit, thickness if any, tempered/repair if any, what it is for). A sticker ON a custom tank (sticker_background/sticker_bottom in compute_aquarium_quote) is already inside the CUSTOM-AQUARIUM total - do not add a separate CUSTOM-STICKER line for it.',
+    '- A custom accessory/sticker/panel quoted with compute_sticker_quote (a loose sticker, a background add-on for a ready-made set, an acrylic sump cover, glass, plywood, rubber matting, etc.) CAN go through create_order too. For that line, set item_code to the literal "CUSTOM-STICKER", quantity to the number of pieces, custom_price to the EXACT compute_sticker_quote totalPrice for ONE piece (never a number you calculate or round yourself), and notes to the full confirmed spec (type, length x width with unit, thickness if any, tempered/repair if any, what it is for). Plain Sticker, Tiles Sticker and Acrylic come in Black, White or Blue only (no other colors) - offer/ask the color before ordering (if they want to see the colors, offer sample photos and send them with send_sticker_color_sample after they say yes) and include it in notes as "Color: Black" / "Color: White" / "Color: Blue" (the order is refused without it); the color doesn\'t change the price. A sticker ON a custom tank (sticker_background/sticker_bottom in compute_aquarium_quote) is already inside the CUSTOM-AQUARIUM total - do not add a separate CUSTOM-STICKER line for it.',
     '- After a successful create_order call, your reply IS the customer\'s receipt - there is no separate automatic message for this path, so compose all of the following yourself: (1) their order number (e.g. "Order No: AO-00008"), (2) a quick recap of what was ordered (items/qty) and the total, (3) the result\'s receiptUrl, introduced as their order receipt (e.g. "Here\'s your receipt: {receiptUrl}") - NEVER share a Pancake order_link, only this receiptUrl, (4) the result\'s policyNote, word for word, on its own line just before the confirmation ask (the order policies - every new order gets it), (5) explicitly ask them to confirm everything above is correct, e.g. "Is everything correct? Reply YES to confirm." Do not skip the policy note or the confirmation ask - staff treat that reply as the customer confirming the order. Also say our team will review and confirm the order shortly - never say it is already confirmed/processed on our side.',
     '',
     'ORDER POLICIES (same text as the Order Confirmation receipt, docs/online-order-receipt.html - keep both in sync):',
@@ -1899,7 +1912,7 @@ export async function computeStickerQuote(supabase: SupabaseClient, input: Recor
     supabase.rpc('public_get_glass_pricing')
   ]);
 
-  return calculateStandaloneSticker({
+  const result = calculateStandaloneSticker({
     unit: (input.unit as string) || 'Inches',
     length: Number(input.length),
     width: Number(input.width),
@@ -1911,7 +1924,29 @@ export async function computeStickerQuote(supabase: SupabaseClient, input: Recor
     glassPricingSetupRows: glassRows ?? [],
     glassPricingUom: 'MM'
   });
+
+  // Color (Black/White/Blue) for Plain/Tiles Sticker and Acrylic - no effect on price, just echoed
+  // back so the bot carries it into the order notes (same field as the portal's Stickers quote).
+  const type = String((result.normalized as Record<string, unknown> | undefined)?.type ?? '');
+  if (result.ok && STICKER_COLOR_TYPES.includes(type)) {
+    const color = STICKER_COLORS.find((c) => c.toLowerCase() === String(input.color ?? '').trim().toLowerCase());
+    (result.normalized as Record<string, unknown>).color = color ?? null;
+    if (!color) result.colorNeeded = `Ask the customer which color: ${STICKER_COLORS.join(', ')} (required before ordering; doesn't change the price).`;
+  }
+  return result;
 }
+
+// Sticker types that come in colors, and the only colors offered - mirrors the portal's
+// Stickers quote (docs/js/gmaConversations.js CUSTOM_STICKER_COLOR_TYPES / the Color dropdown).
+const STICKER_COLOR_TYPES = ['Plain Sticker', 'Tiles Sticker', 'Acrylic'];
+const STICKER_COLORS = ['Black', 'White', 'Blue'];
+
+// Sample photos per color for send_sticker_color_sample (served from docs/icons on rspetstop.com).
+const STICKER_COLOR_SAMPLE_IMAGES: Record<string, string[]> = {
+  Black: ['https://rspetstop.com/icons/sticker-color-black-1.jpg', 'https://rspetstop.com/icons/sticker-color-black-2.jpg'],
+  White: ['https://rspetstop.com/icons/sticker-color-white-1.jpg', 'https://rspetstop.com/icons/sticker-color-white-2.jpg'],
+  Blue: ['https://rspetstop.com/icons/sticker-color-blue-1.jpg', 'https://rspetstop.com/icons/sticker-color-blue-2.jpg']
+};
 
 // ============================================================================
 // BEGIN: ported from docs/js/repairCalculator.js (repairRecalculate + everything it calls) - backs
@@ -2647,6 +2682,12 @@ export async function buildBotOrderLines(
     if (!String(it.notes ?? '').trim()) {
       return `Cannot save the order - ${tag} needs a notes value with the full confirmed spec (${tag === 'CUSTOM-STICKER' ? 'type, size, thickness, etc.' : 'dimensions, glass thickness, etc.'}).`;
     }
+    // Plain/Tiles Sticker and Acrylic (not an Acrylic Sump Cover) need a color in the notes.
+    const notes = String(it.notes ?? '');
+    if (tag === 'CUSTOM-STICKER' && /\b(plain sticker|tiles? sticker|sticker tiles|acrylic)\b/i.test(notes)
+        && !/sump cover/i.test(notes) && !/\bcolou?r:\s*(black|white|blue)\b/i.test(notes)) {
+      return 'Cannot save the order - a Plain Sticker / Tiles Sticker / Acrylic line needs its color in notes as "Color: Black", "Color: White" or "Color: Blue". Ask the customer which color (only those three are offered), then try again.';
+    }
   }
 
   const codes = [...new Set(catalogCodedItems.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
@@ -2926,6 +2967,27 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const sent = await sendMessengerImage(psid, imageUrl, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION);
       if (sent) await logBotImage(supabase, psid, imageUrl);
       return sent ? 'Photo sent to the customer.' : 'Sending the photo failed - let the customer know and continue without it.';
+    }
+    case 'send_sticker_color_sample': {
+      const color = STICKER_COLORS.find((c) => c.toLowerCase() === String(input.color ?? '').trim().toLowerCase());
+      if (!color) return `Unknown color - only ${STICKER_COLORS.join(', ')} are offered.`;
+      const imageUrls = STICKER_COLOR_SAMPLE_IMAGES[color];
+
+      if (simulate) {
+        return `SANDBOX MODE - no real photos were sent. If this were live, these ${color} sticker samples would be sent: ${imageUrls.join(', ')}`;
+      }
+
+      if (!pageAccessToken) return 'Photo sending is not configured right now - describe the color in words instead.';
+      let sentCount = 0;
+      for (const imageUrl of imageUrls) {
+        if (await sendMessengerImage(psid, imageUrl, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION)) {
+          await logBotImage(supabase, psid, imageUrl);
+          sentCount++;
+        }
+      }
+      return sentCount > 0
+        ? `${sentCount} ${color} sticker sample photo(s) sent to the customer.`
+        : 'Sending the sample photos failed - let the customer know and continue without them.';
     }
     case 'react_to_message': {
       const reactionName = String(input.reaction ?? '').trim();

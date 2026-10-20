@@ -3845,6 +3845,7 @@ function openCustomStickerModal(mode = 'order') {
   document.getElementById('customStickerResult').innerHTML = '';
   document.getElementById('addCustomStickerToSaleBtn').classList.add('hidden');
   customStickerResult = null;
+  document.getElementById('customStickerColor').value = '';
   updateCustomStickerVisibility();
   ensureCustomStickerPricingLoaded();
 }
@@ -3874,12 +3875,24 @@ function updateCustomStickerVisibility() {
   const showRepair = type === 'Glass';
   document.getElementById('customStickerRepairRow').classList.toggle('hidden', !showRepair);
   if (!showRepair) document.getElementById('customStickerRepair').checked = false;
+
+  document.getElementById('customStickerColorRow').classList.toggle('hidden', !CUSTOM_STICKER_COLOR_TYPES.includes(type));
+}
+
+// Types that come in colors. Color doesn't change the price - it's just carried into the order
+// line's name and note so it flows through to the order.
+const CUSTOM_STICKER_COLOR_TYPES = ['Tiles Sticker', 'Plain Sticker', 'Acrylic'];
+
+function customStickerColor(type) {
+  if (!CUSTOM_STICKER_COLOR_TYPES.includes(type)) return '';
+  return document.getElementById('customStickerColor').value.trim();
 }
 
 function customStickerSpecText(result) {
   const n = result.normalized;
   const hasThickness = window.CustomAquariumCalculator.stickerTypeHasThickness(n.type);
-  return `${n.type}${n.isRepair ? ' REPAIR' : ''}${hasThickness ? ` (${n.thickness})` : ''} ${n.lengthInches}in x ${n.widthInches}in`;
+  const color = customStickerColor(n.type);
+  return `${n.type}${color ? ` - ${color}` : ''}${n.isRepair ? ' REPAIR' : ''}${hasThickness ? ` (${n.thickness})` : ''} ${n.lengthInches}in x ${n.widthInches}in`;
 }
 
 async function calculateCustomSticker() {
@@ -3962,6 +3975,8 @@ function customStickerNoteText(result, qty) {
     `Area: ${fmtIn(n.areaSqFt)} sq ft per piece`
   ];
   if (hasThickness) lines.push(`Thickness: ${n.thickness}${n.isTempered ? ', Tempered' : ''}`);
+  const color = customStickerColor(n.type);
+  if (color) lines.push(`Color: ${color}`);
   if (n.isRepair) lines.push('Job: Repair (existing glass)');
   lines.push(`Quantity: ${qty} piece(s) - ₱${Number(result.totalPrice).toFixed(2)} each`);
   return lines.join('\n');
@@ -3970,6 +3985,15 @@ function customStickerNoteText(result, qty) {
 function addCustomStickerToSale() {
   if (!customStickerResult) return;
   const result = customStickerResult;
+  // Color is required on an order line for the colored types (a reply quote can go out without it).
+  if (customStickerMode !== 'reply' && CUSTOM_STICKER_COLOR_TYPES.includes(result.normalized.type)
+      && !customStickerColor(result.normalized.type)) {
+    const errorEl = document.getElementById('customStickerError');
+    errorEl.textContent = 'Enter the sticker color.';
+    errorEl.classList.remove('hidden');
+    document.getElementById('customStickerColor').focus();
+    return;
+  }
   const qty = Math.max(1, Math.round(Number(document.getElementById('customStickerQty').value) || 1));
   const spec = customStickerSpecText(result);
   const line = {
@@ -4582,6 +4606,8 @@ let mediaLibrarySelected = []; // ids, in the order picked
 let mediaLibraryView = 'all'; // 'all' | 'unsorted' | 'f:<folder name>'
 let mediaLibraryEmptyFolders = new Set();
 let mediaLibraryUploading = false;
+let mediaLibrarySearch = ''; // "Search media by name" box
+let mediaLibraryFolderSearch = ''; // sidebar "Search folder" box
 
 function toggleMediaLibraryPanel(show) {
   const panel = document.getElementById('mediaLibraryPanel');
@@ -4594,6 +4620,10 @@ function toggleMediaLibraryPanel(show) {
   if (willShow) {
     toggleQuickRepliesPanel(false);
     toggleProductLookupPanel(false);
+    mediaLibrarySearch = '';
+    mediaLibraryFolderSearch = '';
+    document.getElementById('mediaLibrarySearchInput').value = '';
+    document.getElementById('mediaLibraryFolderSearchInput').value = '';
     try {
       mediaLibraryView = localStorage.getItem(MEDIA_LIBRARY_FOLDER_KEY) || 'all';
     } catch {
@@ -4638,11 +4668,19 @@ function mediaLibraryCurrentFolder() {
   return mediaLibraryView.startsWith('f:') ? mediaLibraryView.slice(2) : null;
 }
 
+function mediaLibraryItemName(item) {
+  return item.file_name || (item.media_type === 'video' ? 'Video' : 'Photo');
+}
+
+// Items in the open folder, narrowed by the "Search media by name" box.
 function mediaLibraryItemsInView() {
-  if (mediaLibraryView === 'all') return mediaLibraryItems;
-  if (mediaLibraryView === 'unsorted') return mediaLibraryItems.filter((item) => !item.folder);
   const folder = mediaLibraryCurrentFolder();
-  return mediaLibraryItems.filter((item) => item.folder === folder);
+  const query = mediaLibrarySearch.trim().toLowerCase();
+  return mediaLibraryItems.filter((item) => {
+    if (mediaLibraryView === 'unsorted' && item.folder) return false;
+    if (folder && item.folder !== folder) return false;
+    return !query || mediaLibraryItemName(item).toLowerCase().includes(query);
+  });
 }
 
 function setMediaLibraryView(view) {
@@ -4663,19 +4701,23 @@ function renderMediaLibrary() {
 
 function renderMediaLibraryFolders() {
   const el = document.getElementById('mediaLibraryFolders');
-  const folders = mediaLibraryFolderNames();
+  const folderQuery = mediaLibraryFolderSearch.trim().toLowerCase();
+  const allFolders = mediaLibraryFolderNames();
+  const folders = allFolders.filter((name) => !folderQuery || name.toLowerCase().includes(folderQuery));
   const unsortedCount = mediaLibraryItems.filter((item) => !item.folder).length;
-  const folderIcon = '<svg viewBox="0 0 20 20" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.6l1.6 1.8H16a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5v-9Z"/></svg>';
+  const folderIcon = '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.6l1.6 1.8H16a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5v-9Z" stroke-linejoin="round"/></svg>';
+  const allIcon = '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke-linejoin="round"/><circle cx="7" cy="8" r="1.4"/><path d="M3 14.5 7.5 10l3 3 2.5-2.5 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const unsortedIcon = '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 11.5h4l1 2h4l1-2h4M3 11.5 5 5h10l2 6.5v3.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" stroke-linejoin="round"/></svg>';
   const chip = (view, label, count, icon = '') => `
     <button type="button" class="mlib-chip${mediaLibraryView === view ? ' active' : ''}" data-view="${escapeHtml(view)}">
       ${icon}<span class="mlib-chip-label">${escapeHtml(label)}</span><span class="mlib-chip-count">${count}</span>
     </button>`;
 
   el.innerHTML = [
-    chip('all', 'All', mediaLibraryItems.length),
+    folderQuery ? '' : chip('all', 'All media', mediaLibraryItems.length, allIcon),
     ...folders.map((name) => chip(`f:${name}`, name, mediaLibraryItems.filter((item) => item.folder === name).length, folderIcon)),
-    folders.length > 0 && unsortedCount > 0 ? chip('unsorted', 'Unsorted', unsortedCount) : '',
-    '<button type="button" class="mlib-chip mlib-chip-new" id="mediaLibraryNewFolderChip">+ New folder</button>'
+    !folderQuery && allFolders.length > 0 && unsortedCount > 0 ? chip('unsorted', 'Unsorted', unsortedCount, unsortedIcon) : '',
+    folderQuery && folders.length === 0 ? '<div class="mlib-folders-empty">No folder matches.</div>' : ''
   ].join('');
 
   el.querySelectorAll('.mlib-chip[data-view]').forEach((btn) => {
@@ -4684,7 +4726,6 @@ function renderMediaLibraryFolders() {
       renderMediaLibrary();
     });
   });
-  document.getElementById('mediaLibraryNewFolderChip').addEventListener('click', createMediaLibraryFolder);
   el.querySelector('.mlib-chip.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
@@ -4724,22 +4765,25 @@ function renderMediaLibraryGrid() {
     gridEl.innerHTML = `
       <div class="mlib-empty">
         <div class="mlib-empty-icon">&#128444;&#65039;</div>
-        <div>${mediaLibraryItems.length === 0 ? 'Your media library is empty.' : 'Nothing in this folder yet.'}</div>
-        <div class="muted">Use <strong>+ Add</strong> for photos, videos or a whole folder - or drag them here.</div>
+        <div>${mediaLibraryItems.length === 0 ? 'Your media library is empty.' : mediaLibrarySearch.trim() ? 'No media matches that name.' : 'Nothing in this folder yet.'}</div>
+        ${mediaLibrarySearch.trim() ? '' : '<div class="muted">Use <strong>Upload</strong> for photos or videos (<strong>&#8943;</strong> for a whole folder) - or drag them here.</div>'}
       </div>`;
     return;
   }
 
   gridEl.innerHTML = inView.map((item) => {
     const order = mediaLibrarySelected.indexOf(item.id) + 1;
-    const name = item.file_name || (item.media_type === 'video' ? 'Video' : 'Photo');
+    const name = mediaLibraryItemName(item);
     return `
       <div class="mlib-item${order ? ' selected' : ''}" data-id="${item.id}" title="${escapeHtml(name)}${item.folder && mediaLibraryView === 'all' ? ` (${escapeHtml(item.folder)})` : ''}">
-        ${item.media_type === 'video'
-          ? `<video src="${escapeHtml(item.media_url)}#t=0.1" muted playsinline preload="metadata"></video><span class="mlib-play">&#9654;</span>`
-          : `<img src="${escapeHtml(item.media_url)}" alt="" loading="lazy" />`}
-        <span class="mlib-check">${order || ''}</span>
-        <a class="mlib-view" href="${escapeHtml(item.media_url)}" target="_blank" rel="noopener" title="Open full size">&#10530;</a>
+        <div class="mlib-thumb">
+          ${item.media_type === 'video'
+            ? `<video src="${escapeHtml(item.media_url)}#t=0.1" muted playsinline preload="metadata"></video><span class="mlib-play">&#9654;</span>`
+            : `<img src="${escapeHtml(item.media_url)}" alt="" loading="lazy" />`}
+          <span class="mlib-check">${order || ''}</span>
+          <a class="mlib-view" href="${escapeHtml(item.media_url)}" target="_blank" rel="noopener" title="Open full size">&#10530;</a>
+        </div>
+        <div class="mlib-name">${escapeHtml(name)}</div>
       </div>`;
   }).join('');
 
@@ -4753,7 +4797,7 @@ function renderMediaLibraryFooter() {
   const count = mediaLibrarySelected.length;
   document.getElementById('mediaLibrarySelectedCount').textContent = count
     ? `${count} selected`
-    : 'Tap photos to pick them';
+    : 'Click photos to pick them';
   document.getElementById('mediaLibrarySelectionActions').classList.toggle('hidden', count === 0);
 
   const moveSelect = document.getElementById('mediaLibraryMoveSelect');
@@ -4974,7 +5018,7 @@ async function uploadMediaLibraryFile(file, folder) {
 async function uploadMediaLibraryFiles(entries) {
   const errorEl = document.getElementById('mediaLibraryError');
   const statusEl = document.getElementById('mediaLibraryStatus');
-  const addBtn = document.getElementById('addMediaLibraryBtn');
+  const addBtns = [document.getElementById('mediaLibraryUploadBtn'), document.getElementById('addMediaLibraryBtn')];
   if (entries.length === 0 || mediaLibraryUploading) return;
 
   errorEl.classList.add('hidden');
@@ -4990,7 +5034,7 @@ async function uploadMediaLibraryFiles(entries) {
   }
 
   mediaLibraryUploading = true;
-  addBtn.disabled = true;
+  addBtns.forEach((btn) => { btn.disabled = true; });
   statusEl.classList.remove('hidden');
   let done = 0;
   const failures = [];
@@ -5015,7 +5059,7 @@ async function uploadMediaLibraryFiles(entries) {
   await Promise.all(Array.from({ length: MEDIA_LIBRARY_UPLOAD_CONCURRENCY }, worker));
 
   mediaLibraryUploading = false;
-  addBtn.disabled = false;
+  addBtns.forEach((btn) => { btn.disabled = false; });
   const added = valid.length - failures.length;
   statusEl.textContent = `Added ${added} item${added === 1 ? '' : 's'}${skipped ? ` - skipped ${skipped} (not a photo/video, or over 25 MB)` : ''}.`;
   setTimeout(() => statusEl.classList.add('hidden'), 5000);
@@ -5031,8 +5075,33 @@ async function uploadMediaLibraryFiles(entries) {
 }
 
 function initMediaLibrary() {
-  const panel = document.getElementById('mediaLibraryPanel');
+  const modal = document.getElementById('mediaLibraryPanel');
+  const panel = modal.querySelector('.mlib-dialog');
+  // Declared inside the composer's markup but shown as a full-page modal - hang it off <body> so no
+  // composer ancestor (overflow / stacking context) can clip it.
+  document.body.appendChild(modal);
   document.getElementById('toggleMediaLibraryBtn').addEventListener('click', () => toggleMediaLibraryPanel());
+  document.getElementById('mediaLibraryCloseBtn').addEventListener('click', () => toggleMediaLibraryPanel(false));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) toggleMediaLibraryPanel(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) toggleMediaLibraryPanel(false);
+  });
+  document.getElementById('mediaLibrarySearchInput').addEventListener('input', (e) => {
+    mediaLibrarySearch = e.target.value;
+    renderMediaLibraryFolderBar();
+    renderMediaLibraryGrid();
+  });
+  document.getElementById('mediaLibraryFolderSearchInput').addEventListener('input', (e) => {
+    mediaLibraryFolderSearch = e.target.value;
+    renderMediaLibraryFolders();
+  });
+  document.getElementById('mediaLibraryNewFolderBtn').addEventListener('click', createMediaLibraryFolder);
+  document.getElementById('mediaLibraryUploadBtn').addEventListener('click', () => {
+    toggleMediaLibraryAddMenu(false);
+    document.getElementById('mediaLibraryFileInput').click();
+  });
   document.getElementById('addMediaLibraryBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     toggleMediaLibraryAddMenu();
@@ -7809,7 +7878,7 @@ function initDeliveryCalendar() {
     document.getElementById(id).addEventListener('change', autoCalculateCustomSticker);
   });
   document.getElementById('customStickerRepair').addEventListener('change', autoCalculateCustomSticker);
-  ['customStickerLength', 'customStickerWidth', 'customStickerQty'].forEach((id) => {
+  ['customStickerLength', 'customStickerWidth', 'customStickerQty', 'customStickerColor'].forEach((id) => {
     document.getElementById(id).addEventListener('input', autoCalculateCustomSticker);
   });
   document.getElementById('calculateCustomStickerBtn').addEventListener('click', calculateCustomSticker);

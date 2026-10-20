@@ -2183,29 +2183,155 @@
     /* Media library panel - per direct request ("a compilation of images and videos saved so they
        can resend it to the customer when needed"), a Quick-Reply-like picker but plain photos/videos
        with no label/text, browsed as a thumbnail grid instead of a list. Same floating-popover shape
-       as .inbox-product-lookup-panel. */
-    .inbox-media-library-panel {
-      position: absolute;
-      right: 10px;
-      bottom: calc(100% + 6px);
-      width: 480px;
-      max-width: calc(100vw - 40px);
-      max-height: 520px;
+       as .inbox-product-lookup-panel. Now a roomy centered modal (per request, "not congested"):
+       folder sidebar on the left, searchable grid with file names on the right. */
+    .mlib-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(15, 20, 30, 0.45);
+    }
+    .mlib-dialog {
+      position: relative;
+      width: min(1040px, 100%);
+      height: min(860px, 100%);
       display: flex;
       flex-direction: column;
       background: #fff;
-      border: 1px solid var(--panel-border);
-      border-radius: 12px;
-      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+      border-radius: 14px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
       overflow: hidden;
-      z-index: 5;
     }
-    /* "+ Add" dropdown: photos / a whole folder / new empty folder. */
-    .mlib-add-wrap { position: relative; }
+    .mlib-head {
+      display: grid;
+      grid-template-columns: 1fr minmax(0, 340px) 1fr;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--panel-border);
+      flex-shrink: 0;
+    }
+    .mlib-head-title { font-size: 17px; font-weight: 700; color: #1c1e21; }
+    .mlib-search,
+    .mlib-folder-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      background: #fff;
+      color: #65676b;
+      cursor: text;
+    }
+    .mlib-search:focus-within { border-color: #1877f2; box-shadow: 0 0 0 2px rgba(24, 119, 242, 0.2); }
+    .mlib-search input,
+    .mlib-folder-search input {
+      flex: 1;
+      min-width: 0;
+      border: none;
+      outline: none;
+      background: transparent;
+      font-size: 14px;
+      padding: 0;
+      height: auto;
+      box-shadow: none;
+    }
+    .mlib-close {
+      justify-self: end;
+      width: 34px;
+      height: 34px;
+      border: none;
+      border-radius: 50%;
+      background: none;
+      color: #444;
+      font-size: 26px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .mlib-close:hover { background: #f0f2f5; }
+    .mlib-body { flex: 1; min-height: 0; display: flex; }
+    .mlib-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      background: #f5f6f8;
+      border-right: 1px solid var(--panel-border);
+    }
+    .mlib-folder-search-row { display: flex; gap: 8px; padding: 12px 12px 8px; }
+    .mlib-folder-search { flex: 1; min-width: 0; background: #eceef1; border-color: transparent; }
+    .mlib-new-folder-btn {
+      width: 36px;
+      height: 36px;
+      flex-shrink: 0;
+      border: none;
+      border-radius: 8px;
+      background: #dbe7fb;
+      color: #1877f2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .mlib-new-folder-btn:hover { background: #c9dcfa; }
+    .mlib-sidebar-hint {
+      padding: 14px 16px;
+      border-top: 1px solid var(--panel-border);
+      font-size: 12px;
+      color: #65676b;
+      flex-shrink: 0;
+    }
+    .mlib-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    /* Upload / ⋯ (photos / a whole folder / new empty folder) and the Add-to-reply button. */
+    .mlib-footer {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--panel-border);
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+    .mlib-footer-buttons { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+    .mlib-upload-btn {
+      height: 38px;
+      padding: 0 22px;
+      border: none;
+      background: #dbe7fb;
+      color: #1877f2;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      border-radius: 8px 0 0 8px;
+    }
+    .mlib-upload-btn:hover { background: #c9dcfa; }
+    .mlib-upload-btn:disabled { opacity: 0.6; cursor: default; }
+    .mlib-upload-more { padding: 0 12px; margin-left: 2px; border-radius: 0 8px 8px 0; font-size: 18px; }
+    .mlib-select-btn {
+      height: 38px;
+      padding: 0 22px;
+      border: none;
+      border-radius: 8px;
+      background: #1877f2;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .mlib-select-btn:hover { background: #166fe0; }
+    .mlib-select-btn:disabled { background: #8e9bb5; cursor: default; }
+    .mlib-add-wrap { position: relative; display: flex; }
     .mlib-add-menu {
       position: absolute;
       right: 0;
-      top: calc(100% + 4px);
+      bottom: calc(100% + 6px);
       width: 230px;
       background: #fff;
       border: 1px solid var(--panel-border);
@@ -2231,56 +2357,51 @@
     .mlib-add-menu button > span:first-child { font-size: 18px; width: 22px; text-align: center; }
     .mlib-add-menu strong { display: block; font-size: 13px; color: #1c1e21; }
     .mlib-add-menu small { display: block; font-size: 11px; color: #65676b; }
-    /* Folder chips - one horizontal, scrollable row. */
+    /* Folder list - vertical in the sidebar (a horizontal chip row on phones). */
     .mlib-folders {
+      flex: 1;
+      min-height: 0;
       display: flex;
-      gap: 6px;
-      padding: 10px 12px 6px;
-      overflow-x: auto;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 10px 10px;
+      overflow-y: auto;
       scrollbar-width: thin;
-      flex-shrink: 0;
     }
     .mlib-chip {
-      display: inline-flex;
+      display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 10px;
       flex-shrink: 0;
-      max-width: 180px;
-      height: 28px;
-      padding: 0 10px;
-      border: 1px solid var(--panel-border);
-      border-radius: 999px;
-      background: #fff;
+      width: 100%;
+      min-height: 42px;
+      padding: 0 12px;
+      border: none;
+      border-radius: 8px;
+      background: none;
       color: #1c1e21;
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 14px;
+      font-weight: 500;
+      text-align: left;
       cursor: pointer;
     }
-    .mlib-chip:hover { background: #f0f2f5; }
-    .mlib-chip.active { background: #1877f2; border-color: #1877f2; color: #fff; }
-    .mlib-chip svg { color: #f5b301; flex-shrink: 0; }
-    .mlib-chip.active svg { color: #fff; }
-    .mlib-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .mlib-chip-count {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 0 6px;
-      border-radius: 999px;
-      background: #e4e6eb;
-      color: #65676b;
-    }
-    .mlib-chip.active .mlib-chip-count { background: rgba(255, 255, 255, 0.25); color: #fff; }
-    .mlib-chip-new { border-style: dashed; color: #1877f2; background: #f7faff; }
+    .mlib-chip:hover { background: #e8eaee; }
+    .mlib-chip.active { background: #dbe7fb; color: #1c1e21; }
+    .mlib-chip svg { color: #65676b; flex-shrink: 0; }
+    .mlib-chip.active svg { color: #1877f2; }
+    .mlib-chip-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mlib-chip-count { font-size: 13px; color: #65676b; }
+    .mlib-folders-empty { padding: 10px 12px; font-size: 12px; color: #65676b; }
     /* Open folder: name, count, Select all / Rename / Delete folder. */
     .mlib-folder-bar {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 4px 12px 6px;
+      padding: 12px 16px 8px;
       font-size: 12px;
       flex-shrink: 0;
     }
-    .mlib-folder-title { font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mlib-folder-title { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mlib-folder-actions { margin-left: auto; display: flex; gap: 10px; flex-shrink: 0; }
     .mlib-link-btn {
       border: none;
@@ -2318,21 +2439,34 @@
       overflow-y: auto;
       min-height: 140px;
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
       align-content: start;
-      gap: 8px;
-      padding: 4px 12px 12px;
+      gap: 18px 14px;
+      padding: 4px 16px 16px;
     }
     .mlib-item {
+      min-width: 0;
+      cursor: pointer;
+    }
+    .mlib-thumb {
       position: relative;
       aspect-ratio: 1;
       border-radius: 10px;
       overflow: hidden;
-      background: #eef0f2;
-      cursor: pointer;
+      background: #f3f4f6;
+      border: 1px solid #e4e6eb;
       outline: 3px solid transparent;
       outline-offset: -3px;
       transition: outline-color 0.1s;
+    }
+    .mlib-name {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #1c1e21;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .mlib-item img,
     .mlib-item video {
@@ -2344,7 +2478,8 @@
     }
     .mlib-item:hover img,
     .mlib-item:hover video { filter: brightness(0.92); }
-    .mlib-item.selected { outline-color: #1877f2; }
+    .mlib-item.selected .mlib-thumb { outline-color: #1877f2; }
+    .mlib-item.selected .mlib-name { color: #1877f2; font-weight: 600; }
     .mlib-item.selected img,
     .mlib-item.selected video { filter: brightness(0.85); }
     /* Always-visible ring = "you can pick this"; filled + numbered once picked (= order in the reply). */
@@ -2406,8 +2541,7 @@
       gap: 4px;
     }
     .mlib-empty-icon { font-size: 30px; }
-    .mlib-footer { flex-wrap: wrap; }
-    .mlib-selection-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+    .mlib-selection-actions { display: flex; align-items: center; gap: 10px; }
     .mlib-selection-actions.hidden { display: none; }
     .mlib-move-select {
       height: 28px;
@@ -2435,7 +2569,7 @@
       pointer-events: none;
       z-index: 7;
     }
-    .inbox-media-library-panel.is-dragover .mlib-drop-overlay { display: flex; }
+    .mlib-dialog.is-dragover .mlib-drop-overlay { display: flex; }
     /* Shared "small thumbnail with a removable x overlay" look, reused by the pending-attachment
        strip above, the Manage Quick Replies add/edit form, and its results table. */
     .qr-image-thumb-wrap {
@@ -3747,8 +3881,7 @@
       .inbox-reply-row .inbox-icon-btn.inbox-composer-expand { display: flex; }
       /* Quick replies / product list / media library open full-width above the composer. */
       .inbox-quick-replies-panel,
-      .inbox-product-lookup-panel,
-      .inbox-media-library-panel {
+      .inbox-product-lookup-panel {
         left: 6px;
         right: 6px;
         width: auto;
@@ -3758,9 +3891,24 @@
       }
       .inbox-product-lookup-search input { font-size: 16px; }
       .inbox-thread-search input { font-size: 16px; }
-      /* Media library: no hover on touch, so the full-size button is always shown; 3 per row. */
+      /* Media library: full screen; folders become a chip row; no hover on touch, so the full-size
+         button is always shown; 3 per row. */
+      .mlib-modal { padding: 0; }
+      .mlib-dialog { width: 100%; height: var(--inbox-vh, 100dvh); border-radius: 0; }
+      .mlib-head { grid-template-columns: auto minmax(0, 1fr) auto; padding: 10px 12px; }
+      .mlib-search input { font-size: 16px; }
+      .mlib-body { flex-direction: column; }
+      .mlib-sidebar { width: auto; border-right: none; border-bottom: 1px solid var(--panel-border); }
+      .mlib-folder-search-row, .mlib-sidebar-hint { display: none; }
+      .mlib-folders { flex: none; flex-direction: row; gap: 6px; padding: 8px 12px; overflow-x: auto; overflow-y: hidden; }
+      .mlib-chip { width: auto; max-width: 180px; min-height: 32px; padding: 0 12px; border-radius: 999px; background: #fff; border: 1px solid var(--panel-border); font-size: 13px; gap: 6px; }
+      .mlib-chip.active { background: #1877f2; border-color: #1877f2; color: #fff; }
+      .mlib-chip.active svg, .mlib-chip.active .mlib-chip-count { color: #fff; }
+      .mlib-folder-bar { padding: 10px 12px 6px; }
+      .inbox-media-library-grid { grid-template-columns: repeat(3, 1fr); gap: 12px 8px; padding: 4px 12px 12px; }
+      .mlib-name { font-size: 11px; }
       .mlib-view { opacity: 1; }
-      .inbox-media-library-grid { grid-template-columns: repeat(3, 1fr); }
+      .mlib-footer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
       .mlib-move-select { font-size: 16px; }
 
       /* --- Customer & orders screen --- */
@@ -3882,37 +4030,63 @@
                 <button type="button" class="btn btn-primary btn-sm" id="sendProductListBtn">Send</button>
               </div>
             </div>
-            <div class="inbox-media-library-panel hidden" id="mediaLibraryPanel">
-              <!-- Folders + bulk actions: js/gmaConversations.js renderMediaLibrary / initMediaLibrary. -->
-              <div class="inbox-quick-replies-header">
-                <span>Media library</span>
-                <div class="mlib-add-wrap">
-                  <button type="button" class="btn btn-primary btn-sm" id="addMediaLibraryBtn">+ Add &#9662;</button>
-                  <div class="mlib-add-menu hidden" id="mediaLibraryAddMenu">
-                    <button type="button" data-add="files"><span>&#128247;</span><span><strong>Photos or videos</strong><small>Pick one or several files</small></span></button>
-                    <button type="button" data-add="folder"><span>&#128193;</span><span><strong>A whole folder</strong><small>Keeps the folder's name</small></span></button>
-                    <button type="button" data-add="new-folder"><span>&#10133;</span><span><strong>New empty folder</strong><small>Then add photos into it</small></span></button>
-                  </div>
+            <!-- Media library modal (moved to <body> on load): folder sidebar + searchable grid.
+                 js/gmaConversations.js renderMediaLibrary / initMediaLibrary. -->
+            <div class="mlib-modal hidden" id="mediaLibraryPanel">
+              <div class="mlib-dialog" role="dialog" aria-modal="true" aria-label="Media library">
+                <div class="mlib-head">
+                  <span class="mlib-head-title">Media</span>
+                  <label class="mlib-search">
+                    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" stroke-linecap="round" /></svg>
+                    <input type="search" id="mediaLibrarySearchInput" placeholder="Search media by name" autocomplete="off" />
+                  </label>
+                  <button type="button" class="mlib-close" id="mediaLibraryCloseBtn" aria-label="Close" title="Close">&times;</button>
                 </div>
-              </div>
-              <input type="file" id="mediaLibraryFileInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime" multiple class="hidden" />
-              <input type="file" id="mediaLibraryFolderInput" webkitdirectory multiple class="hidden" />
-              <div class="mlib-folders" id="mediaLibraryFolders"></div>
-              <div class="mlib-folder-bar" id="mediaLibraryFolderBar"></div>
-              <div id="mediaLibraryStatus" class="mlib-status hidden"></div>
-              <div id="mediaLibraryError" class="error-text hidden" style="padding:0 12px;"></div>
-              <div class="inbox-media-library-grid" id="mediaLibraryGrid">
-                <div class="inbox-empty-state">Loading...</div>
-              </div>
-              <div class="mlib-drop-overlay">Drop photos, videos or folders to add them</div>
-              <div class="inbox-product-lookup-footer mlib-footer">
-                <span class="muted" id="mediaLibrarySelectedCount">Tap photos to pick them</span>
-                <span class="mlib-selection-actions hidden" id="mediaLibrarySelectionActions">
-                  <button type="button" class="mlib-link-btn" id="mediaLibraryClearSelectionBtn">Clear</button>
-                  <select id="mediaLibraryMoveSelect" class="mlib-move-select" title="Move the picked items to a folder"></select>
-                  <button type="button" class="mlib-link-btn mlib-danger" id="mediaLibraryDeleteSelectedBtn">Delete</button>
-                </span>
-                <button type="button" class="btn btn-primary btn-sm" id="useMediaLibrarySelectionBtn" disabled>Add to reply</button>
+                <input type="file" id="mediaLibraryFileInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime" multiple class="hidden" />
+                <input type="file" id="mediaLibraryFolderInput" webkitdirectory multiple class="hidden" />
+                <div class="mlib-body">
+                  <aside class="mlib-sidebar">
+                    <div class="mlib-folder-search-row">
+                      <label class="mlib-folder-search">
+                        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" stroke-linecap="round" /></svg>
+                        <input type="search" id="mediaLibraryFolderSearchInput" placeholder="Search folder" autocomplete="off" />
+                      </label>
+                      <button type="button" class="mlib-new-folder-btn" id="mediaLibraryNewFolderBtn" title="New folder" aria-label="New folder">
+                        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3.6l1.6 1.8H16a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5v-9Z" stroke-linejoin="round" /><path d="M10 8.5v5M7.5 11h5" stroke-linecap="round" /></svg>
+                      </button>
+                    </div>
+                    <div class="mlib-folders" id="mediaLibraryFolders"></div>
+                    <div class="mlib-sidebar-hint">Drag and drop photos, videos or folders anywhere here to add them</div>
+                  </aside>
+                  <section class="mlib-main">
+                    <div class="mlib-folder-bar" id="mediaLibraryFolderBar"></div>
+                    <div id="mediaLibraryStatus" class="mlib-status hidden"></div>
+                    <div id="mediaLibraryError" class="error-text hidden" style="padding:0 16px;"></div>
+                    <div class="inbox-media-library-grid" id="mediaLibraryGrid">
+                      <div class="inbox-empty-state">Loading...</div>
+                    </div>
+                  </section>
+                </div>
+                <div class="mlib-footer">
+                  <span class="muted" id="mediaLibrarySelectedCount">Click photos to pick them</span>
+                  <span class="mlib-selection-actions hidden" id="mediaLibrarySelectionActions">
+                    <button type="button" class="mlib-link-btn" id="mediaLibraryClearSelectionBtn">Clear</button>
+                    <select id="mediaLibraryMoveSelect" class="mlib-move-select" title="Move the picked items to a folder"></select>
+                    <button type="button" class="mlib-link-btn mlib-danger" id="mediaLibraryDeleteSelectedBtn">Delete</button>
+                  </span>
+                  <span class="mlib-footer-buttons">
+                    <span class="mlib-add-wrap">
+                      <button type="button" class="mlib-upload-btn" id="mediaLibraryUploadBtn">Upload</button><button type="button" class="mlib-upload-btn mlib-upload-more" id="addMediaLibraryBtn" aria-label="More upload options" title="More upload options">&#8943;</button>
+                      <div class="mlib-add-menu hidden" id="mediaLibraryAddMenu">
+                        <button type="button" data-add="files"><span>&#128247;</span><span><strong>Photos or videos</strong><small>Pick one or several files</small></span></button>
+                        <button type="button" data-add="folder"><span>&#128193;</span><span><strong>A whole folder</strong><small>Keeps the folder's name</small></span></button>
+                        <button type="button" data-add="new-folder"><span>&#10133;</span><span><strong>New empty folder</strong><small>Then add photos into it</small></span></button>
+                      </div>
+                    </span>
+                    <button type="button" class="mlib-select-btn" id="useMediaLibrarySelectionBtn" disabled>Add to reply</button>
+                  </span>
+                </div>
+                <div class="mlib-drop-overlay">Drop photos, videos or folders to add them</div>
               </div>
             </div>
             <div class="inbox-replying-to hidden" id="replyingToEl">
@@ -4203,6 +4377,18 @@
         </div>
       </div>
 
+      <!-- Color - only for Tiles Sticker / Plain Sticker / Acrylic (doesn't affect price). Fixed list,
+           blank by default; carried into the order line's name + note. -->
+      <div class="form-row hidden" id="customStickerColorRow">
+        <label>Color <span style="color:#c0392b;">*</span></label>
+        <select id="customStickerColor">
+          <option value="">Select color</option>
+          <option>Black</option>
+          <option>White</option>
+          <option>Blue</option>
+        </select>
+      </div>
+
       <div class="form-row hidden" id="customStickerRepairRow">
         <label><input type="checkbox" id="customStickerRepair"> Repair (2.5x price)</label>
       </div>
@@ -4328,7 +4514,7 @@ Message: ..."></textarea>
   <script src="js/nav.js?v=tenderdecl1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
-  <script src="js/gmaConversations.js?v=fbname1"></script>
+  <script src="js/gmaConversations.js?v=mlibmodal1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
