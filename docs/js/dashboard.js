@@ -188,8 +188,8 @@ function staffInitials(displayName) {
 // Each figure links to Online Orders pre-filtered to this staff member + period (see
 // onlineOrders.js's confirmedBy/period URL handling and admin_list_online_orders's matching
 // p_confirmed_by/p_period params in supabase_orders_sync_tables.sql).
-function staffStatLinkHtml(displayName, period, label, amount, count) {
-  const href = `online-orders.html?confirmedBy=${encodeURIComponent(displayName)}&period=${period}`;
+function staffStatLinkHtml(displayName, period, label, amount, count, linkParam = 'confirmedBy') {
+  const href = `online-orders.html?${linkParam}=${encodeURIComponent(displayName)}&period=${period}`;
   const orderWord = count === 1 ? 'order' : 'orders';
   return `
     <a class="staff-sales-stat" href="${href}">
@@ -292,7 +292,39 @@ async function loadSalesByStaff(session) {
         ${staffTargetHtml(r.monthly_sales, r.monthly_sales_target)}
       </div>
     `)
-    .join('');
+    .join('') + await botCreatedCardHtml(session, 'Vic');
+}
+
+// Vic (the Messenger bot) card - per "add vic there but only for created". Vic never confirms, so
+// his card counts orders he CREATED (admin_get_sales_by_created_by, supabase_dashboard_sales_by_
+// created_by.sql); not ranked against the staff. Empty if the SQL isn't run yet.
+async function botCreatedCardHtml(session, name) {
+  const { data, error } = await supabaseClient.rpc('admin_get_sales_by_created_by', {
+    p_admin_username: session.username,
+    p_admin_password: session.password,
+    p_created_by: name
+  });
+  if (error) {
+    console.error('admin_get_sales_by_created_by failed:', error);
+    return '';
+  }
+  const r = (data || [])[0];
+  if (!r) return '';
+  return `
+    <div class="staff-sales-card">
+      <div class="staff-sales-header">
+        <div class="staff-sales-identity">
+          <div class="staff-sales-avatar">🤖</div>
+          <div class="staff-sales-name">${name} <span class="muted">(created)</span></div>
+        </div>
+      </div>
+      <div class="staff-sales-stats">
+        ${staffStatLinkHtml(name, 'today', 'Daily', r.daily_sales, r.daily_order_count, 'createdBy')}
+        ${staffStatLinkHtml(name, 'month', 'Monthly', r.monthly_sales, r.monthly_order_count, 'createdBy')}
+        ${staffStatLinkHtml(name, 'prevmonth', 'Prev. Month', r.previous_month_sales, r.previous_month_order_count, 'createdBy')}
+      </div>
+    </div>
+  `;
 }
 
 // "Expense This Month" / "Expense Today" cards, sourced from admin_get_expense_entry_summary()

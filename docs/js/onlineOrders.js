@@ -8934,6 +8934,9 @@ async function initAdvanceOrdersView() {
   const scopeParam = urlParams.get('scope') || '';
   const filterParam = urlParams.get('filter') || '';
   const confirmedByParam = urlParams.get('confirmedBy') || '';
+  // Dashboard's Vic card (?createdBy=Vic) - pre-fills the Created By field filter.
+  const createdByParam = (urlParams.get('createdBy') || '').trim();
+  if (createdByParam) orderFieldFilters.set('created_by', createdByParam);
 
   // Per "if the user is a online order staff They can only see Confirmed / Printed / To Ship" -
   // hard-locked server-side via p_status_in (see loadOrders/ONLINE_ORDER_STAFF_STATUS_SCOPE
@@ -9010,6 +9013,8 @@ async function initAdvanceOrdersView() {
   const noteParts = [];
   if (currentConfirmedBy) {
     noteParts.push(`orders confirmed by ${currentConfirmedBy}`);
+  } else if (createdByParam) {
+    noteParts.push(`orders created by ${createdByParam}`);
   } else {
     if (currentScope === 'walkin') noteParts.push('walk-in');
     noteParts.push(currentScope === 'walkin' ? 'sales' : 'online orders');
@@ -9054,7 +9059,7 @@ async function initAdvanceOrdersView() {
   // The scope tabs already say which list this is, so the note only shows for the Dashboard's
   // other deep-link filters - and Clear filters keeps you on the same (online / walk-in) list.
   const activeFilterNote = document.getElementById('activeFilterNote');
-  if (currentPeriod || outstandingOnly || currentConfirmedBy || (currentScope && !showScopeTabs)) {
+  if (currentPeriod || outstandingOnly || currentConfirmedBy || createdByParam || (currentScope && !showScopeTabs)) {
     const clearHref = currentScope === 'walkin' && showScopeTabs ? 'online-orders.html?scope=walkin' : 'online-orders.html';
     activeFilterNote.innerHTML = `Showing ${noteParts.join(' ')}. <a href="${clearHref}">Clear filters</a>`;
     activeFilterNote.classList.remove('hidden');
