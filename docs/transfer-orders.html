@@ -271,6 +271,27 @@
     </div>
   </div>
 
+  <!-- Receive = post: what happens to each quantity and where it's saved, plus Return / Write off for
+       shipped-but-not-received (js/transferOrders.js showPostReceiveDialog) - stacks above the Manage modal -->
+  <div id="postReceiveModal" class="modal-backdrop hidden" style="z-index:110;">
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:760px;" role="dialog" aria-modal="true" aria-labelledby="postReceiveTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">TRANSFER ORDER - RECEIVE</div>
+          <h2 id="postReceiveTitle">Post</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <div id="postReceiveBody"></div>
+        <div id="postReceiveError" class="error-text hidden"></div>
+      </div>
+      <div class="bc-doc-foot">
+        <button class="bc-btn bc-btn-primary" id="postReceiveConfirmBtn" type="button">Receive &amp; Post</button>
+        <button class="bc-btn" id="postReceiveCancelBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Create PO from the missing items of a transfer order (js/transferOrders.js) - stacks above the Manage modal -->
   <div id="createPoModal" class="modal-backdrop hidden" style="z-index:110;">
     <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:900px;" role="dialog" aria-modal="true" aria-labelledby="createPoTitle">
@@ -402,7 +423,8 @@
                   <th style="min-width:280px;">Item No.</th>
                   <th style="min-width:260px;">Variant</th>
                   <th style="min-width:420px;">Description</th>
-                  <th class="num" style="width:110px;">Qty To Transfer</th>
+                  <th class="num" style="width:150px;">Qty To Transfer</th>
+                  <th style="width:150px;" title="Only for a customer order: the online / walk-in order ID, or ADV-&lt;no&gt; for an advance order. The qty is checked against what the order needs instead of the shelf limit.">Order ID</th>
                   <th style="width:40px;"></th>
                 </tr>
               </thead>
@@ -432,7 +454,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/transferOrders.js?v=whpick1"></script>
+  <script src="js/transferOrders.js?v=reqcap1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

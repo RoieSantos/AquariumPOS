@@ -20,13 +20,17 @@
     <div class="toolbar">
       <h1>Posted Transfer Orders</h1>
     </div>
-    <p class="muted">Permanent record of fully-received Transfer Orders - read-only. Once a Transfer Order is fully received, it moves here from the Transfer Orders page and can no longer be edited.</p>
+    <p class="muted">Permanent record of received Transfer Orders - read-only. Every Receive posts the order (fully or as a partial receipt), moving it here from the Transfer Orders page and can no longer be edited.</p>
 
     <div class="toolbar">
       <input type="text" id="searchInput" placeholder="Search by No., description, warehouse..." style="max-width:320px;" />
       <label id="warehouseFilterLabel" class="muted hidden" style="display:flex; align-items:center; gap:6px; margin:0;">
         <input type="checkbox" id="showAllWarehousesCheck" style="width:auto;" />
         <span>Show all warehouses (default: <span id="myWarehouseName"></span> only)</span>
+      </label>
+      <label class="muted" style="display:flex; align-items:center; gap:6px; margin:0;">
+        <input type="checkbox" id="shortagesOnlyCheck" style="width:auto;" />
+        <span>Shortages only (returned / written off)</span>
       </label>
       <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
     </div>
@@ -42,10 +46,12 @@
             <th>Requested Date</th>
             <th>Transfer Date</th>
             <th>Receive Date</th>
+            <th>Status</th>
+            <th>Shortage</th>
           </tr>
         </thead>
         <tbody id="headerTableBody">
-          <tr><td colspan="7" class="muted">Loading...</td></tr>
+          <tr><td colspan="9" class="muted">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -56,7 +62,7 @@
     <div class="modal-panel" style="max-width:1000px; width:95vw;">
       <div class="toolbar">
         <h2 id="viewLinesTitle">Posted Transfer Order</h2>
-        <span class="badge badge-success">Received</span>
+        <span class="badge badge-success" id="viewStatusBadge">Received</span>
         <button class="btn btn-secondary btn-sm" id="printTransferBtn" type="button" style="margin-left:auto;">Print</button>
         <button class="btn btn-secondary btn-sm" id="closeViewLinesBtn" type="button">Close</button>
       </div>
@@ -95,6 +101,8 @@
               <th>Qty To Transfer</th>
               <th>Qty Shipped</th>
               <th>Qty Received</th>
+              <th>Qty Returned</th>
+              <th>Qty Written Off</th>
             </tr>
           </thead>
           <tbody id="viewLinesBody"></tbody>
@@ -110,7 +118,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=tenderdecl1"></script>
-  <script src="js/postedTransferOrders.js"></script>
+  <script src="js/postedTransferOrders.js?v=reqcap1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

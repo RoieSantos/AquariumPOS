@@ -47,6 +47,20 @@
     .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
     /* Use the whole window instead of the site-wide 1200px cap - same as production-shelf-map.html. */
     .page.page-full { max-width: none; }
+    /* Stock List view (shelfMap.js renderStockList) */
+    .view-toggle { display: inline-flex; border: 1px solid var(--panel-border, #c9d3e0); border-radius: 6px; overflow: hidden; }
+    .view-toggle button { border: 0; border-radius: 0; background: transparent; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; color: inherit; }
+    .view-toggle button.active { background: #1d4f91; color: #fff; }
+    .stock-table td.num, .stock-table th.num { text-align: right; white-space: nowrap; }
+    .stock-table td { vertical-align: middle; }
+    .stock-table th.sortable { cursor: pointer; user-select: none; }
+    .stock-table tr.st-empty td.st-onhand { color: #d64545; font-weight: 700; }
+    .stock-table tr.st-low td.st-onhand { color: #d98a00; font-weight: 700; }
+    .stock-table tr.st-ok td.st-onhand { color: #2e9e5b; font-weight: 700; }
+    .stock-table input.sl-qty { width: 72px; text-align: right; }
+    .stock-table select.sl-vendor { max-width: 180px; }
+    .stock-table .sl-sub { display: block; font-size: 11px; color: var(--text-muted, #666); }
+    .stock-summary { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -55,15 +69,19 @@
   <!-- Full window width so more shelf spots fit side by side - see .page.page-full below -->
   <div class="page page-full">
     <h1>Shelf Map</h1>
-    <p class="muted">Each box is a spot on the shelf. "Min. Shelf Count" is the minimum count for that shelf spot - type a new number to update it. "Stock on hand" is the item's quantity at the location from the Item Ledger (always current), coloured by the legend below. "Pending TO" is what open transfer orders into this location still have to be received (hover for the TO numbers, click to open).</p>
+    <p class="muted map-only">Each box is a spot on the shelf. "Min. Shelf Count" is the minimum count for that shelf spot - type a new number to update it. "Stock on hand" is the item's quantity at the location from the Item Ledger (always current), coloured by the legend below. "Pending TO" is what open transfer orders into this location still have to be received (hover for the TO numbers, click to open).</p>
 
     <div class="toolbar">
+      <div class="view-toggle" role="group" aria-label="View">
+        <button type="button" id="viewMapBtn" class="active">Map</button>
+        <button type="button" id="viewListBtn">Stock List</button>
+      </div>
       <label for="locationSelect" class="muted" style="margin:0;">Location</label>
       <select id="locationSelect" style="max-width:200px;"></select>
-      <label for="shelfSelect" class="muted" style="margin:0;">Shelf</label>
-      <select id="shelfSelect" style="max-width:260px;"></select>
-      <span class="muted" id="warehouseLabel"></span>
-      <span class="muted" id="lastReplenishment"></span>
+      <label for="shelfSelect" class="muted map-only" style="margin:0;">Shelf</label>
+      <select id="shelfSelect" class="map-only" style="max-width:260px;"></select>
+      <span class="muted map-only" id="warehouseLabel"></span>
+      <span class="muted map-only" id="lastReplenishment"></span>
       <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
       <button class="btn btn-secondary btn-sm" id="replenishBtn" type="button" title="Create a transfer order from the Warehouse location to this shelf's location for every item running low">Create Replenishment TO</button>
       <button class="btn btn-secondary btn-sm hidden" id="newShelfBtn" type="button">New Shelf</button>
@@ -80,6 +98,33 @@
       <button class="btn btn-secondary btn-sm" id="deleteShelfBtn" type="button">Delete Shelf</button>
     </div>
 
+    <!-- Stock List view: every item linked on any shelf at the location (sql/supabase_shelf_map_stock_list.sql) -->
+    <div id="stockListBar" class="toolbar hidden">
+      <label for="slFilter" class="muted" style="margin:0;">Show</label>
+      <select id="slFilter" style="max-width:200px;">
+        <option value="low">Low stock (half or less)</option>
+        <option value="empty">Out of stock</option>
+        <option value="buy">Suggested to buy</option>
+        <option value="all">All items</option>
+      </select>
+      <label for="slDays" class="muted" style="margin:0;">Sales in the last</label>
+      <select id="slDays" style="max-width:120px;">
+        <option value="7">7 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="60">60 days</option>
+        <option value="90">90 days</option>
+        <option value="180">180 days</option>
+        <option value="365">365 days</option>
+      </select>
+      <label for="slTarget" class="muted" style="margin:0;" title="What the suggested quantity tops the location back up to">Buy up to</label>
+      <select id="slTarget" style="max-width:260px;">
+        <option value="min">Min. Shelf Count</option>
+        <option value="sales">Min. or sales in the period (higher)</option>
+      </select>
+      <input type="text" id="slSearch" placeholder="Search item / vendor..." style="max-width:200px;" />
+      <button class="btn btn-primary btn-sm hidden" id="slCreatePoBtn" type="button">Create Purchase Order(s)</button>
+    </div>
+
     <div class="shelf-legend muted" id="legend">
       <span><i class="shelf-dot" style="background:#2e9e5b"></i>Stock on hand is more than half of the Min. Shelf Count</span>
       <span><i class="shelf-dot" style="background:#d98a00"></i>Stock on hand is half or less of the Min. Shelf Count</span>
@@ -91,6 +136,27 @@
     <div id="shelfError" class="error-text hidden"></div>
     <div id="shelfLoading" class="muted">Loading...</div>
     <div id="shelfBody" class="shelf-scroll" style="margin-top:12px;"></div>
+    <div id="stockListBody" class="hidden" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- Create Purchase Order(s) from the Stock List - super users only (shelfMap.js openSlPoModal) -->
+  <div class="modal-backdrop hidden" id="slPoModal">
+    <div class="modal-panel" style="max-width:960px;">
+      <h3 style="margin-top:0;">Create Purchase Order(s)</h3>
+      <p class="muted" id="slPoIntro"></p>
+      <div class="toolbar">
+        <label for="slPoWarehouse" class="muted" style="margin:0;">Receive into</label>
+        <select id="slPoWarehouse" style="max-width:220px;"></select>
+        <input type="text" id="slPoNotes" placeholder="Notes (optional)" style="max-width:360px;" />
+      </div>
+      <div id="slPoBody"></div>
+      <div id="slPoError" class="error-text hidden"></div>
+      <div id="slPoResult"></div>
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button class="btn btn-primary btn-sm" id="slPoConfirmBtn" type="button">Create Purchase Order(s)</button>
+        <button class="btn btn-secondary btn-sm" id="slPoCloseBtn" type="button">Close</button>
+      </div>
+    </div>
   </div>
 
   <div class="modal-backdrop hidden" id="cellModal">
@@ -122,7 +188,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=tenderdecl1"></script>
-  <script src="js/shelfMap.js?v=pendingto1"></script>
+  <script src="js/shelfMap.js?v=stocklist2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

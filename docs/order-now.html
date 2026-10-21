@@ -484,6 +484,8 @@
       <p class="muted" style="margin-top:-8px;">Sump dimensions use the same unit of measure as your aquarium.</p>
       <div class="checkbox-stack">
         <label class="checkbox-row"><input type="checkbox" id="sumpPiping" /> Set of Piping</label>
+        <!-- Overhead Sump only - replaces the standard Set of Piping (item A-070), see syncPipingDrainOption in js/orderNow.js -->
+        <label class="checkbox-row hidden" id="sumpPipingDrainRow"><input type="checkbox" id="sumpPipingDrain" /> Custom 1/2" Pipe with Separate Drain <span class="option-tip">Replaces the standard piping</span></label>
         <label class="checkbox-row"><input type="checkbox" id="sumpOverflowBox" /> Overflow Box</label>
         <label class="checkbox-row"><input type="checkbox" id="sumpFilterMedias" /> Filter Medias</label>
         <label class="checkbox-row"><input type="checkbox" id="sumpAllumTopCover" /> Allum Top Cover</label>
@@ -565,6 +567,7 @@
       </div>
       <div class="checkbox-stack">
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpPiping" /> Set of Piping</label>
+        <label class="checkbox-row hidden" id="standaloneSumpPipingDrainRow"><input type="checkbox" id="standaloneSumpPipingDrain" /> Custom 1/2" Pipe with Separate Drain <span class="option-tip">Replaces the standard piping</span></label>
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpOverflowBox" /> Overflow Box</label>
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpFilterMedias" /> Filter Medias</label>
         <label class="checkbox-row"><input type="checkbox" id="standaloneSumpAllumTopCover" /> Allum Top Cover</label>
@@ -1138,8 +1141,8 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
-  <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sump1"></script>
-  <script src="js/orderNow.js?v=9"></script>
+  <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=pipedrain2"></script>
+  <script src="js/orderNow.js?v=11"></script>
   <script src="js/chatWidget.js" defer></script>
 </body>
 </html>

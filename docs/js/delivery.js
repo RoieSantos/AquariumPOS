@@ -385,6 +385,11 @@ function renderCalendarGrid(year, month) {
     // badge below (weekly + per-date together), so counting them twice would double up.
     const fixedCount = fixedRoute ? (fixedRoute.warehouse_names?.length || 0) : 0;
     const vendorNames = vendorCodes.map((code) => vendorByCode[code]?.name || code);
+    // Combined drops count once - "2 drops · 3 orders" (groupStopsIntoDrops).
+    const dropCount = groupStopsIntoDrops(stops).length;
+    const stopsBadgeText = dropCount < stops.length
+      ? `${dropCount} drop${dropCount === 1 ? '' : 's'} &middot; ${stops.length} orders`
+      : `${stops.length} stop${stops.length === 1 ? '' : 's'}`;
 
     html += `
       <div class="${classes.join(' ')}" data-date="${key}">
@@ -393,7 +398,7 @@ function renderCalendarGrid(year, month) {
         ${fixedRoute && fixedRoute.route_name ? `<span class="badge badge-purple" title="Fixed route for this day">${fixedRoute.route_name}</span>` : ''}
         ${fixedCount > 0 ? `<span class="badge badge-glass" title="${fixedCount} fixed Warehouse stop${fixedCount === 1 ? '' : 's'} for this day">${fixedCount} Fixed</span>` : ''}
         ${vendorCodes.length > 0 ? `<span class="badge badge-vendor" title="${vendorNames.join(', ')}">${vendorCodes.length} Vendor stop${vendorCodes.length === 1 ? '' : 's'}</span>` : ''}
-        ${stops.length > 0 ? `<span class="badge badge-primary">${stops.length} stop${stops.length === 1 ? '' : 's'}</span>` : ''}
+        ${stops.length > 0 ? `<span class="badge badge-primary">${stopsBadgeText}</span>` : ''}
       </div>
     `;
   }
@@ -477,7 +482,9 @@ async function renderDriverRouteView(dateKey) {
     // same distinction as the desktop Stops table's "Print Note" column.
     // Per "show the details once the box has been clicked or tap" - the whole card opens Order
     // Details (wireDriverRouteNav), not only the order-id button.
-    cardsEl.innerHTML = vendorCardsHtml + stops.map((s) => {
+    cardsEl.innerHTML = vendorCardsHtml + groupStopsIntoDrops(stops).map((group) => {
+      if (group.stops.length > 1) return driverDropCardHtml(group);
+      const s = group.stops[0];
       const displayAddress = isPlaceholderAddress(s.shipping_address) ? (s.geocoded_address || '') : s.shipping_address;
       return `
         <div class="driver-stop-card driver-stop-card-tappable" data-stop-id="${s.stop_id}" style="cursor:pointer;">
@@ -504,6 +511,44 @@ async function renderDriverRouteView(dateKey) {
   }
 
   await renderDayMap(stops, dateKey, 'driverRouteMap');
+}
+
+// One card for a combined drop (groupStopsIntoDrops): the customer / address once, each order as a
+// line (tap to open its details), one combined balance, one Record Payment (split across the orders,
+// saveCollection) and one Mark Done (one photo marks every order done, one Facebook post - see
+// saveStopDone / postStop). The lead (first) stop stands for the card.
+function driverDropCardHtml(group) {
+  const lead = group.stops[0];
+  const ids = group.stops.map((s) => s.stop_id).join(',');
+  const displayAddress = isPlaceholderAddress(lead.shipping_address) ? (lead.geocoded_address || '') : lead.shipping_address;
+  const totalBalance = group.stops.reduce((sum, s) => sum + Math.max(Number(s.balance) || 0, 0), 0);
+  const knownBalance = group.stops.some((s) => s.balance !== null && s.balance !== undefined && s.balance !== '');
+  const notes = Array.from(new Set(group.stops.map((s) => s.notes).filter(Boolean)));
+  return `
+    <div class="driver-stop-card driver-stop-card-tappable" data-stop-id="${lead.stop_id}" style="cursor:pointer;">
+      <div class="driver-stop-card-header">
+        <span class="badge badge-primary">&#127968; ${group.stops.length} orders &middot; one drop</span>
+      </div>
+      <div class="driver-stop-customer">${lead.customer_name || ''}</div>
+      ${knownBalance ? driverBalanceHtml(totalBalance) : ''}
+      <div class="driver-stop-address">&#128205; ${displayAddress || '<span class="muted">No address on file</span>'}</div>
+      ${lead.route_name ? `<div class="driver-stop-route muted">&#128666; Route: ${lead.route_name}</div>` : ''}
+      ${notes.map((n) => `<div class="driver-stop-notes muted">&#128221; Note: ${n}</div>`).join('')}
+      ${group.stops.map((s) => `
+        <div class="driver-drop-order" style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(127,127,127,0.25);">
+          <button type="button" class="driver-stop-order-id" data-stop-id="${s.stop_id}">${s.order_id || ''}</button>
+          ${s.status ? `<span class="badge badge-primary">${s.status}</span>` : ''}
+          ${Number(s.balance) > 0 ? `<span class="muted" style="font-size:12px;">&middot; ${pesoAmount(s.balance)}</span>` : ''}
+          ${s.note_print ? `<div class="driver-stop-notes muted">&#128204; Delivery Note: ${s.note_print}</div>` : ''}
+          <div class="driver-stop-collections" data-collect-for="${s.stop_id}"></div>
+        </div>
+      `).join('')}
+      ${totalBalance > 0 ? `<button type="button" class="btn btn-primary driver-collect-btn" data-collect-stop-id="${lead.stop_id}" data-collect-drop-ids="${ids}" style="width:100%; margin-top:10px;">&#128176; Record Payment Collected (all ${group.stops.length} orders)</button>` : ''}
+      <div class="driver-stop-done" data-done-for="${lead.stop_id}" data-done-members="${ids}" style="margin-top:10px;">
+        <button type="button" class="btn btn-success driver-mark-done-btn" data-done-stop-id="${lead.stop_id}" data-done-drop-ids="${ids}" style="width:100%;">&#9989; Mark Done (all ${group.stops.length} orders)</button>
+      </div>
+    </div>
+  `;
 }
 
 // --- Driver collections ----------------------------------------------------------------------
@@ -602,14 +647,35 @@ function setCollectError(message) {
   el.classList.toggle('hidden', !message);
 }
 
-async function openCollectModal(stopId) {
-  const stop = (stopsByDate[driverDate] || []).find((s) => s.stop_id === stopId);
+// Combined drop: [{ stopId, orderId, cap, collectionId }] - the amount is split across these in card
+// order, each up to what's still owed on it (cap). Each part is its own collection with its own ID,
+// made once per modal, so Save again after a partial failure never records a part twice.
+let collectDropParts = null;
+
+async function openCollectModal(stopId, dropIds = null) {
+  const dayStops = stopsByDate[driverDate] || [];
+  const stop = dayStops.find((s) => s.stop_id === stopId);
   if (!stop) return;
   collectStopId = stopId;
   collectId = newCollectionId();
+  collectDropParts = null;
+  let balance = Number(stop.balance || 0);
+  let label = `${stop.order_id || ''} · ${stop.customer_name || ''}`;
+  if (dropIds && dropIds.length > 1) {
+    const members = dropIds.map((id) => dayStops.find((s) => s.stop_id === id)).filter(Boolean);
+    // Same as _delivery_stop_collectable: balance minus collections not reflected in it yet.
+    const collections = await fetchCollections(members.map((s) => s.stop_id));
+    collectDropParts = members.map((s) => {
+      const pending = collections.filter((c) => c.stop_id === s.stop_id)
+        .reduce((sum, c) => sum + Number(c.amount || 0) - Number(c.applied_amount || 0), 0);
+      return { stopId: s.stop_id, orderId: s.order_id, cap: Math.max(Math.round((Number(s.balance || 0) - pending) * 100) / 100, 0), collectionId: newCollectionId() };
+    });
+    balance = collectDropParts.reduce((sum, p) => sum + p.cap, 0);
+    label = `${members.map((s) => s.order_id).join(' + ')} · ${stop.customer_name || ''}`;
+  }
   document.getElementById('collectOrderLabel').textContent =
-    `${stop.order_id || ''} · ${stop.customer_name || ''} · balance ₱${Number(stop.balance || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
-  document.getElementById('collectAmountInput').value = Number(stop.balance) > 0 ? Number(stop.balance).toFixed(2) : '';
+    `${label} · balance ₱${balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  document.getElementById('collectAmountInput').value = balance > 0 ? balance.toFixed(2) : '';
   document.getElementById('collectReferenceInput').value = '';
   setCollectError('');
   const select = document.getElementById('collectMethodSelect');
@@ -631,6 +697,47 @@ function closeCollectModal() {
   document.getElementById('collectModal').classList.add('hidden');
   collectStopId = null;
   collectId = null;
+  collectDropParts = null;
+}
+
+// Combined drop Save: one staff_record_delivery_collection per order with a share of the amount.
+// Returns { failedApply: [...], error } - error = a part that didn't save (Save again retries safely).
+async function saveDropCollection(amount, method, reference) {
+  const total = collectDropParts.reduce((sum, p) => sum + p.cap, 0);
+  if (amount > total + 0.005) {
+    return { error: `The amount is more than the balance to collect (₱${total.toFixed(2)}).` };
+  }
+  if (!collectDropParts.some((p) => p.saved)) {
+    collectDropParts.forEach((p) => { delete p.share; });
+    collectDropParts.amount = amount;
+  } else if (Math.abs(amount - collectDropParts.amount) > 0.004) {
+    return { error: `Part of ₱${collectDropParts.amount.toFixed(2)} is already saved - keep that amount and Save again to finish.` };
+  }
+  let left = Math.round(amount * 100) / 100;
+  const failedApply = [];
+  for (const part of collectDropParts) {
+    if (left <= 0.004) break;
+    if (part.share === undefined) part.share = Math.min(left, part.cap);
+    left = Math.round((left - part.share) * 100) / 100;
+    if (part.share <= 0 || part.saved) continue;
+    const { data, error } = await supabaseClient.rpc('staff_record_delivery_collection', {
+      p_username: currentSession.username,
+      p_password: currentSession.password,
+      p_collection_id: part.collectionId,
+      p_stop_id: part.stopId,
+      p_amount: part.share,
+      p_method_code: method,
+      p_reference: reference
+    });
+    if (error) {
+      const savedOnes = collectDropParts.filter((p) => p.saved).map((p) => p.orderId);
+      return { error: `${part.orderId}: ${error.message}${savedOnes.length ? ` (already saved: ${savedOnes.join(', ')} - Save again finishes the rest)` : ''}` };
+    }
+    part.saved = true;
+    const r = (data || [])[0];
+    if (r && r.apply_status === 'Failed') failedApply.push(`${part.orderId}: ${r.apply_error || ''}`);
+  }
+  return { failedApply };
 }
 
 async function reloadDriverDay() {
@@ -650,6 +757,19 @@ async function saveCollection() {
   btn.disabled = true;
   btn.textContent = 'Saving...';
   setCollectError('');
+  if (collectDropParts) {
+    const result = await saveDropCollection(amount, method, document.getElementById('collectReferenceInput').value.trim() || null);
+    collectBusy = false;
+    btn.disabled = false;
+    btn.textContent = 'Save';
+    if (result.error) { setCollectError(`Not saved: ${result.error}`); return; }
+    closeCollectModal();
+    if (result.failedApply.length) {
+      alert(`The payment is saved as collected, but part of it could not be put on the order yet:\n${result.failedApply.join('\n')}\n\nTap "Try again" on the stop later.`);
+    }
+    await reloadDriverDay();
+    return;
+  }
   const { data, error } = await supabaseClient.rpc('staff_record_delivery_collection', {
     p_username: currentSession.username,
     p_password: currentSession.password,
@@ -691,7 +811,10 @@ async function retryCollection(collectionId, btn) {
 function wireDriverCollections() {
   document.getElementById('driverStopCards').addEventListener('click', async (e) => {
     const collectBtn = e.target.closest('.driver-collect-btn');
-    if (collectBtn) { openCollectModal(collectBtn.dataset.collectStopId); return; }
+    if (collectBtn) {
+      openCollectModal(collectBtn.dataset.collectStopId, collectBtn.dataset.collectDropIds ? collectBtn.dataset.collectDropIds.split(',') : null);
+      return;
+    }
     const retryBtn = e.target.closest('.driver-collect-retry-btn');
     if (retryBtn) {
       await retryCollection(retryBtn.dataset.retryCollectionId, retryBtn);
@@ -788,6 +911,9 @@ function driverBalanceHtml(balance) {
 // Nothing here runs on a timer - every Facebook post starts from a tap.
 const STUCK_POST_MINUTES = 10;
 let markDoneStopId = null;
+// Combined drop: every stop on the card (lead first) - all marked done with the one photo, and only
+// the lead is posted to Facebook, so a drop is one post, not one per order.
+let markDoneStopIds = [];
 let markDonePhotoBase64 = null;
 let markDoneStep = null; // 'save' | 'post' - what Try Again repeats
 let markDoneBusy = false;
@@ -809,7 +935,15 @@ async function loadStopCompletions(stopIds) {
   });
   // Before supabase_delivery_stop_done_post.sql is run the RPC doesn't exist - keep the buttons.
   if (error) return;
-  (data || []).forEach(showStopDone);
+  const rows = data || [];
+  rows.forEach((row) => {
+    const el = document.querySelector(`.driver-stop-done[data-done-for="${row.stop_id}"]`);
+    // A drop card reads Done only once every order on it is (a part-done drop keeps Mark Done,
+    // which then marks the rest).
+    const members = el?.dataset.doneMembers ? el.dataset.doneMembers.split(',') : null;
+    if (members && !members.every((id) => rows.some((r) => r.stop_id === id))) return;
+    showStopDone(row);
+  });
 }
 
 function showStopDone(row) {
@@ -862,7 +996,8 @@ function openMarkDoneModal(previewSrc) {
 
 // Re-reads this stop's Done / post state onto its card.
 function refreshStopCard(stopId) {
-  return loadStopCompletions([stopId]);
+  const members = document.querySelector(`.driver-stop-done[data-done-for="${stopId}"]`)?.dataset.doneMembers;
+  return loadStopCompletions(members ? members.split(',') : [stopId]);
 }
 
 async function onMarkDonePhoto(e) {
@@ -896,10 +1031,16 @@ async function saveStopDone() {
   markDoneBusy = true;
   setMarkDoneState({ status: '💾 Saving delivery...', caption: '' });
   try {
-    const result = await callFacebookPostFunction(currentSession, markDonePhotoBase64, { action: 'mark_done', stop_id: stopId });
+    const ids = markDoneStopIds.length ? markDoneStopIds : [stopId];
+    let allAlreadyDone = true;
+    for (const id of ids) {
+      if (ids.length > 1) setMarkDoneState({ status: `💾 Saving delivery (${ids.indexOf(id) + 1} of ${ids.length})...`, caption: '' });
+      const result = await callFacebookPostFunction(currentSession, markDonePhotoBase64, { action: 'mark_done', stop_id: id });
+      if (!result.already_done) allAlreadyDone = false;
+    }
     markDoneBusy = false;
     await refreshStopCard(stopId);
-    if (result.already_done) {
+    if (allAlreadyDone) {
       setMarkDoneState({ status: '✅ This stop was already marked done.' });
       return false;
     }
@@ -944,6 +1085,7 @@ function wireMarkDone() {
     const doneBtn = e.target.closest('.driver-mark-done-btn');
     if (doneBtn) {
       markDoneStopId = doneBtn.dataset.doneStopId;
+      markDoneStopIds = doneBtn.dataset.doneDropIds ? doneBtn.dataset.doneDropIds.split(',') : [];
       // Start loading settings/logo while the driver reads the tip and takes the photo.
       ensureFbPostReady();
       // Per "while taking picture show a note" - a web page can't draw over the phone's own camera
@@ -954,6 +1096,7 @@ function wireMarkDone() {
     const postBtn = e.target.closest('.driver-post-stop-btn');
     if (postBtn) {
       markDoneStopId = postBtn.dataset.postStopId;
+      markDoneStopIds = [];
       openMarkDoneModal(null);
       postStop();
     }
@@ -1262,7 +1405,100 @@ async function removeDateVendor(dateKey, vendorCode) {
 // Print Job Order stay blocked until it has a fee (the stop's own from Calculate fee, or the order's).
 // Client-side only, like the other print gating on this page.
 function stopHasDeliveryFee(s) {
-  return Number(s?.delivery_fee) > 0;
+  // An order riding on another order's fee in a combined drop (fee_combined_with) has 0 on purpose.
+  return Number(s?.delivery_fee) > 0 || !!s?.fee_combined_with;
+}
+
+// --- Combined drops ----------------------------------------------------------------------------
+// Per "if an customer has multiple orders and plan to deliver it on one day" - stops on one date with
+// the same customer + address (drop_key, sql/supabase_delivery_combined_drops.sql) are one drop: one
+// header row in the office table, one driver card, one map pin, one Mark Done, one payment. Each order
+// is still its own stop underneath. The drop is charged once (default) or per order
+// (staff_set_delivery_drop_fee_mode) - the server moves the fee onto one order and 0 on the others.
+// Groups keep the stops' own order, placed where the drop's first stop is. No drop_key = on its own.
+function groupStopsIntoDrops(stops) {
+  const groups = [];
+  const byKey = new Map();
+  (stops || []).forEach((s) => {
+    if (s.drop_key && byKey.has(s.drop_key)) { byKey.get(s.drop_key).stops.push(s); return; }
+    const group = { key: s.drop_key || null, stops: [s] };
+    if (s.drop_key) byKey.set(s.drop_key, group);
+    groups.push(group);
+  });
+  return groups;
+}
+
+// Per "Production manager / store manager and sales users" (+ Super User) - re-checked server side.
+function canSetDropFeeMode() {
+  const s = currentSession || {};
+  return !!(s.isSuperUser || s.isProductionManager || s.isStoreManager || s.isSalesUser);
+}
+
+// The fee line under a stop's status in the office table.
+function stopDropFeeNoteHtml(s, group) {
+  if (!group || group.stops.length < 2) return '';
+  if (s.fee_combined_with) {
+    if (s.combined_fee_waived !== null && s.combined_fee_waived !== undefined) {
+      return `<br><span class="muted">Delivery fee combined with ${escapeHtmlText(s.fee_combined_with)} (${pesoAmount(s.combined_fee_waived)} taken off)</span>`;
+    }
+    if (Number(s.delivery_fee) > 0) {
+      return `<br><span class="error-text">Fee ${pesoAmount(s.delivery_fee)} already paid on this order, so it was not taken off - refund it or switch the drop to Per order</span>`;
+    }
+    return `<br><span class="muted">Delivery fee combined with ${escapeHtmlText(s.fee_combined_with)}</span>`;
+  }
+  if (group.stops.some((x) => x.fee_combined_with)) {
+    return `<br><span class="muted">Carries the one delivery fee for this drop</span>`;
+  }
+  return '';
+}
+
+function dropHeaderRowHtml(group, dateKey) {
+  const lead = group.stops[0];
+  const address = isPlaceholderAddress(lead.shipping_address) ? (lead.geocoded_address || '') : lead.shipping_address;
+  const mode = lead.drop_fee_mode || 'once';
+  const disabled = canSetDropFeeMode() ? '' : ' disabled title="Only a Super User, Production Manager, Store Manager or Sales User can change this"';
+  return `
+    <tr class="delivery-drop-header-row" style="background:rgba(29,79,145,0.08);">
+      <td colspan="9">
+        &#127968; <strong>Combined delivery</strong> &middot; ${escapeHtmlText(lead.customer_name || '')} &middot; ${group.stops.length} orders
+        <span class="muted">&middot; ${escapeHtmlText(address || '')}</span>
+        <label style="margin-left:12px; white-space:nowrap;">Delivery fee:
+          <select class="form-control" style="display:inline-block; width:auto; padding:2px 6px;" data-drop-fee-mode-key="${escapeHtmlText(group.key)}" data-drop-date="${dateKey}"${disabled}>
+            <option value="once"${mode === 'once' ? ' selected' : ''}>Charge once (one trip)</option>
+            <option value="per_order"${mode === 'per_order' ? ' selected' : ''}>Charge per order</option>
+          </select>
+        </label>
+      </td>
+    </tr>
+  `;
+}
+
+async function setDropFeeMode(select) {
+  const dateKey = select.dataset.dropDate;
+  const mode = select.value;
+  const previous = mode === 'once' ? 'per_order' : 'once';
+  const message = mode === 'once'
+    ? 'Charge ONE delivery fee for all these orders?\n\nOne order keeps its fee and the others go to 0. An order whose fee is already paid keeps it (refund it yourself if needed).'
+    : 'Charge EACH order its own delivery fee?\n\nThe fees taken off for the combined delivery are put back on those orders, so the customer pays more.';
+  if (!window.confirm(message)) { select.value = previous; return; }
+  select.disabled = true;
+  const { error } = await supabaseClient.rpc('staff_set_delivery_drop_fee_mode', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_delivery_date: dateKey,
+    p_drop_key: select.dataset.dropFeeModeKey,
+    p_fee_mode: mode
+  });
+  if (error) {
+    select.value = previous;
+    select.disabled = false;
+    window.alert(/could not find the function|schema cache/i.test(error.message)
+      ? 'Combined deliveries aren\'t set up yet - run sql/supabase_delivery_combined_drops.sql.'
+      : `Not changed: ${error.message}`);
+    return;
+  }
+  await renderMonth(currentYear, currentMonth);
+  showDayDetail(dateKey);
 }
 
 function guardStopPrint(stops, stopId) {
@@ -1297,7 +1533,8 @@ function showDayDetail(dateKey) {
   const vendorRows = vendorStopRowsHtml(dateKey);
   tbody.innerHTML = fixedRouteRow + vendorRows + (stops.length === 0
     ? (vendorRows ? '' : '<tr><td colspan="9" class="muted">No stops scheduled for this day.</td></tr>')
-    : stops.map((s) => {
+    : groupStopsIntoDrops(stops).map((group) => (group.stops.length > 1 ? dropHeaderRowHtml(group, dateKey) : '') + group.stops.map((s) => {
+        const inDrop = group.stops.length > 1;
         // Falls back to geocoded_address (a DeliveryStops-only field) when the order itself has
         // no real ShippingAddress on file - either genuinely blank, or Pancake's own "Walkin"
         // placeholder text (isPlaceholderAddress) - that's where a manually-typed address from
@@ -1315,11 +1552,11 @@ function showDayDetail(dateKey) {
         // separate from the "Notes" column above (DeliveryStops."Notes" - a staff-typed
         // scheduling note, an unrelated field).
         return `
-        <tr>
-          <td>${s.order_id || ''}</td>
+        <tr${inDrop ? ' class="delivery-drop-member-row"' : ''}>
+          <td>${inDrop ? '<span class="muted">&#8627;</span> ' : ''}${s.order_id || ''}</td>
           <td>${s.customer_name || ''}</td>
           <td>${s.route_name || ''}</td>
-          <td>${s.status || ''}${s.is_manual_delivery_fee ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}${stopHasDeliveryFee(s) ? '' : '<br><span class="error-text">No delivery fee - can\'t print yet</span>'}</td>
+          <td>${s.status || ''}${s.is_manual_delivery_fee && !s.fee_combined_with ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}${stopDropFeeNoteHtml(s, group)}${stopHasDeliveryFee(s) ? '' : '<br><span class="error-text">No delivery fee - can\'t print yet</span>'}</td>
           <td>${displayAddress}${isManuallyEnteredAddress ? ' <span class="muted">(manually entered)</span>' : ''}</td>
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
@@ -1334,7 +1571,11 @@ function showDayDetail(dateKey) {
           </td>
         </tr>
       `;
-      }).join(''));
+      }).join('')).join(''));
+
+  tbody.querySelectorAll('select[data-drop-fee-mode-key]').forEach((select) => {
+    select.addEventListener('change', () => setDropFeeMode(select));
+  });
 
   tbody.querySelectorAll('button[data-stop-id]').forEach((btn) => {
     btn.addEventListener('click', () => removeStop(btn.dataset.stopId, dateKey));
@@ -1652,13 +1893,20 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   // onStopPinDragged (confirms via Edit Details before saving).
   const canDragPins = !isDriverMap && currentSession.isSuperUser;
 
-  plottedStops.forEach((s) => {
+  // A combined drop is one pin (its first stop's spot) labelled with every order on it. Not
+  // draggable - moving one pin would only move its first order out of the drop.
+  const plottedDrops = groupStopsIntoDrops(plottedStops);
+  plottedDrops.forEach((group) => {
+    const s = group.stops[0];
+    const isDrop = group.stops.length > 1;
+    const orderIds = group.stops.map((x) => x.order_id).filter(Boolean).join(' + ');
+    const draggable = canDragPins && !isDrop;
     const position = { lat: Number(s.latitude), lng: Number(s.longitude) };
     const marker = new google.maps.Marker({
       position,
       map: dayMapInstance,
-      title: `${s.order_id} - ${s.customer_name || ''}${canDragPins ? ' (drag to move)' : ''}`,
-      draggable: canDragPins,
+      title: `${orderIds} - ${s.customer_name || ''}${draggable ? ' (drag to move)' : ''}`,
+      draggable,
       // Cyan pin on the driver map to match the tech motif's accent color - default red pin on
       // the admin calendar's map stays untouched.
       icon: isDriverMap ? 'https://maps.google.com/mapfiles/ms/icons/ltblue-dot.png' : undefined
@@ -1668,13 +1916,13 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
     // Order id chip beside the pin - admin calendar map only (see OrderIdLabelOverlay above); the
     // driver map already shows this via the tooltip/marker title and doesn't need the extra chip.
     let chip = null;
-    if (!isDriverMap && s.order_id) {
+    if (!isDriverMap && orderIds) {
       const OrderIdLabelOverlay = getOrderIdLabelOverlayClass();
-      chip = new OrderIdLabelOverlay(new google.maps.LatLng(position.lat, position.lng), String(s.order_id));
+      chip = new OrderIdLabelOverlay(new google.maps.LatLng(position.lat, position.lng), orderIds);
       chip.setMap(dayMapInstance);
     }
 
-    if (canDragPins) {
+    if (draggable) {
       marker.addListener('drag', () => {
         if (chip) { chip.position = marker.getPosition(); chip.draw(); }
       });
@@ -1685,9 +1933,9 @@ async function renderDayMap(stops, dateKey, mapElId = 'dayMap') {
   // Per "the driver can view the per day route" - a straight-line path connecting the day's
   // stops in list order, not real driving directions (would need the separately-billed Directions
   // API) - just enough to read as "today's route" the way a delivery app's route line does.
-  if (plottedStops.length > 1) {
+  if (plottedDrops.length > 1) {
     new google.maps.Polyline({
-      path: plottedStops.map((s) => ({ lat: Number(s.latitude), lng: Number(s.longitude) })),
+      path: plottedDrops.map(({ stops: [s] }) => ({ lat: Number(s.latitude), lng: Number(s.longitude) })),
       map: dayMapInstance,
       strokeColor: '#1d4f91',
       strokeOpacity: 0.8,
@@ -2553,7 +2801,8 @@ async function openFixStopDetails(stop, droppedPin = null) {
     title: 'Edit Delivery Details',
     message: droppedPin
       ? `Move order <strong>${stop.order_id}</strong> to the new pin? The address below was looked up from where you dropped it - edit it if needed (e.g. add a unit no. or landmark), then Continue. This also updates the order in the portal; nothing is changed in Pancake.`
-      : `Update the delivery details shown for order <strong>${stop.order_id}</strong>. A changed address, contact number or fee also updates the order in the portal. Nothing is changed in Pancake.`,
+      : `Update the delivery details shown for order <strong>${stop.order_id}</strong>. A changed address, contact number or fee also updates the order in the portal. Nothing is changed in Pancake.`
+        + (stop.fee_combined_with ? `<br><br>This order is in a <strong>combined delivery</strong> charged once - its fee rides on <strong>${escapeHtmlText(stop.fee_combined_with)}</strong>. A fee typed here goes to the drop (the biggest fee is kept); to charge it separately, switch the drop to "Charge per order".` : ''),
     prefillAddress: droppedPin ? (droppedPin.address || currentAddress || '') : (currentAddress || ''),
     pinPicker,
     stopPin: hasPin ? { lat: Number(stop.latitude), lng: Number(stop.longitude) } : null,

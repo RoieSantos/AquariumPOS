@@ -290,7 +290,8 @@ namespace AquariumPOS
                 ("filterMedia", BuildDetailedSaleDescription("Filter Medias", sumpSizeDetail), "", true),
                 ("light", string.IsNullOrWhiteSpace(lightCode) ? "Submersible Light" : LookupItemDescription(connectionString, lightCode) + (lightQty > 1 ? $" x{lightQty}" : ""), lightCode, true),
                 ("overflowBox", BuildDetailedSaleDescription("Overflow Box", sumpSizeDetail, tankSizeDetail), "", true),
-                ("piping", BuildDetailedSaleDescription("Set of Piping", sumpSizeDetail, tankSizeDetail), "", true),
+                // Keeps "Set of Piping" in the text so ResolveCustomAquariumCalculatorCategory still files it as CUSTOM-PIPINGS.
+                ("piping", BuildDetailedSaleDescription(Checked("pipingDrain") ? "Set of Piping - Custom 1/2in Pipe with Separate Drain (A-070)" : "Set of Piping", sumpSizeDetail, tankSizeDetail), "", true),
                 ("pump", string.IsNullOrWhiteSpace(pumpCode) ? "Submersible Pump" : LookupItemDescription(connectionString, pumpCode) + (pumpQty > 1 ? $" x{pumpQty}" : ""), pumpCode, true),
                 ("allumTopCover", BuildDetailedSaleDescription("Allum Top Cover", sumpSizeDetail, tankSizeDetail), "", true),
                 ("stickerBackground", BuildDetailedSaleDescription(Checked("allSides")

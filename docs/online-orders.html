@@ -713,6 +713,9 @@
              (js/onlineOrders.js printAdvanceSerialLabels, sql/supabase_advance_order_serials.sql). -->
         <button class="bc-cmd" id="advanceCardShowSerialsBtn" type="button" title="Show the serials linked to this order"><svg class="bc-ico"><use href="#ico-serials"/></svg>Show Serials</button>
         <button class="bc-cmd" id="advanceCardPrintSerialsBtn" type="button" title="Print (or reprint) the serial labels tied to this order"><svg class="bc-ico"><use href="#ico-print"/></svg>Print Serial Labels</button>
+        <!-- Shown when a line isn't in stock at the order's branch but another warehouse has it
+             (staff_get_advance_order_transfer_plan) - js/onlineOrders.js openAdvTransferDialog. -->
+        <button class="bc-cmd hidden" id="advanceCardRequestTransferBtn" type="button" title="Request the missing stock from another warehouse on a Transfer Order linked to this order">Request Stock Transfer</button>
       </div>
 
       <!-- Same split as the Online Order card: the document on the left, the Serials FactBox on the right. -->
@@ -733,6 +736,21 @@
               <div class="bc-doc-field"><label>Tank Maker</label><div class="bc-doc-value" id="acTankMaker"></div></div>
               <div class="bc-doc-field"><label>Stand Maker</label><div class="bc-doc-value" id="acStandMaker"></div></div>
             </div>
+          </div>
+        </details>
+
+        <!-- Transfer Orders linked to this order (line Order ID = ADV-<no>, sql/supabase_advance_order_transfer_link.sql)
+             + what's still not in stock at its branch. Hidden when neither. js/onlineOrders.js loadAdvanceCardTransfers. -->
+        <details class="doc-fasttab hidden" id="advanceCardTransfersTab" open>
+          <summary>Stock Transfers <span class="doc-fasttab-summary" id="advanceCardTransfersSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="bc-grid-wrap">
+              <table class="bc-grid">
+                <thead><tr><th>Transfer</th><th>From &rarr; To</th><th>Item</th><th class="num">Requested</th><th class="num">Shipped</th><th class="num">Received</th><th>State</th></tr></thead>
+                <tbody id="acTransfersBody"></tbody>
+              </table>
+            </div>
+            <div id="acTransfersShort"></div>
           </div>
         </details>
 
@@ -978,6 +996,40 @@
         <button class="bc-btn" id="confirmActionCancelBtn" type="button">Cancel</button>
         <button class="bc-btn hidden" id="confirmActionAltBtn" type="button"></button>
         <button class="bc-btn bc-btn-primary" id="confirmActionOkBtn" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request Stock Transfer for an advance order (js/onlineOrders.js openAdvTransferDialog,
+       staff_create_advance_order_transfer): one Requested transfer From the picked warehouse To the order's
+       branch, every line carrying the order's ID. Received units are held (Reserved) for the order. -->
+  <div id="advTransferDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="advTransferTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">REQUEST STOCK TRANSFER</div>
+          <h2 id="advTransferTitle">Advance Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeAdvTransferBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">Creates a transfer request to <b id="advTransferTo"></b> for this order. The sending warehouse ships it as usual; once received, the unit(s) are held for this order and Ready to Ship picks them up.</p>
+        <div class="bc-field">
+          <label for="advTransferFrom">Send from</label>
+          <select id="advTransferFrom"></select>
+        </div>
+        <div class="bc-grid-wrap" style="margin-top:8px;">
+          <table class="bc-grid">
+            <thead><tr><th>Item</th><th class="num">Short</th><th class="num">In stock there</th><th class="num">Request</th></tr></thead>
+            <tbody id="advTransferLines"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="advTransferError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveAdvTransferBtn" type="button">Request</button>
+        <button class="bc-btn" id="cancelAdvTransferBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>
@@ -1291,7 +1343,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=fulfilled1"></script>
-  <script src="js/onlineOrders.js?v=serialmaker1"></script>
+  <script src="js/onlineOrders.js?v=advtransfer1"></script>
   <script src="js/onlineNewOrders.js?v=newconv1"></script>
   <script src="js/pwa.js"></script>
 </body>

@@ -1,4 +1,4 @@
-// Posted Transfer Orders page logic - read-only browse/search of fully-received Transfer Orders
+// Posted Transfer Orders page logic - read-only browse/search of received (fully or partially) Transfer Orders
 // archived into Posted_Transfer_Header/Posted_Transfer_Line by receiveTransferOrder() in
 // transferOrders.js (see supabase_posted_transfer_orders_tables.sql). Same column set as
 // Transfer_Header/Transfer_Line, just permanently moved here once received - nothing on this
@@ -14,7 +14,8 @@ const FILTERS_STORAGE_KEY = 'postedTransferOrders.filters';
 function saveFilters() {
   const filters = {
     search: document.getElementById('searchInput').value,
-    showAllWarehouses: document.getElementById('showAllWarehousesCheck').checked
+    showAllWarehouses: document.getElementById('showAllWarehousesCheck').checked,
+    shortagesOnly: document.getElementById('shortagesOnlyCheck').checked
   };
   sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
 }
@@ -26,6 +27,7 @@ function restoreFilters() {
     const filters = JSON.parse(raw);
     document.getElementById('searchInput').value = filters.search || '';
     document.getElementById('showAllWarehousesCheck').checked = !!filters.showAllWarehouses;
+    document.getElementById('shortagesOnlyCheck').checked = !!filters.shortagesOnly;
   } catch {
     // Ignore malformed/stale storage.
   }
@@ -40,7 +42,7 @@ function formatDate(value) {
 
 async function loadHeaders() {
   const tbody = document.getElementById('headerTableBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient
     .from('Posted_Transfer_Header')
@@ -49,7 +51,7 @@ async function loadHeaders() {
     .limit(300);
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -69,6 +71,9 @@ function renderHeaders() {
       (r['To Warehouse'] || '') === currentSession.warehouseName
     );
   }
+  if (document.getElementById('shortagesOnlyCheck').checked) {
+    rows = rows.filter((r) => !!r['Short Action']);
+  }
   if (search) {
     rows = rows.filter((r) =>
       [r['No.'], r['Description'], r['From Warehouse'], r['To Warehouse']]
@@ -77,7 +82,7 @@ function renderHeaders() {
   }
 
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">No posted transfer orders found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">No posted transfer orders found.</td></tr>';
     return;
   }
 
@@ -91,6 +96,8 @@ function renderHeaders() {
         <td>${formatDate(r['Requested Date'])}</td>
         <td>${formatDate(r['Transfer Date'])}</td>
         <td>${formatDate(r['Receive Date'])}</td>
+        <td><span class="badge ${statusBadgeClass(r['Status'])}">${r['Status'] || 'Received'}</span></td>
+        <td>${shortActionBadge(r['Short Action'])}</td>
       </tr>
     `)
     .join('');
@@ -100,7 +107,27 @@ function renderHeaders() {
   });
 }
 
+// Orders posted from a partial receipt keep Status "Partial Received" (receiveTransferOrder); dead
+// pre-ledger orders closed by supabase_transfer_orders_cleanup_close_stale.sql are "Closed - Cleanup".
+function statusBadgeClass(status) {
+  const s = status || 'Received';
+  if (s === 'Received') return 'badge-success';
+  if (s.startsWith('Closed')) return 'badge-neutral';
+  return 'badge-warning';
+}
+
+// "Short Action": what happened to shipped-but-not-received units at posting
+// (staff_settle_transfer_shortage) - Returned to the sender, or Written Off as lost/damaged.
+function shortActionBadge(action) {
+  if (action === 'Written Off') return '<span class="badge badge-danger">Written Off</span>';
+  if (action === 'Returned') return '<span class="badge badge-warning">Returned</span>';
+  return '';
+}
+
 function renderViewHeader(header) {
+  const badge = document.getElementById('viewStatusBadge');
+  badge.textContent = header['Status'] || 'Received';
+  badge.className = `badge ${statusBadgeClass(header['Status'])}`;
   document.getElementById('viewFromWarehouse').textContent = header['From Warehouse'] || '';
   document.getElementById('viewToWarehouse').textContent = header['To Warehouse'] || '';
   document.getElementById('viewRequestedDate').textContent = formatDate(header['Requested Date']);
@@ -111,7 +138,7 @@ function renderViewHeader(header) {
 function renderViewLines(lines) {
   const body = document.getElementById('viewLinesBody');
   if (!lines || lines.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" class="muted">No line items.</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="muted">No line items.</td></tr>';
     return;
   }
 
@@ -120,10 +147,12 @@ function renderViewLines(lines) {
       <tr>
         <td>${l['Item No.'] || ''}</td>
         <td>${l['Variant Name'] || ''}</td>
-        <td>${l['Description'] || ''}</td>
+        <td>${l['Description'] || ''}${l['Order ID'] ? `<div class="muted" style="font-size:12px;">For order ${l['Order ID']}</div>` : ''}</td>
         <td>${l['Qty To Transfer'] ?? ''}</td>
         <td>${l['Qty Shipped'] ?? ''}</td>
         <td>${l['Qty Received'] ?? ''}</td>
+        <td>${Number(l['Qty Returned']) ? l['Qty Returned'] : ''}</td>
+        <td>${Number(l['Qty Written Off']) ? `<span class="error-text">${l['Qty Written Off']}</span>` : ''}</td>
       </tr>
     `)
     .join('');
@@ -136,7 +165,7 @@ async function openViewModal(docNo) {
   document.getElementById('viewLinesTitle').textContent = `Transfer Order ${docNo}`;
   document.getElementById('viewLinesError').classList.add('hidden');
   const body = document.getElementById('viewLinesBody');
-  body.innerHTML = '<tr><td colspan="6" class="muted">Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
   document.getElementById('viewLinesModal').classList.remove('hidden');
 
   const { data: headerRows, error: headerError } = await supabaseClient
@@ -146,7 +175,7 @@ async function openViewModal(docNo) {
     .limit(1);
 
   if (headerError || !headerRows || headerRows.length === 0) {
-    body.innerHTML = `<tr><td colspan="6" class="error-text">${headerError?.message || 'Posted transfer order not found.'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8" class="error-text">${headerError?.message || 'Posted transfer order not found.'}</td></tr>`;
     return;
   }
 
@@ -159,7 +188,7 @@ async function openViewModal(docNo) {
     .order('"Line No."', { ascending: true });
 
   if (error) {
-    body.innerHTML = `<tr><td colspan="6" class="error-text">${error.message}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
@@ -184,6 +213,10 @@ async function openViewModal(docNo) {
     renderHeaders();
   });
   document.getElementById('showAllWarehousesCheck').addEventListener('change', () => {
+    saveFilters();
+    renderHeaders();
+  });
+  document.getElementById('shortagesOnlyCheck').addEventListener('change', () => {
     saveFilters();
     renderHeaders();
   });

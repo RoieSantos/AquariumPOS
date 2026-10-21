@@ -7485,6 +7485,8 @@ let myAdvanceShipCount = 0; // Dispatcher's To Ship advance orders (loadDispatch
 // production stage: the "To Follow" pill filters on staff_get_advance_orders_to_follow instead.
 const ADVANCE_TO_FOLLOW_FILTER = 'To Follow';
 const advanceToFollowByNo = new Map(); // transaction_no -> { units_to_follow, to_follow }
+const advanceTransferByNo = new Map(); // transaction_no -> { stage, docs, from_warehouses, qty_* } (staff_get_advance_order_transfer_status)
+let advanceTransferPlan = null; // the open card's staff_get_advance_order_transfer_plan rows (Request Stock Transfer)
 const ADVANCE_CARD_MAXIMIZED_KEY = 'advanceOrderCardMaximized';
 const ADVANCE_PARTS = ['tank', 'stand'];
 
@@ -7559,15 +7561,35 @@ function advanceToFollowBadgeHtml(transactionNo) {
 async function loadAdvanceToFollow(transactionNos) {
   const nos = (transactionNos || []).map(String).filter(Boolean);
   if (!nos.length) return;
-  const { data, error } = await advanceRpc('staff_get_advance_orders_to_follow', { p_nos: nos });
+  // The linked Stock Transfer stage rides along (same orders, same moments) - quiet on error, e.g.
+  // sql/supabase_advance_order_transfer_link.sql not run yet.
+  const [{ data, error }, transfers] = await Promise.all([
+    advanceRpc('staff_get_advance_orders_to_follow', { p_nos: nos }),
+    advanceRpc('staff_get_advance_order_transfer_status', { p_nos: nos })
+  ]);
+  if (!transfers.error) {
+    nos.forEach((no) => advanceTransferByNo.delete(no));
+    (transfers.data || []).forEach((r) => advanceTransferByNo.set(String(r.transaction_no), r));
+  }
   if (error) return;
   nos.forEach((no) => advanceToFollowByNo.delete(no));
   (data || []).forEach((r) => advanceToFollowByNo.set(String(r.transaction_no), r));
 }
 
+// ---- Stock Transfers linked to an advance order (transfer line Order ID = 'ADV-<no>',
+// sql/supabase_advance_order_transfer_link.sql). The stage is calculated from the transfers, never stored.
+function advanceTransferBadgeHtml(transactionNo) {
+  const t = advanceTransferByNo.get(String(transactionNo));
+  if (!t) return '';
+  const cls = t.stage === 'Transfer received' ? 'badge-success' : t.stage === 'In transit' ? 'badge-primary' : 'badge-warning';
+  const label = t.stage === 'Transfer received' ? 'Transfer received' : `${t.stage}${t.from_warehouses ? ` · from ${t.from_warehouses}` : ''}`;
+  return `<span class="badge ${cls}" title="Stock transfer ${escapeHtml(t.docs || '')} - ${Number(t.qty_received) || 0}/${Number(t.qty_requested) || 0} received">${escapeHtml(label)}</span>`;
+}
+
 function advanceFlagsHtml(o) {
   return [
     advanceToFollowBadgeHtml(o.transaction_no),
+    advanceTransferBadgeHtml(o.transaction_no),
     o.glass_thickness ? `<span class="badge badge-glass" title="This order has a ${escapeHtml(o.glass_thickness)} glass line">${escapeHtml(o.glass_thickness)} glass</span>` : '',
     o.has_custom_line ? '<span class="badge badge-custom" title="This order has a custom-built line - it may need a maker assigned.">Custom</span>' : '',
     o.needs_tank ? '<span class="badge badge-custom" title="Has a custom tank line">Tank</span>' : '',
@@ -7833,7 +7855,8 @@ function fillAdvanceCard(o) {
   fillAdvanceCardToFollow(o.transaction_no);
 
   document.getElementById('acProdStatus').innerHTML = advanceStatusBadgeHtml(status)
-    + (Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : '');
+    + (Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : '')
+    + (advanceTransferByNo.has(String(o.transaction_no)) ? ` ${advanceTransferBadgeHtml(o.transaction_no)}` : '');
   setCardText('acNeeds', advanceNeedsText(o));
   document.getElementById('acTankMaker').innerHTML = advanceMakerFieldHtml(o, 'tank');
   document.getElementById('acStandMaker').innerHTML = advanceMakerFieldHtml(o, 'stand');
@@ -7954,8 +7977,158 @@ function openAdvanceCard(transactionNo) {
   loadAdvanceCardLines(openAdvanceNo);
   loadAdvanceCardRework(openAdvanceNo);
   loadAdvanceCardDeliveryFee(openAdvanceNo);
+  loadAdvanceCardTransfers(openAdvanceNo);
   renderSerialsFactbox('advanceCard', []); // clear the previous order's while loading
   loadAdvanceCardSerials(openAdvanceNo);
+}
+
+// "Stock Transfers" FastTab + the Request Stock Transfer button: the order's linked transfer lines, and
+// what's still short at its branch (staff_get_advance_order_transfer_plan). Hidden when there's nothing
+// linked and nothing to request; the button only for people the server says can request.
+async function loadAdvanceCardTransfers(transactionNo) {
+  const no = String(transactionNo);
+  const tab = document.getElementById('advanceCardTransfersTab');
+  const btn = document.getElementById('advanceCardRequestTransferBtn');
+  advanceTransferPlan = null;
+  btn.classList.add('hidden');
+  const [transfers, plan, status] = await Promise.all([
+    advanceRpc('staff_get_advance_order_transfers', { p_no: no }),
+    advanceRpc('staff_get_advance_order_transfer_plan', { p_no: no }),
+    advanceRpc('staff_get_advance_order_transfer_status', { p_nos: [no] })
+  ]);
+  if (openAdvanceNo !== no) return;
+  if (!status.error) {
+    advanceTransferByNo.delete(no);
+    (status.data || []).forEach((r) => advanceTransferByNo.set(String(r.transaction_no), r));
+    const o = advanceRowsByNo.get(no);
+    if (o) { // Status picks up the transfer stage (same markup as fillAdvanceCard)
+      document.getElementById('acProdStatus').innerHTML = advanceStatusBadgeHtml(advanceStatus(o))
+        + (Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : '')
+        + (advanceTransferByNo.has(no) ? ` ${advanceTransferBadgeHtml(no)}` : '');
+    }
+  }
+  if (transfers.error) { // not set up yet / not allowed - leave the card as it was
+    tab.classList.add('hidden');
+    return;
+  }
+
+  const rows = transfers.data || [];
+  const planRows = plan.error ? [] : plan.data || [];
+  advanceTransferPlan = planRows;
+  const shortRows = planRows.filter((r) => Number(r.short) > 0);
+  const canRequest = !!planRows[0]?.can_request && shortRows.some((r) => (r.sources || []).length);
+  btn.classList.toggle('hidden', !canRequest);
+
+  tab.classList.toggle('hidden', !rows.length && !shortRows.length);
+  const t = advanceTransferByNo.get(no);
+  document.getElementById('advanceCardTransfersSummary').textContent = t
+    ? `${t.stage} · ${t.docs}`
+    : shortRows.length ? `${shortRows.reduce((s, r) => s + Number(r.short), 0)} unit(s) not in stock at ${planRows[0]?.order_warehouse || 'this branch'}` : '';
+
+  const qty = (v) => Number(v) || 0;
+  document.getElementById('acTransfersBody').innerHTML = rows.length ? rows.map((r) => {
+    const open = qty(r.qty_shipped) - qty(r.qty_received) - qty(r.qty_returned) - qty(r.qty_written_off);
+    const lineState = r.posted
+      ? (qty(r.qty_received) >= qty(r.qty_requested) ? '<span class="badge badge-success">Received</span>' : `<span class="badge badge-neutral">${escapeHtml(r.status || 'Posted')}</span>`)
+      : qty(r.qty_shipped) < qty(r.qty_requested) ? '<span class="badge badge-warning">Requested</span>'
+        : open > 0 ? '<span class="badge badge-primary">In transit</span>' : `<span class="badge badge-neutral">${escapeHtml(r.status || '')}</span>`;
+    return `<tr>
+      <td><a href="${r.posted ? 'posted-transfer-orders.html' : 'transfer-orders.html'}?doc=${encodeURIComponent(r.doc_no)}" target="_blank" rel="noopener">${escapeHtml(r.doc_no)}</a></td>
+      <td>${escapeHtml(r.from_warehouse || '')} &rarr; ${escapeHtml(r.to_warehouse || '')}</td>
+      <td style="white-space:normal;">${escapeHtml(r.item_no || '')}${r.variant_name ? ` <span class="muted">(${escapeHtml(r.variant_name)})</span>` : ''}<div class="muted" style="font-size:12px;">${escapeHtml(r.description || '')}</div></td>
+      <td class="num">${qty(r.qty_requested)}</td>
+      <td class="num">${qty(r.qty_shipped)}</td>
+      <td class="num">${qty(r.qty_received)}</td>
+      <td>${lineState}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" class="cell-msg">No stock transfer for this order yet.</td></tr>';
+
+  document.getElementById('acTransfersShort').innerHTML = shortRows.length
+    ? `<p class="muted" style="margin:8px 0 0;">Not in stock at <b>${escapeHtml(planRows[0]?.order_warehouse || 'this branch')}</b>: ${shortRows.map((r) => {
+      const where = (r.sources || []).map((s) => `${escapeHtml(s.warehouse)} ${qty(s.available)}`).join(', ');
+      return `${escapeHtml(r.item_code)}${r.variant_name ? ` (${escapeHtml(r.variant_name)})` : ''} &times;${qty(r.short)}${where ? ` <span class="muted">- in stock at ${where}</span>` : ' <span class="muted">- no other warehouse has it (needs a maker)</span>'}`;
+    }).join(' · ')}</p>`
+    : '';
+}
+
+// ---- Request Stock Transfer (#advTransferDialog): one transfer From the picked warehouse To the order's
+// branch, each line carrying the order's ID (staff_create_advance_order_transfer).
+function advTransferAvailableAt(row, warehouseId) {
+  return Number((row.sources || []).find((s) => s.warehouse_id === warehouseId)?.available) || 0;
+}
+
+function renderAdvTransferLines() {
+  const fromId = document.getElementById('advTransferFrom').value;
+  const rows = (advanceTransferPlan || []).filter((r) => Number(r.short) > 0);
+  document.getElementById('advTransferLines').innerHTML = rows.map((r, i) => {
+    const avail = advTransferAvailableAt(r, fromId);
+    const qty = Math.min(Number(r.short), avail);
+    return `<tr>
+      <td style="white-space:normal;">${escapeHtml(r.item_code)}${r.variant_name ? ` <span class="muted">(${escapeHtml(r.variant_name)})</span>` : ''}<div class="muted" style="font-size:12px;">${escapeHtml(r.description || '')}</div></td>
+      <td class="num">${Number(r.short)}</td>
+      <td class="num">${avail}</td>
+      <td class="num"><input type="number" min="0" max="${Math.min(Number(r.short), avail)}" step="1" value="${qty}" data-adv-transfer-row="${i}" style="width:70px;"${avail ? '' : ' disabled'} /></td>
+    </tr>`;
+  }).join('');
+}
+
+function openAdvTransferDialog() {
+  const o = advanceRowsByNo.get(String(openAdvanceNo));
+  const rows = (advanceTransferPlan || []).filter((r) => Number(r.short) > 0);
+  if (!o || !rows.length) return;
+  // From choices: every warehouse holding any short item - production first, then the one covering most.
+  const byId = new Map();
+  rows.forEach((r) => (r.sources || []).forEach((s) => {
+    const e = byId.get(s.warehouse_id) || { ...s, covers: 0 };
+    e.covers += Math.min(Number(r.short), Number(s.available) || 0);
+    byId.set(s.warehouse_id, e);
+  }));
+  const froms = [...byId.values()].sort((a, b) => (b.is_production - a.is_production) || (b.covers - a.covers) || a.warehouse.localeCompare(b.warehouse));
+  document.getElementById('advTransferTitle').textContent = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  document.getElementById('advTransferTo').textContent = rows[0]?.order_warehouse || o.warehouse || '';
+  document.getElementById('advTransferFrom').innerHTML = froms.map((f) =>
+    `<option value="${escapeHtml(f.warehouse_id)}">${escapeHtml(f.warehouse)}${f.is_production ? ' (production)' : ''}</option>`).join('');
+  renderAdvTransferLines();
+  document.getElementById('advTransferError').classList.add('hidden');
+  document.getElementById('advTransferDialog').classList.remove('hidden');
+}
+
+function closeAdvTransferDialog() {
+  document.getElementById('advTransferDialog').classList.add('hidden');
+}
+
+async function saveAdvTransferDialog() {
+  const no = openAdvanceNo;
+  const rows = (advanceTransferPlan || []).filter((r) => Number(r.short) > 0);
+  const errorEl = document.getElementById('advTransferError');
+  const lines = [...document.querySelectorAll('#advTransferLines [data-adv-transfer-row]')]
+    .map((input) => ({ r: rows[Number(input.dataset.advTransferRow)], qty: parseFloat(input.value) || 0, max: Number(input.max) || 0 }))
+    .filter((l) => l.r && l.qty > 0);
+  const over = lines.find((l) => l.qty > l.max);
+  if (!lines.length || over) {
+    errorEl.textContent = over ? `${over.r.item_code}: at most ${over.max}.` : 'Enter a quantity on at least one line.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('saveAdvTransferBtn');
+  btn.disabled = true;
+  btn.textContent = 'Requesting...';
+  const { data, error } = await advanceRpc('staff_create_advance_order_transfer', {
+    p_no: no,
+    p_from_warehouse_id: document.getElementById('advTransferFrom').value,
+    p_lines: lines.map((l) => ({ item_code: l.r.item_code, variant_id: l.r.variant_id || null, qty: l.qty }))
+  });
+  btn.disabled = false;
+  btn.textContent = 'Request';
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  closeAdvTransferDialog();
+  window.alert(`Transfer ${data} requested from ${document.getElementById('advTransferFrom').selectedOptions[0]?.textContent || 'the warehouse'}. When it's received at the branch, the unit(s) are held for this order and Ready to Ship picks them up.`);
+  await refreshAdvanceAfterAction(no);
+  if (openAdvanceNo === no) loadAdvanceCardTransfers(no);
 }
 
 async function loadAdvanceCardLines(transactionNo) {
@@ -8075,9 +8248,14 @@ async function openAdvanceAssignDialog(transactionNo) {
   const missing = ['tank', 'stand']
     .filter((p) => !productionMembers.some((m) => (m.staff_roles || []).includes(MAKER_ROLES[p].staffRole)))
     .map((p) => MAKER_ROLES[p].label);
-  document.getElementById('assignDialogHint').textContent = productionMembersError
+  // Stock already coming on a linked transfer - makers are only needed for what it doesn't cover.
+  const transfer = advanceTransferByNo.get(String(o.transaction_no));
+  const transferHint = transfer
+    ? `Stock is coming from ${transfer.from_warehouses || 'another warehouse'} on ${transfer.docs} (${transfer.stage}) - assign makers only for what that transfer doesn't cover (e.g. custom lines). `
+    : '';
+  document.getElementById('assignDialogHint').textContent = transferHint + (productionMembersError
     ? `Could not load the staff list: ${productionMembersError}`
-    : missing.length ? `No active staff has the ${missing.join(' / ')} role yet - tick it in User Setup > (employee) > Roles.` : '';
+    : missing.length ? `No active staff has the ${missing.join(' / ')} role yet - tick it in User Setup > (employee) > Roles.` : '');
   document.getElementById('assignDialogError').classList.add('hidden');
   document.getElementById('assignDialog').classList.remove('hidden');
 }
@@ -8276,6 +8454,11 @@ function wireAdvanceCard() {
   document.getElementById('advanceCardStepBackBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, null, e.currentTarget));
   document.getElementById('advanceCardShowSerialsBtn').addEventListener('click', (e) => openAdvanceNo && showAdvanceSerials(openAdvanceNo, e.currentTarget));
   document.getElementById('advanceCardPrintSerialsBtn').addEventListener('click', (e) => openAdvanceNo && printAdvanceSerialLabels(openAdvanceNo, e.currentTarget));
+  document.getElementById('advanceCardRequestTransferBtn').addEventListener('click', () => openAdvanceNo && openAdvTransferDialog());
+  document.getElementById('advTransferFrom').addEventListener('change', renderAdvTransferLines);
+  document.getElementById('saveAdvTransferBtn').addEventListener('click', saveAdvTransferDialog);
+  document.getElementById('cancelAdvTransferBtn').addEventListener('click', closeAdvTransferDialog);
+  document.getElementById('closeAdvTransferBtn').addEventListener('click', closeAdvTransferDialog);
 
   // The list's action bar - same actions, on the selected row.
   document.getElementById('advOpenBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceCard(selectedAdvanceNo));
@@ -8297,6 +8480,7 @@ function wireAdvanceCard() {
     const isOpen = (id) => !document.getElementById(id).classList.contains('hidden');
     if (isOpen('confirmActionDialog')) return;
     if (isOpen('assignDialog')) closeAdvanceAssignDialog();
+    else if (isOpen('advTransferDialog')) closeAdvTransferDialog();
     else if (isOpen('sendBackDialog')) closeAdvanceSendBackDialog();
     else if (isOpen('advanceCardModal')) closeAdvanceCard();
   });

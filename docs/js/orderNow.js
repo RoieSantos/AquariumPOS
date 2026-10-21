@@ -727,6 +727,7 @@ function buildCustomPayload() {
       height: document.getElementById('sumpHeight').value,
       unit: unit,
       piping: document.getElementById('sumpPiping').checked,
+      pipingSeparateDrain: document.getElementById('sumpPipingDrain').checked,
       overflowBox: document.getElementById('sumpOverflowBox').checked,
       filterMedias: document.getElementById('sumpFilterMedias').checked,
       allumTopCover: document.getElementById('sumpAllumTopCover').checked
@@ -763,6 +764,31 @@ function applySumpTypeDefaults() {
   document.getElementById('sumpWidth').value = side;
   document.getElementById('sumpHeight').value = side;
   document.getElementById('sumpLength').value = document.getElementById('customLength').value || side;
+}
+
+// "Custom 1/2" Pipe with Separate Drain" (item A-070) is an Overhead Sump-only REPLACEMENT for the
+// standard Set of Piping, so the two boxes are mutually exclusive and the drain row only shows for
+// Overhead Sump. Switching back to Undersump while it's ticked falls back to the standard set rather
+// than silently dropping the piping. changedId = the checkbox the customer just clicked, if any.
+function syncPipingDrainOption(typeId, pipingId, drainId, rowId, changedId) {
+  const overhead = document.getElementById(typeId).value === 'Overhead Sump';
+  const piping = document.getElementById(pipingId);
+  const drain = document.getElementById(drainId);
+  document.getElementById(rowId).classList.toggle('hidden', !overhead);
+  if (!overhead && drain.checked) {
+    drain.checked = false;
+    piping.checked = true;
+  }
+  if (changedId === drainId && drain.checked) piping.checked = false;
+  if (changedId === pipingId && piping.checked) drain.checked = false;
+}
+
+function syncEmbeddedPipingDrain(changedId) {
+  syncPipingDrainOption('sumpType', 'sumpPiping', 'sumpPipingDrain', 'sumpPipingDrainRow', changedId);
+}
+
+function syncStandalonePipingDrain(changedId) {
+  syncPipingDrainOption('standaloneSumpType', 'standaloneSumpPiping', 'standaloneSumpPipingDrain', 'standaloneSumpPipingDrainRow', changedId);
 }
 
 // Aquarium sketch on the Options step - a trimmed-down port of the isometric canvas drawing in
@@ -1774,6 +1800,7 @@ function buildFiltrationSpecText() {
 
   const extras = [];
   if (document.getElementById('sumpPiping').checked) extras.push('Piping');
+  if (document.getElementById('sumpPipingDrain').checked) extras.push('Custom 1/2" Pipe with Separate Drain');
   if (document.getElementById('sumpOverflowBox').checked) extras.push('Overflow Box');
   if (document.getElementById('sumpFilterMedias').checked) extras.push('Filter Medias');
   if (document.getElementById('sumpAllumTopCover').checked) extras.push('Allum Top Cover');
@@ -2212,12 +2239,14 @@ function buildStandaloneFiltrationPayload() {
     sumpType: document.getElementById('standaloneSumpType').value,
     glassThickness: document.getElementById('standaloneFiltrationGlass').value,
     piping: document.getElementById('standaloneSumpPiping').checked,
+    pipingSeparateDrain: document.getElementById('standaloneSumpPipingDrain').checked,
     overflowBox: document.getElementById('standaloneSumpOverflowBox').checked,
     filterMedias: document.getElementById('standaloneSumpFilterMedias').checked,
     allumTopCover: document.getElementById('standaloneSumpAllumTopCover').checked,
     glassPricingSetupRows: glassPricingSetupRows,
     glassPricingUom: 'MM',
-    stickerPricingSetupRows: stickerPricingSetupRows
+    stickerPricingSetupRows: stickerPricingSetupRows,
+    extraPricingSetupRows: extraPricingSetupRows
   };
 }
 
@@ -2277,6 +2306,7 @@ function buildStandaloneFiltrationSpecText() {
 
   const extras = [];
   if (document.getElementById('standaloneSumpPiping').checked) extras.push('Piping');
+  if (document.getElementById('standaloneSumpPipingDrain').checked) extras.push('Custom 1/2" Pipe with Separate Drain');
   if (document.getElementById('standaloneSumpOverflowBox').checked) extras.push('Overflow Box');
   if (document.getElementById('standaloneSumpFilterMedias').checked) extras.push('Filter Medias');
   if (document.getElementById('standaloneSumpAllumTopCover').checked) extras.push('Allum Top Cover');
@@ -2303,8 +2333,9 @@ function resetStandaloneFiltrationBuilder() {
   document.getElementById('standaloneSumpLength').value = '18';
   document.getElementById('standaloneSumpWidth').value = '18';
   document.getElementById('standaloneSumpHeight').value = '18';
-  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
+  ['standaloneSumpPiping', 'standaloneSumpPipingDrain', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
     .forEach((id) => { document.getElementById(id).checked = false; });
+  syncStandalonePipingDrain();
 
   const errorMsg = document.getElementById('customStandaloneFiltrationErrorMsg');
   errorMsg.textContent = '';
@@ -3201,8 +3232,9 @@ function resetCustomAquariumBuilder() {
   document.getElementById('sumpLength').value = '18';
   document.getElementById('sumpWidth').value = '18';
   document.getElementById('sumpHeight').value = '18';
-  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover']
+  ['sumpPiping', 'sumpPipingDrain', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover']
     .forEach((id) => { document.getElementById(id).checked = false; });
+  syncEmbeddedPipingDrain();
 
   filtrationEnabled = false;
   glassBeforeLowIron = null;
@@ -4129,13 +4161,17 @@ async function runDeliveryEstimate() {
 
   document.getElementById('sumpType').addEventListener('change', () => {
     applySumpTypeDefaults();
+    syncEmbeddedPipingDrain();
     updateCustomPriceEstimate();
   });
   ['sumpLength', 'sumpWidth', 'sumpHeight'].forEach((id) => {
     document.getElementById(id).addEventListener('input', () => updateCustomPriceEstimate());
   });
-  ['sumpPiping', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover']
-    .forEach((id) => document.getElementById(id).addEventListener('change', () => updateCustomPriceEstimate()));
+  ['sumpPiping', 'sumpPipingDrain', 'sumpOverflowBox', 'sumpFilterMedias', 'sumpAllumTopCover']
+    .forEach((id) => document.getElementById(id).addEventListener('change', () => {
+      syncEmbeddedPipingDrain(id);
+      updateCustomPriceEstimate();
+    }));
 
   // ---- Stand sub-flow navigation/wiring ----
   document.getElementById('standTubular1x1').addEventListener('click', () => { selectStandTubular('1x1'); updateCustomStandPriceEstimate(); });
@@ -4186,6 +4222,7 @@ async function runDeliveryEstimate() {
   // ---- Standalone Filtration sub-flow navigation/wiring ----
   document.getElementById('standaloneSumpType').addEventListener('change', () => {
     applyStandaloneSumpTypeDefaults();
+    syncStandalonePipingDrain();
     updateStandaloneFiltrationPriceEstimate();
   });
   document.getElementById('standaloneFiltrationUnit').addEventListener('change', () => {
@@ -4200,8 +4237,11 @@ async function runDeliveryEstimate() {
   // fields), but it IS shown on the live summary now - had no listener at all before, matching
   // the same "not wired" gap standaloneStickerQty below had until now.
   document.getElementById('standaloneFiltrationQty').addEventListener('input', () => renderStandaloneFiltrationSummary());
-  ['standaloneSumpPiping', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
-    .forEach((id) => document.getElementById(id).addEventListener('change', () => updateStandaloneFiltrationPriceEstimate()));
+  ['standaloneSumpPiping', 'standaloneSumpPipingDrain', 'standaloneSumpOverflowBox', 'standaloneSumpFilterMedias', 'standaloneSumpAllumTopCover']
+    .forEach((id) => document.getElementById(id).addEventListener('change', () => {
+      syncStandalonePipingDrain(id);
+      updateStandaloneFiltrationPriceEstimate();
+    }));
   document.getElementById('customStandaloneFiltrationAddToCartBtn').addEventListener('click', () => {
     addCustomizeTabToCart('filtration', document.getElementById('customStandaloneFiltrationAddToCartMsg'));
   });

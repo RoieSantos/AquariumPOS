@@ -700,6 +700,8 @@
             <div class="sub-head">Extras</div>
             <div class="checkbox-stack">
               <label class="checkbox-row"><input id="piping" type="checkbox">Set of Piping</label>
+              <!-- Overhead Sump only - item A-070, replaces the standard Set of Piping (see setVisibilityState) -->
+              <label class="checkbox-row hidden" id="pipingDrainRow"><input id="pipingDrain" type="checkbox">Custom 1/2" Pipe with Separate Drain (replaces Set of Piping)</label>
               <label class="checkbox-row"><input id="overflowBox" type="checkbox">Overflow Box</label>
               <label class="checkbox-row"><input id="filterMedias" type="checkbox">Filter medias</label>
               <label class="checkbox-row"><input id="submersibleLight" type="checkbox">Submersible Light</label>
@@ -886,7 +888,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js?v=sumponly1"></script>
+  <script src="./custom-aquarium-calculator.js?v=pipedrain2"></script>
   <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -2100,6 +2102,14 @@
       byId('sumpFieldsWrap').style.opacity = sumpEnabled ? '1' : '0.42';
       byId('sumpFieldsWrap').style.pointerEvents = sumpEnabled ? 'auto' : 'none';
       byId('sumpPriceInputs').classList.toggle('hidden', !sumpEnabled || !anyPumpOrLight);
+      // The separate-drain pipe is an Overhead Sump-only swap for the standard set - switching to
+      // Undersump while it's ticked falls back to the standard set instead of dropping the piping.
+      var overheadSump = byId('sumpType').value === 'Overhead Sump';
+      byId('pipingDrainRow').classList.toggle('hidden', !overheadSump);
+      if (!overheadSump && byId('pipingDrain').checked) {
+        byId('pipingDrain').checked = false;
+        byId('piping').checked = true;
+      }
       byId('allSidesRow').classList.toggle('hidden', !backgroundEnabled);
       byId('backgroundTypeWrap').classList.toggle('hidden', !backgroundEnabled);
       byId('bottomTypeWrap').classList.toggle('hidden', !bottomEnabled);
@@ -2139,6 +2149,7 @@
           glassThickness: byId('sumpGlass').value,
           filterMedias: byId('filterMedias').checked,
           piping: byId('piping').checked,
+          pipingSeparateDrain: byId('pipingDrain').checked,
           overflowBox: byId('overflowBox').checked,
           allumTopCover: byId('allumTopCover').checked,
           lightPrice: byId('submersibleLight').checked ? (Number(byId('lightPrice').value) || 0) * getLightQuantity() : 0,
@@ -2309,7 +2320,7 @@
       if (c.pump > 0) parts.push(['Submersible pump' + itemName('pumpItemSelect') + (getPumpQuantity() > 1 ? ' x' + getPumpQuantity() : '') + markupNote, c.pump * markup]);
       if (c.light > 0) parts.push(['Submersible light' + itemName('lightItemSelect') + (getLightQuantity() > 1 ? ' x' + getLightQuantity() : '') + markupNote, c.light * markup]);
       if (c.overflowBox > 0) parts.push(['Overflow box' + markupNote, c.overflowBox * markup]);
-      if (c.piping > 0) parts.push(['Set of piping', c.piping]);
+      if (c.piping > 0) parts.push([byId('pipingDrain').checked ? 'Custom 1/2" pipe with separate drain' : 'Set of piping', c.piping]);
       if (c.allumTopCover > 0) parts.push(['Allum top cover', c.allumTopCover]);
 
       var partsTotal = parts.reduce(function (sum, p) { return sum + p[1]; }, 0);
@@ -2326,6 +2337,7 @@
     function getSumpExtrasList(filterMediaKg) {
       var sumpExtras = [];
       if (byId('piping').checked) sumpExtras.push('Set of piping');
+      if (byId('pipingDrain').checked) sumpExtras.push('Custom 1/2" pipe with separate drain');
       if (byId('overflowBox').checked) sumpExtras.push('Overflow box');
       if (byId('filterMedias').checked) sumpExtras.push('Filter medias' + (filterMediaKg ? ' (approx. ' + filterMediaKg + ' kg, more or less)' : ''));
       if (byId('submersibleLight').checked) sumpExtras.push('Submersible light' + (getLightQuantity() > 1 ? ' x' + getLightQuantity() : ''));
@@ -2827,12 +2839,14 @@
         filterMedias: s.filterMedias,
         overflowBox: s.overflowBox,
         piping: s.piping,
+        pipingSeparateDrain: s.pipingSeparateDrain,
         allumTopCover: s.allumTopCover,
         lightPrice: s.lightPrice,
         pumpPrice: s.pumpPrice,
         glassPricingSetupRows: payload.glassPricingSetupRows,
         glassPricingUom: payload.glassPricingUom,
-        stickerPricingSetupRows: payload.stickerPricingSetupRows
+        stickerPricingSetupRows: payload.stickerPricingSetupRows,
+        extraPricingSetupRows: payload.extraPricingSetupRows
       });
       if (!r || !r.ok) return r;
 
@@ -2897,11 +2911,20 @@
           byId(id).addEventListener('change', setVisibilityState);
         });
 
+      // Standard set vs separate-drain pipe are either/or - registered before the recalc listeners
+      // below so the price is computed from the already-unticked other box.
+      byId('piping').addEventListener('change', function () {
+        if (byId('piping').checked) byId('pipingDrain').checked = false;
+      });
+      byId('pipingDrain').addEventListener('change', function () {
+        if (byId('pipingDrain').checked) byId('piping').checked = false;
+      });
+
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
         'holeCount', 'dividerCount',
         'sumpEnabled', 'aquascape', 'enclosure', 'turtleTank', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standPaint', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
-        'sumpUnit', 'sumpGlass', 'sumpQuantity', 'piping', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
+        'sumpUnit', 'sumpGlass', 'sumpQuantity', 'piping', 'pipingDrain', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
         var eventName = byId(id).tagName === 'INPUT' && (byId(id).type === 'number' || byId(id).type === 'text' || byId(id).tagName === 'TEXTAREA')
@@ -2956,7 +2979,7 @@
           var pumpOn = byId('submersiblePump').checked && lastResult.components && lastResult.components.pump > 0;
           var fields = {};
           ['length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered',
-            'rimless', 'highStrip', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount', 'sumpEnabled',
+            'rimless', 'highStrip', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount', 'sumpEnabled', 'pipingDrain',
             'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight', 'sumpUnit', 'sumpGlass', 'stickerBackground', 'allSides',
             'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote', 'lightQuantity', 'pumpQuantity',
             'standPaint'
@@ -3048,7 +3071,7 @@
         sumpAutoFillState.sumpType = byId('sumpType').value;
         if (params.has('sumpLength')) sumpLengthEditedByHand = true;
         if (params.has('sumpGlass')) byId('sumpGlass').value = params.get('sumpGlass');
-        ['filterMedias', 'piping', 'overflowBox', 'allumTopCover'].forEach(function (id) {
+        ['filterMedias', 'piping', 'pipingDrain', 'overflowBox', 'allumTopCover'].forEach(function (id) {
           if (params.get(id) === '1') byId(id).checked = true;
         });
       }

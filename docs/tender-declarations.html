@@ -34,6 +34,7 @@
     <div id="setupContent" class="hidden">
       <div class="toolbar" style="flex-wrap:wrap; gap:12px;">
         <input type="text" id="searchInput" placeholder="Search EOD ID, receipt, cashier, warehouse or reason..." style="max-width:320px;" />
+        <select id="warehouseSelect"><option value="">All warehouses</option></select>
         <label class="muted">From <input type="date" id="fromInput" /></label>
         <label class="muted">To <input type="date" id="toInput" /></label>
         <select id="resultSelect">
@@ -46,6 +47,7 @@
 
       <div class="stat-card-grid">
         <div class="stat-card"><div class="stat-label">Declarations</div><div class="stat-value" id="statCount">-</div></div>
+        <div class="stat-card"><div class="stat-label">Total Declared Cash</div><div class="stat-value" id="statDeclared">-</div></div>
         <div class="stat-card stat-cancelled"><div class="stat-label">Total Short</div><div class="stat-value" id="statShort">-</div></div>
         <div class="stat-card stat-shipped"><div class="stat-label">Total Over</div><div class="stat-value" id="statOver">-</div></div>
       </div>
@@ -113,7 +115,7 @@
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=tenderdecl1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/tenderDeclarations.js?v=tenderreason1"></script>
+  <script src="js/tenderDeclarations.js?v=tenderwh2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

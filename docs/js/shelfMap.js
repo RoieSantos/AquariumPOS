@@ -155,8 +155,37 @@ async function createReplenishmentTransfer() {
       return;
     }
 
+    // Request cap (sql/supabase_transfer_request_cap.sql): the shelf qty minus on hand doesn't know
+    // about orders already on the way, and the database refuses a line over the store's limit - so
+    // trim each line to its Max and leave out items that are already covered by an open order.
+    const { data: capRows, error: capError } = await supabaseClient.rpc('staff_check_transfer_request_lines', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_doc_no: '',
+      p_to_warehouse_id: toId,
+      p_lines: lines.map((l) => ({ item_no: l.itemCode, variant_id: l.variantId || null, qty: 0, order_id: null }))
+    });
+    if (capError) throw capError;
+    const capByIdx = new Map((capRows || []).map((r) => [r.idx, r]));
+    const covered = [];
+    const capped = [];
+    lines.forEach((l, i) => {
+      const r = capByIdx.get(i);
+      if (!r || !r.rule) { capped.push(l); return; }
+      const qty = Math.min(l.qty, Math.floor(Number(r.allowed) || 0));
+      if (qty > 0) capped.push({ ...l, qty });
+      else covered.push(`${l.itemCode}${r.open_docs ? ` (on ${r.open_docs})` : ''}`);
+    });
+    lines.length = 0;
+    lines.push(...capped);
+    if (lines.length === 0) {
+      window.alert('Nothing to replenish - everything low on this shelf is already on the way: ' + covered.join(', '));
+      return;
+    }
+
     const summary = lines.map((l) => `  ${l.itemCode} ${l.itemName} - ${formatQty(l.qty)}`).join('\n');
-    const skipped = needsVariant.length ? `\n\nLeft off (they have several variants - add them on the Transfer Orders page): ${needsVariant.join(', ')}` : '';
+    const skipped = (needsVariant.length ? `\n\nLeft off (they have several variants - add them on the Transfer Orders page): ${needsVariant.join(', ')}` : '')
+      + (covered.length ? `\n\nLeft off (already on the way): ${covered.join(', ')}` : '');
     if (!window.confirm(`Create a transfer order from ${fromWarehouse.name} to ${toName} for ${lines.length} item${lines.length === 1 ? '' : 's'}?\n\n${summary}${skipped}`)) return;
 
     const { data: docNo, error: noError } = await supabaseClient.rpc('staff_next_transfer_no', {
@@ -184,14 +213,21 @@ async function createReplenishmentTransfer() {
       'Locked At': new Date().toISOString(),
       'Locked By': who
     });
-    for (let i = 0; i < lines.length; i += 1) {
-      await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': (i + 1) * 10000 }, {
-        'Item No.': lines[i].itemCode,
-        'Variant ID': lines[i].variantId || null,
-        'Variant Name': lines[i].variantName || null,
-        'Description': lines[i].itemName || null,
-        'Qty To Transfer': lines[i].qty
-      });
+    try {
+      for (let i = 0; i < lines.length; i += 1) {
+        await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': (i + 1) * 10000 }, {
+          'Item No.': lines[i].itemCode,
+          'Variant ID': lines[i].variantId || null,
+          'Variant Name': lines[i].variantName || null,
+          'Description': lines[i].itemName || null,
+          'Qty To Transfer': lines[i].qty
+        });
+      }
+    } catch (lineErr) {
+      // A line was refused by the request cap - don't leave a half-saved order behind.
+      await supabaseClient.from('Transfer_Line').delete().eq('"Document No."', docNo);
+      await supabaseClient.from('Transfer_Header').delete().eq('"No."', docNo);
+      throw lineErr;
     }
 
     delete pendingByWarehouse[toId];
@@ -637,6 +673,461 @@ function moveCell(delta) {
   renderShelf();
 }
 
+// ---------------------------------------------------------------- Stock List view
+// Every item linked on any shelf at the selected location, one row per item (all its spots/shelves
+// together), with sales, vendor and what's already on the way (staff_get_shelf_stock_list,
+// sql/supabase_shelf_map_stock_list.sql). Super users tick rows and turn them into Purchase Orders,
+// one per vendor, through the same staff_create_purchase_order the Purchase Orders page uses.
+let currentView = 'map';
+let stockRows = [];
+let stockRowsKey = '';           // "<warehouseId>|<days>" the rows were loaded for
+let stockLoadToken = 0;
+let slSort = { key: 'status', dir: 1 };
+// Per item, survives re-renders/filters: { checked, vendor, qty } - qty null = use the suggestion.
+const slEdits = new Map();
+let slPoGroups = [];
+
+const VIEW_STORAGE_KEY = 'shelfMap.view';
+
+function isPoUser() {
+  return !!(currentSession && currentSession.isSuperUser);
+}
+
+function slDays() {
+  return Number(document.getElementById('slDays').value) || 30;
+}
+
+// Same colours as the map: red = nothing on hand, orange = half of the Min. Shelf Count or less.
+function stockStatus(r) {
+  const onHand = Number(r.on_hand) || 0;
+  const min = Number(r.min_qty) || 0;
+  if (onHand <= 0) return 'empty';
+  if (min > 0 && onHand <= min / 2) return 'low';
+  return 'ok';
+}
+
+// Suggested buy = target - (on hand + in transit + unshipped TO from other stores + Warehouse stock
+// + open PO). A TO not shipped yet FROM the Warehouse adds nothing on its own: its qty is still inside
+// the Warehouse on hand, and if the Warehouse has none the TO can't ship - counting it would hide the
+// buy (L-024: min 5, on hand 0, TO 15 waiting on an empty Warehouse used to show "-").
+// Target is the Min. Shelf Count, or the units sold in the period when "Buy up to" says so and that's higher.
+// Returns { qty, why } - why is the hover breakdown on the Suggested cell.
+function stockSuggestion(r) {
+  const min = Number(r.min_qty) || 0;
+  const sold = Number(r.sold_here) || 0;
+  const bySales = document.getElementById('slTarget').value === 'sales' && sold > min;
+  const target = bySales ? sold : min;
+  const parts = [
+    ['on hand', Math.max(0, Number(r.on_hand) || 0)],
+    ['in transit (TO shipped)', Number(r.pending_in_transit) || 0],
+    ['TO from another store, not shipped', Number(r.pending_unshipped_other) || 0],
+    ['Warehouse stock', Math.max(0, Number(r.warehouse_on_hand) || 0)],
+    ['on PO', Number(r.on_po) || 0]
+  ];
+  const covered = parts.reduce((n, p) => n + p[1], 0);
+  const qty = Math.max(0, Math.ceil(target - covered));
+  let why = `Target ${formatQty(target)} (${bySales ? `sold ${slDays()}d` : 'Min. Shelf Count'})`
+    + parts.filter((p) => p[1] > 0).map((p) => ` - ${p[0]} ${formatQty(p[1])}`).join('')
+    + ` = ${formatQty(target - covered)}`;
+  if (target <= 0) why = 'No Min. Shelf Count set (and no sales target) - nothing to top up to.';
+  else if (qty <= 0 && (Number(r.warehouse_on_hand) || 0) > 0) why += ' - the Warehouse has it: transfer instead of buying.';
+  return { qty, why };
+}
+
+function stockSuggested(r) {
+  return stockSuggestion(r).qty;
+}
+
+function stockDaysLeft(r) {
+  const sold = Number(r.sold_here) || 0;
+  if (sold <= 0) return null;
+  return Math.max(0, Number(r.on_hand) || 0) / (sold / slDays());
+}
+
+function slEdit(itemCode) {
+  if (!slEdits.has(itemCode)) slEdits.set(itemCode, { checked: false, vendor: null, qty: null });
+  return slEdits.get(itemCode);
+}
+
+function slOrderQty(r) {
+  const e = slEdits.get(r.item_code);
+  return e && e.qty != null ? e.qty : stockSuggested(r);
+}
+
+function slVendor(r) {
+  const e = slEdits.get(r.item_code);
+  return (e && e.vendor) || r.vendor_code || ((r.vendors || [])[0] || {}).code || '';
+}
+
+async function loadStockList(force) {
+  const body = document.getElementById('stockListBody');
+  const warehouseId = currentLocation;
+  if (!warehouseId) {
+    stockRows = [];
+    body.innerHTML = '<p class="muted">Pick a location - shelves with no location set have no stock to list.</p>';
+    return;
+  }
+  const key = `${warehouseId}|${slDays()}`;
+  if (!force && key === stockRowsKey) { renderStockList(); return; }
+  const token = ++stockLoadToken;
+  body.innerHTML = '<p class="muted">Loading...</p>';
+  const { data, error } = await supabaseClient.rpc('staff_get_shelf_stock_list', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_warehouse_id: warehouseId,
+    p_days: slDays()
+  });
+  if (token !== stockLoadToken) return;
+  if (error) {
+    body.innerHTML = `<p class="error-text">Could not load the stock list: ${escapeHtml(error.message)} (has supabase_shelf_map_stock_list.sql been run?)</p>`;
+    return;
+  }
+  stockRows = data || [];
+  stockRowsKey = key;
+  renderStockList();
+}
+
+function visibleStockRows() {
+  const filter = document.getElementById('slFilter').value;
+  const term = document.getElementById('slSearch').value.trim().toLowerCase();
+  const statusRank = { empty: 0, low: 1, ok: 2 };
+  const rows = stockRows.filter((r) => {
+    const st = stockStatus(r);
+    if (filter === 'low' && st === 'ok') return false;
+    if (filter === 'empty' && st !== 'empty') return false;
+    if (filter === 'buy' && stockSuggested(r) <= 0) return false;
+    if (term) {
+      const hay = `${r.item_code} ${r.item_name} ${r.vendor_name || ''} ${r.vendor_code || ''} ${r.shelves || ''}`.toLowerCase();
+      if (!hay.includes(term)) return false;
+    }
+    return true;
+  });
+  const val = (r) => {
+    switch (slSort.key) {
+      case 'item': return (r.item_name || r.item_code || '').toLowerCase();
+      case 'vendor': return (r.vendor_name || r.vendor_code || '~').toLowerCase();
+      case 'min': return Number(r.min_qty) || 0;
+      case 'onhand': return Number(r.on_hand) || 0;
+      case 'sold': return -(Number(r.sold_here) || 0);
+      case 'soldall': return -(Number(r.sold_all) || 0);
+      case 'daysleft': { const d = stockDaysLeft(r); return d == null ? Infinity : d; }
+      case 'suggested': return -stockSuggested(r);
+      default: return statusRank[stockStatus(r)] * 1e9 - (Number(r.sold_here) || 0);
+    }
+  };
+  return rows.sort((a, b) => {
+    const x = val(a); const y = val(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * slSort.dir;
+  });
+}
+
+function updateSlPoButton() {
+  const ticked = stockRows.filter((r) => slEdits.get(r.item_code)?.checked).length;
+  document.getElementById('slCreatePoBtn').textContent = `Create Purchase Order(s)${ticked ? ` - ${ticked} item${ticked === 1 ? '' : 's'}` : ''}`;
+}
+
+function fmtDate(d) {
+  return d ? new Date(d + 'T00:00:00').toLocaleDateString() : '-';
+}
+
+function renderStockList() {
+  const body = document.getElementById('stockListBody');
+  if (!currentLocation) return;
+  const rows = visibleStockRows();
+  const poUser = isPoUser();
+  const days = slDays();
+
+  const counts = { empty: 0, low: 0, buy: 0 };
+  stockRows.forEach((r) => {
+    const st = stockStatus(r);
+    if (st === 'empty') counts.empty += 1;
+    if (st === 'low') counts.low += 1;
+    if (stockSuggested(r) > 0) counts.buy += 1;
+  });
+  updateSlPoButton();
+
+  const th = (key, label, cls) => `<th class="sortable ${cls || ''}" data-sort="${key}">${label}${slSort.key === key ? (slSort.dir > 0 ? ' &#9650;' : ' &#9660;') : ''}</th>`;
+  const head = `<tr>
+    ${poUser ? '<th><input type="checkbox" id="slCheckAll" title="Tick every item shown with a quantity to order" /></th>' : ''}
+    ${th('item', 'Item')}
+    ${th('vendor', 'Vendor')}
+    ${th('min', 'Min. Shelf', 'num')}
+    ${th('onhand', 'On hand', 'num')}
+    <th class="num">Pending TO</th>
+    <th class="num" title="Item Ledger at the Warehouse location">Warehouse</th>
+    <th class="num" title="Open purchase orders, any location">On PO</th>
+    ${th('sold', `Sold ${days}d`, 'num')}
+    ${th('soldall', 'Sold all loc.', 'num')}
+    ${th('daysleft', 'Days left', 'num')}
+    <th>Last sold</th>
+    ${th('suggested', 'Suggested', 'num')}
+    ${poUser ? '<th class="num">Order qty</th>' : ''}
+  </tr>`;
+
+  const bodyRows = rows.map((r) => {
+    const st = stockStatus(r);
+    const e = slEdits.get(r.item_code) || {};
+    const vendors = r.vendors || [];
+    const vendorCode = slVendor(r);
+    const vendorCell = poUser && vendors.length > 1
+      ? `<select class="sl-vendor" data-item="${escapeHtml(r.item_code)}">${vendors.map((v) =>
+          `<option value="${escapeHtml(v.code)}"${v.code === vendorCode ? ' selected' : ''}>${escapeHtml(v.name)}${v.primary ? ' (primary)' : ''}${v.cost != null ? ' - ' + Number(v.cost).toLocaleString() : ''}</option>`).join('')}</select>`
+      : (r.vendor_name || r.vendor_code
+        ? `${escapeHtml(r.vendor_name || r.vendor_code)}${vendors.length > 1 ? `<span class="sl-sub">+${vendors.length - 1} other vendor(s)</span>` : ''}`
+        : '<span class="badge badge-danger">No vendor</span>');
+    const daysLeft = stockDaysLeft(r);
+    const ledgerHref = `item-ledger-entries.html?search=${encodeURIComponent(r.item_code)}&warehouse=${encodeURIComponent(currentLocation)}`;
+    const pending = Number(r.pending_to) || 0;
+    const pendingCell = pending > 0 && r.pending_docs
+      ? `<a href="transfer-orders.html?doc=${encodeURIComponent(r.pending_docs.split(', ')[0])}" title="${escapeHtml(r.pending_docs)}">${formatQty(pending)}</a>`
+      : formatQty(pending);
+    const onPo = Number(r.on_po) || 0;
+    const poCell = onPo > 0 && r.open_pos
+      ? `<a href="purchase-orders.html?search=${encodeURIComponent(r.open_pos.split(', ')[0])}" title="${escapeHtml(r.open_pos)}">${formatQty(onPo)}</a>`
+      : formatQty(onPo);
+    const { qty: suggested, why } = stockSuggestion(r);
+    return `<tr class="st-${st}">
+      ${poUser ? `<td><input type="checkbox" class="sl-check" data-item="${escapeHtml(r.item_code)}"${e.checked ? ' checked' : ''} /></td>` : ''}
+      <td><a href="${ledgerHref}">${escapeHtml(r.item_code)}</a> ${escapeHtml(r.item_name && r.item_name !== r.item_code ? r.item_name : '')}
+        <span class="sl-sub">${escapeHtml(r.shelves || '')}${r.spots > 1 ? ` - ${r.spots} spots` : ''}${r.variant_count > 1 ? ` - ${r.variant_count} variants` : ''}</span></td>
+      <td>${vendorCell}</td>
+      <td class="num">${formatQty(r.min_qty)}</td>
+      <td class="num st-onhand">${formatQty(r.on_hand)}</td>
+      <td class="num">${pendingCell}</td>
+      <td class="num">${r.warehouse_on_hand == null ? '-' : formatQty(r.warehouse_on_hand)}</td>
+      <td class="num">${poCell}</td>
+      <td class="num"><strong>${formatQty(r.sold_here)}</strong></td>
+      <td class="num">${formatQty(r.sold_all)}</td>
+      <td class="num" title="On hand / average daily sales at this location over the period">${daysLeft == null ? '-' : Math.round(daysLeft).toLocaleString()}</td>
+      <td title="Last received on a purchase: ${escapeHtml(fmtDate(r.last_purchased))}">${escapeHtml(fmtDate(r.last_sold))}</td>
+      <td class="num" title="${escapeHtml(why)}" style="cursor:help;">${suggested > 0 ? `<strong>${formatQty(suggested)}</strong>` : '-'}</td>
+      ${poUser ? `<td class="num"><input type="number" class="sl-qty" min="0" step="1" data-item="${escapeHtml(r.item_code)}" value="${escapeHtml(slOrderQty(r))}" /></td>` : ''}
+    </tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="stock-summary">
+      <span><strong>${stockRows.length}</strong> item(s) on this location's shelves</span>
+      <span style="color:#d64545;"><strong>${counts.empty}</strong> out of stock</span>
+      <span style="color:#d98a00;"><strong>${counts.low}</strong> low (half or less)</span>
+      <span><strong>${counts.buy}</strong> suggested to buy</span>
+      <span class="muted">Suggested = Buy up to - (on hand + TO in transit + Warehouse stock + on PO). A TO not shipped yet from the Warehouse doesn't count by itself. Hover a Suggested number for the breakdown.</span>
+    </div>
+    ${rows.length === 0
+      ? '<p class="muted">Nothing to show for this filter.</p>'
+      : `<div class="table-wrap"><table class="stock-table"><thead>${head}</thead><tbody>${bodyRows}</tbody></table></div>`}`;
+}
+
+function setView(view) {
+  if (draft) return; // finish the layout edit first
+  currentView = view === 'list' ? 'list' : 'map';
+  try { localStorage.setItem(VIEW_STORAGE_KEY, currentView); } catch (_) { /* storage blocked */ }
+  const list = currentView === 'list';
+  document.getElementById('viewMapBtn').classList.toggle('active', !list);
+  document.getElementById('viewListBtn').classList.toggle('active', list);
+  document.querySelectorAll('.map-only').forEach((el) => el.classList.toggle('hidden', list));
+  document.getElementById('legend').classList.toggle('hidden', list);
+  document.getElementById('shelfBody').classList.toggle('hidden', list);
+  document.getElementById('stockListBar').classList.toggle('hidden', !list);
+  document.getElementById('stockListBody').classList.toggle('hidden', !list);
+  document.getElementById('slCreatePoBtn').classList.toggle('hidden', !list || !isPoUser());
+  if (list) {
+    ['editBtn', 'newShelfBtn', 'replenishBtn'].forEach((id) => document.getElementById(id).classList.add('hidden'));
+    loadStockList(false);
+  } else {
+    setEditing(false);
+  }
+}
+
+// ---- Create Purchase Order(s) from the ticked rows, one per vendor ----
+async function openSlPoModal() {
+  const ticked = stockRows.filter((r) => slEdits.get(r.item_code)?.checked);
+  if (ticked.length === 0) {
+    window.alert('Tick the items to order first (the box at the start of each row).');
+    return;
+  }
+  const byVendor = new Map();
+  const noVendor = [];
+  const zeroQty = [];
+  ticked.forEach((r) => {
+    const qty = Number(slOrderQty(r)) || 0;
+    if (qty <= 0) { zeroQty.push(r.item_code); return; }
+    const code = slVendor(r);
+    if (!code) { noVendor.push(r.item_code); return; }
+    const v = (r.vendors || []).find((x) => x.code === code) || { code, name: r.vendor_name || code, cost: r.unit_cost };
+    if (!byVendor.has(code)) byVendor.set(code, { vendorCode: code, vendorName: v.name || code, lines: [] });
+    byVendor.get(code).lines.push({ row: r, qty, cost: v.cost == null ? null : Number(v.cost) });
+  });
+  slPoGroups = Array.from(byVendor.values()).sort((a, b) => a.vendorName.localeCompare(b.vendorName));
+
+  const select = document.getElementById('slPoWarehouse');
+  if (!select.options.length) {
+    const { data } = await supabaseClient.rpc('staff_search_warehouses', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_search: null,
+      p_limit: 100
+    });
+    select.innerHTML = (data || []).map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)}</option>`).join('');
+    const main = (data || []).find((w) => (w.name || '').toLowerCase() === REPLENISH_FROM_WAREHOUSE_NAME.toLowerCase());
+    if (main) select.value = main.id;
+  }
+  const locationName = (shelves.find((s) => locationKey(s) === currentLocation) || {}).warehouse_name || currentLocation;
+  document.getElementById('slPoNotes').value = `From Shelf Map stock list - ${locationName}`;
+  document.getElementById('slPoIntro').textContent =
+    `${ticked.length} ticked item(s). One Purchase Order per vendor. Adjust quantities or untick a vendor to skip it. Unit cost blank = the item's catalog cost.`;
+
+  const groupsHtml = slPoGroups.map((g, gi) => `
+    <div style="margin-bottom:14px;">
+      <label style="display:flex; gap:8px; align-items:center; font-weight:600; margin-bottom:4px;">
+        <input type="checkbox" class="sl-po-vendor-check" data-group="${gi}" checked /> ${escapeHtml(g.vendorName)} <span class="muted" style="font-weight:400;">(${escapeHtml(g.vendorCode)})</span>
+      </label>
+      <div class="table-wrap"><table class="stock-table">
+        <thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Sold ${slDays()}d</th><th class="num">Qty</th><th class="num">Unit cost</th></tr></thead>
+        <tbody>${g.lines.map((l, li) => `
+          <tr>
+            <td>${escapeHtml(l.row.item_code)} ${escapeHtml(l.row.item_name || '')}
+              ${l.row.variant_count > 1 ? '<span class="sl-sub">Several variants - pick the variant when receiving.</span>' : ''}</td>
+            <td class="num">${formatQty(l.row.on_hand)}</td>
+            <td class="num">${formatQty(l.row.sold_here)}</td>
+            <td class="num"><input type="number" class="sl-qty sl-po-qty" data-group="${gi}" data-line="${li}" min="0" step="1" value="${l.qty}" /></td>
+            <td class="num"><input type="number" class="sl-qty sl-po-cost" data-group="${gi}" data-line="${li}" min="0" step="0.01" value="${l.cost == null ? '' : l.cost}" style="width:96px;" /></td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>`).join('');
+  const notes = (noVendor.length ? `<div class="error-text" style="margin-bottom:8px;">No vendor set on: ${noVendor.map(escapeHtml).join(', ')} - set the Vendor No. in Item Setup. Not included.</div>` : '')
+    + (zeroQty.length ? `<div class="muted" style="margin-bottom:8px;">Order qty is 0 for: ${zeroQty.map(escapeHtml).join(', ')} - not included.</div>` : '');
+  document.getElementById('slPoBody').innerHTML = notes + (groupsHtml || '<p class="muted">Nothing to order.</p>');
+  document.getElementById('slPoError').classList.add('hidden');
+  document.getElementById('slPoResult').innerHTML = '';
+  document.getElementById('slPoConfirmBtn').classList.toggle('hidden', slPoGroups.length === 0);
+  document.getElementById('slPoConfirmBtn').disabled = false;
+  document.getElementById('slPoModal').classList.remove('hidden');
+}
+
+async function confirmSlPo() {
+  const errorEl = document.getElementById('slPoError');
+  errorEl.classList.add('hidden');
+  const select = document.getElementById('slPoWarehouse');
+  const warehouseId = select.value;
+  const warehouseName = select.selectedOptions[0] ? select.selectedOptions[0].textContent : null;
+  if (!warehouseId) {
+    errorEl.textContent = 'Pick the location to receive into.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('slPoConfirmBtn');
+  btn.disabled = true;
+  const results = [];
+  const failures = [];
+
+  for (let gi = 0; gi < slPoGroups.length; gi++) {
+    const group = slPoGroups[gi];
+    const check = document.querySelector(`.sl-po-vendor-check[data-group="${gi}"]`);
+    if (!check?.checked) continue;
+    const lines = group.lines.map((l, li) => {
+      const qty = Number(document.querySelector(`.sl-po-qty[data-group="${gi}"][data-line="${li}"]`)?.value) || 0;
+      const rawCost = (document.querySelector(`.sl-po-cost[data-group="${gi}"][data-line="${li}"]`)?.value || '').trim();
+      return {
+        item_code: l.row.item_code,
+        item_name: l.row.item_name || l.row.item_code,
+        quantity: qty,
+        // Exactly one variant -> use it (same rule as the Replenishment TO); several -> picked on receipt.
+        variant_code: l.row.variant_id || null,
+        variant_name: l.row.variant_name || null,
+        warehouse_id: warehouseId,
+        warehouse_name: warehouseName,
+        unit_cost: rawCost === '' ? null : rawCost
+      };
+    }).filter((l) => l.quantity > 0);
+    if (lines.length === 0) continue;
+
+    const { data, error } = await supabaseClient.rpc('staff_create_purchase_order', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_vendor_code: group.vendorCode,
+      p_notes: document.getElementById('slPoNotes').value.trim() || null,
+      p_lines: lines,
+      p_warehouse_id: warehouseId,
+      p_warehouse_name: warehouseName
+    });
+    if (error) {
+      failures.push(`${group.vendorName}: ${error.message || error}`);
+    } else {
+      results.push({ vendor: group.vendorName, poNo: data });
+      // Done - stop it being created twice by a second click.
+      check.checked = false;
+      check.disabled = true;
+      group.lines.forEach((l) => slEdits.delete(l.row.item_code));
+    }
+  }
+
+  btn.disabled = false;
+  if (failures.length) {
+    errorEl.textContent = 'Some Purchase Orders could not be created - ' + failures.join('; ');
+    errorEl.classList.remove('hidden');
+  }
+  if (results.length) {
+    document.getElementById('slPoResult').innerHTML = '<p><strong>Created:</strong></p><ul>' + results.map((r) =>
+      `<li>${escapeHtml(r.vendor)}: <a href="purchase-order-print.html?po=${encodeURIComponent(r.poNo)}">${escapeHtml(r.poNo)}</a></li>`).join('') + '</ul>';
+    loadStockList(true); // On PO / Suggested now include the new orders
+  } else if (!failures.length) {
+    errorEl.textContent = 'Nothing to create - tick a vendor and enter a quantity above 0.';
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function wireStockList() {
+  document.getElementById('viewMapBtn').addEventListener('click', () => setView('map'));
+  document.getElementById('viewListBtn').addEventListener('click', () => setView('list'));
+  ['slFilter', 'slTarget'].forEach((id) => document.getElementById(id).addEventListener('change', renderStockList));
+  document.getElementById('slDays').addEventListener('change', () => loadStockList(false));
+  let searchTimer = null;
+  document.getElementById('slSearch').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderStockList, 200);
+  });
+
+  const listBody = document.getElementById('stockListBody');
+  listBody.addEventListener('click', (e) => {
+    const sortTh = e.target.closest('th[data-sort]');
+    if (!sortTh) return;
+    const key = sortTh.dataset.sort;
+    slSort = { key, dir: slSort.key === key ? -slSort.dir : 1 };
+    renderStockList();
+  });
+  listBody.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.id === 'slCheckAll') {
+      visibleStockRows().forEach((r) => {
+        if (!t.checked) slEdit(r.item_code).checked = false;
+        else if ((Number(slOrderQty(r)) || 0) > 0) slEdit(r.item_code).checked = true;
+      });
+      renderStockList();
+      return;
+    }
+    // Updated in place (no re-render) so tabbing between the qty boxes keeps the cursor.
+    const item = t.dataset.item;
+    if (!item) return;
+    if (t.classList.contains('sl-check')) slEdit(item).checked = t.checked;
+    else if (t.classList.contains('sl-vendor')) slEdit(item).vendor = t.value;
+    else if (t.classList.contains('sl-qty')) {
+      slEdit(item).qty = t.value === '' ? null : Math.max(0, Number(t.value) || 0);
+      if (slEdit(item).qty > 0) {
+        slEdit(item).checked = true; // typing a qty means "order this"
+        const box = t.closest('tr')?.querySelector('.sl-check');
+        if (box) box.checked = true;
+      }
+    }
+    updateSlPoButton();
+  });
+
+  document.getElementById('slCreatePoBtn').addEventListener('click', openSlPoModal);
+  document.getElementById('slPoConfirmBtn').addEventListener('click', confirmSlPo);
+  document.getElementById('slPoCloseBtn').addEventListener('click', () => document.getElementById('slPoModal').classList.add('hidden'));
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -655,6 +1146,7 @@ function moveCell(delta) {
     currentLocation = e.target.value;
     renderShelfSelect();
     renderShelf();
+    if (currentView === 'list') loadStockList(false);
   });
   // Live count entry in view mode - saved the moment the number is committed (blur/Enter). The
   // count only changes this cell and its item's shelf_total, both recomputed here from the shelves
@@ -683,7 +1175,11 @@ function moveCell(delta) {
     renderShelf();
     if (nextId) document.querySelector(`.cell-count[data-cellid="${nextId}"]`)?.focus();
   });
-  document.getElementById('refreshBtn').addEventListener('click', () => { pendingByWarehouse = {}; loadShelves(); });
+  document.getElementById('refreshBtn').addEventListener('click', async () => {
+    pendingByWarehouse = {};
+    await loadShelves();
+    if (currentView === 'list') loadStockList(true);
+  });
   document.getElementById('replenishBtn').addEventListener('click', createReplenishmentTransfer);
   document.getElementById('editBtn').addEventListener('click', () => { if (currentShelf()) startEdit(false); });
   document.getElementById('newShelfBtn').addEventListener('click', () => startEdit(true));
@@ -752,5 +1248,10 @@ function moveCell(delta) {
     document.getElementById('cellItemHits').innerHTML = '';
   });
 
+  wireStockList();
   await loadShelves();
+  // ?view=list deep link, else whichever view this browser used last.
+  let startView = new URLSearchParams(window.location.search).get('view');
+  if (!startView) { try { startView = localStorage.getItem(VIEW_STORAGE_KEY); } catch (_) { startView = null; } }
+  if (startView === 'list') setView('list');
 })();

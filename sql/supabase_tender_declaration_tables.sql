@@ -180,7 +180,8 @@ returns table(
   synced_at_utc timestamptz,
   total_count bigint,
   total_short numeric,
-  total_over numeric
+  total_over numeric,
+  total_declared numeric
 )
 language plpgsql
 security definer
@@ -204,7 +205,8 @@ begin
       h."Variance", h."VarianceReason"::text, h."AdvanceCollections", h."SalesByTender", h."FromHistoryUpload", h."SyncedAtUtc",
       count(*) over(),
       coalesce(sum(case when h."Variance" < 0 then -h."Variance" else 0 end) over(), 0),
-      coalesce(sum(case when h."Variance" > 0 then h."Variance" else 0 end) over(), 0)
+      coalesce(sum(case when h."Variance" > 0 then h."Variance" else 0 end) over(), 0),
+      coalesce(sum(h."DeclaredCash") over(), 0)
     from public."TenderDeclarationHeader" h
     where (v_warehouse is null or h."Warehouse" = v_warehouse)
       and (p_from is null or h."DeclDate" >= p_from)

@@ -21,6 +21,9 @@
   // supabase_aquarium_extra_pricing.sql), editable from the portal's Pricing Setup page.
   var DEFAULT_EXTRA_PRICES = {
     Hole: 150,
+    // Overhead Sump's Custom 1/2 Pipe with Separate Drain - live value is item A-070's own Price,
+    // appended to public_get_aquarium_extra_pricing (supabase_piping_separate_drain_price.sql).
+    'Piping Separate Drain': 790,
     // Cabinet/Canopy (18mm laminated plywood), priced per sq ft - see computePlywoodPanels.
     // 'Plywood Sheet 18mm' = one 4x8ft sheet (pesos); 'Plywood Waste %' = cutting loss;
     // 'Plywood Markup' = multiplier (1.6 ~ P224/sq ft at a P3,900 sheet);
@@ -580,6 +583,21 @@
     };
   }
 
+  // Set of Piping: 540 for an Overhead Sump, 2500 for an Undersump. An Overhead Sump can swap the
+  // standard set for item A-070 "Custom 1/2 Pipe with Separate Drain" instead, at that item's live
+  // price (extraPricingSetupRows' 'Piping Separate Drain' row) - the drain option is ignored for an
+  // Undersump. Hand-ported in chatbot-engine.ts's calculateCustomAquarium.
+  function isOverheadSump(sumpType) {
+    return String(sumpType).toLowerCase() === 'overhead sump';
+  }
+  function getSumpPipingPrice(sumpType, piping, separateDrain, extraPricingSetupRows) {
+    if (isOverheadSump(sumpType) && separateDrain) {
+      return Number(buildExtraPriceLookup(extraPricingSetupRows)['Piping Separate Drain']) || DEFAULT_EXTRA_PRICES['Piping Separate Drain'];
+    }
+    if (piping) return isOverheadSump(sumpType) ? 540 : 2500;
+    return 0;
+  }
+
   // Standalone Filtration/Sump build - the sump pricing math the Aquarium+Filtration combo already
   // uses (glass panels, filter media, overflow box, piping, allum top cover) reads its glass rate
   // and "effective width" off the aquarium it's attached to; here there is no aquarium, so this
@@ -635,9 +653,7 @@
       subtotal = roundNearest10(subtotal);
     }
 
-    if (options.piping) {
-      components.piping = String(sumpType).toLowerCase() === 'overhead sump' ? 540 : 2500;
-    }
+    components.piping = getSumpPipingPrice(sumpType, options.piping, options.pipingSeparateDrain, options.extraPricingSetupRows);
 
     if (options.allumTopCover) {
       var coverAreaSqFt = (lengthInches / 12) * (widthInches / 12);
@@ -659,6 +675,7 @@
         heightInches: round2(heightInches),
         glassThickness: glass,
         piping: Boolean(options.piping),
+        pipingSeparateDrain: Boolean(options.pipingSeparateDrain) && isOverheadSump(sumpType),
         overflowBox: Boolean(options.overflowBox),
         filterMedias: Boolean(options.filterMedias),
         allumTopCover: Boolean(options.allumTopCover)
@@ -1226,9 +1243,8 @@
           calculatedPrice += components.pump;
         }
 
-        if (sump.piping) {
-          components.piping = String(sumpType).toLowerCase() === 'overhead sump' ? 540 : 2500;
-        }
+        components.piping = getSumpPipingPrice(sumpType, sump.piping, sump.pipingSeparateDrain, options.extraPricingSetupRows);
+        normalizedSump.pipingSeparateDrain = Boolean(sump.pipingSeparateDrain) && isOverheadSump(sumpType);
 
         if (sump.allumTopCover) {
           var effectiveWidthInches = widthInches;

@@ -59,6 +59,13 @@
       a.near(r.totalPrice, 5167.6, 'total');
     });
 
+    t.test('Piping: Overhead 540, Overhead separate-drain pipe 790, drain ignored for Undersump', (a) => {
+      const sump = (type, extra) => quote({ length: 48, width: 18, height: 18, glassThickness: '6mm', filtrationSump: Object.assign({ enabled: true, type, length: 48, width: 6, height: 6 }, extra) });
+      a.near(sump('Overhead Sump', { piping: true }).components.piping, 540, 'overhead standard set');
+      a.near(sump('Overhead Sump', { pipingSeparateDrain: true }).components.piping, 790, 'overhead separate drain');
+      a.near(sump('Undersump', { piping: true, pipingSeparateDrain: true }).components.piping, 2500, 'undersump ignores drain');
+    });
+
     t.test('Holes are priced from the Hole price setting', (a) => {
       const r = quote({ length: 36, width: 18, height: 18, glassThickness: '6mm', holeCount: 3 });
       expectOk(a, r);

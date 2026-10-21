@@ -315,8 +315,11 @@ function lineRemainingToShip(l) {
   return Math.max(0, (Number(l['Qty To Transfer']) || 0) - (Number(l['Qty Shipped']) || 0));
 }
 
+// Shipped units already returned to sender / written off at posting (staff_settle_transfer_shortage)
+// are no longer waiting to be received.
 function lineRemainingToReceive(l) {
-  return Math.max(0, (Number(l['Qty Shipped']) || 0) - (Number(l['Qty Received']) || 0));
+  return Math.max(0, (Number(l['Qty Shipped']) || 0) - (Number(l['Qty Received']) || 0)
+    - (Number(l['Qty Returned']) || 0) - (Number(l['Qty Written Off']) || 0));
 }
 
 // Ship/Receive are only ever blocked outright by status once an order is done (Received) or
@@ -420,9 +423,12 @@ function updateManageActionButtons(status, lines) {
     'hidden',
     !hasRemainingToShip || currentManageIsOwnToWarehouse || hasUnmanageableSerialRequirement
   );
+  // A settled shortage on a still-live order means a Receive got interrupted before it finished
+  // posting - keep Receive available so it can be clicked again to complete the post.
+  const hasUnfinishedPost = lines.some((l) => (Number(l['Qty Returned']) || 0) + (Number(l['Qty Written Off']) || 0) > 0);
   document.getElementById('receiveTransferBtn').classList.toggle(
     'hidden',
-    !hasRemainingToReceive || currentManageIsOwnFromWarehouse
+    !(hasRemainingToReceive || hasUnfinishedPost) || currentManageIsOwnFromWarehouse
   );
   // Cancelling is the requester's call, not the shipper's - staff at the source (From) warehouse
   // can ship but not cancel, same restriction shape as them not being able to receive either.
@@ -535,10 +541,10 @@ function renderManageLines(lines, status) {
       }
 
       return `
-        <tr data-line-no="${l['Line No.']}" data-qty-to-transfer="${qtyToTransfer}" data-qty-shipped="${qtyShipped}" data-qty-received="${qtyReceived}" data-item-no="${l['Item No.'] || ''}" data-variant-id="${l['Variant ID'] || ''}" data-requires-serials="${requiresSerials}">
+        <tr data-line-no="${l['Line No.']}" data-qty-to-transfer="${qtyToTransfer}" data-qty-shipped="${qtyShipped}" data-qty-received="${qtyReceived}" data-qty-settled="${(Number(l['Qty Returned']) || 0) + (Number(l['Qty Written Off']) || 0)}" data-item-no="${l['Item No.'] || ''}" data-variant-id="${l['Variant ID'] || ''}" data-requires-serials="${requiresSerials}">
           <td>${l['Item No.'] || ''}</td>
           <td>${l['Variant Name'] || ''}</td>
-          <td>${l['Description'] || ''}</td>
+          <td>${l['Description'] || ''}${l['Order ID'] ? `<div class="muted" style="font-size:12px;">For order ${escapeHtml(l['Order ID'])}</div>` : ''}</td>
           <td class="available-stock-cell muted" data-available-line-no="${l['Line No.']}">&hellip;</td>
           <td>${qtyToTransfer}</td>
           <td>${qtyToShipCell}</td>
@@ -1648,7 +1654,8 @@ async function receiveTransferOrder(docNo) {
     const qtyToTransfer = Number(row.dataset.qtyToTransfer) || 0;
     const existingShipped = Number(row.dataset.qtyShipped) || 0;
     const existingReceived = Number(row.dataset.qtyReceived) || 0;
-    const remaining = Math.max(0, existingShipped - existingReceived);
+    const settled = Number(row.dataset.qtySettled) || 0;
+    const remaining = Math.max(0, existingShipped - existingReceived - settled);
     const entered = parseFloat(row.querySelector('.manage-qty-to-receive')?.value) || 0;
     const increment = Math.min(Math.max(entered, 0), remaining);
     return {
@@ -1657,16 +1664,31 @@ async function receiveTransferOrder(docNo) {
       increment,
       qtyShipped: existingShipped,
       qtyReceived: existingReceived + increment,
+      // Shipped but not received once this Receive is applied - settled by the popup's choice.
+      short: Math.max(0, remaining - increment),
+      notShipped: Math.max(0, qtyToTransfer - existingShipped),
       itemNo: row.dataset.itemNo || '',
-      variantId: row.dataset.variantId || ''
+      variantId: row.dataset.variantId || '',
+      variantName: row.cells[1]?.textContent.trim() || '',
+      description: row.cells[2]?.textContent.trim() || ''
     };
   });
 
-  if (!lineUpdates.some((l) => l.increment > 0)) {
+  // Receiving 0 everywhere is still allowed when something shipped is open - that's "nothing
+  // arrived", and the popup makes the user return or write it all off before posting.
+  const finishingPost = rows.some((row) => (Number(row.dataset.qtySettled) || 0) > 0);
+  if (!finishingPost && !lineUpdates.some((l) => l.increment > 0 || l.short > 0)) {
     errorEl.textContent = 'At least one line must have a Qty To Receive greater than 0 to receive.';
     errorEl.classList.remove('hidden');
     return;
   }
+
+  // Every Receive posts the order (moves it to Posted Transfers), even a partial one - staff tend
+  // to raise a new order for the rest rather than come back to this one. The popup spells out what
+  // happens to each quantity and where it's recorded, and for anything shipped-but-not-received
+  // asks whether it goes back to the sender or is written off (staff_settle_transfer_shortage).
+  const shortAction = await showPostReceiveDialog(docNo, lineUpdates);
+  if (!shortAction) return;
 
   const receiveBtn = document.getElementById('receiveTransferBtn');
   receiveBtn.disabled = true;
@@ -1684,37 +1706,135 @@ async function receiveTransferOrder(docNo) {
       await releaseReceivedSerials(docNo, line.itemNo, line.variantId, line.increment, toWarehouseName);
     }
 
-    // For a partial receipt, Receive Date marks the first receipt and is left alone once
-    // already set. Once the order becomes fully Received, Receive Date is always overwritten
-    // with today - the completion date, not whichever partial receipt happened to be first.
+    if (shortAction === 'return' || shortAction === 'writeoff') {
+      const { error: settleError } = await supabaseClient.rpc('staff_settle_transfer_shortage', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_document_no: docNo,
+        p_action: shortAction,
+        p_actor: currentSession?.username || null
+      });
+      if (settleError) throw settleError;
+    }
+
+    // Posted now either way. Receive Date = today (the posting date). "Received" only when every
+    // line got its full Qty To Transfer; anything short or never shipped posts as "Partial Received".
     const status = computeAggregateStatus(lineUpdates);
-    const headerPayload = { 'Status': status };
-    if (status === 'Received' || !currentManageHeader?.['Receive Date']) {
-      headerPayload['Receive Date'] = todayLocalDateString();
-    }
-    await upsertRow('Transfer_Header', { 'No.': docNo }, headerPayload);
+    await upsertRow('Transfer_Header', { 'No.': docNo }, {
+      'Status': status === 'Received' ? 'Received' : 'Partial Received',
+      'Receive Date': todayLocalDateString()
+    });
 
-    if (status === 'Received') {
-      // Fully received - archive to Posted_Transfer_Header/Posted_Transfer_Line and remove from
-      // the live tables, rather than leaving a completed order in the working set forever.
-      await archiveReceivedTransferOrder(docNo);
-      document.getElementById('viewLinesModal').classList.add('hidden');
-      await loadHeaders();
-      window.alert(`Order ${docNo} has been fulfilled - moving into Posted Transfers.`);
-      return;
-    }
-
-    await openManageModal(docNo);
+    // Archive to Posted_Transfer_Header/Posted_Transfer_Line and remove from the live tables.
+    await archiveReceivedTransferOrder(docNo);
+    document.getElementById('viewLinesModal').classList.add('hidden');
     await loadHeaders();
+    window.alert(status === 'Received'
+      ? `Order ${docNo} has been fulfilled - moving into Posted Transfers.`
+      : `Order ${docNo} was posted as a partial receipt - moving into Posted Transfers. Raise a new transfer order for anything still needed.`);
   } catch (err) {
-    errorEl.textContent = describeSupabaseError(err, 'Failed to receive transfer order.');
+    // Reload first so the lines show what DID get saved (a retry then only receives/settles what's
+    // still open, instead of re-adding quantities from the stale form), then show the error.
+    const message = describeSupabaseError(err, 'Failed to receive transfer order.');
+    try { await openManageModal(docNo); } catch { /* keep the error visible below */ }
+    errorEl.textContent = `${message} Whatever was saved before the error is shown above - click Receive again to finish posting.`;
     errorEl.classList.remove('hidden');
   } finally {
     receiveBtn.disabled = false;
   }
 }
 
-// Moves a fully-Received order out of the live Transfer_Header/Transfer_Line tables into
+// Confirm popup for Receive - every Receive posts the order. Lists, per line, what happens to each
+// quantity and where it's recorded. If anything shipped wasn't received, the user must pick Return
+// to sender or Write off. Resolves to 'return' | 'writeoff' | 'none' (nothing short), or null on Cancel.
+function showPostReceiveDialog(docNo, lineUpdates) {
+  const fromName = escapeHtml(currentManageHeader?.['From Warehouse'] || 'the From Warehouse');
+  const toName = escapeHtml(currentManageHeader?.['To Warehouse'] || 'the To Warehouse');
+  const doc = escapeHtml(docNo);
+  const itemLabel = (l) => `<strong>${escapeHtml(l.itemNo)}</strong>${l.variantName ? ` <span class="muted">(${escapeHtml(l.variantName)})</span>` : ''}<div class="muted" style="font-size:12px;">${escapeHtml(l.description)}</div>`;
+
+  const received = lineUpdates.filter((l) => l.increment > 0);
+  const short = lineUpdates.filter((l) => l.short > 0);
+  const notShipped = lineUpdates.filter((l) => l.notShipped > 0);
+  const shortTotal = short.reduce((s, l) => s + l.short, 0);
+
+  let html = `<p>Receiving <strong>posts</strong> ${doc} - it moves to <strong>Posted Transfers</strong> and can't be received again. Raise a new transfer order for anything still needed.</p>`;
+
+  if (received.length > 0) {
+    html += `
+      <h3 style="margin:14px 0 4px;">✅ Received now - added to ${toName}</h3>
+      <table class="bc-grid"><thead><tr><th>Item</th><th class="num">Receiving</th></tr></thead><tbody>
+        ${received.map((l) => `<tr><td>${itemLabel(l)}</td><td class="num">${l.increment}</td></tr>`).join('')}
+      </tbody></table>
+      <p class="muted" style="margin:4px 0 0;">Saved to: Item Ledger at ${toName} (Transfer Receipt, ${doc}) · serials set to In Stock at ${toName}.</p>`;
+  }
+
+  if (short.length > 0) {
+    html += `
+      <h3 style="margin:16px 0 4px;">⚠️ Short - shipped but not received (${shortTotal})</h3>
+      <table class="bc-grid"><thead><tr><th>Item</th><th class="num">Shipped</th><th class="num">Received</th><th class="num">Short</th></tr></thead><tbody>
+        ${short.map((l) => `<tr><td>${itemLabel(l)}</td><td class="num">${l.qtyShipped}</td><td class="num">${l.qtyReceived}</td><td class="num"><strong>${l.short}</strong></td></tr>`).join('')}
+      </tbody></table>
+      <p style="margin:8px 0 4px;"><strong>What should happen to the short items?</strong></p>
+      <label class="bc-doc-field" style="display:flex; gap:8px; align-items:flex-start; border:1px solid var(--border, #ccc); border-radius:6px; padding:8px; margin-bottom:6px; cursor:pointer;">
+        <input type="radio" name="postReceiveShortAction" value="return" style="width:auto; margin-top:3px;" />
+        <span><strong>Return to sender</strong> - they never left ${fromName}, or will go on a new order.<br>
+          <span class="muted">Saved to: Item Ledger at ${fromName}: +${shortTotal} (Transfer Return, ${doc}) - back in ${fromName} stock ·
+          serials back to In Stock at ${fromName} · Posted Transfers "Qty Returned" column.</span></span>
+      </label>
+      <label class="bc-doc-field" style="display:flex; gap:8px; align-items:flex-start; border:1px solid var(--border, #ccc); border-radius:6px; padding:8px; cursor:pointer;">
+        <input type="radio" name="postReceiveShortAction" value="writeoff" style="width:auto; margin-top:3px;" />
+        <span><strong>Write off as lost / damaged</strong> - they really went missing.<br>
+          <span class="muted">Saved to: Item Ledger at ${fromName}: +${shortTotal} Transfer Return then −${shortTotal} Negative Adjmt. (Transfer Shortage, ${doc}) - stock stays out ·
+          serials marked Missing in Serial Tracker · Posted Transfers "Qty Written Off" column, tagged "Written Off".</span></span>
+      </label>`;
+  }
+
+  if (notShipped.length > 0) {
+    html += `
+      <h3 style="margin:16px 0 4px;">➖ Never shipped - no stock change</h3>
+      <table class="bc-grid"><thead><tr><th>Item</th><th class="num">Requested</th><th class="num">Not shipped</th></tr></thead><tbody>
+        ${notShipped.map((l) => `<tr><td>${itemLabel(l)}</td><td class="num">${l.qtyToTransfer}</td><td class="num">${l.notShipped}</td></tr>`).join('')}
+      </tbody></table>
+      <p class="muted" style="margin:4px 0 0;">Only recorded on the posted order (Qty To Transfer vs Qty Shipped) - ${fromName} keeps this stock.</p>`;
+  }
+
+  const modal = document.getElementById('postReceiveModal');
+  const body = document.getElementById('postReceiveBody');
+  const errorEl = document.getElementById('postReceiveError');
+  const confirmBtn = document.getElementById('postReceiveConfirmBtn');
+  const cancelBtn = document.getElementById('postReceiveCancelBtn');
+  document.getElementById('postReceiveTitle').textContent = short.length > 0 || notShipped.length > 0
+    ? `Post ${docNo} as a partial receipt`
+    : `Post ${docNo}`;
+  body.innerHTML = html;
+  errorEl.classList.add('hidden');
+  modal.classList.remove('hidden');
+
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      modal.classList.add('hidden');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onConfirm = () => {
+      if (short.length === 0) return finish('none');
+      const picked = body.querySelector('input[name="postReceiveShortAction"]:checked')?.value;
+      if (!picked) {
+        errorEl.textContent = 'Choose what happens to the short items - Return to sender or Write off.';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      finish(picked);
+    };
+    const onCancel = () => finish(null);
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
+// Moves a received (fully or partially - every Receive posts) order out of the live Transfer_Header/Transfer_Line tables into
 // Posted_Transfer_Header/Posted_Transfer_Line (see supabase_posted_transfer_orders_tables.sql) -
 // inserts into the Posted tables first, then deletes from the live tables, so a failure partway
 // through leaves a recoverable duplicate rather than losing the order entirely.
@@ -1741,6 +1861,9 @@ async function archiveReceivedTransferOrder(docNo) {
   if (lineError) throw lineError;
 
   const header = headerRows[0];
+  // Shortage tag for Posted Transfers - from the lines' settled quantities (staff_settle_transfer_shortage).
+  const anyWrittenOff = (lineRows || []).some((l) => (Number(l['Qty Written Off']) || 0) > 0);
+  const anyReturned = (lineRows || []).some((l) => (Number(l['Qty Returned']) || 0) > 0);
   const postedHeader = {
     'No.': header['No.'],
     'Description': header['Description'] ?? null,
@@ -1758,7 +1881,8 @@ async function archiveReceivedTransferOrder(docNo) {
     'Posted Date': header['Posted Date'] ?? null,
     'Sent To Online': header['Sent To Online'] ?? null,
     'Requested By': header['Requested By'] ?? null,
-    'Shipped By': header['Shipped By'] ?? null
+    'Shipped By': header['Shipped By'] ?? null,
+    'Short Action': anyWrittenOff ? 'Written Off' : anyReturned ? 'Returned' : null
   };
 
   const { error: insertHeaderError } = await supabaseClient.from('Posted_Transfer_Header').insert(postedHeader);
@@ -1778,7 +1902,10 @@ async function archiveReceivedTransferOrder(docNo) {
       'Qty To Ship': line['Qty To Ship'] ?? null,
       'Qty Shipped': line['Qty Shipped'] ?? null,
       'Qty To Receive': line['Qty To Receive'] ?? null,
-      'Qty Received': line['Qty Received'] ?? null
+      'Qty Received': line['Qty Received'] ?? null,
+      'Qty Returned': line['Qty Returned'] ?? null,
+      'Qty Written Off': line['Qty Written Off'] ?? null,
+      'Order ID': line['Order ID'] ?? null
     }));
     const { error: insertLineError } = await supabaseClient.from('Posted_Transfer_Line').insert(postedLines);
     if (insertLineError) throw insertLineError;
@@ -2448,7 +2575,11 @@ function addNewLineRow() {
       <div class="variant-suggest-dropdown hidden"></div>
     </td>
     <td><input type="text" class="line-description" /></td>
-    <td><input type="number" class="line-qty" min="0" step="0.01" value="1" /></td>
+    <td>
+      <input type="number" class="line-qty" min="0" step="0.01" value="1" />
+      <div class="line-cap-msg muted hidden" style="margin-top:4px; font-size:12px; white-space:normal;"></div>
+    </td>
+    <td><input type="text" class="line-order-id" placeholder="Customer order (optional)" autocomplete="off" /></td>
     <td><button type="button" class="btn btn-danger btn-sm remove-line-btn">Remove</button></td>
   `;
   row.querySelector('.remove-line-btn').addEventListener('click', () => {
@@ -2456,7 +2587,18 @@ function addNewLineRow() {
     updateProductionCategoryLock();
     scheduleNewBomPreview();
   });
-  row.querySelector('.line-qty').addEventListener('input', scheduleNewBomPreview);
+  let capCheckDebounceHandle = null;
+  const scheduleCapCheck = () => {
+    clearTimeout(capCheckDebounceHandle);
+    capCheckDebounceHandle = setTimeout(() => checkRowRequestCap(row), 300);
+  };
+  row.querySelector('.line-qty').addEventListener('input', () => {
+    scheduleNewBomPreview();
+    scheduleCapCheck();
+  });
+  // An Order ID swaps the shelf limit for the order's own quantity - re-check, and re-run the
+  // duplicate-request check (customer-order lines are exempt from it).
+  row.querySelector('.line-order-id').addEventListener('change', () => checkRowPendingTransfer(row));
 
   const itemInput = row.querySelector('.line-item-no');
   let itemSearchDebounceHandle = null;
@@ -2630,7 +2772,16 @@ async function checkRowPendingTransfer(row) {
   const itemNo = row.querySelector('.line-item-no').value.trim();
   const variantId = row.querySelector('.line-variant-id').value || null;
   const variantName = row.querySelector('.line-variant-search').value.trim() || null;
-  if (!toWarehouseId || !itemNo) return;
+  if (!toWarehouseId || !itemNo) {
+    checkRowRequestCap(row);
+    return;
+  }
+
+  // Items with a shelf maintaining qty (and customer-order lines) are governed by the request cap,
+  // which already counts open orders - the blanket "one open request per item" block below is only
+  // for items with no limit set.
+  const cap = await checkRowRequestCap(row);
+  if (cap?.rule || row.querySelector('.line-order-id').value.trim()) return;
 
   let conflicts;
   try {
@@ -2654,6 +2805,84 @@ async function checkRowPendingTransfer(row) {
   msgEl.innerHTML = `<strong>${escapeHtml(label)}</strong> already has a pending transfer: ${pendingTransferLinksHtml(conflicts[0].orders)}`;
   msgEl.classList.remove('hidden');
   wirePendingTransferLinks(msgEl);
+}
+
+// Request cap (sql/supabase_transfer_request_cap.sql): per line, Max = the store's shelf maintaining
+// qty - on hand there - already on the way; customer-order lines (Order ID) are capped at what the
+// order needs instead. Lines of the same item in one request share the allowance, so every form line
+// is sent together. Returns one result per line (null = nothing to check). The database enforces the
+// same rule on save - this is so staff see the limit before they hit it.
+async function checkTransferRequestLines(docNo, toWarehouseId, lines) {
+  const { data, error } = await supabaseClient.rpc('staff_check_transfer_request_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_doc_no: docNo || '',
+    p_to_warehouse_id: toWarehouseId,
+    p_lines: lines.map((l) => ({ item_no: l.itemNo, variant_id: l.variantId || null, qty: l.qty, order_id: l.orderId || null }))
+  });
+  if (error) throw error;
+  const byIdx = new Map((data || []).map((r) => [r.idx, r]));
+  return lines.map((_, i) => byIdx.get(i) || null);
+}
+
+function readNewLineRow(row) {
+  return {
+    itemNo: row.querySelector('.line-item-no').value.trim(),
+    variantId: row.querySelector('.line-variant-id').value || null,
+    variantName: row.querySelector('.line-variant-search').value.trim() || null,
+    description: row.querySelector('.line-description').value.trim(),
+    qty: parseFloat(row.querySelector('.line-qty').value) || 0,
+    orderId: row.querySelector('.line-order-id').value.trim().toUpperCase() || null
+  };
+}
+
+function formatCapQty(value) {
+  const n = Number(value) || 0;
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+// Shows "Max N" (and why) under a row's qty. Returns that row's check result, or null.
+async function checkRowRequestCap(row) {
+  const msgEl = row.querySelector('.line-cap-msg');
+  const toWarehouseId = document.getElementById('newToWarehouseId').value.trim();
+  const me = readNewLineRow(row);
+  if (!toWarehouseId || !me.itemNo) {
+    msgEl.classList.add('hidden');
+    return null;
+  }
+
+  const rows = Array.from(document.getElementById('newLinesBody').querySelectorAll('tr'));
+  const lines = rows.map(readNewLineRow);
+  let results;
+  try {
+    results = await checkTransferRequestLines(document.getElementById('newNo').value.trim(), toWarehouseId, lines);
+  } catch (err) {
+    console.error('Request cap check failed:', err);
+    msgEl.classList.add('hidden');
+    return null;
+  }
+  // The row may have changed while the check was in flight.
+  const now = readNewLineRow(row);
+  if (now.itemNo !== me.itemNo || now.variantId !== me.variantId || now.qty !== me.qty || now.orderId !== me.orderId) return null;
+
+  const r = results[rows.indexOf(row)];
+  if (!r || !r.rule) {
+    msgEl.classList.add('hidden');
+    return r;
+  }
+  let text;
+  if (me.orderId) {
+    text = r.message && r.order_needed == null
+      ? r.message
+      : `Max ${formatCapQty(r.allowed)} - order needs ${formatCapQty(r.order_needed)}, ${formatCapQty(r.order_already)} already requested`;
+  } else {
+    text = `Max ${formatCapQty(r.allowed)} - ${r.rule} ${formatCapQty(r.maintain)}, on hand ${formatCapQty(r.on_hand)}, on the way ${formatCapQty(r.on_the_way)}`
+      + (r.open_docs ? ` (${r.open_docs})` : '');
+  }
+  msgEl.textContent = text;
+  msgEl.className = `line-cap-msg ${r.ok ? 'muted' : 'error-text'}`;
+  msgEl.style.cssText = 'margin-top:4px; font-size:12px; white-space:normal;';
+  return r;
 }
 
 async function saveNewTransfer() {
@@ -2697,14 +2926,7 @@ async function saveNewTransfer() {
 
   const lineRows = Array.from(document.getElementById('newLinesBody').querySelectorAll('tr'));
   const lines = lineRows
-    .map((row, index) => ({
-      itemNo: row.querySelector('.line-item-no').value.trim(),
-      variantId: row.querySelector('.line-variant-id').value || null,
-      variantName: row.querySelector('.line-variant-search').value.trim() || null,
-      description: row.querySelector('.line-description').value.trim(),
-      qty: parseFloat(row.querySelector('.line-qty').value) || 0,
-      lineNo: (index + 1) * 10000
-    }))
+    .map((row, index) => ({ ...readNewLineRow(row), lineNo: (index + 1) * 10000 }))
     .filter((l) => l.itemNo);
 
   if (lines.length === 0) {
@@ -2737,12 +2959,36 @@ async function saveNewTransfer() {
     return;
   }
 
+  // Request cap: every line within its shelf limit (or its customer order's qty). The database refuses
+  // an over-limit line anyway - checking here first means nothing is half-saved and staff see why.
+  let capResults;
+  try {
+    capResults = await checkTransferRequestLines(no, toWarehouseId, lines);
+  } catch (err) {
+    errorEl.textContent = describeSupabaseError(err, 'Could not check the request limits.');
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const overLimit = lines
+    .map((line, i) => ({ line, r: capResults[i] }))
+    .filter(({ r }) => r && !r.ok);
+  if (overLimit.length > 0) {
+    errorEl.innerHTML = 'These lines are over what this store can request:<ul style="margin:4px 0 0 18px;">'
+      + overLimit.map(({ line, r }) =>
+        `<li><strong>${escapeHtml([line.itemNo, line.variantName].filter(Boolean).join(' - '))}</strong> - requested ${formatCapQty(line.qty)}. ${escapeHtml(r.message || '')}</li>`
+      ).join('')
+      + '</ul>Lower the qty, remove the line, or put the customer\'s Order ID on it if it\'s for an order.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
   // One open request per item per store: if this To Warehouse already has the same item/variant on
   // an active order that isn't fully received yet, block and link to that order instead of letting
-  // duplicate requests pile up.
+  // duplicate requests pile up. Only for items with no shelf limit - capped lines already count what's
+  // on the way, and customer-order lines are checked against their order.
   let pendingConflicts;
   try {
-    pendingConflicts = await findPendingTransferConflicts(toWarehouseId, lines);
+    pendingConflicts = await findPendingTransferConflicts(toWarehouseId, lines.filter((l, i) => !capResults[i]?.rule));
   } catch (err) {
     errorEl.textContent = describeSupabaseError(err, 'Could not check for pending transfer orders.');
     errorEl.classList.remove('hidden');
@@ -2782,14 +3028,23 @@ async function saveNewTransfer() {
       'Locked By': currentSession?.displayName || currentSession?.username || null
     });
 
-    for (const line of lines) {
-      await upsertRow('Transfer_Line', { 'Document No.': no, 'Line No.': line.lineNo }, {
-        'Item No.': line.itemNo,
-        'Variant ID': line.variantId,
-        'Variant Name': line.variantName,
-        'Description': line.description || null,
-        'Qty To Transfer': line.qty
-      });
+    try {
+      for (const line of lines) {
+        await upsertRow('Transfer_Line', { 'Document No.': no, 'Line No.': line.lineNo }, {
+          'Item No.': line.itemNo,
+          'Variant ID': line.variantId,
+          'Variant Name': line.variantName,
+          'Description': line.description || null,
+          'Qty To Transfer': line.qty,
+          'Order ID': line.orderId
+        });
+      }
+    } catch (lineErr) {
+      // A line was refused (e.g. the request cap - someone else requested the same item a moment
+      // ago). Take the half-saved order back out so it doesn't sit there with missing lines.
+      await supabaseClient.from('Transfer_Line').delete().eq('"Document No."', no);
+      await supabaseClient.from('Transfer_Header').delete().eq('"No."', no);
+      throw lineErr;
     }
 
     // Assemble-to-Order lines: keep the exploded BOM as it was when requested, so a later change to

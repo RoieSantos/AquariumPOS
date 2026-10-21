@@ -27,10 +27,28 @@ function varianceBadge(variance) {
 function currentFilters() {
   return {
     p_search: document.getElementById('searchInput').value.trim() || null,
+    p_warehouse: document.getElementById('warehouseSelect').value || null,
     p_from: document.getElementById('fromInput').value || null,
     p_to: document.getElementById('toInput').value || null,
     p_result: document.getElementById('resultSelect').value || null
   };
+}
+
+// Declarations are keyed by the POS's warehouse NAME, so the filter matches on name.
+async function loadWarehouseOptions() {
+  const select = document.getElementById('warehouseSelect');
+  const { data, error } = await supabaseClient.rpc('admin_list_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (error) {
+    console.error('admin_list_warehouses failed:', error);
+    return;
+  }
+  const names = [...new Set((data || []).map((w) => w.name).filter(Boolean))].sort();
+  select.innerHTML = '<option value="">All warehouses</option>' + names
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join('');
 }
 
 function renderRows(rows) {
@@ -87,6 +105,7 @@ async function loadDeclarations() {
   currentRows = data || [];
   const first = currentRows[0];
   document.getElementById('statCount').textContent = first ? Number(first.total_count).toLocaleString() : '0';
+  document.getElementById('statDeclared').textContent = formatMoney(first ? first.total_declared : 0);
   document.getElementById('statShort').textContent = formatMoney(first ? first.total_short : 0);
   document.getElementById('statOver').textContent = formatMoney(first ? first.total_over : 0);
 
@@ -166,7 +185,7 @@ function wireFilters() {
     clearTimeout(searchDebounceHandle);
     searchDebounceHandle = setTimeout(() => { currentPage = 1; loadDeclarations(); }, 300);
   });
-  ['fromInput', 'toInput', 'resultSelect'].forEach((id) => {
+  ['warehouseSelect', 'fromInput', 'toInput', 'resultSelect'].forEach((id) => {
     document.getElementById(id).addEventListener('change', () => { currentPage = 1; loadDeclarations(); });
   });
   document.getElementById('detailCloseBtn').addEventListener('click', closeDetail);
@@ -196,5 +215,5 @@ function wireFilters() {
 
   document.getElementById('setupContent').classList.remove('hidden');
   wireFilters();
-  await loadDeclarations();
+  await Promise.all([loadWarehouseOptions(), loadDeclarations()]);
 })();
