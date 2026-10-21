@@ -112,6 +112,9 @@
         <button class="bc-cmd adv-cmd hidden" id="advNextBtn" type="button"></button>
         <button class="bc-cmd adv-cmd hidden" id="advSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd adv-cmd hidden" id="advStepBackBtn" type="button" title="Undo the last stage (Shipped -> To Ship -> production)">Undo Stage</button>
+        <!-- Same as the card's Request Stock Transfer, for the selected row - enabled once its plan
+             (staff_get_advance_order_transfer_plan) shows a short line another warehouse has. -->
+        <button class="bc-cmd adv-cmd hidden" id="advRequestTransferBtn" type="button" disabled title="Request the missing stock from another warehouse on a Transfer Order linked to this order">Request Stock Transfer</button>
         <span class="bc-cmd-sep"></span>
         <button class="bc-cmd" id="refreshOrdersBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
         <!-- Super users only (js/onlineOrders.js wireItemLedgerButton) - opens Item Ledger Entries, filtered
@@ -1343,7 +1346,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=fulfilled1"></script>
-  <script src="js/onlineOrders.js?v=advtransfer1"></script>
+  <script src="js/onlineOrders.js?v=advtransfer3"></script>
   <script src="js/onlineNewOrders.js?v=newconv1"></script>
   <script src="js/pwa.js"></script>
 </body>

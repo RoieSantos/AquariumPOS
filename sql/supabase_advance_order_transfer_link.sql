@@ -23,10 +23,12 @@
 --      order's branch) with the Order ID on every line. The request cap trigger still checks each line.
 --      Who: Super User / Production Manager, or the order's own branch staff (Store Manager / Sales /
 --      Conversations staff who can see the order). Makers alone can't.
+--   5. staff_get_advance_order_fulfilment_flags(p_nos[]) - list flags on NEW orders: "Can be transferred"
+--      (another warehouse has the missing stock) / "Needs assigning" (nobody has it - a maker builds it).
 --
 -- Run AFTER supabase_transfer_request_cap.sql (re-run it first - its ADV- check was fixed in the same
 -- change), supabase_serial_order_reservation.sql and supabase_advance_order_to_follow.sql.
--- Needs js/onlineOrders.js + online-orders.html cache v=advtransfer1. Safe to re-run.
+-- Needs js/onlineOrders.js + online-orders.html cache v=advtransfer3. Safe to re-run.
 
 -- ============================================================================
 -- Helpers
@@ -273,8 +275,9 @@ create trigger "TR_ItemSerialTracking_ReserveOnTransferReceipt"
 -- ============================================================================
 
 drop function if exists public.staff_get_advance_order_transfer_plan(text, text, text);
+drop function if exists public._advance_order_transfer_plan_rows(text);
 
--- One row per item/variant on the order (sets, stickers and CUSTOM- builds left out - makers do those):
+-- (internal - the button's plan and the list's flags) One row per item/variant on the order (sets, stickers and CUSTOM- builds left out - makers do those):
 --   needed         = qty on the order
 --   tagged         = serials already SOLD to the order
 --   held           = serials RESERVED for the order (e.g. received on an earlier transfer)
@@ -282,12 +285,8 @@ drop function if exists public.staff_get_advance_order_transfer_plan(text, text,
 --   in_stock_here  = free stock at the order's branch (could be used without a transfer)
 --   short          = needed - tagged - held - on_the_way - in_stock_here (never below 0)
 --   sources        = [{warehouse_id, warehouse, is_production, available}] other active warehouses with stock
-create or replace function public.staff_get_advance_order_transfer_plan(
-  p_admin_username text,
-  p_admin_password text,
-  p_no text
-)
-returns table(order_warehouse text, order_warehouse_id text, can_request boolean, item_code text,
+create or replace function public._advance_order_transfer_plan_rows(p_no text)
+returns table(order_warehouse text, order_warehouse_id text, item_code text,
               variant_id text, variant_name text, description text, needs_serial boolean,
               needed numeric, tagged numeric, held numeric, on_the_way numeric, in_stock_here numeric,
               short numeric, sources jsonb)
@@ -301,11 +300,6 @@ declare
   v_wh_id text;
   v_link text := 'ADV-' || trim(coalesce(p_no, ''));
 begin
-  if not public.is_staff_authorized(p_admin_username, p_admin_password)
-     or not public._advance_order_can_view(p_admin_username, p_no) then
-    raise exception 'Not authorized.';
-  end if;
-
   select nullif(trim(a."Warehouse"), '') into v_wh_name from public."AdvanceOrders" a where a."TransactionNo" = p_no;
   select w."ID" into v_wh_id from public."Warehouses" w where lower(trim(w."Name")) = lower(v_wh_name) limit 1;
 
@@ -337,7 +331,6 @@ begin
         from li
     )
     select v_wh_name, v_wh_id::text,
-           public._advance_order_can_request_transfer(p_admin_username, p_no) and v_wh_id is not null,
            c.code::text, c.variant::text,
            (select nullif(trim(v."VariantName"), '') from public."Variants" v where v."VariationId" = c.variant)::text,
            c.descr::text, c.is_serial, c.qty, c.n_tagged, c.n_held, c.n_way, c.n_here,
@@ -359,7 +352,96 @@ begin
 end;
 $$;
 
+revoke execute on function public._advance_order_transfer_plan_rows(text) from public, anon, authenticated;
+
+create or replace function public.staff_get_advance_order_transfer_plan(
+  p_admin_username text,
+  p_admin_password text,
+  p_no text
+)
+returns table(order_warehouse text, order_warehouse_id text, can_request boolean, item_code text,
+              variant_id text, variant_name text, description text, needs_serial boolean,
+              needed numeric, tagged numeric, held numeric, on_the_way numeric, in_stock_here numeric,
+              short numeric, sources jsonb)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password)
+     or not public._advance_order_can_view(p_admin_username, p_no) then
+    raise exception 'Not authorized.';
+  end if;
+  return query
+    select r.order_warehouse, r.order_warehouse_id,
+           public._advance_order_can_request_transfer(p_admin_username, p_no) and r.order_warehouse_id is not null,
+           r.item_code, r.variant_id, r.variant_name, r.description, r.needs_serial, r.needed, r.tagged,
+           r.held, r.on_the_way, r.in_stock_here, r.short, r.sources
+      from public._advance_order_transfer_plan_rows(p_no) r;
+end;
+$$;
+
 grant execute on function public.staff_get_advance_order_transfer_plan(text, text, text) to anon;
+
+-- ============================================================================
+-- 5. List flags: "Can be transferred" / "Needs assigning"
+-- ============================================================================
+
+drop function if exists public.staff_get_advance_order_fulfilment_flags(text, text, text[]);
+
+-- Per NEW order (not assigned / shipped yet - the production stage takes over from there), from the
+-- same plan as the button:
+--   short_units        = stock units not at the branch and not on the way / held
+--   transferable_units = of those, how many another warehouse can send (best single warehouse per line)
+--   maker_units        = the rest - no warehouse has them, a maker has to build them
+--   transfer_from      = the warehouse(s) that would send (production first, then most stock)
+-- Custom lines (CUSTOM- builds, needs_tank / needs_stand) are left to the page - it already has those
+-- flags on the list row. Orders with nothing short aren't returned.
+create or replace function public.staff_get_advance_order_fulfilment_flags(
+  p_admin_username text,
+  p_admin_password text,
+  p_nos text[]
+)
+returns table(transaction_no text, short_units numeric, transferable_units numeric, maker_units numeric,
+              transfer_from text)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  return query
+    with nos as (
+      select distinct a."TransactionNo"::text as no
+        from public."AdvanceOrders" a
+        left join public."AdvanceOrderProduction" p on p."TransactionNo" = a."TransactionNo"
+       where a."TransactionNo" = any(coalesce(p_nos, array[]::text[]))
+         and coalesce(public._advance_order_prod_status(p), 'New') = 'New'
+         and public._advance_order_can_view(p_admin_username, a."TransactionNo")
+    ),
+    lines as (
+      select n.no, r.short,
+             least(r.short, coalesce((select max((s->>'available')::numeric) from jsonb_array_elements(r.sources) s), 0)) as can_send,
+             (select s->>'warehouse' from jsonb_array_elements(r.sources) s
+               order by (s->>'is_production')::boolean desc, (s->>'available')::numeric desc limit 1) as best_from
+        from nos n
+        cross join lateral public._advance_order_transfer_plan_rows(n.no) r
+       where r.short > 0
+    )
+    select l.no, sum(l.short), sum(l.can_send), sum(l.short - l.can_send),
+           string_agg(distinct l.best_from, ', ') filter (where l.can_send > 0)
+      from lines l
+     group by l.no
+     order by l.no;
+end;
+$$;
+
+grant execute on function public.staff_get_advance_order_fulfilment_flags(text, text, text[]) to anon;
 
 drop function if exists public.staff_create_advance_order_transfer(text, text, text, text, jsonb);
 
@@ -485,6 +567,7 @@ from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public' and p.proname in (
   'staff_get_advance_order_transfers', 'staff_get_advance_order_transfer_status',
   'staff_get_advance_order_transfer_plan', 'staff_create_advance_order_transfer',
+  'staff_get_advance_order_fulfilment_flags', '_advance_order_transfer_plan_rows',
   '_serial_reserve_on_transfer_receipt', '_tr_order_cap')
 union all
 select 'trigger', tgname::text, case when tgenabled <> 'D' then 'enabled' else 'DISABLED' end

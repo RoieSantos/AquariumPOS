@@ -7486,7 +7486,11 @@ let myAdvanceShipCount = 0; // Dispatcher's To Ship advance orders (loadDispatch
 const ADVANCE_TO_FOLLOW_FILTER = 'To Follow';
 const advanceToFollowByNo = new Map(); // transaction_no -> { units_to_follow, to_follow }
 const advanceTransferByNo = new Map(); // transaction_no -> { stage, docs, from_warehouses, qty_* } (staff_get_advance_order_transfer_status)
-let advanceTransferPlan = null; // the open card's staff_get_advance_order_transfer_plan rows (Request Stock Transfer)
+const advanceFulfilmentByNo = new Map(); // transaction_no -> { transferable_units, maker_units, transfer_from } (staff_get_advance_order_fulfilment_flags)
+// staff_get_advance_order_transfer_plan rows per order (Request Stock Transfer on the card and the list) -
+// read when the card opens or a list row is selected, dropped after any action / list reload.
+const advanceTransferPlanByNo = new Map();
+let advTransferNo = null; // the order #advTransferDialog is open for
 const ADVANCE_CARD_MAXIMIZED_KEY = 'advanceOrderCardMaximized';
 const ADVANCE_PARTS = ['tank', 'stand'];
 
@@ -7563,13 +7567,18 @@ async function loadAdvanceToFollow(transactionNos) {
   if (!nos.length) return;
   // The linked Stock Transfer stage rides along (same orders, same moments) - quiet on error, e.g.
   // sql/supabase_advance_order_transfer_link.sql not run yet.
-  const [{ data, error }, transfers] = await Promise.all([
+  const [{ data, error }, transfers, fulfilment] = await Promise.all([
     advanceRpc('staff_get_advance_orders_to_follow', { p_nos: nos }),
-    advanceRpc('staff_get_advance_order_transfer_status', { p_nos: nos })
+    advanceRpc('staff_get_advance_order_transfer_status', { p_nos: nos }),
+    advanceRpc('staff_get_advance_order_fulfilment_flags', { p_nos: nos })
   ]);
   if (!transfers.error) {
     nos.forEach((no) => advanceTransferByNo.delete(no));
     (transfers.data || []).forEach((r) => advanceTransferByNo.set(String(r.transaction_no), r));
+  }
+  if (!fulfilment.error) {
+    nos.forEach((no) => advanceFulfilmentByNo.delete(no));
+    (fulfilment.data || []).forEach((r) => advanceFulfilmentByNo.set(String(r.transaction_no), r));
   }
   if (error) return;
   nos.forEach((no) => advanceToFollowByNo.delete(no));
@@ -7586,8 +7595,32 @@ function advanceTransferBadgeHtml(transactionNo) {
   return `<span class="badge ${cls}" title="Stock transfer ${escapeHtml(t.docs || '')} - ${Number(t.qty_received) || 0}/${Number(t.qty_requested) || 0} received">${escapeHtml(label)}</span>`;
 }
 
+// What to do next on a NEW order (staff_get_advance_order_fulfilment_flags + the row's custom flags):
+// "Can be transferred" - another warehouse has the missing stock (Request Stock Transfer);
+// "Needs assigning" - nobody has it, or a custom line, so a maker has to build it (Assign).
+// Both can show (e.g. stand in stock at Amaya, custom tank to build). Gone once assigned / transferred.
+function advanceNextStepBadgesHtml(o) {
+  if (advanceStatus(o) !== 'New' || advanceAssignedParts(o).length) return '';
+  const f = advanceFulfilmentByNo.get(String(o.transaction_no));
+  const transferable = Number(f?.transferable_units) || 0;
+  const makerUnits = Number(f?.maker_units) || 0;
+  const customWork = !!(o.has_custom_line || o.needs_tank || o.needs_stand);
+  return [
+    transferable > 0
+      ? `<span class="badge badge-primary" title="${transferable} unit${transferable === 1 ? '' : 's'} not at ${escapeHtml(o.warehouse || 'the branch')} but in stock at ${escapeHtml(f.transfer_from || 'another warehouse')} - use Request Stock Transfer">Can be transferred</span>`
+      : '',
+    makerUnits > 0 || customWork
+      ? `<span class="badge badge-warning" title="${[
+        makerUnits > 0 ? `${makerUnits} unit${makerUnits === 1 ? '' : 's'} not in stock at any warehouse` : '',
+        customWork ? 'has a custom line' : ''
+      ].filter(Boolean).join(' · ')} - assign a maker to build it">Needs assigning</span>`
+      : ''
+  ].filter(Boolean).join(' ');
+}
+
 function advanceFlagsHtml(o) {
   return [
+    advanceNextStepBadgesHtml(o),
     advanceToFollowBadgeHtml(o.transaction_no),
     advanceTransferBadgeHtml(o.transaction_no),
     o.glass_thickness ? `<span class="badge badge-glass" title="This order has a ${escapeHtml(o.glass_thickness)} glass line">${escapeHtml(o.glass_thickness)} glass</span>` : '',
@@ -7717,6 +7750,7 @@ function updateAdvanceListActions() {
   const o = selectedAdvanceNo ? advanceRowsByNo.get(selectedAdvanceNo) : null;
   document.getElementById('advOpenBtn').disabled = !o;
   applyAdvanceActions({ assign: 'advAssignBtn', next: 'advNextBtn', sendBack: 'advSendBackBtn', stepBack: 'advStepBackBtn' }, o);
+  refreshAdvanceListTransferBtn(o?.transaction_no);
   showListSerials('advance', o?.transaction_no);
 }
 
@@ -7737,7 +7771,8 @@ async function loadAdvanceOrders() {
       ...listSortParam(advanceListSort)
     });
   if (thisGeneration !== advanceLoadGeneration) return; // superseded by a newer search/page
-  if (!error && advanceStatusFilter !== ADVANCE_TO_FOLLOW_FILTER) {
+  // (To Follow already read its badges, but the transfer / next-step flags still need this page's rows)
+  if (!error) {
     await loadAdvanceToFollow((data || []).map((o) => o.transaction_no));
     if (thisGeneration !== advanceLoadGeneration) return;
   }
@@ -7749,6 +7784,7 @@ async function loadAdvanceOrders() {
   }
 
   (data || []).forEach((o) => advanceRowsByNo.set(String(o.transaction_no), o));
+  advanceTransferPlanByNo.clear(); // stock may have moved - re-read the selected row's plan
   if (selectedAdvanceNo && !(data || []).some((o) => String(o.transaction_no) === selectedAdvanceNo)) selectedAdvanceNo = null;
   tbody.innerHTML = !data || data.length === 0
     ? `<tr><td colspan="19" class="cell-msg">No advance orders found${advanceStatusFilter ? ` in ${escapeHtml(advanceStatusFilter)}` : ''}.</td></tr>`
@@ -7989,7 +8025,6 @@ async function loadAdvanceCardTransfers(transactionNo) {
   const no = String(transactionNo);
   const tab = document.getElementById('advanceCardTransfersTab');
   const btn = document.getElementById('advanceCardRequestTransferBtn');
-  advanceTransferPlan = null;
   btn.classList.add('hidden');
   const [transfers, plan, status] = await Promise.all([
     advanceRpc('staff_get_advance_order_transfers', { p_no: no }),
@@ -8014,10 +8049,10 @@ async function loadAdvanceCardTransfers(transactionNo) {
 
   const rows = transfers.data || [];
   const planRows = plan.error ? [] : plan.data || [];
-  advanceTransferPlan = planRows;
+  if (!plan.error) advanceTransferPlanByNo.set(no, planRows);
   const shortRows = planRows.filter((r) => Number(r.short) > 0);
-  const canRequest = !!planRows[0]?.can_request && shortRows.some((r) => (r.sources || []).length);
-  btn.classList.toggle('hidden', !canRequest);
+  btn.classList.toggle('hidden', !advanceCanRequestTransfer(planRows));
+  if (selectedAdvanceNo === no) updateAdvanceListActions();
 
   tab.classList.toggle('hidden', !rows.length && !shortRows.length);
   const t = advanceTransferByNo.get(no);
@@ -8057,9 +8092,52 @@ function advTransferAvailableAt(row, warehouseId) {
   return Number((row.sources || []).find((s) => s.warehouse_id === warehouseId)?.available) || 0;
 }
 
+// Something short at the branch that another warehouse has, and the server says this user may request.
+function advanceCanRequestTransfer(planRows) {
+  return !!planRows?.[0]?.can_request && planRows.some((r) => Number(r.short) > 0 && (r.sources || []).length);
+}
+
+function advTransferShortRows() {
+  return (advanceTransferPlanByNo.get(String(advTransferNo)) || []).filter((r) => Number(r.short) > 0);
+}
+
+// Reads the order's plan into advanceTransferPlanByNo (once until dropped). Returns the rows, or null on error.
+async function loadAdvanceTransferPlan(no) {
+  const key = String(no);
+  if (advanceTransferPlanByNo.has(key)) return advanceTransferPlanByNo.get(key);
+  const { data, error } = await advanceRpc('staff_get_advance_order_transfer_plan', { p_no: key });
+  if (error) return null;
+  advanceTransferPlanByNo.set(key, data || []);
+  return data || [];
+}
+
+// List button: enabled for the selected row once its plan says a transfer can be requested.
+async function refreshAdvanceListTransferBtn(no) {
+  const btn = document.getElementById('advRequestTransferBtn');
+  if (!no) { btn.disabled = true; return; }
+  const key = String(no);
+  if (!advanceTransferPlanByNo.has(key)) {
+    btn.disabled = true;
+    await loadAdvanceTransferPlan(key);
+    if (selectedAdvanceNo !== key) return;
+  }
+  const plan = advanceTransferPlanByNo.get(key);
+  btn.disabled = !advanceCanRequestTransfer(plan);
+  btn.title = btn.disabled
+    ? (plan?.length && !plan[0].can_request ? "You can't request transfers for this order" : 'Nothing on this order is short at its branch, or no other warehouse has it')
+    : 'Request the missing stock from another warehouse on a Transfer Order linked to this order';
+}
+
+async function requestAdvanceTransfer(no) {
+  const plan = await loadAdvanceTransferPlan(no);
+  if (!plan) { window.alert("Could not check this order's stock - run sql/supabase_advance_order_transfer_link.sql if it's not set up yet."); return; }
+  if (!advanceCanRequestTransfer(plan)) { window.alert('Nothing on this order needs a transfer right now.'); return; }
+  openAdvTransferDialog(no);
+}
+
 function renderAdvTransferLines() {
   const fromId = document.getElementById('advTransferFrom').value;
-  const rows = (advanceTransferPlan || []).filter((r) => Number(r.short) > 0);
+  const rows = advTransferShortRows();
   document.getElementById('advTransferLines').innerHTML = rows.map((r, i) => {
     const avail = advTransferAvailableAt(r, fromId);
     const qty = Math.min(Number(r.short), avail);
@@ -8072,9 +8150,10 @@ function renderAdvTransferLines() {
   }).join('');
 }
 
-function openAdvTransferDialog() {
-  const o = advanceRowsByNo.get(String(openAdvanceNo));
-  const rows = (advanceTransferPlan || []).filter((r) => Number(r.short) > 0);
+function openAdvTransferDialog(no) {
+  advTransferNo = String(no);
+  const o = advanceRowsByNo.get(advTransferNo);
+  const rows = advTransferShortRows();
   if (!o || !rows.length) return;
   // From choices: every warehouse holding any short item - production first, then the one covering most.
   const byId = new Map();
@@ -8098,8 +8177,8 @@ function closeAdvTransferDialog() {
 }
 
 async function saveAdvTransferDialog() {
-  const no = openAdvanceNo;
-  const rows = (advanceTransferPlan || []).filter((r) => Number(r.short) > 0);
+  const no = advTransferNo;
+  const rows = advTransferShortRows();
   const errorEl = document.getElementById('advTransferError');
   const lines = [...document.querySelectorAll('#advTransferLines [data-adv-transfer-row]')]
     .map((input) => ({ r: rows[Number(input.dataset.advTransferRow)], qty: parseFloat(input.value) || 0, max: Number(input.max) || 0 }))
@@ -8127,6 +8206,7 @@ async function saveAdvTransferDialog() {
   }
   closeAdvTransferDialog();
   window.alert(`Transfer ${data} requested from ${document.getElementById('advTransferFrom').selectedOptions[0]?.textContent || 'the warehouse'}. When it's received at the branch, the unit(s) are held for this order and Ready to Ship picks them up.`);
+  advanceTransferPlanByNo.delete(no);
   await refreshAdvanceAfterAction(no);
   if (openAdvanceNo === no) loadAdvanceCardTransfers(no);
 }
@@ -8454,7 +8534,7 @@ function wireAdvanceCard() {
   document.getElementById('advanceCardStepBackBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, null, e.currentTarget));
   document.getElementById('advanceCardShowSerialsBtn').addEventListener('click', (e) => openAdvanceNo && showAdvanceSerials(openAdvanceNo, e.currentTarget));
   document.getElementById('advanceCardPrintSerialsBtn').addEventListener('click', (e) => openAdvanceNo && printAdvanceSerialLabels(openAdvanceNo, e.currentTarget));
-  document.getElementById('advanceCardRequestTransferBtn').addEventListener('click', () => openAdvanceNo && openAdvTransferDialog());
+  document.getElementById('advanceCardRequestTransferBtn').addEventListener('click', () => openAdvanceNo && requestAdvanceTransfer(openAdvanceNo));
   document.getElementById('advTransferFrom').addEventListener('change', renderAdvTransferLines);
   document.getElementById('saveAdvTransferBtn').addEventListener('click', saveAdvTransferDialog);
   document.getElementById('cancelAdvTransferBtn').addEventListener('click', closeAdvTransferDialog);
@@ -8463,6 +8543,7 @@ function wireAdvanceCard() {
   // The list's action bar - same actions, on the selected row.
   document.getElementById('advOpenBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceCard(selectedAdvanceNo));
   document.getElementById('advAssignBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceAssignDialog(selectedAdvanceNo));
+  document.getElementById('advRequestTransferBtn').addEventListener('click', () => selectedAdvanceNo && requestAdvanceTransfer(selectedAdvanceNo));
   document.getElementById('advSendBackBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceSendBackDialog(selectedAdvanceNo));
   document.getElementById('advNextBtn').addEventListener('click', (e) => setAdvanceStage(selectedAdvanceNo, e.currentTarget.dataset.stage, e.currentTarget));
   document.getElementById('advStepBackBtn').addEventListener('click', (e) => setAdvanceStage(selectedAdvanceNo, null, e.currentTarget));
