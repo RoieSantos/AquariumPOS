@@ -201,6 +201,13 @@ function formatDate(value) {
   return d.toLocaleDateString();
 }
 
+// A date with who did it underneath (Requested By / Shipped By / Received By) - list cells and the
+// card's General fields. The name line is left off when nobody is recorded.
+function dateByHtml(date, by) {
+  const who = (by || '').trim();
+  return `${escapeHtml(formatDate(date))}${who ? `<div class="doc-by" style="font-size:11.5px; line-height:1.25; color:var(--text-muted);">by ${escapeHtml(who)}</div>` : ''}`;
+}
+
 // "Today" as a yyyy-mm-dd string in the browser's local calendar date - NOT
 // `new Date().toISOString().slice(0, 10)`, which converts to UTC first and silently rolls back
 // to "yesterday" for any local time before UTC midnight (e.g. every local time before 8:00 AM in
@@ -275,10 +282,10 @@ function renderHeaders() {
         <td><span class="badge ${statusBadgeClass(r['Status'])}">${r['Status'] || ''}</span></td>
         <td>${r['From Warehouse'] || ''}</td>
         <td>${r['To Warehouse'] || ''}</td>
-        <td>${formatDate(r['Requested Date'])}</td>
+        <td>${dateByHtml(r['Requested Date'], r['Requested By'])}</td>
         <td>${formatDate(r['Estimated Delivery Date'])}</td>
-        <td>${formatDate(r['Transfer Date'])}</td>
-        <td>${formatDate(r['Receive Date'])}</td>
+        <td>${dateByHtml(r['Transfer Date'], r['Shipped By'])}</td>
+        <td>${dateByHtml(r['Receive Date'], r['Received By'])}</td>
       </tr>
     `)
     .join('');
@@ -354,12 +361,12 @@ function renderManageHeader(header) {
 
   document.getElementById('viewFromWarehouse').textContent = header['From Warehouse'] || '';
   document.getElementById('viewToWarehouse').textContent = header['To Warehouse'] || '';
-  document.getElementById('viewRequestedDate').textContent = formatDate(header['Requested Date']);
+  document.getElementById('viewRequestedDate').innerHTML = dateByHtml(header['Requested Date'], header['Requested By']);
   // Transfer Date/Receive Date are set automatically by the first Ship/Receive action (today's
   // date), not manually entered - shown here as plain read-only text, same as the warehouse
   // fields. They don't change on later partial ship/receive actions for the same order.
-  document.getElementById('viewTransferDate').textContent = formatDate(header['Transfer Date']);
-  document.getElementById('viewReceiveDate').textContent = formatDate(header['Receive Date']);
+  document.getElementById('viewTransferDate').innerHTML = dateByHtml(header['Transfer Date'], header['Shipped By']);
+  document.getElementById('viewReceiveDate').innerHTML = dateByHtml(header['Receive Date'], header['Received By']);
 
   // Shown on the General tab only while it is collapsed, so folding it away never costs you the
   // fields you most need while working the lines - same reasoning as the PO card's General tab.
@@ -1724,6 +1731,16 @@ async function receiveTransferOrder(docNo) {
       'Status': status === 'Received' ? 'Received' : 'Partial Received',
       'Receive Date': todayLocalDateString()
     });
+    // Separate and best-effort: before supabase_document_requested_shipped_received_by.sql adds the
+    // column this would fail, and that must not stop the receipt. The archive trigger falls back to
+    // the ledger for the name anyway.
+    try {
+      await upsertRow('Transfer_Header', { 'No.': docNo }, {
+        'Received By': currentSession?.displayName || currentSession?.username || null
+      });
+    } catch (err) {
+      console.error('Setting Received By failed:', err);
+    }
 
     // Archive to Posted_Transfer_Header/Posted_Transfer_Line and remove from the live tables.
     await archiveReceivedTransferOrder(docNo);
@@ -1882,6 +1899,8 @@ async function archiveReceivedTransferOrder(docNo) {
     'Sent To Online': header['Sent To Online'] ?? null,
     'Requested By': header['Requested By'] ?? null,
     'Shipped By': header['Shipped By'] ?? null,
+    // Only when the live header has the column (select('*')) - Posted has it from the same SQL file.
+    ...('Received By' in header ? { 'Received By': header['Received By'] ?? null } : {}),
     'Short Action': anyWrittenOff ? 'Written Off' : anyReturned ? 'Returned' : null
   };
 

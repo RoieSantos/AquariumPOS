@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Purchase Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=navwide1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=skuname1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=posuggest2" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -66,7 +66,8 @@
                 <th class="num">Total Qty</th>
                 <th>Received</th>
                 <th>Payment</th>
-                <th>Created By</th>
+                <th>Requested By</th>
+                <th>Received By</th>
                 <th></th>
               </tr>
             </thead>
@@ -202,6 +203,16 @@
                 <label>Order Date</label>
                 <div id="receiveOrderDate" class="bc-doc-value"></div>
               </div>
+              <!-- Who requested (CreatedBy) / received (Item Ledger receipts) - staff_get_purchase_order_people,
+                   sql/supabase_document_requested_shipped_received_by.sql -->
+              <div class="bc-doc-field hidden" id="poCardRequestedByRow">
+                <label>Requested By</label>
+                <div id="receiveRequestedBy" class="bc-doc-value">-</div>
+              </div>
+              <div class="bc-doc-field hidden" id="poCardReceivedByRow">
+                <label>Received By</label>
+                <div id="receiveReceivedBy" class="bc-doc-value">-</div>
+              </div>
 
               <!-- Payment Method (Cash/Online) - per "my process is pay first before receiving the
                    item, can we track how it is get paid". Shown and editable in BOTH new and
@@ -236,6 +247,7 @@
           <div class="bc-doc-part-head">
             Lines
             <button class="bc-cmd" id="addNewPoLineBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Line</button>
+            <button class="bc-cmd" id="suggestPoLinesBtn" type="button" title="Suggest what this warehouse should order from this vendor, from recent sales at the warehouse and the stores it supplies"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Suggest Lines</button>
           </div>
 
           <div class="doc-lines-wrap">
@@ -419,6 +431,78 @@
     </div>
   </div>
 
+  <!-- Suggest Lines (js/purchaseOrders.js openPoSuggestModal) - stacks above the New PO card. What the
+       header warehouse should order from the header vendor (staff_suggest_purchase_order_lines,
+       sql/supabase_purchase_order_suggestions.sql). Nothing is saved here - ticked rows become New PO
+       lines, still editable, and the PO is only created by Create Purchase Order. -->
+  <div id="poSuggestModal" class="modal-backdrop hidden po-suggest-backdrop" style="z-index:110;">
+    <div class="modal-panel bc-doc bc-doc-dialog po-suggest-panel" role="dialog" aria-modal="true" aria-labelledby="poSuggestTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption">PURCHASE ORDER &middot; SUGGESTIONS</div>
+          <h2 id="poSuggestTitle">Suggested Lines</h2>
+          <div class="po-suggest-sub" id="poSuggestSub"></div>
+        </div>
+        <button class="bc-cmd po-suggest-x" id="poSuggestXBtn" type="button" title="Close" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="po-suggest-toolbar">
+        <label title="How many days of sales to average">Sales period
+          <span class="po-suggest-field"><input type="number" id="poSuggestSalesDays" min="1" max="365" value="30" /><span>days</span></span></label>
+        <label title="How many days of sales the order should last after it arrives">Cover
+          <span class="po-suggest-field"><input type="number" id="poSuggestCoverDays" min="0" max="365" value="30" /><span>days</span></span></label>
+        <label title="Used when the item has no lead time for this vendor (Item Setup &gt; Cost &amp; Vendors)">Default lead time
+          <span class="po-suggest-field"><input type="number" id="poSuggestLeadDays" min="0" max="365" value="7" /><span>days</span></span></label>
+        <button class="bc-btn" id="poSuggestRecalcBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Calculate</button>
+        <span class="po-suggest-spacer"></span>
+        <label class="po-suggest-toggle"><input type="checkbox" id="poSuggestOnlyShort" checked /> Only items to order</label>
+      </div>
+
+      <div class="po-suggest-summary">
+        <div class="po-suggest-stat"><span id="poSuggestStatLines">0</span><small>lines picked</small></div>
+        <div class="po-suggest-stat"><span id="poSuggestStatUnits">0</span><small>units</small></div>
+        <div class="po-suggest-stat"><span id="poSuggestStatCost">0.00</span><small>est. cost</small></div>
+        <div class="po-suggest-demand"><small>Demand from sales at</small><div id="poSuggestDemand"></div></div>
+      </div>
+
+      <div class="po-suggest-grid">
+        <table class="bc-doc-lines po-suggest-table">
+          <thead>
+            <tr class="po-suggest-groups">
+              <th colspan="2"></th>
+              <th colspan="4" class="grp">Sales</th>
+              <th colspan="5" class="grp">Stock &amp; pipeline</th>
+              <th colspan="2" class="grp grp-order">Order</th>
+            </tr>
+            <tr class="po-suggest-cols">
+              <th class="po-suggest-check"><input type="checkbox" id="poSuggestAll" title="Tick / untick all" /></th>
+              <th>Item</th>
+              <th class="num" title="Sold at the warehouse and the stores it supplies in the sales period">Sold</th>
+              <th class="num">Per Day</th>
+              <th class="num" title="Lead time in days for this vendor">Lead</th>
+              <th class="num" title="Per day x (lead + cover)">Target</th>
+              <th class="num" title="On hand at this warehouse">Warehouse</th>
+              <th class="num" title="Still to arrive on open POs into this warehouse (any vendor)">On PO</th>
+              <th class="num" title="Shipped to this warehouse, not received yet">In</th>
+              <th class="num" title="Requested from this warehouse, not shipped yet">Out</th>
+              <th class="num" title="On hand at the stores (info only - not subtracted)">Stores</th>
+              <th class="num grp-order" title="Pieces (base unit) - converted to the line's purchase unit when added">Qty</th>
+              <th class="num grp-order" title="Qty x the vendor's unit cost">Est. Cost</th>
+            </tr>
+          </thead>
+          <tbody id="poSuggestBody"></tbody>
+        </table>
+      </div>
+      <div id="poSuggestError" class="error-text hidden po-suggest-error"></div>
+
+      <div class="bc-doc-foot">
+        <span class="po-suggest-hint">Qty = Target &minus; (Warehouse + On PO + In &minus; Out). Store stock is shown, not subtracted. Production categories are left out.</span>
+        <button class="bc-btn" id="poSuggestCloseBtn" type="button">Cancel</button>
+        <button class="bc-btn bc-btn-primary" id="poSuggestAddBtn" type="button">Add to Lines</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
@@ -427,7 +511,7 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/purchaseOrders.js?v=liststock1"></script>
+  <script src="js/purchaseOrders.js?v=whoby1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

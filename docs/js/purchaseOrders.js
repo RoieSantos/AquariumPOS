@@ -71,7 +71,8 @@ function poRowsHtml(rows) {
         <td class="num">${Number(po.total_quantity || 0).toLocaleString()}</td>
         <td>${receivedBadgeHtml(po)}</td>
         <td>${escapeHtml(po.payment_method || '')}</td>
-        <td>${po.created_by || ''}</td>
+        <td class="po-requested-by">${escapeHtml(po.created_by || '')}</td>
+        <td class="po-received-by"></td>
         <td>
           <a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" class="bc-row-action" onclick="event.stopPropagation();">Print</a>
           <button class="bc-row-action bc-row-action-danger" data-delete-po="${encodeURIComponent(po.po_no)}" data-received-qty="${Number(po.total_received_quantity || 0)}" type="button" onclick="event.stopPropagation();">Delete</button>
@@ -81,9 +82,43 @@ function poRowsHtml(rows) {
     .join('');
 }
 
+// Requested By / Received By per PO (staff_get_purchase_order_people,
+// sql/supabase_document_requested_shipped_received_by.sql) - Received By comes from the Item
+// Ledger's receipt entries, so it's fetched separately rather than widening the list RPC. Quietly
+// does nothing if that SQL hasn't been run yet.
+async function fetchPoPeople(poNos) {
+  if (!poNos.length) return new Map();
+  const { data, error } = await supabaseClient.rpc('staff_get_purchase_order_people', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_po_nos: poNos
+  });
+  if (error) {
+    console.error('staff_get_purchase_order_people failed:', error);
+    return new Map();
+  }
+  return new Map((data || []).map((p) => [p.po_no, p]));
+}
+
+function receivedByHtml(p) {
+  if (!p?.received_by) return '<span class="muted">-</span>';
+  return `${escapeHtml(p.received_by)}${p.received_at
+    ? `<div class="muted" style="font-size:11.5px; line-height:1.25;">${escapeHtml(formatDate(p.received_at))}</div>` : ''}`;
+}
+
+async function fillPoListPeople(tbody, rows) {
+  const people = await fetchPoPeople(rows.map((r) => r.po_no));
+  tbody.querySelectorAll('tr[data-po-no]').forEach((tr) => {
+    const p = people.get(decodeURIComponent(tr.dataset.poNo));
+    if (!p) return;
+    if (p.requested_by) tr.querySelector('.po-requested-by').textContent = p.requested_by;
+    tr.querySelector('.po-received-by').innerHTML = receivedByHtml(p);
+  });
+}
+
 async function loadPurchaseOrders() {
   const tbody = document.getElementById('poTableBody');
-  tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11" class="cell-msg">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('staff_list_purchase_orders', {
     p_admin_username: currentSession.username,
@@ -94,14 +129,15 @@ async function loadPurchaseOrders() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   const rows = data || [];
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="10" class="cell-msg">No Purchase Orders yet - create one from Stock On Hand, or with New.</td></tr>'
+    ? '<tr><td colspan="11" class="cell-msg">No Purchase Orders yet - create one from Stock On Hand, or with New.</td></tr>'
     : poRowsHtml(rows);
+  fillPoListPeople(tbody, rows);
 
   // Click = select + Stock FactBox; the PO No. / double-click opens (js/itemStockFactbox.js).
   ItemStockFactbox.wireListRows(tbody, document.getElementById('poListStockFact'), 'purchase', openReceiveModal);
@@ -217,6 +253,8 @@ function applyPoCardMode(mode) {
   document.getElementById('poCardVendorViewRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardWarehouseViewRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardOrderDateRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardRequestedByRow').classList.toggle('hidden', !isExisting);
+  document.getElementById('poCardReceivedByRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardNoRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardStatusRow').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardNotesViewRow').classList.toggle('hidden', !isExisting);
@@ -771,6 +809,19 @@ async function openReceiveModal(poNo) {
   // the Warehouse column on the lines below still says where each item goes.
   document.getElementById('receiveWarehouse').textContent = header.warehouse_name || '-';
   document.getElementById('receiveOrderDate').textContent = formatDate(header.order_date);
+  document.getElementById('receiveRequestedBy').textContent = header.created_by || '-';
+  document.getElementById('receiveReceivedBy').innerHTML = '<span class="muted">-</span>';
+  fetchPoPeople([poNo]).then((people) => {
+    const p = people.get(poNo);
+    if (!p) return;
+    if (p.requested_by) {
+      document.getElementById('receiveRequestedBy').textContent =
+        `${p.requested_by}${p.requested_at ? ` · ${formatDate(p.requested_at)}` : ''}`;
+    }
+    document.getElementById('receiveReceivedBy').innerHTML = p.received_by
+      ? `${escapeHtml(p.received_by)}${p.received_at ? ` · ${escapeHtml(formatDate(p.received_at))}` : ''}`
+      : '<span class="muted">Not received yet</span>';
+  });
   document.getElementById('receiveNotes').textContent = header.notes || '-';
   document.getElementById('poPaymentMethod').value = header.payment_method || '';
 
@@ -1463,6 +1514,15 @@ async function applyNewPoLineUnits(row, itemCode) {
     select.value = preferred.unit_of_measure_code;
     setNewPoLineQtyPer(row, Number(preferred.qty_per_unit_of_measure) || 1);
   }
+
+  // A line added by Suggest Lines carries its quantity in BASE units - restate it in the unit the
+  // line just landed on, rounded up to whole units (12 pcs suggested, bought by BOX(10) -> 2 boxes).
+  if (row.dataset.pendingBaseQty) {
+    const qtyInput = row.querySelector('.new-po-line-qty');
+    if (qtyInput) qtyInput.value = Math.ceil(Number(row.dataset.pendingBaseQty) / newPoLineQtyPer(row));
+    delete row.dataset.pendingBaseQty;
+    refreshNewPoCostTotals();
+  }
 }
 
 // Re-bases the row on a new conversion, carrying the Unit Cost across with it: the cost shown is
@@ -1959,6 +2019,246 @@ async function createNewPurchaseOrder() {
   }
 }
 
+// Suggest Lines - what the header warehouse should order from the header vendor
+// (staff_suggest_purchase_order_lines, sql/supabase_purchase_order_suggestions.sql). The warehouse
+// buys for itself and the stores it supplies, so demand = their recent sales; nothing is saved here -
+// ticked rows become ordinary New PO lines, reviewed and edited before Create Purchase Order.
+// Each row carries its own pick/qty (_pick, _qty) so ticking and editing survive the "Only items
+// to order" filter re-rendering the grid.
+let poSuggestRows = [];
+
+function formatSuggestQty(value, extraClass = '') {
+  const n = Number(value) || 0;
+  if (n === 0) return '<span class="po-suggest-zero">0</span>';
+  const text = n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return extraClass ? `<span class="${extraClass}">${text}</span>` : text;
+}
+
+function formatSuggestMoney(value) {
+  return (Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function poSuggestLineCost(r) {
+  return r.unit_cost === null || r.unit_cost === undefined ? null : (Number(r._qty) || 0) * Number(r.unit_cost);
+}
+
+// Lines / units / est. cost of what is ticked, plus the Add button's own count.
+function refreshPoSuggestSummary() {
+  const picked = poSuggestRows.filter((r) => r._pick && Number(r._qty) > 0);
+  const units = picked.reduce((sum, r) => sum + (Number(r._qty) || 0), 0);
+  const cost = picked.reduce((sum, r) => sum + (poSuggestLineCost(r) || 0), 0);
+  const uncosted = picked.filter((r) => poSuggestLineCost(r) === null).length;
+
+  document.getElementById('poSuggestStatLines').textContent = picked.length.toLocaleString();
+  document.getElementById('poSuggestStatUnits').textContent = units.toLocaleString();
+  const costEl = document.getElementById('poSuggestStatCost');
+  costEl.textContent = formatSuggestMoney(cost);
+  costEl.title = uncosted ? `${uncosted} line(s) have no cost yet - not included` : '';
+
+  const addBtn = document.getElementById('poSuggestAddBtn');
+  addBtn.textContent = picked.length ? `Add ${picked.length} Line${picked.length === 1 ? '' : 's'}` : 'Add to Lines';
+  addBtn.disabled = picked.length === 0;
+}
+
+function renderPoSuggestions() {
+  const onlyShort = document.getElementById('poSuggestOnlyShort').checked;
+  const body = document.getElementById('poSuggestBody');
+  const shown = poSuggestRows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => !onlyShort || Number(r.suggested_qty) > 0);
+
+  if (shown.length === 0) {
+    body.innerHTML = `<tr><td colspan="13" class="po-suggest-empty">${poSuggestRows.length === 0
+      ? "No sales in this period for this vendor's items at this warehouse or its stores."
+      : 'Nothing to order - stock and open POs already cover the target.<br>Untick <b>Only items to order</b> to see every item.'}</td></tr>`;
+    refreshPoSuggestSummary();
+    return;
+  }
+
+  body.innerHTML = shown.map(({ r, i }) => {
+    const variant = variantDisplayName(r.sku, r.variant_name);
+    const cost = poSuggestLineCost(r);
+    return `
+      <tr data-idx="${i}" class="${r._pick ? '' : 'is-off'}">
+        <td class="po-suggest-check"><input type="checkbox" class="po-suggest-pick" ${r._pick ? 'checked' : ''} /></td>
+        <td class="po-suggest-item">
+          <b>${escapeHtml(r.item_name || r.item_code)}</b>
+          <small>${escapeHtml(r.item_code)}${variant ? ` &middot; ${escapeHtml(variant)}` : ''}</small>
+        </td>
+        <td class="num">${formatSuggestQty(r.sold_qty)}</td>
+        <td class="num">${formatSuggestQty(r.avg_daily)}</td>
+        <td class="num">${Number(r.lead_days) || 0}d</td>
+        <td class="num">${formatSuggestQty(r.target_qty, 'po-suggest-target')}</td>
+        <td class="num">${formatSuggestQty(r.wh_on_hand)}</td>
+        <td class="num">${formatSuggestQty(r.on_po)}</td>
+        <td class="num">${formatSuggestQty(r.inbound)}</td>
+        <td class="num">${formatSuggestQty(r.outbound)}</td>
+        <td class="num">${formatSuggestQty(r.store_on_hand)}</td>
+        <td class="num grp-order"><input type="number" class="po-suggest-qty" min="0" step="1" value="${Number(r._qty) || 0}" /></td>
+        <td class="num grp-order po-suggest-cost">${cost === null ? '<span class="po-suggest-zero" title="No cost set for this item">-</span>' : formatSuggestMoney(cost)}</td>
+      </tr>
+    `;
+  }).join('');
+  refreshPoSuggestSummary();
+}
+
+// Delegated from the grid body: tick / qty edits update the row's state, its cost cell and the summary.
+function onPoSuggestBodyInput(e) {
+  const tr = e.target.closest('tr[data-idx]');
+  if (!tr) return;
+  const r = poSuggestRows[Number(tr.dataset.idx)];
+  if (!r) return;
+
+  if (e.target.classList.contains('po-suggest-pick')) {
+    r._pick = e.target.checked;
+    tr.classList.toggle('is-off', !r._pick);
+  } else if (e.target.classList.contains('po-suggest-qty')) {
+    r._qty = Math.max(0, parseFloat(e.target.value) || 0);
+    if (r._qty > 0 && !r._pick) {
+      r._pick = true;
+      tr.querySelector('.po-suggest-pick').checked = true;
+      tr.classList.remove('is-off');
+    }
+    const cost = poSuggestLineCost(r);
+    tr.querySelector('.po-suggest-cost').innerHTML = cost === null ? '<span class="po-suggest-zero">-</span>' : formatSuggestMoney(cost);
+  } else {
+    return;
+  }
+  refreshPoSuggestSummary();
+}
+
+async function loadPoSuggestions() {
+  const errorEl = document.getElementById('poSuggestError');
+  const body = document.getElementById('poSuggestBody');
+  errorEl.classList.add('hidden');
+  body.innerHTML = '<tr><td colspan="13" class="po-suggest-empty">Calculating...</td></tr>';
+
+  const salesDays = parseInt(document.getElementById('poSuggestSalesDays').value, 10) || 30;
+  const coverDays = parseInt(document.getElementById('poSuggestCoverDays').value, 10);
+  const leadDays = parseInt(document.getElementById('poSuggestLeadDays').value, 10);
+
+  const { data, error } = await supabaseClient.rpc('staff_suggest_purchase_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_vendor_code: document.getElementById('newPoVendor').value,
+    p_warehouse_id: newPoHeaderWarehouseId(),
+    p_sales_days: salesDays,
+    p_cover_days: Number.isNaN(coverDays) ? 30 : coverDays,
+    p_default_lead_days: Number.isNaN(leadDays) ? 7 : leadDays
+  });
+
+  if (error) {
+    poSuggestRows = [];
+    body.innerHTML = '';
+    refreshPoSuggestSummary();
+    errorEl.textContent = describeSupabaseError(error, 'Failed to calculate suggestions - run supabase_purchase_order_suggestions.sql.');
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  poSuggestRows = (data || []).map((r) => {
+    const qty = Number(r.suggested_qty) || 0;
+    return { ...r, _qty: qty, _pick: qty > 0 };
+  });
+
+  // demand_from lists the PO warehouse first, then the stores it supplies.
+  const names = (poSuggestRows[0]?.demand_from || newPoHeaderWarehouseName() || '')
+    .split(',').map((n) => n.trim()).filter(Boolean);
+  document.getElementById('poSuggestDemand').innerHTML = names.length
+    ? names.map((n, i) => `<span class="po-suggest-chip${i === 0 ? ' is-home' : ''}">${escapeHtml(n)}</span>`).join('') +
+      `<span class="po-suggest-sub">last ${salesDays} days</span>`
+    : '<span class="po-suggest-sub">-</span>';
+
+  document.getElementById('poSuggestAll').checked = poSuggestRows.length > 0 && poSuggestRows.every((r) => r._pick);
+  renderPoSuggestions();
+}
+
+function closePoSuggestModal() {
+  document.getElementById('poSuggestModal').classList.add('hidden');
+}
+
+function openPoSuggestModal() {
+  const errorEl = document.getElementById('poCardError');
+  errorEl.classList.add('hidden');
+
+  if (!document.getElementById('newPoVendor').value) {
+    errorEl.textContent = 'Select a Vendor first.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (!newPoHeaderWarehouseId()) {
+    errorEl.textContent = 'Select the Warehouse this order is for first - suggestions are per warehouse.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const vendorSelect = document.getElementById('newPoVendor');
+  document.getElementById('poSuggestTitle').textContent = vendorSelect.selectedOptions[0]?.textContent || vendorSelect.value;
+  document.getElementById('poSuggestSub').textContent = `What ${newPoHeaderWarehouseName() || 'this warehouse'} should order from this vendor, from recent sales.`;
+  document.getElementById('poSuggestAll').checked = false;
+  document.getElementById('poSuggestDemand').innerHTML = '';
+  document.getElementById('poSuggestModal').classList.remove('hidden');
+  loadPoSuggestions();
+}
+
+function addPoSuggestionsToLines() {
+  const tbody = document.getElementById('newPoLinesBody');
+  // Same set the summary counts - ticked with a qty, whether or not the filter is showing it.
+  const picked = poSuggestRows
+    .filter((r) => r._pick && Number(r._qty) > 0)
+    .map((r) => ({ r, qty: Number(r._qty) }));
+
+  if (picked.length === 0) {
+    const errorEl = document.getElementById('poSuggestError');
+    errorEl.textContent = 'Tick at least one line with an Order Qty above 0.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  // The blank starter rows go; lines already on the order for the same item/variant are left as
+  // they are (not doubled up) and reported.
+  const existing = new Set();
+  Array.from(tbody.querySelectorAll('tr')).forEach((row) => {
+    const code = row.dataset.variantCode || row.dataset.itemCode || '';
+    if (!code) { row.remove(); return; }
+    existing.add(`${code}|${row.dataset.variantId || ''}`);
+  });
+
+  const skipped = [];
+  picked.forEach(({ r, qty }) => {
+    if (existing.has(`${r.item_code}|${r.variant_id || ''}`)) {
+      skipped.push(r.item_name || r.item_code);
+      return;
+    }
+    addNewPoLineRow();
+    const row = tbody.lastElementChild;
+    row.dataset.pendingBaseQty = String(qty);
+    row.querySelector('.new-po-line-qty').value = qty;
+    applyNewPoItemSelection(row, r.item_code, r.item_name, r.unit_cost, r.description);
+
+    if (r.variant_id) {
+      const label = variantDisplayName(r.sku, r.variant_name) || r.variant_id;
+      row.dataset.variantCode = r.item_code;
+      row.dataset.variantName = `${r.item_name || ''} - ${label}`;
+      row.dataset.variantDescription = label;
+      row.dataset.variantId = r.variant_id;
+      row.dataset.variantLabel = label;
+      row.querySelector('.new-po-line-variant').value = label;
+      refreshNewPoLineDescription(row);
+    }
+  });
+
+  if (tbody.querySelectorAll('tr').length === 0) addNewPoLineRow();
+  renumberNewPoLines();
+  refreshNewPoCostTotals();
+  scheduleNewPoStockRefresh();
+  document.getElementById('poSuggestModal').classList.add('hidden');
+
+  if (skipped.length > 0) {
+    window.alert(`Already on this order, left as they are:\n${skipped.join('\n')}`);
+  }
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -2153,6 +2453,27 @@ async function createNewPurchaseOrder() {
   });
 
   document.getElementById('addNewPoLineBtn').addEventListener('click', addNewPoLineRow);
+  document.getElementById('suggestPoLinesBtn').addEventListener('click', openPoSuggestModal);
+  document.getElementById('poSuggestRecalcBtn').addEventListener('click', loadPoSuggestions);
+  document.getElementById('poSuggestOnlyShort').addEventListener('change', renderPoSuggestions);
+  document.getElementById('poSuggestAddBtn').addEventListener('click', addPoSuggestionsToLines);
+  document.getElementById('poSuggestCloseBtn').addEventListener('click', closePoSuggestModal);
+  document.getElementById('poSuggestXBtn').addEventListener('click', closePoSuggestModal);
+  document.getElementById('poSuggestBody').addEventListener('change', onPoSuggestBodyInput);
+  document.getElementById('poSuggestBody').addEventListener('input', onPoSuggestBodyInput);
+  // Ticks / unticks the rows currently shown (the filter decides which those are).
+  document.getElementById('poSuggestAll').addEventListener('change', (e) => {
+    document.querySelectorAll('#poSuggestBody tr[data-idx]').forEach((tr) => {
+      const r = poSuggestRows[Number(tr.dataset.idx)];
+      if (r) r._pick = e.target.checked;
+    });
+    renderPoSuggestions();
+  });
+  ['poSuggestSalesDays', 'poSuggestCoverDays', 'poSuggestLeadDays'].forEach((id) => {
+    document.getElementById(id).addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); loadPoSuggestions(); }
+    });
+  });
   document.getElementById('createNewPoBtn').addEventListener('click', createNewPurchaseOrder);
 
   await Promise.all([loadNewPoVendorOptions(), loadNewPoWarehouseOptionsHtml()]);

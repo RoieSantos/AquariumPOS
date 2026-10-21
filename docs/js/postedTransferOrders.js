@@ -40,6 +40,18 @@ function formatDate(value) {
   return d.toLocaleDateString();
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// A date with who did it underneath (Requested By / Shipped By / Received By).
+function dateByHtml(date, by) {
+  const who = (by || '').trim();
+  return `${escapeHtml(formatDate(date))}${who ? `<div class="doc-by" style="font-size:11.5px; line-height:1.25; color:var(--text-muted);">by ${escapeHtml(who)}</div>` : ''}`;
+}
+
 async function loadHeaders() {
   const tbody = document.getElementById('headerTableBody');
   tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
@@ -93,9 +105,9 @@ function renderHeaders() {
         <td>${r['Description'] || ''}</td>
         <td>${r['From Warehouse'] || ''}</td>
         <td>${r['To Warehouse'] || ''}</td>
-        <td>${formatDate(r['Requested Date'])}</td>
-        <td>${formatDate(r['Transfer Date'])}</td>
-        <td>${formatDate(r['Receive Date'])}</td>
+        <td>${dateByHtml(r['Requested Date'], r['Requested By'])}</td>
+        <td>${dateByHtml(r['Transfer Date'], r['Shipped By'])}</td>
+        <td>${dateByHtml(r['Receive Date'], r['Received By'])}</td>
         <td><span class="badge ${statusBadgeClass(r['Status'])}">${r['Status'] || 'Received'}</span></td>
         <td>${shortActionBadge(r['Short Action'])}</td>
       </tr>
@@ -130,9 +142,9 @@ function renderViewHeader(header) {
   badge.className = `badge ${statusBadgeClass(header['Status'])}`;
   document.getElementById('viewFromWarehouse').textContent = header['From Warehouse'] || '';
   document.getElementById('viewToWarehouse').textContent = header['To Warehouse'] || '';
-  document.getElementById('viewRequestedDate').textContent = formatDate(header['Requested Date']);
-  document.getElementById('viewTransferDate').textContent = formatDate(header['Transfer Date']);
-  document.getElementById('viewReceiveDate').textContent = formatDate(header['Receive Date']);
+  document.getElementById('viewRequestedDate').innerHTML = dateByHtml(header['Requested Date'], header['Requested By']);
+  document.getElementById('viewTransferDate').innerHTML = dateByHtml(header['Transfer Date'], header['Shipped By']);
+  document.getElementById('viewReceiveDate').innerHTML = dateByHtml(header['Receive Date'], header['Received By']);
 }
 
 function renderViewLines(lines) {

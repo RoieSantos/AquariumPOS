@@ -87,7 +87,9 @@ function poRowsHtml(rows) {
         <td>${receivedBadgeHtml(po)}</td>
         <td style="text-align:right;">${Number(po.total_cost || 0).toFixed(2)}</td>
         <td>${escapeHtml(po.payment_method || '')}</td>
-        <td>${po.posted_by || ''}</td>
+        <td class="po-requested-by">${escapeHtml(po.created_by || '')}</td>
+        <td class="po-received-by"></td>
+        <td>${escapeHtml(po.posted_by || '')}</td>
         <td>${formatDateTime(po.posted_at_utc)}</td>
         <td><a href="purchase-order-print.html?po=${encodeURIComponent(po.po_no)}" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();">Print</a></td>
       </tr>
@@ -95,9 +97,38 @@ function poRowsHtml(rows) {
     .join('');
 }
 
+// Requested By / Received By / Posted By as display names (staff_get_purchase_order_people,
+// sql/supabase_document_requested_shipped_received_by.sql) - Received By comes from the Item
+// Ledger's receipt entries. Quietly does nothing if that SQL hasn't been run yet.
+async function fetchPoPeople(poNos) {
+  if (!poNos.length) return new Map();
+  const { data, error } = await supabaseClient.rpc('staff_get_purchase_order_people', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_po_nos: poNos
+  });
+  if (error) {
+    console.error('staff_get_purchase_order_people failed:', error);
+    return new Map();
+  }
+  return new Map((data || []).map((p) => [p.po_no, p]));
+}
+
+async function fillPoListPeople(tbody, rows) {
+  const people = await fetchPoPeople(rows.map((r) => r.po_no));
+  tbody.querySelectorAll('tr[data-po-no]').forEach((tr) => {
+    const p = people.get(decodeURIComponent(tr.dataset.poNo));
+    if (!p) return;
+    if (p.requested_by) tr.querySelector('.po-requested-by').textContent = p.requested_by;
+    tr.querySelector('.po-received-by').innerHTML = p.received_by
+      ? `${escapeHtml(p.received_by)}${p.received_at ? `<div class="muted" style="font-size:11.5px; line-height:1.25;">${escapeHtml(formatDate(p.received_at))}</div>` : ''}`
+      : '<span class="muted">-</span>';
+  });
+}
+
 async function loadPurchaseOrders() {
   const tbody = document.getElementById('poTableBody');
-  tbody.innerHTML = '<tr><td colspan="12" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="14" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('staff_list_posted_purchase_orders', {
     p_admin_username: currentSession.username,
@@ -108,14 +139,15 @@ async function loadPurchaseOrders() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="12" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14" class="error-text">${error.message}</td></tr>`;
     return;
   }
 
   const rows = data || [];
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="12" class="muted">No posted Purchase Orders found.</td></tr>'
+    ? '<tr><td colspan="14" class="muted">No posted Purchase Orders found.</td></tr>'
     : poRowsHtml(rows);
+  fillPoListPeople(tbody, rows);
 
   tbody.querySelectorAll('tr[data-po-no]').forEach((row) => {
     row.addEventListener('click', () => openViewModal(decodeURIComponent(row.dataset.poNo)));
@@ -262,6 +294,24 @@ async function openViewModal(poNo) {
   document.getElementById('viewPaymentMethod').textContent = header.payment_method || '-';
   document.getElementById('viewNotes').textContent = header.notes || '-';
   document.getElementById('viewPostedBy').textContent = `${header.posted_by || 'unknown'} on ${formatDateTime(header.posted_at_utc)}`;
+  document.getElementById('viewRequestedBy').textContent = header.created_by || '-';
+  document.getElementById('viewReceivedBy').textContent = '-';
+  const shownPoNo = header.po_no || poNo;
+  fetchPoPeople([shownPoNo]).then((people) => {
+    const p = people.get(shownPoNo);
+    if (!p) return;
+    if (p.requested_by) {
+      document.getElementById('viewRequestedBy').textContent =
+        `${p.requested_by}${p.requested_at ? ` on ${formatDateTime(p.requested_at)}` : ''}`;
+    }
+    if (p.received_by) {
+      document.getElementById('viewReceivedBy').textContent =
+        `${p.received_by}${p.received_at ? ` (last on ${formatDateTime(p.received_at)})` : ''}`;
+    }
+    if (p.posted_by) {
+      document.getElementById('viewPostedBy').textContent = `${p.posted_by} on ${formatDateTime(p.posted_at)}`;
+    }
+  });
 
   // Shown on the General tab only while it is collapsed, so folding the tab away never costs you
   // the fields you most need at a glance - same rule the live PO card uses.
