@@ -300,6 +300,7 @@ async function openNewOrderDialog(orderNo) {
   document.getElementById('newOrderLines').innerHTML = '<tr><td colspan="4" class="cell-msg">Loading...</td></tr>';
   document.getElementById('newOrderFoot').innerHTML = '';
   dialog.classList.remove('hidden');
+  loadNewOrderConversation(order);
   // After a payment change: reload the list (Paid / Balance) and redraw this dialog with it.
   renderAoPayments(document.getElementById('newOrderPayments'), orderNo, async () => {
     await loadNewOrders();
@@ -353,6 +354,46 @@ function renderNewOrderFoot(items, fee, paid) {
     row('Paid', newOrderMoney(paid)),
     row('Balance', newOrderMoney(balance), 'no-foot-balance' + (balance > 0 ? ' is-due' : balance < 0 ? ' is-over' : ''))
   ].join('');
+}
+
+// Conversation panel - per "in the new orders can you create a panel for messages there same on what we
+// did on the confirmed orders": the customer's chat, read-only, on the right of the dialog (widened while
+// it shows). Same rules and rendering as the order card's Conversation FactBox (onlineOrders.js
+// loadOrderCardConversation / cardConversationMessageHtml): Super User / Conversations Access only, and
+// admin_get_chatbot_conversation_messages doesn't mark the thread read. The psid is on the list row.
+async function loadNewOrderConversation(order) {
+  const part = document.getElementById('newOrderConversationPart');
+  const thread = document.getElementById('newOrderConversationThread');
+  const dialog = part.closest('.no-dialog');
+  const orderNo = order.order_no;
+  part.classList.add('hidden');
+  dialog.classList.remove('has-conv');
+  const psid = order.gma_psid;
+  if (!psid || !canOpenConversations()) return;
+
+  const params = new URLSearchParams({ psid });
+  if (order.customer_name) params.set('name', order.customer_name);
+  document.getElementById('newOrderConversationOpen').href = `gma-conversations.html?${params}`;
+  thread.innerHTML = '<p class="oc-fact-empty muted">Loading messages...</p>';
+  part.classList.remove('hidden');
+  dialog.classList.add('has-conv');
+
+  const { data, error } = await supabaseClient.rpc('admin_get_chatbot_conversation_messages', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: psid,
+    p_limit: 100
+  });
+  if (openNewOrderNo !== orderNo) return;
+  if (error) {
+    thread.innerHTML = `<p class="oc-fact-empty error-text">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  const rows = data || [];
+  thread.innerHTML = rows.length ? rows.map(cardConversationMessageHtml).join('') : '<p class="oc-fact-empty muted">No messages yet.</p>';
+  const toBottom = () => { thread.scrollTop = thread.scrollHeight; };
+  toBottom();
+  thread.querySelectorAll('img').forEach((img) => img.addEventListener('load', toBottom, { once: true }));
 }
 
 function closeNewOrderDialog() {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=navwide1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=serialmaker1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=newconv1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -882,7 +882,7 @@
   <!-- New order detail (js/onlineNewOrders.js) - an order waiting to be confirmed. Edit switches the dialog
        into an edit form (admin_update_automated_order, sql/supabase_online_orders_new_tab_edit.sql). -->
   <div id="newOrderDialog" class="bc-dialog-backdrop hidden">
-    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="newOrderTitle" style="max-width:760px;">
+    <div class="bc-dialog bc-assign-dialog no-dialog" role="dialog" aria-modal="true" aria-labelledby="newOrderTitle">
       <div class="bc-dialog-head">
         <div>
           <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">NEW ORDER - WAITING TO BE CONFIRMED</div>
@@ -890,7 +890,8 @@
         </div>
         <button class="bc-iconbtn" id="closeNewOrderBtn" type="button" aria-label="Close">&times;</button>
       </div>
-      <div class="bc-dialog-body">
+      <div class="bc-dialog-body no-split">
+       <div class="no-main">
         <div id="newOrderInfo" class="bc-lede"></div>
         <div class="no-section-title">Items</div>
         <div id="newOrderEditSearch" class="no-edit-search hidden">
@@ -913,6 +914,13 @@
           <div id="newOrderPayments" class="ao-pay"></div>
         </div>
         <p class="muted" id="newOrderHint" style="margin-top:8px; font-size:12px;">Click Edit to change items or details. Custom aquarium / stand builds are added from GMA Conversations' Edit Order.</p>
+       </div>
+        <!-- Conversation panel: the customer's chat, read-only (does not mark it read) - same as the order
+             card's Conversation FactBox. js/onlineNewOrders.js loadNewOrderConversation. -->
+        <aside class="oc-factbox oc-conv-part hidden" id="newOrderConversationPart" aria-label="Conversation">
+          <div class="oc-fact-title">Conversation <a id="newOrderConversationOpen" class="oc-conv-open" target="_blank" rel="noopener">Open &rsaquo;</a></div>
+          <div class="oc-conv-thread" id="newOrderConversationThread"></div>
+        </aside>
       </div>
       <div class="bc-dialog-foot">
         <p id="newOrderError" class="bc-dialog-msg error-text hidden"></p>
@@ -1284,7 +1292,7 @@
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=fulfilled1"></script>
   <script src="js/onlineOrders.js?v=serialmaker1"></script>
-  <script src="js/onlineNewOrders.js?v=phone2"></script>
+  <script src="js/onlineNewOrders.js?v=newconv1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

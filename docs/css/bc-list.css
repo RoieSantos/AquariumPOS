@@ -2623,19 +2623,34 @@ a.bc-cue:hover {
 /* Conversation FactBox (online-orders.html #orderCardConversationPart, js/onlineOrders.js
    loadOrderCardConversation) - widens the card's right column while it shows. */
 .bc-doc .bc-doc-body.oc-split.has-conv { grid-template-columns: minmax(0, 1fr) 360px; }
-.bc-doc .oc-conv-part .oc-fact-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.bc-doc .oc-conv-open { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
-.bc-doc .oc-conv-thread { display: flex; flex-direction: column; gap: 6px; max-height: 460px; overflow-y: auto; padding: 10px 12px 12px; }
-.bc-doc .oc-conv-msg { display: flex; flex-direction: column; max-width: 85%; }
-.bc-doc .oc-conv-msg.is-in { align-self: flex-start; align-items: flex-start; }
-.bc-doc .oc-conv-msg.is-out { align-self: flex-end; align-items: flex-end; }
-.bc-doc .oc-conv-bubble { padding: 7px 10px; border-radius: 12px; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; background: var(--bc-surface, #fff); border: 1px solid var(--bc-line); }
-.bc-doc .oc-conv-msg.is-out .oc-conv-bubble { background: color-mix(in srgb, var(--bc-accent, #2f6fde) 14%, var(--bc-surface, #fff)); border-color: transparent; }
-.bc-doc .oc-conv-text { white-space: pre-wrap; }
-.bc-doc .oc-conv-bubble img { display: block; max-width: 100%; max-height: 220px; border-radius: 8px; margin-bottom: 4px; }
-.bc-doc .oc-conv-pay { margin-top: 4px; font-size: 12px; font-weight: 600; }
-.bc-doc .oc-conv-meta { margin-top: 2px; font-size: 10.5px; color: var(--bc-muted, #5f6b7a); }
+:is(.bc-doc, #newOrderDialog) .oc-conv-part .oc-fact-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-open { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-thread { display: flex; flex-direction: column; gap: 6px; max-height: 460px; overflow-y: auto; padding: 10px 12px 12px; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-msg { display: flex; flex-direction: column; max-width: 85%; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-msg.is-in { align-self: flex-start; align-items: flex-start; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-msg.is-out { align-self: flex-end; align-items: flex-end; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-bubble { padding: 7px 10px; border-radius: 12px; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; background: var(--bc-surface, #fff); border: 1px solid var(--bc-line); }
+:is(.bc-doc, #newOrderDialog) .oc-conv-msg.is-out .oc-conv-bubble { background: color-mix(in srgb, var(--bc-accent, #2f6fde) 14%, var(--bc-surface, #fff)); border-color: transparent; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-text { white-space: pre-wrap; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-bubble img { display: block; max-width: 100%; max-height: 220px; border-radius: 8px; margin-bottom: 4px; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-pay { margin-top: 4px; font-size: 12px; font-weight: 600; }
+:is(.bc-doc, #newOrderDialog) .oc-conv-meta { margin-top: 2px; font-size: 10.5px; color: var(--bc-muted, #5f6b7a); }
 @media (max-width: 900px) { .bc-doc .bc-doc-body.oc-split.has-conv { grid-template-columns: minmax(0, 1fr); } }
+/* Same panel in the New order dialog (js/onlineNewOrders.js loadNewOrderConversation): the dialog widens
+   and the body splits into the order (left) and the chat (right); stacks under the order when narrow. */
+#newOrderDialog .no-dialog { max-width: 760px; }
+#newOrderDialog .no-dialog.has-conv { max-width: 1160px; }
+#newOrderDialog .no-dialog.has-conv .no-split { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
+#newOrderDialog .no-main { min-width: 0; }
+#newOrderDialog .oc-conv-part { position: sticky; top: 0; margin-top: 4px; border: 1px solid var(--bc-line); border-radius: 6px; background: var(--bc-surface-2, var(--bc-surface-alt, rgba(0, 0, 0, 0.02))); }
+#newOrderDialog .oc-fact-title { padding: 9px 12px 6px; border-bottom: 1px solid var(--bc-line); font-size: 13px; font-weight: 600; }
+#newOrderDialog .oc-fact-empty { margin: 0; font-size: 12.5px; }
+#newOrderDialog .oc-conv-thread { max-height: min(560px, 65vh); }
+@media (max-width: 980px) {
+  #newOrderDialog .no-dialog.has-conv .no-split { grid-template-columns: minmax(0, 1fr); }
+  #newOrderDialog .oc-conv-part { position: static; margin: 16px 0 4px; }
+  #newOrderDialog .oc-conv-thread { max-height: 420px; }
+}
 /* The card's lines table stays inside the left column (it ran under the FactBoxes once the
    Conversation column made it narrower): scrolls sideways if it must, long notes / URLs wrap. */
 .bc-doc .oc-main .line-items-wrap { overflow-x: auto; }

@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-21
+
+- **Online Orders > New: Conversation panel in the order dialog.** Orders from a chat now show the customer's messages read-only on the right of the New order dialog (photos, detected payments, "Open ›" to the full thread), the same as the Confirmed order card's Conversation FactBox. It doesn't mark the chat read. Super User / Conversations Access only. The dialog widens while the panel shows and stacks it below the order on narrow screens ([onlineNewOrders.js](docs/js/onlineNewOrders.js) `loadNewOrderConversation`, [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css); `v=newconv1`).
+
 ## 2026-10-20
 
 - **Order Serials FactBox: who made each serial.** Under each serial on Online / Walk-in / Advance orders (list FactBox + order card): "Tank maker: <name>" / "Stand maker: <name>", from the existing `staff_get_serial_makers` (same as the Serial Tracker's Maker column). No SQL. [onlineOrders.js](docs/js/onlineOrders.js) `v=serialmaker1`, [bc-list.css](docs/css/bc-list.css).
