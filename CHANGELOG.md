@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-21
 
+- **Contact Us page for Xendit verification** (Xendit: website contact details must match the account). New [contact-us.html](docs/contact-us.html) shows the registered emails (roie.santos@rspetstop.com, maruhsantos@gmail.com), mobiles (+63 962 087 3789, +63 995 753 4317), the Amaya business address and both branch numbers as plain text. Every public footer (home, Order Now, T&C, Privacy, Help) now has the same contact line and a Contact Us link; the T&C and Privacy contact cards are fixed text instead of loading from General Setup (whose email reads roiesantos@).
 - **Online Orders > New: Conversation panel in the order dialog.** Orders from a chat now show the customer's messages read-only on the right of the New order dialog (photos, detected payments, "Open ›" to the full thread), the same as the Confirmed order card's Conversation FactBox. It doesn't mark the chat read. Super User / Conversations Access only. The dialog widens while the panel shows and stacks it below the order on narrow screens ([onlineNewOrders.js](docs/js/onlineNewOrders.js) `loadNewOrderConversation`, [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css); `v=newconv1`).
 
 ## 2026-10-20

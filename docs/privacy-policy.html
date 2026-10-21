@@ -119,12 +119,14 @@
       request, contact us using any of the details below - we'll confirm and act on your request
       within a reasonable time.
     </p>
+    <!-- Plain text on purpose (not CompanyInfo) - must match the details registered with Xendit; same as contact-us.html. -->
     <div class="legal-contact-card" id="privacyContactCard">
-      <p data-company-name>RS Pet Stop</p>
-      <p id="privacyContactEmail"></p>
-      <p id="privacyContactAddress"></p>
-      <p id="privacyContactPhone"></p>
-      <p id="privacyContactFacebook"></p>
+      <p><strong>RSPETSTOP PET STORE</strong> (RS Pet Stop) - DTI Business Name Reg. No. 6230461</p>
+      <p>Email: <a href="mailto:roie.santos@rspetstop.com">roie.santos@rspetstop.com</a> &middot; <a href="mailto:maruhsantos@gmail.com">maruhsantos@gmail.com</a></p>
+      <p>Mobile: <a href="tel:+639620873789">+63 962 087 3789</a> &middot; <a href="tel:+639957534317">+63 995 753 4317</a></p>
+      <p>Address: Amaya Dos, Antero Soriano Highway, Tanza, Cavite, Philippines</p>
+      <p>Branches: Amaya <a href="tel:+639455184066">+63 945 518 4066</a> &middot; GMA <a href="tel:+639971891662">+63 997 189 1662</a></p>
+      <p>Facebook: <a href="https://facebook.com/RSPetStop" target="_blank" rel="noopener">facebook.com/RSPetStop</a> &middot; <a href="contact-us.html">All contact details</a></p>
     </div>
 
     <h2 id="data-deletion">Data Deletion Instructions</h2>
@@ -160,7 +162,8 @@
       <a id="landingFacebookLink" href="#" target="_blank" rel="noopener" hidden>Facebook</a>
     </div>
     <p>&copy; <span id="landingYear"></span> <span data-company-name>RS Pet Stop</span>. All rights reserved.</p>
-    <p><a href="index.html">&larr; Back to home</a> &middot; <a href="terms-and-conditions.html">Terms &amp; Conditions</a> &middot; <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a> &middot; <a href="help.html">Help</a></p>
+    <p><a href="index.html">&larr; Back to home</a> &middot; <a href="terms-and-conditions.html">Terms &amp; Conditions</a> &middot; <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a> &middot; <a href="contact-us.html">Contact Us</a> &middot; <a href="help.html">Help</a></p>
+    <p class="land-footer-contact">Contact us: <a href="mailto:roie.santos@rspetstop.com">roie.santos@rspetstop.com</a> &middot; <a href="mailto:maruhsantos@gmail.com">maruhsantos@gmail.com</a> &middot; <a href="tel:+639620873789">+63 962 087 3789</a> &middot; <a href="tel:+639957534317">+63 995 753 4317</a> &middot; Amaya Dos, Antero Soriano Highway, Tanza, Cavite</p>
     <p class="land-footer-owner">This website (www.rspetstop.com) is owned and operated by <strong>RSPETSTOP PET STORE</strong>, a business registered with the Philippine Department of Trade and Industry (DTI Business Name Reg. No. 6230461).</p>
   </footer>
 
@@ -178,17 +181,7 @@
       if (info['CompanyName']) {
         document.querySelectorAll('[data-company-name]').forEach((el) => { el.textContent = info['CompanyName']; });
       }
-      if (info['Email']) {
-        document.getElementById('privacyContactEmail').innerHTML = `Email: <a href="mailto:${info['Email']}">${info['Email']}</a>`;
-      }
-      if (info['Address']) {
-        document.getElementById('privacyContactAddress').textContent = info['Address'];
-      }
-      if (info['ContactNo']) {
-        document.getElementById('privacyContactPhone').textContent = `Phone: ${info['ContactNo']}`;
-      }
       if (info['FacebookUrl']) {
-        document.getElementById('privacyContactFacebook').innerHTML = `Facebook: <a href="${info['FacebookUrl']}" target="_blank" rel="noopener">${info['FacebookUrl']}</a>`;
         const fbLink = document.getElementById('landingFacebookLink');
         fbLink.href = info['FacebookUrl'];
         fbLink.textContent = 'Message us on Facebook';
