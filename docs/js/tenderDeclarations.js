@@ -66,7 +66,9 @@ function renderRows(rows) {
       <td>${escapeHtml(r.warehouse)}</td>
       <td>${escapeHtml(r.user_id)}</td>
       <td>${formatMoney(r.expected_cash)}</td>
-      <td>${formatMoney(r.declared_cash)}</td>
+      <td>${formatMoney(r.declared_cash)}${r.is_counted === false
+        ? '<div><span class="badge badge-neutral" title="A later declaration was made at this warehouse the same day - only that one is added to Total Declared Cash">Not counted</span></div>'
+        : ''}</td>
       <td>${varianceBadge(r.variance)}${r.variance_reason
         ? `<div class="muted" style="font-size:12px; max-width:260px;">${escapeHtml(r.variance_reason)}</div>`
         : (Number(r.variance || 0) !== 0 ? '<div class="muted" style="font-size:12px;">No reason given</div>' : '')}</td>

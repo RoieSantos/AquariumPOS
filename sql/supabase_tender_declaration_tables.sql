@@ -145,6 +145,9 @@ grant execute on function public.pos_upsert_tender_declaration(jsonb, jsonb) to 
 -- ---------------------------------------------------------------------------
 -- Portal: list (super users only).
 -- p_result: 'short' / 'over' / 'balanced' filter on Variance. p_from / p_to: DeclDate range.
+-- Cashiers sometimes declare twice in a day: is_counted marks the LATEST declaration per Warehouse +
+-- DeclDate (highest EODID - the POS running number), decided over all rows before the filters apply, and total_declared
+-- sums only those - the earlier one of a re-declare is listed but not added in.
 
 drop function if exists public.admin_list_tender_declarations(text, text, text, text, date, date, text, int, int);
 
@@ -181,7 +184,8 @@ returns table(
   total_count bigint,
   total_short numeric,
   total_over numeric,
-  total_declared numeric
+  total_declared numeric,
+  is_counted boolean
 )
 language plpgsql
 security definer
@@ -199,6 +203,12 @@ begin
   end if;
 
   return query
+    with ranked as (
+      select d.*,
+             row_number() over (partition by d."Warehouse", d."DeclDate"
+                                order by d."EODID" desc) = 1 as counted
+        from public."TenderDeclarationHeader" d
+    )
     select
       h."Warehouse"::text, h."EODID"::text, h."ReceiptNo"::text, h."UserID"::text, h."DeclDate", h."DeclTime"::text,
       h."FloatAmount", h."CashSales", h."CashIncome", h."CashExpense", h."ExpectedCash", h."DeclaredCash",
@@ -206,8 +216,9 @@ begin
       count(*) over(),
       coalesce(sum(case when h."Variance" < 0 then -h."Variance" else 0 end) over(), 0),
       coalesce(sum(case when h."Variance" > 0 then h."Variance" else 0 end) over(), 0),
-      coalesce(sum(h."DeclaredCash") over(), 0)
-    from public."TenderDeclarationHeader" h
+      coalesce(sum(h."DeclaredCash") filter (where h.counted) over(), 0),
+      h.counted
+    from ranked h
     where (v_warehouse is null or h."Warehouse" = v_warehouse)
       and (p_from is null or h."DeclDate" >= p_from)
       and (p_to is null or h."DeclDate" <= p_to)
