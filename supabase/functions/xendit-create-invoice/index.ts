@@ -63,6 +63,23 @@ function validEmail(email: unknown): string | null {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
 }
 
+// Expires an unpaid invoice at Xendit. If Xendit refuses (e.g. it was paid a moment ago), the invoice is
+// re-read so the caller sees its real status. Returns { status, invoice, error }.
+async function expireInvoice(secretKey: string, invoiceId: string): Promise<{ status: string; invoice?: any; error?: string }> {
+  const auth = { 'Authorization': 'Basic ' + btoa(secretKey + ':') };
+  try {
+    const expire = await fetch(`${XENDIT_API}/invoices/${encodeURIComponent(invoiceId)}/expire!`, { method: 'POST', headers: auth });
+    const expired = await expire.json().catch(() => null);
+    if (expire.ok && expired?.status) return { status: String(expired.status).toUpperCase(), invoice: expired };
+    const check = await fetch(`${XENDIT_API}/v2/invoices/${encodeURIComponent(invoiceId)}`, { headers: auth });
+    const invoice = await check.json().catch(() => null);
+    if (check.ok && invoice?.status) return { status: String(invoice.status).toUpperCase(), invoice };
+    return { status: 'UNKNOWN', error: `expire ${expire.status} / get ${check.status}: ${expired?.message || invoice?.message || ''}` };
+  } catch (err) {
+    return { status: 'UNKNOWN', error: (err as Error).message };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405);
@@ -81,14 +98,43 @@ Deno.serve(async (req) => {
   if (!orderRef) return jsonResponse({ error: 'Order ID is required.' }, 400);
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+  // One open invoice per order: expire the order's older unpaid invoices at Xendit first, so a customer
+  // can never pay two of them (AO-00118). One that turns out to be paid is recorded and stops here.
+  // sql/supabase_xendit_expire_old_invoices.sql
+  const staffUsername = typeof body?.staffUsername === 'string' ? body.staffUsername : null;
+  const staffPassword = typeof body?.staffPassword === 'string' ? body.staffPassword : null;
+  const { data: openInvoices, error: openError } = await supabase.rpc('_xendit_open_invoices', {
+    p_order_ref: orderRef,
+    p_staff_username: staffUsername,
+    p_staff_password: staffPassword
+  });
+  if (openError) {
+    console.error('xendit-create-invoice: open invoice check failed', openError.message);
+    return jsonResponse({ error: 'We could not start the online payment. Please try again in a moment.' }, 500);
+  }
+  for (const open of openInvoices ?? []) {
+    const outcome = await expireInvoice(secretKey, open.invoice_id);
+    if (outcome.status === 'PAID' || outcome.status === 'SETTLED') {
+      await supabase.rpc('_xendit_record_invoice_status', { p_invoice: outcome.invoice, p_webhook: { source: 'expire-check' } });
+      return jsonResponse({ error: 'A payment for this order was just received. Please refresh the page to see your updated balance.' }, 409);
+    }
+    if (outcome.status === 'EXPIRED') {
+      await supabase.rpc('_xendit_mark_expired', { p_payment_id: open.payment_id });
+    } else {
+      console.error('xendit-create-invoice: could not expire', open.invoice_id, outcome.error);
+      return jsonResponse({ error: 'We could not start the online payment. Please try again in a moment.' }, 502);
+    }
+  }
+
   // While Xendit is switched off (XenditSettings.Enabled) only a super user's portal login gets an
   // invoice - checked in _xendit_prepare_invoice, not here.
   const { data: prepared, error: prepareError } = await supabase.rpc('_xendit_prepare_invoice', {
     p_order_ref: orderRef,
     p_purpose: purpose,
     p_is_test: isTest,
-    p_staff_username: typeof body?.staffUsername === 'string' ? body.staffUsername : null,
-    p_staff_password: typeof body?.staffPassword === 'string' ? body.staffPassword : null
+    p_staff_username: staffUsername,
+    p_staff_password: staffPassword
   });
   if (prepareError) return jsonResponse({ error: prepareError.message }, 400);
   if (prepared.reuse) {

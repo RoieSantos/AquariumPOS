@@ -2156,6 +2156,7 @@ function renderConversationOrderCards() {
             <span>Send to customer:</span>
             <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="confirmation">Order Confirmation</button>
             <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="invoice">Invoice</button>
+            ${canSendPayLink(o, balance) ? `<button type="button" class="btn-text inbox-send-paylink-btn" data-order="${escapeHtml(o.order_no)}">💳 Pay link${xenditEnabled ? '' : ' (test)'}</button>` : ''}
           </div>
         </div>
 
@@ -2223,6 +2224,10 @@ function renderConversationOrderCards() {
   });
   listEl.querySelectorAll('.inbox-send-receipt-btn').forEach((btn) => {
     btn.addEventListener('click', () => sendReceiptToCustomer(btn.dataset.order, btn.dataset.kind, btn));
+  });
+  listEl.querySelectorAll('.inbox-send-paylink-btn').forEach((btn) => {
+    const order = conversationOrders.find((o) => o.order_no === btn.dataset.order);
+    btn.addEventListener('click', () => sendPayLinkToCustomer(order, btn));
   });
   listEl.querySelectorAll('.inbox-edit-order-btn').forEach((btn) => {
     btn.addEventListener('click', () => editOrder(btn.dataset.order, btn));
@@ -2517,6 +2522,48 @@ async function sendReceiptToCustomer(orderNo, kind, btn) {
   const isInvoice = kind === 'invoice';
   const link = `https://rspetstop.com/${isInvoice ? 'online-order-invoice.html' : 'online-order-receipt.html'}?order=${encodeURIComponent(orderNo)}`;
   const message = `Here's your ${isInvoice ? 'invoice' : 'order receipt'} for Order No: ${orderNo}\n${link}`;
+
+  if (btn) btn.disabled = true;
+  await sendMessageToCustomer(message, []);
+  if (btn) btn.disabled = false;
+}
+
+// Xendit online payment link (pay.html, sql/supabase_xendit_payments.sql). While Xendit is switched off
+// only super users see the button (marked "test") - customers opening the link are told online payment
+// isn't available yet. The payment lands on the order on its own and xendit-webhook messages the customer.
+let xenditEnabled = false;
+Promise.resolve(supabaseClient.rpc('public_get_xendit_settings')).then(({ data, error }) => {
+  xenditEnabled = !error && !!(data && data[0] && data[0].enabled);
+  if (xenditEnabled && conversationOrders.length) renderConversationOrderCards();
+}).catch(() => {});
+
+// Portal orders only (drafts and confirmed portal orders) - online payment refuses old Pancake orders.
+function canSendPayLink(o, balance) {
+  if (!o || balance <= 0 || o.status === 'Completed' || o.status === 'Cancelled') return false;
+  if (o.pancake_sync_status !== 'Not Pushed' && o.pancake_sync_status !== 'Portal') return false;
+  return xenditEnabled || !!currentSession?.isSuperUser;
+}
+
+function payLinkPeso(value) {
+  return '₱' + Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function sendPayLinkToCustomer(o, btn) {
+  if (!o) return;
+  const total = Number(o.estimated_total || 0);
+  const paid = Number(o.amount_paid || 0);
+  const balance = Number(o.balance || 0);
+  // Same 50% rule as the pay page (_xendit_down_payment_due).
+  const downDue = Math.min(Math.max(Math.ceil(total / 2) - paid, 0), balance);
+  const link = `https://rspetstop.com/pay.html?order=${encodeURIComponent(o.order_no)}`;
+  const amounts = downDue > 0 && downDue < balance
+    ? `Down payment (50%): ${payLinkPeso(downDue)}\nFull balance: ${payLinkPeso(balance)}`
+    : `Balance: ${payLinkPeso(balance)}`;
+  const message = `💳 You can pay for your order ${o.order_no} online here:\n${link}\n\n${amounts}\n\n`
+    + 'Pay with GCash, Maya, card, QR Ph or online banking (secured by Xendit). Your payment shows on your order automatically.';
+
+  const offNote = xenditEnabled ? '' : '\n\n⚠️ Xendit is switched OFF - the customer will see "Online payment isn\'t available yet". Only send this to a test chat.';
+  if (!window.confirm(`Send this to the customer?\n\n${message}${offNote}`)) return;
 
   if (btn) btn.disabled = true;
   await sendMessageToCustomer(message, []);
