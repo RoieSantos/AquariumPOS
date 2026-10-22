@@ -280,6 +280,8 @@ function renderTopNavLinks(activeLabel) {
     admin.push({ href: 'quick-post.html', label: 'Quick Post' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
+    // Online payments through Xendit (pay.html) - sql/supabase_xendit_payments.sql.
+    admin.push({ href: 'xendit-payments.html', label: 'Xendit Payments' });
     admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
     // Read-only regression checks - calculator prices/safety rules, live pricing tables, website
@@ -452,6 +454,7 @@ const TELL_ME_KEYWORDS = {
   'quick-post.html': 'facebook fb photo social',
   'pricing-setup.html': 'prices rates',
   'payment-methods.html': 'gcash cash bank tender',
+  'xendit-payments.html': 'online payment gateway gcash card pay link',
   'gl-setup.html': 'accounts chart accounting',
   'user-setup.html': 'staff employees permissions accounts login',
   'system-tests.html': 'test check broken regression health',

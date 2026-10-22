@@ -943,7 +943,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_order_status',
     description:
-      'Look up the status of a previously placed order by its order number. Works for a portal Automated Order (format AO-xxxxx, e.g. from a custom quote), a regular Online Order placed through Pancake/checkout, or a Walk-in Order bought at one of our stores (by its POS receipt number, e.g. RS-0000010861, or its order ID) - just pass whatever number the customer gives you, this tries all of them. An Online Order result also includes a receiptUrl link to a printable/PDF-saveable receipt page, for when the customer specifically asks for a receipt rather than just a status update (Walk-in Orders have none). Never call this without an order number - if the customer only says "my order", ask them for the order number (or, for an in-store purchase, the receipt number) first.',
+      'Look up the status of a previously placed order by its order number. Works for a portal Automated Order (format AO-xxxxx, e.g. from a custom quote), a regular Online Order placed through Pancake/checkout, or a Walk-in Order bought at one of our stores (by its POS receipt number, e.g. RS-0000010861, or its order ID) - just pass whatever number the customer gives you, this tries all of them. Results include the order\'s items (name and quantity) - use them to check complaints about missing/extra/wrong items - plus acceptance (when the customer confirmed the itemized receipt, when it was delivered) for "that\'s not what I expected" complaints.An Online Order result also includes a receiptUrl link to a printable/PDF-saveable receipt page, for when the customer specifically asks for a receipt rather than just a status update (Walk-in Orders have none). Never call this without an order number - if the customer only says "my order", ask them for the order number (or, for an in-store purchase, the receipt number) first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -955,7 +955,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'escalate_to_staff',
     description:
-      'Notify store staff that this conversation needs a human follow-up. Use for refund requests, complaints, damaged/wrong items, or when the customer explicitly asks for a person. Do NOT use this just because a customer asked for a discount or a lower price - decline that yourself per the DISCOUNTS / PRICE CHANGES rule instead; only escalate if they turn it into a complaint or keep insisting after you\'ve declined.',
+      'Notify store staff that this conversation needs a human follow-up. Use for refund requests, complaints, damaged/wrong/missing items (first ask what the issue is and check the order with get_order_status per HANDLING COMPLAINTS, so the reason says exactly what is wrong), or when the customer explicitly asks for a person. Do NOT use this just because a customer asked for a discount or a lower price - decline that yourself per the DISCOUNTS / PRICE CHANGES rule instead; only escalate if they turn it into a complaint or keep insisting after you\'ve declined.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1445,8 +1445,19 @@ export function buildSystemPrompt(
     '- A search_items result\'s wholesale_price will be null for almost everything (any item outside Aquarium/Stand/Sump Filtration, or one in those categories with no wholesale price actually set) - if a wholesale customer asks about an item where it\'s null, say plainly that item doesn\'t have wholesale pricing available (regular price applies), don\'t guess or estimate one.',
     '- Never mention or estimate an item\'s Cost (what the store pays for it) under any circumstance, wholesale question or not - that field is never given to you and must never be invented.',
     '',
+    'HANDLING COMPLAINTS (understand and check first, then escalate):',
+    '- When a customer complains or sounds unhappy, don\'t jump straight to escalate_to_staff. First acknowledge it warmly (one short sorry, no excuses), then ask what exactly the issue is if they haven\'t said - what happened, which order (order number or store receipt number), and photos/video if it\'s about the product itself. Ask only for what\'s still missing, a couple of things per message.',
+    '- Then analyze it: call get_order_status with their order number and compare what they say against the order\'s status, items, quantities and dates. Tell them plainly what you found (e.g. "Nakita ko po sa order #123: 2x ..., 1x ..."). Only state what the lookup actually returned - never guess.',
+    '- WHAT THEY RECEIVED vs THE RECEIPT/ORDER: when the customer says something they received is not on the receipt, is missing, is extra, is the wrong item/size/color, or the quantity is off, check it line by line. List EVERY item and quantity on the order back to them and ask them to confirm, item by item, what they actually received (e.g. "1) 2x Guppy - natanggap niyo po ba pareho? 2) 1x Fish Net - ..."). Then sum it up clearly: which items match, which are missing, which are extra (received but not on the order), and which are different. You can confirm what IS or ISN\'T on the order record - that is a fact from the lookup - but never decide fault, never promise a refund, replacement, redelivery or credit, and never tell them to keep or return anything; staff decide.',
+    '- If the lookup has no items (or no order is found), say you can\'t see the item list for that number and ask them to double-check the number, or to send a photo of their receipt (or type its items and quantities) so you can compare them the same way. If they send a receipt photo, read its items from the photo itself.',
+    '- EXPECTED SOMETHING DIFFERENT FROM WHAT THEY ORDERED (e.g. they say they expected 2x2 tubular but the order/receipt says 1.5x1.5, or a different size, thickness, color or model): first back-read this conversation for the itemized receipt/recap that was sent and the customer\'s reply to it (e.g. "YES"), and check get_order_status\'s acceptance fields (receiptConfirmedByCustomerAt = they confirmed the itemized receipt; deliveredAt = it was delivered and turned over). The order record wins over memory - if the receipt and their confirmation show the item they received, politely point that out with the facts, e.g. "Sir/Ma\'am, sa receipt po na kinonfirm niyo noong Oct 3 (nag-reply po kayo ng YES), 1.5 x 1.5 tubular po ang nakalagay, at yun din po ang na-deliver. Kung gusto niyo po ng 2x2 tubular, pwede po kayong mag-order ulit - ibigay lang po ang complete details (size, tubular, kulay, atbp.) para ma-quote ko po agad." Then offer to quote/place that new order like any other order (it is a new paid order, not a free exchange). Stay warm and never sarcastic or blaming ("kayo po ang nag-confirm" is a fact, said kindly - not "it\'s your fault").',
+    '- ACKNOWLEDGED RECEIPT: acceptance.receiptAcknowledgement is the receipt link we sent (receiptLinkSentAt, by staff or bot) and the customer\'s first replies right after it (customerRepliesAfter, one per line; a thumbs-up shows as "[👍 Like]" - in the chat history too). If those replies accept it (👍, ok, thanks, "no concerns", "everything is cleared", "wala na po") and raised no correction, you may say they acknowledged the receipt - softer than an explicit YES, e.g. "na-send po namin ang receipt noong Oct 3 at nag-👍 po kayo / sinabi niyo pong okay na lahat", then point out the item on it and offer a new order the same way. If the replies asked a question or pointed out something wrong, it is NOT an acknowledgement - treat what they said then as part of the complaint.',
+    '- Only say they confirmed or acknowledged it if you can actually see it (in the back-read chat, receiptConfirmedByCustomerAt, or an accepting receiptAcknowledgement) - if there is none on record, just say what the order record shows, don\'t claim they agreed to it. If the chat or receipt shows WE quoted or promised what they expected (our recap said 2x2 but the order says 1.5x1.5), or the item they received doesn\'t match the receipt, that is our mistake to check - don\'t tell them to reorder; escalate_to_staff with both facts. Also escalate if they insist they were promised something else (in store, by phone, in another chat - you can\'t see those), ask for a refund/exchange, or ask for a person.',
+    '- Once you understand the issue (or the customer won\'t give more details, or asks for a person), call escalate_to_staff with a precise reason: order number, the issue in one line, and for a received-vs-order check the exact mismatch (e.g. "Order 12345: order has 2x Guppy, customer received 1x; customer received 1x Air Pump not on the order; photos sent"). Then tell them a team member will follow up in this same conversation.',
+    '- Angry customer or safety issue (leak flooding, broken glass, injury): escalate right away - you can keep gathering details after.',
+    '',
     'WHEN TO ESCALATE TO STAFF:',
-    '- Refund requests, complaints, damaged/wrong items, or the customer explicitly asking for a human.',
+    '- Refund requests, complaints and damaged/wrong/missing items (after understanding and checking them per HANDLING COMPLAINTS above), or the customer explicitly asking for a human.',
     '- A repair quote from compute_repair_quote that the customer wants to proceed with - staff need to arrange drop-off/scheduling since there is no create_order path for repairs.',
     '- Call the escalate_to_staff tool, then let the customer know a team member will follow up with them in this same conversation.',
     '',
@@ -2511,6 +2522,42 @@ function phoneKey(phone: unknown): string {
   return digits.length >= 10 ? digits.slice(-10) : '';
 }
 
+// Proof the customer accepted the order as written, for "that's not what I ordered" complaints
+// (HANDLING COMPLAINTS) - the chat's own YES often scrolled out of the 20-message history by then.
+// receiptConfirmedAt: their YES to the itemized receipt (supabase_gma_conversation_receipt_confirmation.sql);
+// deliveredAt: the delivery stop marked done (supabase_delivery_stop_done_post.sql). Best-effort - nulls on any error.
+async function getOrderAcceptance(supabase: SupabaseClient, ids: string[]) {
+  const list = [...new Set(ids.filter(Boolean))];
+  const ph = (v: unknown) => (v ? new Date(String(v)).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : null);
+  try {
+    const [byNo, byReceipt] = await Promise.all([
+      supabase.from('AutomatedOrders').select('OrderNo, PancakeReceiptNo, CreatedAtUtc, ReceiptConfirmationRequestedAtUtc, ReceiptConfirmedAtUtc').in('OrderNo', list).limit(1),
+      supabase.from('AutomatedOrders').select('OrderNo, PancakeReceiptNo, CreatedAtUtc, ReceiptConfirmationRequestedAtUtc, ReceiptConfirmedAtUtc').in('PancakeReceiptNo', list).limit(1)
+    ]);
+    const ao = (byNo.data?.[0] ?? byReceipt.data?.[0]) as Record<string, unknown> | undefined;
+    const onlineIds = [...new Set([...list, String(ao?.PancakeReceiptNo ?? '')].filter(Boolean))];
+    const refs = [...new Set([...onlineIds, String(ao?.OrderNo ?? '')].filter(Boolean))];
+    const [{ data: online }, { data: acks }] = await Promise.all([
+      supabase.from('OnlineOrders').select('DeliveredAtUtc').in('OrderID', onlineIds).not('DeliveredAtUtc', 'is', null).limit(1),
+      // Customer's replies right after a receipt link was sent (supabase_chatbot_receipt_acknowledgements.sql;
+      // logged by facebook-messenger-webhook). Missing table -> just no data.
+      supabase.from('ReceiptAcknowledgements').select('ReceiptSentAtUtc, SentByRole, Replies').in('OrderRef', refs).order('ReceiptSentAtUtc', { ascending: false }).limit(1)
+    ]);
+    const ack = acks?.[0] as Record<string, unknown> | undefined;
+    return {
+      orderPlacedAt: ph(ao?.CreatedAtUtc),
+      receiptSentForConfirmationAt: ph(ao?.ReceiptConfirmationRequestedAtUtc),
+      receiptConfirmedByCustomerAt: ph(ao?.ReceiptConfirmedAtUtc),
+      deliveredAt: ph((online?.[0] as Record<string, unknown> | undefined)?.DeliveredAtUtc),
+      receiptAcknowledgement: ack
+        ? { receiptLinkSentAt: ph(ack.ReceiptSentAtUtc), sentBy: ack.SentByRole === 'staff' ? 'staff' : 'bot', customerRepliesAfter: ack.Replies }
+        : null
+    };
+  } catch {
+    return { orderPlacedAt: null, receiptSentForConfirmationAt: null, receiptConfirmedByCustomerAt: null, deliveredAt: null, receiptAcknowledgement: null };
+  }
+}
+
 // orderIds: what the customer typed plus anything it resolved to (e.g. a POS receipt no. -> OrderID).
 export async function orderBelongsToChat(supabase: SupabaseClient, psid: string, orderIds: string[], simulate = false): Promise<boolean> {
   if (simulate || STAFF_PSID_PREFIXES.some((p) => psid.startsWith(p))) return true;
@@ -2898,7 +2945,13 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         // Portal-rendered receipt, NOT Pancake's own order link - per direct decision, the bot
         // never shares Pancake's link with customers (see supabase_automated_order_portal_receipt.sql).
         const receiptUrl = `https://rspetstop.com/online-order-receipt.html?order=${encodeURIComponent(orderNo)}`;
-        return JSON.stringify({ orderType: 'Automated Order', ...automatedData[0], receiptUrl });
+        // Item list too, so the bot can check "what I received isn't on the receipt" complaints
+        // line by line (HANDLING COMPLAINTS) - same name/quantity shape as the Online Order items.
+        const { data: aoLines } = await supabase.from('AutomatedOrderLines')
+          .select('ItemName, Quantity').eq('OrderNo', orderNo).order('EntryNo');
+        const items = (aoLines ?? []).map((l: Record<string, unknown>) => ({ item_name: l.ItemName, quantity: l.Quantity }));
+        const acceptance = await getOrderAcceptance(supabase, [orderNo]);
+        return JSON.stringify({ orderType: 'Automated Order', ...automatedData[0], items, acceptance, receiptUrl });
       }
 
       // Not an Automated Order - try it as a regular Pancake Online Order instead (see
@@ -2928,12 +2981,16 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         // maker's name (supabase_chatbot_order_production_maker_names.sql, service_role only) -
         // never Messenger/website/sandbox. Best-effort: a failure here never hides the status.
         const productionRpc = psid.startsWith('portal-chat:') ? 'staff_get_online_order_production' : 'public_get_online_order_production';
-        const { data: productionData } = await supabase.rpc(productionRpc, { p_order_id: orderId });
+        const [{ data: productionData }, acceptance] = await Promise.all([
+          supabase.rpc(productionRpc, { p_order_id: orderId }),
+          getOrderAcceptance(supabase, [orderNo, orderId])
+        ]);
         return JSON.stringify({
           orderType: order.order_type ?? 'Online Order',
           ...order,
           items: lineData ?? [],
           production: productionData ?? [],
+          acceptance,
           ...(receiptUrl ? { receiptUrl } : {})
         });
       }

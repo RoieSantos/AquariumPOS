@@ -1356,6 +1356,7 @@ function setupDashboardGroups() {
     document.getElementById('orderTimingDashboardCard').classList.remove('hidden');
     document.getElementById('vendorSetupCard').classList.remove('hidden');
     document.getElementById('userSetupCard').classList.remove('hidden');
+    document.getElementById('xenditPaymentsCard').classList.remove('hidden');
     document.getElementById('financeCardGrid').classList.remove('hidden');
     setupDashboardGroups();
     // Fired in parallel rather than one await after another - each RPC is a full round trip, so

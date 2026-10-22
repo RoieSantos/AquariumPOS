@@ -3080,6 +3080,7 @@ async function submitOrder(event) {
     }
 
     document.getElementById('confirmationOrderNo').textContent = result.order_no;
+    showPayOnlineButton(result.order_no);
 
     const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
     const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
@@ -3113,6 +3114,24 @@ async function submitOrder(event) {
     errorMsg.textContent = 'Your order was submitted (order #' + ((data && data[0] && data[0].order_no) || '?') + '), but something went wrong showing the confirmation. Please take a screenshot of this and contact us.';
     errorMsg.classList.remove('hidden');
   }
+}
+
+// "Pay down payment online" (Xendit, pay.html) on the confirmation screen - hidden unless it's switched
+// on from the Xendit Payments page (public_get_xendit_settings, sql/supabase_xendit_payments.sql), so
+// test-mode payments are never offered to real customers. Fire-and-forget: a failed check just leaves
+// it hidden.
+function showPayOnlineButton(orderNo) {
+  const box = document.getElementById('confirmationPayOnline');
+  // Never let this break the confirmation screen (e.g. an older cached order-now.html without the box).
+  if (!box) return;
+  box.classList.add('hidden');
+  if (!orderNo) return;
+  Promise.resolve(supabaseClient.rpc('public_get_xendit_settings')).then(({ data, error }) => {
+    const enabled = !error && data && data[0] && data[0].show_on_order_now;
+    if (!enabled || document.getElementById('confirmationOrderNo').textContent !== orderNo) return;
+    document.getElementById('confirmationPayOnlineLink').href = `pay.html?order=${encodeURIComponent(orderNo)}`;
+    box.classList.remove('hidden');
+  }).catch(() => {});
 }
 
 // How long submitOrder waits for the background Pancake push to land before showing the

@@ -827,6 +827,12 @@
           <span class="confirmation-waiting-spinner" id="confirmationWaitingSpinner"></span>
           <span id="confirmationWaitingText">Gathering your order details - please don't close this screen while we work on it.</span>
         </div>
+        <!-- Xendit online payment (pay.html) - only shown when "Show Pay online on Order Now" is ticked on
+             the Xendit Payments page (public_get_xendit_settings, sql/supabase_xendit_payments.sql). -->
+        <div class="hidden" id="confirmationPayOnline" style="margin-bottom:14px;">
+          <a class="btn btn-primary" id="confirmationPayOnlineLink" href="pay.html">💳 Pay down payment online</a>
+          <div class="muted" style="font-size:12px; margin-top:6px;">GCash, Maya, QR Ph, cards or online banking - or pay later by GCash / bank transfer as usual.</div>
+        </div>
         <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
           <button type="button" class="btn btn-primary" id="startNewOrderBtn">Start a New Order</button>
           <button type="button" class="btn btn-secondary" id="exitOrderNowBtn">Exit</button>
@@ -1123,7 +1129,7 @@
       <a href="privacy-policy.html">Privacy Policy</a> &middot;
       <a href="contact-us.html">Contact Us</a>
     </p>
-    <p style="margin:0 0 6px;">Contact us: <a href="mailto:roie.santos@rspetstop.com">roie.santos@rspetstop.com</a> &middot; <a href="mailto:maruhsantos@gmail.com">maruhsantos@gmail.com</a> &middot; <a href="tel:+639620873789">+63 962 087 3789</a> &middot; <a href="tel:+639957534317">+63 995 753 4317</a> &middot; Amaya Dos, Antero Soriano Highway, Tanza, Cavite</p>
+    <p style="margin:0 0 6px;">Contact us: <a href="mailto:roie.santos@rspetstop.com">roie.santos@rspetstop.com</a> &middot; <a href="mailto:maruhsantos@gmail.com">maruhsantos@gmail.com</a> &middot; <a href="tel:+639620873789">+63 962 087 3789</a> &middot; <a href="tel:+639957534317">+63 995 753 4317</a> &middot; Registered address: Blk 17 Lot 16 Masson St., Pineview Filinvest, Sahud Ulan, Tanza, Cavite 4108</p>
     <p style="margin:0;">This website (www.rspetstop.com) is owned and operated by <strong>RSPETSTOP PET STORE</strong>, a business registered with the Philippine Department of Trade and Industry (DTI Business Name Reg. No. 6230461).</p>
   </footer>
 
@@ -1142,7 +1148,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=pipedrain2"></script>
-  <script src="js/orderNow.js?v=11"></script>
+  <script src="js/orderNow.js?v=xendit1"></script>
   <script src="js/chatWidget.js" defer></script>
 </body>
 </html>

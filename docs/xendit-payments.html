@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Xendit Payments - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navwide1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Xendit Payments</h1>
+    <p class="muted">Online payments customers make on the Pay Online page (pay.html) through Xendit. A paid invoice is added to its order's payments automatically as "Xendit &lt;channel&gt;" (e.g. Xendit GCASH). <strong>TEST</strong> rows are test-mode payments (no real money), recorded as "Xendit TEST ..." - delete them from the order card after testing. Only visible to super users.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="card" style="margin-bottom:16px;">
+        <h2 style="margin-top:0;">Settings</h2>
+        <label style="display:flex; gap:8px; align-items:center; margin-bottom:4px;">
+          <input type="checkbox" id="xenditEnabled" />
+          <strong>Enable Xendit online payment for customers</strong>
+        </label>
+        <p class="muted" id="enabledHint" style="margin:0 0 10px 26px; font-size:13px;"></p>
+        <label style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+          <input type="checkbox" id="showOnOrderNow" />
+          Show "Pay online" on the Order Now confirmation screen (only while enabled)
+        </label>
+        <button class="btn btn-primary" id="saveSettingsBtn" type="button">Save Settings</button>
+        <span class="muted hidden" id="settingsSaved">Saved</span>
+        <p class="muted" id="settingsUpdated" style="margin-bottom:0;"></p>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <h2 style="margin-top:0;">Pay link</h2>
+        <p class="muted" style="margin-top:0;">Make a link to send a customer (Messenger, SMS) so they can pay an order online.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input type="text" id="payLinkOrder" placeholder="AO-00012 or Online Order ID" style="min-width:220px;" />
+          <button class="btn btn-secondary" id="payLinkBtn" type="button">Copy pay link</button>
+          <a class="btn btn-secondary" id="payLinkOpen" target="_blank" rel="noopener" href="pay.html">Open pay page</a>
+        </div>
+        <p class="muted" id="payLinkResult" style="margin-bottom:0;"></p>
+      </div>
+
+      <div class="toolbar">
+        <h2 style="margin:0;">Payments</h2>
+        <input type="text" id="searchBox" placeholder="Search order / reference" style="min-width:220px;" />
+        <button class="btn btn-secondary" id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Order</th>
+              <th>Purpose</th>
+              <th>Amount</th>
+              <th>Mode</th>
+              <th>Status</th>
+              <th>Paid via</th>
+              <th>Paid</th>
+              <th>Added to order</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="xenditTableBody">
+            <tr><td colspan="10" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=custconv1"></script>
+  <script src="js/nav.js?v=xendit1"></script>
+  <script src="js/xenditPayments.js?v=xendit3"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

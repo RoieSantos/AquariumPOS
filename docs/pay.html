@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pay Online - RS Pet Stop</title>
+  <meta name="description" content="Pay your RS Pet Stop order online - GCash, Maya, cards, QR Ph and online banking." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/landing.css?v=3" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <meta name="theme-color" content="#060a14" />
+  <style>
+    .pay-wrap { max-width: 620px; margin: 0 auto; padding: 40px 16px 80px; line-height: 1.6; }
+    .pay-wrap h1 { font-size: 1.8rem; margin-bottom: 4px; }
+    .pay-sub { color: var(--land-ink-muted); margin-bottom: 24px; }
+    .pay-card { background: var(--land-surface); border: 1px solid var(--land-border); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+    .pay-lookup { display: flex; gap: 10px; flex-wrap: wrap; }
+    .pay-lookup input { flex: 1 1 200px; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--land-border); background: var(--land-bg-alt); color: var(--land-ink); font: inherit; text-transform: uppercase; }
+    .pay-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; }
+    .pay-row.total { border-top: 1px solid var(--land-border); margin-top: 6px; padding-top: 10px; font-weight: 700; font-size: 1.1rem; }
+    .pay-muted { color: var(--land-ink-muted); font-size: 0.92rem; }
+    .pay-items { margin: 8px 0 12px; padding-left: 18px; color: var(--land-ink-muted); font-size: 0.92rem; }
+    .pay-actions { display: grid; gap: 10px; margin-top: 16px; }
+    .pay-actions .land-btn { width: 100%; justify-content: center; }
+    .pay-msg { padding: 14px 16px; border-radius: 12px; margin-bottom: 16px; }
+    .pay-msg.ok { background: rgba(22, 224, 189, 0.12); border: 1px solid rgba(22, 224, 189, 0.4); }
+    .pay-msg.warn { background: rgba(255, 180, 0, 0.12); border: 1px solid rgba(255, 180, 0, 0.4); }
+    .pay-msg.err { background: rgba(255, 79, 120, 0.12); border: 1px solid rgba(255, 79, 120, 0.45); }
+    .pay-methods { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .pay-methods span { font-size: 0.8rem; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--land-border); color: var(--land-ink-muted); }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="land-topbar land-wrap">
+    <div class="land-brand">
+      <img src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
+      <span>RS Pet Stop</span>
+    </div>
+    <nav class="land-nav-actions">
+      <a class="land-staff-link" href="index.html">Home</a>
+      <a class="land-btn land-btn-primary land-btn-sm" href="order-now.html">Order Now</a>
+    </nav>
+  </header>
+
+  <main class="pay-wrap">
+    <h1>Pay Online</h1>
+    <p class="pay-sub">Pay your order's down payment or balance securely through Xendit.</p>
+
+    <div id="staffBanner" class="pay-msg hidden"></div>
+    <div id="resultMsg" class="pay-msg hidden"></div>
+
+    <form id="lookupForm" class="pay-card pay-lookup">
+      <input id="orderInput" type="text" placeholder="Order ID, e.g. AO-00012" autocomplete="off" aria-label="Order ID" />
+      <button class="land-btn land-btn-primary" type="submit" id="lookupBtn">Find order</button>
+    </form>
+    <p id="lookupError" class="pay-msg err hidden"></p>
+
+    <section id="orderCard" class="pay-card hidden">
+      <div class="pay-row"><span>Order</span><strong id="orderRef"></strong></div>
+      <div class="pay-row hidden" id="onlineOrderRow"><span>Online Order ID</span><span id="onlineOrderId"></span></div>
+      <div class="pay-row"><span>Status</span><span id="orderStatus"></span></div>
+      <ul class="pay-items" id="orderItems"></ul>
+      <div class="pay-row"><span>Order total</span><span id="orderTotal"></span></div>
+      <div class="pay-row"><span>Paid so far</span><span id="orderPaid"></span></div>
+      <div class="pay-row total"><span>Balance</span><span id="orderBalance"></span></div>
+
+      <p id="cannotPay" class="pay-msg warn hidden" style="margin-top:14px;"></p>
+
+      <div class="pay-actions" id="payActions">
+        <button class="land-btn land-btn-primary hidden" type="button" id="payDownBtn"></button>
+        <button class="land-btn land-btn-secondary" type="button" id="payFullBtn"></button>
+      </div>
+      <p class="pay-muted" style="margin-top:12px;">You'll be taken to Xendit's secure checkout page. Payments are non-refundable - see our <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a>.</p>
+      <div class="pay-methods"><span>GCash</span><span>Maya</span><span>QR Ph</span><span>Cards</span><span>Online banking</span></div>
+      <p id="payError" class="pay-msg err hidden" style="margin-top:12px;"></p>
+    </section>
+  </main>
+
+  <footer class="land-footer land-wrap">
+    <p>&copy; <span id="landingYear"></span> RSPETSTOP PET STORE. All rights reserved.</p>
+    <p><a href="index.html">&larr; Back to home</a> &middot; <a href="contact-us.html">Contact Us</a> &middot; <a href="privacy-policy.html">Privacy Policy</a> &middot; <a href="terms-and-conditions.html">Terms &amp; Conditions</a> &middot; <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a></p>
+    <p class="land-footer-owner">This website (www.rspetstop.com) is owned and operated by <strong>RSPETSTOP PET STORE</strong>, a business registered with the Philippine Department of Trade and Industry (DTI Business Name Reg. No. 6230461).</p>
+  </footer>
+
+  <script>document.getElementById('landingYear').textContent = new Date().getFullYear();</script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <!-- Only for the staff-test check while Xendit is switched off (getPortalSession) - the page itself is public. -->
+  <script src="js/auth.js?v=custconv1"></script>
+  <script src="js/pay.js?v=xendit2"></script>
+</body>
+</html>

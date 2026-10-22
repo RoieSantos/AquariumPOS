@@ -81,7 +81,7 @@ interface FacebookAttachment {
   type?: string;
   title?: string;
   url?: string;
-  payload?: { url?: string; title?: string; coordinates?: { lat?: number; long?: number } };
+  payload?: { url?: string; title?: string; coordinates?: { lat?: number; long?: number }; sticker_id?: number | string };
 }
 
 // Click-to-Messenger ad tap (or m.me link) - on the first message after it, on a postback, or as a
@@ -435,8 +435,16 @@ function attachmentLink(a: FacebookAttachment): string | null {
   return null;
 }
 
+// Messenger's built-in Like (thumbs-up) button arrives as an image attachment with one of these
+// sticker_ids (small / medium / large, by how long it was held). Labeled so the bot and the inbox
+// can tell a 👍 apart from a real photo - it used to show only as a "[Photo]"/"[Attachment]" placeholder.
+const LIKE_STICKER_IDS = new Set(['369239263222822', '369239343222814', '369239383222810']);
+const LIKE_LABEL = '[👍 Like]';
+
 function attachmentLabel(a: FacebookAttachment, link: string | null): string {
   const kind = a.type as string;
+  const stickerId = a.payload?.sticker_id;
+  if (stickerId != null) return LIKE_STICKER_IDS.has(String(stickerId)) ? LIKE_LABEL : '[Sticker]';
   if (kind === 'location') return link ? `[Location] ${link}` : '[Location]';
   if (link) {
     const title = (a.title || a.payload?.title || '').trim();
@@ -675,6 +683,64 @@ function formatOrderLines(lines: OrderSummaryLine[]): string {
 function isAffirmativeReply(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/[.!?]+$/, '');
   return /^(yes+|yep|yup|yeah|correct|that'?s correct|all correct|tama|tama po|sige|sige po|oo|oo po|opo|confirm|confirmed|ok|okay|okay po|ok po|right|all good|good to go)$/.test(normalized);
+}
+
+// Logs the customer's first few replies after a receipt link (online-order-receipt.html?order=...)
+// was sent by staff OR the bot, into ReceiptAcknowledgements (supabase_chatbot_receipt_acknowledgements.sql).
+// The bot's get_order_status returns them, so a "that's not what I ordered" complaint days later can
+// point to "we sent the receipt on X and you replied 👍 / 'everything is cleared'" - by then that
+// exchange has usually scrolled out of the bot's 20-message history. Raw replies are stored as-is;
+// the bot judges whether they were an acknowledgement or a correction. Best-effort - never throws.
+const RECEIPT_LINK_RE = /online-order-receipt\.html\?order=([A-Za-z0-9%_-]+)/i;
+const RECEIPT_ACK_MAX_REPLIES = 5;
+
+async function recordReceiptAcknowledgement(supabase: SupabaseClient, psid: string, replyText: string): Promise<void> {
+  try {
+    if (!replyText) return;
+    const { data: prev } = await supabase
+      .from('ChatbotMessages')
+      .select('Role, Content, CreatedAtUtc')
+      .eq('Psid', psid)
+      .neq('Role', 'user')
+      .order('CreatedAtUtc', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const match = String(prev?.Content ?? '').match(RECEIPT_LINK_RE);
+    if (!prev || !match) return;
+    const orderRef = decodeURIComponent(match[1]);
+
+    const { count } = await supabase
+      .from('ChatbotMessages')
+      .select('Id', { count: 'exact', head: true })
+      .eq('Psid', psid)
+      .eq('Role', 'user')
+      .gt('CreatedAtUtc', prev.CreatedAtUtc);
+    if (!count || count > RECEIPT_ACK_MAX_REPLIES) return;
+
+    const { data: existing } = await supabase
+      .from('ReceiptAcknowledgements')
+      .select('ReceiptSentAtUtc, Replies, FirstReplyAtUtc, ReplyCount')
+      .eq('OrderRef', orderRef)
+      .eq('Psid', psid)
+      .maybeSingle();
+    // Same receipt message -> append; a newer receipt link for this order starts over.
+    const same = existing && Date.parse(existing.ReceiptSentAtUtc) === Date.parse(prev.CreatedAtUtc);
+    const now = new Date().toISOString();
+    const reply = replyText.slice(0, 300);
+    const { error } = await supabase.from('ReceiptAcknowledgements').upsert({
+      OrderRef: orderRef,
+      Psid: psid,
+      ReceiptSentAtUtc: prev.CreatedAtUtc,
+      SentByRole: prev.Role,
+      Replies: same ? `${existing.Replies}\n${reply}` : reply,
+      ReplyCount: same ? (existing.ReplyCount ?? 0) + 1 : 1,
+      FirstReplyAtUtc: same ? existing.FirstReplyAtUtc : now,
+      LastReplyAtUtc: now
+    }, { onConflict: 'OrderRef,Psid' });
+    if (error) console.error('Failed to record receipt acknowledgement:', error.message);
+  } catch (err) {
+    console.error('Receipt acknowledgement check failed:', err instanceof Error ? err.message : err);
+  }
 }
 
 // Classifies a reply to "is this payment for your existing order, or a new one?" (asked - see
@@ -974,6 +1040,12 @@ async function processMessage(
 
   await broadcastGmaEvent(supabase, psid);
 
+  // A lone 👍 counts as a reply ("yes") wherever a short text answer would - the receipt prompt below
+  // and the acknowledgement log. Recorded before the pause/schedule returns, so a staff-handled chat
+  // (like a staff-sent receipt link) still gets its acknowledgement logged.
+  const isLikeOnly = !trimmedText && recorded.parts.length === 1 && recorded.parts[0].label === LIKE_LABEL;
+  await recordReceiptAcknowledgement(supabase, psid, trimmedText || recorded.parts.map((p) => p.label).join(' '));
+
   // Customer mood for the inbox (mood.ts) - background, waits out a burst of messages first.
   const moodWork = runMoodCheck({ supabase, anthropic, psid, receivedAtIso, broadcast: (p) => broadcastGmaEvent(supabase, p) })
     .catch((err) => console.error('Mood check task failed:', err instanceof Error ? err.message : err));
@@ -1128,7 +1200,8 @@ async function processMessage(
   // Only ever intercepts an exact affirmative reply (isAffirmativeReply) on the customer's MOST
   // RECENT order while it's still 'New' and genuinely awaiting exactly this confirmation; anything
   // else (a correction, a question, "no") falls through to the normal AI-driven conversation below.
-  if (trimmedText) {
+  // A lone 👍 Like counts as that affirmative reply too.
+  if (trimmedText || isLikeOnly) {
     const { data: pendingOrder } = await supabase
       .from('AutomatedOrders')
       .select('OrderNo, Status, ReceiptConfirmationRequestedAtUtc, ReceiptConfirmedAtUtc')
@@ -1160,7 +1233,7 @@ async function processMessage(
       pendingOrder.ReceiptConfirmationRequestedAtUtc &&
       !pendingOrder.ReceiptConfirmedAtUtc &&
       isFirstReplySincePrompt &&
-      isAffirmativeReply(trimmedText)
+      (isLikeOnly || isAffirmativeReply(trimmedText))
     ) {
       // This IS the "pass to staff for order id confirmation" step: staff already see every 'New'
       // order in GMA Conversations, but ReceiptConfirmedAtUtc now flags this one as customer-
