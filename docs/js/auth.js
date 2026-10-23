@@ -171,7 +171,7 @@ const STORE_MANAGER_ALLOWED_PAGES = [
   'serial-tracker.html', 'inventory-summary.html',
   'stock-on-hand.html', 'stock-on-hand-print.html', 'shelf-map.html',
   'transfer-orders.html', 'transfer-order-print.html', 'transfer-order-print-production.html',
-  'physical-inventory-journal.html', 'serial-inventory-journal.html', 'defect-items.html',
+  'physical-inventory-journal.html', 'serial-inventory-journal.html', 'defect-items.html', 'repair-returns.html',
   'stand-calculator.html', 'aquarium-calculator.html', 'repair-calculator.html', 'sticker-calculator.html', 'glass-cut-list.html',
   'online-orders.html', 'online-order-lines.html',
   'gma-conversations.html', 'gma-order-invoice.html', 'customers.html'
@@ -213,6 +213,12 @@ function canOpenProductionPage(session, page) {
   // view-only for a Sales User; saving / deleting shelves and Auto Production Order re-check
   // _production_is_manager server-side.
   if (page === 'production-shelf-map.html' && session?.isSalesUser) return true;
+  // Repair Returns (supabase_repair_returns.sql): production receives, repairs and returns; a Tank /
+  // Stand Maker sees the repairs assigned to them (not Dispatchers).
+  if (page === 'repair-returns.html') {
+    return !!(session?.isSuperUser || session?.isProductionManager ||
+      (session?.staffRoles || []).some((r) => r === 'TankMaker' || r === 'StandMaker'));
+  }
   return PRODUCTION_PAGES.includes(page) && !!(session?.isSuperUser || session?.isProductionManager || session?.isOrderMaker);
 }
 

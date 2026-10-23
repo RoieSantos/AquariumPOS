@@ -17,11 +17,11 @@
     .defect-form .field label { display: block; font-size: 12px; margin-bottom: 3px; }
     .defect-form .field input, .defect-form .field select, .defect-form .field textarea { width: 100%; box-sizing: border-box; }
     .defect-form .wide { grid-column: 1 / -1; }
-    .item-hits { border: 1px solid var(--border, #c9d3e0); border-radius: 6px; margin-top: 2px; max-height: 220px; overflow-y: auto; background: var(--card-bg, #fff); }
-    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--border, #e0e6ee); font-size: 13px; }
-    .item-hit:hover { background: rgba(29, 79, 145, 0.08); }
+    .item-hits { border: 1px solid var(--panel-border); border-radius: 6px; margin-top: 2px; max-height: 220px; overflow-y: auto; background: var(--panel-bg); color: var(--text-main); }
+    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--panel-border); font-size: 13px; color: var(--text-main); }
+    .item-hit:hover { background: rgba(80, 140, 220, 0.18); }
     .photo-preview { max-width: 220px; max-height: 180px; border-radius: 6px; margin-top: 6px; display: block; }
-    .defect-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border, #c9d3e0); display: block; }
+    .defect-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--panel-border); display: block; }
     .defect-actions { display: flex; gap: 6px; flex-wrap: wrap; }
     .status-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
     .status-tabs button.active { background: var(--primary, #1d4f91); color: #fff; }

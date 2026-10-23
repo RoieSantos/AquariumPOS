@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Repair Returns - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navwide1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .repair-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; align-items: start; }
+    .repair-form .field label { display: block; font-size: 12px; margin-bottom: 3px; }
+    .repair-form .field input, .repair-form .field select, .repair-form .field textarea { width: 100%; box-sizing: border-box; }
+    .repair-form .wide { grid-column: 1 / -1; }
+    .item-hits { border: 1px solid var(--panel-border); border-radius: 6px; margin-top: 2px; max-height: 220px; overflow-y: auto; background: var(--panel-bg); color: var(--text-main); }
+    .item-hit { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--panel-border); font-size: 13px; color: var(--text-main); }
+    .item-hit:hover { background: rgba(80, 140, 220, 0.18); }
+    .serial-list { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }
+    .serial-list label { display: inline-flex; align-items: center; gap: 4px; }
+    .photo-preview { max-width: 220px; max-height: 180px; border-radius: 6px; margin-top: 6px; display: block; }
+    .repair-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--panel-border); display: block; }
+    .repair-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .repair-actions select { max-width: 160px; }
+    .status-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+    .status-tabs button.active { background: var(--primary, #1d4f91); color: #fff; }
+    .repair-note { font-size: 12px; color: var(--text-muted, #666); }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Repair Returns</h1>
+    <p class="muted">Send a damaged item from a store to our makers for repair. Sending takes it out of the store's stock; it isn't sellable anywhere while it's being repaired. Production receives it, marks it repaired, and returns it to a store, which puts it back in stock there.</p>
+
+    <div class="card hidden" id="sendCard" style="margin-bottom:16px;">
+      <h2 style="margin-top:0;">Send for repair</h2>
+      <div class="repair-form">
+        <div class="field wide">
+          <label for="itemSearchInput">Item</label>
+          <input type="text" id="itemSearchInput" placeholder="Search item code or name..." autocomplete="off" />
+          <div id="itemHits" class="item-hits hidden"></div>
+          <div id="itemChosen" class="muted" style="margin-top:4px;"></div>
+        </div>
+        <div class="field hidden" id="variantField">
+          <label for="variantSelect">Variant</label>
+          <select id="variantSelect"></select>
+        </div>
+        <div class="field">
+          <label for="fromSelect">From store</label>
+          <select id="fromSelect"></select>
+        </div>
+        <div class="field">
+          <label for="repairSelect">Repair at (production)</label>
+          <select id="repairSelect"></select>
+        </div>
+        <div class="field">
+          <label for="quantityInput">Quantity</label>
+          <input type="number" id="quantityInput" min="0" step="1" value="1" />
+        </div>
+        <div class="field">
+          <label for="problemSelect">What's wrong</label>
+          <select id="problemSelect">
+            <option value="">Select...</option>
+            <option>Leaking</option>
+            <option>Cracked / broken glass</option>
+            <option>Silicone / seal</option>
+            <option>Scratched</option>
+            <option>Stand / cabinet damage</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="field wide hidden" id="serialField">
+          <label>Serial no. (tick the unit(s) going)</label>
+          <div id="serialList" class="serial-list"></div>
+        </div>
+        <div class="field wide">
+          <label for="noteInput">Note (optional)</label>
+          <textarea id="noteInput" rows="2" placeholder="Where is the damage? What happened?"></textarea>
+        </div>
+        <div class="field wide">
+          <label for="photoInput">Photo (required)</label>
+          <input type="file" id="photoInput" accept="image/*" capture="environment" />
+          <img id="photoPreview" class="photo-preview hidden" alt="Photo preview" />
+        </div>
+      </div>
+      <div id="formError" class="error-text hidden" style="margin-top:8px;"></div>
+      <div id="formSuccess" class="hidden" style="margin-top:8px; color:#2e9e5b;"></div>
+      <div style="margin-top:12px;">
+        <button class="btn btn-primary" id="submitBtn" type="button">Send for repair</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Repairs</h2>
+      <div class="toolbar">
+        <input type="text" id="searchInput" placeholder="Search repair no., item, serial..." style="max-width:320px;" />
+        <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div class="status-tabs" id="statusTabs">
+        <button class="btn btn-secondary btn-sm active" data-status="Open" type="button">Open</button>
+        <button class="btn btn-secondary btn-sm" data-status="Sent" type="button">Sent</button>
+        <button class="btn btn-secondary btn-sm" data-status="In Repair" type="button">In Repair</button>
+        <button class="btn btn-secondary btn-sm" data-status="Repaired" type="button">Repaired</button>
+        <button class="btn btn-secondary btn-sm" data-status="Returned" type="button">Returned</button>
+        <button class="btn btn-secondary btn-sm" data-status="Scrapped" type="button">Scrapped</button>
+        <button class="btn btn-secondary btn-sm" data-status="Cancelled" type="button">Cancelled</button>
+        <button class="btn btn-secondary btn-sm" data-status="" type="button">All</button>
+      </div>
+      <div id="listError" class="error-text hidden"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Photo</th>
+              <th>Repair</th>
+              <th>Item</th>
+              <th>From &rarr; Repair at</th>
+              <th>Qty</th>
+              <th>Problem</th>
+              <th>Sent</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="repairsBody"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" style="margin-top:8px;">
+        <button class="btn btn-secondary btn-sm" id="prevPageBtn" type="button">&lsaquo; Prev</button>
+        <span class="muted" id="pageInfo"></span>
+        <button class="btn btn-secondary btn-sm" id="nextPageBtn" type="button">Next &rsaquo;</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=repair2"></script>
+  <script src="js/nav.js?v=repair2"></script>
+  <script src="js/repairReturns.js?v=repair2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

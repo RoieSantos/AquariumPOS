@@ -12,7 +12,18 @@ function compactProductionLinks(session, activeLabel) {
   return `
           <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>${session.isProductionManager ? `
           <a class="topnav-link${activeLabel === 'Finished Production Orders' ? ' active' : ''}" href="production-orders.html?view=finished">Finished</a>` : ''}
-          <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>`;
+          <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>${repairLink(session, activeLabel)}`;
+}
+
+// Repair Returns for a Tank / Stand Maker (their assigned repairs) or Production Manager - see
+// canOpenProductionPage in js/auth.js.
+function isRepairMaker(session) {
+  return (session?.staffRoles || []).some((r) => r === 'TankMaker' || r === 'StandMaker');
+}
+function repairLink(session, activeLabel) {
+  if (!(session?.isProductionManager || isRepairMaker(session))) return '';
+  return `
+          <a class="topnav-link${activeLabel === 'Repair Returns' ? ' active' : ''}" href="repair-returns.html">Repairs</a>`;
 }
 
 // Pages every staff login can open (ALL_STAFF_PAGES in js/auth.js) - added to the compact navs below,
@@ -85,7 +96,7 @@ function renderTopNavLinks(activeLabel) {
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">My Assignments</a>
           <a class="topnav-link${activeLabel === 'Production Orders' ? ' active' : ''}" href="production-orders.html">Production Orders</a>
-          <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>${allStaffLinks(activeLabel)}
+          <a class="topnav-link${activeLabel === 'Production Shelf Map' ? ' active' : ''}" href="production-shelf-map.html">Shelf Map</a>${repairLink(session, activeLabel)}${allStaffLinks(activeLabel)}
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
@@ -194,6 +205,11 @@ function renderTopNavLinks(activeLabel) {
     // Store Managers report (own location, with a photo); Super Users report and approve.
     inventory.push({ href: 'defect-items.html', label: 'Defect Items' });
   }
+  // Store sends a damaged item to our makers and gets it back (supabase_repair_returns.sql);
+  // Production Managers receive / repair / return it.
+  if (isSuperUser || isStoreManager || session?.isProductionManager) {
+    inventory.push({ href: 'repair-returns.html', label: 'Repair Returns' });
+  }
   if (isSuperUser) {
     // Super users only for now - every RPC behind this page re-checks with is_admin_authorized, so
     // this gate is convenience, not the control.
@@ -216,6 +232,10 @@ function renderTopNavLinks(activeLabel) {
     }
     // Where each built unit is stored, by serial (supabase_production_shelf_map.sql).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
+    // A maker's assigned repairs - managers already have it under Inventory.
+    if (isRepairMaker(session) && !(isSuperUser || isStoreManager || session?.isProductionManager)) {
+      production.push({ href: 'repair-returns.html', label: 'Repair Returns' });
+    }
   } else if (session?.isSalesUser) {
     // View-only stock availability for Sales Users (canOpenProductionPage in js/auth.js).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
@@ -420,6 +440,7 @@ const TELL_ME_KEYWORDS = {
   'posted-purchase-orders.html': 'po received history receipt',
   'physical-inventory-journal.html': 'count stocktake adjust phys',
   'defect-items.html': 'damaged broken return',
+  'repair-returns.html': 'repair fix broken leak send back aquarium',
   'item-ledger-entries.html': 'ile movements history stock',
   'warehouse-setup.html': 'location branch store',
   'item-setup.html': 'product items price card',
