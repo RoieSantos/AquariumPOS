@@ -18,7 +18,7 @@
 
   <div class="page">
     <h1>Item Setup</h1>
-    <p class="muted">Read-only view of Items, kept fresh automatically by a background sync from Pancake every 5 minutes. Only visible to super users.</p>
+    <p class="muted" id="itemSetupIntro">Only visible to super users.</p>
 
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
@@ -44,6 +44,7 @@
           <select id="itemCategoryFilter" style="max-width:200px;">
             <option value="">All categories</option>
           </select>
+          <button class="btn btn-primary hidden" id="newItemBtn" type="button">+ New Item</button>
           <button class="btn btn-secondary" id="exportItemsExcelBtn" type="button">Export to Excel</button>
           <button class="btn btn-secondary" id="importItemsExcelBtn" type="button">Import from Excel</button>
         </div>
@@ -140,10 +141,56 @@
               <div id="factboxImage"></div>
             </div>
           </div>
-          <p class="muted" style="font-size:12px; margin-bottom:0;">
+          <p class="muted" style="font-size:12px; margin-bottom:0;" id="itemCardPancakeNote">
             These fields come from Pancake and are refreshed by the background sync - they are read
             only here. Everything editable on this card is portal-owned.
           </p>
+
+          <!-- Shown once the portal owns products (supabase_item_master_portal_owned.sql): the
+               fields above become editable here. Price stays on the Prices tab. -->
+          <div id="itemCardEditBox" class="hidden" style="margin-top:12px;">
+            <h4 class="factbox-section-heading">Edit item</h4>
+            <div class="form-grid">
+              <div class="form-row">
+                <label for="itemEditName">Name</label>
+                <input type="text" id="itemEditName" maxlength="255" />
+              </div>
+              <div class="form-row">
+                <label for="itemEditCategory">Category</label>
+                <select id="itemEditCategory"></select>
+              </div>
+              <div class="form-row">
+                <label for="itemEditBrand">Brand</label>
+                <input type="text" id="itemEditBrand" maxlength="150" />
+              </div>
+              <div class="form-row">
+                <label for="itemEditPromoPrice">Promo Price</label>
+                <input type="number" id="itemEditPromoPrice" step="0.01" min="0" placeholder="No promo" />
+              </div>
+              <div class="form-row" style="grid-column:1 / -1;">
+                <label for="itemEditDescription">Description</label>
+                <textarea id="itemEditDescription" rows="3" maxlength="1000"></textarea>
+              </div>
+              <div class="form-row">
+                <label class="checkbox-row" style="font-weight:400;">
+                  <input type="checkbox" id="itemEditActive" />
+                  Active (can be sold)
+                </label>
+              </div>
+              <div class="form-row">
+                <label>Picture</label>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                  <button class="btn btn-secondary btn-sm" id="itemEditPictureBtn" type="button">Upload picture</button>
+                  <button class="btn btn-secondary btn-sm" id="itemEditPictureRemoveBtn" type="button">Remove</button>
+                </div>
+                <input type="file" id="itemEditPictureInput" class="hidden" accept="image/*" />
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+              <button class="btn btn-primary btn-sm" id="itemEditSaveBtn" type="button">Save item</button>
+              <span id="itemEditSaved" class="muted hidden">Saved.</span>
+            </div>
+          </div>
         </div>
       </details>
 
@@ -304,6 +351,18 @@
         </summary>
         <div class="doc-fasttab-body">
           <div id="factboxVariants"></div>
+          <input type="file" id="variantPictureInput" class="hidden" accept="image/*" />
+          <div id="addVariantBox" class="hidden" style="margin-top:10px; max-width:560px;">
+            <h4 class="factbox-section-heading">Add variant</h4>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="text" id="addVariantOption" placeholder="Option (e.g. BlackSealant)" maxlength="40" style="flex:1;" />
+              <input type="number" id="addVariantPrice" step="0.01" min="0" placeholder="Price" style="width:110px;" />
+              <button class="btn btn-secondary btn-sm" id="addVariantBtn" type="button">Add</button>
+            </div>
+            <div class="muted" style="font-size:12px; margin-top:4px;" id="addVariantHint">
+              SKU becomes ITEMCODE-Option. A blank price copies the item's price.
+            </div>
+          </div>
         </div>
       </details>
 
@@ -320,13 +379,61 @@
     </div>
   </div>
 
+  <!-- New Item: code = category prefix + next number (admin_create_item). -->
+  <div id="newItemModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:560px;">
+      <div class="toolbar">
+        <h2>New Item</h2>
+        <button class="btn btn-secondary btn-sm" id="newItemCloseBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="newItemCategory">Category</label>
+          <select id="newItemCategory"></select>
+        </div>
+        <div class="form-row">
+          <label>Item Code</label>
+          <div id="newItemCodePreview" class="muted">-</div>
+        </div>
+        <div class="form-row hidden" id="newItemPrefixRow">
+          <label for="newItemPrefix">Code prefix for this category</label>
+          <input type="text" id="newItemPrefix" maxlength="6" placeholder="e.g. FD" style="text-transform:uppercase;" />
+        </div>
+        <div class="form-row" style="grid-column:1 / -1;">
+          <label for="newItemName">Name</label>
+          <input type="text" id="newItemName" maxlength="255" />
+        </div>
+        <div class="form-row">
+          <label for="newItemPrice">Price</label>
+          <input type="number" id="newItemPrice" step="0.01" min="0" />
+        </div>
+        <div class="form-row">
+          <label for="newItemBrand">Brand</label>
+          <input type="text" id="newItemBrand" maxlength="150" />
+        </div>
+        <div class="form-row" style="grid-column:1 / -1;">
+          <label for="newItemDescription">Description</label>
+          <textarea id="newItemDescription" rows="3" maxlength="1000" placeholder="Shown to customers. Blank = the name."></textarea>
+        </div>
+        <div class="form-row" style="grid-column:1 / -1;">
+          <label for="newItemPicture">Picture</label>
+          <input type="file" id="newItemPicture" accept="image/*" />
+        </div>
+      </div>
+      <p id="newItemError" class="error-text hidden"></p>
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button class="btn btn-primary" id="newItemCreateBtn" type="button">Create Item</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=xendit1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/itemSetup.js"></script>
+  <script src="js/itemSetup.js?v=itemmaster1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -998,6 +998,9 @@ function renderFactboxVariants(variants) {
             <button class="btn btn-secondary btn-sm factbox-variant-price-save" type="button">Save</button>
           </div>`
         : '';
+      const pictureBtn = itemsPortalOwned
+        ? `<button class="btn btn-secondary btn-sm factbox-variant-picture" type="button" data-variation-id="${escapeHtml(v.variation_id)}">Picture</button>`
+        : '';
       return `
         <div class="factbox-variant-row">
           ${thumb}
@@ -1007,6 +1010,7 @@ function renderFactboxVariants(variants) {
             <div class="factbox-variant-status muted hidden"></div>
           </div>
           ${priceEditor}
+          ${pictureBtn}
         </div>
       `;
     })
@@ -1156,6 +1160,7 @@ async function openFactbox(code) {
   applyItemCardMaximized(readStoredFlag(ITEM_CARD_MAXIMIZED_KEY, false));
 
   renderItemCardGeneral(item);
+  fillItemEditBox(item);
 
   const imageSection = document.getElementById('factboxImage');
   imageSection.innerHTML = item.images
@@ -1219,9 +1224,12 @@ async function openFactbox(code) {
 function setFactboxPriceEditable(editable, variantCount) {
   document.getElementById('factboxPriceInput').disabled = !editable;
   document.getElementById('factboxPriceSaveBtn').disabled = !editable;
+  const priceSource = itemsPortalOwned ? 'here' : 'in Pancake';
   document.getElementById('factboxPriceHint').textContent = editable
-    ? 'The selling price. Saving sends it to Pancake first; the POS picks it up from Pancake within about 5 minutes.'
-    : `This item has ${variantCount} variants, each priced separately in Pancake. Shows the default variant's price - set each variant's price in the Variants tab below.`;
+    ? (itemsPortalOwned
+      ? 'The selling price. The store POS picks it up within about 5 minutes.'
+      : 'The selling price. Saving sends it to Pancake first; the POS picks it up from Pancake within about 5 minutes.')
+    : `This item has ${variantCount} variants, each priced separately ${priceSource}. Shows the default variant's price - set each variant's price in the Variants tab below.`;
 }
 
 function closeFactbox() {
@@ -1516,6 +1524,321 @@ async function importItemsFromExcel(file) {
   }
 }
 
+// Portal-owned products (supabase_item_master_portal_owned.sql). Until the cutover
+// (supabase_item_master_cutover.sql) Pancake still syncs products every 5 minutes and the server refuses
+// edits, so everything below stays hidden and the card is the read-only Pancake view it always was.
+let itemsPortalOwned = false;
+let itemCategories = []; // [{ code, description, code_prefix, next_code }]
+let pendingItemImageUrl = null; // null = picture untouched, '' = remove, else the uploaded URL
+let pendingVariantPictureId = null;
+
+async function loadItemMasterStatus() {
+  const { data, error } = await supabaseClient.rpc('admin_item_master_status', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  itemsPortalOwned = !error && Boolean(data?.portal_owned);
+
+  document.getElementById('itemSetupIntro').textContent = itemsPortalOwned
+    ? 'Products are maintained here - the store POS pulls them from the portal. Only visible to super users.'
+    : 'Read-only view of Items, kept fresh automatically by a background sync from Pancake every 5 minutes. Only visible to super users.';
+  document.getElementById('newItemBtn').classList.toggle('hidden', !itemsPortalOwned);
+  document.getElementById('itemCardPancakeNote').classList.toggle('hidden', itemsPortalOwned);
+  document.getElementById('itemCardEditBox').classList.toggle('hidden', !itemsPortalOwned);
+  document.getElementById('addVariantBox').classList.toggle('hidden', !itemsPortalOwned);
+}
+
+async function loadItemCategoriesForEditing() {
+  if (!itemsPortalOwned) return;
+  const { data, error } = await supabaseClient.rpc('admin_list_item_categories', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  if (error) return;
+  itemCategories = data || [];
+
+  const options = itemCategories
+    .map((c) => `<option value="${escapeHtml(c.code)}">${escapeHtml(c.description)}${c.code_prefix ? ' (' + escapeHtml(c.code_prefix) + ')' : ''}</option>`)
+    .join('');
+  document.getElementById('newItemCategory').innerHTML = '<option value="">Pick a category...</option>' + options;
+  document.getElementById('itemEditCategory').innerHTML = options;
+}
+
+// Same shrink as Defect Items (js/defectItems.js): at most 1280px on the long side, JPEG.
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not process the picture.'))), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a readable image.')); };
+    img.src = url;
+  });
+}
+
+// Returns the public URL of the uploaded picture.
+async function uploadItemPicture(file) {
+  const blob = await compressImage(file);
+  const { data, error } = await supabaseClient.rpc('admin_create_item_image_upload', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_file_name: 'picture.jpg'
+  });
+  if (error || !data || !data[0]) throw new Error('Could not prepare the picture upload: ' + (error ? error.message : 'unknown error'));
+  const { storage_path, upload_token, public_url } = data[0];
+  const { error: uploadError } = await supabaseClient.storage.from('portal-assets').uploadToSignedUrl(storage_path, upload_token, blob);
+  if (uploadError) throw new Error('Picture upload failed: ' + uploadError.message);
+  return public_url;
+}
+
+function updateNewItemCodePreview() {
+  const category = itemCategories.find((c) => c.code === document.getElementById('newItemCategory').value);
+  const prefixRow = document.getElementById('newItemPrefixRow');
+  const preview = document.getElementById('newItemCodePreview');
+
+  if (!category) {
+    prefixRow.classList.add('hidden');
+    preview.textContent = '-';
+    return;
+  }
+  prefixRow.classList.toggle('hidden', Boolean(category.code_prefix));
+  if (category.next_code) {
+    preview.textContent = `${category.next_code} (next free number)`;
+  } else {
+    const prefix = document.getElementById('newItemPrefix').value.trim().toUpperCase();
+    preview.textContent = prefix ? `${prefix}-### (next free number)` : 'Enter a prefix for this category below';
+  }
+}
+
+function openNewItemModal() {
+  ['newItemName', 'newItemPrice', 'newItemBrand', 'newItemDescription', 'newItemPrefix', 'newItemPicture']
+    .forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('newItemCategory').value = document.getElementById('itemCategoryFilter').value || '';
+  document.getElementById('newItemError').classList.add('hidden');
+  updateNewItemCodePreview();
+  document.getElementById('newItemModal').classList.remove('hidden');
+  document.getElementById('newItemName').focus();
+}
+
+async function createNewItem() {
+  const errorEl = document.getElementById('newItemError');
+  const btn = document.getElementById('newItemCreateBtn');
+  errorEl.classList.add('hidden');
+
+  const categoryCode = document.getElementById('newItemCategory').value;
+  const name = document.getElementById('newItemName').value.trim();
+  const priceRaw = document.getElementById('newItemPrice').value.trim();
+  const price = priceRaw === '' ? NaN : Number(priceRaw);
+  const pictureFile = document.getElementById('newItemPicture').files[0];
+
+  const fail = (message) => { errorEl.textContent = message; errorEl.classList.remove('hidden'); };
+  if (!categoryCode) return fail('Pick a category.');
+  if (!name) return fail('Enter the item name.');
+  if (!Number.isFinite(price) || price < 0) return fail('Enter a price of 0 or more.');
+
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+  try {
+    const imageUrl = pictureFile ? await uploadItemPicture(pictureFile) : null;
+    const { data: code, error } = await supabaseClient.rpc('admin_create_item', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_category_code: categoryCode,
+      p_name: name,
+      p_description: document.getElementById('newItemDescription').value.trim() || null,
+      p_brand: document.getElementById('newItemBrand').value.trim() || null,
+      p_price: price,
+      p_image_url: imageUrl,
+      p_code_prefix: document.getElementById('newItemPrefix').value.trim() || null
+    });
+    if (error) throw new Error(error.message);
+
+    document.getElementById('newItemModal').classList.add('hidden');
+    await loadItemCategoriesForEditing(); // next_code moved on
+    await loadVariantCounts();
+    // Show just the new item and open its card.
+    document.getElementById('itemSearchInput').value = code;
+    currentSearch = code;
+    currentPage = 1;
+    await loadItems();
+    openFactbox(code);
+  } catch (err) {
+    fail(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create Item';
+  }
+}
+
+function fillItemEditBox(item) {
+  pendingItemImageUrl = null;
+  document.getElementById('itemEditSaved').classList.add('hidden');
+  if (!itemsPortalOwned) return;
+
+  document.getElementById('itemEditName').value = item.name || '';
+  document.getElementById('itemEditBrand').value = item.brand || '';
+  document.getElementById('itemEditDescription').value = item.description || '';
+  document.getElementById('itemEditActive').checked = item.is_active !== false;
+  document.getElementById('itemEditPromoPrice').value =
+    item.promo_price === null || item.promo_price === undefined ? '' : Number(item.promo_price);
+
+  // A category the list doesn't know (old Pancake spelling) is still offered, so saving keeps it.
+  const select = document.getElementById('itemEditCategory');
+  if (item.category_code && !itemCategories.some((c) => c.code === item.category_code)) {
+    select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(item.category_code)}">${escapeHtml(item.category_code)}</option>`);
+  }
+  select.value = item.category_code || '';
+}
+
+function showPendingItemPicture() {
+  const imageSection = document.getElementById('factboxImage');
+  imageSection.innerHTML = pendingItemImageUrl
+    ? imageHtml(pendingItemImageUrl, 'factbox-image-thumb') + '<p class="muted" style="font-size:12px;">New picture - click Save item.</p>'
+    : '<p class="muted">Picture will be removed - click Save item.</p>';
+}
+
+async function saveItemEdit() {
+  if (!openFactboxCode) return;
+  const code = openFactboxCode;
+  const btn = document.getElementById('itemEditSaveBtn');
+  const promoRaw = document.getElementById('itemEditPromoPrice').value.trim();
+  const promo = promoRaw === '' ? null : Number(promoRaw);
+  if (promo !== null && (!Number.isFinite(promo) || promo < 0)) {
+    window.alert('Enter a promo price of 0 or more, or leave it blank for no promo.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const { error } = await supabaseClient.rpc('admin_update_item', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: code,
+    p_name: document.getElementById('itemEditName').value.trim(),
+    p_description: document.getElementById('itemEditDescription').value.trim() || null,
+    p_brand: document.getElementById('itemEditBrand').value.trim() || null,
+    p_category_code: document.getElementById('itemEditCategory').value,
+    p_is_active: document.getElementById('itemEditActive').checked,
+    p_promo_price: promo,
+    p_image_url: pendingItemImageUrl
+  });
+  btn.disabled = false;
+  btn.textContent = 'Save item';
+
+  if (error) {
+    window.alert(error.message);
+    return;
+  }
+  await loadItems(); // reopens the card with the saved values
+  if (openFactboxCode === code) document.getElementById('itemEditSaved').classList.remove('hidden');
+}
+
+async function addItemVariant() {
+  if (!openFactboxCode) return;
+  const code = openFactboxCode;
+  const option = document.getElementById('addVariantOption').value.trim();
+  const priceRaw = document.getElementById('addVariantPrice').value.trim();
+  const price = priceRaw === '' ? null : Number(priceRaw);
+  if (!option) {
+    window.alert('Enter the option name, e.g. BlackSealant.');
+    return;
+  }
+  if (price !== null && (!Number.isFinite(price) || price < 0)) {
+    window.alert('Enter a price of 0 or more, or leave it blank to copy the item price.');
+    return;
+  }
+
+  const btn = document.getElementById('addVariantBtn');
+  btn.disabled = true;
+  const { error } = await supabaseClient.rpc('admin_add_item_variant', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: code,
+    p_option: option,
+    p_price: price,
+    p_image_url: null
+  });
+  btn.disabled = false;
+
+  if (error) {
+    window.alert(error.message);
+    return;
+  }
+  document.getElementById('addVariantOption').value = '';
+  document.getElementById('addVariantPrice').value = '';
+  await loadVariantCounts();
+  await loadItems();
+}
+
+async function onVariantPictureChosen(file) {
+  const variationId = pendingVariantPictureId;
+  pendingVariantPictureId = null;
+  if (!file || !variationId || !openFactboxCode) return;
+  try {
+    const url = await uploadItemPicture(file);
+    const { error } = await supabaseClient.rpc('admin_set_variant_image', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_variation_id: variationId,
+      p_image_url: url
+    });
+    if (error) throw new Error(error.message);
+    await openFactbox(openFactboxCode);
+  } catch (err) {
+    window.alert(err.message);
+  }
+}
+
+function wireItemMaster() {
+  document.getElementById('newItemBtn').addEventListener('click', openNewItemModal);
+  document.getElementById('newItemCloseBtn').addEventListener('click', () => {
+    document.getElementById('newItemModal').classList.add('hidden');
+  });
+  document.getElementById('newItemCategory').addEventListener('change', updateNewItemCodePreview);
+  document.getElementById('newItemPrefix').addEventListener('input', updateNewItemCodePreview);
+  document.getElementById('newItemCreateBtn').addEventListener('click', createNewItem);
+
+  document.getElementById('itemEditSaveBtn').addEventListener('click', saveItemEdit);
+  document.getElementById('itemEditPictureBtn').addEventListener('click', () => {
+    document.getElementById('itemEditPictureInput').click();
+  });
+  document.getElementById('itemEditPictureInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const btn = document.getElementById('itemEditPictureBtn');
+    btn.disabled = true;
+    btn.textContent = 'Uploading...';
+    try {
+      pendingItemImageUrl = await uploadItemPicture(file);
+      showPendingItemPicture();
+    } catch (err) {
+      window.alert(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Upload picture';
+    }
+  });
+  document.getElementById('itemEditPictureRemoveBtn').addEventListener('click', () => {
+    pendingItemImageUrl = '';
+    showPendingItemPicture();
+  });
+
+  document.getElementById('addVariantBtn').addEventListener('click', addItemVariant);
+  document.getElementById('variantPictureInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    onVariantPictureChosen(file);
+  });
+}
+
 function wireFactbox() {
   document.getElementById('itemTableBody').addEventListener('click', (e) => {
     const row = e.target.closest('tr[data-code]');
@@ -1576,6 +1899,11 @@ function wireFactbox() {
   document.getElementById('factboxVariants').addEventListener('click', (event) => {
     const saveBtn = event.target.closest('.factbox-variant-price-save');
     if (saveBtn) saveFactboxVariantPrice(saveBtn.closest('.factbox-variant-price'));
+    const pictureBtn = event.target.closest('.factbox-variant-picture');
+    if (pictureBtn) {
+      pendingVariantPictureId = pictureBtn.dataset.variationId;
+      document.getElementById('variantPictureInput').click();
+    }
   });
   document.getElementById('factboxWholesalePriceSaveBtn').addEventListener('click', saveFactboxWholesalePrice);
   document.getElementById('factboxHideFromSetCheckbox').addEventListener('change', saveFactboxHideFromSet);
@@ -1604,6 +1932,7 @@ function wireFactbox() {
   document.getElementById('setupContent').classList.remove('hidden');
   wireItemSearch();
   wireFactbox();
+  wireItemMaster();
 
   document.getElementById('exportItemsExcelBtn').addEventListener('click', exportItemsToExcel);
   document.getElementById('importItemsExcelBtn').addEventListener('click', () => {
@@ -1615,9 +1944,13 @@ function wireFactbox() {
     if (file) await importItemsFromExcel(file);
   });
 
-  await loadVariantCounts();
-  await loadVendorOptionsOnce();
-  await loadUnitOfMeasureOptions();
-  await loadItemCategoryFilterOptions();
+  await loadItemMasterStatus();
+  await Promise.all([
+    loadVariantCounts(),
+    loadVendorOptionsOnce(),
+    loadUnitOfMeasureOptions(),
+    loadItemCategoryFilterOptions(),
+    loadItemCategoriesForEditing()
+  ]);
   await loadItems();
 })();

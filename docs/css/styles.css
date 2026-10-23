@@ -4259,23 +4259,20 @@ body:has(.wizard-page) {
 /* Customize tab bar (docs/order-now.html's data-step="customize-tabs") - per "so they can see the
    stand / aquarium / filtration only in one page": Aquarium/Stand/Filtration/Accessories switch
    instantly (js/orderNow.js's switchCustomizeTab) instead of navigating to a separate page each. */
-/* Folder-tab look: a single strip of tabs sitting flush on top of the content below, like tabs on
-   a manila folder - the active tab's background matches the content panel and its bottom border
-   is erased right where it meets the divider line, so it reads as "part of" the panel while the
-   other tabs sit a shade further back. Deliberately never wraps to a second row (min-width:0 lets
-   items shrink below their text's natural width instead) - a folder never has a tab dangling on
-   its own row underneath the others, so labels truncate with an ellipsis on very narrow screens
-   instead. */
+/* Pill look, same as the Aquarium Calculator's step nav (WebAquariumCalculator/calculator-ui.css's
+   .step-nav). Deliberately never wraps to a second row (min-width:0 lets items shrink below their
+   text's natural width instead), so labels truncate with an ellipsis on very narrow screens. */
 .customize-tab-bar {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   margin: 16px 0 16px;
-  border-bottom: 2px solid var(--panel-border);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--panel-border);
 }
 
 /* Each tab keeps the same per-section color used by the category tiles (gradient tap tiles
-   above) as a top accent stripe + active label color, so the tab strip still reads as part of the
-   same colorful system instead of a plain navy/white toggle. */
+   above) as its active pill fill, so the tab strip still reads as part of the same colorful
+   system instead of a plain navy/white toggle. */
 .customize-tab-btn[data-tab="aquarium"] { --tab-color: var(--primary); --tab-color-strong: var(--primary-strong); }
 .customize-tab-btn[data-tab="stand"] { --tab-color: #2c6bb8; --tab-color-strong: var(--primary-strong); }
 .customize-tab-btn[data-tab="filtration"] { --tab-color: #2596a8; --tab-color-strong: #1c7f8c; }
@@ -4284,36 +4281,29 @@ body:has(.wizard-page) {
 .customize-tab-btn {
   flex: 1;
   min-width: 0;
-  background: var(--page-bg);
+  background: #ffffff;
   border: 1px solid var(--panel-border);
-  border-top: 3px solid transparent;
-  border-bottom: none;
-  border-radius: 10px 10px 0 0;
-  padding: 8px 10px;
-  margin-bottom: -2px;
+  border-radius: 999px;
+  padding: 8px 12px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--text-muted);
+  color: var(--text-main);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .customize-tab-btn:hover {
+  border-color: #a9c0e2;
   color: var(--tab-color-strong, var(--primary));
 }
 
 .customize-tab-btn.active {
-  background: var(--panel-bg);
-  border-color: var(--panel-border);
-  border-top-color: var(--tab-color, var(--primary));
-  border-bottom: 2px solid var(--panel-bg);
-  color: var(--tab-color-strong, var(--primary-strong));
-  box-shadow: 0 -6px 14px -10px rgba(21, 52, 94, 0.35);
-  position: relative;
-  z-index: 1;
+  background: var(--tab-color, var(--primary));
+  border-color: var(--tab-color, var(--primary));
+  color: #ffffff;
 }
 
 /* The four builder sections (data-step="custom-dims" etc.) stay .wizard-step (so their own
@@ -6752,30 +6742,237 @@ body:has(.wizard-page) {
 }
 
 /* ---- Order Now: Customize builder two-column layout (see layoutCustomizePanels in js/orderNow.js) ----
-   Desktop: form on the left, sticky column on the right with the live price, drawing, summary,
-   notices and Add to Cart/Checkout - so the price and buttons stay in view while editing.
-   Phones/tablets: one column in the original order (drawing, price, summary, form, buttons). */
+   Same look as the staff Aquarium Calculator (WebAquariumCalculator/calculator-ui.css): numbered
+   step cards on a light grey backdrop, and a blue quote card (price + Add to Cart/Checkout).
+   Desktop: form on the left, sticky column on the right with the quote card, notices, drawing and
+   summary - so the price and buttons stay in view while editing.
+   Phones/tablets: one column (drawing, quote, notices, form, summary) + the #czQuoteBar price bar. */
 body.order-now-wide .wizard-page {
   max-width: 1200px;
+}
+
+body.order-now-wide .wizard-card {
+  background: #f2f5fa;
 }
 
 .cz-layout {
   display: flex;
   flex-direction: column;
+  gap: 14px;
 }
 
 .cz-aside {
   display: contents;
 }
 
+.cz-layout > .cz-form,
+.cz-layout .cz-aside > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
 .cz-r2 { order: 1; }
-.cz-r1 { order: 2; }
-.cz-r3 { order: 3; }
-.cz-r4 { order: 4; }
+.cz-quote { order: 2; }
+.cz-r6 { order: 3; }
+.cz-r5 { order: 4; }
 .cz-form { order: 5; }
-.cz-r5 { order: 6; }
-.cz-r6 { order: 7; }
-.cz-r7 { order: 8; }
+.cz-r3 { order: 6; }
+
+/* Step cards - each .form-group gets a numbered badge like the calculator's .step-num. */
+.cz-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  counter-reset: czstep;
+}
+
+.cz-form > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.cz-form > .form-group {
+  background: #ffffff;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(21, 52, 94, 0.05), 0 6px 18px rgba(21, 52, 94, 0.06);
+  padding: 16px 18px;
+}
+
+.cz-form > .form-group > .form-group-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+  font-size: 15px;
+  color: var(--primary-strong);
+  counter-increment: czstep;
+}
+
+.cz-form > .form-group > .form-group-title::before {
+  content: counter(czstep);
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Quote card - the calculator's .quote-card. */
+.cz-quote {
+  background: linear-gradient(160deg, #1d4f91 0%, #163e73 100%);
+  color: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(22, 62, 115, 0.25);
+  padding: 18px;
+}
+
+.cz-quote-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.cz-quote .custom-price-card {
+  margin: 4px 0 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.cz-quote .custom-price-label {
+  display: none;
+}
+
+.cz-quote .custom-price-value {
+  display: block;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+}
+
+.cz-quote .custom-price-gallons-badge {
+  width: auto;
+  margin: 12px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0;
+  background: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.cz-quote .custom-price-disclaimer {
+  margin: 10px 0 0;
+  text-align: left;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.cz-quote .wizard-nav-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.wizard-page .cz-quote .btn-secondary {
+  background: #ffffff;
+  border: 0;
+  color: var(--primary-strong);
+}
+
+.wizard-page .cz-quote .btn-secondary:hover {
+  background: #eaf2fd;
+  color: var(--primary-strong);
+}
+
+.wizard-page .cz-quote .btn-primary {
+  background: rgba(255, 255, 255, 0.14);
+  border: 0;
+  box-shadow: none;
+  color: #ffffff;
+}
+
+.wizard-page .cz-quote .btn-primary:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* Phone price bar (#czQuoteBar) - the calculator's .quote-bar. `bottom` is set inline by
+   updateCzQuoteBar() so it sits just above #cartBar when that's showing. */
+.cz-quote-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 49;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--primary-strong);
+  color: #ffffff;
+  font-family: 'Poppins', "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  box-shadow: 0 -6px 18px rgba(22, 62, 115, 0.25);
+}
+
+.cz-quote-bar-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.cz-quote-bar-price {
+  font-size: 18px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.cz-quote-bar a {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--primary-strong);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+body:has(#czQuoteBar:not(.hidden)) .wizard-page {
+  padding-bottom: 180px;
+}
+
+/* Keep the chat launcher (js/chatWidget.js) from covering the bar's "View quote" button. */
+@media (max-width: 999px) {
+  body:has(#czQuoteBar:not(.hidden)) .rsps-chat-launcher {
+    bottom: 76px;
+  }
+
+  body:has(#czQuoteBar:not(.hidden)):has(#cartBar:not(.hidden)) .rsps-chat-launcher {
+    bottom: 150px;
+  }
+}
 
 /* L x W x H (and footing) side by side instead of one full-width row each - 3 across even on
    a phone (min 84px each). */
@@ -6789,12 +6986,9 @@ body.order-now-wide .wizard-page {
   min-width: 0;
 }
 
-.cz-form > .rule-notice {
-  margin-bottom: 14px;
-}
-
+/* Option tiles 2+ across like the calculator's toggle tiles, single column on narrow phones. */
 .cz-form .checkbox-stack {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
 }
 
 .cz-form .checkbox-row {
@@ -6829,19 +7023,14 @@ body.order-now-wide .wizard-page {
 
   body.order-now-wide .cz-aside > * {
     order: 0;
-    margin-top: 0;
-    margin-bottom: 0;
   }
 
-  body.order-now-wide .cz-aside .wizard-nav-buttons {
-    position: sticky;
-    bottom: 0;
-    padding-top: 8px;
-    background: var(--panel-bg);
+  /* Quote card + sticky column already keep the price in view on desktop. */
+  .cz-quote-bar {
+    display: none;
   }
 
-  body.order-now-wide .cz-form > .form-group:first-child,
-  body.order-now-wide .cz-form > .rule-notice:first-child {
-    margin-top: 0;
+  body:has(#czQuoteBar:not(.hidden)) .wizard-page {
+    padding-bottom: 110px;
   }
 }

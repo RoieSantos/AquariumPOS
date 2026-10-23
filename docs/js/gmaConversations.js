@@ -1884,7 +1884,7 @@ function renderInformationTab(conv) {
 }
 
 // POS walk-ins tagged to this customer at checkout (OnlineOrders."WalkinPsid" -
-// sql/supabase_gma_conversation_walkins.sql). Read-only: already paid at the counter, so none of the bot
+// sql/supabase_gma_conversation_walkins.sql), plus advance orders tagged the same way (AdvanceOrders."CustomerPsid"). Read-only: already paid at the counter, so none of the bot
 // order actions apply. The section stays hidden when there are none (or the RPC isn't installed yet).
 async function loadConversationWalkins(conv) {
   const sectionEl = document.getElementById('conversationWalkinsSection');
@@ -1907,6 +1907,10 @@ async function loadConversationWalkins(conv) {
   listEl.innerHTML = walkins.map((w) => {
     const balance = Number(w.balance || 0);
     const cancelled = /^cancel/i.test(w.status || '');
+    // Advance orders tagged at the POS's advance-order POST (sql/supabase_advance_order_customer_tag.sql):
+    // status comes as 'Advance - <production stage>', shown here without the prefix.
+    const isAdvance = w.kind === 'advance';
+    const statusText = isAdvance ? String(w.status || '').replace(/^Advance - /, '') : (w.status || 'Completed');
     const more = Number(w.line_count || 0) > 5 ? ` +${Number(w.line_count) - 5} more` : '';
     return `
     <div class="inbox-order-item expanded">
@@ -1915,8 +1919,8 @@ async function loadConversationWalkins(conv) {
           <span class="inbox-order-no">${escapeHtml(w.order_id)}</span>
         </div>
         <div class="inbox-order-badges">
-          <span class="badge badge-neutral">Walk-in</span>
-          <span class="badge ${cancelled ? 'badge-danger' : 'badge-success'}">${escapeHtml(cancelled ? 'Cancelled' : (w.status || 'Completed'))}</span>
+          <span class="badge badge-neutral">${isAdvance ? 'Advance order' : 'Walk-in'}</span>
+          <span class="badge ${cancelled ? 'badge-danger' : (isAdvance && balance > 0 ? 'badge-warning' : 'badge-success')}">${escapeHtml(cancelled ? 'Cancelled' : statusText)}</span>
         </div>
       </div>
       <div class="inbox-order-details">

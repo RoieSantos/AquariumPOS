@@ -45,6 +45,13 @@ namespace AquariumPOS
         private volatile bool _isMasterDataSyncRunning = false;
         // Prevent overlapping failed-transactions send runs (0 = idle, 1 = running)
         private int _isSendingFailedTransactionsRunning = 0;
+        // Online/Offline pill under the header logo - pings Supabase every 15s (any HTTP reply = online)
+        private Label connectionStatusLabel = null!;
+        private ToolTip connectionStatusToolTip = new ToolTip();
+        private System.Windows.Forms.Timer? connectionCheckTimer = null;
+        private int _isConnectionCheckRunning = 0;
+        private bool? _lastConnectionOnline = null;
+        private static readonly HttpClient _connectionCheckClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         private readonly string connectionString = GlobalSettings.ConnectionString;
         private Panel salesPanel = null!;
         private Panel totalPanel = null!;
@@ -1079,6 +1086,16 @@ INSERT INTO CardProcessingFeeLog (
                 }
                 catch { }
 
+                // Online/Offline indicator - check now, then every 15 seconds
+                if (connectionCheckTimer == null)
+                {
+                    connectionCheckTimer = new System.Windows.Forms.Timer();
+                    connectionCheckTimer.Interval = 15000; // 15 seconds
+                    connectionCheckTimer.Tick += async (s, ev) => await CheckConnectionAsync();
+                    connectionCheckTimer.Start();
+                    _ = CheckConnectionAsync();
+                }
+
                 // Attempt a one-time startup resend of failed transactions in background
                 try
                 {
@@ -1190,8 +1207,8 @@ INSERT INTO CardProcessingFeeLog (
         // Master data sync timer tick handler. Awaits the async sync calls with
         // ConfigureAwait(false) so the (potentially slow, many-HTTP-call) sync work runs on a
         // background thread instead of blocking the UI thread.
-        // Pulls fresh Warehouses/Items from Pancake (pages.fm) into the local DB first, then
-        // pushes the local data to Supabase, so Supabase ends up reflecting the latest Pancake data.
+        // Pulls Warehouses from Pancake (pages.fm) and products from the Web Portal into the local DB,
+        // then pushes Warehouses to Supabase.
         private async void MasterDataSyncTimer_Tick(object? sender, EventArgs e)
         {
             if (_isMasterDataSyncRunning) return;
@@ -1199,10 +1216,12 @@ INSERT INTO CardProcessingFeeLog (
             try
             {
                 try { await OnlinefunctionsEvents.SyncWarehouseAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
-                try { await OnlinefunctionsEvents.SyncProductVariationsAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+                // Products come from the Web Portal now, not Pancake (the Portal is the product master -
+                // supabase_item_master_portal_owned.sql). The old Items push up to Supabase is gone too: it
+                // would overwrite the master with this terminal's copy.
+                try { await OnlinefunctionsEvents.SyncProductsFromPortalAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
 
                 try { await OnlinefunctionsEvents.SyncWarehousesToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
-                try { await OnlinefunctionsEvents.SyncItemsToSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
                 // Online orders are no longer pushed up from here - the portal owns them and syncs from Pancake
                 // itself. This push re-sent every local order on every tick (slow) and could overwrite the
                 // portal's newer data with the POS's stale copy. Online orders moved to the portal; see
@@ -1269,6 +1288,12 @@ INSERT INTO CardProcessingFeeLog (
                     try { masterDataSyncTimer.Dispose(); } catch { }
                     masterDataSyncTimer = null;
                 }
+                if (connectionCheckTimer != null)
+                {
+                    try { connectionCheckTimer.Stop(); } catch { }
+                    try { connectionCheckTimer.Dispose(); } catch { }
+                    connectionCheckTimer = null;
+                }
                 try
                 {
                     NetworkChange.NetworkAvailabilityChanged -= NetworkAvailabilityChangedHandler;
@@ -1284,11 +1309,72 @@ INSERT INTO CardProcessingFeeLog (
         {
             try
             {
+                // Refresh the Online/Offline pill right away instead of waiting for the next 15s tick
+                try { if (IsHandleCreated) BeginInvoke(new Action(() => _ = CheckConnectionAsync())); } catch { }
                 if (!e.IsAvailable) return;
                 // Run in background to avoid blocking the network event thread
                 Task.Run(() => TrySendFailedTransactionsAsync());
             }
             catch { }
+        }
+
+        // Online = Supabase answers at all (even 401/404 means we reached it). The network adapter being
+        // up isn't enough - the store's router can be up with the internet down. Runs on the UI thread.
+        private async Task CheckConnectionAsync()
+        {
+            if (Interlocked.Exchange(ref _isConnectionCheckRunning, 1) == 1) return;
+            try
+            {
+                bool online = false;
+                try
+                {
+                    if (NetworkInterface.GetIsNetworkAvailable())
+                    {
+                        var baseUrl = new Uri(GlobalSettings.ItemsSupabaseEndpoint).GetLeftPart(UriPartial.Authority);
+                        using var req = new HttpRequestMessage(HttpMethod.Get, baseUrl + "/rest/v1/");
+                        req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+                        using var resp = await _connectionCheckClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                        online = true;
+                    }
+                }
+                catch { online = false; }
+
+                bool cameBackOnline = _lastConnectionOnline == false && online;
+                _lastConnectionOnline = online;
+                SetConnectionStatus(online);
+
+                // Internet back (often without a NetworkAvailabilityChanged event, e.g. router stayed up) -
+                // send the sales that were saved while offline.
+                if (cameBackOnline)
+                    _ = Task.Run(() => TrySendFailedTransactionsAsync());
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isConnectionCheckRunning, 0);
+            }
+        }
+
+        private void SetConnectionStatus(bool? online)
+        {
+            if (connectionStatusLabel == null || connectionStatusLabel.IsDisposed) return;
+            if (online == null)
+            {
+                connectionStatusLabel.Text = "● Checking...";
+                connectionStatusLabel.BackColor = UiTheme.Neutral;
+            }
+            else if (online.Value)
+            {
+                connectionStatusLabel.Text = "● Online";
+                connectionStatusLabel.BackColor = UiTheme.Success;
+            }
+            else
+            {
+                connectionStatusLabel.Text = "● Offline";
+                connectionStatusLabel.BackColor = UiTheme.Danger;
+            }
+            connectionStatusToolTip.SetToolTip(connectionStatusLabel, online == false
+                ? $"No connection to the portal (last checked {DateTime.Now:h:mm:ss tt}).\nSales still save on this PC and are sent once it's back online.\nOnline Pay, customer search and syncs won't work until then."
+                : $"Connected to the portal (last checked {DateTime.Now:h:mm:ss tt}).");
         }
 
         // Attempt to send failed transactions; guarded to prevent concurrent runs.
@@ -1432,6 +1518,17 @@ INSERT INTO CardProcessingFeeLog (
             };
             new ToolTip().SetToolTip(versionLabel,
                 $"Version: {BuildInfo.Version}\nCommit: {BuildInfo.Commit}{(BuildInfo.Dirty ? " (uncommitted changes)" : "")}\nBuilt: {BuildInfo.BuildTime}");
+
+            // Online/Offline pill under the logo (CheckConnectionAsync keeps it current)
+            connectionStatusLabel = new Label
+            {
+                Location = new Point(10, 74),
+                Size = new Size(100, 20),
+                ForeColor = Color.White,
+                Font = new Font("Arial", 8.5f, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            SetConnectionStatus(null);
 
             var baseActions = new[] {
                 "Qty\nChange",
@@ -1793,7 +1890,7 @@ INSERT INTO CardProcessingFeeLog (
 
             // Add controls: left logo/title and right-side grouped management buttons
             headerPanel.Controls.AddRange(new Control[] {
-                logoPictureBox, titleLabel, subtitleLabel, versionLabel, rightButtonsPanel, headerSyncButton, headerCustomerSyncButton, headerDeliveryTrackingButton, headerCustomersButton
+                logoPictureBox, connectionStatusLabel, titleLabel, subtitleLabel, versionLabel, rightButtonsPanel, headerSyncButton, headerCustomerSyncButton, headerDeliveryTrackingButton, headerCustomersButton
                 // Note: User Setup, Glass Pricing, and Tender Types have been moved into Settings dialog
             });
             PositionHeaderHeaderButtons();
@@ -4369,11 +4466,11 @@ ORDER BY i.[Description], i.[Name], i.Code";
 
             try
             {
-                int updated = await OnlinefunctionsEvents.SyncProductVariationsAsync(TimeSpan.FromSeconds(60));
+                int updated = await OnlinefunctionsEvents.SyncProductsFromPortalAsync(TimeSpan.FromSeconds(60));
 
-                // Wholesale prices come from the Web Portal, not Pancake - pulled here too so the
-                // button also refreshes them on demand instead of waiting for the 5-minute timer.
-                // A failure here is reported but doesn't undo the Pancake item sync above.
+                // Wholesale prices come from the Web Portal too - pulled here so the button also
+                // refreshes them on demand instead of waiting for the 5-minute timer.
+                // A failure here is reported but doesn't undo the product sync above.
                 string wholesaleNote;
                 try
                 {
@@ -25005,8 +25102,25 @@ ORDER BY [Name]", conn);
             try
             {
                 //MessageBox.Show("Downpayment should not be equal to Grand Total. Please checkout full amount instead", "Invalid Downpayment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                // Prompt for Customer Name
-                customerName = FunctionEvents.PromptForCustomerName();
+                // Same customer box as a regular sale (CompleteSale): search by mobile / name and tap the
+                // Messenger customer to link the advance order to their chat (supabase_advance_order_customer_tag.sql).
+                var customer = FunctionEvents.PromptForCustomer(
+                    this,
+                    string.Equals(currentCustomerName?.Trim(), DefaultWalkInCustomerName, StringComparison.OrdinalIgnoreCase)
+                        ? string.Empty
+                        : currentCustomerName?.Trim(),
+                    currentCustomerPhone,
+                    currentCustomerPsid,
+                    currentCustomerAddress);
+                customerName = customer.Name;
+                if (!string.IsNullOrWhiteSpace(customerName))
+                {
+                    // Kept for a retry if a later prompt is cancelled (POST again shows the same customer).
+                    currentCustomerName = customerName;
+                    currentCustomerPhone = customer.Phone;
+                    currentCustomerPsid = customer.Psid;
+                    currentCustomerAddress = customer.Address;
+                }
                 if (string.IsNullOrWhiteSpace(customerName))
                 {
                     MessageBox.Show(isPaidInFullToFollow
@@ -25327,6 +25441,34 @@ IF COL_LENGTH('AdvanceOrderLines', 'VariationId') IS NULL
                         cmd.Parameters.AddWithValue("@datePaid", isFullyPaidAtCreation ? (object)DateTime.UtcNow : DBNull.Value);
                     }
                     cmd.ExecuteNonQuery();
+
+                    // Customer tag (mobile / Messenger PSID / address) - own columns, added on first use, and
+                    // synced to public."AdvanceOrders" (OptionalAdvanceOrderHeaderColumns). Best-effort: a
+                    // failure here never loses the advance order itself.
+                    try
+                    {
+                        using var ensureCustomerCmd = new SqlCommand(@"
+IF COL_LENGTH('AdvanceOrderHeader', 'CustomerMobile') IS NULL
+    ALTER TABLE AdvanceOrderHeader ADD CustomerMobile NVARCHAR(30) NULL;
+IF COL_LENGTH('AdvanceOrderHeader', 'CustomerPsid') IS NULL
+    ALTER TABLE AdvanceOrderHeader ADD CustomerPsid NVARCHAR(100) NULL;
+IF COL_LENGTH('AdvanceOrderHeader', 'CustomerAddress') IS NULL
+    ALTER TABLE AdvanceOrderHeader ADD CustomerAddress NVARCHAR(500) NULL;", connection);
+                        ensureCustomerCmd.ExecuteNonQuery();
+
+                        using var customerCmd = new SqlCommand(@"
+UPDATE AdvanceOrderHeader SET CustomerMobile = @mobile, CustomerPsid = @psid, CustomerAddress = @address
+WHERE TransactionNo = @transactionNo", connection);
+                        customerCmd.Parameters.AddWithValue("@mobile", string.IsNullOrWhiteSpace(currentCustomerPhone) ? DBNull.Value : currentCustomerPhone.Trim());
+                        customerCmd.Parameters.AddWithValue("@psid", string.IsNullOrWhiteSpace(currentCustomerPsid) ? DBNull.Value : currentCustomerPsid.Trim());
+                        customerCmd.Parameters.AddWithValue("@address", string.IsNullOrWhiteSpace(currentCustomerAddress) ? DBNull.Value : currentCustomerAddress.Trim());
+                        customerCmd.Parameters.AddWithValue("@transactionNo", currentTransNo);
+                        customerCmd.ExecuteNonQuery();
+                    }
+                    catch (Exception customerEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Advance order customer tag failed for {currentReceiptNo}: {customerEx.Message}");
+                    }
                 }
                 // If this is a full advance order (not just an initial downpayment), record payment entries as well
 

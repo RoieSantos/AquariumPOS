@@ -4366,7 +4366,16 @@ ORDER BY [RunningSerialNo]", connection);
             // warehouse is being sent too without logging it on local DB, I just want to see it on
             // the portal", it's looked up live from dbo.Warehouses and stitched into the payload at
             // sync time instead (see GetCurrentAdvanceOrderWarehouseName below).
-            "OnlineOrderID", "FullyPaid", "DatePaid"
+            "OnlineOrderID", "FullyPaid", "DatePaid",
+            // Customer tag from the advance-order POST's customer box (supabase_advance_order_customer_tag.sql).
+            // Left out of the payload while blank (see AdvanceOrderCustomerTagColumns), so untagged orders
+            // keep syncing even on a Supabase that doesn't have these columns yet.
+            "CustomerMobile", "CustomerPsid", "CustomerAddress"
+        };
+
+        private static readonly HashSet<string> AdvanceOrderCustomerTagColumns = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "CustomerMobile", "CustomerPsid", "CustomerAddress"
         };
 
         // "Current warehouse" for tagging Advance Orders in the Portal - deliberately not persisted
@@ -4440,6 +4449,8 @@ ORDER BY [RunningSerialNo]", connection);
                 foreach (var column in presentColumns)
                 {
                     var value = rdr[column];
+                    if (value == DBNull.Value && AdvanceOrderCustomerTagColumns.Contains(column))
+                        continue;
                     payload[SanitizeSupabaseColumnName(column)] = value == DBNull.Value ? null : ConvertSupabaseValue(value);
                 }
                 payload["SyncedAtUtc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffK", CultureInfo.InvariantCulture);
@@ -8186,6 +8197,312 @@ WHEN NOT MATCHED THEN
             }
 
             return updatedCount;
+        }
+
+        /// <summary>
+        /// Supabase -> desktop: products (dbo.Items + dbo.[Variant]) from the Web Portal, replacing the
+        /// Pancake /products/variations pull (SyncProductVariationsAsync). The Portal is the product master
+        /// (supabase_item_master_portal_owned.sql); until its cutover the Portal's own copy is refreshed from
+        /// Pancake every 5 minutes, so this reads the same data either way.
+        /// Reads pos_list_items_master / pos_list_variants_master (POS key, no cost). Same field rules as the
+        /// Pancake pull: Price / Category / Description / VariationId / ProductId / Images / SKU follow the
+        /// Portal and a blank Portal value keeps the local one. The local Name and IsActive are only
+        /// overwritten for items edited in the Portal (portal_edited) - names that never came from the
+        /// Portal stay as they are, like before. Items and variants missing locally are added (as active);
+        /// nothing is deleted. Only rows that actually differ are written.
+        /// Safety: an empty Portal answer changes nothing. Returns the number of local rows added or changed.
+        /// </summary>
+        public static async Task<int> SyncProductsFromPortalAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(90);
+
+            string endpointUrl = GlobalSettings.ItemsSupabaseEndpoint?.Trim() ?? string.Empty;
+            int restIndex = endpointUrl.IndexOf("/rest/v1/", StringComparison.OrdinalIgnoreCase);
+            if (restIndex < 0)
+                throw new InvalidOperationException("ItemsSupabaseEndpoint is not a Supabase REST URL.");
+            string rpcBase = endpointUrl.Substring(0, restIndex) + "/rest/v1/rpc/";
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+
+            async Task<List<JsonElement>> FetchAllAsync(string rpcName)
+            {
+                const int pageSize = 1000;
+                var rows = new List<JsonElement>();
+                for (int offset = 0; ; offset += pageSize)
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Post, rpcBase + rpcName);
+                    req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+                    req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+                    req.Content = new StringContent(
+                        JsonSerializer.Serialize(new { p_pos_key = GlobalSettings.PosApiKey, p_limit = pageSize, p_offset = offset }),
+                        Encoding.UTF8, "application/json");
+
+                    using var resp = await http.SendAsync(req).ConfigureAwait(false);
+                    string respText = string.Empty;
+                    try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+                    if (!resp.IsSuccessStatusCode)
+                        throw new HttpRequestException($"{rpcName} failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+                    using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+                    if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                        break;
+
+                    int rowCount = 0;
+                    foreach (var row in doc.RootElement.EnumerateArray())
+                    {
+                        rowCount++;
+                        if (row.ValueKind == JsonValueKind.Object) rows.Add(row.Clone());
+                    }
+                    if (rowCount < pageSize)
+                        break;
+                }
+                return rows;
+            }
+
+            static string Str(JsonElement row, string name, int maxLength) =>
+                row.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+                    ? Cut((v.GetString() ?? string.Empty).Trim(), maxLength)
+                    : string.Empty;
+            static decimal? Dec(JsonElement row, string name) =>
+                row.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? Math.Round(v.GetDecimal(), 2) : (decimal?)null;
+            static bool Bool(JsonElement row, string name, bool fallback) =>
+                row.TryGetProperty(name, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : fallback;
+            static string Cut(string s, int maxLength) => maxLength > 0 && s.Length > maxLength ? s.Substring(0, maxLength) : s;
+            static string Text(object? value) => value == null || value == DBNull.Value ? string.Empty : Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+            static decimal? Money(object? value) => value == null || value == DBNull.Value ? (decimal?)null : Math.Round(Convert.ToDecimal(value, CultureInfo.InvariantCulture), 2);
+            static object Db(string s) => string.IsNullOrEmpty(s) ? DBNull.Value : s;
+            static object DbMoney(decimal? d) => d.HasValue ? d.Value : DBNull.Value;
+
+            var portalItems = await FetchAllAsync("pos_list_items_master").ConfigureAwait(false);
+            var portalVariants = await FetchAllAsync("pos_list_variants_master").ConfigureAwait(false);
+            if (portalItems.Count == 0)
+                return 0;
+
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            await conn.OpenAsync().ConfigureAwait(false);
+
+            var itemColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var colCmd = new SqlCommand("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'Items'", conn))
+            using (var rdr = await colCmd.ExecuteReaderAsync().ConfigureAwait(false))
+            {
+                while (await rdr.ReadAsync().ConfigureAwait(false))
+                    itemColumns.Add(rdr.GetString(0));
+            }
+
+            // The columns the Pancake pull always wrote (it added VariationId/ProductId/Images itself), so
+            // every terminal that ever synced has them - an odd install fails loudly instead of half-syncing.
+            foreach (var required in new[] { "Code", "Name", "Description", "Price", "CategoryCode", "VariationId", "ProductId", "Images" })
+            {
+                if (!itemColumns.Contains(required))
+                    throw new InvalidOperationException($"dbo.Items has no {required} column.");
+            }
+            bool hasSku = itemColumns.Contains("SKU");
+            bool hasIsActive = itemColumns.Contains("IsActive");
+
+            bool hasVariantTable;
+            bool hasCategoryTable;
+            using (var existsCmd = new SqlCommand("SELECT CASE WHEN OBJECT_ID(N'dbo.[Variant]', N'U') IS NULL THEN 0 ELSE 1 END, CASE WHEN OBJECT_ID(N'dbo.Category', N'U') IS NULL THEN 0 ELSE 1 END", conn))
+            using (var rdr = await existsCmd.ExecuteReaderAsync().ConfigureAwait(false))
+            {
+                await rdr.ReadAsync().ConfigureAwait(false);
+                hasVariantTable = rdr.GetInt32(0) == 1;
+                hasCategoryTable = rdr.GetInt32(1) == 1;
+            }
+
+            // Local snapshot, so only rows that differ are written.
+            var localItems = new Dictionary<string, (string Name, string Description, decimal? Price, string Category, string VariationId, string ProductId, string Images, string Sku, bool? IsActive)>(StringComparer.OrdinalIgnoreCase);
+            using (var cmd = new SqlCommand(
+                "SELECT Code, Name, Description, Price, CategoryCode, VariationId, ProductId, Images, "
+                + (hasSku ? "SKU" : "NULL") + ", " + (hasIsActive ? "IsActive" : "NULL") + " FROM dbo.Items", conn))
+            using (var rdr = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+            {
+                while (await rdr.ReadAsync().ConfigureAwait(false))
+                {
+                    string code = Text(rdr[0]);
+                    if (code.Length == 0) continue;
+                    localItems[code] = (Text(rdr[1]), Text(rdr[2]), Money(rdr[3]), Text(rdr[4]), Text(rdr[5]), Text(rdr[6]), Text(rdr[7]), Text(rdr[8]),
+                        rdr[9] == DBNull.Value ? (bool?)null : Convert.ToBoolean(rdr[9], CultureInfo.InvariantCulture));
+                }
+            }
+
+            var localVariants = new Dictionary<string, (string MainItemCode, string ItemCode, string Sku, string Name, decimal? Price, string Category, string Images)>(StringComparer.OrdinalIgnoreCase);
+            if (hasVariantTable)
+            {
+                using var cmd = new SqlCommand("SELECT VariationId, MainItemCode, ItemCode, SKU, VariantName, Price, CategoryCode, Images FROM dbo.[Variant]", conn);
+                using var rdr = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+                while (await rdr.ReadAsync().ConfigureAwait(false))
+                {
+                    string id = Text(rdr[0]);
+                    if (id.Length == 0) continue;
+                    localVariants[id] = (Text(rdr[1]), Text(rdr[2]), Text(rdr[3]), Text(rdr[4]), Money(rdr[5]), Text(rdr[6]), Text(rdr[7]));
+                }
+            }
+
+            int changed = 0;
+            using var tx = conn.BeginTransaction();
+            try
+            {
+                // Items.CategoryCode has a FK to Category(Code) on many installs - make sure each one exists first.
+                if (hasCategoryTable)
+                {
+                    var categories = portalItems.Select(r => Str(r, "category_code", 50))
+                        .Concat(portalVariants.Select(r => Str(r, "category_code", 50)))
+                        .Where(c => c.Length > 0)
+                        .Distinct(StringComparer.OrdinalIgnoreCase);
+                    using var ensureCategory = new SqlCommand(
+                        "IF NOT EXISTS (SELECT 1 FROM Category WHERE Code = @Code) INSERT INTO Category (Code, Description) VALUES (@Code, @Code)", conn, tx);
+                    ensureCategory.Parameters.Add("@Code", System.Data.SqlDbType.NVarChar, 50);
+                    foreach (var category in categories)
+                    {
+                        ensureCategory.Parameters["@Code"].Value = category;
+                        await ensureCategory.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    }
+                }
+
+                string setList = "Name = @Name, Description = @Description, Price = @Price, CategoryCode = @CategoryCode, VariationId = @VariationId, ProductId = @ProductId, Images = @Images"
+                    + (hasSku ? ", SKU = @SKU" : string.Empty) + (hasIsActive ? ", IsActive = @IsActive" : string.Empty);
+                using var updateItem = new SqlCommand($"UPDATE dbo.Items SET {setList} WHERE Code = @Code", conn, tx);
+                using var insertItem = new SqlCommand(
+                    "INSERT INTO dbo.Items (Code, Name, Description, Price, CategoryCode, VariationId, ProductId, Images"
+                    + (hasSku ? ", SKU" : string.Empty) + (hasIsActive ? ", IsActive" : string.Empty)
+                    + ") VALUES (@Code, @Name, @Description, @Price, @CategoryCode, @VariationId, @ProductId, @Images"
+                    + (hasSku ? ", @SKU" : string.Empty) + (hasIsActive ? ", @IsActive" : string.Empty) + ")", conn, tx);
+                foreach (var itemCmd in new[] { updateItem, insertItem })
+                {
+                    itemCmd.Parameters.Add("@Code", System.Data.SqlDbType.NVarChar, 50);
+                    itemCmd.Parameters.Add("@Name", System.Data.SqlDbType.NVarChar, 255);
+                    itemCmd.Parameters.Add("@Description", System.Data.SqlDbType.NVarChar, 1000);
+                    itemCmd.Parameters.Add(new SqlParameter("@Price", System.Data.SqlDbType.Decimal) { Precision = 18, Scale = 2 });
+                    itemCmd.Parameters.Add("@CategoryCode", System.Data.SqlDbType.NVarChar, 50);
+                    itemCmd.Parameters.Add("@VariationId", System.Data.SqlDbType.NVarChar, 50);
+                    itemCmd.Parameters.Add("@ProductId", System.Data.SqlDbType.NVarChar, 100);
+                    itemCmd.Parameters.Add("@Images", System.Data.SqlDbType.NVarChar, -1);
+                    if (hasSku) itemCmd.Parameters.Add("@SKU", System.Data.SqlDbType.NVarChar, 100);
+                    if (hasIsActive) itemCmd.Parameters.Add("@IsActive", System.Data.SqlDbType.Bit);
+                }
+
+                foreach (var row in portalItems)
+                {
+                    string code = Str(row, "code", 0);
+                    if (code.Length == 0 || code.Length > 50) continue;
+
+                    bool portalEdited = Bool(row, "portal_edited", false);
+                    string name = Str(row, "name", 255);
+                    string description = Str(row, "description", 1000);
+                    decimal? price = Dec(row, "price");
+                    string category = Str(row, "category_code", 50);
+                    string variationId = Str(row, "variation_id", 50);
+                    string productId = Str(row, "product_id", 100);
+                    string images = Str(row, "images", 0);
+                    string sku = Str(row, "sku", 100);
+                    bool isActive = Bool(row, "is_active", true);
+
+                    SqlCommand target;
+                    if (localItems.TryGetValue(code, out var local))
+                    {
+                        // A blank Portal value keeps the local one; Name / IsActive / a removed picture only
+                        // follow the Portal for items edited there (see the summary).
+                        name = portalEdited && name.Length > 0 ? name : local.Name;
+                        description = description.Length > 0 ? description : local.Description;
+                        price ??= local.Price;
+                        category = category.Length > 0 ? category : local.Category;
+                        variationId = variationId.Length > 0 ? variationId : local.VariationId;
+                        productId = productId.Length > 0 ? productId : local.ProductId;
+                        images = images.Length > 0 || portalEdited ? images : local.Images;
+                        sku = sku.Length > 0 ? sku : local.Sku;
+                        bool? active = portalEdited ? isActive : local.IsActive;
+
+                        bool same = name == local.Name && description == local.Description && price == local.Price
+                            && category == local.Category && variationId == local.VariationId && productId == local.ProductId
+                            && images == local.Images && (!hasSku || sku == local.Sku) && (!hasIsActive || active == local.IsActive);
+                        if (same) continue;
+
+                        target = updateItem;
+                        if (hasIsActive) target.Parameters["@IsActive"].Value = active.HasValue ? active.Value : DBNull.Value;
+                    }
+                    else
+                    {
+                        target = insertItem;
+                        if (description.Length == 0) description = name;
+                        if (hasIsActive) target.Parameters["@IsActive"].Value = isActive;
+                    }
+
+                    target.Parameters["@Code"].Value = code;
+                    target.Parameters["@Name"].Value = Db(name);
+                    target.Parameters["@Description"].Value = Db(description);
+                    target.Parameters["@Price"].Value = DbMoney(price);
+                    target.Parameters["@CategoryCode"].Value = Db(category);
+                    target.Parameters["@VariationId"].Value = Db(variationId);
+                    target.Parameters["@ProductId"].Value = Db(productId);
+                    target.Parameters["@Images"].Value = Db(images);
+                    if (hasSku) target.Parameters["@SKU"].Value = Db(sku);
+                    changed += await target.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+
+                if (hasVariantTable)
+                {
+                    using var upsertVariant = new SqlCommand(@"
+IF EXISTS (SELECT 1 FROM dbo.[Variant] WHERE VariationId = @VariationId)
+    UPDATE dbo.[Variant]
+       SET MainItemCode = @MainItemCode, ItemCode = @ItemCode, SKU = @SKU, VariantName = @VariantName,
+           Price = @Price, CategoryCode = @CategoryCode, Images = @Images, UpdatedDate = GETDATE()
+     WHERE VariationId = @VariationId
+ELSE
+    INSERT INTO dbo.[Variant] (VariationId, MainItemCode, ItemCode, SKU, VariantName, Price, CategoryCode, Images)
+    VALUES (@VariationId, @MainItemCode, @ItemCode, @SKU, @VariantName, @Price, @CategoryCode, @Images)", conn, tx);
+                    upsertVariant.Parameters.Add("@VariationId", System.Data.SqlDbType.NVarChar, 50);
+                    upsertVariant.Parameters.Add("@MainItemCode", System.Data.SqlDbType.NVarChar, 50);
+                    upsertVariant.Parameters.Add("@ItemCode", System.Data.SqlDbType.NVarChar, 50);
+                    upsertVariant.Parameters.Add("@SKU", System.Data.SqlDbType.NVarChar, 100);
+                    upsertVariant.Parameters.Add("@VariantName", System.Data.SqlDbType.NVarChar, 255);
+                    upsertVariant.Parameters.Add(new SqlParameter("@Price", System.Data.SqlDbType.Decimal) { Precision = 18, Scale = 2 });
+                    upsertVariant.Parameters.Add("@CategoryCode", System.Data.SqlDbType.NVarChar, 50);
+                    upsertVariant.Parameters.Add("@Images", System.Data.SqlDbType.NVarChar, -1);
+
+                    foreach (var row in portalVariants)
+                    {
+                        string id = Str(row, "variation_id", 0);
+                        if (id.Length == 0 || id.Length > 50) continue;
+
+                        string mainItemCode = Str(row, "main_item_code", 50);
+                        string itemCode = Str(row, "item_code", 50);
+                        string sku = Str(row, "sku", 100);
+                        string variantName = Str(row, "variant_name", 255);
+                        decimal? price = Dec(row, "price");
+                        string category = Str(row, "category_code", 50);
+                        string images = Str(row, "images", 0);
+
+                        if (localVariants.TryGetValue(id, out var local))
+                        {
+                            price ??= local.Price;
+                            images = images.Length > 0 ? images : local.Images;
+                            if (mainItemCode == local.MainItemCode && itemCode == local.ItemCode && sku == local.Sku
+                                && variantName == local.Name && price == local.Price && category == local.Category && images == local.Images)
+                                continue;
+                        }
+
+                        upsertVariant.Parameters["@VariationId"].Value = id;
+                        upsertVariant.Parameters["@MainItemCode"].Value = mainItemCode; // NOT NULL column, '' allowed
+                        upsertVariant.Parameters["@ItemCode"].Value = Db(itemCode);
+                        upsertVariant.Parameters["@SKU"].Value = Db(sku);
+                        upsertVariant.Parameters["@VariantName"].Value = Db(variantName);
+                        upsertVariant.Parameters["@Price"].Value = DbMoney(price);
+                        upsertVariant.Parameters["@CategoryCode"].Value = Db(category);
+                        upsertVariant.Parameters["@Images"].Value = Db(images);
+                        await upsertVariant.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        changed++;
+                    }
+                }
+
+                tx.Commit();
+            }
+            catch
+            {
+                try { tx.Rollback(); } catch { }
+                throw;
+            }
+
+            return changed;
         }
 
         /// <summary>

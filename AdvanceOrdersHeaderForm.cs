@@ -1316,6 +1316,8 @@ GROUP BY s.ItemCode, ISNULL(s.VariantCode, '')", conn);
                     // source (it was evidently altered directly against the live database).
                     HideColumnIfPresent("Page ID", "Page_ID", "PageID");
                     HideColumnIfPresent("Conversation ID", "Conversation_ID", "ConversationID");
+                    // Messenger PSID from the advance-order customer box - just the chat link, not for the grid.
+                    HideColumnIfPresent("CustomerPsid");
 
                     // Make ReceiptNo column wider for readability (defensive) - AllCells already
                     // sizes it to fit "RS-0000006687"-style values, MinimumWidth is just a safety

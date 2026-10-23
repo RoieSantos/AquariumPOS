@@ -105,4 +105,15 @@ from pg_stat_database where datname = current_database()
 union all
 select '8 Database', 2, 'database size', pg_size_pretty(pg_database_size(current_database()))
 
+-- Is the 2026-10-20 fix (supabase_skip_noop_sync_updates.sql) actually installed?
+union all
+select '9 No-op sync fix', row_number() over (order by c.relname)::int, c.relname::text,
+       case when t.tgname is null then 'MISSING - run supabase_skip_noop_sync_updates.sql' else 'installed' end
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+left join pg_trigger t on t.tgrelid = c.oid and t.tgname = 'zz_skip_noop_sync_update'
+where c.relname in ('Items', 'Variants', 'OnlineCustomers', 'AdvanceOrders', 'AdvanceOrderLines',
+                    'AdvanceOrderPayments', 'OnlineOrderLines')
+  and c.relkind = 'r'
+
 order by 1, 2;

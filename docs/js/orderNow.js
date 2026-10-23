@@ -198,6 +198,7 @@ function updateCartBar() {
   // confirmation (steps 4-5) and Estimate Delivery, where it'd just be clutter.
   const showBar = (currentStep === 1 || currentStep === 2 || currentStep === 'customize-tabs' || String(currentStep).indexOf('custom') === 0) && cart.length > 0;
   bar.classList.toggle('hidden', !showBar);
+  updateCzQuoteBar();
   document.getElementById('cartBarInfo').textContent = `${cartItemCount()} item${cartItemCount() === 1 ? '' : 's'} - ${formatMoney(cartTotal())}`;
   document.getElementById('cartBarSub').textContent = 'Tap to review your order';
 }
@@ -336,6 +337,7 @@ function applyCustomizeTabVisibility() {
 function switchCustomizeTab(tab) {
   activeCustomizeTab = tab;
   applyCustomizeTabVisibility();
+  updateCzQuoteBar();
   if (tab === 'stand') {
     updateStandAdviseFromAquariumVisibility();
   }
@@ -850,9 +852,22 @@ function formatDimsWithAlt(length, width, height, unit) {
 // as one long column. This sorts its existing elements into a two-column layout at page load: the
 // form on the left, and the price/drawing/summary/notices/Add to Cart+Checkout in a sticky column
 // on the right, so the live price and buttons stay in view while the customer edits. Elements are
-// MOVED, not copied, so every id and event listener stays exactly as before. On phones the CSS
-// flattens it back to one column in the original drawing -> price -> form -> buttons order.
+// MOVED, not copied, so every id and event listener stays exactly as before.
+// Looks like the staff Aquarium Calculator (WebAquariumCalculator/index.html): each .form-group
+// becomes a numbered step card (CSS counter), and the price + disclaimer + Add to Cart/Checkout
+// are grouped into one blue .cz-quote card at the top of the sticky column, followed by messages,
+// safety notices, the drawing and the summary. On phones the CSS flattens it to one column
+// (drawing -> quote -> notices -> form -> summary) and #czQuoteBar keeps the price in view.
 const CZ_SAFETY_NOTICE_IDS = ['customDimsGlassNotice', 'customGlassNotice', 'customStandNotice'];
+const CZ_QUOTE_RANKS = [1, 4, 7];
+const CZ_ASIDE_ORDER = [6, 5, 2, 3];
+
+// Price card content for the Customize builder - the .custom-price-label is hidden inside the
+// .cz-quote card (which has its own "Estimated price" heading) but still shows on the add-on
+// Filtration step's standalone price card.
+function customPriceHtml(total) {
+  return `<span class="custom-price-label">Estimated Price: </span><span class="custom-price-value">${formatMoney(total)}</span>`;
+}
 
 function czAsideRank(el) {
   if (el.matches('.custom-price-card')) return 1;
@@ -890,13 +905,46 @@ function layoutCustomizePanels() {
       }
     });
 
+    const quote = document.createElement('div');
+    quote.className = 'cz-quote';
+    quote.innerHTML = '<div class="cz-quote-label">Estimated price</div>';
     asideItems
+      .filter(({ rank }) => CZ_QUOTE_RANKS.includes(rank))
       .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .forEach(({ el }) => quote.appendChild(el));
+    aside.appendChild(quote);
+    asideItems
+      .filter(({ rank }) => !CZ_QUOTE_RANKS.includes(rank))
+      .sort((a, b) => CZ_ASIDE_ORDER.indexOf(a.rank) - CZ_ASIDE_ORDER.indexOf(b.rank) || a.i - b.i)
       .forEach(({ el }) => aside.appendChild(el));
     layout.appendChild(form);
     layout.appendChild(aside);
     panel.appendChild(layout);
+    // Keep the phone quote bar in sync whenever this tab's price card is rewritten.
+    const priceCard = quote.querySelector('.custom-price-card');
+    if (priceCard) new MutationObserver(updateCzQuoteBar).observe(priceCard, { childList: true, characterData: true, subtree: true });
   });
+}
+
+// Phone-only bottom bar (#czQuoteBar, same idea as the calculator's .quote-bar) - mirrors the
+// active Customize tab's price; "View quote" scrolls to that tab's .cz-quote card. Hidden outside
+// the Customize step, and sits just above #cartBar while that's showing (called from updateCartBar).
+function updateCzQuoteBar() {
+  const bar = document.getElementById('czQuoteBar');
+  if (!bar) return;
+  const panel = document.querySelector('.customize-tab-panel.active');
+  bar.classList.toggle('hidden', currentStep !== 'customize-tabs' || !panel);
+  if (!panel) return;
+  const cartBar = document.getElementById('cartBar');
+  bar.style.bottom = cartBar && !cartBar.classList.contains('hidden') ? cartBar.offsetHeight + 'px' : '0';
+  const value = panel.querySelector('.cz-quote .custom-price-value');
+  document.getElementById('czQuoteBarPrice').textContent = value ? value.textContent : '-';
+}
+
+function scrollToActiveCzQuote(event) {
+  event.preventDefault();
+  const quote = document.querySelector('.customize-tab-panel.active .cz-quote');
+  if (quote) quote.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 const STAND_TUBULAR_THICKNESS_IN = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 };
@@ -1754,7 +1802,7 @@ async function updateCustomPriceEstimate() {
 
   // All three steps show the computed gallon volume right under the price, so the customer has a
   // sense of tank size at every point in the custom-aquarium flow.
-  const priceHtml = `Estimated Price: ${formatMoney(result.totalPrice)}<div class="custom-price-gallons-badge">${result.gallons} gallons</div>`;
+  const priceHtml = `${customPriceHtml(result.totalPrice)}<div class="custom-price-gallons-badge">${result.gallons} gallons</div>`;
   boxes.forEach((box) => { box.innerHTML = priceHtml; });
 }
 
@@ -2073,7 +2121,7 @@ async function updateCustomStandPriceEstimate() {
     notice.classList.add('hidden');
   }
 
-  box.textContent = `Estimated Price: ${formatMoney(result.totalPrice)}`;
+  box.innerHTML = customPriceHtml(result.totalPrice);
 }
 
 function buildCustomStandSpecText() {
@@ -2293,7 +2341,7 @@ async function updateStandaloneFiltrationPriceEstimate() {
     return;
   }
 
-  box.innerHTML = `Estimated Price: ${formatMoney(result.totalPrice)}`;
+  box.innerHTML = customPriceHtml(result.totalPrice);
 }
 
 function buildStandaloneFiltrationSpecText() {
@@ -2406,7 +2454,7 @@ async function updateStandaloneStickerPriceEstimate() {
     return;
   }
 
-  box.innerHTML = `Estimated Price: ${formatMoney(result.totalPrice)}`;
+  box.innerHTML = customPriceHtml(result.totalPrice);
 }
 
 function buildStandaloneStickerSpecText() {
@@ -4423,6 +4471,7 @@ async function runDeliveryEstimate() {
     document.getElementById(id).addEventListener('input', () => updateCustomPriceEstimate());
   });
   document.getElementById('viewCartBtn').addEventListener('click', () => { renderCart(); goToStep(3); });
+  document.getElementById('czQuoteBarLink').addEventListener('click', scrollToActiveCzQuote);
   document.getElementById('cartAddMoreBtn').addEventListener('click', () => goToStep(currentCategoryLabel ? 2 : 1));
   document.getElementById('cartContinueBtn').addEventListener('click', () => {
     detailsBackTarget = 3;
