@@ -20,8 +20,10 @@
 // item that already has one shows "Serial assigned to this order" instead of its stock badge, and isn't
 // counted as out. Matched by docKey (load's 3rd / loadDocument's docNo), so it can arrive before or after.
 // ItemStockFactbox.setFulfilled(box, docKey, statusLabel) - the order is Shipped / Delivered / Completed
-// (statusLabel, null = not): every line reads "Serials fully satisfied" / "Fulfilled", no "(n out)" and no
-// other-warehouse stock - per "if an order is delivered ... no need to show stock (out)". Same docKey rule.
+// (statusLabel, null = not): serial-tracked lines show the serials actually tagged (or "No serial tagged" /
+// "1 of 2 serials tagged" - a line's optional `quantity` is the need), no stock and no other-warehouse
+// stock - per "if an order is delivered ... no need to show stock (out)". Same docKey rule.
+// ItemStockFactbox.setTagHandler(box, onTag) - fulfilled order: untagged lines get a "Tag serial" button -> onTag(itemCode).
 // ItemStockFactbox.loadSets(box, orderId) - Online orders: each SET's package parts with their serials.
 // ItemStockFactbox.clear(box, text) - placeholder while a document loads / has no lines.
 (function () {
@@ -129,11 +131,15 @@
   function setAssigned(box, docKey, serialRows) {
     if (!box) return;
     const counts = new Map();
+    const serials = new Map(); // item code -> its tagged serial nos, shown on a fulfilled order's lines
     (serialRows || []).forEach((s) => {
       const code = String(s.item_code || '').trim().toUpperCase();
-      if (code) counts.set(code, (counts.get(code) || 0) + 1);
+      if (!code) return;
+      counts.set(code, (counts.get(code) || 0) + 1);
+      if (s.serial_no) serials.set(code, [...(serials.get(code) || []), String(s.serial_no)]);
     });
-    box._isfAssigned = { doc: String(docKey), counts };
+    // serialRows null = couldn't look them up (error / view-only) - a fulfilled order says "not checked", not "none"
+    box._isfAssigned = { doc: String(docKey), counts, serials, unknown: serialRows == null };
     const last = box._isfLast;
     if (last && last.doc === String(docKey) && box._isfDoc === String(docKey)) render(box, last.list, last.data, last.error, last.sqlFile);
   }
@@ -145,42 +151,104 @@
     if (last && last.doc === String(docKey) && box._isfDoc === String(docKey)) render(box, last.list, last.data, last.error, last.sqlFile);
   }
 
+  // A fulfilled order's untagged lines get a "Tag serial" button calling onTag(itemCode) (null = none,
+  // e.g. the user can't tag). Set once per box; the page opens its own picker and re-calls setAssigned.
+  function setTagHandler(box, onTag) {
+    if (!box) return;
+    box._isfOnTag = onTag || null;
+    if (!box._isfTagWired) {
+      box._isfTagWired = true;
+      box.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-isf-tag]');
+        if (btn && box._isfOnTag) box._isfOnTag(btn.dataset.isfTag);
+      });
+    }
+  }
+
   function fulfilledLabel(box) {
     const f = box._isfFulfilled;
     return f && f.doc === box._isfDoc ? f.label : null;
   }
 
-  // Shipped / Delivered / Completed order: the units are out the door, so stock no longer matters.
+  // Shipped / Delivered / Completed order: the units are out the door, so stock no longer matters - but
+  // per "the user actually thinks that the serials has been tagged", each serial-tracked line says what was
+  // actually tagged: the serial nos (green), "1 of 2 tagged" (amber) or "No serial tagged" (red). Until
+  // setAssigned arrives the lines read "Checking serials..." rather than a false "none".
   function renderFulfilled(box, list, rowsByKey, label) {
     const { body, count } = parts(box);
+    const checked = assignedLoaded(box);
+    let untagged = 0;
+    let tracked = 0;
     const html = list.map((l) => {
       const rows = rowsByKey.get(l.key);
       if (!rows) return '';
-      const assigned = assignedCount(box, l.item_code);
       const serialTracked = rows[0].source === 'serials';
-      const text = serialTracked
-        ? (assigned ? `${assigned === 1 ? 'Serial' : `${assigned} serials`} fully satisfied` : 'Serials fully satisfied')
-        : 'Fulfilled';
+      const assigned = assignedCount(box, l.item_code);
+      const need = Number(l.quantity) || 0; // 0 = quantity not known (list FactBox)
+      const nos = assignedSerials(box, l.item_code);
+      let cls = 'isf-assigned';
+      let badge;
+      if (!serialTracked) {
+        badge = `<span class="badge badge-success" title="Not serial-tracked - nothing to tag">&#10003; ${esc(label)}</span>`;
+      } else if (!checked) {
+        tracked++;
+        badge = `<span class="badge badge-neutral">${assignedLoaded(box, true) ? 'Serials not checked' : 'Checking serials...'}</span>`;
+      } else if (!assigned) {
+        tracked++;
+        untagged++;
+        cls = 'isf-none';
+        badge = `<span class="badge badge-danger" title="${esc(label)} without a serial linked to this order - tag it with Show Serials">&#9888; No serial tagged</span>`;
+      } else if (need && assigned < need) {
+        tracked++;
+        untagged++;
+        cls = 'isf-short';
+        badge = `<span class="badge badge-warning" title="Only some units have a serial linked to this order">&#9888; ${assigned} of ${fmtQty(need)} serials tagged</span>`;
+      } else {
+        tracked++;
+        badge = `<span class="badge badge-success">&#10003; ${assigned === 1 ? 'Serial' : `${assigned} serials`} tagged</span>`;
+      }
+      const tagLink = box._isfOnTag && (cls === 'isf-none' || cls === 'isf-short')
+        ? ` <button type="button" class="isf-tag-btn" data-isf-tag="${esc(l.item_code)}" title="Pick the serial(s) of the unit(s) that went out">Tag serial</button>` : '';
+      const chips = serialTracked && nos.length
+        ? `<div class="isf-serials"><span class="isf-locs-label muted">Serial${nos.length === 1 ? '' : 's'}</span>${nos.map((s) => `<span class="isf-serial">${esc(s)}</span>`).join('')}</div>`
+        : '';
       const name = rows[0].item_name;
-      return `<li class="isf-item isf-assigned">
+      return `<li class="isf-item ${cls}">
         <div class="isf-code">${esc(l.item_code)}${skuPill(rows[0].sku, l.item_code)}</div>
         ${name ? `<div class="isf-name" title="${esc(name)}">${esc(name)}</div>` : ''}
         ${l.label && l.label !== l.item_code && l.label !== name ? `<div class="isf-desc muted" title="${esc(l.label)}">${esc(l.label)}</div>` : ''}
-        <div class="isf-badges"><span class="badge badge-success">&#10003; ${text}</span></div>
+        <div class="isf-badges">${badge}${tagLink}</div>
+        ${chips}
       </li>`;
     }).join('');
-    body.innerHTML = `<p class="isf-note isf-fulfilled-note">&#10003; Order ${esc(label)} - serials fully satisfied, stock no longer needed.</p>`
-      + (html ? `<ul class="isf-list">${html}</ul>` : '');
+    const note = !tracked || !checked
+      ? `<p class="isf-note isf-fulfilled-note">&#10003; Order ${esc(label)} - stock no longer needed.</p>`
+      : untagged
+        ? `<p class="isf-note isf-fulfilled-warn">&#9888; Order ${esc(label)}, but ${untagged} serial-tracked item${untagged === 1 ? ' is' : 's are'} missing a serial${box._isfOnTag ? ' - use Tag serial to pick which unit went out.' : '.'}</p>`
+        : `<p class="isf-note isf-fulfilled-note">&#10003; Order ${esc(label)} - every serial tagged, stock no longer needed.</p>`;
+    body.innerHTML = note + (html ? `<ul class="isf-list">${html}</ul>` : '');
     if (count) {
-      count.textContent = '(fulfilled)';
-      count.classList.remove('isf-out');
+      count.textContent = checked && untagged ? `(${untagged} untagged)` : '(fulfilled)';
+      count.classList.toggle('isf-out', checked && untagged > 0);
     }
+  }
+
+  // The order's serials are in (orUnknown: also when the lookup came back unknown).
+  function assignedLoaded(box, orUnknown) {
+    const a = box._isfAssigned;
+    return !!a && a.doc === box._isfDoc && (orUnknown || !a.unknown);
   }
 
   function assignedCount(box, itemCode) {
     const a = box._isfAssigned;
     if (!a || a.doc !== box._isfDoc) return 0;
     return a.counts.get(String(itemCode || '').trim().toUpperCase()) || 0;
+  }
+
+  function assignedSerials(box, itemCode) {
+    const a = box._isfAssigned;
+    if (!a || a.doc !== box._isfDoc || !a.serials) return [];
+    return a.serials.get(String(itemCode || '').trim().toUpperCase()) || [];
   }
 
   function render(box, list, data, error, sqlFile) {
@@ -361,5 +429,5 @@
     }
   }
 
-  window.ItemStockFactbox = { load, loadDocument, setAssigned, setFulfilled, loadSets, clear, wireListRows };
+  window.ItemStockFactbox = { load, loadDocument, setAssigned, setFulfilled, setTagHandler, loadSets, clear, wireListRows };
 })();

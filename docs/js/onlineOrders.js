@@ -3090,15 +3090,18 @@ async function loadOrderCardSerials(orderId) {
   if (String(orderId) !== String(openCardOrderId)) return;
   renderSerialsFactbox('orderCard', error ? [] : data || [], error?.message);
   // Stock box: items with a serial already tagged here read "Serial assigned to this order".
-  ItemStockFactbox.setAssigned(document.getElementById('orderCardStockPart'), orderId, error ? [] : data);
+  ItemStockFactbox.setAssigned(document.getElementById('orderCardStockPart'), orderId, error ? null : data);
 }
 
 async function loadAdvanceCardSerials(no) {
-  if (!canAssignOrders()) return; // view-only Store Managers: the FactBox is hidden (updateAdvanceCardActions)
+  if (!canAssignOrders()) { // view-only Store Managers: the FactBox is hidden (updateAdvanceCardActions)
+    ItemStockFactbox.setAssigned(document.getElementById('advanceCardStockPart'), no, null); // Stock: "Serials not checked"
+    return;
+  }
   const { data, error } = await advanceRpc('staff_get_advance_order_serial_labels', { p_no: no });
   if (openAdvanceNo !== String(no)) return;
   renderSerialsFactbox('advanceCard', error ? [] : data || [], error?.message);
-  ItemStockFactbox.setAssigned(document.getElementById('advanceCardStockPart'), no, error ? [] : data);
+  ItemStockFactbox.setAssigned(document.getElementById('advanceCardStockPart'), no, error ? null : data);
 }
 
 // Payment part of the list FactBox - per "in the factbox can we show if the order has balance?". Read
@@ -3169,7 +3172,10 @@ let listSerialsTimer = null;
 function showListSerials(kind, id, forceReload = false) {
   showListPayment(kind, id);
   showListStock(kind, id, forceReload);
-  if (kind === 'advance' && !canAssignOrders()) return; // view-only Store Managers: Serials part hidden, Stock only
+  if (kind === 'advance' && !canAssignOrders()) { // view-only Store Managers: Serials part hidden, Stock only
+    if (id) ItemStockFactbox.setAssigned(document.getElementById('advanceListStockFact'), id, null);
+    return;
+  }
   const prefix = kind === 'advance' ? 'advanceList' : 'orderList';
   const box = document.getElementById(`${prefix}Factbox`);
   const key = id ? `${kind}:${id}` : null;
@@ -3193,7 +3199,7 @@ function showListSerials(kind, id, forceReload = false) {
       });
     if (listSerialsKey !== key) return; // another row picked meanwhile
     renderSerialsFactbox(prefix, error ? [] : data || [], error?.message);
-    ItemStockFactbox.setAssigned(document.getElementById(`${prefix}StockFact`), id, error ? [] : data);
+    ItemStockFactbox.setAssigned(document.getElementById(`${prefix}StockFact`), id, error ? null : data);
   }, 250);
 }
 
@@ -5765,17 +5771,161 @@ async function loadOrderCardLines(orderId) {
 // Stock FactBox (js/itemStockFactbox.js) - each line's on-hand, the badge at the order's own branch.
 function loadOrderCardStock(orderId) {
   const o = findFlatOrder(orderId);
+  ItemStockFactbox.setTagHandler(document.getElementById('orderCardStockPart'),
+    canTagFulfilledSerials() ? (itemCode) => openTagSerialsDialog('online', orderId, itemCode) : null);
   ItemStockFactbox.setFulfilled(document.getElementById('orderCardStockPart'), orderId, orderFulfilledStatus(o));
   ItemStockFactbox.load(document.getElementById('orderCardStockPart'), cardLines.map((l) => ({
     item_code: l.item_code || l.product_display_id,
     variant_id: l.variation_id,
     label: l.description,
+    quantity: l.quantity,
     warehouse: o?.location_id || o?.warehouse_name,
     warehouseName: o?.warehouse_name
   })), orderId);
   // SET lines: the package's BOM parts and their serials, in the same box.
   ItemStockFactbox.loadSets(document.getElementById('orderCardStockPart'), orderId);
 }
+
+// ---------------------------------------------------------------- Tag serials after ship
+// Per "can we create a button on the delivered if the products dont have serials we can manually choose
+// what serials they release": the Stock FactBox's "Tag serial" on a Shipped / Delivered / Completed order
+// opens this picker - every serial-tracked item still short, with its In Stock serials (any branch; the
+// order's own branch and reserved-for-it first). Saving marks them SOLD to the order
+// (sql/supabase_tag_serials_fulfilled_order.sql). Same people who manage reservations: Super User,
+// Serial Admin, Production Manager (the RPC checks too).
+function canTagFulfilledSerials() {
+  return !!(currentSession?.isSuperUser || currentSession?.isSerialAdmin || currentSession?.isProductionManager);
+}
+
+let tagSerialsDoc = null; // { docType, docNo }
+let tagSerialsNeeds = new Map(); // item code -> still needed
+
+async function openTagSerialsDialog(docType, docNo, focusItemCode) {
+  tagSerialsDoc = { docType, docNo: String(docNo) };
+  tagSerialsNeeds = new Map();
+  const modal = document.getElementById('tagSerialsModal');
+  const linesEl = document.getElementById('tagSerialsModalLines');
+  const errorEl = document.getElementById('tagSerialsModalError');
+  const saveBtn = document.getElementById('tagSerialsModalSaveBtn');
+  document.getElementById('tagSerialsModalCaption').textContent = `${docType === 'advance' ? 'ADVANCE ORDER' : 'ONLINE ORDER'} ${docNo}`;
+  linesEl.innerHTML = '<p class="muted">Loading serials...</p>';
+  errorEl.classList.add('hidden');
+  saveBtn.disabled = true;
+  document.getElementById('tagSerialsModalCount').textContent = '';
+  modal.classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('staff_get_fulfilled_order_serial_candidates', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_doc_type: docType,
+    p_doc_no: String(docNo)
+  });
+  if (!tagSerialsDoc || tagSerialsDoc.docNo !== String(docNo)) return;
+  if (error) {
+    linesEl.innerHTML = `<p class="error-text">${/schema cache|could not find the function|does not exist/i.test(error.message)
+      ? 'Not set up yet - run sql/supabase_tag_serials_fulfilled_order.sql.'
+      : `Could not load serials: ${escapeHtml(error.message)}`}</p>`;
+    return;
+  }
+  const focus = String(focusItemCode || '').trim().toUpperCase();
+  const items = (data || []).filter((r) => r.quantity_needed > 0)
+    .sort((a, b) => (b.item_code.toUpperCase() === focus) - (a.item_code.toUpperCase() === focus));
+  if (!items.length) {
+    linesEl.innerHTML = '<p class="muted">Every serial-tracked item on this order already has its serial.</p>';
+    return;
+  }
+  items.forEach((r) => tagSerialsNeeds.set(r.item_code, r.quantity_needed));
+  linesEl.innerHTML = items.map((r) => {
+    const serials = r.serials || [];
+    const rows = serials.map((s) => `
+      <label data-tag-search="${escapeHtml(`${s.serial_no} ${s.location || ''} ${s.variant || ''}`.toLowerCase())}">
+        <input type="checkbox" data-tag-item="${escapeHtml(r.item_code)}" value="${s.running_serial_no}" />
+        <span class="isf-serial">${escapeHtml(s.serial_no)}</span>
+        ${s.reserved ? '<span class="badge badge-warning" style="font-size:10px;">Reserved for this order</span>' : ''}
+        ${!s.variant_match && s.variant ? '<span class="badge badge-neutral" style="font-size:10px;" title="Not the variant on the order line">Other variant</span>' : ''}
+        <span class="tag-serials-meta muted">${escapeHtml(s.location || 'No location')}${s.variant ? `<br>${escapeHtml(s.variant)}` : ''}</span>
+      </label>`).join('');
+    return `<div class="tag-serials-item">
+      <h4>${escapeHtml(r.item_code)} <span class="muted" style="font-weight:normal;">- ${escapeHtml(r.description || '')}</span></h4>
+      <div class="muted" style="font-size:12px;">Needs <b>${r.quantity_needed}</b> more (${r.quantity_tagged} of ${r.quantity_total} tagged)
+        <span data-tag-picked="${escapeHtml(r.item_code)}"></span></div>
+      ${serials.length
+        ? `${serials.length > 8 ? `<input type="search" data-tag-filter="${escapeHtml(r.item_code)}" placeholder="Search serial / branch..." style="margin-top:6px;width:100%;" />` : ''}
+           <div class="tag-serials-list" data-tag-list="${escapeHtml(r.item_code)}">${rows}</div>`
+        : '<p class="error-text" style="margin:6px 0 0;">No In Stock serial for this item anywhere - create / receive it in the Serial Tracker first.</p>'}
+    </div>`;
+  }).join('');
+  updateTagSerialsCount();
+}
+
+function updateTagSerialsCount() {
+  const linesEl = document.getElementById('tagSerialsModalLines');
+  let total = 0;
+  tagSerialsNeeds.forEach((need, code) => {
+    const boxes = [...linesEl.querySelectorAll('input[data-tag-item]')].filter((b) => b.dataset.tagItem === code);
+    const picked = boxes.filter((b) => b.checked).length;
+    total += picked;
+    // Can't tick more than the item still needs.
+    boxes.forEach((b) => { b.disabled = !b.checked && picked >= need; });
+    const label = [...linesEl.querySelectorAll('[data-tag-picked]')].find((el) => el.dataset.tagPicked === code);
+    if (label) label.textContent = picked ? ` - ${picked} picked` : '';
+  });
+  document.getElementById('tagSerialsModalCount').textContent = total ? `${total} serial${total === 1 ? '' : 's'} selected` : 'Tick the serials that went out';
+  document.getElementById('tagSerialsModalSaveBtn').disabled = total === 0;
+  document.getElementById('tagSerialsModalError').classList.add('hidden');
+}
+
+function closeTagSerialsDialog() {
+  document.getElementById('tagSerialsModal').classList.add('hidden');
+  tagSerialsDoc = null;
+}
+
+async function saveTagSerials() {
+  if (!tagSerialsDoc) return;
+  const { docType, docNo } = tagSerialsDoc;
+  const picks = [...document.querySelectorAll('#tagSerialsModalLines input[data-tag-item]:checked')].map((b) => Number(b.value));
+  if (!picks.length) return;
+  const errorEl = document.getElementById('tagSerialsModalError');
+  const saveBtn = document.getElementById('tagSerialsModalSaveBtn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Tagging...';
+  const { error } = await supabaseClient.rpc('staff_tag_serials_to_fulfilled_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_doc_type: docType,
+    p_doc_no: docNo,
+    p_running_nos: picks
+  });
+  saveBtn.textContent = 'Tag Serials';
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    saveBtn.disabled = false;
+    return;
+  }
+  closeTagSerialsDialog();
+  // Serials FactBox + Stock box ("n serials tagged") re-read for the open card.
+  if (docType === 'advance') {
+    if (openAdvanceNo === docNo) loadAdvanceCardSerials(docNo);
+  } else if (String(openCardOrderId) === docNo) {
+    loadOrderCardSerials(docNo);
+  }
+}
+
+(function wireTagSerialsDialog() {
+  const linesEl = document.getElementById('tagSerialsModalLines');
+  if (!linesEl) return;
+  linesEl.addEventListener('change', (e) => { if (e.target.matches('input[data-tag-item]')) updateTagSerialsCount(); });
+  linesEl.addEventListener('input', (e) => {
+    const code = e.target.dataset?.tagFilter;
+    if (code === undefined) return;
+    const q = e.target.value.trim().toLowerCase();
+    const list = [...linesEl.querySelectorAll('[data-tag-list]')].find((el) => el.dataset.tagList === code);
+    list?.querySelectorAll('label').forEach((l) => { l.style.display = !q || l.dataset.tagSearch.includes(q) ? '' : 'none'; });
+  });
+  document.getElementById('tagSerialsModalSaveBtn').addEventListener('click', saveTagSerials);
+  document.getElementById('tagSerialsModalCancelBtn').addEventListener('click', closeTagSerialsDialog);
+})();
 
 // ---------------------------------------------------------------- Change Item
 // Per "can a super user change the item.. the punched is black paint but the actual is white paint" - a
@@ -8231,6 +8381,8 @@ async function loadAdvanceCardLines(transactionNo) {
     return;
   }
   // Stock FactBox (js/itemStockFactbox.js) - each line's on-hand, the badge at the order's warehouse.
+  ItemStockFactbox.setTagHandler(document.getElementById('advanceCardStockPart'),
+    canTagFulfilledSerials() ? (itemCode) => openTagSerialsDialog('advance', transactionNo, itemCode) : null);
   ItemStockFactbox.setFulfilled(document.getElementById('advanceCardStockPart'), transactionNo,
     advanceFulfilledStatus(advanceRowsByNo.get(String(transactionNo))));
   // POS PAYMENT lines (CASH, GCASH...) are money received, not goods - kept out of the FactBox and totals.
@@ -8238,6 +8390,7 @@ async function loadAdvanceCardLines(transactionNo) {
   ItemStockFactbox.load(document.getElementById('advanceCardStockPart'), (data || []).filter((l) => !isPaymentLine(l)).map((l) => ({
     item_code: l.item_no,
     label: l.description,
+    quantity: l.quantity,
     warehouse: advanceRowsByNo.get(String(transactionNo))?.warehouse
   })), transactionNo);
   // Serial-tracked lines get "No serial yet" (or "n/m no serial") until tagged at Ready to Ship, then

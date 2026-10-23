@@ -2962,6 +2962,19 @@ a.bc-cue:hover {
 .isf-loc.isf-has { color: var(--success); border-color: currentColor; }
 .isf-note { margin: 8px 0 0; font-size: 11.5px; }
 .isf-note.isf-fulfilled-note { margin: 0 0 8px; color: var(--success, #107c10); font-weight: 600; }
+.isf-note.isf-fulfilled-warn { margin: 0 0 8px; color: var(--danger); font-weight: 600; }
+.isf-item.isf-short { border-left-color: var(--warning, #c19c00); }
+.isf-tag-btn { margin-left: 6px; padding: 1px 8px; border: 1px solid var(--primary); border-radius: 3px; background: transparent; color: var(--primary); font-size: 11px; font-weight: 600; cursor: pointer; }
+.isf-tag-btn:hover { background: var(--primary); color: #fff; }
+/* Tag serials dialog (onlineOrders.js openTagSerialsDialog) */
+.tag-serials-item { margin-bottom: 14px; }
+.tag-serials-item h4 { margin: 0 0 2px; font-size: 13px; }
+.tag-serials-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--bc-line); border-radius: 4px; margin-top: 6px; }
+.tag-serials-list label { display: flex; gap: 8px; align-items: center; padding: 4px 8px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--bc-line); }
+.tag-serials-list label:last-child { border-bottom: 0; }
+.tag-serials-list label:hover { background: var(--bc-row-hover, rgba(0, 0, 0, 0.04)); }
+.tag-serials-list .isf-serial { font-size: 11.5px; }
+.tag-serials-list .tag-serials-meta { margin-left: auto; font-size: 11px; text-align: right; }
 /* SET orders: the package's BOM parts and their serials (itemStockFactbox.js setSectionHtml). */
 .isf-set { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--bc-line); }
 .isf-set:first-child { margin-top: 0; padding-top: 0; border-top: none; }

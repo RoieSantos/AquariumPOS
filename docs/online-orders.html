@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=navwide1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=newconv1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=tagserial1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -1248,6 +1248,30 @@
     </div>
   </div>
 
+  <!-- Tag serials to an order that already went out (Stock FactBox "Tag serial" on a Shipped / Delivered /
+       Completed order with no serial) - js/onlineOrders.js openTagSerialsDialog,
+       sql/supabase_tag_serials_fulfilled_order.sql. -->
+  <div id="tagSerialsModal" class="modal-backdrop hidden">
+    <div class="modal-panel bc-doc bc-doc-dialog" style="max-width:600px;" role="dialog" aria-modal="true" aria-labelledby="tagSerialsModalTitle">
+      <div class="bc-doc-head">
+        <div>
+          <div class="bc-doc-caption" id="tagSerialsModalCaption">ORDER</div>
+          <h2 id="tagSerialsModalTitle">Tag Serials</h2>
+        </div>
+      </div>
+      <div class="bc-doc-body">
+        <p class="muted" style="margin:0 0 12px;">This order already went out without a serial. Tick the serial(s) of the unit(s) that were actually released - they're marked <b>Sold</b> to this order and leave stock.</p>
+        <div id="tagSerialsModalLines"><p class="muted">Loading...</p></div>
+        <p class="error-text hidden" id="tagSerialsModalError" style="margin-top:12px;"></p>
+      </div>
+      <div class="bc-doc-foot">
+        <span class="muted" id="tagSerialsModalCount" style="flex:1;"></span>
+        <button type="button" class="bc-btn bc-btn-primary" id="tagSerialsModalSaveBtn">Tag Serials</button>
+        <button type="button" class="bc-btn" id="tagSerialsModalCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Read-only "available serials" list shown after a staff member confirms (via the Send Photo
        button's post-send prompt) that they're about to ship an order with a serial-tracked line -
        see promptShipAfterPhoto in js/onlineOrders.js. Mirrors the desktop's REGULAR CHECKOUT serial
@@ -1345,8 +1369,8 @@
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
-  <script src="js/itemStockFactbox.js?v=fulfilled1"></script>
-  <script src="js/onlineOrders.js?v=vicstat1"></script>
+  <script src="js/itemStockFactbox.js?v=tagserial1"></script>
+  <script src="js/onlineOrders.js?v=tagserial1"></script>
   <script src="js/onlineNewOrders.js?v=newconv1"></script>
   <script src="js/pwa.js"></script>
 </body>

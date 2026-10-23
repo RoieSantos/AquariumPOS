@@ -2,6 +2,12 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-23
+
+- "Tag serial" on Shipped/Delivered/Completed orders with untagged serial items (Stock FactBox, Online + Advance cards): picker of In Stock / reserved serials, marks the chosen ones SOLD to the order. New [supabase_tag_serials_fulfilled_order.sql](sql/supabase_tag_serials_fulfilled_order.sql); Super User / Serial Admin / Production Manager only.
+
+- Stock FactBox on Shipped/Delivered/Completed orders ([itemStockFactbox.js](docs/js/itemStockFactbox.js)): replaced the always-green "Serials fully satisfied" (shown even with no serial tagged) with the real state - tagged serial nos (green), "1 of 2 serials tagged" (amber), "No serial tagged" (red) + an "(n untagged)" header count; "Serials not checked" when the lookup fails / view-only. Order + advance cards now pass line quantity.
+
 ## 2026-10-22
 
 - **Payment receipt for online payments.** New public [payment-receipt.html](docs/payment-receipt.html)`?id=<PaymentID>` shows one Xendit payment with the company letterhead: receipt no., date paid, received from, amount, what it was for, paid via + Xendit reference, order items, order total, paid to date, balance, and Print / Save as PDF. It's marked as not a BIR Official Receipt; TEST payments get a banner. The "Payment received" Messenger message now ends with "🧾 Receipt: <link>", and the Xendit Payments page has a Receipt link per paid row ([supabase_xendit_payment_receipt_page.sql](sql/supabase_xendit_payment_receipt_page.sql); `xenditPayments.js v=xendit5`).
