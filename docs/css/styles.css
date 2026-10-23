@@ -3876,6 +3876,19 @@ body:has(.wizard-page) {
   box-shadow: 0 10px 30px rgba(0,0,0,0.2);
 }
 
+/* Never print the floating overlays - a fixed element repeats on every printed page and covered
+   the bottom of the delivery receipt / invoice printouts (install banner, staff chat bubble/panel,
+   Alice launcher/panel from js/chatWidget.js, send-status / pull-to-refresh pills). */
+@media print {
+  .pwa-install-banner,
+  .chat-widget-bubble,
+  .chat-widget-panel,
+  .rsps-chat-launcher,
+  .rsps-chat-panel,
+  .send-status-banner,
+  .pull-refresh-indicator { display: none !important; }
+}
+
 .pwa-install-icon {
   font-size: 20px;
   line-height: 1;

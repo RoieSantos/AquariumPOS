@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-23
 
+- **Fix: "Install this app" banner and chat bubbles no longer print** ([styles.css](docs/css/styles.css), [chatWidget.js](docs/js/chatWidget.js)). `@media print` hides the install banner, staff chat bubble/panel, Alice launcher/panel and send-status / pull-to-refresh pills - fixed overlays repeated on every printed page and covered the bottom of delivery receipts / invoices.
 - **Conversations: "Walk-in purchases" under the chat's orders.** POS walk-ins tagged to the customer at checkout (`WalkinPsid`) now show read-only (order no., date/time, branch, cashier, items, total/paid/balance) via new `admin_list_gma_conversation_walkins` (`sql/supabase_gma_conversation_walkins.sql`). Hidden when there are none. `docs/js/gmaConversations.js` (`?v=walkins1`).
 
 - **POS customer box: optional Address (for delivery).** New customers type it; a picked customer's newest address is filled in (never overwrites what the cashier typed). Saved in new local `TransactionHeader.CustomerAddress` (self-added at startup - Description's 255 chars is too short) and sent as `customer_address`; `pos_create_walkin_order` uses it as the walk-in's ShippingAddress instead of 'Walkin', and adds the mobile/address to a linked Messenger customer's contact list (not as default). `pos_get_customer_history` now also lists walk-in addresses.

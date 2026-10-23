@@ -169,6 +169,9 @@
         .rsps-chat-panel { right: 12px; left: 12px; width: auto; bottom: 84px; }
         .rsps-chat-launcher { right: 14px; bottom: 14px; }
       }
+      @media print {
+        .rsps-chat-launcher, .rsps-chat-panel { display: none !important; }
+      }
     `;
     document.head.appendChild(style);
   }
