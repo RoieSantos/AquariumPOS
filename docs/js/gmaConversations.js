@@ -1850,6 +1850,14 @@ function renderInformationTab(conv) {
       <div id="conversationOrdersEl" class="inbox-empty-state">Loading...</div>
     </div>
 
+    <div class="inbox-panel-section" id="conversationWalkinsSection" hidden>
+      <div class="inbox-section-label">
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.5 8h13l-1 8.5h-11z M7 8V6a3 3 0 0 1 6 0v2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Walk-in purchases</span>
+      </div>
+      <div id="conversationWalkinsEl"></div>
+    </div>
+
     <div class="inbox-panel-section">
       <div class="inbox-section-label">
         <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="5"/><path d="M12.5 12.5 17 17" stroke-linecap="round"/></svg>
@@ -1872,6 +1880,67 @@ function renderInformationTab(conv) {
   });
 
   loadConversationOrders(conv);
+  loadConversationWalkins(conv);
+}
+
+// POS walk-ins tagged to this customer at checkout (OnlineOrders."WalkinPsid" -
+// sql/supabase_gma_conversation_walkins.sql). Read-only: already paid at the counter, so none of the bot
+// order actions apply. The section stays hidden when there are none (or the RPC isn't installed yet).
+async function loadConversationWalkins(conv) {
+  const sectionEl = document.getElementById('conversationWalkinsSection');
+  const listEl = document.getElementById('conversationWalkinsEl');
+  if (!sectionEl || !listEl) return;
+
+  const { data, error } = await supabaseClient.rpc('admin_list_gma_conversation_walkins', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_psid: conv.psid
+  });
+  // A different conversation was opened while this was loading.
+  if (document.getElementById('conversationWalkinsEl') !== listEl) return;
+  if (error) {
+    if (!/could not find the function|schema cache/i.test(error.message)) console.warn('Walk-in purchases:', error.message);
+    return;
+  }
+  const walkins = data || [];
+  sectionEl.hidden = walkins.length === 0;
+  listEl.innerHTML = walkins.map((w) => {
+    const balance = Number(w.balance || 0);
+    const cancelled = /^cancel/i.test(w.status || '');
+    const more = Number(w.line_count || 0) > 5 ? ` +${Number(w.line_count) - 5} more` : '';
+    return `
+    <div class="inbox-order-item expanded">
+      <div class="inbox-order-top" style="cursor:default">
+        <div class="inbox-order-top-left">
+          <span class="inbox-order-no">${escapeHtml(w.order_id)}</span>
+        </div>
+        <div class="inbox-order-badges">
+          <span class="badge badge-neutral">Walk-in</span>
+          <span class="badge ${cancelled ? 'badge-danger' : 'badge-success'}">${escapeHtml(cancelled ? 'Cancelled' : (w.status || 'Completed'))}</span>
+        </div>
+      </div>
+      <div class="inbox-order-details">
+        <div class="inbox-order-meta">${escapeHtml(w.order_date || '')}${w.order_time ? ` ${escapeHtml(String(w.order_time).slice(0, 5))}` : ''} · ${escapeHtml(w.branch || '')}${w.cashier ? ` · Cashier: ${escapeHtml(w.cashier)}` : ''}</div>
+        ${w.items ? `<div class="inbox-order-meta">${escapeHtml(w.items + more)}</div>` : ''}
+        <div class="inbox-order-subsection">
+          <div class="inbox-order-stats">
+            <div class="inbox-order-stat">
+              <span class="inbox-order-stat-label">Total</span>
+              <span class="inbox-order-stat-value">${Number(w.total || 0).toFixed(2)}</span>
+            </div>
+            <div class="inbox-order-stat">
+              <span class="inbox-order-stat-label">Paid</span>
+              <span class="inbox-order-stat-value">${Number(w.amount_paid || 0).toFixed(2)}</span>
+            </div>
+            <div class="inbox-order-stat">
+              <span class="inbox-order-stat-label">Balance</span>
+              <span class="inbox-order-stat-value ${balance > 0 ? 'balance-due' : 'balance-clear'}">${balance.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 async function loadConversationOrders(conv) {

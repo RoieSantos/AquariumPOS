@@ -12,6 +12,9 @@
 //
 // Body: { admin_username, admin_password, psids: string[] } (max 100) - re-verified via
 // is_conversations_authorized, same as every Conversations RPC.
+// Or { pos_key, psids } from the desktop POS checkout's customer lookup (so the cashier can see it's the
+// right customer before tagging the walk-in) - checked with _pos_key_ok (Vault POS_API_KEY), same as the
+// pos_* RPCs (sql/supabase_pos_walkin_orders_direct.sql grants it to service_role).
 // Returns: { ok: true, pictures: { [psid]: url | null }, errors: { [psid]: string } }
 //
 // Deploy: supabase functions deploy chatbot-profile-pics --project-ref hymcmesqgpliyyeghpgq
@@ -59,20 +62,24 @@ Deno.serve(async (req) => {
 
   let adminUsername: string;
   let adminPassword: string;
+  let posKey: string;
   let psids: string[];
   try {
     const body = await req.json();
     adminUsername = String(body.admin_username ?? '');
     adminPassword = String(body.admin_password ?? '');
+    posKey = String(body.pos_key ?? '');
     psids = Array.isArray(body.psids) ? [...new Set(body.psids.map((p: unknown) => String(p)).filter(Boolean))] as string[] : [];
   } catch {
-    return jsonResponse({ error: 'Body must be JSON: { admin_username, admin_password, psids }.' }, 400);
+    return jsonResponse({ error: 'Body must be JSON: { admin_username, admin_password, psids } or { pos_key, psids }.' }, 400);
   }
-  if (!adminUsername || !adminPassword) return jsonResponse({ error: 'Not authorized.' }, 401);
+  if (!posKey && (!adminUsername || !adminPassword)) return jsonResponse({ error: 'Not authorized.' }, 401);
   psids = psids.slice(0, MAX_PSIDS);
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const { data: authorized, error: authError } = await supabase.rpc('is_conversations_authorized', { p_username: adminUsername, p_password: adminPassword });
+  const { data: authorized, error: authError } = posKey
+    ? await supabase.rpc('_pos_key_ok', { p_key: posKey })
+    : await supabase.rpc('is_conversations_authorized', { p_username: adminUsername, p_password: adminPassword });
   if (authError || authorized !== true) return jsonResponse({ error: 'Not authorized.' }, 401);
 
   const pictures: Record<string, string | null> = {};

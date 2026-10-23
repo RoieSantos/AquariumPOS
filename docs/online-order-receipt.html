@@ -50,7 +50,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
-  <script src="js/orderDocument.js?v=1"></script>
+  <script src="js/orderDocument.js?v=regaddr1"></script>
   <script>
     async function loadReceipt() {
       const orderId = new URLSearchParams(window.location.search).get('order');
@@ -62,7 +62,7 @@
 
       const [{ data, error }, info] = await Promise.all([
         supabaseClient.rpc('public_get_order_receipt', { p_order_no: orderId }),
-        fetchCompanyInfo()
+        fetchCompanyInfo().then((ci) => orderLetterheadInfo(ci, orderId))
       ]);
       if (error) {
         statusEl.textContent = 'Could not load this receipt right now - please try again shortly.';

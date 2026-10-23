@@ -6485,7 +6485,7 @@ body:has(.wizard-page) {
    columns into a phone. */
 .new-po-lines {
   table-layout: fixed;
-  min-width: 1080px;
+  min-width: 1180px;
 }
 
 /* Each editor fills its cell rather than sitting at some default width, which is what makes the

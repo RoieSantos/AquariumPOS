@@ -115,16 +115,19 @@ function orderDisplayStatus(o) {
   return status;
 }
 
-// Shipped / Delivered / Completed (walk-in picked up): the units are out, so the Stock FactBox reads
-// "Serials fully satisfied" instead of on-hand / "(n out)" (ItemStockFactbox.setFulfilled). null = not yet.
-const FULFILLED_STATUSES = ['Shipped', 'Delivered', 'Completed'];
+// To Ship / Shipped / Delivered / Completed (walk-in picked up): the units are packed or out, so the Stock
+// FactBox shows the serials tagged (or "No serial tagged" + Tag serial) instead of on-hand / "(n out)"
+// (ItemStockFactbox.setFulfilled). To Ship too - an untagged order can't print its Delivery Receipt
+// (sql/supabase_delivery_receipt_serial_gate.sql), so it must be fixable before it leaves. null = not yet.
+// Same list as sql/supabase_delivery_receipt_serial_gate.sql's _order_status_past_to_ship.
+const FULFILLED_STATUSES = ['to ship', 'packing', 'packed', 'in-transit', 'shipped', 'delivered', 'received', 'completed'];
 function orderFulfilledStatus(o) {
   const s = o ? orderDisplayStatus(o) : '';
-  return FULFILLED_STATUSES.includes(s) ? s : null;
+  return FULFILLED_STATUSES.includes(String(s).trim().toLowerCase()) ? s : null;
 }
 function advanceFulfilledStatus(o) {
   const s = o ? advanceStatus(o) : '';
-  return FULFILLED_STATUSES.includes(s) ? s : null;
+  return FULFILLED_STATUSES.includes(String(s).trim().toLowerCase()) ? s : null;
 }
 
 // Which tab is currently showing in the grouped (Online Order Staff) view, and the last set of

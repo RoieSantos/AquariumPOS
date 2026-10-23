@@ -55,7 +55,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
-  <script src="js/orderDocument.js?v=1"></script>
+  <script src="js/orderDocument.js?v=regaddr1"></script>
   <script>
     function prPeso(value) {
       return '&#8369; ' + Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -101,7 +101,7 @@
                 <span>Received from</span><b>${odEsc(p.customer_name || '-')}</b>
                 <span>Payment for</span><b>${odEsc(p.purpose || '')} - Order ${odEsc(p.order_ref || '')}</b>
                 <span>Paid via</span><b>${odEsc(p.paid_via || '')}</b>
-                <span>Reference</span><b>${odEsc(p.xendit_reference || '-')}</b>
+                <span>Xendit reference</span><b>${odEsc(p.xendit_reference || '-')}</b>
               </div>
             </div>
           </div>
@@ -150,7 +150,9 @@
         return;
       }
       statusEl.classList.add('hidden');
-      renderPaymentReceipt(document.getElementById('docContainer'), data[0], info);
+      // The order's branch registered address on the letterhead (Warehouse Setup).
+      const letterhead = await orderLetterheadInfo(info, data[0].order_ref);
+      renderPaymentReceipt(document.getElementById('docContainer'), data[0], letterhead);
       document.title = `Payment Receipt #${data[0].receipt_no} - RS Pet Stop`;
       document.getElementById('toolbar').classList.remove('hidden');
     }

@@ -49,6 +49,20 @@ function odKv(label, value) {
   return value ? `<div class="od-kv"><b>${odEsc(label)}:</b> ${odEsc(value)}</div>` : '';
 }
 
+// Company Info with the letterhead Address swapped for the order's branch registered address (Warehouse
+// Setup, public_get_order_letterhead - sql/supabase_warehouse_registered_address.sql). Falls back to
+// Company Info's own address when the branch has none, or if the lookup fails.
+async function orderLetterheadInfo(info, orderRef) {
+  if (!orderRef) return info;
+  try {
+    const { data, error } = await supabaseClient.rpc('public_get_order_letterhead', { p_order_ref: orderRef });
+    const reg = !error && data && data[0] && data[0].registered_address;
+    return reg ? { ...(info || {}), Address: reg } : info;
+  } catch {
+    return info;
+  }
+}
+
 function odLetterheadHtml(info) {
   const lines = [];
   if (info?.FacebookUrl) lines.push(`<div class="od-company-line"><a href="${odEsc(info.FacebookUrl)}" target="_blank" rel="noopener">${odEsc(info.FacebookUrl)}</a></div>`);

@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Printing;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace AquariumPOS
@@ -285,6 +286,298 @@ namespace AquariumPOS
             }
         }
 
+
+        // Checkout's customer box - per "if the customer walks in then check if they already have a record on
+        // us": name (required, WALK-IN by default) + an optional mobile no., with a lookup against the portal's
+        // customers (OnlinefunctionsEvents.SearchWalkinCustomersAsync). The mobile goes on the walk-in order so
+        // the portal and Vic know who it's for (sql/supabase_pos_walkin_orders_direct.sql).
+        // Returns an empty Name if nothing was confirmed (same as PromptForCustomerName).
+        // Psid: the Messenger customer tapped in the results (their Facebook picture is shown so the cashier can
+        // check it's really them) - links the walk-in to that chat. Typing over the name / mobile afterwards
+        // drops the link (it's someone else then).
+        // Address: optional, for delivery - a new customer types it; a picked customer's newest address is filled
+        // in (the cashier can change it). Goes on the walk-in as its ShippingAddress.
+        public static (string Name, string Phone, string Psid, string Address) PromptForCustomer(Form? owner = null, string? initialCustomerName = null, string? initialPhone = null, string? initialPsid = null, string? initialAddress = null)
+        {
+            using (var customerForm = new ThemedForm())
+            {
+                customerForm.Text = "Customer";
+                customerForm.Size = new System.Drawing.Size(1280, 780);
+                customerForm.StartPosition = FormStartPosition.CenterParent;
+                customerForm.FormBorderStyle = FormBorderStyle.None;
+                customerForm.MaximizeBox = false;
+                customerForm.MinimizeBox = false;
+
+                var bigFont = new System.Drawing.Font("Arial", 24);
+                var phoneLabel = new Label { Text = "Mobile No. (optional):", Left = 40, Top = 20, Width = 800, Height = 44, Font = new System.Drawing.Font("Arial", 22, System.Drawing.FontStyle.Bold) };
+                var phoneBox = new TextBox { Left = 40, Top = 70, Width = 560, Font = bigFont, MaxLength = 20 };
+                var searchButton = new Button { Text = "SEARCH", Left = 620, Top = 66, Width = 220, Height = 52, Font = new System.Drawing.Font("Arial", 18, System.Drawing.FontStyle.Bold) };
+                var nameLabel = new Label { Text = "Customer Name:", Left = 40, Top = 140, Width = 800, Height = 44, Font = new System.Drawing.Font("Arial", 22, System.Drawing.FontStyle.Bold) };
+                var nameBox = new TextBox { Left = 40, Top = 190, Width = 800, Font = bigFont, MaxLength = 200 };
+                var addressLabel = new Label { Text = "Address (optional - for delivery):", Left = 40, Top = 250, Width = 800, Height = 34, Font = new System.Drawing.Font("Arial", 16, System.Drawing.FontStyle.Bold) };
+                var addressBox = new TextBox { Left = 40, Top = 286, Width = 800, Font = new System.Drawing.Font("Arial", 18), MaxLength = 500 };
+                var statusLabel = new Label { Left = 40, Top = 336, Width = 800, Height = 30, Font = new System.Drawing.Font("Arial", 14), Text = "Type a mobile no. or name, then SEARCH to find a returning customer." };
+                var resultsList = new ListBox { Left = 40, Top = 370, Width = 800, Height = 260, Font = new System.Drawing.Font("Arial", 18), IntegralHeight = false, HorizontalScrollbar = true };
+                // Right side: the picked customer - Facebook picture, then their addresses + existing orders.
+                var pictureBox = new PictureBox { Left = 870, Top = 20, Width = 140, Height = 140, SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.FixedSingle, Visible = false };
+                var linkLabel = new Label { Left = 1020, Top = 20, Width = 220, Height = 140, Font = new System.Drawing.Font("Arial", 12) };
+                var historyLabel = new Label { Text = "Address & existing orders:", UseMnemonic = false, Left = 870, Top = 170, Width = 370, Height = 28, Font = new System.Drawing.Font("Arial", 14, System.Drawing.FontStyle.Bold) };
+                var historyBox = new TextBox { Left = 870, Top = 200, Width = 370, Height = 430, Font = new System.Drawing.Font("Arial", 12), Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, TabStop = false, Text = "Tap a customer to see their address and orders." };
+                var okButton = new Button { Text = "OK", Left = 440, Top = 665, Width = 180, Height = 70, Font = new System.Drawing.Font("Arial", 24, System.Drawing.FontStyle.Bold) };
+                // Back to the sale without posting (the cart stays as it is).
+                var cancelButton = new Button { Text = "CANCEL", Left = 660, Top = 665, Width = 180, Height = 70, Font = new System.Drawing.Font("Arial", 20, System.Drawing.FontStyle.Bold) };
+
+                phoneBox.Text = initialPhone?.Trim() ?? string.Empty;
+                nameBox.Text = string.IsNullOrWhiteSpace(initialCustomerName) ? string.Empty : initialCustomerName.Trim();
+                addressBox.Text = initialAddress?.Trim() ?? string.Empty;
+                // True while the address is the one filled in from a picked customer (not typed by the cashier) -
+                // so picking someone else / typing over the name replaces it, but never what the cashier typed.
+                bool addressAutoFilled = false;
+                bool fillingAddress = false;
+                addressBox.TextChanged += (s, e) => { if (!fillingAddress) addressAutoFilled = false; };
+                void SetAutoAddress(string value)
+                {
+                    if (addressBox.Text.Trim().Length > 0 && !addressAutoFilled) return;
+                    fillingAddress = true;
+                    addressBox.Text = value;
+                    fillingAddress = false;
+                    addressAutoFilled = value.Length > 0;
+                }
+                // Force all caps as user types (same as the old name prompt)
+                nameBox.TextChanged += (s, e) =>
+                {
+                    int selStart = nameBox.SelectionStart;
+                    string upper = nameBox.Text.ToUpper();
+                    if (nameBox.Text != upper)
+                    {
+                        nameBox.Text = upper;
+                        nameBox.SelectionStart = selStart;
+                    }
+                };
+
+                var matches = new List<OnlinefunctionsEvents.WalkinCustomerMatch>();
+                async Task RunSearchAsync()
+                {
+                    string digits = new string(phoneBox.Text.Where(char.IsDigit).ToArray());
+                    string name = nameBox.Text.Trim();
+                    string query = digits.Length >= 4 ? digits
+                        : (!string.IsNullOrWhiteSpace(name) && !string.Equals(name, "WALK-IN", StringComparison.OrdinalIgnoreCase) ? name : string.Empty);
+                    if (query.Length < 2)
+                    {
+                        statusLabel.Text = "Type at least 4 digits of the mobile no., or part of the name.";
+                        return;
+                    }
+
+                    searchButton.Enabled = false;
+                    statusLabel.Text = "Searching...";
+                    resultsList.Items.Clear();
+                    matches.Clear();
+                    try
+                    {
+                        matches.AddRange(await OnlinefunctionsEvents.SearchWalkinCustomersAsync(query));
+                        foreach (var m in matches)
+                            resultsList.Items.Add($"{m.Name}  ·  {(string.IsNullOrWhiteSpace(m.Phone) ? "no mobile" : m.Phone)}  ·  {m.Source}{(string.IsNullOrWhiteSpace(m.LastSeen) ? string.Empty : "  ·  " + m.LastSeen)}{(string.IsNullOrWhiteSpace(m.Psid) ? string.Empty : "  ·  FB")}");
+                        statusLabel.Text = matches.Count == 0
+                            ? "No match - new customer. Type the name (and mobile) and press OK."
+                            : "Tap the customer to use them, or keep typing for a new one.";
+                    }
+                    catch (Exception ex)
+                    {
+                        // No internet must never block a sale - the cashier can still type the customer.
+                        statusLabel.Text = "Search unavailable (" + ex.Message.Split('\n')[0] + ") - type the customer and press OK.";
+                    }
+                    finally
+                    {
+                        searchButton.Enabled = true;
+                    }
+                }
+
+                searchButton.Click += async (s, e) => await RunSearchAsync();
+                phoneBox.KeyDown += async (s, e) =>
+                {
+                    if (e.KeyCode == Keys.Enter)
+                    {
+                        e.SuppressKeyPress = true;
+                        await RunSearchAsync();
+                    }
+                };
+                // The linked Messenger customer and their Facebook picture.
+                string linkedPsid = initialPsid?.Trim() ?? string.Empty;
+                bool applyingMatch = false;
+                async void ShowLinkedCustomer()
+                {
+                    string psid = linkedPsid;
+                    var old = pictureBox.Image;
+                    pictureBox.Image = null;
+                    old?.Dispose();
+                    pictureBox.Visible = psid.Length > 0;
+                    linkLabel.Text = psid.Length > 0 ? "Messenger customer - loading picture..." : string.Empty;
+                    if (psid.Length == 0) return;
+
+                    System.Drawing.Image? img = null;
+                    try { img = await OnlinefunctionsEvents.GetCustomerProfilePictureAsync(psid); } catch { }
+                    if (customerForm.IsDisposed || linkedPsid != psid)
+                    {
+                        img?.Dispose();
+                        return;
+                    }
+                    pictureBox.Image = img;
+                    linkLabel.Text = img == null
+                        ? "Linked to their Messenger chat (no Facebook picture available)."
+                        : "Linked to their Messenger chat - check the picture is them.";
+                }
+                // Their addresses + 10 newest orders (pos_get_customer_history), by mobile and/or PSID.
+                int historyGeneration = 0;
+                bool historyShown = false;
+                async void ShowHistory(string phone, string psid)
+                {
+                    int generation = ++historyGeneration;
+                    historyShown = phone.Length > 0 || psid.Length > 0;
+                    historyBox.Text = historyShown ? "Loading..." : "Tap a customer to see their address and orders.";
+                    if (!historyShown) return;
+
+                    List<OnlinefunctionsEvents.CustomerHistoryRow> rows;
+                    try
+                    {
+                        rows = await OnlinefunctionsEvents.GetCustomerHistoryAsync(phone, psid);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!customerForm.IsDisposed && generation == historyGeneration)
+                            historyBox.Text = "Couldn't load their orders (" + ex.Message.Split('\n')[0] + ").";
+                        return;
+                    }
+                    if (customerForm.IsDisposed || generation != historyGeneration) return;
+
+                    var sb = new StringBuilder();
+                    var addresses = rows.Where(r => r.Kind == "Address").ToList();
+                    var orders = rows.Where(r => r.Kind == "Order").ToList();
+                    SetAutoAddress(addresses.Count > 0 ? addresses[0].Detail : string.Empty);
+                    sb.AppendLine("ADDRESS");
+                    if (addresses.Count == 0)
+                        sb.AppendLine("  (none on file)");
+                    foreach (var a in addresses)
+                        sb.AppendLine("• " + a.Detail + (string.IsNullOrWhiteSpace(a.Seen) ? string.Empty : "  (" + a.Seen + ")"));
+                    sb.AppendLine();
+                    sb.AppendLine(orders.Count == 0 ? "ORDERS" : $"ORDERS (newest {orders.Count})");
+                    if (orders.Count == 0)
+                        sb.AppendLine("  (no orders yet)");
+                    foreach (var o in orders)
+                    {
+                        sb.AppendLine($"{o.Seen}   {o.Ref}   ₱{(o.Amount ?? 0m):N2}");
+                        sb.AppendLine("   " + o.Status);
+                        if (!string.IsNullOrWhiteSpace(o.Detail))
+                            sb.AppendLine("   " + o.Detail);
+                    }
+                    historyBox.Text = sb.ToString().TrimEnd();
+                    historyBox.SelectionStart = 0;
+                }
+
+                // Typing over the name / mobile after tapping a customer = someone else: drop the link and their history.
+                void Unlink()
+                {
+                    if (applyingMatch) return;
+                    if (linkedPsid.Length > 0)
+                    {
+                        linkedPsid = string.Empty;
+                        ShowLinkedCustomer();
+                    }
+                    if (historyShown)
+                        ShowHistory(string.Empty, string.Empty);
+                    if (addressAutoFilled)
+                        SetAutoAddress(string.Empty);
+                }
+                phoneBox.TextChanged += (s, e) => Unlink();
+                nameBox.TextChanged += (s, e) => Unlink();
+
+                resultsList.SelectedIndexChanged += (s, e) =>
+                {
+                    int i = resultsList.SelectedIndex;
+                    if (i < 0 || i >= matches.Count) return;
+                    applyingMatch = true;
+                    try
+                    {
+                        if (!string.Equals(matches[i].Name, "(no name)", StringComparison.OrdinalIgnoreCase))
+                            nameBox.Text = matches[i].Name.ToUpper();
+                        if (!string.IsNullOrWhiteSpace(matches[i].Phone))
+                            phoneBox.Text = matches[i].Phone;
+                    }
+                    finally
+                    {
+                        applyingMatch = false;
+                    }
+                    linkedPsid = matches[i].Psid?.Trim() ?? string.Empty;
+                    ShowLinkedCustomer();
+                    ShowHistory(matches[i].Phone?.Trim() ?? string.Empty, linkedPsid);
+                };
+                customerForm.FormClosed += (s, e) => pictureBox.Image?.Dispose();
+
+                customerForm.Controls.AddRange(new Control[] { phoneLabel, phoneBox, searchButton, nameLabel, nameBox, addressLabel, addressBox, statusLabel, resultsList, pictureBox, linkLabel, historyLabel, historyBox, okButton, cancelButton });
+                customerForm.AcceptButton = okButton;
+                customerForm.CancelButton = cancelButton;
+                // Enter in the mobile box searches instead of posting (the form's OK would take it first).
+                phoneBox.Enter += (s, e) => customerForm.AcceptButton = null;
+                phoneBox.Leave += (s, e) => customerForm.AcceptButton = okButton;
+                customerForm.Shown += (s, e) =>
+                {
+                    try
+                    {
+                        phoneBox.Focus();
+                        phoneBox.SelectAll();
+                    }
+                    catch { }
+                    ShowLinkedCustomer();
+                    // Re-opened for the same sale: show the customer already picked.
+                    if (linkedPsid.Length > 0 || phoneBox.Text.Count(char.IsDigit) >= 10)
+                        ShowHistory(phoneBox.Text.Trim(), linkedPsid);
+                };
+
+                (string Name, string Phone, string Psid, string Address) result = (string.Empty, string.Empty, string.Empty, string.Empty);
+                okButton.Click += (s, e) =>
+                {
+                    string name = nameBox.Text.Trim();
+                    string phone = phoneBox.Text.Trim();
+                    int digitCount = phone.Count(char.IsDigit);
+                    if (string.IsNullOrEmpty(name))
+                    {
+                        MessageBox.Show("Please enter a customer name before posting.", "Missing Customer Name", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        nameBox.Focus();
+                        return;
+                    }
+                    if (phone.Length > 0 && (digitCount < 10 || digitCount > 12))
+                    {
+                        MessageBox.Show("That mobile no. doesn't look complete (e.g. 09171234567). Fix it or clear it.", "Mobile No.", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        phoneBox.Focus();
+                        return;
+                    }
+                    result = (name, phone, linkedPsid, addressBox.Text.Trim());
+                    customerForm.DialogResult = DialogResult.OK;
+                    customerForm.Close();
+                };
+                bool cancelled = false;
+                cancelButton.Click += (s, e) =>
+                {
+                    cancelled = true;
+                    result = (string.Empty, string.Empty, string.Empty, string.Empty);   // empty Name = checkout stops
+                    customerForm.DialogResult = DialogResult.Cancel;
+                    customerForm.Close();
+                };
+                // Prevent closing by intercepting form closing event (except CANCEL)
+                customerForm.FormClosing += (s, e) =>
+                {
+                    if (!cancelled && (customerForm.DialogResult != DialogResult.OK || string.IsNullOrWhiteSpace(result.Name)))
+                    {
+                        e.Cancel = true;
+                        MessageBox.Show("You must enter and confirm customer name before closing.", "Customer Name Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                };
+                if (owner != null)
+                    customerForm.ShowDialog(owner);
+                else
+                    customerForm.ShowDialog();
+                return result;
+            }
+        }
 
         // Prompts for order description before posting
         public static string PromptForOrderDescription(Form? owner = null, string? initialOrderDescription = null)

@@ -8,6 +8,9 @@
 -- 1. admin_list_gma_customer_orders - every AutomatedOrders row for the customer (GmaPsid + page,
 --    or Psid for order-now.html orders - same match as the Customers list), newest first, with
 --    paid / balance from AutomatedOrderPayments and the Online Orders status once confirmed.
+--    Plus the POS walk-ins tagged to this customer at checkout (OnlineOrders."WalkinPsid",
+--    supabase_pos_walkin_orders_direct.sql) - Fulfillment "Walk-in", status Completed (paid at the
+--    counter) or Cancelled.
 -- 2. admin_update_gma_customer - staff edit the CRM record on ChatbotConversations (Name / Contact
 --    No. / Address). This is the same record the bot reads for returning customers and saves to
 --    with save_customer_info, so a fix here is what the bot sees next. A blank field clears it.
@@ -17,7 +20,8 @@
 --    whose mobile number matches this CustomerPhone - so only save a number that is really theirs.
 --
 -- Super users only (is_admin_authorized), like the Customers page. Run AFTER
--- supabase_gma_customers_enriched.sql. Safe to re-run. Needs docs/js/customers.js ?v=4.
+-- supabase_gma_customers_enriched.sql and supabase_pos_walkin_orders_direct.sql (WalkinPsid). Safe to
+-- re-run. Needs docs/js/customers.js ?v=4.
 
 drop function if exists public.admin_list_gma_customer_orders(text, text, text, text);
 
@@ -53,6 +57,7 @@ begin
   end if;
 
   return query
+    select x.* from (
     select
       o."OrderNo"::text,
       o."CreatedAtUtc",
@@ -71,7 +76,24 @@ begin
     left join public."OnlineOrders" oo on oo."OrderID" = o."PancakeReceiptNo"
     where (o."GmaPsid" = trim(p_psid) and o."GmaPageId" = trim(coalesce(p_page_id, '')))
        or o."Psid" = trim(p_psid)
-    order by o."CreatedAtUtc" desc;
+    union all
+    -- POS walk-ins tagged to this customer at checkout.
+    select
+      w."OrderID"::text,
+      coalesce((w."Date"::date + case when w."Time"::text ~ '^\d{1,2}:\d{2}' then w."Time"::text::time else time '00:00' end)
+                 at time zone 'Asia/Manila', w."SyncedAtUtc"),
+      case when lower(trim(coalesce(w."Status", ''))) in ('cancelled', 'canceled') then 'Cancelled' else 'Completed' end,
+      w."Status"::text,
+      'Walk-in',
+      w."LocationID"::text,
+      coalesce(w."MoneyToCollect", 0)::numeric,
+      coalesce(w."AmountPaid", 0)::numeric,
+      coalesce(w."Balance", 0)::numeric,
+      coalesce((select sum(l."Quantity") from public."OnlineOrderLines" l where l."OrderID" = w."OrderID"), 0)::bigint
+    from public."OnlineOrders" w
+    where w."WalkinPsid" = trim(p_psid)
+    ) x
+    order by 2 desc;
 end;
 $$;
 

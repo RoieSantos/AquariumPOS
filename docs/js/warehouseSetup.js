@@ -10,7 +10,7 @@ function renderWarehouseRows(warehouses) {
   const tbody = document.getElementById('warehouseTableBody');
 
   if (!warehouses || warehouses.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">No warehouses synced yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">No warehouses synced yet.</td></tr>';
     return;
   }
 
@@ -37,6 +37,11 @@ function renderWarehouseRows(warehouses) {
           <button class="btn btn-secondary btn-sm" data-action="save-contact" data-id="${w.id}" type="button">Save</button>
           <span class="contact-saved muted hidden" data-id="${w.id}">Saved</span>
         </td>
+        <td>
+          <input type="text" class="regaddr-input" data-id="${w.id}" value="${(w.registered_address ?? '').replace(/"/g, '&quot;')}" placeholder="As on BIR 2303" style="width:240px;" />
+          <button class="btn btn-secondary btn-sm" data-action="save-regaddr" data-id="${w.id}" type="button">Save</button>
+          <span class="regaddr-saved muted hidden" data-id="${w.id}">Saved</span>
+        </td>
         <td>${w.synced_at_utc ? new Date(w.synced_at_utc).toLocaleString() : '<span class="muted">Never</span>'}</td>
       </tr>
     `)
@@ -47,6 +52,9 @@ function renderWarehouseRows(warehouses) {
   });
   tbody.querySelectorAll('button[data-action="save-contact"]').forEach((btn) => {
     btn.addEventListener('click', () => saveContact(btn.dataset.id));
+  });
+  tbody.querySelectorAll('button[data-action="save-regaddr"]').forEach((btn) => {
+    btn.addEventListener('click', () => saveRegisteredAddress(btn.dataset.id));
   });
   tbody.querySelectorAll('button[data-action="save-address"]').forEach((btn) => {
     btn.addEventListener('click', () => saveAddress(btn.dataset.id));
@@ -152,9 +160,32 @@ async function saveContact(warehouseId) {
   setTimeout(() => savedLabel.classList.add('hidden'), 1500);
 }
 
+// The branch's BIR registered address - the letterhead "Address:" on its orders' Order Confirmation,
+// Invoices and Payment Receipts (sql/supabase_warehouse_registered_address.sql). Blank = use the
+// General Setup address.
+async function saveRegisteredAddress(warehouseId) {
+  const input = document.querySelector(`.regaddr-input[data-id="${warehouseId}"]`);
+  const savedLabel = document.querySelector(`.regaddr-saved[data-id="${warehouseId}"]`);
+
+  const { error } = await supabaseClient.rpc('admin_update_warehouse_registered_address', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_warehouse_id: warehouseId,
+    p_registered_address: input.value
+  });
+
+  if (error) {
+    window.alert(`Failed to save Registered Address: ${error.message}`);
+    return;
+  }
+
+  savedLabel.classList.remove('hidden');
+  setTimeout(() => savedLabel.classList.add('hidden'), 1500);
+}
+
 async function loadWarehouses() {
   const tbody = document.getElementById('warehouseTableBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="muted">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
 
   const { data, error } = await supabaseClient.rpc('admin_list_warehouses', {
     p_admin_username: currentSession.username,
@@ -164,7 +195,7 @@ async function loadWarehouses() {
   });
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="error-text">${error.message}</td></tr>`;
     return;
   }
 

@@ -117,6 +117,9 @@ namespace AquariumPOS
         private const string DefaultWalkInCustomerName = "WALK-IN";
         private string username = "";
         private string currentCustomerName = DefaultWalkInCustomerName;  // Store current customer name for receipt
+        private string currentCustomerPhone = string.Empty;  // Optional mobile from checkout's customer box (walk-in order's contact no.)
+        private string currentCustomerPsid = string.Empty;   // Messenger customer picked in that box (links the walk-in to their chat)
+        private string currentCustomerAddress = string.Empty; // Optional address from that box (TransactionHeader.CustomerAddress -> walk-in ShippingAddress)
         private string pendingCustomAquariumSpecialNote = string.Empty;
 
         // Selected salesperson (employee) for the current in-progress transaction.
@@ -966,6 +969,20 @@ INSERT INTO CardProcessingFeeLog (
                     using (var command4 = new SqlCommand(addExpenseCategoryColumn, connection))
                     {
                         command4.ExecuteNonQuery();
+                    }
+
+                    // Checkout's customer box address (for delivery) - too long for Description's 255 chars,
+                    // so its own column; the walk-in send reads it from here (incl. offline catch-up).
+                    string addCustomerAddressColumn = @"
+                        IF EXISTS (SELECT * FROM sysobjects WHERE name='TransactionHeader' AND xtype='U')
+                        AND NOT EXISTS (SELECT * FROM syscolumns WHERE id = OBJECT_ID('TransactionHeader') AND name = 'CustomerAddress')
+                        BEGIN
+                            ALTER TABLE TransactionHeader ADD CustomerAddress NVARCHAR(500) NULL;
+                        END";
+
+                    using (var commandAddress = new SqlCommand(addCustomerAddressColumn, connection))
+                    {
+                        commandAddress.ExecuteNonQuery();
                     }
 
                     // FullyPaid/DatePaid on AdvanceOrderHeader - previously a manual one-off script
@@ -17282,6 +17299,9 @@ END", connection);
             currentDiscountDescription = string.Empty;
             grandTotal = 0;
             currentCustomerName = DefaultWalkInCustomerName;  // Reset customer name when clearing sale
+            currentCustomerPhone = string.Empty;
+            currentCustomerPsid = string.Empty;
+            currentCustomerAddress = string.Empty;
             isReturnExchangeMode = false;
             returnExchangeOriginalReceiptNo = string.Empty;
 
@@ -18360,11 +18380,15 @@ END", connection);
             }
             else
             {
-                customerName = FunctionEvents.PromptForCustomerName(
+                var customer = FunctionEvents.PromptForCustomer(
                     this,
                     string.IsNullOrWhiteSpace(currentCustomerName)
                         ? DefaultWalkInCustomerName
-                        : currentCustomerName.Trim());
+                        : currentCustomerName.Trim(),
+                    currentCustomerPhone,
+                    currentCustomerPsid,
+                    currentCustomerAddress);
+                customerName = customer.Name;
 
                 if (string.IsNullOrEmpty(customerName))
                 {
@@ -18372,6 +18396,9 @@ END", connection);
                 }
 
                 currentCustomerName = customerName;
+                currentCustomerPhone = customer.Phone;
+                currentCustomerPsid = customer.Psid;
+                currentCustomerAddress = customer.Address;
 
                 // Prompt for order description after customer name
                 string initialOrderDescription = string.IsNullOrWhiteSpace(pendingCustomAquariumSpecialNote)
@@ -18475,12 +18502,19 @@ END", connection);
                 // Save customer name and order description into the TransactionHeader.Description field
                 string txDescription = isReturnExchangeMode
                     ? $"Exchange from Receipt: {returnExchangeOriginalReceiptNo} | Customer: {currentCustomerName}"
-                    : $"Customer: {currentCustomerName} | Order: {effectiveOrderDescription}";
+                    // Mobile / FB (Messenger PSID) right after the name - Description is cut at 255 chars, and the
+                    // walk-in send reads them from here (OnlinefunctionsEvents.ParseWalkinCustomer).
+                    : $"Customer: {currentCustomerName}"
+                      + (string.IsNullOrWhiteSpace(currentCustomerPhone) ? string.Empty : $" | Mobile: {currentCustomerPhone}")
+                      + (string.IsNullOrWhiteSpace(currentCustomerPsid) ? string.Empty : $" | FB: {currentCustomerPsid}")
+                      + $" | Order: {effectiveOrderDescription}";
                 if (!isReturnExchangeMode && cardProcessingFeeTotal > 0m)
                 {
                     txDescription += $" | CardFee: {cardProcessingFeeTotal:F2}";
                 }
                 WriteSalesTransactionHeader(currentReceiptNo, isReturnExchangeMode ? "EXCHANGE" : "SALES", saleNetTotal, "", txDescription);
+                if (!isReturnExchangeMode && !string.IsNullOrWhiteSpace(currentCustomerAddress))
+                    SaveTransactionCustomerAddress(currentReceiptNo, currentCustomerAddress);
 
                 // Process inventory entries for all items (finish SALES posting first)
                 ProcessInventoryEntries();
@@ -21002,6 +21036,25 @@ OUTPUT INSERTED.LastReceiptNumber;", connection, transaction))
         }
 
         // Write sales transaction header entry when checkout is completed
+        // The checkout customer box's address (best-effort - never blocks the sale).
+        private void SaveTransactionCustomerAddress(string receiptNo, string address)
+        {
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                using var cmd = new SqlCommand("UPDATE TransactionHeader SET CustomerAddress = @Address WHERE ReceiptNo = @ReceiptNo", conn);
+                string trimmed = address.Trim();
+                cmd.Parameters.AddWithValue("@Address", trimmed.Length > 500 ? trimmed.Substring(0, 500) : trimmed);
+                cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to save CustomerAddress for Receipt '{receiptNo}': {ex.Message}");
+            }
+        }
+
         public void WriteSalesTransactionHeader(string receiptNo, string type = "SALES", decimal? amount = null, string eodID = "", string TransDescription = "", string expenseCategory = "")
         {
             try
@@ -24915,6 +24968,23 @@ ORDER BY [Name]", conn);
             if (!isPaidInFullToFollow && totalPaid == currentTotal)
             {
                 MessageBox.Show("Downpayment should not be equal to Grand Total. Please checkout full amount instead", "Invalid Downpayment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Hard block: an advance order needs at least 50% down - per "if the order did not satisfied
+            // 50% downpayment we do hard block" (same 50% as the Xendit pay link). Payment taken so far is
+            // kept, so the cashier can tender the rest and press POST again.
+            decimal minimumDownpayment = Math.Round(netAmountDue * 0.5m, 2, MidpointRounding.AwayFromZero);
+            if (!isPaidInFullToFollow && totalPaid < minimumDownpayment)
+            {
+                MessageBox.Show(
+                    $"Minimum downpayment is 50% of the order.\n\n" +
+                    $"Order total: P{netAmountDue:N2}\n" +
+                    $"Minimum downpayment (50%): P{minimumDownpayment:N2}\n" +
+                    $"Paid so far: P{totalPaid:N2}\n" +
+                    $"Still needed: P{minimumDownpayment - totalPaid:N2}\n\n" +
+                    "Tender the remaining amount, then press POST again.",
+                    "Downpayment Below 50%", MessageBoxButtons.OK, MessageBoxIcon.Stop);
                 return;
             }
 

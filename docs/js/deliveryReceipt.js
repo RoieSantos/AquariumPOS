@@ -253,6 +253,16 @@ function invoiceBlockHtml(info, header, lines) {
 async function loadReceipt(stopId) {
   const errorEl = document.getElementById('loadError');
 
+  // Not until every serial-tracked item has its serial (js/deliverySerialGate.js) - a direct link too.
+  const serialBlock = await deliveryStopSerialBlock(currentSession, stopId);
+  if (serialBlock) {
+    errorEl.textContent = serialBlock;
+    errorEl.style.whiteSpace = 'pre-line';
+    errorEl.classList.remove('hidden');
+    document.getElementById('printBtn').disabled = true;
+    return;
+  }
+
   const { data, error } = await supabaseClient.rpc('admin_get_delivery_receipt', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,

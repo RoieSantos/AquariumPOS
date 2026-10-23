@@ -294,7 +294,49 @@ function refreshNewPoGeneralSummary() {
 // Item Code, Item Name, Variant, Description, Warehouse, Qty Ordered, UoM, Qty Received,
 // Unit Cost, Line Cost, plus the super-user-only Remove column.
 function receiveLinesColspan() {
-  return currentSession?.isSuperUser ? 11 : 10;
+  return currentSession?.isSuperUser ? 12 : 11;
+}
+
+// Selling Price beside Unit Cost - per "in the purchase order lines. can you show the price too on
+// how much we are selling the item". From staff_get_selling_prices (supabase_po_line_selling_price.sql):
+// the variant's own Price, else Items."Price", per BASE unit. Cached per item+variant so the New PO
+// grid can redraw on every keystroke without going back to the server.
+const sellingPriceCache = new Map();
+function sellingPriceKey(itemCode, variantId) {
+  return `${itemCode || ''}|${variantId || ''}`;
+}
+
+async function ensureSellingPricesLoaded(pairs) {
+  const missing = [];
+  const seen = new Set();
+  (pairs || []).forEach((p) => {
+    const key = sellingPriceKey(p.item_code, p.variant_id);
+    if (!p.item_code || sellingPriceCache.has(key) || seen.has(key)) return;
+    seen.add(key);
+    missing.push({ item_code: p.item_code, variant_id: p.variant_id || '' });
+  });
+  if (missing.length === 0) return;
+
+  const { data, error } = await supabaseClient.rpc('staff_get_selling_prices', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_lines: missing
+  });
+  // Not fatal - a database without supabase_po_line_selling_price.sql just shows dashes.
+  if (error) return;
+  (data || []).forEach((r) => {
+    sellingPriceCache.set(sellingPriceKey(r.item_code, r.variant_id), r.price === null ? null : Number(r.price));
+  });
+}
+
+// Restated per the line's unit, like Unit Cost, so the two compare directly ("5 BOX" sells at the
+// box figure); the per-piece price is noted underneath when they differ.
+function sellingPriceHtml(itemCode, variantId, qtyPer) {
+  const base = sellingPriceCache.get(sellingPriceKey(itemCode, variantId));
+  if (base === null || base === undefined) return '<span class="muted">-</span>';
+  const per = Number(qtyPer || 1) || 1;
+  const baseNote = per !== 1 ? `<div class="muted" style="font-size:11px;">${base.toFixed(2)} / base</div>` : '';
+  return `${(base * per).toFixed(2)}${baseNote}`;
 }
 
 // An uncosted line shows a dash, not 0.00 - "nobody has costed this yet" needs to stay visible,
@@ -429,8 +471,10 @@ async function savePurchaseOrderLineVariant(select) {
   await openReceiveModal(currentReceivePoNo);
 }
 
-// The item's units of measure, fetched once per item code and kept for the session - a PO's lines
-// repeat the same items often enough, and re-opening the document should not re-ask.
+// The item's units of measure, fetched once per item code and kept while a document is open - a
+// PO's lines repeat the same items often enough. Cleared on every open (openReceiveModal /
+// below): kept for the whole session, a unit added in Item Setup (e.g. BAG) never showed
+// in the UoM picker until a full page reload - per "i cannot change the UOM from PC to BAG".
 const itemUnitsByItemCode = new Map();
 
 async function ensureItemUnitsLoaded(itemCodes) {
@@ -639,6 +683,11 @@ function scheduleNewPoStockRefresh() {
   clearTimeout(newPoStockTimer);
   newPoStockTimer = setTimeout(() => {
     if (currentPoCardMode !== 'new') return;
+    const rows = Array.from(document.querySelectorAll('#newPoLinesBody tr'));
+    ensureSellingPricesLoaded(rows.map((row) => ({
+      item_code: row.dataset.variantCode || row.dataset.itemCode,
+      variant_id: row.dataset.variantId
+    }))).then(() => rows.forEach(refreshNewPoLineSellingPrice));
     loadPoCardStock(Array.from(document.querySelectorAll('#newPoLinesBody tr')).map((row) => ({
       item_code: row.dataset.itemCode,
       variant_id: row.dataset.variantId,
@@ -659,7 +708,11 @@ async function renderReceiveLines(lines) {
 
   // The UoM and Variant pickers both need their item's own options before the rows are built.
   const itemCodes = (lines || []).map((l) => l.item_code);
-  await Promise.all([ensureItemUnitsLoaded(itemCodes), ensureVariantsLoaded(itemCodes)]);
+  await Promise.all([
+    ensureItemUnitsLoaded(itemCodes),
+    ensureVariantsLoaded(itemCodes),
+    ensureSellingPricesLoaded((lines || []).map((l) => ({ item_code: l.item_code, variant_id: l.variant_code })))
+  ]);
   document.getElementById('receiveLinesActionsHeader').classList.toggle('hidden', !currentSession?.isSuperUser);
   document.getElementById('receiveTotalActionsCell').classList.toggle('hidden', !currentSession?.isSuperUser);
 
@@ -743,6 +796,7 @@ async function renderReceiveLines(lines) {
           <td>${uomCell(l)}</td>
           <td class="doc-num">${receiveInput}</td>
           <td class="doc-num">${unitCostCell(l)}</td>
+          <td class="doc-num">${sellingPriceHtml(l.item_code, l.variant_code, l.qty_per_uom)}</td>
           <td class="doc-num">${l.unit_cost === null || l.unit_cost === undefined ? '<span class="muted">-</span>' : Number(l.line_cost || 0).toFixed(2)}</td>
           ${removeCell}
         </tr>
@@ -780,6 +834,8 @@ async function openReceiveModal(poNo) {
   document.getElementById('poEditSection').classList.toggle('hidden', !currentSession?.isSuperUser);
   document.getElementById('mergePoBtn').classList.toggle('hidden', !currentSession?.isSuperUser);
   resetPoAddItemFields();
+  itemUnitsByItemCode.clear();
+  sellingPriceCache.clear();
 
   const [{ data: headerRows, error: headerError }, { data: lineRows, error: lineError }] = await Promise.all([
     supabaseClient.rpc('staff_get_purchase_order', {
@@ -1744,6 +1800,7 @@ function refreshNewPoCostTotals() {
     // Quantity and Unit Cost are both per the line's unit, so their product is the line total
     // whatever the unit is - the conversion cancels out and only shows up in the base-qty hint.
     refreshNewPoLineBaseQty(row);
+    refreshNewPoLineSellingPrice(row);
 
     if (rawCost === '') {
       if (totalCell) totalCell.innerHTML = '<span class="muted">-</span>';
@@ -1774,6 +1831,17 @@ function refreshNewPoCostTotals() {
       totalNoteEl.classList.add('hidden');
     }
   }
+}
+
+// A variant row's item code is the one the variant resolves to (dataset.variantCode); the
+// VariationId (dataset.variantId) picks the variant's own price.
+function refreshNewPoLineSellingPrice(row) {
+  const cell = row.querySelector('.new-po-line-price');
+  if (!cell) return;
+  const itemCode = row.dataset.variantCode || row.dataset.itemCode;
+  cell.innerHTML = itemCode
+    ? sellingPriceHtml(itemCode, row.dataset.variantId, newPoLineQtyPer(row))
+    : '';
 }
 
 // BC numbers every document line, so the row you are on can be named ("line 3") rather than
@@ -1808,6 +1876,7 @@ function addNewPoLineRow() {
       <div class="new-po-line-base-qty muted"></div>
     </td>
     <td><input type="number" class="new-po-line-cost" min="0" step="0.01" placeholder="-" /></td>
+    <td class="new-po-line-price doc-num"></td>
     <td class="new-po-line-total doc-num">0.00</td>
     <td><button type="button" class="btn btn-danger btn-sm" title="Remove this line">Remove</button></td>
   `;
@@ -1909,6 +1978,7 @@ function resetNewPoModal() {
 
 async function openNewPoModal() {
   currentPoCardMode = 'new';
+  sellingPriceCache.clear();
   applyPoCardMode('new');
   document.getElementById('poCardTitle').textContent = 'New Purchase Order';
   setPoCardStatus(null);

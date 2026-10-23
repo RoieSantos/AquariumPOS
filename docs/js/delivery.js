@@ -1508,6 +1508,22 @@ function guardStopPrint(stops, stopId) {
   return false;
 }
 
+// Delivery Receipt / Invoice: also refused while a serial-tracked item has no serial tagged
+// (js/deliverySerialGate.js) - also until the order has been through To Ship. The tab is opened before the check - a window.open after an await is
+// popup-blocked - and closed again if the order is blocked.
+async function openStopPrintWithSerialGate(stops, stopId, url) {
+  if (!guardStopPrint(stops, stopId)) return;
+  const win = window.open('', '_blank');
+  const serialBlock = await deliveryStopSerialBlock(currentSession, stopId);
+  if (serialBlock) {
+    win?.close();
+    window.alert(serialBlock);
+    return;
+  }
+  if (win) win.location.href = url;
+  else window.open(url, '_blank');
+}
+
 function showDayDetail(dateKey) {
   selectedDateKey = dateKey;
   document.querySelectorAll('.delivery-day-cell[data-date]').forEach((cell) => {
@@ -1586,10 +1602,8 @@ function showDayDetail(dateKey) {
   });
 
   tbody.querySelectorAll('button[data-print-stop-id]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (!guardStopPrint(stops, btn.dataset.printStopId)) return;
-      window.open(`delivery-receipt.html?stop=${encodeURIComponent(btn.dataset.printStopId)}`, '_blank');
-    });
+    btn.addEventListener('click', () => openStopPrintWithSerialGate(stops, btn.dataset.printStopId,
+      `delivery-receipt.html?stop=${encodeURIComponent(btn.dataset.printStopId)}`));
   });
 
   tbody.querySelectorAll('button[data-edit-stop-id]').forEach((btn) => {
@@ -1600,10 +1614,8 @@ function showDayDetail(dateKey) {
   });
 
   tbody.querySelectorAll('button[data-print-invoice-stop-id]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (!guardStopPrint(stops, btn.dataset.printInvoiceStopId)) return;
-      window.open(`invoice.html?stop=${encodeURIComponent(btn.dataset.printInvoiceStopId)}`, '_blank');
-    });
+    btn.addEventListener('click', () => openStopPrintWithSerialGate(stops, btn.dataset.printInvoiceStopId,
+      `invoice.html?stop=${encodeURIComponent(btn.dataset.printInvoiceStopId)}`));
   });
 
   tbody.querySelectorAll('button[data-print-joborder-stop-id]').forEach((btn) => {

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Purchase Orders - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=navwide1" />
+  <link rel="stylesheet" href="css/styles.css?v=sellprice1" />
   <link rel="stylesheet" href="css/bc-list.css?v=posuggest2" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
@@ -254,8 +254,8 @@
             <!-- Fixed column widths (see .new-po-lines in css/styles.css) - an editable grid must not
                  re-flow its columns every time a longer item name is picked. -->
             <table class="doc-lines new-po-lines">
-              <!-- The six fixed columns come to 508px; the four proportional ones are sized to take
-                   the remaining ~53% at the grid's 1080px minimum, and simply grow from there as the
+              <!-- The seven fixed columns come to 608px; the four proportional ones are sized to take
+                   the remaining ~49% at the grid's 1180px minimum, and simply grow from there as the
                    document is widened or maximized. Description gets the biggest share since it is
                    the longest free-text field on the line. -->
               <colgroup>
@@ -266,6 +266,7 @@
                 <col style="width:7%;" />
                 <col style="width:90px;" />
                 <col style="width:88px;" />
+                <col style="width:100px;" />
                 <col style="width:100px;" />
                 <col style="width:100px;" />
                 <col style="width:86px;" />
@@ -283,16 +284,19 @@
                        goes into stock is shown underneath it. See supabase_units_of_measure.sql. -->
                   <th>UoM</th>
                   <th style="text-align:right;">Unit Cost</th>
+                  <!-- What the item sells for, per the line's unit like Unit Cost - read-only
+                       (js/purchaseOrders.js sellingPriceHtml, supabase_po_line_selling_price.sql). -->
+                  <th style="text-align:right;">Selling Price</th>
                   <th style="text-align:right;">Line Cost</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="newPoLinesBody"></tbody>
               <tfoot>
-                <!-- colspan 8 (No. through Unit Cost) puts the total directly under Line Cost, the
+                <!-- colspan 9 (No. through Selling Price) puts the total directly under Line Cost, the
                      column it totals - same alignment as the existing document's footer below. -->
                 <tr>
-                  <td colspan="8" style="text-align:right; font-weight:600;">Total Cost</td>
+                  <td colspan="9" style="text-align:right; font-weight:600;">Total Cost</td>
                   <td class="doc-num" style="font-weight:600;">
                     <span id="newPoTotalCost">0.00</span>
                     <div id="newPoTotalCostNote" class="muted hidden" style="font-size:11px; font-weight:400;"></div>
@@ -330,16 +334,17 @@
                        arrived here and that is exactly what gets added to inventory. -->
                   <th style="text-align:right;">Qty Received</th>
                   <th style="text-align:right;">Unit Cost</th>
+                  <th style="text-align:right;">Selling Price</th>
                   <th style="text-align:right;">Line Cost</th>
                   <th id="receiveLinesActionsHeader" class="hidden"></th>
                 </tr>
               </thead>
               <tbody id="receiveLinesBody"></tbody>
               <tfoot>
-                <!-- colspan 9 puts the total directly under the Line Cost column (the 10th), which is
+                <!-- colspan 10 puts the total directly under the Line Cost column (the 11th), which is
                      what it totals - not under Unit Cost. -->
                 <tr>
-                  <td colspan="9" style="text-align:right; font-weight:600;">Total Cost</td>
+                  <td colspan="10" style="text-align:right; font-weight:600;">Total Cost</td>
                   <td class="doc-num" style="font-weight:600;">
                     <span id="receiveTotalCost">0.00</span>
                     <!-- An uncosted line (dash in Unit Cost/Line Cost) contributes 0 to the total
@@ -511,7 +516,7 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/purchaseOrders.js?v=whoby1"></script>
+  <script src="js/purchaseOrders.js?v=sellprice2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

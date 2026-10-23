@@ -221,6 +221,18 @@ namespace AquariumPOS
         public static string OnlinePayLookupRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_get_online_order_for_payment";
         public static string OnlinePayRecordRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_record_online_order_payment";
         public static string PosApiKey { get; } = "pos_6385f793ed5792e50fa8dc35b19a23e51f28ae1c2d4cb149";
+        // Walk-ins straight to the portal (sql/supabase_pos_walkin_orders_direct.sql) - per "walkin orders
+        // should go directly to supabase": CreateInstoreOnlineOrder writes the order as WI-xxxxx instead of
+        // creating it in Pancake, and checkout's customer box looks people up. Same PosApiKey check as Online Pay.
+        public static string WalkinOrderCreateRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_create_walkin_order";
+        public static string CustomerSearchRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_search_customers";
+        // The picked customer's addresses + existing orders (sql/supabase_pos_customer_history.sql).
+        public static string CustomerHistoryRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_get_customer_history";
+        // The picked Messenger customer's Facebook picture (live from Facebook, nothing saved) - PosApiKey.
+        public static string CustomerProfilePicEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/chatbot-profile-pics";
+        // Fallback only: set AQUARIUMPOS_WALKIN_VIA_PANCAKE=1 on a machine to send its walk-ins to Pancake again.
+        public static bool WalkinOrdersDirectToPortal { get; } =
+            Environment.GetEnvironmentVariable("AQUARIUMPOS_WALKIN_VIA_PANCAKE") != "1";
 
         /// <summary>
         /// Optional: Page ID and Conversation IDs to receive admin notifications via the Public API.

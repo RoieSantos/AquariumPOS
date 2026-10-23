@@ -12,7 +12,7 @@ async function loadInvoice() {
 
   const [{ data, error }, info] = await Promise.all([
     supabaseClient.rpc('public_get_order_receipt', { p_order_no: orderId }),
-    fetchCompanyInfo()
+    fetchCompanyInfo().then((ci) => orderLetterheadInfo(ci, orderId))
   ]);
   if (error) {
     statusEl.textContent = 'Could not load this invoice right now - please try again shortly.';

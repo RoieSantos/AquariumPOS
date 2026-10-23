@@ -60,7 +60,7 @@ function renderRows(rows) {
         <td>${r.is_test ? '<strong style="color:#b45309;">TEST</strong>' : 'Live'}</td>
         <td>${status}</td>
         <td>${esc([r.payment_channel, r.payment_method].filter(Boolean).join(' / ')) || '<span class="muted">-</span>'}</td>
-        <td>${r.paid_at ? `${peso(r.paid_amount)}<div class="muted" style="font-size:12px;">${new Date(r.paid_at).toLocaleString()}</div><a href="payment-receipt.html?id=${encodeURIComponent(r.payment_id)}" target="_blank" rel="noopener" style="font-size:12px;">🧾 Receipt</a>` : '<span class="muted">-</span>'}</td>
+        <td>${r.paid_at ? `${peso(r.paid_amount)}<div class="muted" style="font-size:12px;">${new Date(r.paid_at).toLocaleString()}</div><a href="payment-receipt.html?id=${encodeURIComponent(r.payment_id)}" target="_blank" rel="noopener" style="font-size:12px;">🧾 ${esc(r.receipt_no || 'Receipt')}</a>` : '<span class="muted">-</span>'}</td>
         <td>${applyCell(r)}</td>
         <td>${r.status === 'Paid' && r.apply_status === 'Failed' ? `<button class="btn btn-secondary btn-sm" data-retry="${esc(r.payment_id)}" type="button">Retry</button>` : ''}</td>
       </tr>`;

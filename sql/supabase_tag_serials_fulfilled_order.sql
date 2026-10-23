@@ -165,7 +165,7 @@ begin
     raise exception 'Pick at least one serial.';
   end if;
   if not public._serial_order_is_fulfilled(v_link) then
-    raise exception 'Order % isn''t Shipped / Delivered / Completed yet - tag its serials at Ready to Ship instead.', p_doc_no;
+    raise exception 'Order % hasn''t been through To Ship yet - pick its serials at To Ship instead.', p_doc_no;
   end if;
 
   create temp table if not exists _tag_fulfilled_need (item_code text, quantity_total int, quantity_tagged int) on commit drop;
@@ -216,8 +216,14 @@ begin
     raise exception 'Only % of % selected serial(s) were still In Stock - someone may have just used one. Refresh and try again.', v_claimed, array_length(v_picks, 1);
   end if;
 
-  -- Whatever was still held for the order and not picked is free again (the order is already out).
-  perform public._serial_release_order_reservations(v_link, p_admin_username);
+  -- Every unit tagged now: whatever is still held for the order is free again. Not before - tagging 1 of 2
+  -- must leave the other unit's reservation in place.
+  if not exists (
+    select 1 from public._fulfilled_order_serial_needs(p_admin_username, p_admin_password, p_doc_type, p_doc_no) n
+    where n.quantity_tagged < n.quantity_total
+  ) then
+    perform public._serial_release_order_reservations(v_link, p_admin_username);
+  end if;
 
   return v_claimed;
 end;

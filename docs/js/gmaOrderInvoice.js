@@ -11,7 +11,7 @@ async function loadInvoice(orderNo) {
 
   const [{ data, error }, info] = await Promise.all([
     supabaseClient.rpc('public_get_order_receipt', { p_order_no: orderNo }),
-    fetchCompanyInfo()
+    fetchCompanyInfo().then((ci) => orderLetterheadInfo(ci, orderNo))
   ]);
 
   if (error || !data || data.length === 0) {

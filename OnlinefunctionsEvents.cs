@@ -1843,12 +1843,14 @@ END";
                 string transactionReceiptNo = string.Empty;
                 string transactionUserId = string.Empty;
                 string transactionType = string.Empty;
+                DateTime? transactionDate = null;
+                string transactionTime = string.Empty;
                 try
                 {
                     using (var conn = new SqlConnection(GlobalSettings.ConnectionString))
                     {
                         conn.Open();
-                        using (var cmd = new SqlCommand("SELECT TOP 1 TransactionNo, ReceiptNo, Description, DiscountDescription, Discount, NetAmount, UserID, Type FROM TransactionHeader WHERE ReceiptNo = @ReceiptNo", conn))
+                        using (var cmd = new SqlCommand("SELECT TOP 1 TransactionNo, ReceiptNo, Description, DiscountDescription, Discount, NetAmount, UserID, Type, [Date], [Time] FROM TransactionHeader WHERE ReceiptNo = @ReceiptNo", conn))
                         {
                             cmd.Parameters.AddWithValue("@ReceiptNo", ReceiptNo);
                             using (var rdr = cmd.ExecuteReader())
@@ -1861,6 +1863,8 @@ END";
                                 try { transactionReceiptNo = rdr["ReceiptNo"]?.ToString() ?? string.Empty; } catch { transactionReceiptNo = string.Empty; }
                                 try { transactionUserId = rdr["UserID"]?.ToString() ?? string.Empty; } catch { transactionUserId = string.Empty; }
                                 try { transactionType = rdr["Type"]?.ToString() ?? string.Empty; } catch { transactionType = string.Empty; }
+                                try { transactionDate = rdr["Date"] == DBNull.Value ? null : Convert.ToDateTime(rdr["Date"]); } catch { transactionDate = null; }
+                                try { transactionTime = rdr["Time"]?.ToString()?.Trim() ?? string.Empty; } catch { transactionTime = string.Empty; }
                                 try
                                 {
                                     var dv = rdr["Discount"];
@@ -1898,8 +1902,8 @@ END";
 
                 // Combine DocumentNo and UserID into note text and safely serialize for embedding into our raw JSON string
                 string combinedNoteBase = string.IsNullOrWhiteSpace(transactionReceiptNo)
-                    ? (noteText ?? string.Empty)
-                    : (transactionReceiptNo + " - " + (noteText ?? string.Empty));
+                    ? StripWalkinPsid(noteText)
+                    : (transactionReceiptNo + " - " + StripWalkinPsid(noteText));
 
                 string combinedNote = string.IsNullOrWhiteSpace(transactionUserId)
                     ? combinedNoteBase
@@ -2012,6 +2016,9 @@ WHERE ile.DocumentNo = @DocNo", conn))
 
                 // Build items array from itemLines.
                 var itemsPayload = new System.Collections.Generic.List<object>();
+                // Same lines in the portal's OnlineOrderLines shape (pos_create_walkin_order) - ItemCode /
+                // product_display_id are what the Pancake sync used to store for each line.
+                var portalLines = new System.Collections.Generic.List<Dictionary<string, object?>>();
                 var customItemNotesToSend = new System.Collections.Generic.List<string>();
                 decimal effectiveTransactionDiscount = Math.Abs(transactionDiscount);
                 decimal totalGrossForDiscountAllocation = 0m;
@@ -2172,6 +2179,7 @@ WHERE ile.DocumentNo = @DocNo", conn))
                                 ? lineNote
                                 : (string.IsNullOrWhiteSpace(lineDescription) ? null : lineDescription);
 
+                            portalLines.Add(BuildPortalWalkinLine(distinctDisplayId, null, lineName, effectiveLineNote, qtyValueDecimal, unitRetailPriceValue, lineDiscountTotal));
                             itemsPayload.Add(new
                             {
                                 discount_each_product = discountEachProductValue,
@@ -2195,6 +2203,7 @@ WHERE ile.DocumentNo = @DocNo", conn))
                         }
                         else
                         {
+                            portalLines.Add(BuildPortalWalkinLine(lineItemCode, variationId, lineName, lineNote, qtyValueDecimal, unitRetailPriceValue, lineDiscountTotal));
                             itemsPayload.Add(new
                             {
                                 discount_each_product = discountEachProductValue,
@@ -2297,6 +2306,17 @@ WHERE ile.DocumentNo = @DocNo", conn))
                     }
                 }
 
+                // Walk-ins go straight to the portal (WI-xxxxx), not to Pancake - same lines / payments / note.
+                if (GlobalSettings.WalkinOrdersDirectToPortal)
+                {
+                    if (portalLines.Count == 0)
+                        portalLines.Add(BuildPortalWalkinLine("POS-FALLBACK", null, string.IsNullOrWhiteSpace(noteText) ? "POS sale" : noteText.Trim(), null, 1m, Math.Abs(transactionNetAmount), 0m));
+
+                    return CreateInstoreWalkinOnPortal(
+                        ReceiptNo, warehouseId, transactionDate, transactionTime, transactionUserId, combinedNote, noteText,
+                        Math.Abs(transactionNetAmount), Math.Abs(transactionDiscount), portalLines, paymentLines);
+                }
+
                 // Prepare JSON for bank_payments: { "<POSBankID>": amount, ... }
                 string bankPaymentsJson;
                 if (paymentLines.Count > 0)
@@ -2396,37 +2416,7 @@ WHERE ile.DocumentNo = @DocNo", conn))
                     }
                     catch { }
 
-                // Mark the local TransactionHeader and ItemLedgerEntry as sent to online (best-effort).
-                try
-                {
-                    using (var conn = new SqlConnection(GlobalSettings.ConnectionString))
-                    {
-                        conn.Open();
-                        using (var cmd = new SqlCommand("UPDATE TransactionHeader SET SentToOnline = 1 WHERE ReceiptNo = @ReceiptNo", conn))
-                        {
-                            cmd.Parameters.AddWithValue("@ReceiptNo", ReceiptNo);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        // Also mark matching ItemLedgerEntry rows (by ReceiptNo) as sent online
-                        try
-                        {
-                            using (var cmd2 = new SqlCommand("UPDATE ItemLedgerEntry SET SentToOnline = 1 WHERE ReceiptNo = @ReceiptNo", conn))
-                            {
-                                cmd2.Parameters.AddWithValue("@ReceiptNo", ReceiptNo);
-                                cmd2.ExecuteNonQuery();
-                            }
-                        }
-                        catch (Exception ex2)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Failed to mark ItemLedgerEntry.SentToOnline for Receipt '{ReceiptNo}': {ex2.Message}");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Failed to mark SentToOnline for Receipt '{ReceiptNo}': {ex.Message}");
-                }
+                MarkWalkinReceiptSentToOnline(ReceiptNo);
 
                     return respText ?? string.Empty;
                 }
@@ -2441,6 +2431,279 @@ WHERE ile.DocumentNo = @DocNo", conn))
 
                 throw;
             }
+        }
+
+        // Mark the local TransactionHeader and ItemLedgerEntry as sent to online (best-effort).
+        private static void MarkWalkinReceiptSentToOnline(string receiptNo)
+        {
+            try
+            {
+                using (var conn = new SqlConnection(GlobalSettings.ConnectionString))
+                {
+                    conn.Open();
+                    using (var cmd = new SqlCommand("UPDATE TransactionHeader SET SentToOnline = 1 WHERE ReceiptNo = @ReceiptNo", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                        cmd.ExecuteNonQuery();
+                    }
+
+                    // Also mark matching ItemLedgerEntry rows (by ReceiptNo) as sent online
+                    try
+                    {
+                        using (var cmd2 = new SqlCommand("UPDATE ItemLedgerEntry SET SentToOnline = 1 WHERE ReceiptNo = @ReceiptNo", conn))
+                        {
+                            cmd2.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                            cmd2.ExecuteNonQuery();
+                        }
+                    }
+                    catch (Exception ex2)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Failed to mark ItemLedgerEntry.SentToOnline for Receipt '{receiptNo}': {ex2.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to mark SentToOnline for Receipt '{receiptNo}': {ex.Message}");
+            }
+        }
+
+        private static Dictionary<string, object?> BuildPortalWalkinLine(string itemCode, string? variationId, string description, string? note,
+            decimal quantity, decimal unitPrice, decimal lineDiscount)
+        {
+            decimal qty = quantity == 0m ? 1m : Math.Abs(quantity);
+            decimal gross = Math.Round(unitPrice * qty, 2, MidpointRounding.AwayFromZero);
+            decimal discount = Math.Abs(lineDiscount);
+            return new Dictionary<string, object?>
+            {
+                ["item_code"] = string.IsNullOrWhiteSpace(itemCode) ? null : itemCode.Trim(),
+                ["product_display_id"] = string.IsNullOrWhiteSpace(itemCode) ? null : itemCode.Trim(),
+                ["variation_id"] = string.IsNullOrWhiteSpace(variationId) ? null : variationId.Trim(),
+                ["description"] = description,
+                ["note"] = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
+                ["quantity"] = qty,
+                ["price"] = unitPrice,
+                ["discount"] = discount,
+                ["gross"] = gross,
+                ["net"] = gross - discount
+            };
+        }
+
+        // The checkout's customer box writes "Customer: NAME | Mobile: 0917... | FB: <psid>" at the start of the
+        // receipt description (MainForm.CompleteSale) - read them back for the portal's walk-in customer fields.
+        internal static (string Name, string Phone, string Psid) ParseWalkinCustomer(string? description)
+        {
+            string name = string.Empty, phone = string.Empty, psid = string.Empty;
+            foreach (var part in (description ?? string.Empty).Split('|'))
+            {
+                string text = part.Trim();
+                if (text.StartsWith("Customer:", StringComparison.OrdinalIgnoreCase))
+                    name = text.Substring("Customer:".Length).Trim();
+                else if (text.StartsWith("Mobile:", StringComparison.OrdinalIgnoreCase))
+                    phone = text.Substring("Mobile:".Length).Trim();
+                else if (text.StartsWith("FB:", StringComparison.OrdinalIgnoreCase))
+                    psid = text.Substring("FB:".Length).Trim();
+            }
+            return (name, phone, psid);
+        }
+
+        // The checkout customer box's address (TransactionHeader.CustomerAddress, MainForm.SaveTransactionCustomerAddress).
+        // Empty on a database without the column yet or when none was typed.
+        private static string GetTransactionCustomerAddress(string receiptNo)
+        {
+            try
+            {
+                using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+                conn.Open();
+                using var cmd = new SqlCommand("SELECT TOP 1 CustomerAddress FROM TransactionHeader WHERE ReceiptNo = @ReceiptNo", conn);
+                cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                return (cmd.ExecuteScalar() as string)?.Trim() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        // The "FB: <psid>" part is only for the link (customer_psid) - not shown in the portal's order note.
+        private static string StripWalkinPsid(string? description)
+        {
+            if (string.IsNullOrEmpty(description) || description.IndexOf("FB:", StringComparison.OrdinalIgnoreCase) < 0)
+                return description ?? string.Empty;
+            return string.Join(" | ", description.Split('|')
+                .Select(p => p.Trim())
+                .Where(p => !p.StartsWith("FB:", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        // POS walk-in -> portal (sql/supabase_pos_walkin_orders_direct.sql). The order gets the portal's own
+        // number (WI-xxxxx); the receipt no. is kept with it, and sending the same receipt again (retry /
+        // SendFailedTransactionToCloud) returns the same order instead of making a second one.
+        private static string CreateInstoreWalkinOnPortal(string receiptNo, string warehouseId, DateTime? saleDate, string saleTime,
+            string cashier, string note, string description, decimal total, decimal discount,
+            List<Dictionary<string, object?>> lines,
+            List<(string TenderTypeCode, string POSBankID, decimal Amount)> paymentLines)
+        {
+            // Already in the portal from an older Pancake send (mapped to its Pancake order) - don't make a WI- copy.
+            string alreadyMapped = GetMappedOnlineOrderIdForReceipt(receiptNo);
+            if (!string.IsNullOrWhiteSpace(alreadyMapped))
+            {
+                MarkWalkinReceiptSentToOnline(receiptNo);
+                return alreadyMapped;
+            }
+
+            var customer = ParseWalkinCustomer(description);
+            string customerAddress = GetTransactionCustomerAddress(receiptNo);
+
+            // CASH stays CASH; any other tender goes in as its POSBankID (the code Pancake used), else its tender code.
+            var payments = paymentLines
+                .Where(p => p.Amount > 0m)
+                .Select(p => new Dictionary<string, object?>
+                {
+                    ["method"] = string.Equals(p.TenderTypeCode, "CASH", StringComparison.OrdinalIgnoreCase)
+                        ? "CASH"
+                        : (string.IsNullOrWhiteSpace(p.POSBankID) ? p.TenderTypeCode.Trim() : p.POSBankID.Trim()),
+                    ["amount"] = p.Amount
+                })
+                .Where(p => !string.IsNullOrWhiteSpace(p["method"] as string))
+                .ToList();
+
+            decimal lineDiscounts = lines.Sum(l => l["discount"] is decimal d ? d : 0m);
+            var payload = new Dictionary<string, object?>
+            {
+                ["p_pos_key"] = GlobalSettings.PosApiKey,
+                ["p_order"] = new Dictionary<string, object?>
+                {
+                    ["receipt_no"] = receiptNo,
+                    ["warehouse_id"] = warehouseId,
+                    ["date"] = (saleDate ?? DateTime.Now).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    ["time"] = string.IsNullOrWhiteSpace(saleTime) ? DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture) : saleTime,
+                    ["cashier"] = string.IsNullOrWhiteSpace(cashier) ? null : cashier.Trim(),
+                    ["note"] = note,
+                    ["customer_name"] = string.IsNullOrWhiteSpace(customer.Name) ? null : customer.Name,
+                    ["customer_phone"] = string.IsNullOrWhiteSpace(customer.Phone) ? null : customer.Phone,
+                    ["customer_psid"] = string.IsNullOrWhiteSpace(customer.Psid) ? null : customer.Psid,
+                    ["customer_address"] = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress,
+                    ["total"] = total,
+                    ["discount"] = lineDiscounts > 0m ? lineDiscounts : discount
+                },
+                ["p_lines"] = lines,
+                ["p_payments"] = payments
+            };
+
+            string endpoint = GlobalSettings.WalkinOrderCreateRpcEndpoint;
+            string respText = CallPosRpc(endpoint, JsonSerializer.Serialize(payload), TimeSpan.FromSeconds(30));
+
+            string orderId = string.Empty;
+            try
+            {
+                using var doc = JsonDocument.Parse(respText);
+                var root = doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0
+                    ? doc.RootElement[0]
+                    : doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("order_id", out var id))
+                    orderId = id.GetString() ?? string.Empty;
+            }
+            catch { }
+            if (string.IsNullOrWhiteSpace(orderId))
+                throw new InvalidOperationException($"Portal walk-in create returned no order id for {receiptNo}: {respText}");
+
+            try { UpsertInstoreOnlineOrderMap(receiptNo, orderId, "INSTORE", "CREATE_PORTAL", respText); } catch { }
+            MarkWalkinReceiptSentToOnline(receiptNo);
+            return respText;
+        }
+
+        // POST to a pos_* RPC with the public apikey (the function checks PosApiKey itself, like Online Pay).
+        private static string CallPosRpc(string endpoint, string payloadJson, TimeSpan timeout)
+        {
+            using var http = new HttpClient { Timeout = timeout };
+            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+            using var resp = http.SendAsync(req).GetAwaiter().GetResult();
+            string text = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() ?? string.Empty;
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"{endpoint} failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {text}");
+            return text;
+        }
+
+        public sealed record WalkinCustomerMatch(string Name, string Phone, string Source, string LastSeen, string Psid);
+
+        // Checkout's customer lookup (pos_search_customers): a mobile number (4+ digits) or part of a name.
+        public static async Task<List<WalkinCustomerMatch>> SearchWalkinCustomersAsync(string query, TimeSpan? timeout = null)
+        {
+            var results = new List<WalkinCustomerMatch>();
+            if (string.IsNullOrWhiteSpace(query))
+                return results;
+
+            string payload = JsonSerializer.Serialize(new { p_pos_key = GlobalSettings.PosApiKey, p_query = query.Trim() });
+            string text = await Task.Run(() => CallPosRpc(GlobalSettings.CustomerSearchRpcEndpoint, payload, timeout ?? TimeSpan.FromSeconds(15))).ConfigureAwait(true);
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "[]" : text);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return results;
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                string Get(string name) => row.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty;
+                results.Add(new WalkinCustomerMatch(Get("customer_name"), Get("phone"), Get("source"), Get("last_seen"), Get("psid")));
+            }
+            return results;
+        }
+
+        public sealed record CustomerHistoryRow(string Kind, string Ref, string Seen, string Status, decimal? Amount, string Detail);
+
+        // Checkout's customer box: the picked customer's addresses + 10 newest orders (pos_get_customer_history),
+        // matched on the mobile and/or the Messenger PSID.
+        public static async Task<List<CustomerHistoryRow>> GetCustomerHistoryAsync(string phone, string psid)
+        {
+            var rows = new List<CustomerHistoryRow>();
+            if (string.IsNullOrWhiteSpace(phone) && string.IsNullOrWhiteSpace(psid))
+                return rows;
+
+            string payload = JsonSerializer.Serialize(new { p_pos_key = GlobalSettings.PosApiKey, p_phone = phone?.Trim() ?? string.Empty, p_psid = psid?.Trim() ?? string.Empty });
+            string text = await Task.Run(() => CallPosRpc(GlobalSettings.CustomerHistoryRpcEndpoint, payload, TimeSpan.FromSeconds(15))).ConfigureAwait(true);
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "[]" : text);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return rows;
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                string Get(string name) => row.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty;
+                decimal? amount = row.TryGetProperty("amount", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : null;
+                rows.Add(new CustomerHistoryRow(Get("kind"), Get("ref"), Get("seen"), Get("status"), amount, Get("detail")));
+            }
+            return rows;
+        }
+
+        // The Messenger customer's current Facebook profile picture (chatbot-profile-pics with the POS key),
+        // downloaded straight from Facebook's CDN and kept in memory only. Null when there's none - incl.
+        // while Meta hasn't granted Advanced Access (then only app-role accounts have pictures).
+        public static async Task<System.Drawing.Image?> GetCustomerProfilePictureAsync(string psid)
+        {
+            if (string.IsNullOrWhiteSpace(psid))
+                return null;
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            using var req = new HttpRequestMessage(HttpMethod.Post, GlobalSettings.CustomerProfilePicEndpoint);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Content = new StringContent(JsonSerializer.Serialize(new { pos_key = GlobalSettings.PosApiKey, psids = new[] { psid } }), Encoding.UTF8, "application/json");
+            using var resp = await http.SendAsync(req).ConfigureAwait(true);
+            if (!resp.IsSuccessStatusCode)
+                return null;
+
+            string url = string.Empty;
+            using (var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync().ConfigureAwait(true)))
+            {
+                if (doc.RootElement.TryGetProperty("pictures", out var pics) && pics.ValueKind == JsonValueKind.Object
+                    && pics.TryGetProperty(psid, out var u) && u.ValueKind == JsonValueKind.String)
+                    url = u.GetString() ?? string.Empty;
+            }
+            if (string.IsNullOrWhiteSpace(url))
+                return null;
+
+            byte[] bytes = await http.GetByteArrayAsync(url).ConfigureAwait(true);
+            using var ms = new MemoryStream(bytes);
+            using var img = System.Drawing.Image.FromStream(ms);
+            return new System.Drawing.Bitmap(img);   // copy, so the stream can close
         }
 
         private static string ResolveInstoreCloudMappedItemCode(string? categoryCode, string? categoryName, string? description, string? itemCode)
