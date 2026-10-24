@@ -107,6 +107,8 @@ async function attemptLogin(username, password) {
     // Tank Maker / Stand Maker / Dispatcher - sees their own orders on Online Orders' My
     // Assignments tab (supabase_online_order_my_assignments.sql).
     isOrderMaker: (result.staff_roles || []).some((r) => ORDER_MAKER_ROLES.includes(r)),
+    // Catalog Editor - maintains items in Item Setup, no prices / cost (supabase_catalog_editor_role.sql).
+    isCatalogEditor: (result.staff_roles || []).includes('CatalogEditor'),
     mustChangePassword: !!result.must_change_password,
     loginAt: new Date().toISOString()
   });
@@ -189,7 +191,7 @@ function hasNoPortalPermission(session) {
   return !session.isSuperUser && !session.isPayrollOfficer && !session.isSalesUser &&
     !session.isSerialAdmin && !session.isDeliveryTeam && !session.isOnlineOrderStaff &&
     !session.isProductionMember && !session.isStoreManager && !session.isConversationsStaff &&
-    !session.isProductionManager && !session.isOrderMaker;
+    !session.isProductionManager && !session.isOrderMaker && !session.isCatalogEditor;
 }
 
 // Per "if an order has been assigned to the user.. can you show it to their access?" - a Tank Maker
@@ -219,6 +221,9 @@ function canOpenProductionPage(session, page) {
     return !!(session?.isSuperUser || session?.isProductionManager ||
       (session?.staffRoles || []).some((r) => r === 'TankMaker' || r === 'StandMaker'));
   }
+  // Catalog Editor (supabase_catalog_editor_role.sql): Item Setup, whatever lockdown another setting
+  // (Store Manager, Online Order Staff...) puts on the account. The item RPCs re-check the role.
+  if (page === 'item-setup.html' && session?.isCatalogEditor) return true;
   return PRODUCTION_PAGES.includes(page) && !!(session?.isSuperUser || session?.isProductionManager || session?.isOrderMaker);
 }
 
@@ -434,6 +439,7 @@ async function refreshPortalSession(session) {
     // Tank Maker / Stand Maker / Dispatcher - sees their own orders on Online Orders' My
     // Assignments tab (supabase_online_order_my_assignments.sql).
     isOrderMaker: (result.staff_roles || []).some((r) => ORDER_MAKER_ROLES.includes(r)),
+      isCatalogEditor: (result.staff_roles || []).includes('CatalogEditor'),
       mustChangePassword: !!result.must_change_password
     };
     setPortalSession(refreshed);

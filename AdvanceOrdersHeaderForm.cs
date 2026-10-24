@@ -17,6 +17,7 @@ namespace AquariumPOS
         private Button refreshButton;
 
         private Button payInFullButton;
+        private Button voidOrderButton;
         private Button resendToPancakeButton;
         private Button resendToPortalButton;
         private Button showErrorsButton;
@@ -97,6 +98,18 @@ namespace AquariumPOS
             };
             payInFullButton.Click += PayInFullButton_Click;
 
+            // Wrongly punched order: full refund, same day (before EOD) only - VoidOrderButton_ClickAsync.
+            voidOrderButton = new Button
+            {
+                Text = "Void Order (Full Refund)",
+                Dock = DockStyle.Top,
+                Height = 40,
+                BackColor = Color.DarkRed,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            voidOrderButton.Click += async (s, e) => await VoidOrderButton_ClickAsync();
+
             resendToPancakeButton = new Button
             {
                 Text = "Resend to Pancake",
@@ -135,6 +148,7 @@ namespace AquariumPOS
             Controls.Add(showErrorsButton);
             Controls.Add(resendToPortalButton);
             Controls.Add(resendToPancakeButton);
+            Controls.Add(voidOrderButton);
             Controls.Add(payInFullButton);
             Controls.Add(refreshButton);
             Controls.Add(searchButton);
@@ -396,6 +410,12 @@ namespace AquariumPOS
                         return;
                     }
                 }
+            }
+
+            if (IsAdvanceOrderVoided(connectionString, transactionNo))
+            {
+                MessageBox.Show("This advance order was voided - it can't be paid.", "Voided Order", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
 
             if (balance <= 0m)
@@ -886,6 +906,458 @@ namespace AquariumPOS
             // refresh handled by calling LoadAdvanceOrdersHeader after successful payment above
         }
 
+        // ---- Void Order - per "if a cashier wrongly punch a transaction (advance order) how can they reverse
+        // it?": full refund, the cashier approves it themselves (who / when / why kept on the header and in the
+        // portal's AdvanceOrderVoids), for an order from today or yesterday (per "can we allow next day").
+        // Nothing is deleted: the refund is negative TransPaymentEntry rows on the same receipt, dated now and
+        // in the open shift - so a same-day void nets to zero, and a next-day one comes out of today's drawer /
+        // EOD (yesterday's closed EOD is left as it was). The header gets IsVoid,
+        // which the normal sync sends up - the portal then frees its serials, delivery stops and makers
+        // (supabase_advance_order_void.sql). Refused once the portal has it at Ready to Ship or later.
+
+        internal static void EnsureAdvanceOrderVoidColumns(SqlConnection connection)
+        {
+            using var cmd = new SqlCommand(@"
+IF OBJECT_ID('dbo.AdvanceOrderHeader', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'IsVoid') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD IsVoid BIT NOT NULL CONSTRAINT DF_AdvanceOrderHeader_IsVoid DEFAULT (0);
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidedAtUtc') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD VoidedAtUtc DATETIME2 NULL;
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidedBy') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD VoidedBy NVARCHAR(100) NULL;
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidReason') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD VoidReason NVARCHAR(500) NULL;
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidRefund') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD VoidRefund DECIMAL(18, 2) NULL;
+END", connection);
+            cmd.ExecuteNonQuery();
+        }
+
+        internal static bool IsAdvanceOrderVoided(string connectionString, string transactionNo)
+        {
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                EnsureAdvanceOrderVoidColumns(conn);
+                using var cmd = new SqlCommand("SELECT COUNT(*) FROM dbo.AdvanceOrderHeader WHERE TransactionNo = @tn AND IsVoid = 1", conn);
+                cmd.Parameters.AddWithValue("@tn", transactionNo);
+                return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool TryGetSelectedOrderKeys(out string transactionNo, out string receiptNo)
+        {
+            transactionNo = string.Empty;
+            receiptNo = string.Empty;
+            if (!TryGetSelectedReceiptNo(out receiptNo))
+                return false;
+
+            var row = dataGridView.SelectedRows.Count > 0
+                ? dataGridView.SelectedRows[0]
+                : dataGridView.Rows[dataGridView.SelectedCells[0].RowIndex];
+            transactionNo = row.Cells["TransactionNo"].Value?.ToString()?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(transactionNo))
+            {
+                MessageBox.Show("Selected row does not contain a TransactionNo.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+            return true;
+        }
+
+        private async Task VoidOrderButton_ClickAsync()
+        {
+            if (!TryGetSelectedOrderKeys(out string transactionNo, out string receiptNo))
+                return;
+
+            string customerName = string.Empty;
+            string orderDescription = string.Empty;
+            decimal netAmount = 0m;
+            bool fromYesterday = false;
+            // One refund per tender the customer paid with, on the same payment transaction it came in on.
+            var refunds = new List<(string StoreNo, string PosTerminalNo, string PaymentTransactionNo, string TenderTypeCode, decimal Amount)>();
+
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                EnsureAdvanceOrderVoidColumns(conn);
+
+                using (var cmd = new SqlCommand(@"
+SELECT CustomerName, Order_Description, NetAmount, IsVoid,
+       CASE WHEN TRY_CAST([Date] AS date) = CAST(GETDATE() AS date) THEN 0
+            WHEN TRY_CAST([Date] AS date) = DATEADD(day, -1, CAST(GETDATE() AS date)) THEN 1
+            ELSE NULL END AS DaysAgo,
+       ISNULL(CONVERT(nvarchar(10), TRY_CAST([Date] AS date), 23), '') AS OrderDate
+FROM dbo.AdvanceOrderHeader
+WHERE TransactionNo = @tn", conn))
+                {
+                    cmd.Parameters.AddWithValue("@tn", transactionNo);
+                    using var rdr = cmd.ExecuteReader();
+                    if (!rdr.Read())
+                    {
+                        MessageBox.Show(this, "Advance order header not found.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+                    if (rdr["IsVoid"] is bool alreadyVoid && alreadyVoid)
+                    {
+                        MessageBox.Show(this, $"Advance order {receiptNo} is already voided.", "Void Order", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    if (rdr["DaysAgo"] == DBNull.Value)
+                    {
+                        MessageBox.Show(this, $"Only advance orders from today or yesterday can be voided.\n\nAdvance order {receiptNo} is from {rdr["OrderDate"]}.", "Can't Void", MessageBoxButtons.OK, MessageBoxIcon.Stop);
+                        return;
+                    }
+                    fromYesterday = Convert.ToInt32(rdr["DaysAgo"]) == 1;
+                    customerName = rdr["CustomerName"]?.ToString()?.Trim() ?? string.Empty;
+                    orderDescription = rdr["Order_Description"]?.ToString()?.Trim() ?? string.Empty;
+                    netAmount = rdr["NetAmount"] != DBNull.Value ? Convert.ToDecimal(rdr["NetAmount"]) : 0m;
+                }
+
+                // Payments already in a closed EOD are refunded too - the refund rows are new, in the open shift.
+                using (var cmd = new SqlCommand(@"
+SELECT StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode, SUM(Amount) AS Amount
+FROM dbo.TransPaymentEntry
+WHERE ReceiptNo = @rc
+GROUP BY StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode", conn))
+                {
+                    cmd.Parameters.AddWithValue("@rc", receiptNo);
+                    using var rdr = cmd.ExecuteReader();
+                    while (rdr.Read())
+                    {
+                        decimal amount = rdr["Amount"] != DBNull.Value ? Convert.ToDecimal(rdr["Amount"]) : 0m;
+                        if (amount <= 0m)
+                            continue;
+                        refunds.Add((rdr["StoreNo"]?.ToString() ?? string.Empty,
+                                     rdr["POSTerminalNo"]?.ToString() ?? string.Empty,
+                                     rdr["TransactionNo"]?.ToString() ?? string.Empty,
+                                     rdr["TenderTypeCode"]?.ToString() ?? string.Empty,
+                                     amount));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't load advance order {receiptNo}.\n\nError: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // The portal may already be building / shipping it - must be online to void.
+            (bool Ok, string Message) portal;
+            var previousCursor = Cursor;
+            Cursor = Cursors.WaitCursor;
+            voidOrderButton.Enabled = false;
+            try
+            {
+                portal = await OnlinefunctionsEvents.CheckAdvanceOrderVoidOnPortalAsync(transactionNo).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this,
+                    $"Couldn't check advance order {receiptNo} on the portal, so it was NOT voided.\n\n" +
+                    "The POS has to be online to void an advance order (the portal may already be working on it). Try again in a moment.\n\n" +
+                    $"Error: {ex.Message}",
+                    "Can't Void", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            finally
+            {
+                Cursor = previousCursor;
+                voidOrderButton.Enabled = true;
+            }
+            if (!portal.Ok)
+            {
+                MessageBox.Show(this, string.IsNullOrWhiteSpace(portal.Message) ? $"The portal refused to void advance order {receiptNo}." : portal.Message,
+                    "Can't Void", MessageBoxButtons.OK, MessageBoxIcon.Stop);
+                return;
+            }
+
+            string? reason = PromptForVoidReason(receiptNo);
+            if (reason == null)
+                return;
+
+            decimal totalRefund = refunds.Sum(r => r.Amount);
+            string refundLines = refunds.Count == 0
+                ? "  (no payment recorded - nothing to give back)"
+                : string.Join("\n", refunds.Select(r => $"  {r.TenderTypeCode}: P{r.Amount:N2}"));
+            string portalNote = portal.Message is "OK" or "Not on the portal yet." or "Already voided on the portal." or ""
+                ? string.Empty
+                : $"\n\nNote: {portal.Message}";
+            if (MessageBox.Show(this,
+                    $"VOID advance order {receiptNo}{(string.IsNullOrWhiteSpace(customerName) ? "" : " - " + customerName)}?\n\n" +
+                    $"Order total: P{netAmount:N2}\n" +
+                    $"Give back to the customer (full refund):\n{refundLines}\n" +
+                    $"Total refund: P{totalRefund:N2}\n" +
+                    (fromYesterday ? "This order is from yesterday - the refund comes out of TODAY's drawer and shows on today's EOD.\n" : string.Empty) +
+                    $"\nReason: {reason}\n\n" +
+                    "This can't be undone. The void is recorded under your name." + portalNote,
+                    "Confirm Void", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+
+            string voidedBy = CurrentUser.Username ?? "POS_SYSTEM";
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                using var tx = conn.BeginTransaction();
+
+                DateTime now = DateTime.Now;
+                foreach (var refund in refunds)
+                {
+                    using var lineCmd = new SqlCommand(@"
+SELECT ISNULL(MAX([LineNo]), 0) + 1 FROM dbo.TransPaymentEntry
+WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = @transactionNo", conn, tx);
+                    lineCmd.Parameters.AddWithValue("@storeNo", refund.StoreNo);
+                    lineCmd.Parameters.AddWithValue("@posTerminalNo", refund.PosTerminalNo);
+                    lineCmd.Parameters.AddWithValue("@transactionNo", refund.PaymentTransactionNo);
+                    int lineNo = Convert.ToInt32(lineCmd.ExecuteScalar());
+
+                    using var insert = new SqlCommand(@"
+INSERT INTO dbo.TransPaymentEntry (StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode, [LineNo], ReceiptNo, Description, Amount, UserID, Date, Time, CreatedDate)
+VALUES (@storeNo, @posTerminalNo, @transactionNo, @tenderTypeCode, @lineNo, @receiptNo, @description, @amount, @userID, @date, @time, @createdDate)", conn, tx);
+                    insert.Parameters.AddWithValue("@storeNo", refund.StoreNo);
+                    insert.Parameters.AddWithValue("@posTerminalNo", refund.PosTerminalNo);
+                    insert.Parameters.AddWithValue("@transactionNo", refund.PaymentTransactionNo);
+                    insert.Parameters.AddWithValue("@tenderTypeCode", refund.TenderTypeCode);
+                    insert.Parameters.AddWithValue("@lineNo", lineNo);
+                    insert.Parameters.AddWithValue("@receiptNo", receiptNo);
+                    insert.Parameters.AddWithValue("@description", "VOID REFUND");
+                    insert.Parameters.AddWithValue("@amount", -refund.Amount);
+                    insert.Parameters.AddWithValue("@userID", voidedBy);
+                    insert.Parameters.AddWithValue("@date", now.Date);
+                    insert.Parameters.AddWithValue("@time", now.TimeOfDay);
+                    insert.Parameters.AddWithValue("@createdDate", now);
+                    insert.ExecuteNonQuery();
+                }
+
+                using (var update = new SqlCommand(@"
+UPDATE dbo.AdvanceOrderHeader
+SET IsVoid = 1, VoidedAtUtc = SYSUTCDATETIME(), VoidedBy = @by, VoidReason = @reason, VoidRefund = @refund
+WHERE TransactionNo = @tn AND IsVoid = 0", conn, tx))
+                {
+                    update.Parameters.AddWithValue("@by", voidedBy.Length > 100 ? voidedBy.Substring(0, 100) : voidedBy);
+                    update.Parameters.AddWithValue("@reason", reason.Length > 500 ? reason.Substring(0, 500) : reason);
+                    update.Parameters.AddWithValue("@refund", totalRefund);
+                    update.Parameters.AddWithValue("@tn", transactionNo);
+                    if (update.ExecuteNonQuery() == 0)
+                    {
+                        tx.Rollback();
+                        MessageBox.Show(this, $"Advance order {receiptNo} was already voided - nothing was refunded.", "Void Order", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        LoadAdvanceOrdersHeader(searchTextBox.Text);
+                        return;
+                    }
+                }
+
+                tx.Commit();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to void advance order {receiptNo} - nothing was changed.\n\nError: {ex.Message}", "Void Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Units the cashier picked at posting (SOLD to 'ADV-<no>') go back on the shelf. The portal frees
+            // them too when the void arrives; this keeps the local list right in the meantime.
+            try
+            {
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+                using var cmd = new SqlCommand(@"
+IF OBJECT_ID('dbo.ItemSerialTracking', 'U') IS NOT NULL
+    UPDATE dbo.ItemSerialTracking
+    SET Status = 'IN_STOCK', SoldOnlineOrderId = NULL, SoldReceiptNo = NULL,
+        UpdatedAtUtc = SYSUTCDATETIME(), UpdatedBy = @by
+    WHERE Status = 'SOLD' AND SoldOnlineOrderId = @link", conn);
+                cmd.Parameters.AddWithValue("@by", voidedBy);
+                cmd.Parameters.AddWithValue("@link", AdvanceOrderSerialLink(transactionNo));
+                if (cmd.ExecuteNonQuery() > 0)
+                    ProductSerialTrackingForm.TriggerCloudSyncFireAndForget();
+            }
+            catch (Exception serialEx)
+            {
+                System.Diagnostics.Debug.WriteLine($"Void {receiptNo}: releasing local serials failed: {serialEx.Message}");
+            }
+
+            string syncNote;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                await OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabaseAsync(receiptNo).ConfigureAwait(true);
+                syncNote = "The portal has been updated.";
+            }
+            catch (Exception ex)
+            {
+                syncNote = $"The portal couldn't be updated just now ({ex.Message}). The POS retries every 5 minutes - no need to do anything.";
+            }
+            finally
+            {
+                Cursor = previousCursor;
+            }
+
+            PrintAdvanceOrderVoidSlip(receiptNo, customerName, orderDescription, netAmount, refunds.Select(r => (r.TenderTypeCode, r.Amount)).ToList(), reason, voidedBy);
+
+            MessageBox.Show(this,
+                $"Advance order {receiptNo} is VOIDED.\n\n" +
+                $"GIVE BACK TO THE CUSTOMER:\n{refundLines}\n" +
+                $"Total refund: P{totalRefund:N2}\n\n" +
+                syncNote,
+                "Order Voided", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoadAdvanceOrdersHeader(searchTextBox.Text);
+        }
+
+        // Required, at least 5 characters - it's the record of why the money went back.
+        private string? PromptForVoidReason(string receiptNo)
+        {
+            using var dialog = new ThemedForm
+            {
+                Text = $"Void {receiptNo} - Reason",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false,
+                MaximizeBox = false,
+                ShowInTaskbar = false,
+                Size = new Size(520, 300),
+                BackColor = Color.White
+            };
+            var label = new Label
+            {
+                Text = "Why is this advance order being voided? (e.g. wrong item punched, wrong customer, duplicate)",
+                Location = new Point(16, 16),
+                Size = new Size(470, 40),
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            var reasonBox = new TextBox
+            {
+                Location = new Point(16, 60),
+                Size = new Size(470, 110),
+                Multiline = true,
+                MaxLength = 500,
+                Font = new Font("Arial", 11, FontStyle.Regular)
+            };
+            var okButton = new Button
+            {
+                Text = "Continue",
+                Location = new Point(246, 190),
+                Size = new Size(116, 40),
+                BackColor = Color.DarkRed,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            var cancelButton = new Button
+            {
+                Text = "Cancel",
+                Location = new Point(370, 190),
+                Size = new Size(116, 40),
+                BackColor = Color.Gray,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                DialogResult = DialogResult.Cancel
+            };
+            okButton.Click += (_, _) =>
+            {
+                if (reasonBox.Text.Trim().Length < 5)
+                {
+                    MessageBox.Show(dialog, "Please type the reason (at least 5 characters).", "Reason Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                dialog.DialogResult = DialogResult.OK;
+                dialog.Close();
+            };
+            dialog.Controls.Add(label);
+            dialog.Controls.Add(reasonBox);
+            dialog.Controls.Add(okButton);
+            dialog.Controls.Add(cancelButton);
+            dialog.CancelButton = cancelButton;
+
+            return dialog.ShowDialog(this) == DialogResult.OK ? reasonBox.Text.Trim() : null;
+        }
+
+        // Paper record for the drawer: what was given back, why, and who did it (same layout as the
+        // income / expense receipts in FunctionEvents). Best-effort - the void itself is already saved.
+        private void PrintAdvanceOrderVoidSlip(string receiptNo, string customerName, string orderDescription, decimal netAmount,
+            List<(string TenderTypeCode, decimal Amount)> refunds, string reason, string voidedBy)
+        {
+            try
+            {
+                int width = GlobalSettings.ReceiptWidth;
+                string line = new string('=', width);
+                var slip = new System.Text.StringBuilder();
+                slip.AppendLine(line);
+                slip.AppendLine("      RS PET STOP");
+                slip.AppendLine(line);
+                slip.AppendLine("  ADVANCE ORDER VOID");
+                slip.AppendLine(line);
+                slip.AppendLine($"Receipt No: {receiptNo}");
+                slip.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd}");
+                slip.AppendLine($"Time: {DateTime.Now:HH:mm:ss}");
+                slip.AppendLine($"Voided by: {voidedBy}");
+                if (!string.IsNullOrWhiteSpace(customerName))
+                    slip.AppendLine($"Customer: {customerName}");
+                slip.AppendLine($"Order total: P{netAmount,8:F2}");
+                slip.AppendLine(new string('-', width));
+                slip.AppendLine("REFUNDED:");
+                foreach (var refund in refunds)
+                {
+                    string tender = refund.TenderTypeCode.Length > 9 ? refund.TenderTypeCode.Substring(0, 9) : refund.TenderTypeCode;
+                    slip.AppendLine($"{tender.PadRight(Math.Max(0, width - 11))}P{refund.Amount,9:F2}");
+                }
+                slip.AppendLine(new string('-', width));
+                slip.AppendLine($"TOTAL REFUND:  P{refunds.Sum(r => r.Amount),8:F2}");
+                slip.AppendLine();
+                slip.AppendLine("Reason:");
+                foreach (string chunk in ChunkText(reason, width))
+                    slip.AppendLine(chunk);
+                if (!string.IsNullOrWhiteSpace(orderDescription))
+                {
+                    slip.AppendLine("Order:");
+                    foreach (string chunk in ChunkText(orderDescription, width))
+                        slip.AppendLine(chunk);
+                }
+                slip.AppendLine();
+                slip.AppendLine("Customer signature:");
+                slip.AppendLine();
+                slip.AppendLine(new string('_', width));
+                slip.AppendLine(line);
+
+                string content = slip.ToString();
+                using var printDocument = new System.Drawing.Printing.PrintDocument();
+                using var printFont = new Font(GlobalSettings.ReceiptFont, GlobalSettings.ReceiptFontSize, GlobalSettings.ReceiptFontStyle);
+                printDocument.DefaultPageSettings.PaperSize = new System.Drawing.Printing.PaperSize("58mm", (int)(GlobalSettings.PaperWidthInches * 100), (int)(GlobalSettings.PaperHeightInches * 100));
+                printDocument.DefaultPageSettings.Margins = new System.Drawing.Printing.Margins((int)(GlobalSettings.LeftMarginInches * 100), (int)(GlobalSettings.LeftMarginInches * 100), (int)(GlobalSettings.TopMarginInches * 100), (int)(GlobalSettings.TopMarginInches * 100));
+                printDocument.PrintPage += (sender, e) =>
+                {
+                    if (e.Graphics == null) return;
+                    float yPos = e.MarginBounds.Top;
+                    float lineHeight = printFont.GetHeight(e.Graphics);
+                    foreach (var raw in content.Split('\n'))
+                    {
+                        string text = raw.TrimEnd('\r');
+                        if (text.Length > width) text = text.Substring(0, width);
+                        e.Graphics.DrawString(FunctionEvents.ToAscii(text), printFont, Brushes.Black, e.MarginBounds.Left, yPos);
+                        yPos += lineHeight;
+                    }
+                    e.HasMorePages = false;
+                };
+                printDocument.Print();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"The order was voided, but the void slip didn't print: {ex.Message}", "Print Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private static IEnumerable<string> ChunkText(string text, int width)
+        {
+            for (int pos = 0; pos < (text ?? string.Empty).Length; pos += width)
+                yield return text!.Substring(pos, Math.Min(width, text.Length - pos));
+        }
+
         private sealed class SerialTrackedAdvanceOrderLine
         {
             public string ItemCode { get; init; } = string.Empty;
@@ -1356,6 +1828,15 @@ GROUP BY s.ItemCode, ISNULL(s.VariantCode, '')", conn);
                         }
                     }
 
+                    if (dataGridView.Columns.Contains("IsVoid"))
+                    {
+                        var vc = dataGridView.Columns["IsVoid"];
+                        if (vc != null)
+                        {
+                            try { vc.HeaderText = "Voided"; } catch { }
+                        }
+                    }
+
                     // OnlineOrderID: h.* already includes AdvanceOrderHeader's own OnlineOrderID
                     // column (populated by OnlinefunctionsEvents.SyncAdvanceOrderToCloud on every
                     // successful CREATE/UPDATE) - just relabel it for readability, mirroring
@@ -1398,6 +1879,14 @@ GROUP BY s.ItemCode, ISNULL(s.VariantCode, '')", conn);
 
         private void DataGridView_CellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
         {
+            // Voided orders (Void Order) stand out in red on every cell.
+            if (e.RowIndex >= 0 && e.CellStyle != null && dataGridView.Columns.Contains("IsVoid")
+                && dataGridView.Rows[e.RowIndex].Cells["IsVoid"].Value is bool rowVoid && rowVoid)
+            {
+                e.CellStyle.BackColor = Color.MistyRose;
+                e.CellStyle.ForeColor = Color.DarkRed;
+            }
+
             if (dataGridView.Columns[e.ColumnIndex].Name == "PancakeSyncStatus")
             {
                 string rawStatus = e.Value?.ToString()?.Trim() ?? "";

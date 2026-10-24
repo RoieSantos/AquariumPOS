@@ -4131,14 +4131,22 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                 content.AppendLine("ADVANCE ORDERS:");
                 content.AppendLine(new string('-', GlobalSettings.ReceiptWidth));
 
+                // Voided orders (AdvanceOrdersHeaderForm "Void Order") aren't sales - their payments and refunds
+                // already net to zero in the collections above.
+                bool hasAdvanceVoid = TableHasColumn(connection, "AdvanceOrderHeader", "IsVoid");
+                string advanceHeaderNotVoid = hasAdvanceVoid ? " AND ISNULL(IsVoid, 0) = 0" : string.Empty;
+
                 // Totals from AdvanceOrderLines (per-line quantities and sales for ITEM lines)
                 decimal advanceLinesSales = 0m;
                 int advanceLinesQty = 0;
                 var advLinesCmd = new SqlCommand(@"
                     SELECT ISNULL(SUM(CASE WHEN [Type] = 'ITEM' THEN Quantity ELSE 0 END),0) as TotalQty,
                            ISNULL(SUM(CASE WHEN [Type] = 'ITEM' THEN NetAmount ELSE 0 END),0) as TotalSales
-                    FROM AdvanceOrderLines
-                    WHERE (EODID IS NULL OR EODID = '')", connection);
+                    FROM AdvanceOrderLines aol
+                    WHERE (aol.EODID IS NULL OR aol.EODID = '')" +
+                    (hasAdvanceVoid ? @"
+                      AND NOT EXISTS (SELECT 1 FROM AdvanceOrderHeader h
+                                      WHERE h.TransactionNo = aol.TransactionNo AND ISNULL(h.IsVoid, 0) = 1)" : string.Empty), connection);
                 using (var advLinesReader = advLinesCmd.ExecuteReader())
                 {
                     if (advLinesReader.Read())
@@ -4154,7 +4162,7 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                 var advHdrCmd = new SqlCommand(@"
                     SELECT ISNULL(COUNT(*),0) as OrderCount, ISNULL(SUM(NetAmount),0) as OrderSales
                     FROM AdvanceOrderHeader
-                    WHERE (EODID IS NULL OR EODID = '')", connection);
+                    WHERE (EODID IS NULL OR EODID = '')" + advanceHeaderNotVoid, connection);
                 using (var advHdrReader = advHdrCmd.ExecuteReader())
                 {
                     if (advHdrReader.Read())
@@ -4310,7 +4318,7 @@ ORDER BY ExpenseCategory, [Date], [Time], Description";
                 var advHdrDiscCmd = new SqlCommand(@"
                     SELECT ISNULL(SUM(Discount),0) as TotalDiscounts
                     FROM AdvanceOrderHeader
-                    WHERE (EODID IS NULL OR EODID = '')", connection);
+                    WHERE (EODID IS NULL OR EODID = '')" + advanceHeaderNotVoid, connection);
                 var advHdrDiscObj = advHdrDiscCmd.ExecuteScalar();
                 if (advHdrDiscObj != null && advHdrDiscObj != DBNull.Value)
                     totalDiscounts += Convert.ToDecimal(advHdrDiscObj);

@@ -863,6 +863,10 @@ async function saveFactboxHideFromSet() {
 // Enter or Edit opens the Item Card below.
 
 let selectedItemCode = null;
+// Super User = everything. Catalog Editor role (supabase_catalog_editor_role.sql) = the catalog only:
+// no Unit Cost, vendors, price changes, units of measure, Assemble to Order or Excel. The RPCs enforce
+// it; this just keeps their parts off the screen (applyCatalogEditorView).
+let canManageMoney = false;
 let listSort = { key: 'name', desc: false };
 let listFiltersSupported = true; // false until supabase_item_setup_bc_list.sql is run - then only search / category work
 // BC opens a list with the filter pane shut when there is no room for it; here it is open whenever the
@@ -893,9 +897,12 @@ function itemRowsHtml(items) {
     .map((i) => {
       const code = escapeHtml(i.code || '');
       const variantCount = variantCountsByItemCode.get(i.code);
-      const variantsCell = variantCount
-        ? `<a href="variant-setup.html?item=${encodeURIComponent(i.code)}">View (${variantCount})</a>`
-        : '<span class="muted">-</span>';
+      // Variants page is Super User only - a Catalog Editor sees the count (variants are on the card).
+      const variantsCell = !variantCount
+        ? '<span class="muted">-</span>'
+        : canManageMoney
+          ? `<a href="variant-setup.html?item=${encodeURIComponent(i.code)}">View (${variantCount})</a>`
+          : String(variantCount);
       const inactive = i.is_active === false;
       const classes = [inactive ? 'item-inactive' : '', i.code === selectedItemCode ? 'selected' : ''].filter(Boolean).join(' ');
       return `
@@ -1206,9 +1213,9 @@ function renderListFactBox() {
       factRow('Status', item.is_active === false
         ? '<span class="item-status item-status-off">Inactive</span>'
         : '<span class="item-status item-status-on">Active</span>') +
-      factRow('Variants', variantCount
-        ? `<a href="variant-setup.html?item=${encodeURIComponent(item.code)}">${variantCount}</a>`
-        : dash) +
+      factRow('Variants', !variantCount
+        ? dash
+        : canManageMoney ? `<a href="variant-setup.html?item=${encodeURIComponent(item.code)}">${variantCount}</a>` : String(variantCount)) +
     '</dl>';
 
   // Margin = what a sale at the selling price leaves over the unit cost (only when both are known).
@@ -1222,8 +1229,10 @@ function renderListFactBox() {
     factRow('Unit Price', moneyCell(item.price), true) +
     factRow('Wholesale', moneyCell(item.wholesale_price), true) +
     factRow('Promo Price', moneyCell(item.promo_price), true) +
-    factRow('Unit Cost', item.cost === null || item.cost === undefined ? '<span class="muted">Not costed</span>' : formatMoney(item.cost), true) +
-    factRow('Margin', marginHtml, true) +
+    (canManageMoney
+      ? factRow('Unit Cost', item.cost === null || item.cost === undefined ? '<span class="muted">Not costed</span>' : formatMoney(item.cost), true) +
+        factRow('Margin', marginHtml, true)
+      : '') +
     '</dl>';
 
   loadListFactStock(item.code);
@@ -1254,8 +1263,10 @@ async function loadListFactStock(code) {
   const total = rows.reduce((sum, w) => sum + Number(w.quantity || 0), 0);
   el.innerHTML = '<table class="bc-avail"><tbody>' +
     rows.map((w) => {
+      const qty = Number(w.quantity).toLocaleString();
+      if (!canManageMoney) return `<tr><td>${escapeHtml(w.warehouse_name)}</td><td>${qty}</td></tr>`; // ledger page is Super User only
       const href = `item-ledger-entries.html?search=${encodeURIComponent(code)}&warehouse=${encodeURIComponent(w.warehouse_id)}`;
-      return `<tr><td>${escapeHtml(w.warehouse_name)}</td><td><a href="${href}" title="Item ledger entries for this location">${Number(w.quantity).toLocaleString()}</a></td></tr>`;
+      return `<tr><td>${escapeHtml(w.warehouse_name)}</td><td><a href="${href}" title="Item ledger entries for this location">${qty}</a></td></tr>`;
     }).join('') +
     `<tr class="total"><td>Total</td><td>${total.toLocaleString()}</td></tr>` +
     '</tbody></table>';
@@ -1427,10 +1438,10 @@ function renderFactboxVariants(variants) {
         : '<div class="factbox-variant-thumb-placeholder"></div>';
       const priceText = v.price !== null && v.price !== undefined ? formatMoney(v.price) : '';
       const priceValue = v.price === null || v.price === undefined ? '' : Number(v.price);
-      const metaText = perVariantPrices
+      const metaText = perVariantPrices && canManageMoney
         ? (v.sku ? 'SKU ' + v.sku : '')
         : `${v.sku ? 'SKU ' + v.sku : ''}${v.sku && priceText ? ' - ' : ''}${priceText ? '₱' + priceText : ''}`;
-      const priceEditor = perVariantPrices
+      const priceEditor = perVariantPrices && canManageMoney
         ? `
           <div class="factbox-variant-price" data-variation-id="${escapeHtml(v.variation_id)}">
             <input type="number" class="factbox-variant-price-input" step="0.01" min="0" placeholder="Price" value="${priceValue}" aria-label="Price" />
@@ -1606,13 +1617,17 @@ async function openFactbox(code) {
     ? imageHtml(item.images, 'factbox-image-thumb')
     : '<p class="muted">No image available.</p>';
 
-  document.getElementById('factboxVendorSaved').classList.add('hidden');
-  populateFactboxVendorSelect(item.vendor_code);
-  loadFactboxItemVendors(code);
+  // Vendors, units and Assemble to Order are Super User RPCs - not loaded (and their tabs are hidden)
+  // for a Catalog Editor.
+  if (canManageMoney) {
+    document.getElementById('factboxVendorSaved').classList.add('hidden');
+    populateFactboxVendorSelect(item.vendor_code);
+    loadFactboxItemVendors(code);
 
-  document.getElementById('factboxUomSaved').classList.add('hidden');
-  loadFactboxItemUoms(code);
-  loadFactboxBom(code);
+    document.getElementById('factboxUomSaved').classList.add('hidden');
+    loadFactboxItemUoms(code);
+    loadFactboxBom(code);
+  }
   loadItemCardStockByLocation(code);
 
   document.getElementById('factboxCostSaved').classList.add('hidden');
@@ -1661,6 +1676,11 @@ async function openFactbox(code) {
 }
 
 function setFactboxPriceEditable(editable, variantCount) {
+  if (!canManageMoney) {
+    document.getElementById('factboxPriceInput').disabled = true;
+    document.getElementById('factboxPriceHint').textContent = 'The selling price. Only a Super User can change prices.';
+    return;
+  }
   document.getElementById('factboxPriceInput').disabled = !editable;
   document.getElementById('factboxPriceSaveBtn').disabled = !editable;
   const priceSource = itemsPortalOwned ? 'here' : 'in Pancake';
@@ -1978,9 +1998,11 @@ async function loadItemMasterStatus() {
   });
   itemsPortalOwned = !error && Boolean(data?.portal_owned);
 
-  document.getElementById('itemSetupIntro').textContent = itemsPortalOwned
-    ? 'Products are maintained here - the store POS pulls them from the portal. Only visible to super users.'
-    : 'Read-only view of Items, kept fresh automatically by a background sync from Pancake every 5 minutes. Only visible to super users.';
+  document.getElementById('itemSetupIntro').textContent = !canManageMoney
+    ? 'Catalog Editor: add and edit items, pictures and variants. Prices and cost are set by a Super User.'
+    : itemsPortalOwned
+      ? 'Products are maintained here - the store POS pulls them from the portal. Super Users and Catalog Editors.'
+      : 'Read-only view of Items, kept fresh automatically by a background sync from Pancake every 5 minutes. Only visible to super users.';
   document.getElementById('newItemBtn').classList.toggle('hidden', !itemsPortalOwned);
   document.getElementById('itemCardPancakeNote').classList.toggle('hidden', itemsPortalOwned);
   document.getElementById('itemCardEditBox').classList.toggle('hidden', !itemsPortalOwned);
@@ -2280,6 +2302,23 @@ function wireItemMaster() {
   });
 }
 
+// Catalog Editor (not Super User): take the money and Super-User-only parts off the page. The server
+// refuses them anyway (supabase_catalog_editor_role.sql); this just avoids buttons that can only fail.
+function applyCatalogEditorView() {
+  if (canManageMoney) return;
+  const hide = (id) => document.getElementById(id).classList.add('hidden');
+  ['exportItemsExcelBtn', 'importItemsExcelBtn', 'itemLedgerBtn',
+    'itemCardCostTab', 'itemCardUomTab', 'itemCardBomTab', 'itemCardOrderNowTab',
+    'factboxPriceSaveBtn', 'factboxWholesalePriceSaveBtn'].forEach(hide);
+  // Filters that need Super User data (vendor list) or are about cost.
+  ['itemVendorFilter', 'itemCostFilter'].forEach((id) => document.getElementById(id).closest('.bc-fp-field').classList.add('hidden'));
+  LIST_FILTERS.splice(LIST_FILTERS.findIndex((f) => f.key === 'vendor'), 1);
+  LIST_FILTERS.splice(LIST_FILTERS.findIndex((f) => f.key === 'cost'), 1);
+  document.getElementById('factboxWholesalePriceInput').disabled = true;
+  document.getElementById('itemEditPromoPrice').closest('.form-row').classList.add('hidden');
+  document.querySelector('#itemGridWrap table').classList.add('item-hide-cost');
+}
+
 function wireFactbox() {
   document.getElementById('itemCardCloseBtn').addEventListener('click', closeFactbox);
 
@@ -2349,10 +2388,11 @@ function wireFactbox() {
   currentSession = session;
   renderTopNav('Item Setup');
 
-  if (!session.isSuperUser) {
+  if (!session.isSuperUser && !session.isCatalogEditor) {
     document.getElementById('notAuthorizedBox').classList.remove('hidden');
     return;
   }
+  canManageMoney = !!session.isSuperUser;
 
   if (!session.password) {
     // Session was created before login started capturing the password (edge case for
@@ -2379,11 +2419,12 @@ function wireFactbox() {
     if (file) await importItemsFromExcel(file);
   });
 
+  applyCatalogEditorView();
   await loadItemMasterStatus();
   await Promise.all([
     loadVariantCounts(),
-    loadVendorOptionsOnce(),
-    loadUnitOfMeasureOptions(),
+    canManageMoney ? loadVendorOptionsOnce() : null,
+    canManageMoney ? loadUnitOfMeasureOptions() : null,
     loadItemCategoryFilterOptions(),
     loadItemCategoriesForEditing()
   ]);

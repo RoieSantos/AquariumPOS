@@ -219,6 +219,9 @@ function renderTopNavLinks(activeLabel) {
     inventory.push({ href: 'variant-setup.html', label: 'Variants' });
     inventory.push({ href: 'category-setup.html', label: 'Categories' });
     inventory.push({ href: 'vendor-setup.html', label: 'Vendors' });
+  } else if (session?.isCatalogEditor) {
+    // Catalog Editor role (supabase_catalog_editor_role.sql) - Item Setup only, without prices / cost.
+    inventory.push({ href: 'item-setup.html', label: 'Item Setup' });
   }
 
   // Production (supabase_production_orders.sql) - restock builds; Super User / Production Manager

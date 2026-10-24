@@ -98,6 +98,7 @@
                 <option value="Cashier">Cashier</option>
                 <option value="ProductionManager">Production Manager</option>
                 <option value="AllBranchFabrication">All-Branch Fabrication</option>
+                <option value="CatalogEditor">Catalog Editor</option>
                 <option value="__none">(no role)</option>
               </select>
             </div>
@@ -247,6 +248,7 @@
                   <label><input type="checkbox" value="Cashier" /> Cashier</label>
                   <label title="Assigns Tank Maker / Stand Maker / Dispatcher on Online Orders"><input type="checkbox" value="ProductionManager" /> Production Manager</label>
                   <label title="Also sees other branches' open orders that need fabrication (custom, 10mm / 12mm glass, stand) on Online Orders"><input type="checkbox" value="AllBranchFabrication" /> All-Branch Fabrication</label>
+                  <label title="Item Setup: add and edit items, pictures and variants - no prices, cost or vendors"><input type="checkbox" value="CatalogEditor" /> Catalog Editor</label>
                 </div>
               </div>
               <div class="bc-field">
@@ -329,10 +331,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=custconv1"></script>
-  <script src="js/nav.js?v=xendit1"></script>
+  <script src="js/auth.js?v=catalog1"></script>
+  <script src="js/nav.js?v=catalog1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/userSetup.js?v=8"></script>
+  <script src="js/userSetup.js?v=9"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

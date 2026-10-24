@@ -4216,6 +4216,33 @@ ORDER BY [RunningSerialNo]", connection);
             }
         }
 
+        // Asks the portal whether an advance order may still be voided (pos_check_advance_order_void,
+        // supabase_advance_order_void.sql): refused once it's Ready to Ship / Shipped / Delivered there.
+        // Throws when the portal can't be reached or the SQL isn't run yet - AdvanceOrdersHeaderForm then
+        // refuses the void rather than refunding blind. Message is shown to the cashier (e.g. open transfers).
+        public static async Task<(bool Ok, string Message)> CheckAdvanceOrderVoidOnPortalAsync(string transactionNo, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(15);
+            string headerEndpoint = GlobalSettings.AdvanceOrdersSupabaseEndpoint?.Trim() ?? string.Empty;
+            int restIndex = headerEndpoint.IndexOf("/rest/v1/", StringComparison.OrdinalIgnoreCase);
+            if (restIndex < 0)
+                throw new InvalidOperationException("AdvanceOrdersSupabaseEndpoint is not a Supabase REST URL.");
+            string rpcUrl = headerEndpoint.Substring(0, restIndex) + "/rest/v1/rpc/pos_check_advance_order_void";
+
+            string respText = await PostJsonWithHeadersAsync(
+                rpcUrl,
+                JsonSerializer.Serialize(new { p_transaction_no = (transactionNo ?? string.Empty).Trim() }),
+                timeout.Value).ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "{}" : respText);
+            var root = doc.RootElement;
+            bool ok = root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("ok", out var okProp) && okProp.ValueKind == JsonValueKind.True;
+            string message = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("message", out var msgProp)
+                && msgProp.ValueKind == JsonValueKind.String ? msgProp.GetString() ?? string.Empty : string.Empty;
+            return (ok, message);
+        }
+
         private static async Task<(int Inserted, int Updated)> UpsertAdvanceOrderHeaderRowsAsync(string headerEndpoint, List<(string TransactionNo, Dictionary<string, object?> Payload)> headerRows, TimeSpan timeout)
         {
             int inserted = 0;
@@ -4370,12 +4397,21 @@ ORDER BY [RunningSerialNo]", connection);
             // Customer tag from the advance-order POST's customer box (supabase_advance_order_customer_tag.sql).
             // Left out of the payload while blank (see AdvanceOrderCustomerTagColumns), so untagged orders
             // keep syncing even on a Supabase that doesn't have these columns yet.
-            "CustomerMobile", "CustomerPsid", "CustomerAddress"
+            "CustomerMobile", "CustomerPsid", "CustomerAddress",
+            // Void (AdvanceOrdersHeaderForm "Void Order", supabase_advance_order_void.sql). Only sent for a
+            // voided order (see AdvanceOrderVoidColumns), so every other order keeps syncing on a Supabase
+            // that doesn't have these columns yet.
+            "IsVoid", "VoidedAtUtc", "VoidedBy", "VoidReason", "VoidRefund"
         };
 
         private static readonly HashSet<string> AdvanceOrderCustomerTagColumns = new(StringComparer.OrdinalIgnoreCase)
         {
             "CustomerMobile", "CustomerPsid", "CustomerAddress"
+        };
+
+        private static readonly HashSet<string> AdvanceOrderVoidColumns = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "IsVoid", "VoidedAtUtc", "VoidedBy", "VoidReason", "VoidRefund"
         };
 
         // "Current warehouse" for tagging Advance Orders in the Portal - deliberately not persisted
@@ -4445,11 +4481,14 @@ ORDER BY [RunningSerialNo]", connection);
                 if (string.IsNullOrWhiteSpace(transactionNo))
                     continue;
 
+                bool isVoid = presentColumns.Contains("IsVoid") && rdr["IsVoid"] is bool voidFlag && voidFlag;
                 var payload = new Dictionary<string, object?> { ["TransactionNo"] = transactionNo };
                 foreach (var column in presentColumns)
                 {
                     var value = rdr[column];
                     if (value == DBNull.Value && AdvanceOrderCustomerTagColumns.Contains(column))
+                        continue;
+                    if (!isVoid && AdvanceOrderVoidColumns.Contains(column))
                         continue;
                     payload[SanitizeSupabaseColumnName(column)] = value == DBNull.Value ? null : ConvertSupabaseValue(value);
                 }

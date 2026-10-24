@@ -177,16 +177,17 @@
                 <select id="newPoWarehouse" title="Where this order is for - new lines inherit it."></select>
               </div>
 
-              <!-- Existing order: read-only - once an order is real, its vendor and header warehouse
-                   are fixed (changing the vendor after lines exist would misprice them; a per-line
-                   Warehouse below still moves individual items). -->
+              <!-- Existing order: the vendor is fixed (changing it after lines exist would misprice
+                   them). The warehouse stays editable until anything is received - changing it
+                   moves the lines that follow the header too
+                   (staff_set_purchase_order_warehouse, sql/supabase_purchase_order_change_warehouse.sql). -->
               <div class="bc-doc-field hidden" id="poCardVendorViewRow">
                 <label>Vendor</label>
                 <div id="receiveVendor" class="bc-doc-value"></div>
               </div>
               <div class="bc-doc-field hidden" id="poCardWarehouseViewRow">
-                <label>Warehouse</label>
-                <div id="receiveWarehouse" class="bc-doc-value"></div>
+                <label for="receiveWarehouseSelect">Warehouse</label>
+                <select id="receiveWarehouseSelect" title="Where this order is for - lines on the old warehouse move with it."></select>
               </div>
             </div>
             <div>
@@ -511,12 +512,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=custconv1"></script>
-  <script src="js/nav.js?v=xendit1"></script>
+  <script src="js/auth.js?v=catalog1"></script>
+  <script src="js/nav.js?v=catalog1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/purchaseOrders.js?v=sellprice2"></script>
+  <script src="js/purchaseOrders.js?v=powh1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

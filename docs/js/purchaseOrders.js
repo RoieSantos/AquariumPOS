@@ -863,7 +863,20 @@ async function openReceiveModal(poNo) {
   document.getElementById('poCardTitle').textContent = [poNo, vendorLabel].filter(Boolean).join(' · ');
   // Blank on orders raised before the header carried one, and on any whose lines span several -
   // the Warehouse column on the lines below still says where each item goes.
-  document.getElementById('receiveWarehouse').textContent = header.warehouse_name || '-';
+  // Editable until anything is received - after that the stock is already in the old warehouse
+  // (staff_set_purchase_order_warehouse refuses it too).
+  const warehouseSelect = document.getElementById('receiveWarehouseSelect');
+  warehouseSelect.innerHTML = newPoWarehouseOptionsHtml;
+  if (currentReceiveWarehouseId && !Array.from(warehouseSelect.options).some((o) => o.value === currentReceiveWarehouseId)) {
+    warehouseSelect.insertAdjacentHTML('beforeend',
+      `<option value="${escapeHtml(currentReceiveWarehouseId)}" data-name="${escapeHtml(header.warehouse_name || '')}">${escapeHtml(header.warehouse_name || currentReceiveWarehouseId)}</option>`);
+  }
+  warehouseSelect.value = currentReceiveWarehouseId;
+  const anyReceived = (lineRows || []).some((l) => Number(l.qty_received || 0) > 0);
+  warehouseSelect.disabled = anyReceived;
+  warehouseSelect.title = anyReceived
+    ? 'Items have already been received on this order - its warehouse can no longer be changed.'
+    : 'Where this order is for - lines on the old warehouse move with it.';
   document.getElementById('receiveOrderDate').textContent = formatDate(header.order_date);
   document.getElementById('receiveRequestedBy').textContent = header.created_by || '-';
   document.getElementById('receiveReceivedBy').innerHTML = '<span class="muted">-</span>';
@@ -2520,6 +2533,35 @@ function addPoSuggestionsToLines() {
       return;
     }
     await loadPurchaseOrders();
+  });
+
+  // Existing PO's header warehouse - saves immediately, then reopens the card so the lines'
+  // Warehouse column, the Add Item default and the Stock FactBox all follow the new warehouse.
+  document.getElementById('receiveWarehouseSelect').addEventListener('change', async (e) => {
+    if (currentPoCardMode !== 'existing') return;
+    const select = e.target;
+    const id = select.value;
+    const name = id ? (select.selectedOptions[0].dataset.name || null) : null;
+    const label = id ? (name || id) : 'No warehouse';
+    if (!window.confirm(`Change this Purchase Order's warehouse to ${label}?\n\nLines on the current warehouse move with it; a line set to a different warehouse keeps its own.`)) {
+      select.value = currentReceiveWarehouseId;
+      return;
+    }
+    select.disabled = true;
+    const { error } = await supabaseClient.rpc('staff_set_purchase_order_warehouse', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_po_no: currentReceivePoNo,
+      p_warehouse_id: id || null,
+      p_warehouse_name: name
+    });
+    select.disabled = false;
+    if (error) {
+      select.value = currentReceiveWarehouseId;
+      window.alert(describeSupabaseError(error, 'Failed to change the warehouse.'));
+      return;
+    }
+    await openReceiveModal(currentReceivePoNo);
   });
 
   document.getElementById('addNewPoLineBtn').addEventListener('click', addNewPoLineRow);

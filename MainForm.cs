@@ -1021,6 +1021,9 @@ INSERT INTO CardProcessingFeeLog (
                         command6.ExecuteNonQuery();
                     }
 
+                    // IsVoid / VoidedAtUtc / VoidedBy / VoidReason / VoidRefund - Advance Orders "Void Order".
+                    AdvanceOrdersHeaderForm.EnsureAdvanceOrderVoidColumns(connection);
+
                     CompleteAquariumSetData.EnsureTablesExist(connectionString);
 
                 }

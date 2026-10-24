@@ -35,6 +35,8 @@
     .bc-ile .bc-grid td.item-name-cell { max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
     .item-price-range { display: flex; gap: 6px; }
     .item-price-range input { min-width: 0; }
+    /* Catalog Editor (no cost): the Unit Cost column (6th) is hidden - itemSetup.js applyCatalogEditorView. */
+    .bc-ile table.item-hide-cost th:nth-child(6), .bc-ile table.item-hide-cost td:nth-child(6) { display: none; }
   </style>
 </head>
 <body>
@@ -559,12 +561,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=custconv1"></script>
-  <script src="js/nav.js?v=xendit1"></script>
+  <script src="js/auth.js?v=catalog1"></script>
+  <script src="js/nav.js?v=catalog1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/itemSetup.js?v=bclist2"></script>
+  <script src="js/itemSetup.js?v=catalog1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

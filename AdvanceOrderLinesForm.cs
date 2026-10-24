@@ -527,6 +527,12 @@ namespace AquariumPOS
                 return;
             }
 
+            if (AdvanceOrdersHeaderForm.IsAdvanceOrderVoided(connectionString, transactionNo))
+            {
+                MessageBox.Show("This advance order was voided - it can't be paid.", "Voided Order", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             // Fetch header info (downpayment, balance, receipt no, customer, description)
             string receiptNo = "";
             string customerName = "";

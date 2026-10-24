@@ -2598,7 +2598,7 @@ function phonePeso(value) {
 
 function phoneStatusTone(status) {
   const s = String(status || '').toLowerCase();
-  if (s === 'cancelled' || s === 'canceled' || s === 'returned') return 'cancel';
+  if (s === 'cancelled' || s === 'canceled' || s === 'returned' || s === 'voided') return 'cancel';
   if (s === 'delivered' || s === 'completed') return 'done';
   if (s === 'shipped') return 'shipped';
   if (s === 'to ship') return 'ship';
@@ -7640,6 +7640,8 @@ const ADVANCE_TO_FOLLOW_FILTER = 'To Follow';
 const advanceToFollowByNo = new Map(); // transaction_no -> { units_to_follow, to_follow }
 const advanceTransferByNo = new Map(); // transaction_no -> { stage, docs, from_warehouses, qty_* } (staff_get_advance_order_transfer_status)
 const advanceFulfilmentByNo = new Map(); // transaction_no -> { transferable_units, maker_units, transfer_from } (staff_get_advance_order_fulfilment_flags)
+// Voided on the POS (Void Order, sql/supabase_advance_order_void.sql): transaction_no -> { voided_at, voided_by, void_reason, void_refund, errors }
+const advanceVoidByNo = new Map();
 // staff_get_advance_order_transfer_plan rows per order (Request Stock Transfer on the card and the list) -
 // read when the card opens or a list row is selected, dropped after any action / list reload.
 const advanceTransferPlanByNo = new Map();
@@ -7667,11 +7669,36 @@ function advanceStatus(o) {
   return o?.prod_status || 'New';
 }
 
+// Voided on the POS - every action on the order is off (the database refuses them too,
+// sql/supabase_advance_order_void.sql). Viewing stays.
+function advanceIsVoided(transactionNo) {
+  return advanceStatus(advanceRowsByNo.get(String(transactionNo))) === 'Voided';
+}
+
 function advanceStatusBadgeHtml(status) {
   const cls = status === 'Shipped' || status === 'Delivered' || status === 'Production Done' ? 'badge-success'
     : status === 'To Ship' ? 'badge-primary'
-      : status === 'Assigned' ? 'badge-warning' : 'badge-neutral';
+      : status === 'Assigned' ? 'badge-warning'
+        : status === 'Voided' ? 'badge-danger' : 'badge-neutral';
   return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
+}
+
+// "Voided <when> by <who> - <reason> (refund P...)" - the POS's Void Order record.
+function advanceVoidText(transactionNo) {
+  const v = advanceVoidByNo.get(String(transactionNo));
+  if (!v) return '';
+  return [
+    `Voided${v.voided_at ? ` ${advanceDateTime(v.voided_at)}` : ''}${v.voided_by ? ` by ${v.voided_by}` : ''}`,
+    v.void_reason || '',
+    v.void_refund !== null && v.void_refund !== undefined ? `refunded P${Number(v.void_refund).toFixed(2)}` : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function advanceVoidBadgeHtml(transactionNo) {
+  const v = advanceVoidByNo.get(String(transactionNo));
+  if (!v) return '';
+  const title = advanceVoidText(transactionNo) + (v.errors ? ` · portal clean-up error: ${v.errors}` : '');
+  return `<span class="badge badge-danger" title="${escapeHtml(title)}">Voided${v.errors ? ' ⚠' : ''}</span>`;
 }
 
 function advancePartLabel(part) {
@@ -7720,11 +7747,17 @@ async function loadAdvanceToFollow(transactionNos) {
   if (!nos.length) return;
   // The linked Stock Transfer stage rides along (same orders, same moments) - quiet on error, e.g.
   // sql/supabase_advance_order_transfer_link.sql not run yet.
-  const [{ data, error }, transfers, fulfilment] = await Promise.all([
+  // ...and the POS void record (quiet on error - sql/supabase_advance_order_void.sql not run yet).
+  const [{ data, error }, transfers, fulfilment, voids] = await Promise.all([
     advanceRpc('staff_get_advance_orders_to_follow', { p_nos: nos }),
     advanceRpc('staff_get_advance_order_transfer_status', { p_nos: nos }),
-    advanceRpc('staff_get_advance_order_fulfilment_flags', { p_nos: nos })
+    advanceRpc('staff_get_advance_order_fulfilment_flags', { p_nos: nos }),
+    advanceRpc('staff_get_advance_order_voids', { p_nos: nos })
   ]);
+  if (!voids.error) {
+    nos.forEach((no) => advanceVoidByNo.delete(no));
+    (voids.data || []).forEach((r) => advanceVoidByNo.set(String(r.transaction_no), r));
+  }
   if (!transfers.error) {
     nos.forEach((no) => advanceTransferByNo.delete(no));
     (transfers.data || []).forEach((r) => advanceTransferByNo.set(String(r.transaction_no), r));
@@ -7773,6 +7806,7 @@ function advanceNextStepBadgesHtml(o) {
 
 function advanceFlagsHtml(o) {
   return [
+    advanceVoidBadgeHtml(o.transaction_no),
     advanceNextStepBadgesHtml(o),
     advanceToFollowBadgeHtml(o.transaction_no),
     advanceTransferBadgeHtml(o.transaction_no),
@@ -7866,6 +7900,8 @@ function selectAdvanceRow(transactionNo) {
 function advanceActionState(o) {
   const canManage = canAssignOrders();
   const status = advanceStatus(o);
+  // Voided on the POS - read-only here (the database refuses changes too).
+  if (status === 'Voided') return { canManage, assignDisabled: true, next: null, nextTitle: '', sendBack: false, stepBack: false };
   const assigned = advanceAssignedParts(o);
   let next = null;
   if (status === 'New' || status === 'Production Done') next = { label: 'Ready to Ship', stage: 'To Ship', icon: 'ico-done' };
@@ -8044,6 +8080,8 @@ function fillAdvanceCard(o) {
   fillAdvanceCardToFollow(o.transaction_no);
 
   document.getElementById('acProdStatus').innerHTML = advanceStatusBadgeHtml(status)
+    + (status === 'Voided' && advanceVoidByNo.has(String(o.transaction_no))
+      ? ` <span class="muted">${escapeHtml(advanceVoidText(o.transaction_no))}</span>` : '')
     + (Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : '')
     + (advanceTransferByNo.has(String(o.transaction_no)) ? ` ${advanceTransferBadgeHtml(o.transaction_no)}` : '');
   setCardText('acNeeds', advanceNeedsText(o));
@@ -8101,7 +8139,7 @@ async function loadAdvanceCardDeliveryFee(transactionNo) {
   }
   const r = (data || [])[0] || {};
   const fee = Number(r.delivery_fee) || 0;
-  const editable = !r.delivered;
+  const editable = !r.delivered && !advanceIsVoided(transactionNo);
   setCardText('acDeliveryFee', fee ? fee.toFixed(2) : '');
   document.getElementById('acDeliveryFee').classList.toggle('hidden', editable);
   document.getElementById('acDeliveryFeeEdit').classList.toggle('hidden', !editable);
@@ -8147,8 +8185,9 @@ function fillAdvanceCardToFollow(transactionNo) {
 function updateAdvanceCardActions(o) {
   applyAdvanceActions({ assign: 'advanceCardAssignBtn', next: 'advanceCardNextBtn', sendBack: 'advanceCardSendBackBtn', stepBack: 'advanceCardStepBackBtn' }, o);
   // Same people who can Ready to Ship (staff_get_advance_order_serial_labels refuses view-only Store Managers).
-  document.getElementById('advanceCardPrintSerialsBtn').classList.toggle('hidden', !canAssignOrders());
-  document.getElementById('advanceCardShowSerialsBtn').classList.toggle('hidden', !canAssignOrders());
+  const voided = advanceStatus(o) === 'Voided';
+  document.getElementById('advanceCardPrintSerialsBtn').classList.toggle('hidden', !canAssignOrders() || voided);
+  document.getElementById('advanceCardShowSerialsBtn').classList.toggle('hidden', !canAssignOrders() || voided);
   document.getElementById('advanceCardBody').classList.toggle('no-factbox', !canAssignOrders());
 }
 
@@ -8191,6 +8230,8 @@ async function loadAdvanceCardTransfers(transactionNo) {
     const o = advanceRowsByNo.get(no);
     if (o) { // Status picks up the transfer stage (same markup as fillAdvanceCard)
       document.getElementById('acProdStatus').innerHTML = advanceStatusBadgeHtml(advanceStatus(o))
+        + (advanceStatus(o) === 'Voided' && advanceVoidByNo.has(no)
+          ? ` <span class="muted">${escapeHtml(advanceVoidText(no))}</span>` : '')
         + (Number(o.open_rework_count) > 0 ? '<span class="oo-rework">&#8634; Rework</span>' : '')
         + (advanceTransferByNo.has(no) ? ` ${advanceTransferBadgeHtml(no)}` : '');
     }
@@ -8204,7 +8245,7 @@ async function loadAdvanceCardTransfers(transactionNo) {
   const planRows = plan.error ? [] : plan.data || [];
   if (!plan.error) advanceTransferPlanByNo.set(no, planRows);
   const shortRows = planRows.filter((r) => Number(r.short) > 0);
-  btn.classList.toggle('hidden', !advanceCanRequestTransfer(planRows));
+  btn.classList.toggle('hidden', advanceIsVoided(no) || !advanceCanRequestTransfer(planRows));
   if (selectedAdvanceNo === no) updateAdvanceListActions();
 
   tab.classList.toggle('hidden', !rows.length && !shortRows.length);
@@ -8268,6 +8309,11 @@ async function loadAdvanceTransferPlan(no) {
 async function refreshAdvanceListTransferBtn(no) {
   const btn = document.getElementById('advRequestTransferBtn');
   if (!no) { btn.disabled = true; return; }
+  if (advanceIsVoided(no)) {
+    btn.disabled = true;
+    btn.title = 'This order was voided on the POS';
+    return;
+  }
   const key = String(no);
   if (!advanceTransferPlanByNo.has(key)) {
     btn.disabled = true;
@@ -8282,6 +8328,7 @@ async function refreshAdvanceListTransferBtn(no) {
 }
 
 async function requestAdvanceTransfer(no) {
+  if (advanceIsVoided(no)) { window.alert('This advance order was voided on the POS - nothing can be requested for it.'); return; }
   const plan = await loadAdvanceTransferPlan(no);
   if (!plan) { window.alert("Could not check this order's stock - run sql/supabase_advance_order_transfer_link.sql if it's not set up yet."); return; }
   if (!advanceCanRequestTransfer(plan)) { window.alert('Nothing on this order needs a transfer right now.'); return; }
