@@ -7,6 +7,9 @@
 --                                             (document type "Repair Shipment", document no. RPR-000001),
 --                                             refused if the store doesn't have that many. Picked serials go
 --                                             IN_REPAIR, located at the production warehouse. Status = Sent.
+--                                             Aquarium / stand / sump (_production_item_needs_serial) are
+--                                             counted by serial, not the ledger: one In Stock serial must be
+--                                             ticked per unit, and the ledger posting never refuses.
 --   Receive   action 'receive'                Production Manager / Super User, assigning the maker (Tank /
 --                                             Stand Maker, staff_list_order_makers). Sent -> In Repair.
 --   Assign    action 'assign'                 Production Manager / Super User - change the maker while In Repair.
@@ -202,6 +205,7 @@ declare
   v_variant text;
   v_serials bigint[] := coalesce(p_running_serial_nos, '{}');
   v_serial_count int;
+  v_by_serial boolean;
   v_bad record;
   v_id int;
   v_no text;
@@ -252,6 +256,14 @@ begin
     raise exception 'You picked % serials for % unit(s).', v_serial_count, p_quantity;
   end if;
 
+  -- Aquarium / stand / sump stock is kept in the serials, not the Item Ledger - the ticked In Stock serials
+  -- are the stock check, so one is needed per unit.
+  v_by_serial := public._production_item_needs_serial(v_item, v_variant);
+  if v_by_serial and v_serial_count <> p_quantity then
+    raise exception '% is counted by serial - tick one serial per unit going (% ticked for % unit(s)).',
+      v_item, v_serial_count, p_quantity;
+  end if;
+
   if v_serial_count > 0 then
     select s."SerialNo", s."Status", s."Location", s."ItemCode" into v_bad
       from public."ItemSerialTracking" s
@@ -273,12 +285,13 @@ begin
   v_no := 'RPR-' || lpad(nextval('public.repair_return_no_seq')::text, 6, '0');
   v_transaction_no := nextval('public.ile_transaction_no_seq');
 
-  -- Refused if the store doesn't have this many (p_prevent_negative = true).
+  -- Refused if the store doesn't have this many (p_prevent_negative) - except serial-counted items, whose
+  -- serials were checked above; their ledger balance may go negative.
   perform public._ile_post(
     'Negative Adjmt.', v_item, v_variant, trim(p_from_warehouse_id), -round(p_quantity, 4),
     public._ile_today(), 'Repair Shipment', v_no,
     left('Sent for repair to ' || v_repair."Name" || ' - ' || trim(p_problem) || coalesce(': ' || nullif(trim(coalesce(p_note, '')), ''), ''), 500),
-    v_transaction_no, p_admin_username, null, true
+    v_transaction_no, p_admin_username, null, not v_by_serial
   );
 
   insert into public."RepairReturns" (

@@ -13,6 +13,8 @@
 --
 -- Run AFTER supabase_advance_order_serials.sql. Function only - safe to re-run. If
 -- supabase_advance_order_serials.sql is ever re-run, run this one again afterwards.
+-- !! Superseded by supabase_advance_order_custom_build_serials.sql (2026-10-24, custom builds need serials) -
+-- if you re-run this file, run that one again after it.
 
 -- also used by the read-only check files).
 create or replace function public._advance_order_line_items(p_no text)

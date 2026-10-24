@@ -452,7 +452,13 @@ begin
       ('_notify_delivery_stop_changed', '"AutomatedOrderNo"', 'supabase_delivery_assign_automated_order_search.sql'),
       ('admin_sync_online_order_assigned_status', '"ReceivedAtShop"', 'supabase_walkin_order_production.sql'),
       ('_online_order_line_part', 'online_order_is_sticker_line', 'supabase_online_order_sticker_no_maker.sql'),
-      ('admin_list_payroll_run_lines', '"PayType"', 'supabase_payroll_hourly_days_worked_display.sql')
+      ('admin_list_payroll_run_lines', '"PayType"', 'supabase_payroll_hourly_days_worked_display.sql'),
+      -- Re-running supabase_production_orders.sql silently reverts these (2026-10-24, PRD-000090).
+      ('staff_set_production_order_part_done', '"ProductionOrderRework"', 'supabase_production_order_rework.sql'),
+      ('staff_list_production_order_lines', 'vf."SKU"', 'supabase_production_order_lines_sku.sql'),
+      ('staff_list_production_order_serials', '"ProductionShelfSpots"', 'supabase_production_shelf_map.sql'),
+      ('_ile_on_reversed', 'Repair Shipment', 'supabase_repair_returns.sql'),
+      ('_advance_order_line_items', 'custom build', 'supabase_advance_order_custom_build_serials.sql')
       ) as f(fn, marker, src_file)
       order by f.fn
     loop
@@ -469,6 +475,23 @@ begin
     end loop;
   exception when others then
     section := 'Database functions'; check_name := 'Read function versions'; status := 'warn'; detail := 'Check failed to run: ' || sqlerrm; return next;
+  end;
+
+  -- Item Ledger entry types: supabase_production_orders.sql re-adds the check WITHOUT 'Consumption'.
+  begin
+    section := 'Database functions';
+    check_name := 'Item Ledger allows Consumption entries';
+    if exists (select 1 from pg_constraint c
+               where c.conrelid = 'public."ItemLedgerEntries"'::regclass and c.contype = 'c'
+                 and pg_get_constraintdef(c.oid) ilike '%EntryType%'
+                 and pg_get_constraintdef(c.oid) not ilike '%Consumption%') then
+      status := 'fail'; detail := 'EntryType check lost ''Consumption'' (Materials Used can''t post) - re-run supabase_production_order_consumption.sql.';
+    else
+      status := 'pass'; detail := 'OK';
+    end if;
+    return next;
+  exception when others then
+    status := 'warn'; detail := 'Check failed to run: ' || sqlerrm; return next;
   end;
 end;
 $$;

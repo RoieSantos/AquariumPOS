@@ -18,7 +18,10 @@
 // General/Prices/Cost & Vendors/Units of Measure/Variants, Maximize, the picture where BC keeps
 // its FactBox. It replaces the side factbox this page used to have (per the earlier "a section on
 // the side like a factbox to show Variants/Images"), which had run out of room once vendors and
-// units of measure joined it; the list underneath is full width again as a result.
+// units of measure joined it.
+//
+// LIST (2026-10-24): the list itself is now a BC list page - filter pane left, FactBox right (a read-only
+// summary of the selected row; editing stays on the card). See "Items list" below.
 //
 // The element ids are still the factbox's, so nothing about how each field saves changed - only
 // where it sits. Variants are still fetched per click (admin_list_variants) rather than preloaded
@@ -851,56 +854,129 @@ async function saveFactboxHideFromSet() {
   savedEl.classList.remove('hidden');
 }
 
+// ---------------------------------------------------------------- Items list (Business Central list page)
+// Per "beautify the item setup.. same as business central list with factbox on the right panel and
+// filter feature on the left": the shared BC list shell (css/bc-list.css, same as Item Ledger Entries /
+// Customers) - "Filter list by" pane, sortable grid, FactBox. Filters, sort and paging all run server
+// side in admin_list_items (supabase_item_setup_bc_list.sql), so they apply across the whole catalog,
+// not just the page on screen. A click selects a row for the FactBox; the No. link, a double-click,
+// Enter or Edit opens the Item Card below.
+
+let selectedItemCode = null;
+let listSort = { key: 'name', desc: false };
+let listFiltersSupported = true; // false until supabase_item_setup_bc_list.sql is run - then only search / category work
+// BC opens a list with the filter pane shut when there is no room for it; here it is open whenever the
+// grid still gets a fair width beside it.
+let filterPaneOpen = window.innerWidth >= 1100;
+
+const LIST_FILTERS = [
+  { key: 'category', id: 'itemCategoryFilter', label: 'Category' },
+  { key: 'status', id: 'itemStatusFilter', label: 'Status' },
+  { key: 'vendor', id: 'itemVendorFilter', label: 'Vendor' },
+  { key: 'brand', id: 'itemBrandFilter', label: 'Brand' },
+  { key: 'cost', id: 'itemCostFilter', label: 'Unit Cost' },
+  { key: 'wholesale', id: 'itemWholesaleFilter', label: 'Wholesale' },
+  { key: 'priceFrom', id: 'itemPriceFrom', label: 'Price from' },
+  { key: 'priceTo', id: 'itemPriceTo', label: 'Price to' }
+];
+
+function filterValue(id) {
+  return document.getElementById(id).value.trim();
+}
+
+function moneyCell(value) {
+  return value === null || value === undefined ? '<span class="muted">-</span>' : formatMoney(value);
+}
+
 function itemRowsHtml(items) {
   return items
     .map((i) => {
+      const code = escapeHtml(i.code || '');
       const variantCount = variantCountsByItemCode.get(i.code);
       const variantsCell = variantCount
         ? `<a href="variant-setup.html?item=${encodeURIComponent(i.code)}">View (${variantCount})</a>`
         : '<span class="muted">-</span>';
+      const inactive = i.is_active === false;
+      const classes = [inactive ? 'item-inactive' : '', i.code === selectedItemCode ? 'selected' : ''].filter(Boolean).join(' ');
       return `
-      <tr class="clickable-row" data-code="${i.code || ''}">
-        <td>${i.code || ''}</td>
-        <td>${i.name || ''}</td>
-        <td>${i.category_code || ''}</td>
-        <td>${i.vendor_name || '<span class="muted">-</span>'}</td>
-        <td style="text-align:right;">${i.cost === null || i.cost === undefined ? '<span class="muted">-</span>' : formatMoney(i.cost)}</td>
-        <td style="text-align:right;">${formatMoney(i.price)}</td>
-        <td style="text-align:right;">${i.wholesale_price === null || i.wholesale_price === undefined ? '<span class="muted">-</span>' : formatMoney(i.wholesale_price)}</td>
+      <tr data-code="${code}"${classes ? ` class="${classes}"` : ''}>
+        <td><a href="#" class="bc-doc-no" data-open-card>${code}</a></td>
+        <td class="item-name-cell" title="${escapeHtml(i.name || '')}">${escapeHtml(i.name || '')}</td>
+        <td>${escapeHtml(i.category_code || '')}</td>
+        <td>${i.brand ? escapeHtml(i.brand) : '<span class="muted">-</span>'}</td>
+        <td>${i.vendor_name ? escapeHtml(i.vendor_name) : '<span class="muted">-</span>'}</td>
+        <td class="num">${moneyCell(i.cost)}</td>
+        <td class="num">${moneyCell(i.price)}</td>
+        <td class="num">${moneyCell(i.wholesale_price)}</td>
         <td>${variantsCell}</td>
+        <td><span class="item-status ${inactive ? 'item-status-off' : 'item-status-on'}">${inactive ? 'Inactive' : 'Active'}</span></td>
       </tr>
     `;
     })
     .join('');
 }
 
-async function loadItems() {
-  const tbody = document.getElementById('itemTableBody');
-  tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading items...</td></tr>';
-
-  const thisGeneration = ++loadGeneration;
-
-  const { data, error } = await supabaseClient.rpc('admin_list_items', {
+function listRpcArgs() {
+  const args = {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_search: currentSearch || null,
     p_page: currentPage,
     p_page_size: currentPageSize,
-    p_category_code: document.getElementById('itemCategoryFilter').value || null
-  });
+    p_category_code: filterValue('itemCategoryFilter') || null
+  };
+  if (!listFiltersSupported) return args;
+
+  const priceFrom = filterValue('itemPriceFrom');
+  const priceTo = filterValue('itemPriceTo');
+  return {
+    ...args,
+    p_status: filterValue('itemStatusFilter') || null,
+    p_vendor_code: filterValue('itemVendorFilter') || null,
+    p_brand: filterValue('itemBrandFilter') || null,
+    p_cost_filter: filterValue('itemCostFilter') || null,
+    p_wholesale_filter: filterValue('itemWholesaleFilter') || null,
+    p_price_from: priceFrom === '' ? null : Number(priceFrom),
+    p_price_to: priceTo === '' ? null : Number(priceTo),
+    p_sort: listSort.key,
+    p_sort_desc: listSort.desc
+  };
+}
+
+// PostgREST answers PGRST202 when no function matches the arguments - the new filters are sent to a
+// database that still has the old admin_list_items.
+function isMissingSignature(error) {
+  return error && (error.code === 'PGRST202' || /could not find the function/i.test(error.message || ''));
+}
+
+async function loadItems() {
+  const tbody = document.getElementById('itemTableBody');
+  tbody.innerHTML = '<tr><td colspan="10" class="cell-msg">Loading items...</td></tr>';
+
+  const thisGeneration = ++loadGeneration;
+
+  let { data, error } = await supabaseClient.rpc('admin_list_items', listRpcArgs());
+  if (isMissingSignature(error) && listFiltersSupported) {
+    listFiltersSupported = false;
+    showListInfo('Only Search and Category filter for now - run sql/supabase_item_setup_bc_list.sql to turn on the other filters and column sorting.');
+    ({ data, error } = await supabaseClient.rpc('admin_list_items', listRpcArgs()));
+  }
 
   if (thisGeneration !== loadGeneration) return; // a newer search/page request superseded this one
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="8" class="error-text">${error.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
   const rows = data || [];
   itemsByCode = new Map(rows.map((i) => [i.code, i]));
 
+  // BC keeps the current row when the list refreshes; otherwise the first row becomes current.
+  if (!itemsByCode.has(selectedItemCode)) selectedItemCode = rows.length ? rows[0].code : null;
+
   tbody.innerHTML = rows.length === 0
-    ? '<tr><td colspan="8" class="muted">No items found.</td></tr>'
+    ? '<tr><td colspan="10" class="cell-msg">No items match these filters.</td></tr>'
     : itemRowsHtml(rows);
 
   renderPaginationBar(
@@ -912,7 +988,13 @@ async function loadItems() {
     }
   );
 
-  // If the factbox was open for an item that's still in this refreshed result set, keep it
+  renderSortArrows();
+  renderFilterChips();
+  updateListActions();
+  renderListFactBox();
+  fitItemGrid();
+
+  // If the card was open for an item that's still in this refreshed result set, keep it
   // open and refresh its contents; otherwise close it (the item scrolled out of view/search).
   if (openFactboxCode && itemsByCode.has(openFactboxCode)) {
     openFactbox(openFactboxCode);
@@ -921,23 +1003,117 @@ async function loadItems() {
   }
 }
 
+function reloadFromFirstPage() {
+  currentPage = 1;
+  loadItems();
+}
+
+function showListInfo(text) {
+  document.getElementById('itemListInfoText').textContent = text;
+  document.getElementById('itemListInfoBar').classList.remove('hidden');
+}
+
+// ---------------------------------------------------------------- filter pane, chips, sort
+
+function filterDisplayValue(f) {
+  const el = document.getElementById(f.id);
+  if (el.tagName === 'SELECT') return el.options[el.selectedIndex]?.textContent || el.value;
+  return el.value.trim();
+}
+
+// The applied filters as removable chips above the list, so a hidden filter pane never hides why
+// items are missing.
+function renderFilterChips() {
+  const chips = LIST_FILTERS
+    .filter((f) => filterValue(f.id) !== '')
+    .map((f) => `<span class="bc-chip">${escapeHtml(f.label)}: ${escapeHtml(filterDisplayValue(f))}<button type="button" data-clear-filter="${f.id}" aria-label="Remove this filter">&times;</button></span>`);
+  const box = document.getElementById('filterChips');
+  box.innerHTML = chips.join('');
+  box.classList.toggle('hidden', chips.length === 0);
+}
+
+function clearFilters() {
+  LIST_FILTERS.forEach((f) => { document.getElementById(f.id).value = ''; });
+  document.getElementById('itemSearchInput').value = '';
+  currentSearch = '';
+  reloadFromFirstPage();
+}
+
+function renderSortArrows() {
+  document.querySelectorAll('#itemHeaderRow th.sortable').forEach((th) => {
+    const active = listFiltersSupported && th.dataset.sort === listSort.key;
+    th.classList.toggle('sort-asc', active && !listSort.desc);
+    th.classList.toggle('sort-desc', active && listSort.desc);
+    th.querySelector('.sort-arrow').textContent = active ? (listSort.desc ? '▼' : '▲') : '';
+  });
+}
+
+function updateBodyLayout() {
+  document.getElementById('bcBody').classList.toggle('no-filterpane', !filterPaneOpen);
+  document.getElementById('filterPane').classList.toggle('hidden', !filterPaneOpen);
+  document.getElementById('filterPaneBtn').setAttribute('aria-pressed', filterPaneOpen ? 'true' : 'false');
+  fitItemGrid();
+}
+
+// The grid fills the rest of the window instead of stopping at a guessed height (same as Item Ledger
+// Entries' fitGridToViewport); the pager sits under it.
+function fitItemGrid() {
+  const wrap = document.getElementById('itemGridWrap');
+  if (!wrap || window.innerWidth <= 860) return;
+  const pagerHeight = document.getElementById('itemPaginationBar').offsetHeight || 0;
+  const available = window.innerHeight - wrap.getBoundingClientRect().top - pagerHeight - 20;
+  wrap.style.maxHeight = Math.max(240, available) + 'px';
+}
+
 function wireItemSearch() {
   document.getElementById('itemSearchInput').addEventListener('input', (e) => {
     const value = e.target.value.trim();
     clearTimeout(itemSearchDebounceHandle);
     itemSearchDebounceHandle = setTimeout(() => {
       currentSearch = value;
-      currentPage = 1;
-      loadItems();
+      reloadFromFirstPage();
     }, 300);
   });
 
-  // Per "in the item setup can we filter by category" - reuses admin_list_categories (already
-  // admin-gated, same trust level as this page) rather than a new RPC.
-  document.getElementById('itemCategoryFilter').addEventListener('change', () => {
-    currentPage = 1;
-    loadItems();
+  // Dropdowns apply at once; typed filters (brand, price) wait until typing pauses.
+  LIST_FILTERS.forEach((f) => {
+    const el = document.getElementById(f.id);
+    if (el.tagName === 'SELECT') {
+      el.addEventListener('change', reloadFromFirstPage);
+    } else {
+      el.addEventListener('input', () => {
+        clearTimeout(itemSearchDebounceHandle);
+        itemSearchDebounceHandle = setTimeout(reloadFromFirstPage, 400);
+      });
+    }
   });
+
+  document.getElementById('filterPaneBtn').addEventListener('click', () => {
+    filterPaneOpen = !filterPaneOpen;
+    updateBodyLayout();
+  });
+  document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
+  document.getElementById('clearFiltersLink').addEventListener('click', clearFilters);
+  document.getElementById('filterChips').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-clear-filter]');
+    if (!btn) return;
+    document.getElementById(btn.dataset.clearFilter).value = '';
+    reloadFromFirstPage();
+  });
+
+  document.getElementById('itemHeaderRow').addEventListener('click', (e) => {
+    if (e.target.closest('.bc-col-resizer')) return; // dragging a column edge, not sorting
+    const th = e.target.closest('th.sortable');
+    if (!th || !listFiltersSupported) return;
+    listSort = th.dataset.sort === listSort.key
+      ? { key: listSort.key, desc: !listSort.desc }
+      : { key: th.dataset.sort, desc: false };
+    reloadFromFirstPage();
+  });
+
+  document.getElementById('itemRefreshBtn').addEventListener('click', loadItems);
+  window.addEventListener('resize', fitItemGrid);
+  updateBodyLayout();
 }
 
 async function loadItemCategoryFilterOptions() {
@@ -953,6 +1129,269 @@ async function loadItemCategoryFilterOptions() {
     option.value = c.code;
     option.textContent = c.description || c.code;
     select.appendChild(option);
+  });
+}
+
+function populateVendorFilterOptions() {
+  const select = document.getElementById('itemVendorFilter');
+  vendorOptions.forEach((v) => {
+    const option = document.createElement('option');
+    option.value = v.code;
+    option.textContent = v.name ? `${v.name} (${v.code})` : v.code;
+    select.appendChild(option);
+  });
+}
+
+// ---------------------------------------------------------------- row selection + list FactBox
+
+let listStockToken = 0;
+
+function selectItemRow(code) {
+  if (!itemsByCode.has(code)) return;
+  selectedItemCode = code;
+  document.querySelectorAll('#itemTableBody tr.selected').forEach((tr) => tr.classList.remove('selected'));
+  const row = document.querySelector(`#itemTableBody tr[data-code="${CSS.escape(code)}"]`);
+  if (row) {
+    row.classList.add('selected');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+  updateListActions();
+  renderListFactBox();
+}
+
+function updateListActions() {
+  const none = !selectedItemCode;
+  document.getElementById('openItemCardBtn').disabled = none;
+  document.getElementById('itemLedgerBtn').disabled = none;
+}
+
+function factRow(label, valueHtml, numeric) {
+  return `<dt>${label}</dt><dd${numeric ? ' class="num"' : ''}>${valueHtml}</dd>`;
+}
+
+function renderListFactBox() {
+  const detailsEl = document.getElementById('itemFactDetails');
+  const pricesEl = document.getElementById('itemFactPrices');
+  const stockEl = document.getElementById('itemFactStock');
+  const item = itemsByCode.get(selectedItemCode);
+
+  if (!item) {
+    detailsEl.innerHTML = '<p class="bc-fact-empty">Select an item to see its details.</p>';
+    pricesEl.innerHTML = '<p class="bc-fact-empty">-</p>';
+    stockEl.innerHTML = '<p class="bc-fact-empty">-</p>';
+    return;
+  }
+
+  const dash = '<span class="muted">-</span>';
+  const variantCount = variantCountsByItemCode.get(item.code) || 0;
+  // Picture: changeable right here once the portal owns products (same rule as the Item Card).
+  const pictureActions = itemsPortalOwned
+    ? '<div class="item-fact-pic-actions">' +
+        `<button type="button" class="bc-link" data-fact-picture="change">${item.images ? 'Change picture' : 'Add picture'}</button>` +
+        (item.images ? '<button type="button" class="bc-link" data-fact-picture="remove">Remove</button>' : '') +
+        '<span class="item-fact-pic-msg" id="itemFactPictureMsg"></span>' +
+      '</div>'
+    : '';
+  detailsEl.innerHTML =
+    `<div class="item-fact-pic${itemsPortalOwned ? ' can-edit' : ''}" id="itemFactPic"${itemsPortalOwned ? ' title="Drop a picture here to replace it"' : ''}>` +
+      (item.images ? imageHtml(item.images, '') : '<p class="bc-fact-empty">No picture</p>') +
+    '</div>' +
+    pictureActions +
+    `<div class="item-fact-name">${escapeHtml(item.name || '')}</div>` +
+    `<div class="item-fact-code">${escapeHtml(item.code || '')}${item.sku && item.sku !== item.code ? ' · SKU ' + escapeHtml(item.sku) : ''}</div>` +
+    '<dl class="bc-facts">' +
+      factRow('Category', item.category_code ? escapeHtml(item.category_code) : dash) +
+      factRow('Brand', item.brand ? escapeHtml(item.brand) : dash) +
+      factRow('Vendor', item.vendor_name ? escapeHtml(item.vendor_name) : dash) +
+      factRow('Status', item.is_active === false
+        ? '<span class="item-status item-status-off">Inactive</span>'
+        : '<span class="item-status item-status-on">Active</span>') +
+      factRow('Variants', variantCount
+        ? `<a href="variant-setup.html?item=${encodeURIComponent(item.code)}">${variantCount}</a>`
+        : dash) +
+    '</dl>';
+
+  // Margin = what a sale at the selling price leaves over the unit cost (only when both are known).
+  let marginHtml = dash;
+  if (item.price !== null && item.price !== undefined && item.cost !== null && item.cost !== undefined && Number(item.price) > 0) {
+    const margin = Number(item.price) - Number(item.cost);
+    const pct = (margin / Number(item.price)) * 100;
+    marginHtml = `<span class="${margin < 0 ? 'item-margin-neg' : ''}">${formatMoney(margin)} (${pct.toFixed(1)}%)</span>`;
+  }
+  pricesEl.innerHTML = '<dl class="bc-facts">' +
+    factRow('Unit Price', moneyCell(item.price), true) +
+    factRow('Wholesale', moneyCell(item.wholesale_price), true) +
+    factRow('Promo Price', moneyCell(item.promo_price), true) +
+    factRow('Unit Cost', item.cost === null || item.cost === undefined ? '<span class="muted">Not costed</span>' : formatMoney(item.cost), true) +
+    factRow('Margin', marginHtml, true) +
+    '</dl>';
+
+  loadListFactStock(item.code);
+}
+
+// What the Item Ledger says is on hand, per location (same RPC as the Item Card's Stock by Location).
+async function loadListFactStock(code) {
+  const el = document.getElementById('itemFactStock');
+  const token = ++listStockToken;
+  el.innerHTML = '<p class="bc-fact-empty">Loading...</p>';
+
+  const { data, error } = await supabaseClient.rpc('staff_get_item_stock_by_warehouse', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: code
+  });
+  if (token !== listStockToken) return; // another row was selected meanwhile
+
+  if (error) {
+    el.innerHTML = `<p class="bc-fact-empty error-text">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  const rows = data || [];
+  if (rows.length === 0) {
+    el.innerHTML = '<p class="bc-fact-empty">No stock on the ledger.</p>';
+    return;
+  }
+  const total = rows.reduce((sum, w) => sum + Number(w.quantity || 0), 0);
+  el.innerHTML = '<table class="bc-avail"><tbody>' +
+    rows.map((w) => {
+      const href = `item-ledger-entries.html?search=${encodeURIComponent(code)}&warehouse=${encodeURIComponent(w.warehouse_id)}`;
+      return `<tr><td>${escapeHtml(w.warehouse_name)}</td><td><a href="${href}" title="Item ledger entries for this location">${Number(w.quantity).toLocaleString()}</a></td></tr>`;
+    }).join('') +
+    `<tr class="total"><td>Total</td><td>${total.toLocaleString()}</td></tr>` +
+    '</tbody></table>';
+}
+
+// Saves a new (or no) picture for an item from the list FactBox. admin_update_item takes the whole item,
+// so the row's current values go along unchanged - only the picture differs.
+async function saveListFactPicture(code, imageUrl) {
+  const item = itemsByCode.get(code);
+  if (!item) return;
+  const { error } = await supabaseClient.rpc('admin_update_item', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_item_code: code,
+    p_name: item.name || '',
+    p_description: item.description || null,
+    p_brand: item.brand || null,
+    p_category_code: item.category_code || '',
+    p_is_active: item.is_active !== false,
+    p_promo_price: item.promo_price === null || item.promo_price === undefined ? null : Number(item.promo_price),
+    p_image_url: imageUrl // '' removes it
+  });
+  if (error) throw new Error(error.message);
+  await loadItems(); // refreshes the row, the FactBox and an open card
+}
+
+async function changeListFactPicture(file) {
+  const code = selectedItemCode;
+  if (!code || !file) return;
+  const msg = () => document.getElementById('itemFactPictureMsg');
+  if (!file.type.startsWith('image/')) {
+    window.alert('Pick an image file (JPG, PNG, ...).');
+    return;
+  }
+  if (msg()) msg().textContent = 'Uploading...';
+  try {
+    const url = await uploadItemPicture(file);
+    await saveListFactPicture(code, url);
+  } catch (err) {
+    if (msg()) msg().textContent = '';
+    window.alert(err.message);
+  }
+}
+
+function wireListFactPicture() {
+  const details = document.getElementById('itemFactDetails');
+  const input = document.getElementById('itemFactPictureInput');
+
+  details.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-fact-picture]');
+    if (!btn || !selectedItemCode) return;
+    if (btn.dataset.factPicture === 'change') {
+      input.click();
+      return;
+    }
+    if (!window.confirm('Remove this item\'s picture?')) return;
+    try {
+      await saveListFactPicture(selectedItemCode, '');
+    } catch (err) {
+      window.alert(err.message);
+    }
+  });
+
+  input.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    e.target.value = ''; // allow picking the same file again
+    changeListFactPicture(file);
+  });
+
+  // Drag a picture from the desktop onto the FactBox picture.
+  details.addEventListener('dragover', (e) => {
+    const pic = e.target.closest('#itemFactPic.can-edit');
+    if (!pic) return;
+    e.preventDefault();
+    pic.classList.add('drop-over');
+  });
+  details.addEventListener('dragleave', (e) => {
+    const pic = e.target.closest('#itemFactPic');
+    if (pic) pic.classList.remove('drop-over');
+  });
+  details.addEventListener('drop', (e) => {
+    const pic = e.target.closest('#itemFactPic.can-edit');
+    if (!pic) return;
+    e.preventDefault();
+    pic.classList.remove('drop-over');
+    changeListFactPicture(e.dataTransfer.files[0]);
+  });
+}
+
+function wireItemList() {
+  wireListFactPicture();
+  const tbody = document.getElementById('itemTableBody');
+  tbody.addEventListener('click', (e) => {
+    const row = e.target.closest('tr[data-code]');
+    if (!row) return;
+    if (e.target.closest('[data-open-card]')) {
+      e.preventDefault();
+      selectItemRow(row.dataset.code);
+      openFactbox(row.dataset.code);
+      return;
+    }
+    if (e.target.closest('a')) return; // the "View (N)" variants link navigates normally
+    selectItemRow(row.dataset.code);
+  });
+  tbody.addEventListener('dblclick', (e) => {
+    const row = e.target.closest('tr[data-code]');
+    if (row && !e.target.closest('a')) openFactbox(row.dataset.code);
+  });
+
+  document.getElementById('openItemCardBtn').addEventListener('click', () => {
+    if (selectedItemCode) openFactbox(selectedItemCode);
+  });
+  document.getElementById('itemLedgerBtn').addEventListener('click', () => {
+    if (selectedItemCode) location.href = `item-ledger-entries.html?search=${encodeURIComponent(selectedItemCode)}`;
+  });
+
+  // Up / Down move the current row, Enter opens it - only while no dialog is open and the cursor is
+  // not in a field.
+  document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('itemCardModal').classList.contains('hidden')) {
+      if (e.key === 'Escape') closeFactbox();
+      return;
+    }
+    if (!document.getElementById('newItemModal').classList.contains('hidden')) return;
+    if (e.target.closest('input, select, textarea, button, a')) return;
+    const codes = [...itemsByCode.keys()];
+    if (codes.length === 0) return;
+    const idx = codes.indexOf(selectedItemCode);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = e.key === 'ArrowDown' ? Math.min(codes.length - 1, idx + 1) : Math.max(0, idx - 1);
+      selectItemRow(codes[next]);
+    } else if (e.key === 'Enter' && selectedItemCode) {
+      e.preventDefault();
+      openFactbox(selectedItemCode);
+    }
   });
 }
 
@@ -1663,7 +2102,9 @@ async function createNewItem() {
     document.getElementById('newItemModal').classList.add('hidden');
     await loadItemCategoriesForEditing(); // next_code moved on
     await loadVariantCounts();
-    // Show just the new item and open its card.
+    // Show just the new item and open its card (filters cleared, or they could hide it).
+    LIST_FILTERS.forEach((f) => { document.getElementById(f.id).value = ''; });
+    selectedItemCode = code;
     document.getElementById('itemSearchInput').value = code;
     currentSearch = code;
     currentPage = 1;
@@ -1840,13 +2281,6 @@ function wireItemMaster() {
 }
 
 function wireFactbox() {
-  document.getElementById('itemTableBody').addEventListener('click', (e) => {
-    const row = e.target.closest('tr[data-code]');
-    if (!row) return;
-    if (e.target.closest('a')) return; // let the existing "View (N)" variants link navigate normally
-    openFactbox(row.dataset.code);
-  });
-
   document.getElementById('itemCardCloseBtn').addEventListener('click', closeFactbox);
 
   document.getElementById('itemCardMaximizeBtn').addEventListener('click', () => {
@@ -1931,6 +2365,7 @@ function wireFactbox() {
 
   document.getElementById('setupContent').classList.remove('hidden');
   wireItemSearch();
+  wireItemList();
   wireFactbox();
   wireItemMaster();
 
@@ -1952,5 +2387,6 @@ function wireFactbox() {
     loadItemCategoryFilterOptions(),
     loadItemCategoriesForEditing()
   ]);
+  populateVendorFilterOptions();
   await loadItems();
 })();

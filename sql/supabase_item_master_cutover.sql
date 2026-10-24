@@ -5,6 +5,9 @@
 -- item / price added in the portal after this. That same build sends walk-ins to the portal (WI-), so
 -- also run STEP 2 of supabase_pancake_sync_wind_down.sql at the same time.
 --
+-- Run AFTER supabase_item_master_portal_owned.sql (it creates _items_pancake_sync_active - without it this
+-- fails with "function public._items_pancake_sync_active() does not exist").
+--
 -- 1. One last Pancake -> portal product sync, so nothing edited in Pancake today is lost.
 -- 2. Pause sync-items-from-pancake. From then on (supabase_item_master_portal_owned.sql): New Item / edit /
 --    New Variant / pictures work in Item Setup, and price edits no longer go to Pancake.

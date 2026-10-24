@@ -493,7 +493,8 @@ function renderManageLines(lines, status) {
   }
 
   // Partial-friendly per-line qty pipeline:
-  //   Qty To Transfer - intended qty, set at creation (never editable here).
+  //   Qty To Transfer - intended qty, set at creation. Only a Super User can change it here, on a
+  //                      still-active order and never below what's already shipped (saveLineQtyToTransfer).
   //   Qty To Ship     - editable input while there's a remaining unshipped balance; defaults to
   //                      that full remaining balance, but staff can enter less for a partial
   //                      shipment. Added to the Qty Shipped running total when Ship is clicked.
@@ -504,6 +505,7 @@ function renderManageLines(lines, status) {
   //   Qty Received    - read-only running total of everything received so far.
   const canShip = isActiveStatus(status);
   const canReceive = isActiveStatus(status);
+  const canEditQtyToTransfer = !!currentSession?.isSuperUser && isActiveStatus(status);
 
   body.innerHTML = lines
     .map((l) => {
@@ -518,6 +520,10 @@ function renderManageLines(lines, status) {
         : '';
 
       const qtyShippedCell = qtyShipped > 0 ? qtyShipped : '';
+
+      const qtyToTransferCell = canEditQtyToTransfer
+        ? `<input type="number" class="manage-qty-to-transfer" min="${qtyShipped}" step="0.01" value="${qtyToTransfer}" style="width:80px;" title="Super User: change the quantity (not below the ${qtyShipped} already shipped)" />`
+        : qtyToTransfer;
 
       const qtyToReceiveCell = canReceive && remainingToReceive > 0
         ? `<input type="number" class="manage-qty-to-receive" min="0" max="${remainingToReceive}" step="0.01" value="${remainingToReceive}" />`
@@ -553,7 +559,7 @@ function renderManageLines(lines, status) {
           <td>${l['Variant Name'] || ''}</td>
           <td>${l['Description'] || ''}${l['Order ID'] ? `<div class="muted" style="font-size:12px;">For order ${escapeHtml(l['Order ID'])}</div>` : ''}</td>
           <td class="available-stock-cell muted" data-available-line-no="${l['Line No.']}">&hellip;</td>
-          <td>${qtyToTransfer}</td>
+          <td>${qtyToTransferCell}</td>
           <td>${qtyToShipCell}</td>
           <td>${serialsCell}</td>
           <td>${qtyShippedCell}</td>
@@ -568,6 +574,11 @@ function renderManageLines(lines, status) {
     const picker = row.querySelector('.serial-tag-picker');
     if (picker) wireSerialTagPicker(row, picker);
 
+    const qtyToTransferInput = row.querySelector('.manage-qty-to-transfer');
+    if (qtyToTransferInput) {
+      qtyToTransferInput.addEventListener('change', () => saveLineQtyToTransfer(row, qtyToTransferInput));
+    }
+
     // Shipping less than the max remaining lowers how many serials are needed for this action
     // too - keep the picker's required count (and its "N / required" display) in sync live.
     const qtyInput = row.querySelector('.manage-qty-to-ship');
@@ -579,6 +590,59 @@ function renderManageLines(lines, status) {
       });
     }
   });
+}
+
+// Super-user-only change of a line's Qty To Transfer (input from renderManageLines). Re-reads the
+// line first - someone may have shipped since the modal opened - and refuses going below Qty Shipped.
+// Raising is still checked by the request-cap trigger (supabase_transfer_request_cap.sql), which
+// raises the "over the limit" error shown below. Clears "Qty To Ship Manual" so Qty To Ship refills
+// against the new quantity, then reloads the modal.
+async function saveLineQtyToTransfer(row, input) {
+  const errorEl = document.getElementById('viewLinesError');
+  errorEl.classList.add('hidden');
+  const docNo = currentManageDocNo;
+  const lineNo = row.dataset.lineNo;
+  const oldQty = Number(row.dataset.qtyToTransfer) || 0;
+  const newQty = Math.round((parseFloat(input.value) || 0) * 100) / 100;
+
+  const fail = (message) => {
+    errorEl.textContent = message;
+    errorEl.classList.remove('hidden');
+    input.value = oldQty;
+  };
+
+  if (!currentSession?.isSuperUser) { fail('Only a super user can change the quantity.'); return; }
+  if (newQty === oldQty) return;
+  if (newQty <= 0) { fail('Quantity must be more than 0.'); return; }
+
+  input.disabled = true;
+  try {
+    const { data: fresh, error: freshError } = await supabaseClient
+      .from('Transfer_Line')
+      .select('"Qty Shipped"')
+      .eq('"Document No."', docNo)
+      .eq('"Line No."', lineNo)
+      .limit(1);
+    if (freshError) throw freshError;
+    const shipped = Number(fresh?.[0]?.['Qty Shipped']) || 0;
+    if (newQty < shipped) {
+      fail(`Quantity can't go below the ${shipped} already shipped.`);
+      return;
+    }
+
+    await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': lineNo }, { 'Qty To Transfer': newQty });
+    try {
+      await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': lineNo }, { 'Qty To Ship Manual': false });
+    } catch (err) {
+      console.error('Clearing Qty To Ship Manual failed:', err);
+    }
+    await openManageModal(docNo);
+    await loadHeaders();
+  } catch (err) {
+    fail(describeSupabaseError(err, 'Failed to change the quantity.'));
+  } finally {
+    input.disabled = false;
+  }
 }
 
 function getSelectedSerialsForPicker(picker) {

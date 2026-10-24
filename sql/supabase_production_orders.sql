@@ -25,7 +25,13 @@
 -- Maker only sees Released orders they are assigned to, and can only mark their own part done.
 --
 -- Run AFTER supabase_item_ledger_entries.sql, supabase_item_ledger_hooks.sql and
--- supabase_production_manager_role.sql. Safe to re-run.
+-- supabase_production_manager_role.sql.
+--
+-- !! ALREADY INSTALLED - DO NOT RE-RUN. Later files replaced parts of it; re-running brings back the old
+-- 5-arg staff_set_production_order_part_done (Production Done fails: "Could not choose the best candidate
+-- function"), drops 'Consumption' from the ledger EntryType check, and reverts the order lines (colour /
+-- sku) and serials (shelf spot) lists. If it was re-run, run supabase_production_orders_rerun_fix.sql.
+-- Other files' "Run AFTER supabase_production_orders.sql" means it must already be installed, not re-run.
 
 -- ============================================================================
 -- 1. Item Ledger: allow the 'Output' entry type

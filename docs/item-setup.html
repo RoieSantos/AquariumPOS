@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Item Setup - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=navwide1" />
+  <link rel="stylesheet" href="css/bc-list.css?v=skuname1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -12,65 +13,193 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    /* Page-specific bits only - the list shell is css/bc-list.css (same as Item Ledger Entries / Customers). */
+    .item-fact-pic { display: flex; align-items: center; justify-content: center; height: 150px; margin-bottom: 10px; border: 1px solid var(--bc-line); background: var(--bc-surface-2); }
+    .item-fact-pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .item-fact-pic .bc-fact-empty { font-size: 12px; }
+    .item-fact-pic.can-edit { margin-bottom: 4px; }
+    .item-fact-pic.drop-over { border: 2px dashed var(--bc-link); }
+    .item-fact-pic-actions { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; font-size: 12px; }
+    .item-fact-pic-actions .bc-link { font-size: 12px; padding: 0; }
+    .item-fact-pic-actions .item-fact-pic-msg { color: var(--text-muted); }
+    .item-fact-name { font-weight: 600; font-size: 14px; line-height: 1.3; margin-bottom: 2px; }
+    .item-fact-code { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+    .bc-ile dl.bc-facts dd.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .item-margin-neg { color: var(--danger); }
+    .item-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0 6px; border-radius: 3px; border: 1px solid currentColor; }
+    .item-status-on { color: var(--success); }
+    .item-status-off { color: var(--text-muted); }
+    .bc-ile .bc-grid tr.item-inactive td { color: var(--text-muted); }
+    .bc-ile .bc-grid tr.item-inactive.selected td { color: var(--text-main); }
+    .bc-ile .bc-grid td.item-name-cell { max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
+    .item-price-range { display: flex; gap: 6px; }
+    .item-price-range input { min-width: 0; }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>
 
-  <div class="page">
-    <h1>Item Setup</h1>
-    <p class="muted" id="itemSetupIntro">Only visible to super users.</p>
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-clear-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/><path d="M11.5 11.5l3 3M14.5 11.5l-3 3"/></symbol>
+    <symbol id="ico-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="ico-edit" viewBox="0 0 16 16"><path d="M3 13l.6-2.8L10.8 3l2.2 2.2-7.2 7.2z"/><path d="M9.4 4.4l2.2 2.2"/></symbol>
+    <symbol id="ico-download" viewBox="0 0 16 16"><path d="M8 3v8M4.8 7.8 8 11l3.2-3.2M3 13h10"/></symbol>
+    <symbol id="ico-upload" viewBox="0 0 16 16"><path d="M8 11V3M4.8 6.2 8 3l3.2 3.2M3 13h10"/></symbol>
+    <symbol id="ico-ledger" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+  </svg>
 
-    <!-- Not authorized -->
-    <div id="notAuthorizedBox" class="hidden">
-      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
-    </div>
+  <div id="notAuthorizedBox" class="page hidden">
+    <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+  </div>
 
-    <!-- Shown only if the session was created before login started capturing the password
-         (edge case - existing logged-in users before this update); a fresh login fixes it.
-         No password re-entry prompt otherwise - super user status alone is enough, same trust
-         model as Online Orders/Expenses. -->
-    <div id="unlockBox" class="hidden">
-      <p class="error-text" id="unlockError"></p>
-      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
-    </div>
+  <!-- Shown only if the session was created before login started capturing the password
+       (edge case - existing logged-in users before this update); a fresh login fixes it.
+       No password re-entry prompt otherwise - super user status alone is enough, same trust
+       model as Online Orders/Expenses. -->
+  <div id="unlockBox" class="page hidden">
+    <p class="error-text" id="unlockError"></p>
+    <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+  </div>
 
-    <!-- Main content, shown once unlocked -->
-    <div id="setupContent" class="hidden">
-      <div class="toolbar">
-        <h2 style="margin:0;">Items</h2>
-        <div style="display:flex; gap:12px; align-items:center;">
-          <input type="text" id="itemSearchInput" placeholder="Search by code or name..." style="max-width:280px;" />
-          <label for="itemCategoryFilter" class="muted" style="margin:0;">Category</label>
-          <select id="itemCategoryFilter" style="max-width:200px;">
-            <option value="">All categories</option>
-          </select>
-          <button class="btn btn-primary hidden" id="newItemBtn" type="button">+ New Item</button>
-          <button class="btn btn-secondary" id="exportItemsExcelBtn" type="button">Export to Excel</button>
-          <button class="btn btn-secondary" id="importItemsExcelBtn" type="button">Import from Excel</button>
+  <!-- Business Central Items list (css/bc-list.css): "Filter list by" pane | list | FactBox.
+       Filters, sort and paging are server-side (admin_list_items, sql/supabase_item_setup_bc_list.sql).
+       Click a row to show it in the FactBox; the No., a double-click, Enter or Edit opens the Item Card. -->
+  <div id="setupContent" class="page bc-ile hidden">
+    <div class="bc-titlebar">
+      <div>
+        <h1 class="bc-title">Items</h1>
+        <p class="bc-subtitle" id="itemSetupIntro">Only visible to super users.</p>
+      </div>
+      <div class="bc-title-tools">
+        <div class="bc-search">
+          <svg class="bc-ico"><use href="#ico-search"/></svg>
+          <input type="text" id="itemSearchInput" placeholder="Search" aria-label="Search by code or name" autocomplete="off" />
         </div>
+        <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+          <svg class="bc-ico"><use href="#ico-filter"/></svg>
+        </button>
+        <button class="bc-iconbtn" id="clearFiltersBtn" type="button" title="Clear filters" aria-label="Clear filters">
+          <svg class="bc-ico"><use href="#ico-clear-filter"/></svg>
+        </button>
       </div>
-      <p class="muted" style="font-size:12px; margin-top:-8px;">Export to Excel downloads the entire item catalog (ignoring any search/category filter above) with editable <strong>Vendor Code</strong>, <strong>Cost</strong>, and <strong>Wholesale Price</strong> columns. Fill them in and use Import from Excel to bulk-update by Item Code - only those columns are applied, everything else (Name/Category/Price) is read-only context. A blank cell clears that item's vendor, cost, or wholesale price; if the file is missing one of those columns entirely, that field is left untouched.</p>
-      <input type="file" id="importItemsExcelFileInput" class="hidden" accept=".csv" />
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Code</th>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Vendor</th>
-              <th style="text-align:right;">Cost</th>
-              <th style="text-align:right;">Price</th>
-              <th style="text-align:right;">Wholesale Price</th>
-              <th>Variants</th>
-            </tr>
-          </thead>
-          <tbody id="itemTableBody">
-            <tr><td colspan="8" class="muted">Loading...</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div id="itemPaginationBar"></div>
+    </div>
+
+    <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+      <button class="bc-cmd bc-cmd-accent hidden" id="newItemBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>New Item</button>
+      <button class="bc-cmd" id="openItemCardBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-edit"/></svg>Edit</button>
+      <button class="bc-cmd" id="itemLedgerBtn" type="button" disabled title="Item Ledger Entries for the selected item"><svg class="bc-ico"><use href="#ico-ledger"/></svg>Ledger Entries</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="exportItemsExcelBtn" type="button" title="Downloads the entire catalog (ignores filters) with editable Vendor Code, Cost and Wholesale Price columns"><svg class="bc-ico"><use href="#ico-download"/></svg>Export to Excel</button>
+      <button class="bc-cmd" id="importItemsExcelBtn" type="button" title="Bulk-update Vendor Code, Cost and Wholesale Price by Item Code. Only those columns are applied; a blank cell clears the value; a missing column is left untouched."><svg class="bc-ico"><use href="#ico-upload"/></svg>Import from Excel</button>
+      <span class="bc-cmd-sep"></span>
+      <button class="bc-cmd" id="itemRefreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
+    </div>
+    <input type="file" id="importItemsExcelFileInput" class="hidden" accept=".csv" />
+
+    <div class="bc-infobar hidden" id="itemListInfoBar" role="status">
+      <span class="bc-infobar-text" id="itemListInfoText"></span>
+    </div>
+
+    <div class="bc-chips hidden" id="filterChips" aria-label="Active filters"></div>
+
+    <div class="bc-body" id="bcBody">
+      <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+        <div class="bc-pane-head">Filter list by</div>
+        <div class="bc-pane-body">
+          <div class="bc-fp-field">
+            <label for="itemCategoryFilter">Category</label>
+            <select id="itemCategoryFilter"><option value="">(all)</option></select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="itemStatusFilter">Status</label>
+            <select id="itemStatusFilter">
+              <option value="">(all)</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="itemVendorFilter">Primary Vendor</label>
+            <select id="itemVendorFilter"><option value="">(all)</option><option value="-">(no vendor tagged)</option></select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="itemBrandFilter">Brand</label>
+            <input type="text" id="itemBrandFilter" placeholder="Part of the brand" autocomplete="off" />
+          </div>
+          <div class="bc-fp-field">
+            <label for="itemCostFilter">Unit Cost</label>
+            <select id="itemCostFilter">
+              <option value="">(all)</option>
+              <option value="costed">Costed</option>
+              <option value="not_costed">Not costed</option>
+            </select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="itemWholesaleFilter">Wholesale Price</label>
+            <select id="itemWholesaleFilter">
+              <option value="">(all)</option>
+              <option value="set">Set</option>
+              <option value="not_set">Not set</option>
+            </select>
+          </div>
+          <div class="bc-fp-field">
+            <label for="itemPriceFrom">Unit Price</label>
+            <div class="item-price-range">
+              <input type="number" id="itemPriceFrom" step="0.01" min="0" placeholder="From" aria-label="Unit price from" />
+              <input type="number" id="itemPriceTo" step="0.01" min="0" placeholder="To" aria-label="Unit price to" />
+            </div>
+          </div>
+          <button class="bc-link" id="clearFiltersLink" type="button">Clear filters</button>
+          <p class="bc-fp-hint">Click a column heading to sort. Export to Excel always downloads the whole catalog.</p>
+        </div>
+      </aside>
+
+      <section class="bc-main">
+        <div class="bc-grid-wrap" id="itemGridWrap">
+          <table class="bc-grid" data-resize-key="item-setup">
+            <thead>
+              <tr id="itemHeaderRow">
+                <th class="sortable" data-sort="code">No.<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="name">Description<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="category">Category<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="brand">Brand<span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="vendor">Vendor<span class="sort-arrow"></span></th>
+                <th class="sortable num" data-sort="cost">Unit Cost<span class="sort-arrow"></span></th>
+                <th class="sortable num" data-sort="price">Unit Price<span class="sort-arrow"></span></th>
+                <th class="sortable num" data-sort="wholesale">Wholesale<span class="sort-arrow"></span></th>
+                <th>Variants</th>
+                <th class="sortable" data-sort="status">Status<span class="sort-arrow"></span></th>
+              </tr>
+            </thead>
+            <tbody id="itemTableBody">
+              <tr><td colspan="10" class="cell-msg">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="itemPaginationBar"></div>
+      </section>
+
+      <!-- Hidden below 1280px like every BC list FactBox. -->
+      <aside class="bc-factbox" id="factBox" aria-label="Item details">
+        <div class="bc-fact">
+          <div class="bc-fact-title">Item Details</div>
+          <div class="bc-fact-body" id="itemFactDetails"><p class="bc-fact-empty">Select an item to see its details.</p></div>
+          <input type="file" id="itemFactPictureInput" class="hidden" accept="image/*" />
+        </div>
+        <div class="bc-fact">
+          <div class="bc-fact-title">Prices &amp; Cost</div>
+          <div class="bc-fact-body" id="itemFactPrices"><p class="bc-fact-empty">-</p></div>
+        </div>
+        <div class="bc-fact">
+          <div class="bc-fact-title">Item Availability by Location</div>
+          <div class="bc-fact-body" id="itemFactStock"><p class="bc-fact-empty">-</p></div>
+        </div>
+      </aside>
     </div>
   </div>
 
@@ -433,7 +562,9 @@
   <script src="js/auth.js?v=custconv1"></script>
   <script src="js/nav.js?v=xendit1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/itemSetup.js?v=itemmaster1"></script>
+  <script src="js/bcFilterPane.js?v=1"></script>
+  <script src="js/bcColumnResize.js?v=1"></script>
+  <script src="js/itemSetup.js?v=bclist2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

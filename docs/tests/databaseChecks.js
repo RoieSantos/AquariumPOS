@@ -187,7 +187,9 @@
       const ambiguous = (data || []).filter((r) => r.problem === 'ambiguous').map((r) => r.rpc_name);
       a.ok(missing.length === 0, `${missing.length} of ${rpcs.length} not in the database (a .sql file not run yet?): ${missing.join(', ')}`
         + (ambiguous.length ? ` | also 2+ versions of: ${ambiguous.join(', ')}` : ''));
-      if (ambiguous.length) a.warn(`2+ versions with different parameters (calls can fail with PGRST203 - drop the old one): ${ambiguous.join(', ')}`);
+      // A fail, not a warning: calls that skip the extra optional parameter error out with
+      // "Could not choose the best candidate function" (PRD-000090 Production Done, 2026-10-24).
+      a.ok(ambiguous.length === 0, `2+ versions with different parameters - calls fail with "Could not choose the best candidate function" (an older .sql file was re-run? drop the old one): ${ambiguous.join(', ')}`);
     });
 
     t.test('Every Edge Function the pages call is deployed', async (a) => {

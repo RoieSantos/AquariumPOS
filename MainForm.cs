@@ -15556,6 +15556,8 @@ END", connection);
             public bool IsCancelled { get; private set; }
             public string ItemCode { get; set; } = string.Empty;
             public string VariationId { get; set; } = string.Empty;
+            // Portal variants all carry the main item's code as ItemCode - the SKU (e.g. AST-001-BLACK) is what tells them apart.
+            public string Sku { get; set; } = string.Empty;
             public string VariantName { get; set; } = string.Empty;
             public string DisplayText { get; set; } = string.Empty;
             public string Description { get; set; } = string.Empty;
@@ -15579,6 +15581,7 @@ END", connection);
 SELECT
     ISNULL(NULLIF(v.ItemCode, ''), v.MainItemCode) AS ItemCode,
     ISNULL(v.VariationId, '') AS VariationId,
+    ISNULL(v.SKU, '') AS SKU,
     ISNULL(NULLIF(v.VariantName, ''), ISNULL(NULLIF(variantItem.Name, ''), ISNULL(NULLIF(variantItem.Description, ''), ''))) AS VariantName,
     ISNULL(NULLIF(variantItem.Description, ''), ISNULL(NULLIF(mainItem.Description, ''), ISNULL(NULLIF(v.VariantName, ''), ISNULL(NULLIF(variantItem.Name, ''), ISNULL(v.MainItemCode, ''))))) AS VariantDescription,
     ISNULL(v.Price, ISNULL(variantItem.Price, ISNULL(mainItem.Price, @defaultPrice))) AS Price,
@@ -15590,7 +15593,7 @@ FROM dbo.[Variant] v
 LEFT JOIN Items variantItem ON variantItem.Code = ISNULL(NULLIF(v.ItemCode, ''), v.MainItemCode)
 LEFT JOIN Items mainItem ON mainItem.Code = v.MainItemCode
 WHERE v.MainItemCode = @mainItemCode
-ORDER BY VariantName, ItemCode", connection);
+ORDER BY SKU, VariantName, ItemCode", connection);
                 cmd.Parameters.AddWithValue("@mainItemCode", mainItemCode);
                 cmd.Parameters.AddWithValue("@defaultPrice", defaultPrice);
 
@@ -15605,6 +15608,7 @@ ORDER BY VariantName, ItemCode", connection);
                     {
                         ItemCode = itemCode,
                         VariationId = reader["VariationId"]?.ToString() ?? string.Empty,
+                        Sku = reader["SKU"]?.ToString()?.Trim() ?? string.Empty,
                         VariantName = variantName,
                         DisplayText = string.IsNullOrWhiteSpace(variantName) ? itemCode : variantName,
                         Description = reader["VariantDescription"]?.ToString()?.Trim() ?? string.Empty,
@@ -15683,7 +15687,7 @@ ORDER BY VariantName, ItemCode", connection);
 
             foreach (var variant in variants)
             {
-                string buttonText = BuildVariantSelectionButtonText(variant);
+                string buttonText = BuildVariantSelectionButtonText(variant, mainItemCode, mainItemName);
 
                 var button = new Button
                 {
@@ -15753,7 +15757,7 @@ ORDER BY VariantName, ItemCode", connection);
 
         private string BuildAquariumVariantPickerText(SaleVariantSelection variant)
         {
-            string itemCode = variant.ItemCode?.Trim() ?? string.Empty;
+            string itemCode = string.IsNullOrWhiteSpace(variant.Sku) ? variant.ItemCode?.Trim() ?? string.Empty : variant.Sku.Trim();
             string variantName = variant.VariantName?.Trim() ?? string.Empty;
             string description = variant.Description?.Trim() ?? string.Empty;
             string displayText = variant.DisplayText?.Trim() ?? string.Empty;
@@ -15790,8 +15794,22 @@ ORDER BY VariantName, ItemCode", connection);
             return $"{itemCode} - {preferredDescription}";
         }
 
-        private string BuildVariantSelectionButtonText(SaleVariantSelection variant)
+        private string BuildVariantSelectionButtonText(SaleVariantSelection variant, string mainItemCode, string mainItemName)
         {
+            string sku = variant.Sku?.Trim() ?? string.Empty;
+            if (sku.Length > 0)
+            {
+                // SKU first, then only the option part of the name - the shared item name used to fill the
+                // button and get cut off before the part that actually differs between variants.
+                string option = GetVariantOptionText(variant.VariantName, mainItemCode, mainItemName);
+                if (option.Length > 36)
+                {
+                    option = option.Substring(0, 33).TrimEnd() + "...";
+                }
+
+                return (option.Length == 0 ? $"{sku}\nP{variant.Price:F2}" : $"{sku}\n{option}\nP{variant.Price:F2}").ToUpperInvariant();
+            }
+
             string title = string.IsNullOrWhiteSpace(variant.DisplayText) ? variant.ItemCode : variant.DisplayText;
             string description = variant.Description?.Trim() ?? string.Empty;
 
@@ -15808,6 +15826,24 @@ ORDER BY VariantName, ItemCode", connection);
             }
 
             return $"{title}\n{description}\nP{variant.Price:F2}".ToUpperInvariant();
+        }
+
+        // "AST-001 - DUALSTAND-10G (...) - Black" -> "Black". Blank when the name is just the item's own name.
+        private static string GetVariantOptionText(string? variantName, string? mainItemCode, string? mainItemName)
+        {
+            string option = variantName?.Trim() ?? string.Empty;
+            string code = mainItemCode?.Trim() ?? string.Empty;
+            string name = mainItemName?.Trim() ?? string.Empty;
+
+            foreach (var prefix in new[] { code, name })
+            {
+                if (prefix.Length > 0 && option.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    option = option.Substring(prefix.Length).TrimStart(' ', '-', '–').Trim();
+                }
+            }
+
+            return option;
         }
 
         private bool IsManagedAquariumSetItem(string? categoryCode, string? itemCode, string? variationId, string? itemName)
