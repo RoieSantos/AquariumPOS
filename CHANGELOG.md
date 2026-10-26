@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-26
 
+- **Video Ad Builder: full-screen layout (default).**
+  - Scenes now use more of the screen. The logo tag and headline start about 100px higher, and the drawings run down to about y=1720 instead of 1420.
+  - Tank, stand and sump drawings are wider (780 instead of 720), and the delivery truck and house are up to 1.2x bigger. Payment cards are up to 250px tall and sit nearer the middle.
+  - A new **"Keep clear of Facebook/Instagram buttons"** tick box (`config.safeZones`) brings back the old layout, which keeps out of the area the Reels caption and buttons cover.
+  - The end card is unchanged.
+  - Changes are in [videoAdRenderer.js](docs/js/videoAdRenderer.js), [videoAdBuilder.js](docs/js/videoAdBuilder.js) and [video-ad-builder.html](docs/video-ad-builder.html).
 - **Video Ad Builder: Review wall + recommendations count.**
   - The 💬 Reviews scene has a Layout choice. Big bubbles shows up to 3. Review wall shows up to 15 short snippets scrolling up like a chat feed, alternating left and right; it defaults to 6 seconds.
   - **Use all** fills the wall from the loaded Facebook reviews.

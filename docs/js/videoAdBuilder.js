@@ -280,6 +280,7 @@ function renderAdFields() {
   $('logoThumb').src = c.brand.logo || '';
   $('logoThumb').classList.toggle('hidden', !c.brand.logo);
   $('showLogo').checked = c.brand.showLogo !== false;
+  $('safeZones').checked = !!c.safeZones;
   const row = $('accentRow');
   row.querySelectorAll('.va-swatch').forEach((el) => el.remove());
   ACCENTS.forEach((hex) => {
@@ -1293,6 +1294,7 @@ function tick() {
   $('brandName').addEventListener('input', (e) => { current.config.brand.name = e.target.value; setDirty(true); });
   $('accent').addEventListener('input', (e) => { current.config.accent = e.target.value; setDirty(true); });
   $('showLogo').addEventListener('change', (e) => { current.config.brand.showLogo = e.target.checked; setDirty(true); });
+  $('safeZones').addEventListener('change', (e) => { current.config.safeZones = e.target.checked; setDirty(true); });
   $('logoInput').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';

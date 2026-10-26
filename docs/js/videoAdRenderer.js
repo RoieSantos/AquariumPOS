@@ -3,7 +3,9 @@
 // exact even on a slow phone). Kept apart from js/videoAdBuilder.js so the drawing has no page/UI code.
 //
 // Ad shape (saved as VideoAds."Config", sql/supabase_video_ads.sql):
-//   { version: 1, accent: '#3fe0d0', brand: { name, logo }, scenes: [scene...] }
+//   { version: 1, accent: '#3fe0d0', brand: { name, logo }, safeZones, scenes: [scene...] }
+//   safeZones: true = keep content out of the areas Facebook/Instagram cover with the caption and
+//   buttons (the bottom ~25%); otherwise (default) the content uses the full screen.
 //   scene: { style, duration, headline, sub, bullets[], dims[L,W,H], options, layers, paint, media, mediaType, button, footer }
 //   style: 'logo' (shop logo big in the centre; older ads say 'fish') | 'tank' / 'stand' / 'sump' (draws itself to dims in inches; a tank
 //          also takes options - see TANK_OPTIONS; a stand takes layers 1-4 and paint 'black'|'white') | 'water' (text only)
@@ -488,7 +490,7 @@ window.VideoAdRenderer = (function () {
       const canH = o.canopy ? clamp(Ht * 0.45, 6, 12) : 0;
       const cabH = o.cabinet ? 30 : 0;
       const total = canH + Ht + cabH;
-      const full = boxGeom([L, Wd, total], top, 720, maxH);
+      const full = boxGeom([L, Wd, total], top, ad.safeZones ? 720 : 780, maxH);
       const g = subGeom(full, canH / total, (canH + Ht) / total, Ht);
       const a = g.at;
       const frame = easeInOut((lt - 0.2) / 1.4);
@@ -676,7 +678,7 @@ window.VideoAdRenderer = (function () {
 
     // Square-tube metal stand: legs first, then each layer's frame (with its centre support bar).
     function drawStand(s, lt, top, maxH) {
-      const g = boxGeom(dimsOf(s), top, 720, maxH);
+      const g = boxGeom(dimsOf(s), top, ad.safeZones ? 720 : 780, maxH);
       const a = g.at;
       const layers = Math.round(clamp(Number(s.layers) || 2, 1, 4));
       const levels = layers === 1 ? [0] : Array.from({ length: layers }, (_, i) => (i * 0.9) / (layers - 1));
@@ -715,7 +717,7 @@ window.VideoAdRenderer = (function () {
 
     // Sump: glass box with baffles; filter sock -> bio media -> return pump, water flowing through.
     function drawSump(s, lt, top, maxH) {
-      const g = boxGeom(dimsOf(s), top, 720, maxH);
+      const g = boxGeom(dimsOf(s), top, ad.safeZones ? 720 : 780, maxH);
       const a = g.at;
       const wl = easeOut((lt - 1.4) / 0.9);
       const waterTop = 1 - 0.72 * wl;
@@ -849,6 +851,11 @@ window.VideoAdRenderer = (function () {
     }
 
     // Top of every scene (just under the Reels top bar): logo + shop name, centred together.
+    // Full-screen layout (default) starts the text higher and lets drawings run lower;
+    // safeZones keeps the original layout clear of the Reels caption/buttons.
+    const UP = () => (ad && ad.safeZones ? 0 : 100);
+    const BOTTOM = () => (ad && ad.safeZones ? 1430 : 1720);
+
     function drawBrandTag() {
       const name = (ad.brand && ad.brand.name) || '';
       const showLogo = !(ad.brand && ad.brand.showLogo === false) && getMedia(ad.brand && ad.brand.logo);
@@ -859,7 +866,7 @@ window.VideoAdRenderer = (function () {
       const r = 42, gap = showLogo && name ? 20 : 0;
       const tw = name ? Math.min(ctx.measureText(text).width, W - 300) : 0;
       let x = (W - ((showLogo ? r * 2 : 0) + gap + tw)) / 2;
-      const cy = 290;
+      const cy = 290 - UP() * 0.85;
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 14;
       if (showLogo) { drawLogoCircle(x + r, cy, r, 'rgba(255,255,255,0.9)', 4); x += r * 2 + gap; }
       if (name) {
@@ -922,7 +929,7 @@ window.VideoAdRenderer = (function () {
 
     // Headline + sub-text from y=420 (below the Reels top bar). Returns the y under the text.
     function drawText(s, lt) {
-      let y = 420;
+      let y = 420 - UP();
       ctx.save();
       ctx.textBaseline = 'top';
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 4;
@@ -989,15 +996,16 @@ window.VideoAdRenderer = (function () {
     function drawCta(s, lt, t) {
       const a = easeOut(lt / 0.6);
       ctx.save(); ctx.globalAlpha *= a;
-      drawRipples(W / 2, 470, 120, t, a);
-      drawLogoCircle(W / 2, 470, 120, ad.accent, 6);
+      const up = 0; // the end card is centred already - it doesn't move up with full screen
+      drawRipples(W / 2, 470 - up, 120, t, a);
+      drawLogoCircle(W / 2, 470 - up, 120, ad.accent, 6);
       ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = '#fff';
-      ctx.font = `800 64px ${FONT}`; ctx.fillText((ad.brand && ad.brand.name) || '', W / 2, 625, 980);
+      ctx.font = `800 64px ${FONT}`; ctx.fillText((ad.brand && ad.brand.name) || '', W / 2, 625 - up, 980);
       ctx.restore();
       ctx.save();
       ctx.textBaseline = 'top'; ctx.font = `800 96px ${FONT}`; ctx.fillStyle = '#fff';
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18;
-      let y = drawRisingText(wrap(s.headline, 940), lt, 760, 108, 0.2);
+      let y = drawRisingText(wrap(s.headline, 940), lt, 760 - up, 108, 0.2);
       ctx.restore();
       y += 30;
       if (s.button) {
@@ -1151,8 +1159,10 @@ window.VideoAdRenderer = (function () {
       const keys = PAY_METHODS.map(([k]) => k).filter((k) => !Array.isArray(s.methods) || !s.methods.length || s.methods.includes(k));
       if (!keys.length) return;
       const cols = keys.length <= 4 ? 2 : 3, rows = Math.ceil(keys.length / cols), gap = 26;
-      const ch = Math.min(200, (maxH - gap * (rows - 1)) / rows, ((W - 120 - gap * (cols - 1)) / cols) / 1.58);
+      const ch = Math.min(ad.safeZones ? 200 : 250, (maxH - gap * (rows - 1)) / rows, ((W - 120 - gap * (cols - 1)) / cols) / 1.58);
       const cw = ch * 1.58;
+      // Spare room (full screen) goes partly above the cards, so they sit nearer the middle.
+      top += Math.max(0, maxH - (ch * rows + gap * (rows - 1))) * 0.3;
       keys.forEach((key, i) => {
         const row = Math.floor(i / cols), inRow = Math.min(cols, keys.length - row * cols), col = i % cols;
         const cx = W / 2 + (col - (inRow - 1) / 2) * (cw + gap);
@@ -1189,7 +1199,7 @@ window.VideoAdRenderer = (function () {
 
     // ---------- delivery: our truck rolls up to a house, the wrapped aquarium floats to the door ----------
     function drawDelivery(s, lt, top, maxH) {
-      const sc = clamp(maxH / 560, 0.6, 1.1);
+      const sc = clamp(maxH / 560, 0.6, 1.2);
       const gy = top + maxH * 0.78;           // where the wheels touch the road
       // Road with its centre line sliding by while the truck is moving.
       const drive = easeOut((lt - 0.1) / 1.4);
@@ -1432,24 +1442,25 @@ window.VideoAdRenderer = (function () {
       if (!logoScene) drawBrandTag();
       const y = drawText(s, lt);
       const yb = drawBullets(s.bullets, lt, y + 40);
-      if (logoScene) drawLogoHero(lt, t, Math.min(1180, Math.max(1050, yb + 330)));
+      const up = UP(), bottom = BOTTOM();
+      if (logoScene) drawLogoHero(lt, t, Math.min(1180 + (up ? 60 : 0), Math.max(1050 - up, yb + 330)));
       if (s.style === 'reviews') {
-        const top = Math.min(900, Math.max(600, yb + 70));
-        drawReviews(s, lt, top, 1460 - top, dur);
+        const top = Math.min(900 - up, Math.max(600 - up, yb + 70));
+        drawReviews(s, lt, top, bottom + 30 - top, dur);
       }
       if (s.style === 'payments' || s.style === 'delivery') {
-        const top = Math.min(1000, Math.max(760, yb + 110));
-        (s.style === 'payments' ? drawPayments : drawDelivery)(s, lt, top, 1440 - top);
+        const top = Math.min(1000 - up, Math.max(760 - up, yb + 110));
+        (s.style === 'payments' ? drawPayments : drawDelivery)(s, lt, top, bottom + 10 - top);
       }
       // The tank/stand/sump sits under whatever text there is, and stops above the Reels caption area.
       const BUILDS = { tank: drawTank, stand: drawStand, sump: drawSump };
       if (BUILDS[s.style]) {
         // A tank with a cabinet / canopy is a taller stack, so it may start higher to stay a good size.
         const tall = s.style === 'tank' && s.options && (s.options.cabinet || s.options.canopy);
-        const top = Math.min(1060, Math.max(tall ? 700 : 880, yb + 120));
+        const top = Math.min(1060 - up, Math.max((tall ? 700 : 880) - up, yb + 120));
         // Room under a tank for its option tags.
         const reserve = s.style === 'tank' && tankOptionTags(s.options).length ? 160 : 0;
-        BUILDS[s.style](s, lt, top, 1420 - top - reserve);
+        BUILDS[s.style](s, lt, top, bottom - 10 - top - reserve);
       }
     }
 
