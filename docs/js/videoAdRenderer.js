@@ -9,8 +9,9 @@
 //          also takes options - see TANK_OPTIONS; a stand takes layers 1-4 and paint 'black'|'white') | 'water' (text only)
 //          | 'payments' (the payment methods in scene.methods drop in as cards - see PAY_METHODS)
 //          | 'delivery' (our own truck drives up to a house and hands over the wrapped aquarium)
-//          | 'reviews' (five stars, then up to 3 real customer quotes in scene.reviews = [{ text, name }]
-//            rise up as bubbles)
+//          | 'reviews' (five stars, then real customer quotes from scene.reviews = [{ text, name }]:
+//            layout 'bubbles' = up to 3 rise up as big bubbles; 'wall' = up to 15 short snippets scroll up
+//            like a chat feed. reviewCount (optional) = the real number of Facebook recommendations)
 //          | 'photo' (your photo/video, falls back to water until one is chosen) | 'cta' (logo + button end card)
 window.VideoAdRenderer = (function () {
   const W = 1080, H = 1920, FPS = 30, FADE = 0.75; // FADE = length of the tide transition
@@ -1303,7 +1304,54 @@ window.VideoAdRenderer = (function () {
       ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
     }
 
-    function drawReviews(s, lt, top, maxH) {
+    // Review wall: many short snippets scrolling up like a chat feed, fading at the top and bottom.
+    function drawReviewWall(list, lt, dur, y0, y1) {
+      const fs = 30, lineH = 38, padX = 26, padY = 18, gap = 16, maxW = 720;
+      ctx.save(); ctx.font = `600 ${fs}px ${FONT}`;
+      const items = list.map((r, i) => {
+        let text = String(r.text).trim().replace(/\s+/g, ' ');
+        if (text.length > 80) text = text.slice(0, 79).replace(/\s*\S*$/, '') + '…';
+        const lines = wrap('“' + text + '”', maxW - padX * 2).slice(0, 2);
+        const w = Math.min(maxW, Math.max(...lines.map((l) => ctx.measureText(l).width)) + padX * 2, maxW);
+        return { lines, w: Math.max(w, 300), h: padY * 2 + lines.length * lineH + 34, name: String(r.name || '').trim(), right: i % 2 === 1 };
+      });
+      ctx.restore();
+      const contentH = items.reduce((a, b) => a + b.h + gap, 0);
+      const viewH = y1 - y0;
+      // Starts with the wall already full and scrolls so the last bubble reaches the middle at the end.
+      const speed = clamp((contentH - viewH * 0.6) / Math.max(1, dur - 0.9), 40, 320);
+      const scroll = -Math.max(0, lt) * speed;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, y0, W, viewH); ctx.clip();
+      let y = y0 + 30 + scroll;
+      items.forEach((b, i) => {
+        const by = y; y += b.h + gap;
+        if (by > y1 || by + b.h < y0) return;
+        const mid = by + b.h / 2;
+        const edge = clamp(Math.min(mid - y0, y1 - mid) / 90);
+        const k = clamp((lt + 0.3 - i * 0.12) / 0.35);
+        const x = b.right ? W - 90 - b.w : 90;
+        ctx.save(); ctx.globalAlpha *= edge * k;
+        ctx.translate(x + Math.sin(lt * 1.5 + i) * 6, by);
+        ctx.shadowColor = 'rgba(0,0,0,0.25)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+        roundRect(0, 0, b.w, b.h, 30); ctx.fillStyle = b.right ? 'rgba(220,248,255,0.96)' : 'rgba(255,255,255,0.96)'; ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.beginPath();
+        if (b.right) { ctx.moveTo(b.w - 60, b.h - 2); ctx.lineTo(b.w - 40, b.h + 22); ctx.lineTo(b.w - 96, b.h - 2); }
+        else { ctx.moveTo(60, b.h - 2); ctx.lineTo(40, b.h + 22); ctx.lineTo(96, b.h - 2); }
+        ctx.closePath(); ctx.fill();
+        ctx.font = `600 ${fs}px ${FONT}`; ctx.fillStyle = '#10283a'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        b.lines.forEach((line, j) => ctx.fillText(line, padX, padY + j * lineH));
+        const fy = padY + b.lines.length * lineH + 4;
+        for (let j = 0; j < 5; j++) drawStar(padX + 10 + j * 23, fy + 12, 10, '#f5b400');
+        ctx.font = `700 22px ${FONT}`; ctx.fillStyle = '#4a6375';
+        ctx.fillText(b.name || 'Facebook review', padX + 128, fy + 2);
+        ctx.restore();
+      });
+      ctx.restore();
+    }
+
+    function drawReviews(s, lt, top, maxH, dur) {
       // Stars
       const sr = 46, sgap = 112;
       for (let i = 0; i < 5; i++) {
@@ -1320,13 +1368,19 @@ window.VideoAdRenderer = (function () {
       if (lk > 0) {
         ctx.save(); ctx.globalAlpha *= lk;
         ctx.font = `700 34px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#cfefff';
-        ctx.fillText('Real reviews from our Facebook page', W / 2, top + sr * 2 + 34);
+        const count = Math.floor(Number(s.reviewCount) || 0);
+        // The count rolls up to the real number of recommendations staff entered.
+        const shown = count > 0 ? Math.round(count * easeOut((lt - 0.55) / 0.9)) : 0;
+        if (count > 0) ctx.font = `800 40px ${FONT}`;
+        ctx.fillText(count > 0 ? `${shown}+ recommendations on Facebook` : 'Real reviews from our Facebook page', W / 2, top + sr * 2 + 34);
         ctx.restore();
       }
 
       // Quote bubbles, stacked under the stars.
-      const list = (Array.isArray(s.reviews) ? s.reviews : []).filter((r) => r && String(r.text || '').trim()).slice(0, 3);
-      if (!list.length) return;
+      const all = (Array.isArray(s.reviews) ? s.reviews : []).filter((r) => r && String(r.text || '').trim());
+      if (!all.length) return;
+      if (s.layout === 'wall') { drawReviewWall(all.slice(0, 15), lt, dur, top + sr * 2 + 74, top + maxH); return; }
+      const list = all.slice(0, 3);
       const bw = 900, padX = 44, padY = 30;
       const fs = list.length > 2 ? 36 : 40, lineH = Math.round(fs * 1.28);
       let y = top + sr * 2 + 84;
@@ -1381,7 +1435,7 @@ window.VideoAdRenderer = (function () {
       if (logoScene) drawLogoHero(lt, t, Math.min(1180, Math.max(1050, yb + 330)));
       if (s.style === 'reviews') {
         const top = Math.min(900, Math.max(600, yb + 70));
-        drawReviews(s, lt, top, 1460 - top);
+        drawReviews(s, lt, top, 1460 - top, dur);
       }
       if (s.style === 'payments' || s.style === 'delivery') {
         const top = Math.min(1000, Math.max(760, yb + 110));

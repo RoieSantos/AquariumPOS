@@ -2,7 +2,10 @@
 // (reviews) on our Facebook Pages so staff can pick real ones for a ⭐ Reviews scene.
 //
 //   POST { admin_username, admin_password }
-//   ->   { reviews: [{ page, text, recommends, created, name }], pages: [{ name, ok, error? }] }
+//   ->   { reviews: [{ page, text, recommends, created, name }], recommends_total,
+//          pages: [{ name, ok, error?, recommends }] }
+//   recommends_total = every positive recommendation across the Pages, with or without text -
+//   the real number behind a "120+ recommendations" line in the ad.
 //
 // Read-only: one GET of each Page's /ratings with the Page tokens the other functions already use
 // (Messenger bot + Facebook posting secrets). Reading reviews needs the token's
@@ -28,8 +31,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
 }
 
-async function graphGet(graphVersion: string, path: string, params: Record<string, string>) {
-  const url = `https://graph.facebook.com/${graphVersion}/${path}?${new URLSearchParams(params).toString()}`;
+const MAX_PAGES_PER_FB_PAGE = 20; // 100 ratings each
+
+async function graphGet(graphVersion: string, path: string, params: Record<string, string>, fullUrl?: string) {
+  const url = fullUrl || `https://graph.facebook.com/${graphVersion}/${path}?${new URLSearchParams(params).toString()}`;
   try {
     const res = await fetch(url);
     const body = await res.json().catch(() => ({}));
@@ -85,7 +90,8 @@ Deno.serve(async (req) => {
   if (!tokens.length) return jsonResponse({ error: 'No Facebook Page token is set up.' }, 500);
 
   const seenPages = new Set<string>();
-  const pages: { name: string; ok: boolean; error?: string }[] = [];
+  const pages: { name: string; ok: boolean; error?: string; recommends?: number }[] = [];
+  let recommendsTotal = 0;
   const reviews: { page: string; text: string; recommends: boolean; created: string; name: string | null }[] = [];
 
   for (const token of tokens) {
@@ -102,20 +108,30 @@ Deno.serve(async (req) => {
       pages.push({ name: pageName, ok: false, error: r.body?.error?.message || 'Could not read reviews.' });
       continue;
     }
-    pages.push({ name: pageName, ok: true });
-    for (const x of (r.body.data ?? []) as Record<string, any>[]) {
-      const text = String(x.review_text ?? '').trim();
-      if (!text) continue;
-      reviews.push({
-        page: pageName,
-        text,
-        recommends: x.recommendation_type ? x.recommendation_type === 'positive' : Number(x.rating) >= 4,
-        created: String(x.created_time ?? ''),
-        name: x.reviewer?.name ? String(x.reviewer.name) : null
-      });
+    let recommends = 0;
+    for (let n = 0; ; n++) {
+      for (const x of (r.body.data ?? []) as Record<string, any>[]) {
+        const positive = x.recommendation_type ? x.recommendation_type === 'positive' : Number(x.rating) >= 4;
+        if (positive) recommends++;
+        const text = String(x.review_text ?? '').trim();
+        if (!text) continue;
+        reviews.push({
+          page: pageName,
+          text,
+          recommends: positive,
+          created: String(x.created_time ?? ''),
+          name: x.reviewer?.name ? String(x.reviewer.name) : null
+        });
+      }
+      const next = r.body.paging?.next;
+      if (!next || n + 1 >= MAX_PAGES_PER_FB_PAGE) break;
+      r = await graphGet(graphVersion, '', {}, next);
+      if (!r.ok) break;
     }
+    recommendsTotal += recommends;
+    pages.push({ name: pageName, ok: true, recommends });
   }
 
   reviews.sort((a, b) => b.created.localeCompare(a.created));
-  return jsonResponse({ reviews, pages });
+  return jsonResponse({ reviews, recommends_total: recommendsTotal, pages });
 });

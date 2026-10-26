@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-26
 
+- **Video Ad Builder: Review wall + recommendations count.**
+  - The 💬 Reviews scene has a Layout choice. Big bubbles shows up to 3. Review wall shows up to 15 short snippets scrolling up like a chat feed, alternating left and right; it defaults to 6 seconds.
+  - **Use all** fills the wall from the loaded Facebook reviews.
+  - An optional **Recommendations count** shows as "120+ recommendations on Facebook" and counts up.
+  - [video-ad-reviews](supabase/functions/video-ad-reviews/index.ts) now pages through all ratings and returns `recommends_total`, the real number, as a hint for that count (needs redeploy).
+  - Changes are in [videoAdRenderer.js](docs/js/videoAdRenderer.js) and [videoAdBuilder.js](docs/js/videoAdBuilder.js).
 - **Video Ad Builder: 💬 Reviews scene with real Facebook reviews.**
   - Five stars pop in under "Real reviews from our Facebook page", then up to 3 customer quotes rise in like air bubbles and settle as chat bubbles.
   - **📥 Load reviews from Facebook** goes through the new Edge Function [video-ad-reviews](supabase/functions/video-ad-reviews/index.ts). It does a read-only `/ratings` call with the existing Page tokens, which needs `pages_read_user_content`. Staff click Use on a review, or type one in.
