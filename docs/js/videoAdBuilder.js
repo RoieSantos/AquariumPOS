@@ -22,6 +22,8 @@ const STYLES = [
   { key: 'tank', label: '📐 Tank drawing' },
   { key: 'stand', label: '🔩 Stand drawing' },
   { key: 'sump', label: '🌀 Sump drawing' },
+  { key: 'payments', label: '💳 Payments' },
+  { key: 'delivery', label: '🚚 Delivery' },
   { key: 'photo', label: '📷 Photo / video' },
   { key: 'water', label: '🌊 Text only' },
   { key: 'cta', label: '📣 End card' }
@@ -66,6 +68,8 @@ function templateCustomAquarium() {
         bullets: ['Rimless or with rim', '3mm-12mm or tempered glass', 'Black or clear sealant'] },
       { style: 'stand', duration: 3, headline: 'Matching stands', sub: "Built to your tank's size", bullets: [], dims: [48, 18, 30], layers: 2, paint: 'black' },
       { style: 'sump', duration: 3, headline: 'Sump filtration too', sub: 'Filter, bio media & return pump', bullets: [], dims: [36, 14, 16] },
+      { style: 'payments', duration: 3.2, headline: 'Pay your way', sub: 'Cards, e-wallets, bank transfer or cash', bullets: [] },
+      { style: 'delivery', duration: 3.8, headline: 'We deliver it safely', sub: 'Our own team - we handle the rest at your home', bullets: [] },
       { style: 'cta', duration: 3.2, headline: 'Get your quote today', button: 'rspetstop.com',
         bullets: ['Message us on Facebook', 'or chat with Alice on our website'], footer: 'Amaya & GMA branches' }
     ]
@@ -99,6 +103,8 @@ function newScene(style) {
   if (BUILD_DIMS[style]) base.dims = BUILD_DIMS[style].slice();
   if (style === 'stand') Object.assign(base, { layers: 2, paint: 'black' });
   if (style === 'cta') Object.assign(base, { headline: 'Message us today', button: 'rspetstop.com', footer: '' });
+  if (style === 'payments') Object.assign(base, { headline: 'Pay your way', sub: 'Cards, e-wallets, bank transfer or cash' });
+  if (style === 'delivery') Object.assign(base, { duration: 3.8, headline: 'We deliver it safely', sub: 'Our own team - we handle the rest at your home' });
   return base;
 }
 
@@ -342,6 +348,18 @@ function sceneCardHtml(s, i, count) {
       </div>
       <label class="va-label">Other accessories, comma separated (e.g. Filter, Heater, Chiller) <input type="text" data-opt="extras" maxlength="120" value="${escapeHtml(o.extras)}" /></label>`;
   }
+  if (s.style === 'payments') {
+    const on = (k) => !Array.isArray(s.methods) || !s.methods.length || s.methods.includes(k);
+    const checks = VideoAdRenderer.PAY_METHODS.map(([k, label]) =>
+      `<label class="va-opt"><input type="checkbox" data-method="${k}"${on(k) ? ' checked' : ''} /> ${label}</label>`).join('');
+    fields += `
+      <div class="va-label">Payment methods to show (each drops in as a card)
+        <div class="va-opts">${checks}</div>
+      </div>`;
+  }
+  if (s.style === 'delivery') {
+    fields += `<p class="muted" style="margin:0; font-size:12.5px;">Our truck (with your logo and shop name) drives up to a house and the wrapped aquarium goes to the door. The animation takes about 3 seconds - keep this scene at least 3.5 seconds long.</p>`;
+  }
   if (s.style === 'stand') {
     const layers = s.layers || 2;
     fields += `
@@ -408,6 +426,8 @@ function onSceneInput(e) {
     s[k] = e.target.value;
     if (k === 'headline') card.querySelector('.va-scene-title').textContent = s.headline || 'Scene ' + (Number(card.dataset.i) + 1);
     if (k === 'say') { card.querySelector('.va-say-status').textContent = sayStatus(s); renderVoice(); }
+  } else if (e.target.dataset.method) {
+    s.methods = [...card.querySelectorAll('input[data-method]')].filter((el) => el.checked).map((el) => el.dataset.method);
   } else if (e.target.dataset.opt) {
     const opt = e.target.dataset.opt;
     s.options = s.options || {};
@@ -445,6 +465,7 @@ function onSceneClick(e) {
     }
     if (style === 'stand') { s.layers = s.layers || 2; s.paint = s.paint || 'black'; }
     if (style === 'cta' && s.button == null) s.button = 'rspetstop.com';
+    if (style === 'delivery' && s.duration < 3.6) s.duration = 3.8;
     finishStructuralChange(i);
     return;
   }
@@ -913,6 +934,7 @@ async function runAi(prompt, files, baseConfig, setStatus) {
         tank_options: s.options || {},
         stand_layers: s.layers || 2,
         voiceover: s.say || '',
+        payment_methods: s.methods || [],
         stand_paint: s.paint || 'black',
         photo: s.media && index.has(s.media) ? 'upload:' + index.get(s.media) : '',
         button: s.button || '',

@@ -7,6 +7,8 @@
 //   scene: { style, duration, headline, sub, bullets[], dims[L,W,H], options, layers, paint, media, mediaType, button, footer }
 //   style: 'logo' (shop logo big in the centre; older ads say 'fish') | 'tank' / 'stand' / 'sump' (draws itself to dims in inches; a tank
 //          also takes options - see TANK_OPTIONS; a stand takes layers 1-4 and paint 'black'|'white') | 'water' (text only)
+//          | 'payments' (the payment methods in scene.methods drop in as cards - see PAY_METHODS)
+//          | 'delivery' (our own truck drives up to a house and hands over the wrapped aquarium)
 //          | 'photo' (your photo/video, falls back to water until one is chosen) | 'cta' (logo + button end card)
 window.VideoAdRenderer = (function () {
   const W = 1080, H = 1920, FPS = 30, FADE = 0.75; // FADE = length of the tide transition
@@ -30,6 +32,12 @@ window.VideoAdRenderer = (function () {
     const n = parseInt(m[1], 16);
     return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
   }
+
+  // Payment methods a 'payments' scene can show (scene.methods = keys; none set = all of them).
+  const PAY_METHODS = [
+    ['visa', 'Visa'], ['mastercard', 'Mastercard'], ['gcash', 'GCash'], ['maya', 'Maya'],
+    ['qrph', 'QR Ph'], ['bank', 'Bank transfer'], ['cash', 'Cash']
+  ];
 
   // Tank options (scene.options): these flags plus holes / dividers (counts) and extras (other
   // accessories, comma separated). Each one shows on the tank drawing and as a tag under it.
@@ -1083,6 +1091,206 @@ window.VideoAdRenderer = (function () {
       ctx.restore();
     }
 
+    // ---------- payments: each method is a card that drops into the water, splashes and bobs ----------
+    function drawPayCard(key, w, h) {
+      const x = -w / 2, y = -h / 2, r = h * 0.1;
+      const fills = { visa: ['#1a1f71', '#2a3a9e'], mastercard: ['#16181d', '#2c3038'], gcash: ['#0062e0', '#1f8bff'],
+        maya: ['#0b0b0b', '#1d1d1d'], qrph: ['#ffffff', '#e9eef3'], bank: ['#0d3b66', '#1a5a91'], cash: ['#1f7a3a', '#2fa152'] };
+      const [c1, c2] = fills[key] || fills.bank;
+      const bg = ctx.createLinearGradient(x, y, x + w, y + h);
+      bg.addColorStop(0, c1); bg.addColorStop(1, c2);
+      roundRect(x, y, w, h, r); ctx.fillStyle = bg; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.save(); roundRect(x, y, w, h, r); ctx.clip();
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+      const chip = () => {
+        roundRect(x + w * 0.1, y + h * 0.3, w * 0.16, h * 0.24, 6); ctx.fillStyle = '#d9b45a'; ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5; ctx.stroke();
+      };
+      if (key === 'visa') {
+        chip();
+        ctx.font = `italic 900 ${h * 0.3}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText('VISA', x + w * 0.66, y + h * 0.66);
+        ctx.fillStyle = '#f7b600'; ctx.fillRect(x, y + h * 0.88, w, h * 0.06);
+      } else if (key === 'mastercard') {
+        chip();
+        const cy = y + h * 0.56, rr = h * 0.2;
+        ctx.beginPath(); ctx.arc(x + w * 0.62, cy, rr, 0, TAU); ctx.fillStyle = '#eb001b'; ctx.fill();
+        ctx.beginPath(); ctx.arc(x + w * 0.62 + rr * 1.2, cy, rr, 0, TAU); ctx.fillStyle = 'rgba(247,158,27,0.92)'; ctx.fill();
+        ctx.font = `700 ${h * 0.11}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText('mastercard', x + w * 0.72, y + h * 0.86);
+      } else if (key === 'gcash') {
+        ctx.font = `900 ${h * 0.3}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText('GCash', x + w / 2, y + h * 0.52);
+      } else if (key === 'maya') {
+        ctx.font = `900 ${h * 0.32}px ${FONT}`; ctx.fillStyle = '#00d26a'; ctx.fillText('maya', x + w / 2, y + h * 0.5);
+      } else if (key === 'qrph') {
+        const q = h * 0.62, qx = x + w * 0.1, qy = y + (h - q) / 2, n = 9, cell = q / n;
+        ctx.fillStyle = '#0b1b2b';
+        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+          const finder = (i < 3 && j < 3) || (i > 5 && j < 3) || (i < 3 && j > 5);
+          if (finder ? !(i % 6 === 1 && j % 6 === 1) : rand(i * 13 + j * 7) > 0.5) ctx.fillRect(qx + i * cell, qy + j * cell, cell, cell);
+        }
+        ctx.font = `900 ${h * 0.24}px ${FONT}`; ctx.fillStyle = '#c8102e'; ctx.fillText('QR Ph', x + w * 0.7, y + h * 0.52);
+      } else if (key === 'bank') {
+        const bx = x + w * 0.22, by = y + h * 0.5, s = h * 0.36;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.moveTo(bx - s * 0.6, by - s * 0.2); ctx.lineTo(bx, by - s * 0.6); ctx.lineTo(bx + s * 0.6, by - s * 0.2); ctx.closePath(); ctx.fill();
+        for (let i = 0; i < 4; i++) ctx.fillRect(bx - s * 0.5 + i * s * 0.3, by - s * 0.12, s * 0.12, s * 0.5);
+        ctx.fillRect(bx - s * 0.6, by + s * 0.42, s * 1.2, s * 0.12);
+        ctx.font = `800 ${h * 0.15}px ${FONT}`; ctx.fillText('Bank', x + w * 0.65, y + h * 0.4); ctx.fillText('transfer', x + w * 0.65, y + h * 0.6);
+      } else if (key === 'cash') {
+        ctx.beginPath(); ctx.arc(x + w * 0.25, y + h * 0.5, h * 0.26, 0, TAU); ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 4; ctx.stroke();
+        ctx.font = `900 ${h * 0.3}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText('₱', x + w * 0.25, y + h * 0.52);
+        ctx.font = `800 ${h * 0.24}px ${FONT}`; ctx.fillText('Cash', x + w * 0.66, y + h * 0.52);
+      }
+      ctx.restore();
+    }
+
+    function drawPayments(s, lt, top, maxH) {
+      const keys = PAY_METHODS.map(([k]) => k).filter((k) => !Array.isArray(s.methods) || !s.methods.length || s.methods.includes(k));
+      if (!keys.length) return;
+      const cols = keys.length <= 4 ? 2 : 3, rows = Math.ceil(keys.length / cols), gap = 26;
+      const ch = Math.min(200, (maxH - gap * (rows - 1)) / rows, ((W - 120 - gap * (cols - 1)) / cols) / 1.58);
+      const cw = ch * 1.58;
+      keys.forEach((key, i) => {
+        const row = Math.floor(i / cols), inRow = Math.min(cols, keys.length - row * cols), col = i % cols;
+        const cx = W / 2 + (col - (inRow - 1) / 2) * (cw + gap);
+        const cy = top + ch / 2 + row * (ch + gap);
+        const land = 0.35 + i * 0.16;
+        const k = clamp((lt - land) / 0.45);
+        if (k <= 0) return;
+        // Falls in, overshoots under the "surface" and floats back up, then bobs.
+        const drop = k < 1 ? -380 * Math.pow(1 - k, 2) + Math.sin(k * Math.PI) * 30 : 0;
+        const bob = Math.sin(lt * 2.1 + i * 1.3) * 6 * clamp((lt - land - 0.45) / 0.4);
+        const tilt = (i % 2 ? 1 : -1) * (0.2 * (1 - easeOut(k)) + 0.035);
+        if (k > 0.55) drawRipples(cx, cy + ch * 0.1, ch * 0.32, lt - land, clamp(1.6 - (lt - land)) * 0.8);
+        ctx.save();
+        ctx.globalAlpha *= clamp(k * 2.5);
+        ctx.translate(cx, cy + drop + bob); ctx.rotate(tilt);
+        ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 24; ctx.shadowOffsetY = 12;
+        roundRect(-cw / 2, -ch / 2, cw, ch, ch * 0.1); ctx.fillStyle = '#000'; ctx.fill();
+        ctx.shadowColor = 'transparent';
+        drawPayCard(key, cw, ch);
+        // One glint across each card after it settles.
+        const g = (lt - land - 0.45) / 0.6;
+        if (g > 0 && g < 1) {
+          ctx.save(); roundRect(-cw / 2, -ch / 2, cw, ch, ch * 0.1); ctx.clip();
+          ctx.transform(1, 0, -0.45, 1, 0, 0);
+          const gx = -cw + g * cw * 2.4;
+          const sh = ctx.createLinearGradient(gx - 50, 0, gx + 50, 0);
+          sh.addColorStop(0, 'rgba(255,255,255,0)'); sh.addColorStop(0.5, 'rgba(255,255,255,0.45)'); sh.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = sh; ctx.fillRect(gx - 50, -ch, 100, ch * 2);
+          ctx.restore();
+        }
+        ctx.restore();
+      });
+    }
+
+    // ---------- delivery: our truck rolls up to a house, the wrapped aquarium floats to the door ----------
+    function drawDelivery(s, lt, top, maxH) {
+      const sc = clamp(maxH / 560, 0.6, 1.1);
+      const gy = top + maxH * 0.78;           // where the wheels touch the road
+      // Road with its centre line sliding by while the truck is moving.
+      const drive = easeOut((lt - 0.1) / 1.4);
+      const moving = drive < 1;
+      ctx.fillStyle = 'rgba(8,24,36,0.75)'; ctx.fillRect(0, gy, W, 70 * sc);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(0, gy, W, 3);
+      ctx.fillStyle = 'rgba(255,209,102,0.85)';
+      const dashOff = -drive * 900;
+      for (let x = (dashOff % 120) - 120; x < W; x += 120) ctx.fillRect(x, gy + 33 * sc, 60, 6 * sc);
+
+      // House on the right, lights on.
+      const hw = 250 * sc, hh = 190 * sc, hx = W - 70 - hw, hy = gy - hh;
+      const houseIn = easeOut((lt - 0.1) / 0.6);
+      ctx.save(); ctx.globalAlpha *= houseIn;
+      ctx.fillStyle = '#e8eef2'; ctx.fillRect(hx, hy, hw, hh);
+      ctx.fillStyle = '#c0502e';
+      ctx.beginPath(); ctx.moveTo(hx - 24 * sc, hy + 4); ctx.lineTo(hx + hw / 2, hy - 120 * sc); ctx.lineTo(hx + hw + 24 * sc, hy + 4); ctx.closePath(); ctx.fill();
+      const doorX = hx + hw * 0.18, doorW = hw * 0.26, doorH = hh * 0.62;
+      ctx.fillStyle = '#7a4a2a'; ctx.fillRect(doorX, gy - doorH, doorW, doorH);
+      ctx.fillStyle = '#ffd166'; ctx.beginPath(); ctx.arc(doorX + doorW * 0.8, gy - doorH * 0.45, 4 * sc, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(255,214,120,0.95)'; ctx.fillRect(hx + hw * 0.56, hy + hh * 0.22, hw * 0.3, hh * 0.3);
+      ctx.strokeStyle = '#7a8a96'; ctx.lineWidth = 3; ctx.strokeRect(hx + hw * 0.56, hy + hh * 0.22, hw * 0.3, hh * 0.3);
+      ctx.restore();
+
+      // The truck: box body in the accent colour with our logo and name, cab at the front (right).
+      const tw = 470 * sc, th = 210 * sc;
+      const stopX = hx - 40 * sc - tw;
+      const tx = -tw - 40 + (stopX + tw + 40) * drive;
+      const bounce = moving ? Math.sin(lt * 26) * 2 : 0;
+      const ty = gy - th - 34 * sc + bounce;
+      const boxW = tw * 0.7, cabW = tw - boxW - 6 * sc;
+      ctx.save();
+      // Bubbles from the exhaust while it drives (we're underwater, after all).
+      if (lt > 0.2) {
+        for (let i = 0; i < 10; i++) {
+          const age = ((lt * 1.4 + i / 10) % 1);
+          const bx = tx - 10 - age * 140 * (moving ? 1 : 0.3), by = gy - 26 * sc - age * 130 + Math.sin(age * 9 + i) * 8;
+          ctx.beginPath(); ctx.arc(bx, by, (3 + age * 7) * sc, 0, TAU);
+          ctx.strokeStyle = `rgba(220,250,255,${0.7 * (1 - age)})`; ctx.lineWidth = 2; ctx.stroke();
+        }
+      }
+      roundRect(tx, ty, boxW, th, 10 * sc); ctx.fillStyle = '#f4f7f9'; ctx.fill();
+      ctx.fillStyle = ad.accent; ctx.fillRect(tx, ty + th * 0.68, boxW, th * 0.14);
+      const logoR = th * 0.2;
+      const hasLogo = drawLogoCircle(tx + logoR + 22 * sc, ty + th * 0.36, logoR, ad.accent, 4);
+      ctx.font = `900 ${Math.round(th * 0.15)}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#0b2233';
+      const name = String((ad.brand && ad.brand.name) || 'RS Pet Stop').toUpperCase();
+      const nameX = tx + (hasLogo ? logoR * 2 + 40 * sc : 24 * sc);
+      ctx.fillText(name, nameX, ty + th * 0.3, boxW - (nameX - tx) - 14 * sc);
+      ctx.font = `700 ${Math.round(th * 0.09)}px ${FONT}`; ctx.fillStyle = '#3a5566';
+      ctx.fillText('Delivery team', nameX, ty + th * 0.48);
+      // Cab
+      const cx0 = tx + boxW + 6 * sc, cy0 = ty + th * 0.25;
+      ctx.fillStyle = '#2b333a';
+      ctx.beginPath(); ctx.moveTo(cx0, cy0); ctx.lineTo(cx0 + cabW * 0.6, cy0); ctx.lineTo(cx0 + cabW, cy0 + th * 0.32); ctx.lineTo(cx0 + cabW, ty + th); ctx.lineTo(cx0, ty + th); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = 'rgba(160,220,240,0.85)';
+      ctx.beginPath(); ctx.moveTo(cx0 + cabW * 0.12, cy0 + 10 * sc); ctx.lineTo(cx0 + cabW * 0.56, cy0 + 10 * sc); ctx.lineTo(cx0 + cabW * 0.86, cy0 + th * 0.3); ctx.lineTo(cx0 + cabW * 0.12, cy0 + th * 0.3); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffd166'; ctx.fillRect(cx0 + cabW - 10 * sc, ty + th * 0.72, 10 * sc, 14 * sc);
+      ctx.fillStyle = '#1b2026'; ctx.fillRect(tx, ty + th - 4, tw, 10 * sc);
+      // Wheels (spinning while it drives)
+      for (const wx of [tx + boxW * 0.22, tx + boxW * 0.62, cx0 + cabW * 0.55]) {
+        const wr = 30 * sc, wy = gy - wr;
+        ctx.beginPath(); ctx.arc(wx, wy, wr, 0, TAU); ctx.fillStyle = '#111418'; ctx.fill();
+        ctx.beginPath(); ctx.arc(wx, wy, wr * 0.48, 0, TAU); ctx.fillStyle = '#9aa5ad'; ctx.fill();
+        const a = drive * 18;
+        ctx.strokeStyle = '#5d676f'; ctx.lineWidth = 3;
+        for (let k = 0; k < 3; k++) {
+          const ang = a + (k * TAU) / 3;
+          ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(wx + Math.cos(ang) * wr * 0.46, wy + Math.sin(ang) * wr * 0.46); ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // Once parked, the wrapped aquarium floats from the truck to the front door.
+      const f = easeInOut((lt - 1.55) / 0.85);
+      if (f > 0) {
+        const bw = 120 * sc, bh = 86 * sc;
+        const sx = tx + boxW * 0.55, sy = ty + th * 0.4;
+        const ex = doorX + doorW / 2 - 20 * sc, ey = gy - bh / 2 - 6;
+        const px = sx + (ex - sx) * f, py = sy + (ey - sy) * f - Math.sin(f * Math.PI) * 120 * sc;
+        ctx.save();
+        ctx.translate(px, py); ctx.rotate(Math.sin(f * Math.PI) * 0.08);
+        ctx.fillStyle = '#c9a26b'; ctx.fillRect(-bw / 2, -bh / 2, bw, bh);
+        ctx.strokeStyle = '#8a6a3c'; ctx.lineWidth = 3; ctx.strokeRect(-bw / 2, -bh / 2, bw, bh);
+        ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fillRect(-bw / 2, -6 * sc, bw, 12 * sc);
+        ctx.fillStyle = '#c0392b'; ctx.font = `900 ${Math.round(bh * 0.2)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('FRAGILE', 0, -bh * 0.27);
+        ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-10 * sc, bh * 0.16); ctx.lineTo(-7 * sc, bh * 0.4); ctx.lineTo(7 * sc, bh * 0.4); ctx.lineTo(10 * sc, bh * 0.16); ctx.closePath(); ctx.stroke();
+        ctx.restore();
+      }
+      // Delivered: a tick badge pops over the door.
+      const d = easeOut((lt - 2.45) / 0.35);
+      if (d > 0) {
+        const bx = doorX + doorW / 2, by = hy - 150 * sc, r = 44 * sc * (0.6 + 0.4 * d);
+        drawRipples(bx, by, r, lt - 2.45, clamp(2 - (lt - 2.45)) * 0.9);
+        ctx.save(); ctx.globalAlpha *= clamp(d * 1.5);
+        ctx.beginPath(); ctx.arc(bx, by, r, 0, TAU); ctx.fillStyle = '#22c55e'; ctx.fill();
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 7 * sc; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath(); ctx.moveTo(bx - r * 0.42, by + r * 0.02); ctx.lineTo(bx - r * 0.1, by + r * 0.34); ctx.lineTo(bx + r * 0.45, by - r * 0.3); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     function drawScene(s, lt, dur, t) {
       if (s.style === 'cta') { drawCta(s, lt, t); return; }
       const logoScene = s.style === 'logo' || s.style === 'fish'; // 'fish' = older saved ads
@@ -1092,6 +1300,10 @@ window.VideoAdRenderer = (function () {
       const y = drawText(s, lt);
       const yb = drawBullets(s.bullets, lt, y + 40);
       if (logoScene) drawLogoHero(lt, t, Math.min(1180, Math.max(1050, yb + 330)));
+      if (s.style === 'payments' || s.style === 'delivery') {
+        const top = Math.min(1000, Math.max(760, yb + 110));
+        (s.style === 'payments' ? drawPayments : drawDelivery)(s, lt, top, 1440 - top);
+      }
       // The tank/stand/sump sits under whatever text there is, and stops above the Reels caption area.
       const BUILDS = { tank: drawTank, stand: drawStand, sump: drawSump };
       if (BUILDS[s.style]) {
@@ -1271,5 +1483,5 @@ window.VideoAdRenderer = (function () {
     };
   }
 
-  return { create, W, H, FPS, isVideo, TANK_OPTIONS };
+  return { create, W, H, FPS, isVideo, TANK_OPTIONS, PAY_METHODS };
 })();

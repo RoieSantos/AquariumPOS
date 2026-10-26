@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-26
 
+- **Video Ad Builder: 💳 Payments and 🚚 Delivery scenes.**
+  - Payments: the chosen methods drop into the water as cards, with a splash, a bob and a glint. The methods are Visa, Mastercard, GCash, Maya, QR Ph, bank transfer and cash, picked with tick boxes.
+  - Delivery: our own truck, with the shop logo and name, drives up to a house trailing bubbles. The wrapped "FRAGILE" aquarium floats to the door and a ✓ pops.
+  - Both are added to the Custom Aquarium template before the end card.
+  - The AI can use both (`payment_methods`; needs redeploy).
+  - Changes are in [videoAdRenderer.js](docs/js/videoAdRenderer.js), [videoAdBuilder.js](docs/js/videoAdBuilder.js) and [video-ad-generate](supabase/functions/video-ad-generate/index.ts).
 - **Video Ad Builder: voice-over with a choice of Google voices.**
   - Each scene has a 🎙 voice-over line. There is a new Voice-over box with 4 Filipino and 4 English voices, speed, volume, "Try this voice" and "Make voice-over".
   - New Edge Function [video-ad-voice](supabase/functions/video-ad-voice/index.ts) calls Google Cloud Text-to-Speech and saves an MP3 per line in the video-ad-media bucket. It needs the GOOGLE_TTS_API_KEY secret.
