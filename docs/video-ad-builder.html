@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Ad Builder - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navwide1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;800&display=swap" rel="stylesheet" />
+  <style>
+    .va-intro { max-width: 760px; }
+
+    /* Saved ads */
+    .va-list-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .va-ads { display: flex; flex-direction: column; gap: 10px; }
+    .va-ad { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border: 1px solid var(--panel-border); border-radius: 12px; background: var(--panel-bg); box-shadow: var(--shadow); }
+    .va-ad-main { min-width: 200px; flex: 1; }
+    .va-ad-title { font-weight: 700; font-size: 15px; color: var(--text-main); }
+    .va-ad-meta { color: var(--text-muted); font-size: 13px; margin-top: 3px; }
+    .va-ad-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .va-empty { text-align: center; padding: 28px 16px; border: 1px dashed var(--panel-border); border-radius: 12px; color: var(--text-muted); }
+    .va-empty b { display: block; color: var(--text-main); font-size: 16px; margin-bottom: 6px; }
+
+    /* Editor */
+    .va-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 14px; }
+    .va-bar .va-dirty { color: #b45309; font-size: 13px; font-weight: 600; }
+    .va-editor { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+    .va-stage-col { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; position: sticky; top: 70px; }
+    .va-stage { width: 324px; height: 576px; border-radius: 14px; background: #021624; box-shadow: var(--shadow); display: block; }
+    .va-controls { display: flex; gap: 8px; align-items: center; width: 324px; }
+    .va-controls input[type="range"] { flex: 1; }
+    .va-clock { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 13px; min-width: 70px; text-align: right; }
+    .va-export-status { width: 324px; font-size: 13px; color: var(--text-muted); min-height: 18px; }
+    .va-progress { width: 324px; height: 6px; border-radius: 3px; background: var(--panel-border); overflow: hidden; }
+    .va-progress > div { height: 100%; width: 0; background: var(--primary); transition: width .2s; }
+
+    .va-form { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+    .va-box { border: 1px solid var(--panel-border); border-radius: 12px; background: var(--panel-bg); padding: 14px; box-shadow: var(--shadow); }
+    .va-box h3 { margin: 0 0 10px; font-size: 15px; }
+    .va-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+    .va-label { display: grid; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+    .va-color { display: flex; gap: 8px; align-items: center; }
+    .va-color input[type="color"] { width: 44px; height: 36px; padding: 0; border: 1px solid var(--input-border); border-radius: 6px; background: none; }
+    .va-swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--panel-border); cursor: pointer; padding: 0; }
+    .va-logo-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .va-logo-thumb { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 1px solid var(--panel-border); background: #fff; }
+
+    .va-scene { border: 1px solid var(--panel-border); border-radius: 12px; background: var(--panel-bg); padding: 12px 14px; box-shadow: var(--shadow); }
+    .va-scene.va-scene-active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(29, 79, 145, 0.18); }
+    .va-scene-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .va-scene-num { width: 26px; height: 26px; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 800; font-size: 13px;
+      display: inline-flex; align-items: center; justify-content: center; flex: none; cursor: pointer; }
+    .va-scene-title { font-weight: 700; color: var(--text-main); flex: 1; min-width: 120px; cursor: pointer; }
+    .va-scene-tools { display: flex; gap: 4px; }
+    .va-icon-btn { border: 1px solid var(--input-border); background: var(--panel-bg); color: var(--text-main); border-radius: 6px;
+      width: 32px; height: 30px; cursor: pointer; font-size: 14px; line-height: 1; }
+    .va-icon-btn:hover:not(:disabled) { border-color: var(--primary); }
+    .va-icon-btn:disabled { opacity: .35; cursor: default; }
+    .va-styles { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .va-style { border: 1px solid var(--input-border); background: var(--panel-bg); color: var(--text-main); border-radius: 999px;
+      padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .va-style:hover { border-color: var(--primary); }
+    .va-style.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .va-fields { display: grid; gap: 10px; }
+    .va-dims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .va-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .va-opt { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--input-border); border-radius: 999px;
+      padding: 5px 11px; font-size: 13px; font-weight: 600; color: var(--text-main); cursor: pointer; }
+    .va-opt:has(input:checked) { border-color: var(--primary); background: rgba(29, 79, 145, 0.08); }
+    .va-media { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px; border: 1px dashed var(--input-border); border-radius: 10px; }
+    .va-media-thumb { width: 54px; height: 96px; object-fit: cover; border-radius: 6px; background: #021624; flex: none; }
+    .va-media-info { flex: 1; min-width: 140px; font-size: 13px; color: var(--text-muted); }
+    .va-media-info b { color: var(--text-main); display: block; }
+    .va-media input[type="file"] { display: none; }
+    .va-add-scene { border: 2px dashed var(--input-border); border-radius: 12px; padding: 12px; text-align: center; }
+    .va-tips { font-size: 13px; color: var(--text-muted); margin: 0; padding-left: 18px; }
+    .va-tips li { margin: 3px 0; }
+
+    .va-ai { border-color: rgba(124, 58, 237, 0.35); background: linear-gradient(180deg, rgba(124, 58, 237, 0.06), transparent 60%), var(--panel-bg); }
+    .va-list-actions + .va-ads, .va-ai + .va-list-actions { margin-top: 12px; }
+    .va-ai-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+    .va-ai-status { font-size: 13px; color: var(--text-muted); }
+    .va-ai-status.va-error { color: #b42318; }
+    .va-ai-picks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .va-ai-picks:empty { display: none; }
+    .va-pick { position: relative; width: 56px; height: 72px; border-radius: 8px; overflow: hidden; background: #021624; }
+    .va-pick img, .va-pick video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .va-pick button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: 0;
+      background: rgba(0,0,0,.65); color: #fff; font-size: 13px; line-height: 20px; padding: 0; cursor: pointer; }
+    .va-pick span { position: absolute; left: 3px; bottom: 2px; font-size: 10px; color: #fff; text-shadow: 0 1px 2px #000; }
+
+    .va-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 200; max-width: min(560px, calc(100% - 32px));
+      background: #173f74; color: #fff; padding: 12px 18px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); font-size: 14px; }
+    .va-toast.va-toast-error { background: #b42318; }
+
+    @media (max-width: 760px) {
+      .va-stage-col { position: static; width: 100%; align-items: center; }
+      .va-stage { width: min(324px, 100%); height: auto; aspect-ratio: 9 / 16; }
+      .va-controls, .va-export-status, .va-progress { width: min(324px, 100%); }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Video Ad Builder</h1>
+    <p class="muted va-intro">Make 15-second vertical video ads for Facebook and Instagram Reels. Describe the ad and let the AI build it, or build one yourself. Each scene is an animation or your own photo/video, with your text on top, plus background music and an optional voice-over. Click <b>Export MP4</b> to download the finished video, then upload it as a Reel or ad.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <!-- Saved ads -->
+    <div id="listView" class="hidden">
+      <div class="va-box va-ai">
+        <h3>✨ Describe your ad and the AI makes it</h3>
+        <textarea id="aiPrompt" rows="3" maxlength="2000"
+          placeholder="e.g. 15-second ad for our betta fish sale - 20% off this weekend only at the GMA branch. Use the photos I attached."></textarea>
+        <div class="va-ai-picks" id="aiPicks"></div>
+        <div class="va-ai-row">
+          <label class="btn btn-secondary btn-sm" for="aiPhotoInput">+ Add photos / clips (optional)</label>
+          <input type="file" id="aiPhotoInput" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden />
+          <button class="btn btn-primary" id="aiGenerateBtn" type="button">✨ Create ad</button>
+          <span class="va-ai-status" id="aiStatus"></span>
+        </div>
+        <p class="muted" style="margin:8px 0 0; font-size:12.5px;">The AI plans the scenes, writes the text and picks where each photo goes. It can also find product photos and prices in the catalog. You can change anything afterwards before you export.</p>
+      </div>
+
+      <div class="va-list-actions">
+        <button class="btn btn-primary" id="newTemplateBtn" type="button">+ New ad from Custom Aquarium template</button>
+        <button class="btn btn-secondary" id="newBlankBtn" type="button">+ Blank ad</button>
+        <button class="btn btn-secondary" id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div class="va-ads" id="adList"></div>
+    </div>
+
+    <!-- Editor -->
+    <div id="editorView" class="hidden">
+      <div class="va-bar">
+        <button class="btn btn-secondary" id="backBtn" type="button">&larr; All ads</button>
+        <button class="btn btn-primary" id="saveBtn" type="button">Save</button>
+        <span class="va-dirty hidden" id="dirtyNote">Unsaved changes</span>
+      </div>
+
+      <div class="va-editor">
+        <div class="va-stage-col">
+          <canvas class="va-stage" id="stage" width="1080" height="1920"></canvas>
+          <div class="va-controls">
+            <button class="btn btn-secondary btn-sm" id="playBtn" type="button">Pause</button>
+            <button class="btn btn-secondary btn-sm" id="soundBtn" type="button" title="Hear the music in the preview">🔇</button>
+            <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Preview position" />
+            <span class="va-clock" id="clock">0.0 / 0.0s</span>
+          </div>
+          <div class="va-controls">
+            <button class="btn btn-success" id="exportBtn" type="button" style="flex:1;">Export MP4</button>
+          </div>
+          <div class="va-progress hidden" id="exportProgress"><div></div></div>
+          <div class="va-export-status" id="exportStatus"></div>
+        </div>
+
+        <div class="va-form">
+          <div class="va-box">
+            <h3>Ad</h3>
+            <div class="va-grid">
+              <label class="va-label">Ad name (only you see this)
+                <input type="text" id="adName" maxlength="120" placeholder="e.g. Custom aquarium - November" />
+              </label>
+              <label class="va-label">Shop name on the video
+                <input type="text" id="brandName" maxlength="40" />
+              </label>
+            </div>
+            <div class="va-grid" style="margin-top:10px;">
+              <div class="va-label">Accent colour (buttons, ticks)
+                <div class="va-color" id="accentRow">
+                  <input type="color" id="accent" />
+                </div>
+              </div>
+              <div class="va-label">Logo
+                <div class="va-logo-row">
+                  <img class="va-logo-thumb" id="logoThumb" alt="" />
+                  <label class="btn btn-secondary btn-sm" for="logoInput">Change logo</label>
+                  <input type="file" id="logoInput" accept="image/*" hidden />
+                </div>
+                <label style="display:flex; gap:6px; align-items:center; font-weight:600; color:var(--text-main); margin-top:6px;">
+                  <input type="checkbox" id="showLogo" /> Show logo at the top of every scene
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="va-box">
+            <h3>🎵 Music</h3>
+            <div class="va-styles" id="musicChoices"></div>
+            <div class="va-media hidden" id="customSongRow" style="margin-bottom:10px;">
+              <div class="va-media-info"><b id="songName">No song chosen</b><span id="songNote">MP3, M4A or WAV, up to 50 MB.</span></div>
+              <label class="va-label" style="width:120px;">Start from (sec)
+                <input type="number" id="songStart" min="0" step="0.5" value="0" />
+              </label>
+              <label class="btn btn-secondary btn-sm" for="songInput" id="songPickLabel">Choose song</label>
+              <input type="file" id="songInput" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg" hidden />
+            </div>
+            <div class="va-grid" id="musicVolumeRow">
+              <label class="va-label">Volume <input type="range" id="musicVolume" min="0" max="100" step="5" /></label>
+              <div class="va-export-status" id="musicStatus" style="width:auto; align-self:end;"></div>
+            </div>
+            <p class="muted" style="margin:8px 0 0; font-size:12.5px;" id="musicNote"></p>
+          </div>
+
+          <div class="va-box">
+            <h3>🎙 Voice-over</h3>
+            <div class="va-grid">
+              <label class="va-label">Voice <select id="voiceName"></select></label>
+              <label class="va-label">Speed
+                <select id="voiceRate">
+                  <option value="0.9">Slower</option>
+                  <option value="1">Normal</option>
+                  <option value="1.1">A bit faster</option>
+                  <option value="1.2">Fast</option>
+                </select>
+              </label>
+            </div>
+            <label class="va-label" style="margin-top:8px;">Voice volume <input type="range" id="voiceVolume" min="0" max="150" step="5" /></label>
+            <div class="va-ai-row">
+              <button class="btn btn-secondary btn-sm" id="voiceTryBtn" type="button">▶ Try this voice</button>
+              <button class="btn btn-primary btn-sm" id="voiceMakeBtn" type="button">🎙 Make voice-over</button>
+              <span class="va-ai-status" id="voiceStatus"></span>
+            </div>
+            <p class="muted" style="margin:8px 0 0; font-size:12.5px;">Write what the voice says on each scene below (🎙 Voice-over), then click <b>Make voice-over</b>. The music gets quieter while the voice talks. If you change a line, the voice or the speed, click it again.</p>
+          </div>
+
+          <div class="va-box va-ai">
+            <h3>✨ Change with AI</h3>
+            <textarea id="aiRevisePrompt" rows="2" maxlength="2000"
+              placeholder="e.g. make it shorter, write it in Taglish, add a scene about free delivery, use my new photos"></textarea>
+            <div class="va-ai-picks" id="aiRevisePicks"></div>
+            <div class="va-ai-row">
+              <label class="btn btn-secondary btn-sm" for="aiRevisePhotoInput">+ Add photos / clips</label>
+              <input type="file" id="aiRevisePhotoInput" accept="image/*,video/mp4,video/webm,video/quicktime" multiple hidden />
+              <button class="btn btn-primary btn-sm" id="aiReviseBtn" type="button">✨ Apply</button>
+              <span class="va-ai-status" id="aiReviseStatus"></span>
+            </div>
+          </div>
+
+          <div class="va-box hidden" id="aiResultBox">
+            <h3>From the AI</h3>
+            <p id="aiSummary" style="margin:0 0 10px;"></p>
+            <label class="va-label">Caption to post with the video
+              <textarea id="aiCaption" rows="5"></textarea>
+            </label>
+            <button class="btn btn-secondary btn-sm" id="copyCaptionBtn" type="button" style="margin-top:8px;">Copy caption</button>
+          </div>
+
+          <div id="sceneList" style="display:flex; flex-direction:column; gap:12px;"></div>
+          <div class="va-add-scene">
+            <button class="btn btn-secondary" id="addSceneBtn" type="button">+ Add scene</button>
+          </div>
+
+          <div class="va-box">
+            <h3>Tips</h3>
+            <ul class="va-tips">
+              <li>Keep it about 15 seconds and the headlines short. Most people only read the first scene.</li>
+              <li>Facebook and Instagram cover the very top and the bottom third with buttons and captions, so text is always placed in the middle.</li>
+              <li>Vertical photos and clips (taken with the phone held upright) fill the screen best. Clips play muted.</li>
+              <li>The built-in music is made by the portal, so it's safe to post. If you use your own song, or add one from the Reels music library instead, Facebook may mute a song you don't have the rights to.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm dialog -->
+  <div class="modal-backdrop hidden" id="vaConfirmModal">
+    <div class="modal-panel" style="max-width:440px;">
+      <h3 style="margin-top:0;" id="vaConfirmTitle"></h3>
+      <p id="vaConfirmMessage"></p>
+      <div class="toolbar" style="justify-content:flex-end; gap:8px;">
+        <button class="btn btn-secondary" id="vaConfirmNoBtn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="vaConfirmYesBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="va-toast hidden" id="vaToast" role="status"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=catalog1"></script>
+  <script src="js/nav.js?v=vad1"></script>
+  <script src="js/videoAdRenderer.js?v=vad2"></script>
+  <script src="js/videoAdMusic.js?v=vad2"></script>
+  <script src="js/videoAdBuilder.js?v=vad2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

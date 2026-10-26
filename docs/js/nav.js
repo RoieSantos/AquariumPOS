@@ -301,6 +301,8 @@ function renderTopNavLinks(activeLabel) {
     admin.push({ href: 'facebook-post-test.html', label: 'Facebook Post Test' });
     // Phone flow: snap a photo -> auto watermark + AI caption -> Post Now.
     admin.push({ href: 'quick-post.html', label: 'Quick Post' });
+    // Reels video ads (scenes -> MP4 in the browser) - sql/supabase_video_ads.sql.
+    admin.push({ href: 'video-ad-builder.html', label: 'Video Ad Builder' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
     // Online payments through Xendit (pay.html) - sql/supabase_xendit_payments.sql.
@@ -476,6 +478,7 @@ const TELL_ME_KEYWORDS = {
   'ai-bot-sandbox.html': 'alice chatbot test',
   'facebook-post-test.html': 'fb social',
   'quick-post.html': 'facebook fb photo social',
+  'video-ad-builder.html': 'video ad reels marketing facebook instagram mp4 promo',
   'pricing-setup.html': 'prices rates',
   'payment-methods.html': 'gcash cash bank tender',
   'xendit-payments.html': 'online payment gateway gcash card pay link',

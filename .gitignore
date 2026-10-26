@@ -23,3 +23,6 @@ driver-app/android/build/
 driver-app/android/.gradle/
 driver-app/android/local.properties
 
+
+# Rendered ad videos (large, regenerate from marketing/video-ad)
+marketing/video-ad/exports/
