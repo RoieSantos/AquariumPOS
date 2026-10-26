@@ -15,6 +15,7 @@ let rafId = null;
 let activeSceneIndex = -1;
 
 const MAX_SCENES = 12;
+const MAX_MONTAGE = 30; // photos in one 🎞️ Our builds scene
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const ACCENTS = ['#3fe0d0', '#ffd166', '#ff7a59', '#7cc8ff', '#a3e635'];
 const STYLES = [
@@ -26,6 +27,7 @@ const STYLES = [
   { key: 'payments', label: '💳 Payments' },
   { key: 'delivery', label: '🚚 Delivery' },
   { key: 'photo', label: '📷 Photo / video' },
+  { key: 'montage', label: '🎞️ Our builds' },
   { key: 'water', label: '🌊 Text only' },
   { key: 'cta', label: '📣 End card' }
 ];
@@ -105,6 +107,7 @@ function newScene(style) {
   if (style === 'stand') Object.assign(base, { layers: 2, paint: 'black' });
   if (style === 'cta') Object.assign(base, { headline: 'Message us today', button: 'rspetstop.com', footer: '' });
   if (style === 'reviews') Object.assign(base, { duration: 4, headline: 'Our customers say', reviews: [] });
+  if (style === 'montage') Object.assign(base, { duration: 5, headline: 'Setups we built', photos: [] });
   if (style === 'payments') Object.assign(base, { headline: 'Pay your way', sub: 'Cards, e-wallets, bank transfer or cash' });
   if (style === 'delivery') Object.assign(base, { duration: 3.8, headline: 'We deliver it safely', sub: 'Our own team - we handle the rest at your home' });
   return base;
@@ -281,6 +284,7 @@ function renderAdFields() {
   $('logoThumb').classList.toggle('hidden', !c.brand.logo);
   $('showLogo').checked = c.brand.showLogo !== false;
   $('safeZones').checked = !!c.safeZones;
+  $('adLook').value = c.look === 'classic' ? 'classic' : 'cinematic';
   const row = $('accentRow');
   row.querySelectorAll('.va-swatch').forEach((el) => el.remove());
   ACCENTS.forEach((hex) => {
@@ -359,6 +363,9 @@ function sceneCardHtml(s, i, count) {
       <div class="va-review">
         <textarea data-review-text="${j}" rows="2" maxlength="220" placeholder="The customer's review, word for word">${escapeHtml(r.text)}</textarea>
         <div class="va-review-foot">
+          ${wall ? '' : r.photo
+            ? `<span class="va-review-photo"><img src="${escapeHtml(r.photo)}" alt="" crossorigin="anonymous" /><button type="button" data-review-photo-del="${j}" title="Remove the photo">&times;</button></span>`
+            : `<button class="btn btn-secondary btn-sm" data-review-photo="${j}" type="button" title="This customer's own setup, from our Facebook page">📷 Their setup</button>`}
           <input type="text" data-review-name="${j}" maxlength="30" value="${escapeHtml(r.name)}" placeholder="Name shown (optional, e.g. Mark D.)" />
           <button class="va-icon-btn" data-review-del="${j}" type="button" title="Remove this review">&times;</button>
         </div>
@@ -388,7 +395,7 @@ function sceneCardHtml(s, i, count) {
         <span class="va-ai-status">${escapeHtml(fbReviewsStatus)}</span>
       </div>
       ${picks ? `<div class="va-fb-reviews">${picks}</div>` : ''}
-      <p class="muted" style="margin:0; font-size:12.5px;">Use real reviews only: you may shorten one with "…" but don't reword it. Only show a customer's name if they're OK with it (first name + initial is safest). The count shows as "120+ recommendations on Facebook" - only enter a number your Pages really have. Move this scene to the top (↑) - reviews make a strong opening.${wall ? ' Give the wall about 6 seconds so people catch a few.' : ''}</p>`;
+      <p class="muted" style="margin:0; font-size:12.5px;">Use real reviews only: you may shorten one with "…" but don't reword it. Only show a customer's name if they're OK with it (first name + initial is safest). The count shows as "120+ recommendations on Facebook" - only enter a number your Pages really have. Move this scene to the top (↑) - reviews make a strong opening.${wall ? ' Give the wall about 6 seconds so people catch a few.' : ' 📷 Their setup puts a photo beside the quote - only use a photo of the setup that customer really got from us.'}</p>`;
   }
   if (s.style === 'payments') {
     const on = (k) => !Array.isArray(s.methods) || !s.methods.length || s.methods.includes(k);
@@ -433,7 +440,34 @@ function sceneCardHtml(s, i, count) {
         </div>
         <label class="btn btn-secondary btn-sm" for="media${i}">${s.media ? 'Change' : 'Choose photo / video'}</label>
         <input type="file" id="media${i}" data-media="${i}" accept="image/*,video/mp4,video/webm,video/quicktime" />
+        <button class="btn btn-secondary btn-sm" data-fbmedia-load type="button" ${fbMediaBusy ? 'disabled' : ''}>📘 From our Facebook page</button>
       </div>`;
+  }
+  if (s.style === 'montage') {
+    const photos = Array.isArray(s.photos) ? s.photos : [];
+    const showcase = s.layout === 'showcase';
+    const shown = Math.min(photos.length, Math.floor((Number(s.duration) || 3) / (showcase ? 0.6 : 0.25)));
+    const strip = photos.map((url, j) => `<div class="va-pick">
+      <img src="${escapeHtml(url)}" alt="" crossorigin="anonymous" />
+      <button type="button" data-montage-del="${j}" title="Remove">&times;</button></div>`).join('');
+    fields += `
+      <label class="va-label">Layout
+        <select data-k="layout">
+          <option value="cuts"${showcase ? '' : ' selected'}>Quick cuts - fast flashes, lots of builds</option>
+          <option value="showcase"${showcase ? ' selected' : ''}>Showcase - framed prints sliding in and stacking</option>
+        </select>
+      </label>
+      <div class="va-label">Setup photos - ${photos.length} of ${MAX_MONTAGE}${photos.length ? ` (about ${(s.duration / Math.max(1, shown)).toFixed(2)} s each${shown < photos.length ? `; only the first ${shown} fit in ${s.duration} s - make the scene longer to show all` : ''})` : ''}
+        ${strip ? `<div class="va-ai-picks">${strip}</div>` : '<span class="muted" style="font-weight:500;">No photos yet - add your finished setups from Facebook or upload them. Until then this scene shows the water background.</span>'}</div>
+      <div class="va-ai-row">
+        <button class="btn btn-primary btn-sm" data-fbmedia-load type="button" ${fbMediaBusy || photos.length >= MAX_MONTAGE ? 'disabled' : ''}>📘 Add from our Facebook page</button>
+        <label class="btn btn-secondary btn-sm" for="montage${i}">+ Upload photos</label>
+        <input type="file" id="montage${i}" data-montage="${i}" accept="image/*" multiple style="display:none;" />
+        ${photos.length ? `<button class="btn btn-secondary btn-sm" data-montage-clear type="button">Remove all</button>` : ''}
+      </div>`;
+    fields += `<p class="muted" style="margin:0; font-size:12.5px;">${showcase
+      ? 'Each photo slides in as a framed print and stays on the pile - 6-8 photos over 5 seconds lets people really look. Use the Posts view in the picker to take all the angles of one setup.'
+      : 'Each photo flashes in for a moment - 12-20 photos over 4-5 seconds feels fast but readable.'} Pick photos of setups you really built.</p>`;
   }
   return `<div class="va-scene" data-i="${i}">
     <div class="va-scene-head">
@@ -467,6 +501,7 @@ function onSceneInput(e) {
   } else if (k === 'layout') {
     s.layout = e.target.value;
     if (s.layout === 'wall' && s.duration < 6) s.duration = 6;
+    if (s.layout === 'showcase' && s.duration < 5) s.duration = 5;
     if (Array.isArray(s.reviews)) s.reviews = s.reviews.slice(0, maxReviews(s));
     setDirty(true);
     renderScenes();
@@ -521,6 +556,19 @@ function onSceneClick(e) {
     if (style === 'cta' && s.button == null) s.button = 'rspetstop.com';
     if (style === 'delivery' && s.duration < 3.6) s.duration = 3.8;
     if (style === 'reviews') { s.reviews = s.reviews || []; if (s.duration < 4) s.duration = 4; }
+    if (style === 'montage') { s.photos = s.photos || []; if (s.duration < 4) s.duration = 5; }
+    finishStructuralChange(i);
+    return;
+  }
+
+  if (e.target.closest('[data-fbmedia-load]')) { openFacebookMedia(i); return; }
+  const reviewPhoto = e.target.closest('[data-review-photo]');
+  if (reviewPhoto) { openFacebookMedia(i, Number(reviewPhoto.dataset.reviewPhoto)); return; }
+  const reviewPhotoDel = e.target.closest('[data-review-photo-del]');
+  if (reviewPhotoDel) { delete s.reviews[Number(reviewPhotoDel.dataset.reviewPhotoDel)].photo; finishStructuralChange(i); return; }
+  const montageDel = e.target.closest('[data-montage-del]');
+  if (montageDel || e.target.closest('[data-montage-clear]')) {
+    if (montageDel) s.photos.splice(Number(montageDel.dataset.montageDel), 1); else s.photos = [];
     finishStructuralChange(i);
     return;
   }
@@ -758,6 +806,271 @@ async function loadFacebookReviews(sceneIndex) {
 }
 
 // ---------------------------------------------------------------------------
+// Photos/videos posted on our Facebook Pages (supabase/functions/video-ad-page-media), picked in the
+// #fbPickModal pop-up - one for a 📷 scene or a review's setup photo, many for a 🎞️ Our builds scene
+// (by photo, or a whole post's photos at once). The list loads once per visit; picked files are copied
+// into video-ad-media (Facebook's links expire and can't be drawn into the export).
+// ---------------------------------------------------------------------------
+
+const FB_PICK_PAGE_SIZE = 60;
+let fbMedia = null;
+let fbMediaBusy = false;
+// { title, multi, imagesOnly, room() -> how many more fit, used() -> Set of Facebook srcs already in,
+//   apply([{ url, kind }]), kind, view: 'photos'|'posts', page, q, show, selected: Set of fbMedia indexes }
+let fbPick = null;
+
+// Our copy's URL -> the Facebook file it came from, so the picker can tick off ones already added.
+const fbImported = new Map();
+const fbSources = (urls) => new Set((urls || []).map((u) => fbImported.get(u)).filter(Boolean));
+
+async function importFacebookMedia(m) {
+  const { url } = await callVideoAdFunction({ import: { kind: m.kind, src: m.src } }, 'video-ad-page-media');
+  fbImported.set(url, m.src);
+  await renderer.loadMedia(url, m.kind);
+  return url;
+}
+
+function fbPickStatus(text, isError = false) {
+  $('fbPickStatus').textContent = text;
+  $('fbPickStatus').classList.toggle('va-error', isError);
+}
+
+// From a scene's 📘 button (data-fbmedia-load), or a review's 📷 button (reviewIndex).
+function openFacebookMedia(sceneIndex, reviewIndex = null) {
+  const s = current.config.scenes[sceneIndex];
+  if (reviewIndex != null) {
+    const r = s.reviews[reviewIndex];
+    openFbPicker({
+      title: 'Pick this customer\'s setup photo',
+      multi: false, imagesOnly: true,
+      room: () => 1, used: () => fbSources([r.photo]),
+      apply: ([p]) => { r.photo = p.url; }
+    });
+  } else if (s.style === 'montage') {
+    openFbPicker({
+      title: 'Add setup photos from our Facebook page',
+      multi: true, imagesOnly: true,
+      room: () => MAX_MONTAGE - (s.photos || []).length, used: () => fbSources(s.photos),
+      apply: (picked) => { s.photos = s.photos || []; for (const p of picked) if (s.photos.length < MAX_MONTAGE) s.photos.push(p.url); }
+    });
+  } else {
+    openFbPicker({
+      title: 'Pick a photo or video from our Facebook page',
+      multi: false, imagesOnly: false,
+      room: () => 1, used: () => new Set(),
+      apply: ([p]) => { s.media = p.url; s.mediaType = p.kind; }
+    });
+  }
+}
+
+async function openFbPicker(opts) {
+  fbPick = { ...opts, kind: opts.imagesOnly ? 'image' : 'all', view: 'photos', page: '', q: '', show: FB_PICK_PAGE_SIZE, selected: new Set() };
+  $('fbPickTitle').textContent = opts.title;
+  $('fbPickKinds').classList.toggle('hidden', opts.imagesOnly);
+  $('fbPickViews').classList.toggle('hidden', !opts.multi);
+  $('fbPickSearch').value = '';
+  $('fbPickModal').classList.remove('hidden');
+  fbPickStatus('');
+  renderFbPick();
+  if (fbMedia) return;
+  fbPickStatus('Loading photos and videos from Facebook...');
+  try {
+    const result = await callVideoAdFunction({}, 'video-ad-page-media');
+    fbMedia = result.items || [];
+    const failed = (result.pages || []).filter((p) => !p.ok);
+    fbPickStatus((fbMedia.length ? '' : 'No photos or videos were found. ')
+      + (failed.length ? `Could not read: ${failed.map((p) => p.name + ' (' + p.error + ')').join('; ')}` : ''), failed.length > 0);
+  } catch (err) {
+    fbPickStatus(err.message, true);
+  }
+  if (fbPick) renderFbPick();
+}
+
+function closeFbPick() {
+  if (fbMediaBusy) return;
+  fbPick = null;
+  $('fbPickModal').classList.add('hidden');
+}
+
+// [{ m, idx }] after the kind / Page / search filters.
+function fbPickList() {
+  const q = fbPick.q.toLowerCase();
+  return (fbMedia || []).map((m, idx) => ({ m, idx })).filter(({ m }) =>
+    (fbPick.kind === 'all' || m.kind === fbPick.kind)
+    && (!fbPick.page || m.page === fbPick.page)
+    && (!q || m.caption.toLowerCase().includes(q)));
+}
+
+// Posts view: one tile per Facebook post with all its photos (a photo with no known post is its own).
+function fbPickGroups(list) {
+  const groups = new Map();
+  for (const it of list) {
+    const key = it.m.post || 'photo:' + it.idx;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+  return [...groups.values()];
+}
+
+function fbTileHtml(cover, idxs, used, count) {
+  const m = cover.m;
+  const isUsed = idxs.every((idx) => used.has(fbMedia[idx].src));
+  const date = m.created ? new Date(m.created).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  return `<button class="va-fbp-tile${isUsed ? ' used' : ''}" data-pick="${idxs.join(',')}" type="button" title="${escapeHtml(m.caption || m.page)}" ${isUsed || fbMediaBusy ? 'disabled' : ''}>
+    <img src="${escapeHtml(m.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer" />
+    ${m.kind === 'video' ? '<span class="va-fbp-badge">▶ Video</span>' : count > 1 ? `<span class="va-fbp-badge">📑 ${count} photos</span>` : ''}
+    ${isUsed ? '<span class="va-fbp-added">✓ added</span>' : ''}
+    ${date ? `<span class="va-fbp-date">${escapeHtml(date)}</span>` : ''}
+  </button>`;
+}
+
+function renderFbPick() {
+  if (!fbPick) return;
+  const list = fbPickList();
+  const used = fbPick.used();
+
+  for (const b of $('fbPickKinds').querySelectorAll('[data-kind]')) b.classList.toggle('active', b.dataset.kind === fbPick.kind);
+  for (const b of $('fbPickViews').querySelectorAll('[data-view]')) b.classList.toggle('active', b.dataset.view === fbPick.view);
+  const pages = [...new Set((fbMedia || []).map((m) => m.page))];
+  $('fbPickPage').classList.toggle('hidden', pages.length < 2);
+  $('fbPickPage').innerHTML = `<option value="">All Pages</option>` + pages.map((p) => `<option value="${escapeHtml(p)}"${p === fbPick.page ? ' selected' : ''}>${escapeHtml(p)}</option>`).join('');
+
+  const tiles = fbPick.view === 'posts'
+    ? fbPickGroups(list).map((g) => fbTileHtml(g[0], g.map((x) => x.idx), used, g.length))
+    : list.map((it) => fbTileHtml(it, [it.idx], used, 1));
+  $('fbPickGrid').innerHTML = tiles.slice(0, fbPick.show).join('')
+    || (fbMedia ? '<p class="muted" style="grid-column:1/-1; text-align:center;">Nothing matches.</p>' : '');
+  $('fbPickMore').classList.toggle('hidden', tiles.length <= fbPick.show);
+  $('fbPickMore').textContent = `Show more (${tiles.length - fbPick.show} left)`;
+  fbPick.tileCount = tiles.length;
+  markFbPickSelection();
+  renderFbPickFoot(list, used);
+}
+
+// Selection classes only (no re-render), so the grid keeps its scroll and a double-click still lands.
+function markFbPickSelection() {
+  for (const el of $('fbPickGrid').querySelectorAll('[data-pick]')) {
+    const idxs = el.dataset.pick.split(',').map(Number);
+    const n = idxs.filter((idx) => fbPick.selected.has(idx)).length;
+    el.classList.toggle('selected', n > 0 && n === idxs.length);
+    el.classList.toggle('partial', n > 0 && n < idxs.length);
+  }
+}
+
+function renderFbPickFoot(list = fbPickList(), used = fbPick.used()) {
+  const n = fbPick.selected.size;
+  const room = fbPick.room();
+  const shown = `${fbPick.tileCount} ${fbPick.view === 'posts' ? 'posts' : 'shown'}`;
+  $('fbPickCount').textContent = !fbMedia ? '' : fbPick.multi
+    ? `${shown} · ${n} selected · room for ${room - n} more in this scene`
+    : shown;
+  $('fbPickSelectAll').classList.toggle('hidden', !fbPick.multi || !fbMedia);
+  $('fbPickSelectAll').textContent = `Select the newest ${Math.min(room, list.filter(({ m }) => !used.has(m.src)).length)}`;
+  $('fbPickOk').disabled = !n || fbMediaBusy;
+  $('fbPickOk').textContent = fbPick.multi ? (n ? `Add ${n} photo${n === 1 ? '' : 's'}` : 'Add photos')
+    : n && fbMedia[[...fbPick.selected][0]].kind === 'video' ? 'Use this video' : 'Use this photo';
+}
+
+function onFbPickGridClick(e) {
+  const tile = e.target.closest('[data-pick]');
+  if (!tile || !fbPick || fbMediaBusy) return;
+  const used = fbPick.used();
+  const idxs = tile.dataset.pick.split(',').map(Number).filter((idx) => !used.has(fbMedia[idx].src));
+  if (!fbPick.multi) {
+    fbPick.selected = new Set(idxs.slice(0, 1));
+  } else if (idxs.every((idx) => fbPick.selected.has(idx))) {
+    idxs.forEach((idx) => fbPick.selected.delete(idx));
+  } else {
+    const room = fbPick.room() - fbPick.selected.size;
+    const add = idxs.filter((idx) => !fbPick.selected.has(idx));
+    if (room <= 0) {
+      fbPickStatus(`This scene is full (up to ${MAX_MONTAGE} photos) - unselect some first.`, true);
+      return;
+    }
+    add.slice(0, room).forEach((idx) => fbPick.selected.add(idx));
+    fbPickStatus(add.length > room ? `Only ${room} of this post's ${add.length} photos fit in the scene.` : '', add.length > room);
+    markFbPickSelection();
+    renderFbPickFoot();
+    return;
+  }
+  fbPickStatus('');
+  markFbPickSelection();
+  renderFbPickFoot();
+}
+
+function fbPickSelectNewest() {
+  const used = fbPick.used();
+  fbPick.selected = new Set(fbPickList().filter(({ m }) => !used.has(m.src)).slice(0, fbPick.room()).map(({ idx }) => idx));
+  markFbPickSelection();
+  renderFbPickFoot();
+}
+
+// Copies the picked files a few at a time, then hands them to the target in the order they were listed.
+async function confirmFbPick() {
+  if (!fbPick || !fbPick.selected.size || fbMediaBusy) return;
+  const pick = fbPick;
+  const todo = [...pick.selected].sort((a, b) => a - b).map((idx) => fbMedia[idx]);
+  fbMediaBusy = true;
+  uploading++;
+  renderFbPick();
+  const urls = new Array(todo.length);
+  let done = 0, failed = 0, next = 0, lastError = '';
+  const progress = () => fbPickStatus(todo.length === 1
+    ? (todo[0].kind === 'video' ? 'Copying the video from Facebook (big ones take a while)...' : 'Copying the photo from Facebook...')
+    : `Copying photos from Facebook... ${done} of ${todo.length}`);
+  progress();
+  const worker = async () => {
+    while (next < todo.length) {
+      const j = next++;
+      try { urls[j] = await importFacebookMedia(todo[j]); } catch (err) { failed++; lastError = err.message; }
+      done++;
+      progress();
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  fbMediaBusy = false;
+  uploading--;
+
+  const got = todo.map((m, j) => ({ url: urls[j], kind: m.kind })).filter((p) => p.url);
+  if (got.length) { pick.apply(got); setDirty(true); }
+  renderAfterMedia();
+  if (!failed) {
+    closeFbPick();
+    if (pick.multi) toast(`Added ${got.length} photo${got.length === 1 ? '' : 's'} - remove any that aren't setups with ×.`);
+    return;
+  }
+  pick.selected = new Set();
+  fbPickStatus(got.length ? `${got.length} added, ${failed} could not be copied: ${lastError}` : lastError, true);
+  renderFbPick();
+}
+
+function initFbPick() {
+  $('fbPickGrid').addEventListener('click', onFbPickGridClick);
+  $('fbPickGrid').addEventListener('dblclick', (e) => { if (fbPick && !fbPick.multi && e.target.closest('[data-pick]')) confirmFbPick(); });
+  $('fbPickKinds').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-kind]');
+    if (!b || !fbPick) return;
+    fbPick.kind = b.dataset.kind; fbPick.show = FB_PICK_PAGE_SIZE; fbPick.selected = new Set();
+    renderFbPick();
+  });
+  $('fbPickViews').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-view]');
+    if (!b || !fbPick) return;
+    fbPick.view = b.dataset.view; fbPick.show = FB_PICK_PAGE_SIZE;
+    renderFbPick();
+  });
+  $('fbPickPage').addEventListener('change', (e) => { fbPick.page = e.target.value; fbPick.show = FB_PICK_PAGE_SIZE; renderFbPick(); });
+  $('fbPickSearch').addEventListener('input', (e) => { fbPick.q = e.target.value.trim(); fbPick.show = FB_PICK_PAGE_SIZE; renderFbPick(); });
+  $('fbPickMore').addEventListener('click', () => { fbPick.show += FB_PICK_PAGE_SIZE; renderFbPick(); });
+  $('fbPickSelectAll').addEventListener('click', fbPickSelectNewest);
+  $('fbPickOk').addEventListener('click', confirmFbPick);
+  $('fbPickCancel').addEventListener('click', closeFbPick);
+  $('fbPickClose').addEventListener('click', closeFbPick);
+  $('fbPickModal').addEventListener('click', (e) => { if (e.target === $('fbPickModal')) closeFbPick(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && fbPick) closeFbPick(); });
+}
+
+// ---------------------------------------------------------------------------
 // Voice-over: each scene's line is spoken by a Google voice (supabase/functions/video-ad-voice), saved
 // as an MP3 and mixed into the soundtrack at the scene's start (js/videoAdMusic.js).
 // Scene fields: say (the line), sayUrl (the clip), sayKey (voice|speed|line the clip was made with -
@@ -940,7 +1253,33 @@ function renderAfterMedia() {
   $('logoThumb').classList.toggle('hidden', !current.config.brand.logo);
 }
 
+async function onMontageFiles(input) {
+  const s = current.config.scenes[Number(input.dataset.montage)];
+  const files = [...(input.files || [])].filter((f) => f.type.startsWith('image/'));
+  input.value = '';
+  s.photos = s.photos || [];
+  const room = MAX_MONTAGE - s.photos.length;
+  if (files.length > room) toast(`Up to ${MAX_MONTAGE} photos in this scene - only the first ${Math.max(0, room)} were added.`, true);
+  uploading++;
+  try {
+    for (const file of files.slice(0, Math.max(0, room))) {
+      const url = await uploadMedia(file);
+      await renderer.loadMedia(url, 'image');
+      s.photos.push(url);
+      setDirty(true);
+      renderScenes();
+    }
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    uploading--;
+    renderAfterMedia();
+  }
+}
+
 function onSceneFileChange(e) {
+  const montageInput = e.target.closest('input[data-montage]');
+  if (montageInput) { onMontageFiles(montageInput); return; }
   const input = e.target.closest('input[data-media]');
   if (!input) return;
   const s = current.config.scenes[Number(input.dataset.media)];
@@ -1045,7 +1384,8 @@ async function runAi(prompt, files, baseConfig, setStatus) {
     current = {
       accent: baseConfig.accent,
       // Same field names the AI answers with (supabase/functions/video-ad-generate OUTPUT_SCHEMA).
-      scenes: baseConfig.scenes.map((s) => ({
+      // 🎞️ Our builds scenes aren't an AI style - onAiRevise puts them back afterwards.
+      scenes: baseConfig.scenes.filter((s) => s.style !== 'montage').map((s) => ({
         style: s.style,
         seconds: s.duration,
         headline: s.headline || '',
@@ -1126,7 +1466,9 @@ async function onAiRevise(picker) {
       s.reviews = old.reviews;
       return true;
     });
-    c.scenes = renameOldStyles(result.config.scenes);
+    const scenes = renameOldStyles(result.config.scenes);
+    c.scenes.forEach((s, at) => { if (s.style === 'montage') scenes.splice(Math.min(at, scenes.length), 0, s); });
+    c.scenes = scenes.slice(0, MAX_SCENES);
     c.accent = result.config.accent;
     c.caption = result.caption;
     c.aiSummary = result.summary;
@@ -1268,7 +1610,8 @@ function tick() {
   }
 
   renderer = VideoAdRenderer.create($('stage'));
-  document.fonts.load('800 100px Montserrat').then(() => document.fonts.load('600 50px Montserrat')).catch(() => {});
+  document.fonts.load('800 100px Montserrat').then(() => document.fonts.load('600 50px Montserrat'))
+    .then(() => document.fonts.load('italic 600 56px "Playfair Display"')).then(() => document.fonts.load('700 100px Poppins')).catch(() => {});
 
   $('listView').classList.remove('hidden');
   $('newTemplateBtn').addEventListener('click', () => openEditor(null, 'Custom aquarium ad', templateCustomAquarium()));
@@ -1295,6 +1638,7 @@ function tick() {
   $('accent').addEventListener('input', (e) => { current.config.accent = e.target.value; setDirty(true); });
   $('showLogo').addEventListener('change', (e) => { current.config.brand.showLogo = e.target.checked; setDirty(true); });
   $('safeZones').addEventListener('change', (e) => { current.config.safeZones = e.target.checked; setDirty(true); });
+  $('adLook').addEventListener('change', (e) => { current.config.look = e.target.value; setDirty(true); });
   $('logoInput').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
@@ -1336,6 +1680,7 @@ function tick() {
   $('sceneList').addEventListener('input', onSceneInput);
   $('sceneList').addEventListener('click', onSceneClick);
   $('sceneList').addEventListener('change', onSceneFileChange);
+  initFbPick();
   $('addSceneBtn').addEventListener('click', () => {
     const scenes = current.config.scenes;
     if (scenes.length >= MAX_SCENES) return;

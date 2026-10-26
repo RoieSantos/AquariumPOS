@@ -4,6 +4,8 @@
 //
 // Ad shape (saved as VideoAds."Config", sql/supabase_video_ads.sql):
 //   { version: 1, accent: '#3fe0d0', brand: { name, logo }, safeZones, scenes: [scene...] }
+//   look: 'cinematic' (default - light rays, gold serif sub-text under a glowing divider, the logo rising
+//   out of the water with its reflection) | 'classic' (the original look).
 //   safeZones: true = keep content out of the areas Facebook/Instagram cover with the caption and
 //   buttons (the bottom ~25%); otherwise (default) the content uses the full screen.
 //   scene: { style, duration, headline, sub, bullets[], dims[L,W,H], options, layers, paint, media, mediaType, button, footer }
@@ -11,13 +13,19 @@
 //          also takes options - see TANK_OPTIONS; a stand takes layers 1-4 and paint 'black'|'white') | 'water' (text only)
 //          | 'payments' (the payment methods in scene.methods drop in as cards - see PAY_METHODS)
 //          | 'delivery' (our own truck drives up to a house and hands over the wrapped aquarium)
-//          | 'reviews' (five stars, then real customer quotes from scene.reviews = [{ text, name }]:
-//            layout 'bubbles' = up to 3 rise up as big bubbles; 'wall' = up to 15 short snippets scroll up
-//            like a chat feed. reviewCount (optional) = the real number of Facebook recommendations)
+//          | 'reviews' (five stars, then real customer quotes from scene.reviews = [{ text, name, photo? }]:
+//            layout 'bubbles' = up to 3 rise up as big bubbles (photo = that customer's setup, shown on the
+//            left of the bubble); 'wall' = up to 15 short snippets scroll up like a chat feed (no photos).
+//            reviewCount (optional) = the real number of Facebook recommendations)
 //          | 'photo' (your photo/video, falls back to water until one is chosen) | 'cta' (logo + button end card)
+//          | 'montage' (our finished setups from scene.photos = [url...]: layout 'cuts' (default) = quick cuts,
+//            each punching in after a short flash; 'showcase' = slower, framed prints sliding in and stacking.
+//            Falls back to water until photos are added)
 window.VideoAdRenderer = (function () {
   const W = 1080, H = 1920, FPS = 30, FADE = 0.75; // FADE = length of the tide transition
   const FONT = 'Montserrat, system-ui, sans-serif';
+  const SERIF = '"Playfair Display", Georgia, serif';
+  const HEAD = 'Poppins, Montserrat, system-ui, sans-serif'; // cinematic headlines
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
   const easeOut = (x) => 1 - Math.pow(1 - clamp(x), 3);
   const easeInOut = (x) => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
@@ -95,7 +103,10 @@ window.VideoAdRenderer = (function () {
 
     function loadAll() {
       if (!ad) return Promise.resolve();
-      return Promise.all(ad.scenes.map((s) => loadMedia(s.media, s.mediaType)).concat(loadMedia(ad.brand && ad.brand.logo)));
+      const photos = ad.scenes.flatMap((s) => (s.style === 'montage' && Array.isArray(s.photos) ? s.photos
+        : s.style === 'reviews' && Array.isArray(s.reviews) ? s.reviews.map((r) => r && r.photo).filter(Boolean) : []));
+      return Promise.all(ad.scenes.map((s) => loadMedia(s.media, s.mediaType))
+        .concat(photos.map((src) => loadMedia(src, 'image')), loadMedia(ad.brand && ad.brand.logo)));
     }
 
     // ---------- timeline ----------
@@ -177,11 +188,59 @@ window.VideoAdRenderer = (function () {
     const SURFACE_Y = 150;
     const surfaceAt = (x, t) => SURFACE_Y + Math.sin(x * 0.011 + t * 1.6) * 9 + Math.sin(x * 0.027 - t * 2.3) * 4;
 
+    const cinematic = () => !ad || ad.look !== 'classic';
+
+    // Cinematic extras over the water: sun rays fanning down from the surface, twinkling specks, dark edges.
+    function drawCinematicLight(t) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      // A soft glow under the surface, then wide faint rays spread across the top, fanning out downwards.
+      const top = ctx.createRadialGradient(W / 2, 60, 20, W / 2, 60, 700);
+      top.addColorStop(0, 'rgba(150,220,255,0.22)'); top.addColorStop(1, 'rgba(150,220,255,0)');
+      ctx.fillStyle = top; ctx.fillRect(0, 0, W, 800);
+      for (let i = 0; i < 9; i++) {
+        const ox = 90 + i * 112 + Math.sin(t * 0.2 + i) * 20;
+        const ang = (ox - W / 2) / W * 0.5 + Math.sin(t * 0.25 + i * 1.7) * 0.03;
+        const len = H * (0.6 + rand(i + 300) * 0.3), wid = 70 + rand(i + 310) * 80;
+        const alpha = 0.035 + 0.025 * Math.sin(t * 0.6 + i * 2.1) + rand(i + 320) * 0.02;
+        ctx.save();
+        ctx.translate(ox, -20); ctx.rotate(-ang);
+        const g = ctx.createLinearGradient(0, 0, 0, len);
+        g.addColorStop(0, `rgba(170,230,255,${alpha * 2})`); g.addColorStop(1, 'rgba(170,230,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.moveTo(-wid * 0.3, 0); ctx.lineTo(wid * 0.3, 0); ctx.lineTo(wid, len); ctx.lineTo(-wid, len); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      for (let i = 0; i < 40; i++) {
+        const tw = Math.max(0, Math.sin(t * (1.5 + rand(i + 500) * 2) + i * 3.1));
+        if (tw < 0.4) continue;
+        const x = rand(i + 510) * W, y = 300 + rand(i + 520) * (H - 500), s = (1.5 + rand(i + 530) * 2.5) * tw;
+        ctx.fillStyle = `rgba(225,245,255,${0.7 * tw})`;
+        ctx.fillRect(x - s * 2.5, y - 0.6, s * 5, 1.2); ctx.fillRect(x - 0.6, y - s * 2.5, 1.2, s * 5);
+        ctx.beginPath(); ctx.arc(x, y, s * 0.6, 0, TAU); ctx.fill();
+      }
+      ctx.restore();
+      const v = ctx.createRadialGradient(W / 2, H * 0.42, H * 0.25, W / 2, H * 0.5, H * 0.75);
+      v.addColorStop(0, 'rgba(0,8,18,0)'); v.addColorStop(1, 'rgba(0,8,18,0.6)');
+      ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+    }
+
     function drawWater(t) {
       const g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, '#0d6690'); g.addColorStop(0.4, '#06405f'); g.addColorStop(1, '#021624');
+      if (cinematic()) {
+        // Deep royal/navy blue, brighter behind the middle of the screen.
+        g.addColorStop(0, '#1d63ad'); g.addColorStop(0.35, '#0c3a78'); g.addColorStop(0.75, '#06204a'); g.addColorStop(1, '#020b1e');
+      } else {
+        g.addColorStop(0, '#0d6690'); g.addColorStop(0.4, '#06405f'); g.addColorStop(1, '#021624');
+      }
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-      drawCaustics(t, 0, 0, W, H, 0.5);
+      if (cinematic()) {
+        const c = ctx.createRadialGradient(W / 2, H * 0.48, 40, W / 2, H * 0.48, H * 0.5);
+        c.addColorStop(0, 'rgba(70,150,255,0.28)'); c.addColorStop(1, 'rgba(70,150,255,0)');
+        ctx.fillStyle = c; ctx.fillRect(0, 0, W, H);
+      }
+      drawCaustics(t, 0, 0, W, H, cinematic() ? 0.22 : 0.5);
+      if (cinematic()) drawCinematicLight(t);
 
       // The water surface seen from below, rippling across the top.
       ctx.beginPath(); ctx.moveTo(0, 0);
@@ -856,6 +915,80 @@ window.VideoAdRenderer = (function () {
     const UP = () => (ad && ad.safeZones ? 0 : 100);
     const BOTTOM = () => (ad && ad.safeZones ? 1430 : 1720);
 
+    // 'montage': the photos share the scene equally (at least 0.25 s each - extra ones are left out), each
+    // punching in from 1.12x to 1.04x after a short white flash on the cut, so it reads as a fast reel of
+    // finished builds. Dark top/bottom like a photo scene keeps the headline readable; ticks at the
+    // bottom show how many builds go by.
+    function drawMontage(s, lt, dur, t) {
+      const list = (Array.isArray(s.photos) ? s.photos : []).map(getMedia).filter(Boolean);
+      if (!list.length) return;
+      if (s.layout === 'showcase') { drawShowcase(list, lt, dur); return; }
+      const n = Math.min(list.length, Math.max(1, Math.floor(dur / 0.25)));
+      const slot = dur / n;
+      const k = Math.min(n - 1, Math.max(0, Math.floor(lt / slot)));
+      const el = list[k].el, iw = el.naturalWidth, ih = el.naturalHeight;
+      if (!iw || !ih) return;
+      const into = lt - k * slot;
+      const sc = Math.max(W / iw, H / ih) * (1.12 - 0.08 * easeOut(into / Math.min(slot, 0.6)));
+      const dw = iw * sc, dh = ih * sc;
+      const drift = (k % 2 ? -1 : 1) * (clamp(into / slot) - 0.5) * 30;
+      ctx.drawImage(el, (W - dw) / 2 + drift, (H - dh) / 2, dw, dh);
+      drawCaustics(t, 0, 0, W, H, 0.15);
+      const flash = k > 0 ? 1 - clamp(into / 0.12) : 0;
+      if (flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.55 * flash})`; ctx.fillRect(0, 0, W, H); }
+      const tg = ctx.createLinearGradient(0, 0, 0, H * 0.45);
+      tg.addColorStop(0, 'rgba(2,18,30,0.85)'); tg.addColorStop(1, 'rgba(2,18,30,0)');
+      ctx.fillStyle = tg; ctx.fillRect(0, 0, W, H * 0.45);
+      const bg = ctx.createLinearGradient(0, H * 0.72, 0, H);
+      bg.addColorStop(0, 'rgba(2,18,30,0)'); bg.addColorStop(1, 'rgba(2,18,30,0.7)');
+      ctx.fillStyle = bg; ctx.fillRect(0, H * 0.72, W, H * 0.28);
+      if (n < 2) return;
+      const tw = Math.min(40, (W - 160) / n - 6), x0 = (W - n * (tw + 6) + 6) / 2, ty = BOTTOM() + 60;
+      for (let j = 0; j < n; j++) {
+        ctx.fillStyle = j === k ? (ad.accent || '#3fe0d0') : 'rgba(255,255,255,0.35)';
+        roundRect(x0 + j * (tw + 6), ty, tw, 6, 3); ctx.fill();
+      }
+    }
+
+    // 'montage' layout 'showcase': slower - each photo (at least 0.6 s) slides in as a white-framed print,
+    // tilting from the side and settling on top of the ones before it, which stay as a stack underneath.
+    function drawShowcase(list, lt, dur) {
+      const n = Math.min(list.length, Math.max(1, Math.floor(dur / 0.6)));
+      const slot = dur / n;
+      const k = Math.min(n - 1, Math.max(0, Math.floor(lt / slot)));
+      const up = UP(), cy = Math.min(1150 - up, (BOTTOM() + 560 - up) / 2 + 40);
+      const maxW = 820, maxH = Math.min(1000, BOTTOM() - 520 + up);
+      for (let j = Math.max(0, k - 3); j <= k; j++) {
+        const el = list[j].el, iw = el.naturalWidth, ih = el.naturalHeight;
+        if (!iw || !ih) continue;
+        const sc = Math.min(maxW / iw, maxH / ih);
+        const w = iw * sc, h = ih * sc, frame = 18;
+        const p = easeOut((lt - j * slot) / 0.55);
+        const from = j % 2 ? 1 : -1;
+        const rest = (rand(j + 3) - 0.5) * 0.12;          // each print settles at its own slight angle
+        const angle = rest + from * 0.35 * (1 - p);
+        const x = W / 2 + from * 900 * (1 - p) + (rand(j + 9) - 0.5) * 40;
+        const y = cy + (rand(j + 17) - 0.5) * 50;
+        const zoom = 1 + 0.12 * (1 - p);
+        const behind = k - j;                             // older prints darken as more land on top
+        ctx.save();
+        ctx.translate(x, y); ctx.rotate(angle); ctx.scale(zoom, zoom);
+        ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 40; ctx.shadowOffsetY = 16;
+        ctx.fillStyle = '#ffffff';
+        roundRect(-w / 2 - frame, -h / 2 - frame, w + frame * 2, h + frame * 2, 14); ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.drawImage(el, -w / 2, -h / 2, w, h);
+        if (behind > 0) { ctx.fillStyle = `rgba(2,18,30,${Math.min(0.5, behind * 0.18)})`; roundRect(-w / 2 - frame, -h / 2 - frame, w + frame * 2, h + frame * 2, 14); ctx.fill(); }
+        ctx.restore();
+      }
+      if (n < 2) return;
+      const tw = Math.min(40, (W - 160) / n - 6), x0 = (W - n * (tw + 6) + 6) / 2, ty = BOTTOM() + 60;
+      for (let j = 0; j < n; j++) {
+        ctx.fillStyle = j === k ? (ad.accent || '#3fe0d0') : 'rgba(255,255,255,0.35)';
+        roundRect(x0 + j * (tw + 6), ty, tw, 6, 3); ctx.fill();
+      }
+    }
+
     function drawBrandTag() {
       const name = (ad.brand && ad.brand.name) || '';
       const showLogo = !(ad.brand && ad.brand.showLogo === false) && getMedia(ad.brand && ad.brand.logo);
@@ -903,14 +1036,15 @@ window.VideoAdRenderer = (function () {
     // small canvas (cached) and drawn in slices.
     const subCache = new Map();
     function subCanvas(lines) {
-      const key = lines.join('\n') + (document.fonts && document.fonts.check(`600 52px Montserrat`) ? '|m' : '');
+      const cine = cinematic();
+      const key = lines.join('\n') + (cine ? '|c' : '') + (document.fonts && document.fonts.check(cine ? '600 52px "Playfair Display"' : `600 52px Montserrat`) ? '|m' : '');
       if (subCache.has(key)) return subCache.get(key);
       if (subCache.size > 40) subCache.clear();
       const c = document.createElement('canvas');
       c.width = W; c.height = lines.length * 66 + 30;
       const x = c.getContext('2d');
-      x.font = `600 52px ${FONT}`; x.textAlign = 'center'; x.textBaseline = 'top';
-      x.fillStyle = '#bdeff5'; x.shadowColor = 'rgba(0,0,0,0.5)'; x.shadowBlur = 14;
+      x.font = cine ? `italic 600 56px ${SERIF}` : `600 52px ${FONT}`; x.textAlign = 'center'; x.textBaseline = 'top';
+      x.fillStyle = cine ? '#f6d98b' : '#bdeff5'; x.shadowColor = 'rgba(0,0,0,0.5)'; x.shadowBlur = 14;
       lines.forEach((l, i) => x.fillText(l, W / 2, 10 + i * 66));
       subCache.set(key, c);
       return c;
@@ -933,13 +1067,26 @@ window.VideoAdRenderer = (function () {
       ctx.save();
       ctx.textBaseline = 'top';
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 4;
-      ctx.font = `800 104px ${FONT}`; ctx.fillStyle = '#ffffff';
+      ctx.font = cinematic() ? `700 104px ${HEAD}` : `800 104px ${FONT}`; ctx.fillStyle = '#ffffff';
       y = drawRisingText(wrap(s.headline, 940), lt, y, 116, 0);
       ctx.restore();
       if (s.sub) {
-        ctx.save(); ctx.font = `600 52px ${FONT}`;
+        ctx.save(); ctx.font = cinematic() ? `italic 600 56px ${SERIF}` : `600 52px ${FONT}`;
         const lines = wrap(s.sub, 920);
         ctx.restore();
+        if (cinematic()) {
+          // A glowing divider grows out from the middle, then the gold line settles under it.
+          const d = easeOut((lt - 0.25) / 0.6);
+          if (d > 0) {
+            const half = 330 * d, ly = y + 22;
+            const g = ctx.createLinearGradient(W / 2 - half, 0, W / 2 + half, 0);
+            g.addColorStop(0, 'rgba(190,235,255,0)'); g.addColorStop(0.5, 'rgba(225,248,255,0.95)'); g.addColorStop(1, 'rgba(190,235,255,0)');
+            ctx.save(); ctx.shadowColor = 'rgba(160,225,255,0.9)'; ctx.shadowBlur = 12;
+            ctx.fillStyle = g; ctx.fillRect(W / 2 - half, ly - 1.5, half * 2, 3);
+            ctx.restore();
+          }
+          y += 48;
+        }
         y += 14;
         drawRippledSub(lines, lt, y);
         y += lines.length * 66;
@@ -1003,7 +1150,7 @@ window.VideoAdRenderer = (function () {
       ctx.font = `800 64px ${FONT}`; ctx.fillText((ad.brand && ad.brand.name) || '', W / 2, 625 - up, 980);
       ctx.restore();
       ctx.save();
-      ctx.textBaseline = 'top'; ctx.font = `800 96px ${FONT}`; ctx.fillStyle = '#fff';
+      ctx.textBaseline = 'top'; ctx.font = cinematic() ? `700 96px ${HEAD}` : `800 96px ${FONT}`; ctx.fillStyle = '#fff';
       ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18;
       let y = drawRisingText(wrap(s.headline, 940), lt, 760 - up, 108, 0.2);
       ctx.restore();
@@ -1057,7 +1204,104 @@ window.VideoAdRenderer = (function () {
     // Logo scene: the shop logo big in the centre, revealed by water rising up through it, with
     // ripple rings spreading out and the tank's caustic light playing across it. Without a logo,
     // the shop name sits in the ring instead.
+    // Cinematic logo: rises out of the water onto the waterline, glowing, with its reflection rippling
+    // below and gold glints on the water.
+    const reflC = document.createElement('canvas');
+    function drawLogoOnWater(lt, t, cy) {
+      const r = 230, cx = W / 2, horizon = cy + r * 0.92;
+      const e = easeOut(lt / 1.3);
+      if (e <= 0) return;
+      const ly = horizon - r * 0.92 * e + Math.sin(t * 1.1) * 5 * e;   // logo centre, rising
+      const drawLogo = (c, x, y) => {
+        // Halo, white ring, logo (or the shop name if there is no logo).
+        const glow = c.createRadialGradient(x, y, r * 0.8, x, y, r * 1.5);
+        glow.addColorStop(0, withAlpha(ad.accent, 0.55)); glow.addColorStop(1, withAlpha(ad.accent, 0));
+        c.fillStyle = glow; c.beginPath(); c.arc(x, y, r * 1.5, 0, TAU); c.fill();
+        c.beginPath(); c.arc(x, y, r + 18, 0, TAU); c.fillStyle = 'rgba(245,252,255,0.95)'; c.fill();
+        c.beginPath(); c.arc(x, y, r + 18, 0, TAU); c.strokeStyle = withAlpha(ad.accent, 0.9); c.lineWidth = 6; c.stroke();
+      };
+      // Main logo, only above the waterline.
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, W, horizon); ctx.clip();
+      drawLogo(ctx, cx, ly);
+      if (!drawLogoCircle(cx, ly, r, 'rgba(0,0,0,0)', 0)) {
+        ctx.beginPath(); ctx.arc(cx, ly, r, 0, TAU); ctx.fillStyle = '#04263a'; ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = `800 ${Math.round(r * 0.28)}px ${FONT}`;
+        wrap((ad.brand && ad.brand.name) || '', r * 1.6).slice(0, 3).forEach((line, i, all) => ctx.fillText(line, cx, ly + (i - (all.length - 1) / 2) * r * 0.32, r * 1.7));
+      }
+      ctx.restore();
+
+      // The water below the line: darker, with the logo's reflection rippling in it.
+      const below = H - horizon;
+      const wg = ctx.createLinearGradient(0, horizon, 0, H);
+      wg.addColorStop(0, 'rgba(3,30,52,0.55)'); wg.addColorStop(1, 'rgba(1,10,20,0.8)');
+      ctx.fillStyle = wg; ctx.fillRect(0, horizon, W, below);
+      const rh = Math.min(below, r * 2.4);
+      if (reflC.width !== W || reflC.height !== Math.ceil(rh)) { reflC.width = W; reflC.height = Math.ceil(rh); }
+      const rc = reflC.getContext('2d');
+      rc.clearRect(0, 0, reflC.width, reflC.height);
+      rc.save();
+      // Mirror about the waterline: row 0 of the canvas is the waterline, going down = further above it.
+      rc.scale(1, -1); rc.translate(0, -horizon);
+      const logo = getMedia(ad.brand && ad.brand.logo);
+      drawLogo(rc, cx, ly);
+      if (logo) {
+        const iw = logo.el.naturalWidth || logo.el.videoWidth, ih = logo.el.naturalHeight || logo.el.videoHeight;
+        const sc = Math.max((r * 2) / iw, (r * 2) / ih);
+        rc.save(); rc.beginPath(); rc.arc(cx, ly, r, 0, TAU); rc.clip();
+        rc.drawImage(logo.el, cx - (iw * sc) / 2, ly - (ih * sc) / 2, iw * sc, ih * sc);
+        rc.restore();
+      }
+      rc.restore();
+      rc.globalCompositeOperation = 'destination-in';
+      const fade = rc.createLinearGradient(0, 0, 0, reflC.height);
+      fade.addColorStop(0, 'rgba(0,0,0,0.5)'); fade.addColorStop(1, 'rgba(0,0,0,0)');
+      rc.fillStyle = fade; rc.fillRect(0, 0, W, reflC.height);
+      rc.globalCompositeOperation = 'source-over';
+      for (let sy = 0; sy < reflC.height; sy += 4) {
+        const off = Math.sin(sy * 0.09 - t * 4) * (3 + sy * 0.05);
+        ctx.drawImage(reflC, 0, sy, W, 4, off, horizon + sy, W, 4);
+      }
+
+      // Gold glints dancing on the water under the logo.
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 26; i++) {
+        const gy = horizon + 10 + rand(i + 700) * Math.min(220, below - 20);
+        const spread = 40 + (gy - horizon) * 0.9;
+        const gx = cx + (rand(i + 710) - 0.5) * spread * 2 + Math.sin(t * 2 + i) * 10;
+        const a = 0.25 + 0.5 * Math.max(0, Math.sin(t * 3 + i * 1.9));
+        ctx.fillStyle = `rgba(255,190,90,${a * e})`;
+        ctx.fillRect(gx - 14 - rand(i + 720) * 22, gy, 28 + rand(i + 720) * 44, 3);
+      }
+      ctx.restore();
+
+      // The bright waterline across the screen, with a splash where the logo breaks through.
+      ctx.save();
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 12) {
+        const near = Math.exp(-Math.pow((x - cx) / 260, 2));
+        const y = horizon + Math.sin(x * 0.02 + t * 2.2) * 4 + Math.sin(x * 0.05 - t * 3) * 2 - near * 8 * Math.sin(t * 2);
+        ctx[x ? 'lineTo' : 'moveTo'](x, y);
+      }
+      ctx.shadowColor = 'rgba(190,240,255,0.95)'; ctx.shadowBlur = 16;
+      ctx.strokeStyle = 'rgba(235,252,255,0.9)'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.restore();
+      const sp = clamp((lt - 0.1) / 0.9);
+      if (sp > 0 && sp < 1) {
+        for (let i = 0; i < 18; i++) {
+          const side = rand(i + 800) < 0.5 ? -1 : 1;
+          const vx = side * (60 + rand(i + 810) * 260), vy = -(200 + rand(i + 820) * 360);
+          const x = cx + side * r * (0.6 + rand(i + 830) * 0.5) + vx * sp, y = horizon + vy * sp + 600 * sp * sp;
+          if (y > horizon) continue;
+          ctx.beginPath(); ctx.arc(x, y, 3 + rand(i + 840) * 5, 0, TAU);
+          ctx.fillStyle = `rgba(225,248,255,${0.85 * (1 - sp)})`; ctx.fill();
+        }
+      }
+    }
+
     function drawLogoHero(lt, t, cy) {
+      if (cinematic()) { drawLogoOnWater(lt, t, cy); return; }
       const r = 250, cx = W / 2;
       const a = clamp(lt / 0.3);
       if (a <= 0) return;
@@ -1393,13 +1637,19 @@ window.VideoAdRenderer = (function () {
       const list = all.slice(0, 3);
       const bw = 900, padX = 44, padY = 30;
       const fs = list.length > 2 ? 36 : 40, lineH = Math.round(fs * 1.28);
+      // A review's own setup photo (r.photo) sits on the left of its bubble, text to the right of it.
+      const PW = list.length > 2 ? 190 : 230;
       let y = top + sr * 2 + 84;
       const room = top + maxH - y;
       ctx.save(); ctx.font = `600 ${fs}px ${FONT}`;
       const bubbles = list.map((r) => {
-        let lines = wrap('“' + String(r.text).trim() + '”', bw - padX * 2);
-        if (lines.length > 4) { lines = lines.slice(0, 4); lines[3] = lines[3].replace(/\s*\S*$/, '') + '…”'; }
-        return { lines, name: String(r.name || '').trim(), h: padY * 2 + lines.length * lineH + 48 };
+        const photo = getMedia(r.photo);
+        const tx = photo ? padX + PW + 30 : padX;
+        let lines = wrap('“' + String(r.text).trim() + '”', bw - tx - padX);
+        const maxLines = photo ? 5 : 4;
+        if (lines.length > maxLines) { lines = lines.slice(0, maxLines); lines[maxLines - 1] = lines[maxLines - 1].replace(/\s*\S*$/, '') + '…”'; }
+        const h = Math.max(padY * 2 + lines.length * lineH + 48, photo ? PW + padY * 2 : 0);
+        return { lines, name: String(r.name || '').trim(), h, photo, tx };
       });
       ctx.restore();
       const total = bubbles.reduce((a, b) => a + b.h, 0) + 28 * (bubbles.length - 1);
@@ -1422,12 +1672,26 @@ window.VideoAdRenderer = (function () {
           ctx.beginPath(); ctx.moveTo(70, b.h - 2); ctx.lineTo(54, b.h + 30); ctx.lineTo(112, b.h - 2); ctx.closePath(); ctx.fill();
           // Bubble highlight
           ctx.beginPath(); ctx.ellipse(bw - 90, 34, 46, 12, -0.15, 0, TAU); ctx.fillStyle = 'rgba(190,235,255,0.6)'; ctx.fill();
+          if (b.photo) {
+            const el = b.photo.el, iw = el.naturalWidth, ih = el.naturalHeight;
+            const py = (b.h - PW) / 2;
+            ctx.save();
+            roundRect(padX, py, PW, PW, 24); ctx.clip();
+            if (iw && ih) {
+              const c = Math.min(iw, ih);
+              ctx.drawImage(el, (iw - c) / 2, (ih - c) / 2, c, c, padX, py, PW, PW);
+            }
+            ctx.restore();
+            ctx.save(); roundRect(padX, py, PW, PW, 24); ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(16,40,58,0.12)'; ctx.stroke(); ctx.restore();
+          }
+          const tx = b.tx;
+          const ty = b.photo ? Math.max(padY, (b.h - (b.lines.length * lineH + 48)) / 2) : padY;
           ctx.font = `600 ${fs}px ${FONT}`; ctx.fillStyle = '#10283a'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-          b.lines.forEach((line, j) => ctx.fillText(line, padX, padY + j * lineH));
-          const fy = padY + b.lines.length * lineH + 10;
-          for (let j = 0; j < 5; j++) drawStar(padX + 14 + j * 30, fy + 16, 13, '#f5b400');
+          b.lines.forEach((line, j) => ctx.fillText(line, tx, ty + j * lineH));
+          const fy = ty + b.lines.length * lineH + 10;
+          for (let j = 0; j < 5; j++) drawStar(tx + 14 + j * 30, fy + 16, 13, '#f5b400');
           ctx.font = `700 28px ${FONT}`; ctx.fillStyle = '#4a6375';
-          ctx.fillText((b.name ? b.name + ' · ' : '') + 'Facebook review', padX + 170, fy + 2);
+          ctx.fillText((b.name ? b.name + ' · ' : '') + 'Facebook review', tx + 170, fy + 2);
           ctx.restore();
         }
         y += (b.h + 28) * scale;
@@ -1439,6 +1703,7 @@ window.VideoAdRenderer = (function () {
       const logoScene = s.style === 'logo' || s.style === 'fish'; // 'fish' = older saved ads
       const m = sceneMedia(s);
       if (m) drawMediaBg(m, lt, dur, t);
+      if (s.style === 'montage') drawMontage(s, lt, dur, t);
       if (!logoScene) drawBrandTag();
       const y = drawText(s, lt);
       const yb = drawBullets(s.bullets, lt, y + 40);
