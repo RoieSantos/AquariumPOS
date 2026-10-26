@@ -9,6 +9,8 @@
 //          also takes options - see TANK_OPTIONS; a stand takes layers 1-4 and paint 'black'|'white') | 'water' (text only)
 //          | 'payments' (the payment methods in scene.methods drop in as cards - see PAY_METHODS)
 //          | 'delivery' (our own truck drives up to a house and hands over the wrapped aquarium)
+//          | 'reviews' (five stars, then up to 3 real customer quotes in scene.reviews = [{ text, name }]
+//            rise up as bubbles)
 //          | 'photo' (your photo/video, falls back to water until one is chosen) | 'cta' (logo + button end card)
 window.VideoAdRenderer = (function () {
   const W = 1080, H = 1920, FPS = 30, FADE = 0.75; // FADE = length of the tide transition
@@ -1291,6 +1293,83 @@ window.VideoAdRenderer = (function () {
       }
     }
 
+    // ---------- reviews: five stars pop, then each quote rises up like an air bubble and settles ----------
+    function drawStar(cx, cy, r, fill) {
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / 5, rr = i % 2 ? r * 0.45 : r;
+        ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+      }
+      ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+    }
+
+    function drawReviews(s, lt, top, maxH) {
+      // Stars
+      const sr = 46, sgap = 112;
+      for (let i = 0; i < 5; i++) {
+        const k = clamp((lt - 0.05 - i * 0.1) / 0.3);
+        if (k <= 0) continue;
+        const pop = k < 1 ? 1 + Math.sin(k * Math.PI) * 0.35 : 1;
+        const cx = W / 2 + (i - 2) * sgap, cy = top + sr;
+        ctx.save(); ctx.globalAlpha *= clamp(k * 2);
+        ctx.shadowColor = 'rgba(255,209,102,0.7)'; ctx.shadowBlur = 24;
+        drawStar(cx, cy, sr * pop * easeOut(k), '#ffd166');
+        ctx.restore();
+      }
+      const lk = easeOut((lt - 0.55) / 0.4);
+      if (lk > 0) {
+        ctx.save(); ctx.globalAlpha *= lk;
+        ctx.font = `700 34px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#cfefff';
+        ctx.fillText('Real reviews from our Facebook page', W / 2, top + sr * 2 + 34);
+        ctx.restore();
+      }
+
+      // Quote bubbles, stacked under the stars.
+      const list = (Array.isArray(s.reviews) ? s.reviews : []).filter((r) => r && String(r.text || '').trim()).slice(0, 3);
+      if (!list.length) return;
+      const bw = 900, padX = 44, padY = 30;
+      const fs = list.length > 2 ? 36 : 40, lineH = Math.round(fs * 1.28);
+      let y = top + sr * 2 + 84;
+      const room = top + maxH - y;
+      ctx.save(); ctx.font = `600 ${fs}px ${FONT}`;
+      const bubbles = list.map((r) => {
+        let lines = wrap('“' + String(r.text).trim() + '”', bw - padX * 2);
+        if (lines.length > 4) { lines = lines.slice(0, 4); lines[3] = lines[3].replace(/\s*\S*$/, '') + '…”'; }
+        return { lines, name: String(r.name || '').trim(), h: padY * 2 + lines.length * lineH + 48 };
+      });
+      ctx.restore();
+      const total = bubbles.reduce((a, b) => a + b.h, 0) + 28 * (bubbles.length - 1);
+      const scale = Math.min(1, room / total);
+      bubbles.forEach((b, i) => {
+        const k = clamp((lt - 0.7 - i * 0.45) / 0.7);
+        const h = b.h * scale, w = bw * scale;
+        if (k > 0) {
+          // Rises from below with a side-to-side wobble, like an air bubble, then settles.
+          const rise = (1 - easeOut(k)) * 420;
+          const wob = Math.sin(lt * 5 + i) * 18 * (1 - k);
+          const bob = Math.sin(lt * 1.7 + i * 2) * 4 * k;
+          const x = (W - w) / 2 + wob, by = y + rise + bob;
+          ctx.save(); ctx.globalAlpha *= clamp(k * 2);
+          ctx.translate(x, by); ctx.scale(scale, scale);
+          ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 26; ctx.shadowOffsetY = 10;
+          roundRect(0, 0, bw, b.h, 36); ctx.fillStyle = 'rgba(255,255,255,0.96)'; ctx.fill();
+          ctx.shadowColor = 'transparent';
+          // Tail on the left, like a chat bubble.
+          ctx.beginPath(); ctx.moveTo(70, b.h - 2); ctx.lineTo(54, b.h + 30); ctx.lineTo(112, b.h - 2); ctx.closePath(); ctx.fill();
+          // Bubble highlight
+          ctx.beginPath(); ctx.ellipse(bw - 90, 34, 46, 12, -0.15, 0, TAU); ctx.fillStyle = 'rgba(190,235,255,0.6)'; ctx.fill();
+          ctx.font = `600 ${fs}px ${FONT}`; ctx.fillStyle = '#10283a'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+          b.lines.forEach((line, j) => ctx.fillText(line, padX, padY + j * lineH));
+          const fy = padY + b.lines.length * lineH + 10;
+          for (let j = 0; j < 5; j++) drawStar(padX + 14 + j * 30, fy + 16, 13, '#f5b400');
+          ctx.font = `700 28px ${FONT}`; ctx.fillStyle = '#4a6375';
+          ctx.fillText((b.name ? b.name + ' · ' : '') + 'Facebook review', padX + 170, fy + 2);
+          ctx.restore();
+        }
+        y += (b.h + 28) * scale;
+      });
+    }
+
     function drawScene(s, lt, dur, t) {
       if (s.style === 'cta') { drawCta(s, lt, t); return; }
       const logoScene = s.style === 'logo' || s.style === 'fish'; // 'fish' = older saved ads
@@ -1300,6 +1379,10 @@ window.VideoAdRenderer = (function () {
       const y = drawText(s, lt);
       const yb = drawBullets(s.bullets, lt, y + 40);
       if (logoScene) drawLogoHero(lt, t, Math.min(1180, Math.max(1050, yb + 330)));
+      if (s.style === 'reviews') {
+        const top = Math.min(900, Math.max(600, yb + 70));
+        drawReviews(s, lt, top, 1460 - top);
+      }
       if (s.style === 'payments' || s.style === 'delivery') {
         const top = Math.min(1000, Math.max(760, yb + 110));
         (s.style === 'payments' ? drawPayments : drawDelivery)(s, lt, top, 1440 - top);

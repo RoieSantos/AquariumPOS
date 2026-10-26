@@ -4,6 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-26
 
+- **Video Ad Builder: 💬 Reviews scene with real Facebook reviews.**
+  - Five stars pop in under "Real reviews from our Facebook page", then up to 3 customer quotes rise in like air bubbles and settle as chat bubbles.
+  - **📥 Load reviews from Facebook** goes through the new Edge Function [video-ad-reviews](supabase/functions/video-ad-reviews/index.ts). It does a read-only `/ratings` call with the existing Page tokens, which needs `pages_read_user_content`. Staff click Use on a review, or type one in.
+  - Names are shortened to first name + initial, and "does not recommend" reviews can't be used.
+  - The AI never writes or adds reviews. "Change with AI" keeps an existing Reviews scene and its quotes (needs redeploy).
+  - Changes are in [videoAdRenderer.js](docs/js/videoAdRenderer.js), [videoAdBuilder.js](docs/js/videoAdBuilder.js) and [video-ad-builder.html](docs/video-ad-builder.html).
 - **Video Ad Builder: 💳 Payments and 🚚 Delivery scenes.**
   - Payments: the chosen methods drop into the water as cards, with a splash, a bob and a glint. The methods are Visa, Mastercard, GCash, Maya, QR Ph, bank transfer and cash, picked with tick boxes.
   - Delivery: our own truck, with the shop logo and name, drives up to a house trailing bubbles. The wrapped "FRAGILE" aquarium floats to the door and a ✓ pops.

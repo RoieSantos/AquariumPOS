@@ -22,6 +22,7 @@ const STYLES = [
   { key: 'tank', label: '📐 Tank drawing' },
   { key: 'stand', label: '🔩 Stand drawing' },
   { key: 'sump', label: '🌀 Sump drawing' },
+  { key: 'reviews', label: '💬 Reviews' },
   { key: 'payments', label: '💳 Payments' },
   { key: 'delivery', label: '🚚 Delivery' },
   { key: 'photo', label: '📷 Photo / video' },
@@ -103,6 +104,7 @@ function newScene(style) {
   if (BUILD_DIMS[style]) base.dims = BUILD_DIMS[style].slice();
   if (style === 'stand') Object.assign(base, { layers: 2, paint: 'black' });
   if (style === 'cta') Object.assign(base, { headline: 'Message us today', button: 'rspetstop.com', footer: '' });
+  if (style === 'reviews') Object.assign(base, { duration: 4, headline: 'Our customers say', reviews: [] });
   if (style === 'payments') Object.assign(base, { headline: 'Pay your way', sub: 'Cards, e-wallets, bank transfer or cash' });
   if (style === 'delivery') Object.assign(base, { duration: 3.8, headline: 'We deliver it safely', sub: 'Our own team - we handle the rest at your home' });
   return base;
@@ -348,6 +350,31 @@ function sceneCardHtml(s, i, count) {
       </div>
       <label class="va-label">Other accessories, comma separated (e.g. Filter, Heater, Chiller) <input type="text" data-opt="extras" maxlength="120" value="${escapeHtml(o.extras)}" /></label>`;
   }
+  if (s.style === 'reviews') {
+    const list = Array.isArray(s.reviews) ? s.reviews : [];
+    const rows = list.map((r, j) => `
+      <div class="va-review">
+        <textarea data-review-text="${j}" rows="2" maxlength="220" placeholder="The customer's review, word for word">${escapeHtml(r.text)}</textarea>
+        <div class="va-review-foot">
+          <input type="text" data-review-name="${j}" maxlength="30" value="${escapeHtml(r.name)}" placeholder="Name shown (optional, e.g. Mark D.)" />
+          <button class="va-icon-btn" data-review-del="${j}" type="button" title="Remove this review">&times;</button>
+        </div>
+      </div>`).join('');
+    const picks = fbReviews ? fbReviews.map((r, k) => `
+      <div class="va-fb-review">
+        <div><b>${r.name ? escapeHtml(r.name) + ' · ' : ''}${escapeHtml(r.page)}</b>${r.recommends ? '' : ' <span class="va-error">(does not recommend)</span>'}<br>${escapeHtml(r.text.length > 220 ? r.text.slice(0, 220) + '…' : r.text)}</div>
+        <button class="btn btn-secondary btn-sm" data-review-use="${k}" type="button" ${list.length >= 3 || !r.recommends ? 'disabled' : ''}>Use</button>
+      </div>`).join('') : '';
+    fields += `
+      <div class="va-label">Reviews shown in bubbles (up to 3 - short ones work best)${rows || '<span class="muted" style="font-weight:500;">No reviews yet - load them from Facebook or add one.</span>'}</div>
+      <div class="va-ai-row">
+        <button class="btn btn-primary btn-sm" data-review-load type="button">📥 Load reviews from Facebook</button>
+        <button class="btn btn-secondary btn-sm" data-review-add type="button" ${list.length >= 3 ? 'disabled' : ''}>+ Type a review</button>
+        <span class="va-ai-status">${escapeHtml(fbReviewsStatus)}</span>
+      </div>
+      ${picks ? `<div class="va-fb-reviews">${picks}</div>` : ''}
+      <p class="muted" style="margin:0; font-size:12.5px;">Use real reviews only: you may shorten one with "…" but don't reword it. Only show a customer's name if they're OK with it (first name + initial is safest). Move this scene to the top (↑) - reviews make a strong opening.</p>`;
+  }
   if (s.style === 'payments') {
     const on = (k) => !Array.isArray(s.methods) || !s.methods.length || s.methods.includes(k);
     const checks = VideoAdRenderer.PAY_METHODS.map(([k, label]) =>
@@ -426,6 +453,11 @@ function onSceneInput(e) {
     s[k] = e.target.value;
     if (k === 'headline') card.querySelector('.va-scene-title').textContent = s.headline || 'Scene ' + (Number(card.dataset.i) + 1);
     if (k === 'say') { card.querySelector('.va-say-status').textContent = sayStatus(s); renderVoice(); }
+  } else if (e.target.dataset.reviewText != null || e.target.dataset.reviewName != null) {
+    const j = Number(e.target.dataset.reviewText ?? e.target.dataset.reviewName);
+    s.reviews = s.reviews || [];
+    if (!s.reviews[j]) return;
+    if (e.target.dataset.reviewText != null) s.reviews[j].text = e.target.value; else s.reviews[j].name = e.target.value;
   } else if (e.target.dataset.method) {
     s.methods = [...card.querySelectorAll('input[data-method]')].filter((el) => el.checked).map((el) => el.dataset.method);
   } else if (e.target.dataset.opt) {
@@ -466,6 +498,22 @@ function onSceneClick(e) {
     if (style === 'stand') { s.layers = s.layers || 2; s.paint = s.paint || 'black'; }
     if (style === 'cta' && s.button == null) s.button = 'rspetstop.com';
     if (style === 'delivery' && s.duration < 3.6) s.duration = 3.8;
+    if (style === 'reviews') { s.reviews = s.reviews || []; if (s.duration < 4) s.duration = 4; }
+    finishStructuralChange(i);
+    return;
+  }
+
+  if (e.target.closest('[data-review-load]')) { loadFacebookReviews(i); return; }
+  const reviewAdd = e.target.closest('[data-review-add]');
+  const reviewUse = e.target.closest('[data-review-use]');
+  const reviewDel = e.target.closest('[data-review-del]');
+  if (reviewAdd || reviewUse || reviewDel) {
+    s.reviews = Array.isArray(s.reviews) ? s.reviews : [];
+    if (reviewDel) s.reviews.splice(Number(reviewDel.dataset.reviewDel), 1);
+    else if (s.reviews.length < 3) {
+      const r = reviewUse ? fbReviews[Number(reviewUse.dataset.reviewUse)] : null;
+      s.reviews.push(r ? { text: r.text.length > 220 ? r.text.slice(0, 219).replace(/\s*\S*$/, '') + '…' : r.text, name: shortName(r.name) } : { text: '', name: '' });
+    }
     finishStructuralChange(i);
     return;
   }
@@ -634,6 +682,42 @@ async function onSongPicked(e) {
     URL.revokeObjectURL(blobUrl);
     renderMusic();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Facebook reviews for the 💬 Reviews scene (supabase/functions/video-ad-reviews) - loaded once per
+// visit, then picked per scene.
+// ---------------------------------------------------------------------------
+
+let fbReviews = null;
+let fbReviewsStatus = '';
+
+// "Mark Dela Cruz" -> "Mark D.", "Ana Reyes" -> "Ana R." (customers' full names don't belong in an ad).
+function shortName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  if (parts.length < 2) return parts[0];
+  // Compound surnames (Dela Cruz, De los Santos, San Jose, Sta. Maria) start at the particle.
+  const at = parts.findIndex((p, i) => i > 0 && /^(de|del|dela|delos|san|santa|sta\.?|sto\.?)$/i.test(p));
+  return `${parts[0]} ${parts[at > 0 ? at : parts.length - 1][0].toUpperCase()}.`;
+}
+
+async function loadFacebookReviews(sceneIndex) {
+  fbReviewsStatus = 'Loading reviews from Facebook...';
+  renderScenes();
+  try {
+    const result = await callVideoAdFunction({}, 'video-ad-reviews');
+    fbReviews = result.reviews || [];
+    const failed = (result.pages || []).filter((p) => !p.ok);
+    fbReviewsStatus = (fbReviews.length ? `${fbReviews.length} review${fbReviews.length > 1 ? 's' : ''} found. Click Use on the ones you want.`
+      : 'No written reviews were found.')
+      + (failed.length ? ` Could not read: ${failed.map((p) => p.name + ' (' + p.error + ')').join('; ')}` : '');
+  } catch (err) {
+    fbReviewsStatus = err.message + ' You can still type reviews in with + Type a review.';
+  }
+  renderScenes();
+  const card = document.querySelector(`.va-scene[data-i="${sceneIndex}"]`);
+  if (card) card.scrollIntoView({ block: 'nearest' });
 }
 
 // ---------------------------------------------------------------------------
@@ -968,6 +1052,7 @@ async function onAiGenerate(picker) {
     const result = await runAi(prompt, picker.files(), null, setStatus);
     const template = templateCustomAquarium();
     const config = { ...result.config, brand: template.brand, music: template.music, caption: result.caption, aiSummary: result.summary };
+    config.scenes = config.scenes.filter((s) => s.style !== 'reviews'); // only staff-picked real reviews
     setStatus('');
     picker.clear();
     $('aiPrompt').value = '';
@@ -996,6 +1081,14 @@ async function onAiRevise(picker) {
       const old = s.say && madeClips.get(s.say.trim());
       if (old) { s.sayUrl = old.sayUrl; s.sayKey = old.sayKey; }
     }
+    const oldReviews = c.scenes.filter((s) => s.style === 'reviews' && Array.isArray(s.reviews) && s.reviews.length);
+    result.config.scenes = result.config.scenes.filter((s) => {
+      if (s.style !== 'reviews') return true;
+      const old = oldReviews.shift();
+      if (!old) return false; // the AI can't invent reviews
+      s.reviews = old.reviews;
+      return true;
+    });
     c.scenes = renameOldStyles(result.config.scenes);
     c.accent = result.config.accent;
     c.caption = result.caption;
