@@ -2,6 +2,15 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-27
+
+- **Portal speed: session tokens.** [supabase_staff_session_tokens.sql](sql/supabase_staff_session_tokens.sql) + [auth.js](docs/js/auth.js): the password is checked once at sign-in, then RPCs send a 24 h session token instead, so the database skips the ~75 ms bcrypt check on every call. All `is_*_authorized` checks accept it (rewritten in place from their live definitions); old sessions upgrade on their next page load; a password change ends all of that user's sessions. [changePassword.js](docs/js/changePassword.js) gets a new token after a change and still enrolls Face ID / fingerprint with the real password. `auth.js` cache version bumped on all 87 pages.
+- **Portal speed: Conversations reloads.** [gmaConversations.js](docs/js/gmaConversations.js) gathers new-message events for 1.2 s into one list refresh (it used to reload the whole list once per message, on every open tab - the busiest load on the database), and a hidden tab refreshes once when shown again.
+
+- **Query stats reset.** [supabase_reset_query_stats.sql](sql/supabase_reset_query_stats.sql) clears pg_stat_statements so the performance check can measure current load without the old Pancake crons.
+- **Read-only check: portal performance.** [supabase_check_portal_performance.sql](sql/supabase_check_portal_performance.sql) ranks RPCs by total DB time (pg_stat_statements) and shows active cron jobs, connections, cache hit ratio and key table sizes - to confirm where the portal's slowness comes from.
+
+
 ## 2026-10-26
 
 - **Video Ad Builder: review photos, whole-post picking, Showcase layout.**

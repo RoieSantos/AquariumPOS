@@ -6902,9 +6902,36 @@ async function setupAutoResumeSetting() {
   });
 }
 
+// Every new message used to reload the whole list on every open staff tab, once per event - a
+// customer's few quick messages plus the bot's reply meant several full reloads per tab, and it
+// was the busiest load on the database. Events are now gathered for INBOX_EVENT_BATCH_MS and
+// handled as one refresh; a hidden tab skips them and refreshes once when it's shown again.
+const INBOX_EVENT_BATCH_MS = 1200;
+let inboxEventTimer = null;
+let inboxEventPsids = new Set();
+let inboxRefreshPendingWhileHidden = false;
+
+function handleGmaInboxEvent(payload) {
+  if (payload?.psid) inboxEventPsids.add(payload.psid);
+  if (document.hidden) {
+    inboxRefreshPendingWhileHidden = true;
+    return;
+  }
+  if (!inboxEventTimer) inboxEventTimer = setTimeout(flushGmaInboxEvents, INBOX_EVENT_BATCH_MS);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !inboxRefreshPendingWhileHidden) return;
+  inboxRefreshPendingWhileHidden = false;
+  if (!inboxEventTimer) inboxEventTimer = setTimeout(flushGmaInboxEvents, 0);
+});
+
 // List + open thread refresh in parallel (not one after the other) so a new message lands faster.
-async function handleGmaInboxEvent(payload) {
-  const isOpenThread = payload?.psid && payload.psid === selectedPsid;
+async function flushGmaInboxEvents() {
+  inboxEventTimer = null;
+  const psids = inboxEventPsids;
+  inboxEventPsids = new Set();
+  const isOpenThread = !!selectedPsid && psids.has(selectedPsid);
   await Promise.all([
     loadConversations(),
     isOpenThread ? loadMessages(selectedPsid) : Promise.resolve(),

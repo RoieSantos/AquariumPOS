@@ -70,7 +70,9 @@
     // The session's cached password/mustChangePassword flag must be updated in lockstep with
     // what the database now has - every other page's RPC calls re-send session.password, so a
     // stale cached password here would lock the user out on their very next click.
-    setPortalSession({ ...session, password: newPassword, mustChangePassword: false });
+    // The change also ended the old session token (tokens are tied to the password), so get a new one.
+    const token = await createSessionToken(session.username, newPassword);
+    setPortalSession({ ...session, password: token || newPassword, loginPassword: newPassword, mustChangePassword: false });
 
     // Keep this device's Face ID / fingerprint sign-in (if enabled) working with the new
     // password instead of silently starting to fail on the stale one.
@@ -162,7 +164,16 @@ async function initBiometricSection(session) {
 
     toggleBtn.disabled = true;
     toggleBtn.textContent = 'Setting up...';
-    const result = await enrollBiometricCredential(session.username, session.password, session.displayName);
+    // Enrollment saves the real password for Face ID / fingerprint sign-in - never the session token.
+    const loginPassword = session.loginPassword || (isSessionToken(session.password) ? null : session.password);
+    if (!loginPassword) {
+      toggleBtn.disabled = false;
+      render();
+      errorEl.textContent = 'Please sign out and sign in again with your password, then turn this on.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    const result = await enrollBiometricCredential(session.username, loginPassword, session.displayName);
     toggleBtn.disabled = false;
 
     if (!result.success) {

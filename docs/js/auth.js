@@ -85,9 +85,15 @@ async function attemptLogin(username, password) {
     return { success: false, message: result?.message || 'Invalid username or password.' };
   }
 
+  const token = await createSessionToken(username, password);
   setPortalSession({
     username,
-    password,
+    // Every RPC sends session.password - a session token when there is one (see createSessionToken).
+    password: token || password,
+    // The typed password, for the few flows that store or re-check the real one (Face ID /
+    // fingerprint enrollment on change-password.html).
+    loginPassword: password,
+    tokenUnsupported: !token && sessionTokenRpcMissing,
     displayName: result.display_name || username,
     warehouseName: result.warehouse_name || null,
     isSuperUser: !!result.is_super_user,
@@ -320,6 +326,7 @@ async function requireAuth() {
   }
 
   startIdleLogoutTimer();
+  startSessionKeepAlive();
 
   return refreshed;
 }
@@ -401,6 +408,42 @@ function startIdleLogoutTimer() {
   IDLE_ACTIVITY_EVENTS.forEach((evt) => document.addEventListener(evt, handleIdleActivity, { passive: true }));
 }
 
+// Session tokens (supabase_staff_session_tokens.sql): the password is checked once at sign-in, and
+// every RPC afterwards sends this random token in its p_password/p_admin_password slot instead -
+// the database accepts it with a quick lookup instead of a ~75 ms bcrypt check on every call.
+const SESSION_TOKEN_PREFIX = 'stok_';
+// Tokens last 24 h from the last page load; a tab left open all day (Conversations) re-checks hourly.
+const SESSION_KEEPALIVE_MS = 60 * 60 * 1000;
+let sessionTokenRpcMissing = false;
+let sessionKeepAliveTimer = null;
+
+function isSessionToken(value) {
+  return typeof value === 'string' && value.startsWith(SESSION_TOKEN_PREFIX);
+}
+
+// A new token, or null - then the session keeps sending the password as before.
+// sessionTokenRpcMissing is set only when the SQL isn't run (PGRST202), not on a network blip.
+async function createSessionToken(username, password) {
+  try {
+    const { data, error } = await supabaseClient.rpc('staff_create_session', { p_username: username, p_password: password });
+    if (error) {
+      if (error.code === 'PGRST202') sessionTokenRpcMissing = true;
+      return null;
+    }
+    return isSessionToken(data) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function startSessionKeepAlive() {
+  if (sessionKeepAliveTimer) return;
+  sessionKeepAliveTimer = setInterval(() => {
+    const session = getPortalSession();
+    if (session && isSessionToken(session.password)) refreshPortalSession(session);
+  }, SESSION_KEEPALIVE_MS);
+}
+
 /**
  * Re-verifies the cached session against StaffUsers on every page load, so an admin
  * changing a user's warehouse/super-user flag mid-session takes effect on their next
@@ -408,10 +451,10 @@ function startIdleLogoutTimer() {
  */
 async function refreshPortalSession(session) {
   try {
-    const { data, error } = await supabaseClient.rpc('verify_login', {
-      p_username: session.username,
-      p_password: session.password
-    });
+    const usesToken = isSessionToken(session.password);
+    const { data, error } = usesToken
+      ? await supabaseClient.rpc('staff_refresh_session', { p_username: session.username, p_token: session.password })
+      : await supabaseClient.rpc('verify_login', { p_username: session.username, p_password: session.password });
     if (error) return session;
 
     const result = Array.isArray(data) ? data[0] : data;
@@ -421,8 +464,18 @@ async function refreshPortalSession(session) {
       return null;
     }
 
+    // A session from before session tokens (signed in before the switch, or the SQL wasn't run
+    // yet) moves to a token here, once, so it gets the faster calls without signing in again.
+    let tokenFields = {};
+    if (!usesToken && !session.tokenUnsupported) {
+      const token = await createSessionToken(session.username, session.password);
+      if (token) tokenFields = { password: token, loginPassword: session.password };
+      else if (sessionTokenRpcMissing) tokenFields = { tokenUnsupported: true };
+    }
+
     const refreshed = {
       ...session,
+      ...tokenFields,
       displayName: result.display_name || session.displayName,
       warehouseName: result.warehouse_name || null,
       isSuperUser: !!result.is_super_user,
