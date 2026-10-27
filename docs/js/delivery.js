@@ -1209,17 +1209,25 @@ async function openDriverOrderDetail(stopId) {
   document.getElementById('driverOrderDetailTitle').textContent = `Order ${header.order_id || ''}`;
 
   const attachmentsByLineId = {};
-  // Attachments only exist for online orders - an advance stop's "ADV-" id (or a not-yet-synced
+  // Per "can you make the SKU bigger and in red.. how about in the delivery" - the receipt RPC has no
+  // SKU, so it's read from admin_get_online_order_detail_live (same variant SKU -> item SKU -> Item
+  // Code fallback as Online Orders' lineSku), matched by line_id. Its prices are never rendered here.
+  const skuByLineId = {};
+  // Attachments / SKUs only exist for online orders - an advance stop's "ADV-" id (or a not-yet-synced
   // "AO-" one) would never match.
   if (header.order_id && header.source !== 'advance' && header.source !== 'automated') {
-    const { data: attachmentRows } = await supabaseClient.rpc('admin_list_online_order_line_attachments', {
-      p_admin_username: currentSession.username,
-      p_admin_password: currentSession.password,
-      p_order_id: header.order_id
-    });
+    const auth = { p_admin_username: currentSession.username, p_admin_password: currentSession.password, p_order_id: header.order_id };
+    const [{ data: attachmentRows }, { data: detailRows }] = await Promise.all([
+      supabaseClient.rpc('admin_list_online_order_line_attachments', auth),
+      supabaseClient.rpc('admin_get_online_order_detail_live', auth)
+    ]);
     (attachmentRows || []).forEach((a) => {
       if (!attachmentsByLineId[a.line_id]) attachmentsByLineId[a.line_id] = [];
       attachmentsByLineId[a.line_id].push(a);
+    });
+    (detailRows || []).forEach((d) => {
+      const sku = d.sku || d.item_code || d.product_display_id;
+      if (d.line_id && sku) skuByLineId[d.line_id] = sku;
     });
   }
 
@@ -1237,9 +1245,10 @@ async function openDriverOrderDetail(stopId) {
           <li>
             <div class="driver-detail-product-row">
               <span>${l.line_description || ''}</span>
-              <span class="muted">&times; ${l.line_quantity ?? ''}</span>
             </div>
-            ${l.line_note ? `<div class="driver-detail-product-note muted">Note: ${l.line_note}</div>` : ''}
+            ${l.line_note ? `<div class="driver-detail-product-note">${l.line_note}</div>` : ''}
+            <div class="driver-detail-product-qty">${String(l.line_quantity ?? '').trim() ? `${l.line_quantity} ${Number(l.line_quantity) === 1 ? 'pc' : 'pcs'}` : '-'}</div>
+            ${skuByLineId[l.line_id] ? `<div class="driver-detail-product-sku"><span class="muted">SKU</span>${skuByLineId[l.line_id]}</div>` : ''}
             ${driverAttachmentsHtml(attachmentsByLineId[l.line_id])}
           </li>
         `).join('')}</ul>`}

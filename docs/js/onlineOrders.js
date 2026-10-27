@@ -5648,16 +5648,22 @@ function renderOrderCardLineCards() {
     : '')) || '<div class="oo-mc-empty">No line items found for this order.</div>';
 }
 
-// One line for a maker: Item + big Qty, then labelled Description / SKU (shared by the online order
-// card and the Production Order card).
+// "2 pcs" / "1 pc" - per "maybe we can do QTY after Description.. 2pcs aquarium".
+function pcsText(qty) {
+  const s = String(qty ?? '').trim();
+  return s ? `${s} ${Number(s) === 1 ? 'pc' : 'pcs'}` : '-';
+}
+
+// One line for a maker: Item, then labelled Description, big red Qty ("2 pcs") and SKU (shared by the
+// online order card and the Production Order card).
 function makerLineCardHtml({ item, description, sku, qty, tag = '', extra = '' }) {
   return `
     <article class="oc-line-card">
       <div class="oc-lc-head">
         <div class="oc-lc-desc"><span class="oc-lc-label">Item</span>${escapeHtml(item || '-')} ${tag}</div>
-        <div class="oc-lc-qty" title="Quantity">x${escapeHtml(String(qty))}</div>
       </div>
       <div class="oc-lc-row"><span class="oc-lc-label">Description</span>${description ? `<div class="oc-lc-note">${escapeHtml(description)}</div>` : '<div class="oc-lc-none">-</div>'}</div>
+      <div class="oc-lc-row"><span class="oc-lc-label">Quantity</span><div class="oc-lc-qty">${escapeHtml(pcsText(qty))}</div></div>
       <div class="oc-lc-row"><span class="oc-lc-label">SKU</span><div class="oc-lc-code">${escapeHtml(sku || '-')}</div></div>
       ${extra}
     </article>`;
