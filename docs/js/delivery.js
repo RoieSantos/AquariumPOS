@@ -556,8 +556,8 @@ function driverDropCardHtml(group) {
 // system" - "Record Payment Collected" on a stop with a balance: amount (prefilled with the balance),
 // method, reference. staff_record_delivery_collection (sql/supabase_delivery_driver_collections.sql)
 // saves it and puts it on the order right away (Pancake via the POS Online Pay logic, AO- orders on
-// their payments; advance orders are recorded only - the POS takes it at Pay In Full). The money then
-// reads "With driver" until a Super User marks it Remitted on the day's Collections list.
+// their payments). Advance orders get it when a Super User marks it Remitted on the day's Collections
+// list (sql/supabase_advance_order_portal_payments.sql); until then the money reads "With driver".
 // collectId is made once per modal and reused on Save retries, so a lost reply can't record it twice.
 let collectStopId = null;
 let collectId = null;
@@ -609,7 +609,10 @@ function collectionApplyHtml(c) {
       + (feePart > 0.004 ? ` <span class="muted" style="font-size:12px;">(${pesoAmount(feePart)} delivery fee - stop only)</span>` : '');
   }
   if (c.apply_status === 'Record only') {
-    return '<span class="badge badge-warning" title="Advance order - its balance is in the POS">Pay In Full in the POS</span>';
+    // Advance order: goes on the order when a Super User marks it Remitted (supabase_advance_order_portal_payments.sql).
+    return c.remitted_at_utc
+      ? '<span class="badge badge-warning" title="Remitted before the order could take it - pay it on the order card or in the POS">Not on the order</span>'
+      : '<span class="badge badge-warning" title="Advance order - goes on the order when marked Remitted">On the order when remitted</span>';
   }
   return `<span class="badge badge-danger">Not on the order yet</span>${c.apply_error ? `<div class="error-text" style="font-size:12px;">${escapeHtmlText(c.apply_error)}</div>` : ''}`;
 }
@@ -881,7 +884,9 @@ async function remitCollections(ids, total, dateKey, stops) {
     p_collection_ids: ids
   });
   if (error) { alert(`Could not mark remitted: ${error.message}`); return; }
-  await renderDayCollections(dateKey, stops);
+  // Remitted advance-order collections were just put on their orders - refresh the stops' balances too.
+  await renderMonth(currentYear, currentMonth);
+  showDayDetail(dateKey);
 }
 
 // Per "show in the view the actual balance of the customer ? show Fully paid if they are fully paid

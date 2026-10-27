@@ -4,13 +4,21 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-10-27
 
+- **Local POS: manual discount with manager approval.** [MainForm.cs](MainForm.cs) Apply Discount: Percentage / Fixed Amount are selectable again, but Apply asks for a Super User's ID + password (managers can't approve) (`PromptManagerApproval`, checked against `UserSetup`). The approver is saved in `DiscountDescription` (e.g. "Discount (10%) - Mgr juan"). Wholesale still needs no approval and stays the default.
+
 - **Bigger red Description + Quantity on order line cards.** [bc-list.css](docs/css/bc-list.css) (maker / dispatcher order card, Production Order card) and the driver's Order Details ([delivery.js](docs/js/delivery.js), [styles.css](docs/css/styles.css)): Qty badge 24px red, Description 18px bold red (lighter red in dark mode). Staff said the details were hard to read. Qty then moved below the Description as "2 pcs" / "1 pc" ([onlineOrders.js](docs/js/onlineOrders.js) `makerLineCardHtml`, driver detail). Then enlarged again (Description 26px, Qty 34px; driver 24/32px) so it reads from arm's length. SKU now big red too (26px); driver Order Details shows it as well (from `admin_get_online_order_detail_live`, matched by line_id - prices not rendered). Cache bumped to `redqty5`.
+
+- **Bot: 2x2 stand for 10mm+ tanks, ready-made stands too.** [chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts): `create_order` / order changes now refuse a ready-made STAND (or a CUSTOM-STAND whose notes say 1x1 / 1.5x1.5) on the same order as a 10mm+ aquarium unless its name/description says 2x2. Alice's safety rule now says this applies to ready-made stands too. Before, only `compute_aquarium_quote`'s own stand was forced to 2x2.
+
+- **Catalog Editor role: session tokens.** [supabase_catalog_editor_role.sql](sql/supabase_catalog_editor_role.sql): `is_item_catalog_authorized` now checks via `_staff_secret_ok`, so a Catalog Editor's session token is accepted (it compared the raw password before, which today's session-token change would have rejected).
+
 - **Portal speed: session tokens.** [supabase_staff_session_tokens.sql](sql/supabase_staff_session_tokens.sql) + [auth.js](docs/js/auth.js): the password is checked once at sign-in, then RPCs send a 24 h session token instead, so the database skips the ~75 ms bcrypt check on every call. All `is_*_authorized` checks accept it (rewritten in place from their live definitions); old sessions upgrade on their next page load; a password change ends all of that user's sessions. [changePassword.js](docs/js/changePassword.js) gets a new token after a change and still enrolls Face ID / fingerprint with the real password. `auth.js` cache version bumped on all 87 pages.
 - **Portal speed: Conversations reloads.** [gmaConversations.js](docs/js/gmaConversations.js) gathers new-message events for 1.2 s into one list refresh (it used to reload the whole list once per message, on every open tab - the busiest load on the database), and a hidden tab refreshes once when shown again.
 
 - **Query stats reset.** [supabase_reset_query_stats.sql](sql/supabase_reset_query_stats.sql) clears pg_stat_statements so the performance check can measure current load without the old Pancake crons.
 - **Read-only check: portal performance.** [supabase_check_portal_performance.sql](sql/supabase_check_portal_performance.sql) ranks RPCs by total DB time (pg_stat_statements) and shows active cron jobs, connections, cache hit ratio and key table sizes - to confirm where the portal's slowness comes from.
 
+- **Read-only check: Ryan Chua (Aquatinum) items.** [supabase_check_ryan_chua_items.sql](sql/supabase_check_ryan_chua_items.sql) lists every item linked to that vendor as primary, catalog or bought, with current costs and the last PO cost. It's the first step in mapping their supplier catalogue into `ItemVendors."Cost"`.
 
 ## 2026-10-26
 

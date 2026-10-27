@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Price Increase - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .pi-intro { max-width: 760px; }
+
+    /* History cards */
+    .pi-batches { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+    .pi-batch { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border: 1px solid var(--panel-border); border-radius: 12px; background: var(--panel-bg); box-shadow: var(--shadow); }
+    .pi-batch-main { min-width: 220px; flex: 1; }
+    .pi-batch-title { font-weight: 700; font-size: 15px; color: var(--text-main); }
+    .pi-batch-meta { color: var(--text-muted); font-size: 13px; margin-top: 3px; }
+    .pi-batch-when { font-size: 13px; margin-top: 4px; }
+    .pi-batch-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .pi-empty { text-align: center; padding: 28px 16px; border: 1px dashed var(--panel-border); border-radius: 12px; color: var(--text-muted); }
+    .pi-empty b { display: block; color: var(--text-main); font-size: 16px; margin-bottom: 6px; }
+
+    /* Steps */
+    .pi-step { border: 1px solid var(--panel-border); border-radius: 12px; background: var(--panel-bg); padding: 16px; margin-top: 14px; box-shadow: var(--shadow); }
+    .pi-step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .pi-step-num { width: 28px; height: 28px; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 800;
+      display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .pi-step-title { font-size: 17px; font-weight: 700; color: var(--text-main); margin: 0; }
+    .pi-step-sub { color: var(--text-muted); font-size: 13px; margin: 2px 0 0; }
+    .pi-label { font-weight: 700; font-size: 13px; color: var(--text-main); margin: 12px 0 6px; display: block; }
+
+    .pi-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .pi-chip { border: 1px solid var(--input-border); background: var(--panel-bg); color: var(--text-main); border-radius: 999px;
+      padding: 7px 14px; font: inherit; font-weight: 700; cursor: pointer; }
+    .pi-chip:hover { border-color: var(--primary); }
+    .pi-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .pi-chip .pi-count { font-weight: 800; margin-left: 4px; opacity: 0.85; }
+    .pi-custom-pct { width: 90px; }
+
+    .pi-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+    .pi-option { border: 1px solid var(--input-border); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: var(--panel-bg); }
+    .pi-option:hover { border-color: var(--primary); }
+    .pi-option.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(29, 79, 145, 0.18); }
+    .pi-option input { display: none; }
+    .pi-option b { display: block; color: var(--text-main); }
+    .pi-option span { display: block; color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
+    .pi-option .pi-tag { display: inline-block; font-size: 11px; font-weight: 700; color: var(--success); margin-left: 4px; }
+
+    .pi-example { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(29, 79, 145, 0.07); color: var(--text-main); font-size: 14px; }
+    .pi-more { margin-top: 10px; font-size: 13px; }
+    .pi-more summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+
+    /* Summary tiles */
+    .pi-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .pi-tile { border: 1px solid var(--panel-border); border-radius: 10px; padding: 10px 12px; }
+    .pi-tile-label { font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+    .pi-tile-value { font-size: 22px; font-weight: 800; color: var(--text-main); margin-top: 2px; }
+    .pi-tile-sub { font-size: 12px; color: var(--text-muted); }
+    .pi-tile.pi-tile-click { cursor: pointer; }
+    .pi-tile.pi-tile-click:hover { border-color: var(--primary); }
+    .pi-tile-warn .pi-tile-value { color: #b45309; }
+
+    .pi-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+    .pi-filters input[type="search"] { min-width: 200px; flex: 1; max-width: 340px; }
+    .pi-bulk { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; font-size: 13px; color: var(--text-muted); }
+    .pi-linkbtn { background: none; border: none; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 4px; }
+    .pi-linkbtn:hover { text-decoration: underline; }
+
+    /* Table */
+    .pi-num { text-align: right; white-space: nowrap; }
+    .pi-input { width: 96px; text-align: right; font-weight: 700; }
+    .pi-input.pi-overridden { border-color: #d97706; background: rgba(217, 119, 6, 0.08); }
+    .pi-row-excluded td { opacity: 0.45; }
+    .pi-row-excluded td:first-child { opacity: 1; }
+    .pi-up { color: var(--success); font-weight: 700; }
+    .pi-sub { display: block; font-size: 12px; color: var(--text-muted); font-weight: 400; }
+    .pi-arrow { color: var(--text-muted); margin: 0 4px; }
+    .pi-notes .badge { margin: 1px 3px 1px 0; cursor: help; }
+    .pi-details-col { display: none; }
+    .pi-show-details .pi-details-col { display: table-cell; }
+    .pi-more-rows { text-align: center; margin: 10px 0; }
+    .pi-include-box { width: 18px; height: 18px; cursor: pointer; }
+
+    /* When */
+    .pi-schedule-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+
+    /* Sticky action bar */
+    .pi-bar { position: sticky; bottom: 0; z-index: 20; margin-top: 14px; padding: 12px 16px; border-radius: 12px;
+      background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: 0 -6px 20px rgba(21, 52, 94, 0.12);
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+    .pi-bar-info { font-size: 14px; color: var(--text-main); }
+    .pi-bar-info b { font-size: 16px; }
+    .pi-bar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pi-dirty { color: #b45309; font-size: 12.5px; font-weight: 600; }
+
+    /* Dialogs + toast */
+    .pi-modal-panel { max-width: 440px; }
+    .pi-modal-panel h3 { margin: 0 0 8px; color: var(--text-main); }
+    .pi-modal-panel p { white-space: pre-line; color: var(--text-main); line-height: 1.5; margin: 0 0 18px; }
+    .pi-modal-buttons { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+    .pi-view-panel { max-width: 920px; }
+    .pi-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 200; max-width: min(560px, calc(100% - 32px));
+      background: #173f74; color: #fff; padding: 12px 18px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); font-size: 14px; }
+    .pi-toast.pi-toast-error { background: #b42318; }
+
+    @media (max-width: 640px) {
+      .pi-hide-sm { display: none; }
+      .pi-input { width: 80px; }
+      .pi-bar { flex-direction: column; align-items: stretch; }
+      .pi-bar-actions .btn { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Price Increase</h1>
+    <p class="muted pi-intro">Raise prices by a percentage, check every item before anything changes, then apply it now or schedule it for a date. Applied changes can be undone. New prices reach Order Now, Alice and the price list right away, and the store POS on its next sync.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <!-- History -->
+      <div id="historyBox">
+        <div class="toolbar">
+          <h2 style="margin:0;">Price changes</h2>
+          <button class="btn btn-secondary btn-sm" id="refreshBatchesBtn" type="button" style="margin-left:auto;">Refresh</button>
+          <button class="btn btn-primary btn-sm" id="newBatchBtn" type="button">+ New price increase</button>
+        </div>
+        <div class="pi-batches" id="batchList"><p class="muted">Loading...</p></div>
+      </div>
+
+      <!-- Editor -->
+      <div id="editorBox" class="hidden">
+        <div class="toolbar" style="margin-top:8px;">
+          <button class="btn btn-secondary btn-sm" id="backBtn" type="button">&larr; Back to list</button>
+          <h2 style="margin:0;" id="editorTitle">New price increase</h2>
+        </div>
+        <p class="error-text hidden" id="editorNotice" style="margin:8px 0 0;"></p>
+
+        <!-- Step 1 -->
+        <section class="pi-step">
+          <div class="pi-step-head">
+            <span class="pi-step-num">1</span>
+            <div>
+              <h3 class="pi-step-title">How much?</h3>
+              <p class="pi-step-sub">New prices are rounded up to clean amounts: whole pesos under ₱100, ₱5 steps under ₱1,000, ₱10 steps above.</p>
+            </div>
+          </div>
+
+          <span class="pi-label">Retail increase</span>
+          <div class="pi-chips" id="pctChips">
+            <button type="button" class="pi-chip" data-pct="2.5">2.5%</button>
+            <button type="button" class="pi-chip" data-pct="3">3%</button>
+            <button type="button" class="pi-chip" data-pct="5">5%</button>
+            <button type="button" class="pi-chip" data-pct="7.5">7.5%</button>
+            <button type="button" class="pi-chip" data-pct="10">10%</button>
+            <span class="muted" style="margin-left:4px;">or</span>
+            <input type="number" id="pctInput" class="pi-custom-pct" min="0" max="100" step="0.5" value="5" aria-label="Custom increase %" /> <span class="muted">%</span>
+          </div>
+
+          <span class="pi-label">Wholesale prices</span>
+          <div class="pi-options" id="wsOptions">
+            <label class="pi-option" data-keep="100"><input type="radio" name="wsMode" value="100" />
+              <b>Same discount as now</b><span>Wholesale goes up by the same %.</span></label>
+            <label class="pi-option" data-keep="75"><input type="radio" name="wsMode" value="75" />
+              <b>A bit closer to retail <span class="pi-tag">suggested</span></b><span>Resellers keep 3/4 of their discount (20% off becomes 15% off).</span></label>
+            <label class="pi-option" data-keep="50"><input type="radio" name="wsMode" value="50" />
+              <b>Much closer to retail</b><span>Resellers keep half of their discount (20% off becomes 10% off).</span></label>
+            <label class="pi-option" data-keep="off"><input type="radio" name="wsMode" value="off" />
+              <b>Don't change wholesale</b><span>Only retail prices go up.</span></label>
+            <!-- Selected when a custom keep % is typed under More options (no card highlighted). -->
+            <input type="radio" name="wsMode" value="custom" hidden />
+          </div>
+
+          <div class="pi-example" id="exampleBox">-</div>
+
+          <details class="pi-more">
+            <summary>More options</summary>
+            <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+              <label class="checkbox-row"><input type="checkbox" id="skipCustomToggle" checked /> Leave CUSTOM items out (calculator-priced)</label>
+              <label style="display:flex; gap:8px; align-items:center;">Keep <input type="number" id="keepInput" min="0" max="100" step="5" value="75" style="width:80px;" /> % of each wholesale discount (custom)</label>
+              <label style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">Name this price change <input type="text" id="descInput" placeholder="e.g. Nov 2026 increase - Xendit fees" style="min-width:260px;" /></label>
+            </div>
+          </details>
+        </section>
+
+        <!-- Step 2 -->
+        <section class="pi-step">
+          <div class="pi-step-head">
+            <span class="pi-step-num">2</span>
+            <div>
+              <h3 class="pi-step-title">Check the items</h3>
+              <p class="pi-step-sub">Untick an item to leave its price as it is, or type a different new price. Items marked orange need a quick look.</p>
+            </div>
+          </div>
+
+          <div class="pi-tiles">
+            <div class="pi-tile">
+              <div class="pi-tile-label">Items getting a new price</div>
+              <div class="pi-tile-value" id="sumItems">-</div>
+              <div class="pi-tile-sub" id="sumItemsSub"></div>
+            </div>
+            <div class="pi-tile">
+              <div class="pi-tile-label">Extra income every 3 months</div>
+              <div class="pi-tile-value" id="sumExtra">-</div>
+              <div class="pi-tile-sub" id="sumExtraSub"></div>
+            </div>
+            <div class="pi-tile pi-tile-click pi-tile-warn" id="attentionTile" title="Show these items">
+              <div class="pi-tile-label">Need a quick look</div>
+              <div class="pi-tile-value" id="sumFlags">-</div>
+              <div class="pi-tile-sub">below cost, low margin or big jump - click to see</div>
+            </div>
+          </div>
+
+          <div class="pi-chips" id="viewTabs">
+            <button type="button" class="pi-chip active" data-view="">All<span class="pi-count" id="cntAll"></span></button>
+            <button type="button" class="pi-chip" data-view="attention">Need a look<span class="pi-count" id="cntAttention"></span></button>
+            <button type="button" class="pi-chip" data-view="changing">Changing<span class="pi-count" id="cntChanging"></span></button>
+            <button type="button" class="pi-chip" data-view="excluded">Left out<span class="pi-count" id="cntExcluded"></span></button>
+            <button type="button" class="pi-chip" data-view="overridden">Typed by hand<span class="pi-count" id="cntOverridden"></span></button>
+            <button type="button" class="pi-chip" data-view="wholesale">Has wholesale<span class="pi-count" id="cntWholesale"></span></button>
+          </div>
+
+          <div class="pi-filters">
+            <input type="search" id="searchInput" placeholder="Search item code or name" />
+            <select id="categoryFilter"><option value="">All categories</option></select>
+            <label class="checkbox-row" style="margin-left:auto;"><input type="checkbox" id="detailsToggle" /> Show cost &amp; margin</label>
+          </div>
+
+          <div class="pi-bulk">
+            <span id="shownCount"></span>
+            <span>·</span>
+            <button type="button" class="pi-linkbtn" id="includeShownBtn">Include all shown</button>
+            <button type="button" class="pi-linkbtn" id="excludeShownBtn">Leave out all shown</button>
+            <button type="button" class="pi-linkbtn" id="clearOverridesBtn">Undo typed prices (shown)</button>
+          </div>
+
+          <div class="table-wrap" id="rowsTableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th title="Include this item">Include</th>
+                  <th>Item</th>
+                  <th class="pi-num">Retail now</th>
+                  <th class="pi-num">New retail</th>
+                  <th class="pi-num">Wholesale now</th>
+                  <th class="pi-num">New wholesale</th>
+                  <th class="pi-num pi-details-col">Cost</th>
+                  <th class="pi-num pi-details-col">Margin</th>
+                  <th class="pi-num pi-details-col" title="How far below retail wholesale sits">Wholesale discount</th>
+                  <th class="pi-num pi-hide-sm" title="Units sold in the last 90 days">Sold (90 days)</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody id="rowsTableBody">
+                <tr><td colspan="11" class="muted">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pi-more-rows hidden" id="moreRowsBox">
+            <button type="button" class="btn btn-secondary btn-sm" id="moreRowsBtn">Show more</button>
+          </div>
+        </section>
+
+        <!-- Step 3 -->
+        <section class="pi-step">
+          <div class="pi-step-head">
+            <span class="pi-step-num">3</span>
+            <div>
+              <h3 class="pi-step-title">When?</h3>
+              <p class="pi-step-sub">You can come back and change a draft or a scheduled increase any time before it runs.</p>
+            </div>
+          </div>
+          <div class="pi-options" id="whenOptions">
+            <label class="pi-option" data-when="draft"><input type="radio" name="whenMode" value="draft" />
+              <b>Save for later</b><span>Keep it as a draft. Nothing changes yet.</span></label>
+            <label class="pi-option" data-when="schedule"><input type="radio" name="whenMode" value="schedule" />
+              <b>Schedule it</b><span>Applies automatically at the time you pick.</span></label>
+            <label class="pi-option" data-when="now"><input type="radio" name="whenMode" value="now" />
+              <b>Apply now</b><span>New prices take effect right away.</span></label>
+          </div>
+          <div class="pi-schedule-row hidden" id="scheduleRow">
+            <input type="datetime-local" id="scheduleInput" />
+            <button type="button" class="pi-chip" id="pickTomorrowBtn">Tomorrow 12:00 AM</button>
+            <button type="button" class="pi-chip" id="pickMonthBtn">1st of next month 12:00 AM</button>
+          </div>
+          <p class="muted hidden" id="scheduleHint" style="margin:8px 0 0; font-size:13px;">It runs within 5 minutes of that time. If someone changes an item's price before then, that item is skipped and keeps the price they set.</p>
+        </section>
+
+        <!-- Sticky action bar -->
+        <div class="pi-bar">
+          <div class="pi-bar-info" id="barInfo">-</div>
+          <div class="pi-bar-actions">
+            <span class="pi-dirty hidden" id="dirtyNote">Unsaved changes</span>
+            <button class="btn btn-primary" id="primaryBtn" type="button">Save draft</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm dialog -->
+  <div class="modal-backdrop hidden" id="piConfirmModal">
+    <div class="modal-panel pi-modal-panel">
+      <h3 id="piConfirmTitle"></h3>
+      <p id="piConfirmMessage"></p>
+      <div class="pi-modal-buttons">
+        <button class="btn btn-secondary" id="piConfirmNoBtn" type="button">Cancel</button>
+        <button class="btn btn-primary" id="piConfirmYesBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Applied / undone batch details -->
+  <div class="modal-backdrop hidden" id="piViewModal">
+    <div class="modal-panel pi-view-panel">
+      <div class="toolbar">
+        <h3 style="margin:0;" id="viewTitle"></h3>
+        <button class="btn btn-secondary btn-sm" id="closeViewBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <p class="muted" id="viewSub" style="margin:6px 0 10px;"></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="pi-num">Retail</th>
+              <th class="pi-num">Wholesale</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody id="viewTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="pi-toast hidden" id="piToast" role="status"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=stok1"></script>
+  <script src="js/nav.js?v=catalog1"></script>
+  <script src="js/priceIncrease.js?v=pi5"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

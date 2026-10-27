@@ -1386,7 +1386,7 @@ export function buildSystemPrompt(
     '- ENCLOSURE (terrarium/vivarium): we also build dry glass enclosures - for reptiles, amphibians, insects, etc. - with two sliding glass front doors (with handles and a lock), a mesh screen top for ventilation, and a vented bottom lip that holds the substrate. If the customer asks for an enclosure, terrarium, vivarium, or a tank for a reptile/lizard/gecko/snake/spider (anything that lives out of water), pass enclosure=true to compute_aquarium_quote and list "Enclosure" in the itemized summary. An enclosure is dry, so it cannot have a filtration sump or AIO, and it cannot be combined with a turtle tank (a turtle needs water - use turtle_tank for turtles instead). It costs more than a plain aquarium of the same size - only quote it through the tool. The drawing link shows the enclosure with its doors, mesh top and substrate.',
     '- Cabinet and canopy (optional, with a stand): a cabinet encloses the stand in panels (front doors, both sides and a closed back) - by default 2 doors per 3ft of length (3ft = 2 doors, 6ft = 4 doors), but the customer can ask for a different number. Cabinet and canopy come in two types (cabinet_type): Laminated Plywood (18mm, the default) or Aluminum (4mm ACP panels, a more premium, moisture-proof finish that costs more) - ask which they prefer if they want a cabinet or canopy. A canopy is a box cover on top of the tank (default 6 inches high). Both are priced by panel area (with a minimum charge), so only quote them through compute_aquarium_quote (stand_cabinet / canopy) - never estimate them yourself. Only offer them when the customer asks about a cabinet, canopy, or a closed/enclosed stand.',
     '- ACRYLIC SUMP COVER: we cut acrylic covers to size for a sump (filtration sump) - a flat acrylic panel that sits on top of the sump to keep splashing, evaporation and debris down. If the customer asks for a sump cover, a cover/lid for their sump, or an acrylic top for a sump, ask for the length and width of the sump top (the cover size) and quote it with compute_sticker_quote type "Acrylic Sump Cover" (no thickness choice). It is a different product from the Allum Top Cover (an aluminum top cover add-on), and it is priced differently from a plain Acrylic sheet - always use the tool for the price and never explain how it is calculated (no markups or rates). When a customer is ordering or already has a sump, you may mention once that we can make a matching acrylic cover.',
-    '- Stand frames get a thicker tubular size automatically as the load/span grows: 10mm+ glass always needs a 2x2 stand frame; a stand over 30 inches long needs at least 1 1/2 x 1 1/2 tubular; a stand 49+ inches long AND 18+ inches wide always needs 2x2, no exceptions.',
+    '- Stand frames get a thicker tubular size automatically as the load/span grows: 10mm+ glass always needs a 2x2 stand frame; a stand over 30 inches long needs at least 1 1/2 x 1 1/2 tubular; a stand 49+ inches long AND 18+ inches wide always needs 2x2, no exceptions. This applies to READY-MADE stands too, not just custom ones: before offering a ready-made stand (list_items_in_category "STAND") for a 10mm+ tank, or for a tank 49+ inches long and 18+ inches wide, check its name/description says 2x2 tubular - if it is 1x1 or 1 1/2 x 1 1/2, or doesn\'t say, don\'t offer it; offer a 2x2 ready-made stand if one fits, otherwise quote a custom 2x2 stand with compute_aquarium_quote (add_stand, stand_tubular "2x2"). create_order refuses a non-2x2 ready-made stand next to a 10mm+ tank.',
     '- These are structural safety requirements, not preferences - never agree to skip, downgrade, or "just risk it" even if the customer insists, says a smaller tank held up fine before, or asks you to quote the unsafe spec anyway. Politely hold the line, explain it protects them from a cracked tank or a collapsed stand, and note that the quote you give already reflects the safe spec.',
     '- If you can tell upfront from the dimensions the customer gave that a rule above will apply (e.g. they want a 40 inch wide tank in 3mm), mention it before or while quoting rather than only after compute_aquarium_quote returns a safetyNotice/standNotice - so it never feels like a surprise price change.',
     '- When a result DOES include a safetyNotice or standNotice, always explain it in your own plain, reassuring words (e.g. "since that\'s over 36 inches wide, we use tempered glass there for safety - already included in the price above") - never paste the raw notice text verbatim, and never let it read like an error message.',
@@ -2713,6 +2713,60 @@ export interface ExecuteToolParams {
 type BotOrderItemInput = { item_code?: string; quantity?: number; variant?: string; custom_price?: number; notes?: string; extra_to_set?: boolean };
 type BotOrderLine = { CategoryCode: string | null; ItemCode: string | null; ItemName: string; Quantity: number; Price: number; Notes: string | null; VariationId?: string | null };
 
+// Glass thickness (mm) named in an aquarium's name/description/notes - "3MM GLASS", "10mm glass",
+// "Glass thickness: 12mm" - or 0 if none is stated.
+function glassMmFromText(text: string): number {
+  const m = /(\d+(?:\.\d+)?)\s*mm\s*(?:tempered\s*|low[\s-]*iron\s*)?glass/i.exec(text)
+    || /glass[^0-9\n]{0,20}(\d+(?:\.\d+)?)\s*mm/i.exec(text);
+  return m ? Number(m[1]) : 0;
+}
+
+// Stand tubular size named in a stand's name/description/notes ("2x2", "1 1/2 x 1 1/2", "1.5x1.5",
+// "1x1"), or null if none is stated. Only square pairs of 1 / 1.5 / 2 count, so a stand's own
+// dimensions (e.g. "48x18") aren't mistaken for its tubular.
+function standTubularFromText(text: string): string | null {
+  const t = text.replace(/1\s+1\/2|1½/g, '1.5');
+  const re = /(?<![\d.])(1\.5|1|2)\s*["']?\s*[x×]\s*(1\.5|1|2)(?![\d.])/gi;
+  for (const m of t.matchAll(re)) {
+    if (m[1] === m[2]) return m[1] === '1.5' ? '1.5x1.5' : `${m[1]}x${m[1]}`;
+  }
+  return null;
+}
+
+// 10mm+ glass always needs a 2x2 stand frame (enforceStandTubularSafety). compute_aquarium_quote
+// already forces that for a stand quoted with the tank, but a ready-made STAND item (or a
+// CUSTOM-STAND line quoted separately) added next to a 10mm+ tank was never checked, so a 75g
+// 10mm custom tank could go out with a 1.5x1.5 catalog stand. Returns an error string, or null.
+function checkStandTubularForGlass(
+  items: BotOrderItemInput[],
+  catalogByCode: Map<string, { Code: string; Name: string; Description?: string | null; CategoryCode: string | null }>
+): string | null {
+  const cat = (it: BotOrderItemInput) => String(catalogByCode.get(String(it.item_code ?? '').trim())?.CategoryCode ?? '').trim().toUpperCase();
+  const tag = (it: BotOrderItemInput) => String(it.item_code ?? '').trim().toUpperCase();
+  const catalogText = (it: BotOrderItemInput) => {
+    const c = catalogByCode.get(String(it.item_code ?? '').trim());
+    return c ? `${c.Name} ${c.Description ?? ''}` : '';
+  };
+
+  let maxGlassMm = 0;
+  for (const it of items) {
+    if (tag(it) === 'CUSTOM-AQUARIUM') maxGlassMm = Math.max(maxGlassMm, glassMmFromText(String(it.notes ?? '')));
+    else if (cat(it) === 'AQUARIUM') maxGlassMm = Math.max(maxGlassMm, glassMmFromText(catalogText(it)));
+  }
+  if (maxGlassMm < 10) return null;
+
+  for (const it of items) {
+    const isCatalogStand = cat(it) === 'STAND';
+    if (!isCatalogStand && tag(it) !== 'CUSTOM-STAND') continue;
+    const name = isCatalogStand ? (catalogByCode.get(String(it.item_code).trim())?.Name ?? String(it.item_code)) : 'The custom stand';
+    const tubular = standTubularFromText(isCatalogStand ? catalogText(it) : String(it.notes ?? ''));
+    if (tubular === '2x2') continue;
+    if (!isCatalogStand && tubular === null) continue; // custom stand notes without a size - quoted via compute_aquarium_quote, which already forces 2x2
+    return `Cannot save the order - the aquarium on this order uses ${maxGlassMm}mm glass, and 10mm+ glass always needs a 2x2 tubular stand frame (safety rule). ${name}${isCatalogStand ? ` (${it.item_code})` : ''} is ${tubular ? `${tubular} tubular` : 'not listed as 2x2 tubular'}. Remove that stand and offer a ready-made stand that is 2x2, or quote a custom 2x2 stand with compute_aquarium_quote (add_stand, stand_tubular "2x2") and add it as CUSTOM-STAND. Explain to the customer that this protects the tank from cracking and the stand from collapsing under the heavier glass.`;
+  }
+  return null;
+}
+
 // The order lines for create_order / modify_order, priced and variant-checked server-side. Returns an
 // error string (relayed to the model) when an item can't be ordered as given.
 // wholesale = true prices each eligible line (category IsWholesaleApplicable + a WholesalePrice set -
@@ -2767,7 +2821,7 @@ export async function buildBotOrderLines(
   const codes = [...new Set(catalogCodedItems.map((it) => String(it.item_code ?? '').trim()).filter(Boolean))];
   if (codes.length === 0 && customItems.length === 0) return 'Cannot save the order - no valid item_code values were given.';
 
-  type CatalogItem = { Code: string; Name: string; RetailPrice: number | null; Price: number | null; CategoryCode: string | null; WholesalePrice: number | null };
+  type CatalogItem = { Code: string; Name: string; Description: string | null; RetailPrice: number | null; Price: number | null; CategoryCode: string | null; WholesalePrice: number | null };
   const catalogByCode = new Map<string, CatalogItem>();
   // Item code -> wholesale price, only for wholesale-eligible items (filled when opts.wholesale).
   const wholesalePriceByCode = new Map<string, number>();
@@ -2775,7 +2829,7 @@ export async function buildBotOrderLines(
   if (codes.length > 0) {
     const { data: catalogItems, error: itemsError } = await supabase
       .from('Items')
-      .select('Code, Name, RetailPrice, Price, CategoryCode, WholesalePrice')
+      .select('Code, Name, Description, RetailPrice, Price, CategoryCode, WholesalePrice')
       .in('Code', codes)
       .eq('IsActive', true);
     if (itemsError) return `Could not validate items: ${itemsError.message}`;
@@ -2824,6 +2878,9 @@ export async function buildBotOrderLines(
       }
     }
   }
+
+  const standTubularError = checkStandTubularForGlass(items, catalogByCode);
+  if (standTubularError) return standTubularError;
 
   // Resolve each catalog line's variant (color/option) to a real Variants."VariationId", stored
   // on AutomatedOrderLines."VariationId" so _push_automated_order_to_pancake tags that exact

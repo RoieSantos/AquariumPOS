@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Data;
 using System.Drawing;
 using System.Windows.Forms;
@@ -19610,9 +19610,73 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
             ClearButton_Click(null, EventArgs.Empty);
         }
 
-        // Manual (Percentage / Fixed Amount) discounts are greyed out in the Discount dialog; only
-        // Wholesale can be applied. Set back to true to allow cashiers to type in discounts again.
-        private const bool ManualDiscountEnabled = false;
+        // Manual (Percentage / Fixed Amount) discounts can be typed in the Discount dialog, but Apply
+        // asks for a Super User's ID + password first. Wholesale needs no approval.
+        private const bool ManualDiscountEnabled = true;
+
+        // Prompts for a Super User ID + password. Returns the approver's ID, or null if
+        // cancelled / not a Super User / wrong password.
+        private string? PromptManagerApproval(string reason)
+        {
+            using var approvalForm = new ThemedForm
+            {
+                Text = "Super User Approval",
+                Size = new Size(340, 220),
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Color.White,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var reasonLabel = new Label { Text = reason, Location = new Point(20, 15), Size = new Size(290, 20), Font = new Font("Arial", 9, FontStyle.Bold) };
+            var idLabel = new Label { Text = "Super User ID:", Location = new Point(20, 50), Size = new Size(90, 20) };
+            var idBox = new TextBox { Location = new Point(115, 47), Size = new Size(180, 25) };
+            var passwordLabel = new Label { Text = "Password:", Location = new Point(20, 85), Size = new Size(90, 20) };
+            var passwordBox = new TextBox { Location = new Point(115, 82), Size = new Size(180, 25), PasswordChar = '*' };
+            var okButton = new Button { Text = "Approve", Location = new Point(115, 125), Size = new Size(85, 32), BackColor = Color.Green, ForeColor = Color.White, DialogResult = DialogResult.OK };
+            var cancelApprovalButton = new Button { Text = "Cancel", Location = new Point(210, 125), Size = new Size(85, 32), BackColor = Color.Gray, ForeColor = Color.White, DialogResult = DialogResult.Cancel };
+
+            approvalForm.Controls.AddRange(new Control[] { reasonLabel, idLabel, idBox, passwordLabel, passwordBox, okButton, cancelApprovalButton });
+            approvalForm.AcceptButton = okButton;
+            approvalForm.CancelButton = cancelApprovalButton;
+
+            if (approvalForm.ShowDialog(this) != DialogResult.OK)
+            {
+                return null;
+            }
+
+            string managerId = idBox.Text.Trim();
+            if (managerId.Length == 0)
+            {
+                MessageBox.Show("Super User ID is required.", "Super User Approval", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+
+            try
+            {
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+                // Only a Super User can approve a manual discount.
+                using var cmd = new SqlCommand(@"
+SELECT ID FROM UserSetup
+WHERE ID = @id AND Password = @password AND IsActive = 1 AND SuperUser = 1", connection);
+                cmd.Parameters.AddWithValue("@id", managerId);
+                cmd.Parameters.AddWithValue("@password", passwordBox.Text);
+                if (cmd.ExecuteScalar() is string approvedId)
+                {
+                    return approvedId;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not check Super User approval: {ex.Message}", "Super User Approval", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return null;
+            }
+
+            MessageBox.Show("Invalid ID or password, or that user is not a Super User.", "Super User Approval", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return null;
+        }
 
         private void DiscountButton_Click(object? sender, EventArgs e)
         {
@@ -19654,8 +19718,7 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
             {
                 Text = "Percentage (%)",
                 Location = new Point(20, 50),
-                Size = new Size(120, 25),
-                Checked = ManualDiscountEnabled
+                Size = new Size(120, 25)
             };
 
             var percentBox = new NumericUpDown
@@ -19699,10 +19762,10 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
                 Text = "Wholesale",
                 Location = new Point(20, 120),
                 Size = new Size(120, 25),
-                Checked = !ManualDiscountEnabled
+                Checked = true
             };
 
-            // Manual (% / fixed amount) discounts are switched off - see ManualDiscountEnabled.
+            // Manual (% / fixed amount) discounts need manager approval on Apply - see ManualDiscountEnabled.
             percentRadio.Enabled = percentBox.Enabled = percentSymbol.Enabled = ManualDiscountEnabled;
             amountRadio.Enabled = amountBox.Enabled = ManualDiscountEnabled;
 
@@ -19734,10 +19797,27 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
                     return;
                 }
 
+                string? approvedBy = null;
+                if (!wholesaleRadio.Checked)
+                {
+                    decimal requested = percentRadio.Checked ? percentBox.Value : amountBox.Value;
+                    if (requested <= 0m)
+                    {
+                        MessageBox.Show("Enter a discount greater than zero.", "Discount", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    approvedBy = PromptManagerApproval("A Super User must approve this discount.");
+                    if (approvedBy == null)
+                    {
+                        return;
+                    }
+                }
+
                 if (percentRadio.Checked)
                 {
                     currentDiscount = currentTotal * (percentBox.Value / 100);
-                    currentDiscountDescription = string.Empty;
+                    currentDiscountDescription = $"Discount ({percentBox.Value:0.#}%) - Mgr {approvedBy}";
                 }
                 else if (wholesaleRadio.Checked)
                 {
@@ -19754,7 +19834,7 @@ WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = 
                 else
                 {
                     currentDiscount = amountBox.Value;
-                    currentDiscountDescription = string.Empty;
+                    currentDiscountDescription = $"Discount - Mgr {approvedBy}";
                 }
 
                 UpdateTotal();

@@ -5,7 +5,7 @@
 -- One row per item that is active OR sold in the last 365 days. Sales come from Online Orders (online +
 -- walk-ins received at the shop - the same source as Top Selling Items), cancelled orders excluded.
 --   price / cost / margin_pct         - Items list price and cost today
---   new_price                         - price x 1.025, rounded UP to a clean price point
+--   new_price                         - price x (1 + increase_pct), rounded UP to a clean price point
 --                                       (< 100: whole peso; < 1,000: next 5; >= 1,000: next 10)
 --   new_margin_pct, real_increase_pct - after rounding
 --   avg_sold_price_90d                - what customers actually paid (discounts / wholesale lower it)
@@ -16,9 +16,16 @@
 --                                       the calculators / Pricing Setup, not by this list price),
 --                                       NOT SOLD 90D
 --
+-- THE KNOB - params below (default 5, per "can we do above 2.5%?"): the % increase. 2.5 = the original
+-- Xendit-fee cover. Keep it the same as in supabase_check_wholesale_price_increase_2_5.sql so the two
+-- lists line up. (File name kept from the first 2.5% version.)
+--
 -- Nothing is changed. Run the whole file; then use the result grid's export to download it as CSV.
 
-with sales as (
+with params as (
+  select 1 + 5.0::numeric / 100 as mult   -- <- increase_pct
+),
+sales as (
   select l."ItemCode" as code,
          sum(l."Quantity") filter (where o."Date" >= current_date - 90)  as qty_90d,
          sum(l."GrossAmount") filter (where o."Date" >= current_date - 90) as revenue_90d,
@@ -53,10 +60,11 @@ base as (
 priced as (
   select b.*,
          case when b.price <= 0 then 0
-              when b.price * 1.025 < 100  then ceil(b.price * 1.025)
-              when b.price * 1.025 < 1000 then ceil(b.price * 1.025 / 5) * 5
-              else ceil(b.price * 1.025 / 10) * 10 end as new_price
+              when b.price * pr.mult < 100  then ceil(b.price * pr.mult)
+              when b.price * pr.mult < 1000 then ceil(b.price * pr.mult / 5) * 5
+              else ceil(b.price * pr.mult / 10) * 10 end as new_price
     from base b
+    cross join params pr
 )
 select p.item_code,
        p.item_name,

@@ -418,6 +418,11 @@ namespace AquariumPOS
                 return;
             }
 
+            // Paid on the portal (delivery remit / Super User "Mark Fully Paid") - put it on the local order
+            // first, so the cashier never collects that money again.
+            if (balance > 0m && !TryTakePortalPayments(transactionNo, receiptNo, ref downpayment, ref balance, row))
+                return;
+
             if (balance <= 0m)
             {
                 MessageBox.Show("Order has no outstanding balance.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -932,6 +937,134 @@ BEGIN
         ALTER TABLE dbo.AdvanceOrderHeader ADD VoidRefund DECIMAL(18, 2) NULL;
 END", connection);
             cmd.ExecuteNonQuery();
+        }
+
+        // Payments taken on the portal for this order (supabase_advance_order_portal_payments.sql) that this POS
+        // hasn't recorded yet: written onto the local order as a 'PAYMENT' line "Paid on portal" + Downpayment /
+        // Balance / FullyPaid, then acknowledged on the portal - inside one local transaction, so a failed
+        // acknowledgement rolls the local write back. No TransPaymentEntry: that money didn't go through this
+        // drawer. Returns true to carry on with Pay In Full (nothing on the portal, the portal can't be reached,
+        // or a balance is still left); false to stop (now fully paid, or the local write failed).
+        private bool TryTakePortalPayments(string transactionNo, string receiptNo, ref decimal downpayment, ref decimal balance, DataGridViewRow row)
+        {
+            (decimal Amount, List<string> PaymentIds, string Detail) portal;
+            try
+            {
+                portal = System.Threading.Tasks.Task.Run(() => OnlinefunctionsEvents.GetAdvanceOrderPortalPaymentsAsync(transactionNo)).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Portal payment check failed for {transactionNo}: {ex.Message}");
+                return true;
+            }
+            if (portal.Amount <= 0m || portal.PaymentIds.Count == 0)
+                return true;
+
+            decimal applied = Math.Min(portal.Amount, balance);
+            MessageBox.Show(this,
+                $"{portal.Amount:F2} of advance order {receiptNo} was already paid on the portal:\n\n{portal.Detail}\n\n" +
+                "The POS will record it on this order now (no cash drawer entry - that money didn't go through this POS).",
+                "Paid on Portal", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            try
+            {
+                using (var conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        var getLineNo = new SqlCommand("SELECT ISNULL(MAX([LineNo]),0) + 1 FROM AdvanceOrderLines WHERE TransactionNo = @tn", conn, tx);
+                        getLineNo.Parameters.AddWithValue("@tn", transactionNo);
+                        int nextLine = Convert.ToInt32(getLineNo.ExecuteScalar());
+
+                        var insert = new SqlCommand(@"
+                            INSERT INTO AdvanceOrderLines (StoreNo, POSTerminalNo, TransactionNo, [LineNo], ReceiptNo, Type, [No.], Description, Quantity, Price, Discount, GrossAmount, NetAmount, Date, Time, EODID)
+                            VALUES ('1','1',@tn,@ln,@rc,'PAYMENT','PORTAL','Paid on portal',1,@amt,0,@amt,@amt,@date,@time,'')
+                        ", conn, tx);
+                        insert.Parameters.AddWithValue("@tn", transactionNo);
+                        insert.Parameters.AddWithValue("@ln", nextLine);
+                        insert.Parameters.AddWithValue("@rc", receiptNo);
+                        insert.Parameters.AddWithValue("@amt", applied);
+                        insert.Parameters.AddWithValue("@date", DateTime.Now.ToString("yyyy-MM-dd"));
+                        insert.Parameters.AddWithValue("@time", DateTime.Now.ToString("hh:mm:ss tt"));
+                        insert.ExecuteNonQuery();
+
+                        bool hasFullyPaidColumns;
+                        using (var checkCmd = new SqlCommand("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'AdvanceOrderHeader' AND COLUMN_NAME IN ('FullyPaid', 'DatePaid')", conn, tx))
+                        {
+                            hasFullyPaidColumns = Convert.ToInt32(checkCmd.ExecuteScalar()) == 2;
+                        }
+
+                        string updateSql = @"
+                            UPDATE AdvanceOrderHeader
+                            SET Downpayment = CASE
+                                    WHEN ISNULL(Downpayment,0) + @paid > ISNULL(NetAmount,0) THEN ISNULL(NetAmount,0)
+                                    ELSE ISNULL(Downpayment,0) + @paid
+                                END,
+                                Balance = CASE
+                                    WHEN ISNULL(NetAmount,0) - (ISNULL(Downpayment,0) + @paid) < 0 THEN 0
+                                    ELSE ISNULL(NetAmount,0) - (ISNULL(Downpayment,0) + @paid)
+                                END" +
+                            (hasFullyPaidColumns ? @",
+                                FullyPaid = CASE WHEN ISNULL(NetAmount,0) - (ISNULL(Downpayment,0) + @paid) <= 0 THEN 1 ELSE FullyPaid END,
+                                DatePaid = CASE WHEN ISNULL(NetAmount,0) - (ISNULL(Downpayment,0) + @paid) <= 0 THEN SYSUTCDATETIME() ELSE DatePaid END" : "") + @"
+                            WHERE TransactionNo = @tn";
+                        var update = new SqlCommand(updateSql, conn, tx);
+                        update.Parameters.AddWithValue("@paid", applied);
+                        update.Parameters.AddWithValue("@tn", transactionNo);
+                        update.ExecuteNonQuery();
+
+                        var ids = portal.PaymentIds;
+                        System.Threading.Tasks.Task.Run(() => OnlinefunctionsEvents.AckAdvanceOrderPortalPaymentsAsync(transactionNo, ids)).GetAwaiter().GetResult();
+                        tx.Commit();
+                    }
+
+                    var reread = new SqlCommand("SELECT Downpayment, Balance FROM AdvanceOrderHeader WHERE TransactionNo = @tn", conn);
+                    reread.Parameters.AddWithValue("@tn", transactionNo);
+                    using (var rdr = reread.ExecuteReader())
+                    {
+                        if (rdr.Read())
+                        {
+                            downpayment = rdr["Downpayment"] != DBNull.Value ? Convert.ToDecimal(rdr["Downpayment"]) : downpayment;
+                            balance = rdr["Balance"] != DBNull.Value ? Convert.ToDecimal(rdr["Balance"]) : balance;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this,
+                    $"Couldn't record the portal payment on advance order {receiptNo}, so Pay In Full was stopped. Try again in a moment.\n\nError: {ex.Message}",
+                    "Paid on Portal", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            try
+            {
+                if (dataGridView.Columns.Contains("Downpayment"))
+                    row.Cells["Downpayment"].Value = downpayment;
+                if (dataGridView.Columns.Contains("Balance"))
+                    row.Cells["Balance"].Value = balance;
+            }
+            catch
+            {
+                // grid refresh is cosmetic
+            }
+
+            string syncReceipt = receiptNo;
+            _ = System.Threading.Tasks.Task.Run(() =>
+            {
+                try { OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabase(syncReceipt); }
+                catch (Exception syncEx) { System.Diagnostics.Debug.WriteLine($"SyncSingleAdvanceOrderToSupabase(portal pay) failed for {syncReceipt}: {syncEx.Message}"); }
+            });
+
+            if (balance <= 0m)
+            {
+                MessageBox.Show(this, $"Advance order {receiptNo} is now fully paid (paid on the portal). Nothing to collect.",
+                    "Fully Paid", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+            return true;
         }
 
         internal static bool IsAdvanceOrderVoided(string connectionString, string transactionNo)

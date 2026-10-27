@@ -4243,6 +4243,55 @@ ORDER BY [RunningSerialNo]", connection);
             return (ok, message);
         }
 
+        // Payments taken on the portal for an advance order that this POS hasn't written locally yet -
+        // delivery remits and Super User "Mark Fully Paid" (pos_get_advance_order_portal_payments,
+        // supabase_advance_order_portal_payments.sql). Throws when the portal can't be reached or the SQL
+        // isn't run yet - AdvanceOrdersHeaderForm's Pay In Full then carries on without it.
+        public static async Task<(decimal Amount, List<string> PaymentIds, string Detail)> GetAdvanceOrderPortalPaymentsAsync(string transactionNo, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(15);
+            string respText = await PostJsonWithHeadersAsync(
+                AdvanceOrderRpcUrl("pos_get_advance_order_portal_payments"),
+                JsonSerializer.Serialize(new { p_transaction_no = (transactionNo ?? string.Empty).Trim() }),
+                timeout.Value).ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "{}" : respText);
+            var root = doc.RootElement;
+            decimal amount = 0m;
+            var ids = new List<string>();
+            string detail = string.Empty;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("amount", out var amountProp) && amountProp.ValueKind == JsonValueKind.Number)
+                    amount = amountProp.GetDecimal();
+                if (root.TryGetProperty("payment_ids", out var idsProp) && idsProp.ValueKind == JsonValueKind.Array)
+                    ids.AddRange(idsProp.EnumerateArray().Select(e => e.GetString() ?? string.Empty).Where(s => s.Length > 0));
+                if (root.TryGetProperty("detail", out var detailProp) && detailProp.ValueKind == JsonValueKind.String)
+                    detail = detailProp.GetString() ?? string.Empty;
+            }
+            return (amount, ids, detail);
+        }
+
+        // Tells the portal these portal payments are now on the local order (pos_ack_advance_order_portal_payments),
+        // so they stop being added on top of what this POS pushes.
+        public static async Task AckAdvanceOrderPortalPaymentsAsync(string transactionNo, IEnumerable<string> paymentIds, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(15);
+            await PostJsonWithHeadersAsync(
+                AdvanceOrderRpcUrl("pos_ack_advance_order_portal_payments"),
+                JsonSerializer.Serialize(new { p_transaction_no = (transactionNo ?? string.Empty).Trim(), p_payment_ids = paymentIds.ToArray() }),
+                timeout.Value).ConfigureAwait(false);
+        }
+
+        private static string AdvanceOrderRpcUrl(string functionName)
+        {
+            string headerEndpoint = GlobalSettings.AdvanceOrdersSupabaseEndpoint?.Trim() ?? string.Empty;
+            int restIndex = headerEndpoint.IndexOf("/rest/v1/", StringComparison.OrdinalIgnoreCase);
+            if (restIndex < 0)
+                throw new InvalidOperationException("AdvanceOrdersSupabaseEndpoint is not a Supabase REST URL.");
+            return headerEndpoint.Substring(0, restIndex) + "/rest/v1/rpc/" + functionName;
+        }
+
         private static async Task<(int Inserted, int Updated)> UpsertAdvanceOrderHeaderRowsAsync(string headerEndpoint, List<(string TransactionNo, Dictionary<string, object?> Payload)> headerRows, TimeSpan timeout)
         {
             int inserted = 0;

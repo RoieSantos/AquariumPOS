@@ -21,7 +21,8 @@
 -- supabase_warehouses_items_tables.sql) - those put back the Super-User-only versions.
 --
 -- Run AFTER supabase_online_order_all_branch_fabrication.sql (current role list),
--- supabase_item_master_portal_owned.sql and supabase_item_setup_bc_list.sql. Safe to re-run.
+-- supabase_item_master_portal_owned.sql, supabase_item_setup_bc_list.sql and
+-- supabase_staff_session_tokens.sql (_staff_secret_ok). Safe to re-run.
 
 -- ---------------------------------------------------------------------------
 -- 1. Allowed roles (+ CatalogEditor)
@@ -96,7 +97,8 @@ begin
     return false;
   end if;
 
-  return v_password_hash = crypt(p_password, v_password_hash);
+  -- Accepts the portal's 'stok_' session token as well as the password (supabase_staff_session_tokens.sql).
+  return public._staff_secret_ok(p_password, v_password_hash);
 end;
 $$;
 

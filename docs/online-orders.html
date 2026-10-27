@@ -720,6 +720,9 @@
         <!-- Shown when a line isn't in stock at the order's branch but another warehouse has it
              (staff_get_advance_order_transfer_plan) - js/onlineOrders.js openAdvTransferDialog. -->
         <button class="bc-cmd hidden" id="advanceCardRequestTransferBtn" type="button" title="Request the missing stock from another warehouse on a Transfer Order linked to this order">Request Stock Transfer</button>
+        <!-- Super Users, order with a balance (js/onlineOrders.js openAdvPayDialog,
+             sql/supabase_advance_order_portal_payments.sql admin_advance_order_mark_fully_paid). -->
+        <button class="bc-cmd hidden" id="advanceCardMarkPaidBtn" type="button" title="Record the remaining balance as paid"><svg class="bc-ico"><use href="#ico-done"/></svg>Mark Fully Paid</button>
       </div>
 
       <!-- Same split as the Online Order card: the document on the left, the Serials FactBox on the right. -->
@@ -813,6 +816,16 @@
               <div class="bc-doc-field hidden" id="acToCollectRow"><label>To Collect on Delivery</label><div class="bc-doc-value" id="acToCollect"></div></div>
             </div>
           </div>
+          <!-- Paid on the portal: delivery remits + Super User Mark Fully Paid (js/onlineOrders.js
+               loadAdvanceCardPortalPayments). Hidden when none. -->
+          <div class="doc-fasttab-body hidden" id="acPortalPaymentsWrap">
+            <div class="bc-grid-wrap">
+              <table class="bc-grid">
+                <thead><tr><th>Paid on Portal</th><th class="num">Amount</th><th>Method</th><th>From</th><th>By</th><th>POS</th></tr></thead>
+                <tbody id="acPortalPaymentsBody"></tbody>
+              </table>
+            </div>
+          </div>
         </details>
 
         <div class="bc-doc-part">
@@ -857,6 +870,37 @@
           </div>
         </aside>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mark an advance order fully paid on the portal (js/onlineOrders.js openAdvPayDialog,
+       admin_advance_order_mark_fully_paid). Super Users only. -->
+  <div id="advPayDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="advPayTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">MARK FULLY PAID</div>
+          <h2 id="advPayTitle">Advance Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeAdvPayBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">Records the remaining balance of <b id="advPayAmount"></b> as paid. The POS takes it in at its next Pay In Full on this order, so the cashier won't collect it again.</p>
+        <div class="bc-field">
+          <label for="advPayMethod">Paid via</label>
+          <select id="advPayMethod"></select>
+        </div>
+        <div class="bc-field">
+          <label for="advPayReference">Reference <span class="muted">(GCash / bank ref no., optional)</span></label>
+          <input type="text" id="advPayReference" maxlength="200" />
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="advPayError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveAdvPayBtn" type="button">Mark Fully Paid</button>
+        <button class="bc-btn" id="cancelAdvPayBtn" type="button">Cancel</button>
       </div>
     </div>
   </div>

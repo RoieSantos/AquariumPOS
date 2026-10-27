@@ -282,6 +282,8 @@ function renderTopNavLinks(activeLabel) {
     reports.push({ href: 'gl-entries.html', label: 'General Ledger' });
     // Payment Methods report - super users only; its RPCs re-check with is_admin_authorized.
     reports.push({ href: 'payment-method-report.html', label: 'Payment Methods Report' });
+    // Walk-in sales for BIR - journal / daily / monthly + CSV (supabase_bir_walkin_sales_report.sql).
+    reports.push({ href: 'bir-sales-report.html', label: 'BIR Sales Report' });
   }
 
   const admin = [];
@@ -304,6 +306,8 @@ function renderTopNavLinks(activeLabel) {
     // Reels video ads (scenes -> MP4 in the browser) - sql/supabase_video_ads.sql.
     admin.push({ href: 'video-ad-builder.html', label: 'Video Ad Builder' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
+    // Planned % price increases (draft -> apply -> undo) - sql/supabase_price_change_batches.sql.
+    admin.push({ href: 'price-increase.html', label: 'Price Increase' });
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
     // Online payments through Xendit (pay.html) - sql/supabase_xendit_payments.sql.
     admin.push({ href: 'xendit-payments.html', label: 'Xendit Payments' });
@@ -471,6 +475,7 @@ const TELL_ME_KEYWORDS = {
   'spending-report.html': 'purchases expenses costs',
   'gl-entries.html': 'gl accounting ledger finance',
   'payment-method-report.html': 'gcash cash bank collections',
+  'bir-sales-report.html': 'bir tax vat walk-in sales journal sales book',
   'general-setup.html': 'settings company config',
   'ai-bot-setup.html': 'alice chatbot',
   'gma-conversations.html': 'messages inbox chat messenger',
@@ -480,6 +485,7 @@ const TELL_ME_KEYWORDS = {
   'quick-post.html': 'facebook fb photo social',
   'video-ad-builder.html': 'video ad reels marketing facebook instagram mp4 promo',
   'pricing-setup.html': 'prices rates',
+  'price-increase.html': 'price change raise markup wholesale percent',
   'payment-methods.html': 'gcash cash bank tender',
   'xendit-payments.html': 'online payment gateway gcash card pay link',
   'gl-setup.html': 'accounts chart accounting',

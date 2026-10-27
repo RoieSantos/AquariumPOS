@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BIR Sales Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .bir-table td.num, .bir-table th.num { text-align: right; white-space: nowrap; }
+    .bir-table tfoot td { font-weight: 800; border-top: 2px solid var(--panel-border); }
+    .bir-note { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--panel-border); border-radius: 10px; background: var(--panel-bg); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>BIR Sales Report</h1>
+    <p class="muted">Walk-in sales only, ready to hand to your bookkeeper or BIR: a per-receipt Sales Journal, a Daily Summary (first and last receipt no. per day) and Monthly Totals for the quarterly return. Cancelled sales are left out. Export any view to Excel (CSV).</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-primary btn-sm" data-period="month" type="button">This Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="prevmonth" type="button">Last Month</button>
+        <button class="btn btn-secondary btn-sm" data-period="quarter" type="button">This Quarter</button>
+        <button class="btn btn-secondary btn-sm" data-period="prevquarter" type="button">Last Quarter</button>
+        <button class="btn btn-secondary btn-sm" data-period="custom" type="button">Custom</button>
+      </div>
+      <div class="pm-filter-group hidden" id="customRange">
+        <input type="date" id="dateFrom" aria-label="From date" />
+        <span class="muted">to</span>
+        <input type="date" id="dateTo" aria-label="To date" />
+        <button class="btn btn-primary btn-sm" id="applyRangeBtn" type="button">Apply</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="warehouseSelect" aria-label="Branch">
+          <option value="">All branches</option>
+        </select>
+        <select id="taxSelect" aria-label="Tax type">
+          <option value="nonvat">Non-VAT (3% percentage tax)</option>
+          <option value="vat">VAT-registered (12% VAT inclusive)</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="birLoading" class="muted">Loading...</div>
+    <div id="birError" class="error-text hidden"></div>
+
+    <div id="birResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💰</span> Net Sales</div>
+          <div class="stat-value" id="statNet">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏷️</span> Discounts</div>
+          <div class="stat-value" id="statDiscount">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🧾</span> Receipts</div>
+          <div class="stat-value" id="statCount">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏛️</span> <span id="statTaxLabel">Tax</span></div>
+          <div class="stat-value" id="statTax">-</div>
+        </div>
+      </div>
+
+      <div class="bir-note hidden" id="missingReceiptNote"></div>
+
+      <div class="grouped-tabs" id="viewTabs">
+        <button type="button" class="grouped-tab-btn active" data-view="journal">Sales Journal</button>
+        <button type="button" class="grouped-tab-btn" data-view="daily">Daily Summary</button>
+        <button type="button" class="grouped-tab-btn" data-view="monthly">Monthly Totals</button>
+      </div>
+
+      <div class="toolbar" style="justify-content:flex-end;">
+        <button class="btn btn-primary btn-sm" id="exportBtn" type="button">Export to Excel (CSV)</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="bir-table">
+          <thead id="birHead"></thead>
+          <tbody id="birBody"></tbody>
+          <tfoot id="birFoot"></tfoot>
+        </table>
+      </div>
+
+      <p class="muted" style="font-size:13px; margin-top:12px;">The tax columns are computed from the net sales for your reference - VAT-registered: VATable sales = net ÷ 1.12 and VAT = net − VATable; Non-VAT: percentage tax = 3% of net. Have your bookkeeper confirm the rate before filing.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=stok1"></script>
+  <script src="js/nav.js?v=catalog1"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/birSalesReport.js?v=bir1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

@@ -8194,7 +8194,114 @@ function updateAdvanceCardActions(o) {
   const voided = advanceStatus(o) === 'Voided';
   document.getElementById('advanceCardPrintSerialsBtn').classList.toggle('hidden', !canAssignOrders() || voided);
   document.getElementById('advanceCardShowSerialsBtn').classList.toggle('hidden', !canAssignOrders() || voided);
+  document.getElementById('advanceCardMarkPaidBtn').classList.toggle('hidden',
+    !currentSession?.isSuperUser || voided || o.fully_paid || !(Number(o.balance) > 0));
   document.getElementById('advanceCardBody').classList.toggle('no-factbox', !canAssignOrders());
+}
+
+// "Paid on Portal" rows under the Payment FastTab (sql/supabase_advance_order_portal_payments.sql):
+// delivery remits + Super User Mark Fully Paid. Hidden when none (or the SQL isn't run yet).
+async function loadAdvanceCardPortalPayments(transactionNo) {
+  const no = String(transactionNo);
+  const wrap = document.getElementById('acPortalPaymentsWrap');
+  wrap.classList.add('hidden');
+  if (hidePrices()) return;
+  const { data, error } = await advanceRpc('staff_list_advance_order_portal_payments', { p_no: no });
+  if (openAdvanceNo !== no || error || !data?.length) return;
+  document.getElementById('acPortalPaymentsBody').innerHTML = data.map((p) => `<tr>
+      <td>${escapeHtml(advanceDateTime(p.recorded_at_utc))}</td>
+      <td class="num">${formatAdvanceMoney(p.amount)}</td>
+      <td>${escapeHtml(p.method_name || '')}${p.reference ? `<br><span class="muted">${escapeHtml(p.reference)}</span>` : ''}</td>
+      <td>${escapeHtml(p.source || '')}</td>
+      <td>${escapeHtml(p.recorded_by || '')}</td>
+      <td>${p.pos_absorbed_at_utc
+        ? `<span class="badge badge-success" title="Written onto the POS order ${escapeHtml(advanceDateTime(p.pos_absorbed_at_utc))}">In POS</span>`
+        : '<span class="badge badge-neutral" title="The POS takes it in at its next Pay In Full on this order">Not yet</span>'}</td>
+    </tr>`).join('');
+  wrap.classList.remove('hidden');
+}
+
+// Mark Fully Paid (Super Users): the whole remaining balance, one payment method. advPayId is made once
+// per dialog and reused on a retry, so a lost reply can't record the payment twice.
+let advPayNo = null;
+let advPayId = null;
+let advPayMethodsPromise = null;
+
+function newAdvPayId() {
+  if (window.crypto?.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = Math.random() * 16 | 0;
+    return (ch === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+async function openAdvPayDialog(no) {
+  const o = advanceRowsByNo.get(String(no));
+  if (!o) return;
+  advPayNo = String(no);
+  advPayId = newAdvPayId();
+  const errorEl = document.getElementById('advPayError');
+  errorEl.classList.add('hidden');
+  document.getElementById('advPayTitle').textContent = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
+  document.getElementById('advPayAmount').textContent = `₱${Number(o.balance || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  document.getElementById('advPayReference').value = '';
+  const select = document.getElementById('advPayMethod');
+  select.innerHTML = '<option value="">Loading...</option>';
+  document.getElementById('advPayDialog').classList.remove('hidden');
+
+  if (!advPayMethodsPromise) {
+    advPayMethodsPromise = supabaseClient.rpc('staff_list_delivery_payment_methods', {
+      p_username: currentSession.username,
+      p_password: currentSession.password
+    }).then(({ data, error }) => {
+      if (error) { advPayMethodsPromise = null; throw error; }
+      return data || [];
+    });
+  }
+  try {
+    const methods = await advPayMethodsPromise;
+    select.innerHTML = methods.map((m) => `<option value="${escapeHtml(m.code)}">${escapeHtml(m.name)}</option>`).join('');
+  } catch (err) {
+    select.innerHTML = '';
+    errorEl.textContent = `Could not load payment methods: ${err.message}`;
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function closeAdvPayDialog() {
+  document.getElementById('advPayDialog').classList.add('hidden');
+}
+
+async function saveAdvPayDialog() {
+  const no = advPayNo;
+  const errorEl = document.getElementById('advPayError');
+  const method = document.getElementById('advPayMethod').value;
+  if (!method) {
+    errorEl.textContent = 'Pick a payment method.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('saveAdvPayBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const { error } = await advanceRpc('admin_advance_order_mark_fully_paid', {
+    p_payment_id: advPayId,
+    p_no: no,
+    p_method_code: method,
+    p_reference: document.getElementById('advPayReference').value.trim() || null
+  });
+  btn.disabled = false;
+  btn.textContent = 'Mark Fully Paid';
+  if (error) {
+    errorEl.textContent = error.message.includes('admin_advance_order_mark_fully_paid')
+      ? 'Not set up yet - run sql/supabase_advance_order_portal_payments.sql.'
+      : error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  closeAdvPayDialog();
+  await refreshAdvanceAfterAction(no);
+  if (openAdvanceNo === no) loadAdvanceCardPortalPayments(no);
 }
 
 function openAdvanceCard(transactionNo) {
@@ -8211,6 +8318,7 @@ function openAdvanceCard(transactionNo) {
   loadAdvanceCardLines(openAdvanceNo);
   loadAdvanceCardRework(openAdvanceNo);
   loadAdvanceCardDeliveryFee(openAdvanceNo);
+  loadAdvanceCardPortalPayments(openAdvanceNo);
   loadAdvanceCardTransfers(openAdvanceNo);
   renderSerialsFactbox('advanceCard', []); // clear the previous order's while loading
   loadAdvanceCardSerials(openAdvanceNo);
@@ -8748,6 +8856,10 @@ function wireAdvanceCard() {
   document.getElementById('saveAdvTransferBtn').addEventListener('click', saveAdvTransferDialog);
   document.getElementById('cancelAdvTransferBtn').addEventListener('click', closeAdvTransferDialog);
   document.getElementById('closeAdvTransferBtn').addEventListener('click', closeAdvTransferDialog);
+  document.getElementById('advanceCardMarkPaidBtn').addEventListener('click', () => openAdvanceNo && openAdvPayDialog(openAdvanceNo));
+  document.getElementById('saveAdvPayBtn').addEventListener('click', saveAdvPayDialog);
+  document.getElementById('cancelAdvPayBtn').addEventListener('click', closeAdvPayDialog);
+  document.getElementById('closeAdvPayBtn').addEventListener('click', closeAdvPayDialog);
 
   // The list's action bar - same actions, on the selected row.
   document.getElementById('advOpenBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceCard(selectedAdvanceNo));
@@ -8771,6 +8883,7 @@ function wireAdvanceCard() {
     if (isOpen('confirmActionDialog')) return;
     if (isOpen('assignDialog')) closeAdvanceAssignDialog();
     else if (isOpen('advTransferDialog')) closeAdvTransferDialog();
+    else if (isOpen('advPayDialog')) closeAdvPayDialog();
     else if (isOpen('sendBackDialog')) closeAdvanceSendBackDialog();
     else if (isOpen('advanceCardModal')) closeAdvanceCard();
   });

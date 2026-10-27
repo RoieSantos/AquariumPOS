@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ad Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
+<script src="ad-config.js"></script>
+<style>
+  :root { --bg:#0b1620; --panel:#132331; --line:#24384a; --text:#e6f1f7; --muted:#8fa7b8; --accent:#3fe0d0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, sans-serif; }
+  .wrap { display:flex; gap:20px; padding:16px; align-items:flex-start; flex-wrap:wrap; }
+  .stage-col { flex:0 0 auto; display:flex; flex-direction:column; gap:10px; }
+  #stage { width:360px; height:640px; border-radius:14px; background:#000; box-shadow:0 8px 30px #0008; }
+  .controls { display:flex; gap:8px; align-items:center; width:360px; }
+  .controls input[type=range] { flex:1; }
+  button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 12px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#04222b; border-color:var(--accent); font-weight:700; }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { width:360px; color:var(--muted); min-height:20px; }
+  .editor { flex:1 1 420px; min-width:0; display:flex; flex-direction:column; gap:12px; }
+  .scene { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; display:grid; gap:8px; }
+  .scene h3 { margin:0; font-size:14px; display:flex; justify-content:space-between; gap:8px; }
+  .scene h3 span { color:var(--muted); font-weight:400; }
+  label { display:grid; gap:4px; color:var(--muted); font-size:12px; }
+  input[type=text], input[type=number], textarea { background:#0b1620; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; width:100%; }
+  textarea { resize:vertical; min-height:52px; }
+  .media-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .media-row .name { color:var(--accent); word-break:break-all; }
+  .hint { color:var(--muted); font-size:12px; margin:0; }
+  #configOut { width:100%; min-height:220px; font:12px/1.4 Consolas, monospace; display:none; }
+  @media (max-width:500px) { #stage, .controls, #status { width:100%; height:auto; } #stage { aspect-ratio:9/16; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage-col">
+    <canvas id="stage" width="1080" height="1920"></canvas>
+    <div class="controls">
+      <button id="playBtn">Pause</button>
+      <input id="scrub" type="range" min="0" max="1000" value="0">
+      <span id="clock">0.0s</span>
+    </div>
+    <div class="controls">
+      <button id="exportBtn" class="primary">Export MP4</button>
+      <button id="copyBtn">Copy config</button>
+    </div>
+    <div id="status"></div>
+  </div>
+  <div class="editor">
+    <p class="hint">Edits here update the preview right away. To keep them, click <b>Copy config</b> and paste over the contents of <code>ad-config.js</code>.
+      Swap any scene to your own photo/video with <b>Choose photo/video</b>; for it to stick, copy that file into the <code>media/</code> folder too.</p>
+    <div id="scenes"></div>
+    <textarea id="configOut" readonly></textarea>
+  </div>
+</div>
+
+<script>
+const C = window.AD_CONFIG;
+const W = C.width, H = C.height, FPS = C.fps;
+const FADE = 0.4;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const easeOut = x => 1 - Math.pow(1 - clamp(x), 3);
+const easeInOut = x => { x = clamp(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const rand = i => { const s = Math.sin(i * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+const FONT = 'Montserrat, system-ui, sans-serif';
+
+// ---------- media ----------
+const mediaCache = {};
+const isVideoSrc = (src, type) => (type ? type.startsWith('video') : /\.(mp4|webm|mov|m4v)$/i.test(src));
+
+function loadMedia(src, type) {
+  if (!src) return Promise.resolve(null);
+  if (mediaCache[src]) return mediaCache[src].promise;
+  const entry = { ready: false };
+  if (isVideoSrc(src, type)) {
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.loop = true; v.src = src;
+    entry.kind = 'video'; entry.el = v;
+    entry.promise = new Promise(res => {
+      v.addEventListener('loadeddata', () => { entry.ready = true; res(entry); }, { once: true });
+      v.addEventListener('error', () => res(null), { once: true });
+    });
+  } else {
+    const img = new Image();
+    img.src = src;
+    entry.kind = 'image'; entry.el = img;
+    entry.promise = img.decode().then(() => { entry.ready = true; return entry; }, () => null);
+  }
+  mediaCache[src] = entry;
+  return entry.promise;
+}
+const getMedia = src => (src && mediaCache[src] && mediaCache[src].ready ? mediaCache[src] : null);
+
+// ---------- timeline ----------
+function timeline() {
+  let start = 0;
+  return C.scenes.map((s, i) => {
+    const t = { s, i, start, end: start + Number(s.duration), visStart: i > 0 ? start - FADE : 0 };
+    start = t.end;
+    return t;
+  });
+}
+const totalDuration = () => C.scenes.reduce((a, s) => a + Number(s.duration), 0);
+
+// ---------- drawing helpers ----------
+function wrap(text, maxW) {
+  const words = String(text || '').split(' ');
+  const lines = []; let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else line = test;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function drawWater(t) {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#0b5c86'); g.addColorStop(0.45, '#063d5e'); g.addColorStop(1, '#021624');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 5; i++) {
+    const x0 = W * (i + 0.5) / 5 + Math.sin(t * 0.5 + i * 1.7) * 70;
+    const rg = ctx.createLinearGradient(0, 0, 0, H * 0.85);
+    rg.addColorStop(0, 'rgba(160,230,255,0.10)'); rg.addColorStop(1, 'rgba(160,230,255,0)');
+    ctx.fillStyle = rg; ctx.beginPath();
+    ctx.moveTo(x0 - 40, 0); ctx.lineTo(x0 + 40, 0); ctx.lineTo(x0 + 280, H * 0.85); ctx.lineTo(x0 + 90, H * 0.85); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  for (let i = 0; i < 36; i++) {
+    const speed = 80 + rand(i) * 160, r = 4 + rand(i + 9) * 14;
+    const x = rand(i + 3) * W + Math.sin(t * 2 + i) * 14;
+    const y = H + 40 - ((t * speed + rand(i + 5) * (H + 80)) % (H + 80));
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(200,245,255,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x - r * 0.35, y - r * 0.35, r * 0.25, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fill();
+  }
+}
+
+function drawFish(x, y, s, color, dir, t, i) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(dir * s, s);
+  ctx.save(); ctx.translate(-52, 0); ctx.rotate(Math.sin(t * 8 + i) * 0.28);
+  ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-38, -32); ctx.quadraticCurveTo(-26, 0, -38, 32); ctx.closePath();
+  ctx.fillStyle = color; ctx.fill(); ctx.restore();
+  ctx.beginPath(); ctx.moveTo(-14, -30); ctx.quadraticCurveTo(6, -66, 32, -28); ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  const bg = ctx.createLinearGradient(0, -34, 0, 34);
+  bg.addColorStop(0, '#ffffff'); bg.addColorStop(0.25, color); bg.addColorStop(1, color);
+  ctx.beginPath(); ctx.ellipse(0, 0, 62, 34, 0, 0, Math.PI * 2); ctx.fillStyle = bg; ctx.fill();
+  ctx.beginPath(); ctx.arc(38, -8, 9, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.beginPath(); ctx.arc(40, -8, 5, 0, Math.PI * 2); ctx.fillStyle = '#062033'; ctx.fill();
+  ctx.restore();
+}
+const FISH_COLORS = ['#ff7a59', '#ffb547', '#ff5d8f', '#4fe3c1', '#ffd166', '#7cc8ff'];
+function drawSchool(t, count, yMin, yMax, sizeMul = 1) {
+  for (let i = 0; i < count; i++) {
+    const dir = i % 2 ? 1 : -1, speed = 120 + rand(i + 20) * 160, size = (0.8 + rand(i + 30) * 0.8) * sizeMul;
+    const travel = (t * speed + rand(i + 40) * (W + 400)) % (W + 400);
+    const x = dir > 0 ? -200 + travel : W + 200 - travel;
+    const y = yMin + rand(i + 50) * (yMax - yMin) + Math.sin(t * 1.5 + i) * 20;
+    drawFish(x, y, size, FISH_COLORS[i % FISH_COLORS.length], dir, t, i);
+  }
+}
+
+function drawTankBuild(s, lt) {
+  const [L, Wd, Ht] = s.dims || [48, 18, 20];
+  const fw = 560, fh = 380, dx = 160, dy = -115;
+  const x0 = (W - fw - dx) / 2, y0 = 1060;
+  const F = [[x0, y0], [x0 + fw, y0], [x0 + fw, y0 + fh], [x0, y0 + fh]];
+  const B = F.map(([x, y]) => [x + dx, y + dy]);
+  const edges = [[B[0], B[1]], [B[1], B[2]], [B[2], B[3]], [B[3], B[0]], [F[0], B[0]], [F[1], B[1]], [F[2], B[2]], [F[3], B[3]],
+                 [F[0], F[1]], [F[1], F[2]], [F[2], F[3]], [F[3], F[0]]];
+  const p = easeInOut((lt - 0.2) / 1.4) * edges.length;
+  // water rises once the frame is drawn
+  const wl = easeOut((lt - 1.4) / 0.9);
+  if (wl > 0) {
+    const top = y0 + fh - (fh - 40) * wl;
+    const wg = ctx.createLinearGradient(0, top, 0, y0 + fh);
+    wg.addColorStop(0, 'rgba(79,227,193,0.55)'); wg.addColorStop(1, 'rgba(20,120,170,0.6)');
+    ctx.fillStyle = wg;
+    ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(x0 + fw, top); ctx.lineTo(x0 + fw + dx, top + dy); ctx.lineTo(x0 + fw + dx, y0 + fh + dy);
+    ctx.lineTo(x0 + fw, y0 + fh); ctx.lineTo(x0, y0 + fh); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(180,255,240,0.35)';
+    ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(x0 + fw, top); ctx.lineTo(x0 + fw + dx, top + dy); ctx.lineTo(x0 + dx, top + dy); ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(190,240,255,0.08)'; ctx.fillRect(x0, y0, fw, fh);
+  ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(200,250,255,0.95)'; ctx.lineWidth = 7;
+  edges.forEach(([a, b], i) => {
+    const k = clamp(p - i); if (k <= 0) return;
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k); ctx.stroke();
+  });
+  // dimension labels count up
+  const k = easeOut((lt - 0.5) / 1.3);
+  if (k > 0) {
+    ctx.save(); ctx.globalAlpha *= clamp(k * 2);
+    ctx.font = `800 54px ${FONT}`; ctx.fillStyle = '#ffd166'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(`${Math.round(L * k)}"`, x0 + fw / 2, y0 + fh + 60);
+    ctx.textAlign = 'right'; ctx.fillText(`${Math.round(Ht * k)}"`, x0 - 30, y0 + fh / 2);
+    ctx.textAlign = 'left'; ctx.fillText(`${Math.round(Wd * k)}"`, x0 + fw + dx / 2 + 30, y0 + fh + dy / 2 + 10);
+    ctx.restore();
+  }
+  if (wl >= 1) drawFish(x0 + 140 + ((lt - 2.3) * 160) % (fw - 200), y0 + fh - 150, 0.9, '#ff7a59', 1, lt, 3);
+}
+
+function drawMediaBg(m, lt, dur) {
+  const el = m.el;
+  const iw = m.kind === 'video' ? el.videoWidth : el.naturalWidth;
+  const ih = m.kind === 'video' ? el.videoHeight : el.naturalHeight;
+  if (!iw || !ih) return;
+  const zoom = m.kind === 'video' ? 1 : 1.04 + 0.1 * clamp(lt / dur);
+  const sc = Math.max(W / iw, H / ih) * zoom;
+  const dw = iw * sc, dh = ih * sc;
+  ctx.drawImage(el, (W - dw) / 2, (H - dh) / 2 - (m.kind === 'video' ? 0 : 30 * clamp(lt / dur)), dw, dh);
+  const tg = ctx.createLinearGradient(0, 0, 0, H * 0.55);
+  tg.addColorStop(0, 'rgba(2,18,30,0.9)'); tg.addColorStop(0.6, 'rgba(2,18,30,0.55)'); tg.addColorStop(1, 'rgba(2,18,30,0)');
+  ctx.fillStyle = tg; ctx.fillRect(0, 0, W, H * 0.55);
+  const bg = ctx.createLinearGradient(0, H * 0.7, 0, H);
+  bg.addColorStop(0, 'rgba(2,18,30,0)'); bg.addColorStop(1, 'rgba(2,18,30,0.7)');
+  ctx.fillStyle = bg; ctx.fillRect(0, H * 0.7, W, H * 0.3);
+}
+
+function drawBrandTag() {
+  ctx.font = `800 34px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText(C.brand.name.toUpperCase().split('').join(String.fromCharCode(8202)), W / 2, 300);
+}
+
+function drawText(s, lt) {
+  let y = 420;
+  const a = easeOut(lt / 0.6);
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 4;
+  ctx.globalAlpha *= a;
+  ctx.font = `800 104px ${FONT}`; ctx.fillStyle = '#ffffff';
+  for (const line of wrap(s.headline, 940)) { ctx.fillText(line, W / 2, y + (1 - a) * 60); y += 116; }
+  ctx.restore();
+  if (s.sub) {
+    const b = easeOut((lt - 0.25) / 0.6);
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.globalAlpha *= b;
+    ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 14;
+    ctx.font = `600 52px ${FONT}`; ctx.fillStyle = '#bdeff5';
+    y += 14;
+    for (const line of wrap(s.sub, 920)) { ctx.fillText(line, W / 2, y + (1 - b) * 40); y += 66; }
+    ctx.restore();
+  }
+  return y;
+}
+
+function drawBullets(list, lt, y, startDelay) {
+  (list || []).forEach((text, i) => {
+    const b = easeOut((lt - startDelay - i * 0.25) / 0.5);
+    if (b <= 0) return;
+    ctx.save(); ctx.globalAlpha *= b;
+    ctx.font = `600 50px ${FONT}`;
+    const tw = ctx.measureText(text).width, bw = tw + 150, bx = (W - bw) / 2 + (1 - b) * 80;
+    roundRect(bx, y, bw, 96, 48); ctx.fillStyle = 'rgba(2,22,37,0.72)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(63,224,208,0.6)'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.beginPath(); ctx.arc(bx + 56, y + 48, 24, 0, Math.PI * 2); ctx.fillStyle = '#3fe0d0'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(bx + 45, y + 49); ctx.lineTo(bx + 53, y + 57); ctx.lineTo(bx + 68, y + 39);
+    ctx.strokeStyle = '#04222b'; ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, bx + 100, y + 50);
+    ctx.restore();
+    y += 122;
+  });
+  return y;
+}
+
+function drawCta(s, lt, t) {
+  drawSchool(t, 4, 1480, 1680, 0.7);
+  const logo = getMedia(C.brand.logo);
+  const a = easeOut(lt / 0.6);
+  ctx.save(); ctx.globalAlpha *= a;
+  if (logo) {
+    const r = 120, cy = 470;
+    ctx.save(); ctx.beginPath(); ctx.arc(W / 2, cy, r, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(logo.el, W / 2 - r, cy - r, r * 2, r * 2); ctx.restore();
+    ctx.beginPath(); ctx.arc(W / 2, cy, r, 0, Math.PI * 2); ctx.strokeStyle = '#3fe0d0'; ctx.lineWidth = 6; ctx.stroke();
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = '#fff';
+  ctx.font = `800 64px ${FONT}`; ctx.fillText(C.brand.name, W / 2, 625);
+  ctx.restore();
+  let y = 760;
+  const h = easeOut((lt - 0.2) / 0.6);
+  ctx.save(); ctx.globalAlpha *= h; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.font = `800 96px ${FONT}`; ctx.fillStyle = '#fff';
+  ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 18;
+  for (const line of wrap(s.headline, 940)) { ctx.fillText(line, W / 2, y + (1 - h) * 50); y += 108; }
+  ctx.restore();
+  y += 30;
+  if (s.button) {
+    const b = easeOut((lt - 0.5) / 0.5);
+    const pulse = 1 + 0.04 * Math.sin(Math.max(0, lt - 1) * 6);
+    ctx.save(); ctx.globalAlpha *= b;
+    ctx.translate(W / 2, y + 70); ctx.scale(pulse * (0.8 + 0.2 * b), pulse * (0.8 + 0.2 * b));
+    ctx.font = `800 64px ${FONT}`;
+    const bw = ctx.measureText(s.button).width + 120;
+    roundRect(-bw / 2, -70, bw, 140, 70); ctx.fillStyle = '#3fe0d0';
+    ctx.shadowColor = 'rgba(63,224,208,0.6)'; ctx.shadowBlur = 40; ctx.fill(); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#04222b'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s.button, 0, 4);
+    ctx.restore();
+    y += 180;
+  }
+  (s.bullets || []).forEach((line, i) => {
+    const b = easeOut((lt - 0.8 - i * 0.2) / 0.5);
+    ctx.save(); ctx.globalAlpha *= b; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = `600 48px ${FONT}`; ctx.fillStyle = '#bdeff5'; ctx.fillText(line, W / 2, y); ctx.restore();
+    y += 64;
+  });
+  if (s.footer) {
+    const b = easeOut((lt - 1.3) / 0.5);
+    ctx.save(); ctx.globalAlpha *= b; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = `800 44px ${FONT}`; ctx.fillStyle = '#ffd166'; ctx.fillText(s.footer, W / 2, y + 24); ctx.restore();
+  }
+}
+
+function drawScene(s, lt, t) {
+  const m = getMedia(s.media);
+  if (m) drawMediaBg(m, lt, Number(s.duration));
+  else if (s.art === 'fish') drawSchool(t, 7, 1000, 1650);
+  else if (s.art === 'tank-build') drawTankBuild(s, lt);
+  if (s.art === 'cta' && !m) { drawCta(s, lt, t); return; }
+  if (s.art !== 'cta') drawBrandTag();
+  const y = drawText(s, lt);
+  drawBullets(s.bullets, lt, y + 40, 0.5);
+}
+
+function drawFrame(t) {
+  ctx.globalAlpha = 1;
+  drawWater(t);
+  const tl = timeline();
+  tl.forEach((x, i) => {
+    const last = i === tl.length - 1;
+    if (t < x.visStart || (t >= x.end && !last)) return;
+    const lt = t - x.visStart;
+    ctx.save();
+    ctx.globalAlpha = i > 0 ? clamp(lt / FADE) : 1;
+    drawScene(x.s, lt, t);
+    ctx.restore();
+  });
+}
+
+// keep video elements roughly in sync during live preview
+function syncVideosPreview(t, playing) {
+  timeline().forEach(x => {
+    const m = getMedia(x.s.media);
+    if (!m || m.kind !== 'video') return;
+    const v = m.el, visible = t >= x.visStart && t < x.end;
+    const target = Math.max(0, t - x.visStart) % (v.duration || 1);
+    if (!visible) { if (!v.paused) v.pause(); return; }
+    if (Math.abs(v.currentTime - target) > 0.3) v.currentTime = target;
+    if (playing && v.paused) v.play().catch(() => {});
+    if (!playing && !v.paused) v.pause();
+  });
+}
+
+function seekVideosExact(t) {
+  const waits = [];
+  timeline().forEach(x => {
+    const m = getMedia(x.s.media);
+    if (!m || m.kind !== 'video' || t < x.visStart || t >= x.end) return;
+    const v = m.el;
+    v.pause();
+    const target = Math.min(Math.max(0, t - x.visStart) % v.duration, v.duration - 0.05);
+    if (Math.abs(v.currentTime - target) < 0.001) return;
+    waits.push(new Promise(res => { v.addEventListener('seeked', res, { once: true }); v.currentTime = target; }));
+  });
+  return Promise.all(waits);
+}
+
+// ---------- preview loop ----------
+let playing = true, exporting = false, t0 = performance.now(), cur = 0;
+const scrub = document.getElementById('scrub'), clock = document.getElementById('clock');
+const playBtn = document.getElementById('playBtn'), status = document.getElementById('status');
+
+function tick() {
+  if (!exporting) {
+    const total = totalDuration();
+    if (playing) cur = ((performance.now() - t0) / 1000) % total;
+    syncVideosPreview(cur, playing);
+    drawFrame(cur);
+    scrub.value = Math.round(cur / total * 1000);
+    clock.textContent = cur.toFixed(1) + 's';
+  }
+  requestAnimationFrame(tick);
+}
+playBtn.onclick = () => {
+  playing = !playing;
+  if (playing) t0 = performance.now() - cur * 1000;
+  playBtn.textContent = playing ? 'Pause' : 'Play';
+};
+scrub.oninput = () => {
+  playing = false; playBtn.textContent = 'Play';
+  cur = scrub.value / 1000 * totalDuration();
+};
+
+// ---------- export ----------
+async function pickCodec() {
+  const base = { width: W, height: H, bitrate: 10_000_000, framerate: FPS };
+  for (const codec of ['avc1.640033', 'avc1.640032', 'avc1.4d0033', 'avc1.42e033']) {
+    for (const hardwareAcceleration of ['no-preference', 'prefer-software']) {
+      const cfg = { ...base, codec, hardwareAcceleration, avc: { format: 'avc' } };
+      try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch (e) { /* try next */ }
+    }
+  }
+  return null;
+}
+
+async function exportMp4(onProgress) {
+  if (!('VideoEncoder' in window)) throw new Error('This browser cannot export video - use Chrome or Edge.');
+  const cfg = await pickCodec();
+  if (!cfg) throw new Error('No H.264 encoder available in this browser.');
+  await Promise.all(C.scenes.map(s => loadMedia(s.media, s.mediaType)).concat(loadMedia(C.brand.logo)));
+  const muxer = new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video: { codec: 'avc', width: W, height: H, frameRate: FPS },
+    fastStart: 'in-memory'
+  });
+  let encErr = null;
+  const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { encErr = e; } });
+  enc.configure(cfg);
+  const frames = Math.round(totalDuration() * FPS);
+  for (let i = 0; i < frames; i++) {
+    if (encErr) throw encErr;
+    const t = i / FPS;
+    await seekVideosExact(t);
+    drawFrame(t);
+    const frame = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+    enc.encode(frame, { keyFrame: i % (FPS * 2) === 0 });
+    frame.close();
+    while (enc.encodeQueueSize > 8) await new Promise(r => setTimeout(r, 5));
+    if (onProgress && i % 10 === 0) onProgress(i / frames);
+  }
+  await enc.flush();
+  if (encErr) throw encErr;
+  muxer.finalize();
+  return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+}
+
+document.getElementById('exportBtn').onclick = async () => {
+  const btn = document.getElementById('exportBtn');
+  btn.disabled = true; exporting = true;
+  Object.values(mediaCache).forEach(m => m.kind === 'video' && m.el.pause());
+  try {
+    const blob = await exportMp4(p => { status.textContent = `Rendering... ${Math.round(p * 100)}%`; });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = C.fileName || 'ad.mp4'; a.click();
+    status.textContent = `Done - ${(blob.size / 1e6).toFixed(1)} MB saved to your Downloads.`;
+  } catch (e) {
+    status.textContent = e.name === 'SecurityError'
+      ? 'Export blocked: open the studio with start-ad-studio.cmd (not by double-clicking the .html).'
+      : 'Export failed: ' + e.message;
+    console.error(e);
+  } finally {
+    btn.disabled = false; exporting = false;
+  }
+};
+
+// ---------- scene editor ----------
+const ART_LABELS = { fish: 'swimming fish', 'tank-build': 'tank drawing itself', cta: 'logo + call to action', none: 'water + text' };
+function renderEditor() {
+  const host = document.getElementById('scenes');
+  host.innerHTML = '';
+  C.scenes.forEach((s, i) => {
+    const card = document.createElement('div');
+    card.className = 'scene';
+    const usingMedia = !!s.media;
+    card.innerHTML = `
+      <h3>Scene ${i + 1} <span>${usingMedia ? (isVideoSrc(s.media, s.mediaType) ? 'your video' : 'your photo') : 'graphic: ' + (ART_LABELS[s.art] || s.art)}</span></h3>
+      <label>Seconds <input type="number" step="0.1" min="1" data-k="duration"></label>
+      <label>Headline <input type="text" data-k="headline"></label>
+      ${s.art === 'cta' ? '<label>Button text <input type="text" data-k="button"></label>' : '<label>Sub-text <input type="text" data-k="sub"></label>'}
+      <label>${s.art === 'cta' ? 'Lines under button' : 'Checklist'} (one per line) <textarea data-k="bullets"></textarea></label>
+      ${s.art === 'cta' ? '<label>Footer <input type="text" data-k="footer"></label>' : ''}
+      <div class="media-row">
+        <span class="name">${usingMedia ? (s.mediaName || s.media) : 'No photo/video'}</span>
+        <label style="display:inline"><button type="button" class="pick">Choose photo/video</button>
+          <input type="file" accept="image/*,video/*" hidden></label>
+        ${usingMedia ? `<button type="button" class="clear">Use graphic instead</button>` : ''}
+      </div>`;
+    card.querySelectorAll('[data-k]').forEach(el => {
+      const k = el.dataset.k;
+      el.value = k === 'bullets' ? (s.bullets || []).join('\n') : (s[k] ?? '');
+      el.oninput = () => {
+        if (k === 'bullets') s.bullets = el.value.split('\n').map(x => x.trim()).filter(Boolean);
+        else if (k === 'duration') s.duration = Math.max(1, Number(el.value) || 1);
+        else s[k] = el.value;
+      };
+    });
+    const file = card.querySelector('input[type=file]');
+    card.querySelector('.pick').onclick = () => file.click();
+    file.onchange = async () => {
+      const f = file.files[0]; if (!f) return;
+      s.media = URL.createObjectURL(f); s.mediaType = f.type; s.mediaName = 'media/' + f.name;
+      await loadMedia(s.media, s.mediaType);
+      renderEditor();
+    };
+    const clear = card.querySelector('.clear');
+    if (clear) clear.onclick = () => { s.media = null; delete s.mediaType; delete s.mediaName; renderEditor(); };
+    host.appendChild(card);
+  });
+}
+
+document.getElementById('copyBtn').onclick = async () => {
+  const out = { ...C, scenes: C.scenes.map(s => {
+    const c = { ...s, media: s.mediaName || s.media || null };
+    delete c.mediaType; delete c.mediaName;
+    return c;
+  }) };
+  const text = 'window.AD_CONFIG = ' + JSON.stringify(out, null, 2) + ';\n';
+  const box = document.getElementById('configOut');
+  box.style.display = 'block'; box.value = text;
+  try { await navigator.clipboard.writeText(text); status.textContent = 'Config copied - paste it over ad-config.js.'; }
+  catch (e) { box.select(); status.textContent = 'Select the text below and copy it into ad-config.js.'; }
+};
+
+// ---------- start ----------
+window.adStudio = { exportMp4, drawFrame, totalDuration };
+(async () => {
+  await Promise.all([document.fonts.load(`800 100px Montserrat`), document.fonts.load(`600 50px Montserrat`)]).catch(() => {});
+  await Promise.all(C.scenes.map(s => loadMedia(s.media)).concat(loadMedia(C.brand.logo)));
+  renderEditor();
+  t0 = performance.now();
+  window.adStudio.ready = true;
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
