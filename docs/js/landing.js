@@ -47,7 +47,8 @@ async function applyLandingBranding() {
     document.querySelectorAll('[data-company-name]').forEach((el) => {
       el.textContent = info['CompanyName'];
     });
-    document.title = `${info['CompanyName']} - Aquariums & Pet Supplies`;
+    // The product page sets its own title (the product name) - don't overwrite it.
+    if (!document.body.dataset.pageTitle) document.title = `${info['CompanyName']} - Aquariums & Pet Supplies`;
   }
 
   if (info['LogoUrl']) {
@@ -177,10 +178,10 @@ async function loadFeaturedProducts() {
   );
 
   const items = [];
-  results.forEach((result) => {
+  results.forEach((result, index) => {
     (result.data || []).forEach((item) => {
       // A 0-priced item (price not set yet) reads as "free" to a customer - skip it here.
-      if (firstImageUrl(item.images) && Number(item.price) > 0) items.push(item);
+      if (firstImageUrl(item.images) && Number(item.price) > 0) items.push({ ...item, category_code: FEATURED_CATEGORY_CODES[index] });
     });
   });
 
@@ -194,7 +195,7 @@ async function loadFeaturedProducts() {
   grid.innerHTML = items
     .slice(0, MAX_FEATURED_PRODUCTS)
     .map((item) => `
-      <a class="land-product-card" href="order-now.html?start=standard">
+      <a class="land-product-card" href="${productPageUrl(item.code)}">
         <img src="${firstImageUrl(item.images)}" alt="${item.name}" loading="lazy" />
         <div class="land-product-info">
           <div class="land-product-name">${item.name}</div>
@@ -205,6 +206,114 @@ async function loadFeaturedProducts() {
     .join('');
 }
 
+// ---- Ongoing promo + Best Sellers ----
+
+// Same public."PromotionSettings" row Order Now's banner reads (loadPromotionBanner in
+// js/orderNow.js) - anon SELECT is allowed directly, no RPC.
+async function loadPromoBanner() {
+  const banner = document.getElementById('landingPromo');
+  const textEl = document.getElementById('landingPromoText');
+  if (!banner || !textEl) return;
+
+  const { data, error } = await supabaseClient
+    .from('PromotionSettings')
+    .select('*')
+    .eq('"Id"', 1)
+    .limit(1);
+
+  const info = !error && data && data[0];
+  const promoText = info && info['IsActive'] ? (info['PromoText'] || '').trim() : '';
+  if (!promoText) return;
+
+  textEl.textContent = promoText;
+  banner.hidden = false;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+// Every product card on the site opens that product's own page (product.html / js/product.js) -
+// photos, stock per branch, set contents and Add to cart. Also shareable as a direct link.
+function productPageUrl(code) {
+  return `product.html?code=${encodeURIComponent(code)}`;
+}
+
+// Two ranked blocks under one "Best Sellers" section (see supabase_public_best_sellers.sql):
+//   * Complete Aquarium Sets - public_get_best_selling_sets, last 365 days (sets sell less often),
+//     with each set's "N sold" count over that window.
+//   * Top Items - public_get_best_sellers, last 90 days, sets left out. In-store-only items (fish,
+//     food...) are labelled as such; their product page shows stock but no Add to cart.
+const MAX_BEST_SELLERS = 8;
+const MAX_BEST_SETS = 6;
+
+function bestSellerCard(product) {
+  const { code, rank, name, price, images, note } = product;
+  const imageUrl = firstImageUrl(images);
+  const visual = imageUrl
+    ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" loading="lazy" />`
+    : '<div class="land-best-placeholder" aria-hidden="true">🐠</div>';
+  return `
+    <a class="land-product-card land-best-card" href="${productPageUrl(code)}">
+      <span class="land-best-rank">#${rank}</span>
+      ${visual}
+      <div class="land-product-info">
+        <div class="land-product-name">${escapeHtml(name)}</div>
+        <div class="land-product-price">${formatPeso(price)}</div>
+        ${note ? `<div class="land-best-note">${escapeHtml(note)}</div>` : ''}
+      </div>
+    </a>
+  `;
+}
+
+function showBestSection() {
+  document.getElementById('landingBestSection').hidden = false;
+  const navLink = document.getElementById('landingBestNavLink');
+  if (navLink) navLink.hidden = false;
+}
+
+async function loadBestSellingSets() {
+  const block = document.getElementById('landingBestSetsBlock');
+  const grid = document.getElementById('landingBestSetsGrid');
+  if (!block || !grid) return;
+
+  const { data, error } = await supabaseClient.rpc('public_get_best_selling_sets', { p_days: 365, p_limit: MAX_BEST_SETS });
+  const sets = !error && data ? data : [];
+  if (sets.length === 0) return;
+
+  grid.innerHTML = sets
+    .map((set) => {
+      const sold = Number(set.qty_sold) || 0;
+      const note = sold > 0 ? `Complete set · ${sold.toLocaleString('en-PH')} sold` : 'Complete set';
+      return bestSellerCard({ ...set, note });
+    })
+    .join('');
+  block.hidden = false;
+  showBestSection();
+}
+
+async function loadBestSellers() {
+  const block = document.getElementById('landingBestItemsBlock');
+  const grid = document.getElementById('landingBestGrid');
+  if (!block || !grid) return;
+
+  const { data, error } = await supabaseClient.rpc('public_get_best_sellers', { p_days: 90, p_limit: MAX_BEST_SELLERS });
+  const items = (!error && data ? data : []).filter((item) => firstImageUrl(item.images));
+  if (items.length === 0) return;
+
+  grid.innerHTML = items
+    .map((item) => {
+      const orderable = FEATURED_CATEGORY_CODES.includes(String(item.category_code || '').toUpperCase());
+      return bestSellerCard({ ...item, note: orderable ? '' : 'Available in-store' });
+    })
+    .join('');
+  block.hidden = false;
+  showBestSection();
+}
+
+loadPromoBanner();
+loadBestSellingSets();
+loadBestSellers();
 loadCategoryPills();
 loadFeaturedProducts();
 
@@ -241,3 +350,47 @@ function wireLandingNav() {
 }
 
 wireLandingNav();
+
+// ---- Cart (shared by the homepage and product page top bars) ----
+// Same localStorage keys, 3-day expiry and line shape as js/orderNow.js (loadCart/saveCart/
+// addToCart), so a cart started on any page shows up on all of them and in Order Now, and
+// survives the customer closing the tab. The top-bar "🛒 Cart (n)" link opens
+// order-now.html?start=cart (Order Now with the cart viewer on top).
+const CART_KEY = 'order_now_cart';
+const CART_SAVED_AT_KEY = 'order_now_cart_saved_at';
+const CART_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
+function readCart() {
+  try {
+    const savedAt = Number(localStorage.getItem(CART_SAVED_AT_KEY)) || 0;
+    if (Date.now() - savedAt > CART_MAX_AGE_MS) return [];
+    const raw = localStorage.getItem(CART_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCart(cart) {
+  try {
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    localStorage.setItem(CART_SAVED_AT_KEY, String(Date.now()));
+  } catch {
+    // Storage blocked (private mode etc.) - the add just won't carry over to Order Now.
+  }
+}
+
+function updateSiteCartLink() {
+  const link = document.getElementById('siteCartLink');
+  if (!link) return;
+  const count = readCart().reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+  link.textContent = count > 0 ? `🛒 Cart (${count})` : '🛒 Cart';
+}
+
+updateSiteCartLink();
+// Coming Back from Order Now restores this page from the browser's cache without re-running the
+// script, and another tab can change the cart - refresh the count in both cases.
+window.addEventListener('pageshow', updateSiteCartLink);
+window.addEventListener('storage', (event) => {
+  if (event.key === CART_KEY || event.key === CART_SAVED_AT_KEY) updateSiteCartLink();
+});

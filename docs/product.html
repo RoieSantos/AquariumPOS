@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product - RS Pet Stop</title>
+  <meta name="description" content="RS Pet Stop - aquariums, aquarium sets, stands and pet supplies in Tanza and GMA, Cavite. Check stock per branch and order online for pickup or delivery." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/landing.css?v=9" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <meta name="theme-color" content="#060a14" />
+</head>
+<body>
+  <!-- Product page - one product per URL (product.html?code=<Items.Code>), linked from every product
+       card on the homepage and shareable on Facebook/Messenger. Same top bar as index.html (its
+       in-page links point back to the homepage sections) plus a cart link. See js/product.js. -->
+  <header class="land-topbar" id="top">
+    <div class="land-topbar-inner land-wrap">
+      <a class="land-brand" href="index.html">
+        <img id="landingLogoNav" src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
+        <span data-company-name>RS Pet Stop</span>
+      </a>
+
+      <button class="land-menu-btn" id="landingMenuBtn" type="button" aria-expanded="false" aria-controls="landingNav" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+
+      <nav class="land-nav" id="landingNav" aria-label="Main">
+        <a class="land-nav-link" href="index.html#best-sellers">Best sellers</a>
+        <a class="land-nav-link" href="index.html#shop">Shop</a>
+        <a class="land-nav-link" href="index.html#builds">Custom builds</a>
+        <a class="land-nav-link" href="index.html#visit">Visit us</a>
+        <a class="land-nav-link land-cart-link" id="siteCartLink" href="order-now.html?start=cart">🛒 Cart</a>
+        <a class="land-btn land-btn-primary land-btn-sm" href="order-now.html">Order Now</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="land-wrap prod-page">
+    <nav class="prod-breadcrumb" id="productBreadcrumb" aria-label="Breadcrumb">
+      <a href="index.html">Home</a>
+    </nav>
+
+    <p class="prod-status" id="productStatus">Loading product…</p>
+
+    <article class="prod-layout" id="productLayout" hidden>
+      <div class="prod-media">
+        <div class="prod-main-image">
+          <img id="productImage" alt="" />
+          <div class="prod-placeholder" id="productPlaceholder" aria-hidden="true" hidden>🐠</div>
+        </div>
+        <div class="prod-thumbs" id="productThumbs"></div>
+      </div>
+
+      <div class="prod-info">
+        <div class="prod-badges" id="productBadges"></div>
+        <h1 class="prod-name" id="productName"></h1>
+        <div class="prod-sku" id="productSku"></div>
+        <div class="prod-price" id="productPrice"></div>
+
+        <!-- Availability per branch (Items stock_by_location / stock_by_variant - same numbers Alice
+             quotes) and the two ways to get it: pickup at a branch or delivery. -->
+        <section class="prod-panel">
+          <h2 class="prod-panel-title">Availability</h2>
+          <div class="prod-branch-stock" id="productBranchStock"></div>
+          <div id="productVariantStock"></div>
+        </section>
+
+        <div class="prod-fulfillment">
+          <div class="prod-fulfillment-card">
+            <div class="prod-fulfillment-icon">🏬</div>
+            <div class="prod-fulfillment-title">Pickup</div>
+            <div class="prod-fulfillment-sub" id="productPickupSub">Amaya or GMA branch</div>
+          </div>
+          <a class="prod-fulfillment-card" href="order-now.html?start=delivery">
+            <div class="prod-fulfillment-icon">🚚</div>
+            <div class="prod-fulfillment-title">Delivery</div>
+            <div class="prod-fulfillment-sub">Estimate the fee &rarr;</div>
+          </a>
+        </div>
+
+        <!-- Shown for categories Order Now sells (Sets/Aquariums/Stands/Pumps/Lights). -->
+        <div class="prod-buy" id="productBuy" hidden>
+          <div class="prod-qty" role="group" aria-label="Quantity">
+            <button type="button" id="productQtyDec" aria-label="Less">&minus;</button>
+            <input type="number" id="productQty" min="1" value="1" aria-label="Quantity" />
+            <button type="button" id="productQtyInc" aria-label="More">+</button>
+          </div>
+          <button class="land-btn land-btn-primary prod-add-btn" id="productAddBtn" type="button">Add to cart</button>
+        </div>
+        <div class="prod-added" id="productAdded" hidden>
+          <span>✓ Added to your cart</span>
+          <div class="prod-added-actions">
+            <a class="land-btn land-btn-primary land-btn-sm" href="order-now.html?start=cart">Checkout</a>
+            <a class="land-btn land-btn-secondary land-btn-sm" href="index.html#shop">Keep shopping</a>
+          </div>
+        </div>
+
+        <!-- Everything else (fish, food, medicines...) is in-store only, same rule as Order Now. -->
+        <div class="prod-instore" id="productInStore" hidden>
+          <p>This item is available in-store only. Visit either branch, or message us and we'll help you.</p>
+          <a class="land-btn land-btn-primary land-btn-sm" href="index.html#visit">Visit a store</a>
+        </div>
+      </div>
+
+      <section class="prod-details">
+        <div id="productSetContents"></div>
+        <div id="productDescriptionWrap" hidden>
+          <h2 class="prod-panel-title">Details</h2>
+          <p class="prod-desc" id="productDescription"></p>
+        </div>
+      </section>
+    </article>
+
+    <section class="prod-related" id="productRelated" hidden>
+      <h2 class="land-section-title" id="productRelatedTitle">More like this</h2>
+      <div class="land-product-grid" id="productRelatedGrid"></div>
+    </section>
+  </main>
+
+  <footer class="land-footer land-wrap">
+    <nav class="land-footer-links" aria-label="Quick links">
+      <a href="order-now.html?start=standard">Shop</a>
+      <a href="order-now.html?start=custom">Custom aquarium</a>
+      <a href="order-now.html?start=delivery">Delivery fee</a>
+      <a href="index.html#visit">Store locations</a>
+    </nav>
+    <p>&copy; <span id="landingYear"></span> <span data-company-name>RS Pet Stop</span>. All rights reserved.</p>
+    <p><a href="privacy-policy.html">Privacy Policy</a> &middot; <a href="terms-and-conditions.html">Terms &amp; Conditions</a> &middot; <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a> &middot; <a href="contact-us.html">Contact Us</a> &middot; <a href="help.html">Help</a></p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/landing.js?v=8"></script>
+  <script src="js/product.js?v=4"></script>
+  <script>
+    document.getElementById('landingYear').textContent = new Date().getFullYear();
+  </script>
+  <script src="js/chatWidget.js" defer></script>
+</body>
+</html>

@@ -3136,6 +3136,45 @@ function showListPayment(kind, id) {
     const text = v === null || v === undefined || v === '' ? '<span class="muted">-</span>' : `₱${Number(v).toFixed(2)}`;
     return `<dt>${label}</dt><dd${label === 'Balance' && balance > 0 ? ' class="oc-fact-balance-due"' : ''}>${text}</dd>`;
   }).join('')}</dl>`;
+  if (kind === 'online' && !hidePrices() && Number(o.amount_paid) > 0) {
+    body.insertAdjacentHTML('beforeend', '<dl class="bc-facts" id="orderListPaidVia"><dt>Paid Via</dt><dd class="muted">...</dd></dl>');
+    showListPaidVia(o);
+  }
+}
+
+// "Paid Via" in the list FactBox's Payment part - per "can you show what tender type did they use for
+// paying?". Same RPC as the order card's Paid Via (admin_get_online_order_payment_methods: portal
+// orders read AutomatedOrderPayments, older ones read live from Pancake). Cached per order + Amount
+// Paid so list refreshes don't refetch, and a new payment does; 250ms settle like the Serials part.
+const listPaidViaCache = new Map();
+let listPaidViaTimer = null;
+
+function showListPaidVia(o) {
+  const orderId = String(o.order_id);
+  const key = `${orderId}|${o.amount_paid}`;
+  const render = (rows, errorText) => {
+    const el = document.getElementById('orderListPaidVia');
+    if (!el || el.dataset.key !== key) return;
+    if (errorText || !rows.length) {
+      el.innerHTML = `<dt>Paid Via</dt><dd class="muted">${errorText || 'Not recorded'}</dd>`;
+      return;
+    }
+    el.innerHTML = rows.map((r, i) =>
+      `<dt>${i === 0 ? 'Paid Via' : ''}</dt><dd title="${escapeHtml(r.code || '')}">${escapeHtml(r.method)} ₱${money(r.amount)}</dd>`
+    ).join('');
+  };
+  document.getElementById('orderListPaidVia').dataset.key = key;
+  clearTimeout(listPaidViaTimer);
+  if (listPaidViaCache.has(key)) { render(listPaidViaCache.get(key)); return; }
+  listPaidViaTimer = setTimeout(async () => {
+    const { data, error } = await supabaseClient.rpc('admin_get_online_order_payment_methods', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_id: orderId
+    });
+    if (!error) listPaidViaCache.set(key, data || []);
+    render(data || [], error ? 'Could not load' : '');
+  }, 250);
 }
 
 // Stock part of the list FactBox - the selected row's lines with their on-hand per warehouse

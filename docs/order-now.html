@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <link rel="stylesheet" href="css/siteHeader.css?v=1" />
   <meta name="theme-color" content="#1d4f91" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -19,13 +20,30 @@
        loadCompanyLogo() once CompanyInfo.LogoUrl is fetched. Sits behind .wizard-page (z-index 1). -->
   <div class="wizard-watermark" id="watermarkBg" aria-hidden="true"></div>
 
+  <!-- Same customer top bar as the homepage / product page (css/siteHeader.css) - a way back to
+       rspetstop.com from any step. Logo + name filled by loadCompanyLogo() in js/orderNow.js. -->
+  <header class="site-topbar">
+    <div class="site-topbar-inner">
+      <a class="site-brand" href="index.html">
+        <img id="siteBrandLogo" alt="" hidden />
+        <span id="siteBrandName">RS Pet Stop</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="index.html">Home</a>
+        <a class="site-nav-optional" href="index.html#best-sellers">Best sellers</a>
+        <a class="site-nav-optional" href="index.html#visit">Visit us</a>
+        <a href="#" id="siteCartLink">🛒 Cart</a>
+      </nav>
+    </div>
+  </header>
+
   <div class="page wizard-page">
     <div class="wizard-header">
       <div id="companyLogoBox"></div>
       <h1>Order Now</h1>
       <p class="muted">Pick what you need, and we'll get back to you to confirm your order.</p>
       <div class="wizard-header-links">
-        <a href="#" class="view-cart-link" id="viewCartLink">🛒 View Cart</a>
+        <a href="#" class="view-cart-link" id="viewCartLink">🛒 Cart</a>
         <a href="#" class="view-cart-link" id="helpLink">❓ Help</a>
       </div>
     </div>
@@ -58,7 +76,7 @@
       <div class="category-grid">
         <div class="category-card" id="modeStandardBtn">
           <span class="category-icon">🛒</span>
-          Standard<br /><span class="muted" style="font-weight:400; font-size:12px;">Browse categories &amp; items</span>
+          Ready-Made<br /><span class="muted" style="font-weight:400; font-size:12px;">Sets, aquariums, stands, pumps &amp; lights</span>
         </div>
         <div class="category-card" id="modeCustomizeBtn">
           <span class="category-icon">📐</span>
@@ -805,7 +823,7 @@
         <div id="submitErrorMsg" class="error-text hidden"></div>
         <div class="wizard-nav-buttons">
           <button type="button" class="btn btn-secondary" id="detailsBackBtn">&larr; Back</button>
-          <button type="submit" class="btn btn-primary" id="submitOrderBtn">Submit Order Request</button>
+          <button type="submit" class="btn btn-primary" id="submitOrderBtn">Place Order</button>
         </div>
       </form>
     </section>
@@ -819,16 +837,6 @@
         <div style="margin-bottom:14px;">
           <div class="confirmation-order-no" id="confirmationOrderNo"></div>
           <div class="muted" style="margin-top:-8px; font-size:12px;">Order ID</div>
-          <div class="confirmation-order-no hidden" id="confirmationOnlineOrderNo" style="font-size:16px; margin:8px 0 0;"></div>
-          <div class="muted hidden" id="confirmationOnlineOrderNoLabel" style="margin-top:-6px; font-size:12px;">Online Order ID</div>
-        </div>
-        <!-- Shown while pollAutomatedOrderPancakeStatus (js/orderNow.js) is still trying to fill in
-             the Online Order ID above. Never just disappears once shown - settleConfirmationWaitingNote
-             swaps it to a calm resting message (spinner hidden) if the ID lands late/not at all, so the
-             screen never looks like it silently broke mid-wait. -->
-        <div class="confirmation-waiting-note hidden" id="confirmationWaitingNote">
-          <span class="confirmation-waiting-spinner" id="confirmationWaitingSpinner"></span>
-          <span id="confirmationWaitingText">Gathering your order details - please don't close this screen while we work on it.</span>
         </div>
         <!-- Xendit online payment (pay.html) - only shown when "Show Pay online on Order Now" is ticked on
              the Xendit Payments page (public_get_xendit_settings, sql/supabase_xendit_payments.sql). -->
@@ -921,7 +929,7 @@
       </div>
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
         <button type="button" class="btn btn-secondary" id="itemDetailCloseBtn">Close</button>
-        <button type="button" class="btn btn-primary" id="itemDetailAddBtn">Add to Order</button>
+        <button type="button" class="btn btn-primary" id="itemDetailAddBtn">Add to cart</button>
       </div>
     </div>
   </div>
@@ -937,7 +945,7 @@
         <span class="help-step-icon">🛍️</span>
         <div>
           <div class="help-step-title">1. Choose how you want to order</div>
-          <div class="help-step-text">Tap <strong>Standard</strong> to browse ready-made items, or <strong>Customize</strong> to build your own Aquarium, Stand, Filtration, or Accessories.</div>
+          <div class="help-step-text">Tap <strong>Ready-Made</strong> to browse ready-made items, or <strong>Customize</strong> to build your own Aquarium, Stand, Filtration, or Accessories.</div>
         </div>
       </div>
       <div class="help-step">
@@ -958,7 +966,7 @@
         <span class="help-step-icon">🛒</span>
         <div>
           <div class="help-step-title">4. Review your cart</div>
-          <div class="help-step-text">Tap "View Cart" anytime to check what you've added, then Checkout when you're ready.</div>
+          <div class="help-step-text">Tap "Cart" anytime to check what you've added, then Checkout when you're ready.</div>
         </div>
       </div>
       <div class="help-step">
@@ -1143,7 +1151,7 @@
       <div class="cart-bar-info" id="cartBarInfo">0 items</div>
       <div class="cart-bar-sub" id="cartBarSub">Add items to get started</div>
     </div>
-    <button type="button" class="btn btn-success" id="viewCartBtn">View Cart</button>
+    <button type="button" class="btn btn-success" id="viewCartBtn">Cart</button>
   </div>
 
   <!-- Phone-only price bar on the Customize builder, like the Aquarium Calculator's .quote-bar -
@@ -1161,7 +1169,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=pipedrain2"></script>
-  <script src="js/orderNow.js?v=czcalc1"></script>
+  <script src="js/orderNow.js?v=portal4"></script>
   <script src="js/chatWidget.js" defer></script>
 </body>
 </html>

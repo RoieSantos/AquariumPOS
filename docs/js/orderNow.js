@@ -4,10 +4,14 @@
 // (see supabase_automated_orders_tables.sql). Staff review/action requests from
 // automated-orders.html.
 //
-// Cart is kept in sessionStorage (not just an in-memory var) so an accidental refresh/back-nav
-// mid-order doesn't wipe out everything the customer already picked.
+// Cart is kept in localStorage (not just an in-memory var) so a refresh/back-nav, or closing the
+// tab - easy to do in the Messenger/Facebook in-app browser - doesn't wipe out everything the
+// customer already picked. It expires after CART_MAX_AGE_MS so a days-old cart with stale prices
+// doesn't come back. js/product.js reads/writes the same keys.
 
 const CART_STORAGE_KEY = 'order_now_cart';
+const CART_SAVED_AT_KEY = 'order_now_cart_saved_at';
+const CART_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
 // Best-effort friendly icon per known Categories.Code (see supabase_categories_backfill.sql) -
 // anything else (CUSTOM-* accessories, future categories) falls back to the generic icon below,
@@ -149,7 +153,9 @@ async function prefillCustomerDetailsFromPsid() {
 
 function loadCart() {
   try {
-    const raw = sessionStorage.getItem(CART_STORAGE_KEY);
+    const savedAt = Number(localStorage.getItem(CART_SAVED_AT_KEY)) || 0;
+    if (Date.now() - savedAt > CART_MAX_AGE_MS) return [];
+    const raw = localStorage.getItem(CART_STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -157,7 +163,12 @@ function loadCart() {
 }
 
 function saveCart() {
-  sessionStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+  try {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+    localStorage.setItem(CART_SAVED_AT_KEY, String(Date.now()));
+  } catch {
+    // Storage blocked (private mode etc.) - the cart still works in memory for this visit.
+  }
   updateViewCartLink();
 }
 
@@ -206,11 +217,14 @@ function updateCartBar() {
 // "View Cart" link under the page header - shows the running item count so it's clear at a
 // glance whether there's anything to look at, from any step (not just Standard's steps 1-2 like
 // the sticky cart bar above).
+// Also keeps the site top bar's Cart link (css/siteHeader.css) in step with it.
 function updateViewCartLink() {
-  const link = document.getElementById('viewCartLink');
-  if (!link) return;
   const count = cartItemCount();
-  link.textContent = count > 0 ? `🛒 View Cart (${count})` : '🛒 View Cart';
+  const text = count > 0 ? `🛒 Cart (${count})` : '🛒 Cart';
+  ['viewCartLink', 'siteCartLink'].forEach((id) => {
+    const link = document.getElementById(id);
+    if (link) link.textContent = text;
+  });
 }
 
 // Cart viewer modal - reachable from the "View Cart" link regardless of which step the customer
@@ -486,7 +500,7 @@ async function loadItems(codes) {
         ? ''
         : item.quantity_in_stock > 0
           ? `<div class="item-card-stock">In stock</div>`
-          : `<div class="item-card-stock">Currently out of stock - request anyway</div>`;
+          : `<div class="item-card-stock">Out of stock - you can still order, we'll confirm when it's ready</div>`;
       const descSnippet = shortDescriptionSnippet(item.description);
       const descHtml = descSnippet ? `<div class="item-card-desc">${descSnippet}</div>` : '';
 
@@ -504,7 +518,7 @@ async function loadItems(codes) {
             <input type="number" min="1" value="1" data-qty />
             <button type="button" data-action="inc">+</button>
           </div>
-          <button type="button" class="btn btn-primary btn-sm" data-action="add">Add to Order</button>
+          <button type="button" class="btn btn-primary btn-sm" data-action="add">Add to cart</button>
         </div>
       `;
     })
@@ -556,7 +570,7 @@ function openItemDetail(item) {
   if (item.quantity_in_stock === null || item.quantity_in_stock === undefined) {
     stockEl.textContent = '';
   } else {
-    stockEl.textContent = item.quantity_in_stock > 0 ? 'In stock' : 'Currently out of stock - request anyway';
+    stockEl.textContent = item.quantity_in_stock > 0 ? 'In stock' : "Out of stock - you can still order, we'll confirm when it's ready";
   }
 
   const description = (item.description || '').trim();
@@ -3078,31 +3092,14 @@ async function submitOrder(event) {
 
   if (error) {
     submitBtn.disabled = false;
-    submitBtn.textContent = 'Submit Order Request';
+    submitBtn.textContent = 'Place Order';
     errorMsg.textContent = 'Could not submit your order: ' + error.message;
     errorMsg.classList.remove('hidden');
     return;
   }
 
-  // Order is now safely created - stays disabled/relabeled through the brief Pancake-sync wait
-  // below too (previously this reset back to normal here, leaving the customer staring at a
-  // plain, clickable "Submit Order Request" button with no indication anything was happening for
-  // that whole wait - and nothing stopping a second, duplicate submission).
-  submitBtn.textContent = 'Confirming your order...';
-
-  // submit_automated_order returns a row (order_no, pancake_order_id, pancake_sync_status). Order
-  // ID (our internal AO-##### number) always shows - it's assigned before the Pancake push even
-  // runs, so it exists regardless of whether that push succeeded. Online Order ID (Pancake's own
-  // number) only shows alongside it once the sync actually went through - showing both instead of
-  // picking one avoids the confusion of a customer only ever seeing AO-##### when Pancake sync
-  // failed/is pending, with no way to tell that's what happened.
-  //
-  // submit_automated_order no longer pushes to Pancake itself (see
-  // supabase_automated_order_async_pancake_sync.sql) - it always comes back with
-  // pancake_sync_status 'Pending' now. Per direct request, the confirmation screen now waits a
-  // short moment for that push to actually land before it shows, instead of always appearing
-  // immediately and letting the Online Order ID pop in a moment later - see
-  // PANCAKE_SYNC_WAIT_BEFORE_CONFIRMATION_MS below.
+  // Portal only (sql/supabase_order_now_portal_only.sql): no Pancake order any more - the AO-#####
+  // number is the order's only ID. It waits in Online Orders -> New for staff to Confirm Order.
   // Wrapped in try/catch purely as a diagnostic aid: the order is already safely committed server-
   // side at this point (submit_automated_order already returned successfully above), so nothing
   // here SHOULD be able to fail - but if it somehow does, this makes that failure visible (console
@@ -3112,45 +3109,14 @@ async function submitOrder(event) {
     const result = (data && data[0]) || {};
 
     if (result.order_no) {
-      // supabaseClient.rpc(...) returns a PostgREST "thenable" builder, not a real Promise - it
-      // only implements .then(), not .catch()/.finally(), so calling .catch() directly on it
-      // throws "is not a function" (this is what was silently breaking every single order's
-      // confirmation screen before - the whole rest of submitOrder never got to run).
-      // Promise.resolve(...) converts it into a genuine Promise first, so .catch() is safe here.
-      // Raced against a flat timeout so a slow/hung Pancake round trip can never leave the
-      // customer staring at "Submitting..." for too long - if it doesn't land in time, the
-      // confirmation screen just shows without the Online Order ID yet (same as before this
-      // change), and pollAutomatedOrderPancakeStatus below still picks it up shortly after.
-      await Promise.race([
-        Promise.resolve(supabaseClient.rpc('public_sync_automated_order_to_pancake', { p_order_no: result.order_no })).catch(() => {}),
-        new Promise((resolve) => setTimeout(resolve, PANCAKE_SYNC_WAIT_BEFORE_CONFIRMATION_MS))
-      ]);
+      // Messenger "Order Received" message (only for customers who came from a Messenger link) -
+      // fire-and-forget; the cron sends it if this call is missed. Promise.resolve(...) because
+      // supabaseClient.rpc(...) is a thenable without .catch().
+      Promise.resolve(supabaseClient.rpc('public_send_order_now_confirmation', { p_order_no: result.order_no })).catch(() => {});
     }
 
     document.getElementById('confirmationOrderNo').textContent = result.order_no;
     showPayOnlineButton(result.order_no);
-
-    const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
-    const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
-    onlineOrderNoBox.classList.add('hidden');
-    onlineOrderNoLabel.classList.add('hidden');
-
-    if (result.order_no) {
-      // Check once immediately - the wait above may already have let the push land - before
-      // falling back to the existing short poll for the (still-normal) case it hasn't yet.
-      let shown = false;
-      try {
-        const { data: statusData } = await supabaseClient.rpc('public_get_automated_order_status', { p_order_no: result.order_no });
-        shown = applyPancakeSyncStatusDisplay((statusData && statusData[0]) || null);
-      } catch (err) {
-        console.error('public_get_automated_order_status failed:', err);
-      }
-
-      if (!shown) {
-        showConfirmationWaitingNote();
-        pollAutomatedOrderPancakeStatus(result.order_no).catch((err) => console.error('pollAutomatedOrderPancakeStatus failed:', err));
-      }
-    }
 
     cart = [];
     saveCart();
@@ -3158,7 +3124,7 @@ async function submitOrder(event) {
   } catch (err) {
     console.error('submitOrder: order was created (see result above) but showing the confirmation screen failed:', err);
     submitBtn.disabled = false;
-    submitBtn.textContent = 'Submit Order Request';
+    submitBtn.textContent = 'Place Order';
     errorMsg.textContent = 'Your order was submitted (order #' + ((data && data[0] && data[0].order_no) || '?') + '), but something went wrong showing the confirmation. Please take a screenshot of this and contact us.';
     errorMsg.classList.remove('hidden');
   }
@@ -3180,100 +3146,6 @@ function showPayOnlineButton(orderNo) {
     document.getElementById('confirmationPayOnlineLink').href = `pay.html?order=${encodeURIComponent(orderNo)}`;
     box.classList.remove('hidden');
   }).catch(() => {});
-}
-
-// How long submitOrder waits for the background Pancake push to land before showing the
-// confirmation screen anyway - "a bit of delay" per direct request, not a guarantee (the push can
-// genuinely take longer than this on a slow Pancake response, which is exactly why
-// pollAutomatedOrderPancakeStatus below still exists as a fallback).
-const PANCAKE_SYNC_WAIT_BEFORE_CONFIRMATION_MS = 3000;
-
-// Shows the Online Order ID box once the background Pancake sync reports it Synced - shared by
-// submitOrder's own immediate post-wait check above and the background poll fallback right below,
-// so the "what counts as ready to show" logic lives in exactly one place. Returns true/false so
-// each caller can decide whether it still needs to keep checking.
-function applyPancakeSyncStatusDisplay(status) {
-  if (!status || status.pancake_sync_status !== 'Synced' || !status.pancake_order_id) return false;
-  const onlineOrderNoBox = document.getElementById('confirmationOnlineOrderNo');
-  const onlineOrderNoLabel = document.getElementById('confirmationOnlineOrderNoLabel');
-  onlineOrderNoBox.textContent = '#' + status.pancake_order_id;
-  onlineOrderNoBox.classList.remove('hidden');
-  onlineOrderNoLabel.classList.remove('hidden');
-  document.getElementById('confirmationWaitingNote').classList.add('hidden');
-  document.getElementById('startNewOrderBtn').disabled = false;
-  return true;
-}
-
-// Resets the note back to its active "still working" appearance and shows it - used at the start
-// of a fresh order's wait, so a previous order's settled (spinner-hidden, muted) state can never
-// bleed into a new order's own wait.
-function showConfirmationWaitingNote() {
-  const note = document.getElementById('confirmationWaitingNote');
-  note.classList.remove('settled');
-  document.getElementById('confirmationWaitingSpinner').classList.remove('hidden');
-  document.getElementById('confirmationWaitingText').textContent = 'Retrieving your Online Order ID...';
-  note.classList.remove('hidden');
-  // Per direct request: starting a new order while this one is still being linked to Pancake
-  // would abandon pollAutomatedOrderPancakeStatus for it mid-wait (stillOnThisOrder's guard just
-  // quietly stops checking rather than erroring, but the customer would never see the ID land) -
-  // disabled here, re-enabled by applyPancakeSyncStatusDisplay/settleConfirmationWaitingNote below
-  // once there's nothing left to wait for.
-  document.getElementById('startNewOrderBtn').disabled = true;
-}
-
-// Swaps the waiting note to a calm resting message instead of hiding it outright, once
-// pollAutomatedOrderPancakeStatus stops actively checking without ever finding a Synced status -
-// per direct report, silently hiding it made the screen look like it had just stopped/broken
-// mid-wait even though the order itself is still perfectly fine (and, per that same report, the
-// real Pancake order can genuinely land slightly after our polling window closes - the push retries
-// server-side with its own backoff, see _push_automated_order_to_pancake, so this is a real timing
-// gap, not just a perception issue).
-function settleConfirmationWaitingNote(message) {
-  const note = document.getElementById('confirmationWaitingNote');
-  document.getElementById('confirmationWaitingSpinner').classList.add('hidden');
-  document.getElementById('confirmationWaitingText').textContent = message;
-  note.classList.remove('hidden');
-  note.classList.add('settled');
-  document.getElementById('startNewOrderBtn').disabled = false;
-}
-
-// Polls for the background Pancake sync (kicked off just above) to land, so the confirmation
-// screen can reveal the real Pancake order number without the customer ever having to wait on it
-// up front. 16 tries, 2.5s apart (40s total) - _push_automated_order_to_pancake retries up to 3
-// times server-side with its own 1.5s backoff between attempts, each attempt allowed up to 20s, so
-// the old 5-try/7.5s window could genuinely close before a retried push finished - this comfortably
-// outlasts that normal-case worst time. If it still isn't back by then, settleConfirmationWaitingNote
-// leaves a clear final message rather than the note just vanishing; the order itself is already
-// confirmed either way, and the pg_cron safety net still catches it within a minute regardless.
-async function pollAutomatedOrderPancakeStatus(orderNo, attempt) {
-  attempt = attempt || 0;
-  // The customer may have already left the confirmation step (e.g. started a new order) - checked
-  // before every exit path below (including the give-up case), so a timed-out poll for an OLD
-  // order can never touch a NEWER order's still-in-progress waiting note.
-  const stillOnThisOrder = () => document.getElementById('confirmationOrderNo').textContent === orderNo;
-
-  if (attempt >= 16) {
-    if (stillOnThisOrder()) {
-      settleConfirmationWaitingNote('We couldn\'t retrieve your Online Order ID yet - your order is already confirmed.');
-    }
-    return;
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-
-  if (!stillOnThisOrder()) return;
-
-  const { data, error } = await supabaseClient.rpc('public_get_automated_order_status', { p_order_no: orderNo });
-  const status = !error && data && data[0];
-
-  if (applyPancakeSyncStatusDisplay(status)) return;
-
-  if (status && status.pancake_sync_status === 'Failed') {
-    settleConfirmationWaitingNote('Your order is confirmed! We\'re still finishing linking it to our online system - no action needed, we\'ll follow up if there\'s anything else to confirm.');
-    return;
-  }
-
-  await pollAutomatedOrderPancakeStatus(orderNo, attempt + 1);
 }
 
 // Puts the whole Customize flow back to its just-loaded defaults - per direct request, opening
@@ -3380,6 +3252,13 @@ function showCustomizeLoading(durationMs = 1300, options = {}) {
 async function loadCompanyLogo() {
   const info = await fetchCompanyInfo();
   if (!info) return;
+  // Site top bar (css/siteHeader.css) - same logo + name as the homepage's.
+  if (info['CompanyName']) document.getElementById('siteBrandName').textContent = info['CompanyName'];
+  if (info['LogoUrl']) {
+    const brandLogo = document.getElementById('siteBrandLogo');
+    brandLogo.src = info['LogoUrl'];
+    brandLogo.hidden = false;
+  }
   const box = document.getElementById('companyLogoBox');
   if (info['LogoUrl']) {
     box.innerHTML = `<img src="${info['LogoUrl']}" alt="${info['CompanyName'] || 'Company logo'}" class="company-logo-img" />`;
@@ -4491,6 +4370,10 @@ async function runDeliveryEstimate() {
     event.preventDefault();
     openCartViewModal();
   });
+  document.getElementById('siteCartLink').addEventListener('click', (event) => {
+    event.preventDefault();
+    openCartViewModal();
+  });
   document.getElementById('cartViewCloseBtn').addEventListener('click', closeCartViewModal);
   document.getElementById('helpLink').addEventListener('click', (event) => {
     event.preventDefault();
@@ -4539,5 +4422,12 @@ async function runDeliveryEstimate() {
   const startMode = new URLSearchParams(window.location.search).get('start');
   if (START_MODE_BUTTONS[startMode]) {
     document.getElementById(START_MODE_BUTTONS[startMode]).click();
+  }
+  // ?start=cart - from the product page's "Checkout" / cart link (product.html): opens the Standard
+  // flow with the cart viewer on top, so the customer sees what they added and can Proceed or keep
+  // browsing categories. The product page writes the same localStorage cart (CART_STORAGE_KEY).
+  if (startMode === 'cart') {
+    document.getElementById('modeStandardBtn').click();
+    openCartViewModal();
   }
 })();

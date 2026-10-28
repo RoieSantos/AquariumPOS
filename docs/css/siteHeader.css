@@ -1,0 +1,87 @@
+/* Customer site top bar for pages that use the portal's css/styles.css (order-now.html) rather than
+   css/landing.css - same dark navy look and links as the homepage/product page top bar, so a
+   customer going from rspetstop.com into Order Now still feels on the same site and can get back.
+   Self-contained (site-* classes only) so it can't affect the staff portal's own styles. */
+.site-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(6, 10, 20, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid #232a45;
+  font-family: 'Poppins', "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.site-topbar-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.site-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #f5f7ff;
+  font-weight: 700;
+  font-size: 1rem;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.site-brand img {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #fff;
+}
+
+.site-brand img[hidden] {
+  display: none;
+}
+
+.site-brand span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.site-nav a {
+  color: #c9d1ea;
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.site-nav a:hover {
+  color: #f5f7ff;
+  background: #161d36;
+}
+
+@media (max-width: 560px) {
+  .site-nav .site-nav-optional {
+    display: none;
+  }
+}
+
+/* Order Now's sticky Customize price/drawing panel (styles.css: body.order-now-wide .cz-aside,
+   top 16px) would otherwise slide under this sticky bar - push it below. Harmless where the panel
+   isn't sticky (top has no effect on a static element). */
+body.order-now-wide .cz-aside {
+  top: 72px;
+}

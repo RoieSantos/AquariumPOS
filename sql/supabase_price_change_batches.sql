@@ -38,6 +38,17 @@
 -- page (the Items row is a trigger-maintained copy, and the POS sells at PackagePrice). Set lines already on a
 -- draft are refused by Apply Now / skipped by a schedule; re-opening the draft drops them.
 --
+-- Sticker & delivery RATES ride on the same batch (per "is the price increase also include custom stickers?
+-- deliver quote?" - "yes please add that too"), so one increase / schedule / undo covers them:
+--   sticker line  - StickerPricingSetup."PricePerSqFt" (ItemCode = the row's "Id"). The 'Acrylic Sump Cover'
+--                   row is a markup multiplier on Acrylic, not pesos, so it is never listed (it already follows
+--                   Acrylic's new rate).
+--   delivery line - PortalSettings DELIVERY_BASE_FEE / DELIVERY_RATE_PER_KM / DELIVERY_TOLL_FEE (ItemCode = the
+--                   setting key). DELIVERY_MULTI_STOP_MARKUP_PERCENT is a % and is never listed.
+-- Order Now, Alice (chatbot-engine.ts) and the Delivery Quote page read both live, so they quote the new
+-- rates right away. Same safety rules as items: a rate edited since the draft is refused / skipped, and Undo
+-- only restores a rate still at the batch's new value.
+--
 -- Super users only (is_admin_authorized), like Item Setup's price edit.
 -- Run AFTER supabase_item_master_portal_owned.sql. Safe to re-run (re-creates the cron job).
 
@@ -94,6 +105,11 @@ create table if not exists public."PriceChangeBatchLines" (
 -- Set by a scheduled apply for a line it left alone (price edited since the draft was saved / item gone).
 alter table public."PriceChangeBatchLines" add column if not exists "Skipped" boolean not null default false;
 alter table public."PriceChangeBatchLines" add column if not exists "SkipReason" text;
+
+alter table public."PriceChangeBatchLines" drop constraint if exists "PriceChangeBatchLines_Kind_check";
+alter table public."PriceChangeBatchLines" drop constraint if exists "CK_PriceChangeBatchLines_Kind";
+alter table public."PriceChangeBatchLines" add constraint "CK_PriceChangeBatchLines_Kind"
+  check ("Kind" in ('item', 'variant', 'sticker', 'delivery'));
 
 create index if not exists "IX_PriceChangeBatchLines_Item" on public."PriceChangeBatchLines" ("ItemCode");
 
@@ -207,6 +223,41 @@ $$;
 
 grant execute on function public.admin_price_change_source_rows(text, text) to anon;
 
+-- Sticker & delivery rates the page can raise with the same %. A delivery setting that isn't a plain number
+-- comes back with price null (shown, never changed).
+drop function if exists public.admin_price_change_rate_rows(text, text);
+
+create or replace function public.admin_price_change_rate_rows(p_admin_username text, p_admin_password text)
+returns table(kind text, item_code text, name text, price numeric)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.is_admin_authorized(p_admin_username, p_admin_password) then
+    raise exception 'Not authorized.';
+  end if;
+
+  return query
+  select 'sticker'::text, s."Id"::text,
+         (s."StickerType" || coalesce(' ' || nullif(trim(s."Thickness"), '') || 'mm', ''))::text,
+         round(s."PricePerSqFt", 2)
+    from public."StickerPricingSetup" s
+   where s."StickerType" <> 'Acrylic Sump Cover'
+  union all
+  select 'delivery'::text, k.key,
+         k.label,
+         case when trim(coalesce(p."SettingValue", '')) ~ '^[0-9]+(\.[0-9]+)?$' then round(trim(p."SettingValue")::numeric, 2) end
+    from (values ('DELIVERY_BASE_FEE', 'Delivery base fee', 1),
+                 ('DELIVERY_RATE_PER_KM', 'Delivery rate per km', 2),
+                 ('DELIVERY_TOLL_FEE', 'Delivery toll fee (when Google has no toll price)', 3)) as k(key, label, ord)
+    join public."PortalSettings" p on p."SettingKey" = k.key;
+end;
+$$;
+
+grant execute on function public.admin_price_change_rate_rows(text, text) to anon;
+
 -- ---------------------------------------------------------------------------
 -- Batches: list / get / save / delete / schedule
 -- ---------------------------------------------------------------------------
@@ -216,7 +267,7 @@ drop function if exists public.admin_price_change_list(text, text);
 create or replace function public.admin_price_change_list(p_admin_username text, p_admin_password text)
 returns table(
   batch_id bigint, description text, increase_pct numeric, keep_discount numeric, status text,
-  line_count int, retail_lines int, wholesale_lines int, skipped_lines int,
+  line_count int, retail_lines int, wholesale_lines int, rate_lines int, skipped_lines int,
   created_by text, created_at_utc timestamptz, updated_by text, updated_at_utc timestamptz,
   scheduled_for_utc timestamptz, scheduled_by text, apply_error text, apply_error_at_utc timestamptz,
   applied_by text, applied_at_utc timestamptz, undone_by text, undone_at_utc timestamptz, undo_skipped int
@@ -234,8 +285,9 @@ begin
   return query
   select b."BatchId", b."Description", b."IncreasePct", b."KeepDiscount", b."Status",
          count(l."LineNo")::int,
-         count(l."LineNo") filter (where l."NewPrice" is not null)::int,
+         count(l."LineNo") filter (where l."NewPrice" is not null and l."Kind" in ('item', 'variant'))::int,
          count(l."LineNo") filter (where l."NewWholesalePrice" is not null)::int,
+         count(l."LineNo") filter (where l."Kind" in ('sticker', 'delivery'))::int,
          count(l."LineNo") filter (where l."Skipped")::int,
          b."CreatedBy", b."CreatedAtUtc", b."UpdatedBy", b."UpdatedAtUtc",
          b."ScheduledForUtc", b."ScheduledBy", b."ApplyError", b."ApplyErrorAtUtc",
@@ -330,13 +382,17 @@ begin
 
   select string_agg(coalesce(e ->> 'item_code', '?'), ', ') into v_bad
     from jsonb_array_elements(p_lines) e
-   where coalesce(e ->> 'kind', '') not in ('item', 'variant')
+   where coalesce(e ->> 'kind', '') not in ('item', 'variant', 'sticker', 'delivery')
       or nullif(trim(coalesce(e ->> 'item_code', '')), '') is null
       or (e ->> 'kind' = 'variant' and nullif(trim(coalesce(e ->> 'variation_id', '')), '') is null)
       or ((e ->> 'new_price') is null and (e ->> 'new_wholesale_price') is null)
       or coalesce((e ->> 'new_price')::numeric, 0) < 0
       or coalesce((e ->> 'new_wholesale_price')::numeric, 0) < 0
-      or (e ->> 'kind' = 'variant' and (e ->> 'new_wholesale_price') is not null);
+      or (e ->> 'kind' in ('variant', 'sticker', 'delivery') and (e ->> 'new_wholesale_price') is not null)
+      or (e ->> 'kind' in ('sticker', 'delivery') and ((e ->> 'new_price') is null or (e ->> 'old_price') is null))
+      or (e ->> 'kind' = 'delivery'
+          and e ->> 'item_code' not in ('DELIVERY_BASE_FEE', 'DELIVERY_RATE_PER_KM', 'DELIVERY_TOLL_FEE'))
+      or (e ->> 'kind' = 'sticker' and coalesce(e ->> 'item_code', '') !~ '^[0-9]+$');
   if v_bad is not null then
     raise exception 'Invalid lines: %', left(v_bad, 300);
   end if;
@@ -474,6 +530,7 @@ declare
   v_wholesale int := 0;
   v_cleared int := 0;
   v_skipped int := 0;
+  v_rates int := 0;
 begin
   if public._items_pancake_sync_active() then
     raise exception 'Products are still synced from Pancake - the next sync would undo the new prices. Finish the portal cutover first.';
@@ -501,7 +558,7 @@ begin
     from public."PriceChangeBatchLines" l
     left join public."Items" i on i."Code" = l."ItemCode"
     left join public."Variants" v on v."VariationId" = l."VariationId"
-   where l."BatchId" = p_batch_id
+   where l."BatchId" = p_batch_id and l."Kind" in ('item', 'variant')
      and (i."Code" is null
        or upper(trim(coalesce(i."CategoryCode", ''))) = 'SET'
        or (l."Kind" = 'variant' and v."VariationId" is null)
@@ -511,6 +568,21 @@ begin
            and round(coalesce(v."Price", 0), 2) is distinct from round(coalesce(l."OldPrice", 0), 2))
        or (l."NewWholesalePrice" is not null
            and round(i."WholesalePrice", 2) is distinct from round(l."OldWholesalePrice", 2)));
+
+  -- Sticker / delivery rates: gone, or no longer the old value.
+  insert into _pc_bad
+  select l."LineNo", coalesce(l."Name", l."ItemCode"),
+         case when s."Id" is null and p."SettingKey" is null then 'rate no longer exists'
+              else 'rate edited since the draft was saved' end
+    from public."PriceChangeBatchLines" l
+    left join public."StickerPricingSetup" s on l."Kind" = 'sticker' and s."Id"::text = l."ItemCode"
+    left join public."PortalSettings" p on l."Kind" = 'delivery' and p."SettingKey" = l."ItemCode"
+   where l."BatchId" = p_batch_id and l."Kind" in ('sticker', 'delivery')
+     and ((s."Id" is null and p."SettingKey" is null)
+       or (l."Kind" = 'sticker' and round(s."PricePerSqFt", 2) is distinct from round(l."OldPrice", 2))
+       or (l."Kind" = 'delivery'
+           and case when trim(coalesce(p."SettingValue", '')) ~ '^[0-9]+(\.[0-9]+)?$'
+                    then round(trim(p."SettingValue")::numeric, 2) end is distinct from round(l."OldPrice", 2)));
 
   select count(*), string_agg(label, ', ') into v_changed_count, v_changed
     from (select label from _pc_bad order by line_no limit 20) x;
@@ -578,12 +650,26 @@ begin
      and i."Code" = l."ItemCode";
   get diagnostics v_wholesale = row_count;
 
+  -- Sticker / delivery rates.
+  update public."StickerPricingSetup" s
+     set "PricePerSqFt" = round(l."NewPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_actor
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'sticker' and s."Id"::text = l."ItemCode";
+  get diagnostics v_rates = row_count;
+
+  update public."PortalSettings" p
+     set "SettingValue" = trim_scale(round(l."NewPrice", 2))::text, "UpdatedAtUtc" = now(), "UpdatedBy" = left(p_actor, 100)
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'delivery' and p."SettingKey" = l."ItemCode";
+  get diagnostics v_n = row_count;
+  v_rates := v_rates + v_n;
+
   update public."PriceChangeBatches"
      set "Status" = 'Applied', "AppliedBy" = p_actor, "AppliedAtUtc" = now(),
          "ApplyError" = null, "ApplyErrorAtUtc" = null
    where "BatchId" = p_batch_id;
 
-  return jsonb_build_object('retail_updated', v_retail, 'wholesale_updated', v_wholesale,
+  return jsonb_build_object('retail_updated', v_retail, 'wholesale_updated', v_wholesale, 'rates_updated', v_rates,
                             'retail_price_cleared', v_cleared, 'skipped', v_skipped);
 end;
 $$;
@@ -671,6 +757,7 @@ declare
   v_wholesale int := 0;
   v_n int;
   v_skipped int;
+  v_rates int := 0;
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -741,13 +828,31 @@ begin
      and round(i."WholesalePrice", 2) = round(l."NewWholesalePrice", 2);
   get diagnostics v_wholesale = row_count;
 
-  v_skipped := greatest(v_total - v_retail - v_wholesale, 0);
+  -- Sticker / delivery rates, only where still at the batch's new value.
+  update public."StickerPricingSetup" s
+     set "PricePerSqFt" = round(l."OldPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_admin_username
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'sticker' and s."Id"::text = l."ItemCode"
+     and round(s."PricePerSqFt", 2) = round(l."NewPrice", 2);
+  get diagnostics v_rates = row_count;
+
+  update public."PortalSettings" p
+     set "SettingValue" = trim_scale(round(l."OldPrice", 2))::text, "UpdatedAtUtc" = now(), "UpdatedBy" = left(p_admin_username, 100)
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'delivery' and p."SettingKey" = l."ItemCode"
+     and case when trim(coalesce(p."SettingValue", '')) ~ '^[0-9]+(\.[0-9]+)?$'
+              then round(trim(p."SettingValue")::numeric, 2) end = round(l."NewPrice", 2);
+  get diagnostics v_n = row_count;
+  v_rates := v_rates + v_n;
+
+  v_skipped := greatest(v_total - v_retail - v_wholesale - v_rates, 0);
 
   update public."PriceChangeBatches"
      set "Status" = 'Undone', "UndoneBy" = p_admin_username, "UndoneAtUtc" = now(), "UndoSkipped" = v_skipped
    where "BatchId" = p_batch_id;
 
-  return jsonb_build_object('retail_restored', v_retail, 'wholesale_restored', v_wholesale, 'skipped', v_skipped);
+  return jsonb_build_object('retail_restored', v_retail, 'wholesale_restored', v_wholesale, 'rates_restored', v_rates,
+                            'skipped', v_skipped);
 end;
 $$;
 
@@ -755,7 +860,7 @@ grant execute on function public.admin_price_change_undo(text, text, bigint) to 
 
 notify pgrst, 'reload schema';
 
--- Verification - ONE result. Expect 8 'function' rows (all has_anon_execute = true) and 1 'cron' row (active).
+-- Verification - ONE result. Expect 9 'function' rows (all has_anon_execute = true) and 1 'cron' row (active).
 select 'function' as section, p.proname::text as name,
        has_function_privilege('anon', p.oid, 'EXECUTE')::text as detail
   from pg_proc p

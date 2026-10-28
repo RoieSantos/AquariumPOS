@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/landing.css?v=3" />
+  <link rel="stylesheet" href="css/landing.css?v=9" />
   <link rel="icon" href="icons/icon-192.png" />
   <meta name="theme-color" content="#060a14" />
 </head>
@@ -28,15 +28,26 @@
 
       <nav class="land-nav" id="landingNav" aria-label="Main">
         <a class="land-nav-link" href="#offer">What we offer</a>
+        <a class="land-nav-link" href="#best-sellers" id="landingBestNavLink" hidden>Best sellers</a>
         <a class="land-nav-link" href="#shop" id="landingShopNavLink" hidden>Shop</a>
         <a class="land-nav-link" href="#builds">Custom builds</a>
         <a class="land-nav-link" href="#visit">Visit us</a>
         <a class="land-nav-link" href="order-now.html?start=delivery">Delivery fee</a>
-        <a class="land-staff-link" href="staff-login.html">Staff Login</a>
+        <a class="land-nav-link land-cart-link" id="siteCartLink" href="order-now.html?start=cart">🛒 Cart</a>
         <a class="land-btn land-btn-primary land-btn-sm" href="order-now.html">Order Now</a>
       </nav>
     </div>
   </header>
+
+  <!-- Ongoing promo - same public."PromotionSettings" text Order Now shows (edited from General
+       Setup). Stays hidden when IsActive is off or the text is blank - see loadPromoBanner(). -->
+  <div class="land-promo" id="landingPromo" hidden>
+    <div class="land-wrap land-promo-inner">
+      <span class="land-promo-tag">Promo</span>
+      <span class="land-promo-text" id="landingPromoText"></span>
+      <a class="land-promo-cta" href="order-now.html">Order now &rarr;</a>
+    </div>
+  </div>
 
   <section class="land-hero">
     <div class="land-hero-grid land-wrap">
@@ -107,13 +118,28 @@
     </div>
   </section>
 
+  <section class="land-section" id="landingBestSection" hidden>
+    <div class="land-wrap" id="best-sellers">
+      <h2 class="land-section-title">Best Sellers</h2>
+      <p class="land-section-sub">What our customers have been buying the most lately.</p>
+      <div class="land-best-block" id="landingBestSetsBlock" hidden>
+        <h3 class="land-best-heading">Complete Aquarium Sets</h3>
+        <div class="land-product-grid" id="landingBestSetsGrid"></div>
+      </div>
+      <div class="land-best-block" id="landingBestItemsBlock" hidden>
+        <h3 class="land-best-heading">Top Items</h3>
+        <div class="land-product-grid" id="landingBestGrid"></div>
+      </div>
+    </div>
+  </section>
+
   <section class="land-section land-visit" id="landingProductsSection" hidden>
     <div class="land-wrap" id="shop">
       <h2 class="land-section-title">From Our Shelves</h2>
       <p class="land-section-sub">A few of what's currently in stock - tap any item to order.</p>
       <div class="land-product-grid" id="landingProductGrid"></div>
       <div class="land-section-cta">
-        <a class="land-btn land-btn-secondary" href="order-now.html?start=standard">Browse all products &rarr;</a>
+        <a class="land-btn land-btn-secondary" href="order-now.html?start=standard">See all ready-made products &rarr;</a>
       </div>
     </div>
   </section>
@@ -193,7 +219,7 @@
       <a id="landingFacebookLink" href="#" target="_blank" rel="noopener" hidden>Facebook</a>
     </div>
     <p>&copy; <span id="landingYear"></span> <span data-company-name>RS Pet Stop</span>. All rights reserved.</p>
-    <p><a href="privacy-policy.html">Privacy Policy</a> &middot; <a href="terms-and-conditions.html">Terms &amp; Conditions</a> &middot; <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a> &middot; <a href="contact-us.html">Contact Us</a> &middot; <a href="help.html">Help</a> &middot; <a href="staff-login.html">Staff sign in</a></p>
+    <p><a href="privacy-policy.html">Privacy Policy</a> &middot; <a href="terms-and-conditions.html">Terms &amp; Conditions</a> &middot; <a href="terms-and-conditions.html#cancellation-refund">Cancellation &amp; Refund Policy</a> &middot; <a href="contact-us.html">Contact Us</a> &middot; <a href="help.html">Help</a></p>
     <p class="land-footer-contact">Contact us: <a href="mailto:roie.santos@rspetstop.com">roie.santos@rspetstop.com</a> &middot; <a href="mailto:maruhsantos@gmail.com">maruhsantos@gmail.com</a> &middot; <a href="tel:+639620873789">+63 962 087 3789</a> &middot; <a href="tel:+639957534317">+63 995 753 4317</a> &middot; Registered address: Blk 17 Lot 16 Masson St., Pineview Filinvest, Sahud Ulan, Tanza, Cavite 4108</p>
     <p class="land-footer-owner">This website (www.rspetstop.com) is owned and operated by <strong>RSPETSTOP PET STORE</strong>, a business registered with the Philippine Department of Trade and Industry (DTI Business Name Reg. No. 6230461).</p>
   </footer>
@@ -202,7 +228,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
-  <script src="js/landing.js?v=2"></script>
+  <script src="js/landing.js?v=8"></script>
   <script>
     document.getElementById('landingYear').textContent = new Date().getFullYear();
   </script>

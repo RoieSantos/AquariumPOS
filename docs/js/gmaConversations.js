@@ -645,7 +645,7 @@ function renderConversationList() {
     return;
   }
 
-  listEl.innerHTML = conversations.map((c) => {
+  const rowHtml = conversations.map((c) => {
     const badges = [
       moodBadgeHtml(c),
       c.pinned_at_utc ? `<span class="inbox-pin-icon" title="${escapeHtml(pinnedTitle(c))}">📌</span>` : '',
@@ -670,19 +670,43 @@ function renderConversationList() {
           ${c.tags?.length ? `<div class="inbox-conv-tags">${tagChipsHtml(c.tags)}</div>` : ''}
         </div>
       </div>
-    `;
-  }).join('') + (conversationTotalCount > conversationPagesLoaded * CONVERSATION_PAGE_SIZE ? `
+    `.trim();
+  });
+  const footerHtml = conversationTotalCount > conversationPagesLoaded * CONVERSATION_PAGE_SIZE ? `
       <div class="inbox-load-more">
         <span class="inbox-load-more-count">Showing ${conversationPagesLoaded * CONVERSATION_PAGE_SIZE} of ${conversationTotalCount}</span>
         <button type="button" class="btn btn-secondary btn-sm" id="conversationLoadMoreBtn">Load more</button>
       </div>
-    ` : '');
+    ` : '';
 
-  listEl.querySelectorAll('.inbox-conv-item').forEach((el) => {
-    el.addEventListener('click', () => openConversation(el.dataset.psid));
-  });
-  document.getElementById('conversationLoadMoreBtn')?.addEventListener('click', loadMoreConversations);
+  // Opening a chat, a teammate's presence change or a batch of new messages used to rebuild all
+  // ~100 rows (and their profile pictures) every time - the lag staff felt. When the same rows are
+  // still on screen in the same order, only the rows whose HTML changed are swapped.
+  const psids = conversations.map((c) => c.psid);
+  const domRows = listEl.querySelectorAll(':scope > .inbox-conv-item[data-psid]');
+  const samePsids = domRows.length === psids.length && psids.every((p, i) => domRows[i].dataset.psid === p);
+  if (samePsids && conversationListRendered.footerHtml === footerHtml) {
+    rowHtml.forEach((html, i) => {
+      if (conversationListRendered.rowHtml[i] !== html) domRows[i].outerHTML = html;
+    });
+  } else {
+    listEl.innerHTML = rowHtml.join('') + footerHtml;
+    document.getElementById('conversationLoadMoreBtn')?.addEventListener('click', loadMoreConversations);
+  }
+  conversationListRendered = { rowHtml, footerHtml };
   ensureProfilePics(conversations);
+}
+
+// What renderConversationList last drew, so it can patch changed rows instead of redrawing them all.
+let conversationListRendered = { rowHtml: [], footerHtml: '' };
+
+// One listener for the whole list (rows are redrawn often) - comment/call rows have no data-psid
+// and keep their own listeners.
+function setupConversationListClicks() {
+  document.getElementById('conversationListEl').addEventListener('click', (e) => {
+    const row = e.target.closest('.inbox-conv-item[data-psid]');
+    if (row) openConversation(row.dataset.psid);
+  });
 }
 
 async function loadMoreConversations(e) {
@@ -5637,6 +5661,20 @@ function productLookupParentStockHtml(item) {
   return `<span class="inbox-product-lookup-stock${inStock ? '' : ' out-of-stock'}">${escapeHtml(label)}</span>`;
 }
 
+// Parent row price: the min-max of its variants' prices once loaded (they can differ), else the
+// item's own price. Blank when there's no price above 0.
+function productLookupParentPriceHtml(item) {
+  const peso = (n) => `&#8369;${Number(n).toLocaleString()}`;
+  const variants = productLookupVariantsCache.get(item.code);
+  const prices = (variants || []).map((v) => Number(v.price || 0)).filter((p) => p > 0);
+  if (prices.length > 0) {
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    return `<span class="inbox-product-lookup-price">${min === max ? peso(min) : `${peso(min)} - ${peso(max)}`}</span>`;
+  }
+  return Number(item.price || 0) > 0 ? `<span class="inbox-product-lookup-price">${peso(item.price)}</span>` : '';
+}
+
 function renderProductLookupList() {
   const listEl = document.getElementById('productLookupList');
 
@@ -5667,7 +5705,7 @@ function renderProductLookupItemHtml(item) {
           ${productLookupThumbHtml(item.images)}
           <span class="inbox-product-lookup-info">
             <span class="inbox-product-lookup-name">${escapeHtml(item.name)}</span>
-            <span class="inbox-product-lookup-meta">${productLookupParentStockHtml(item)}</span>
+            <span class="inbox-product-lookup-meta">${productLookupParentStockHtml(item)}${productLookupParentPriceHtml(item)}</span>
           </span>
         </div>
         ${expanded ? renderProductLookupVariantsHtml(item.code, productLookupVariantsCache.get(item.code)) : ''}
@@ -8084,6 +8122,7 @@ function initDeliveryCalendar() {
   document.getElementById('replyInput').addEventListener('input', autoResizeReplyInput);
 
   setupThreadInteractions();
+  setupConversationListClicks();
   setupAutoResumeSetting();
   setupRealtimeInbox();
   setupPullToRefresh();

@@ -8,6 +8,9 @@ const rowState = new Map();   // key -> { include, newPrice (typed override or n
 let editingBatchId = null;    // null = new draft
 let editingStatus = null;     // 'Draft' | 'Scheduled' | null (new)
 let lastComputed = [];        // rows with computed prices, for summary / save
+let rateRows = [];            // admin_price_change_rate_rows - sticker / delivery rates, same %
+const rateState = new Map();  // key -> { include, newPrice (typed override or null) }
+let lastRates = [];           // rate rows with computed new values
 let activeView = '';
 let shownLimit = 100;
 let dirty = false;
@@ -33,6 +36,13 @@ function roundUpPrice(x) {
   if (v < 100) return Math.ceil(v);
   if (v < 1000) return Math.ceil(v / 5) * 5;
   return Math.ceil(v / 10) * 10;
+}
+
+// Rates (per sq ft / per km) are small numbers, so under ₱100 they step by ₱0.50 instead of a whole peso.
+function roundUpRate(x) {
+  if (!(x > 0)) return 0;
+  const v = Math.round(x * 100) / 100;
+  return v < 100 ? Math.ceil(v * 2) / 2 : roundUpPrice(v);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +217,18 @@ function compute(r, k) {
   };
 }
 
+// The toll fee is a fallback pass-through for tolls Google can't price, so it starts unticked.
+const defaultIncludeRate = (r) => r.price > 0 && r.item_code !== 'DELIVERY_TOLL_FEE';
+
+function computeRate(r, k) {
+  const key = rowKey(r);
+  if (!rateState.has(key)) rateState.set(key, { include: defaultIncludeRate(r), newPrice: null });
+  const st = rateState.get(key);
+  const calcPrice = r.price > 0 ? roundUpRate(r.price * (1 + k.increasePct / 100)) : r.price;
+  const newPrice = st.newPrice != null ? st.newPrice : calcPrice;
+  return { r, st, key, price: r.price, calcPrice, newPrice, changes: st.include && r.price != null && newPrice !== r.price };
+}
+
 function matchesView(c, view) {
   switch (view) {
     case 'attention': return c.attention;
@@ -247,10 +269,12 @@ function renderExample(k) {
 
 function updateBar() {
   const changing = lastComputed.filter((c) => c.retailChanges || c.wsChanges);
+  const ratesChanging = lastRates.filter((c) => c.changes).length;
   const extra = changing.reduce((s, c) => s + c.extraRetail + c.extraWs, 0);
+  const rateText = ratesChanging ? ` · <b>${ratesChanging}</b> sticker/delivery rate${ratesChanging === 1 ? '' : 's'}` : '';
   $('barInfo').innerHTML = changing.length
-    ? `<b>${changing.length.toLocaleString('en-PH')}</b> item${changing.length === 1 ? '' : 's'} getting a new price · about <b>${peso(Math.round(extra))}</b> more every 3 months`
-    : '<span class="muted">No item would change price yet.</span>';
+    ? `<b>${changing.length.toLocaleString('en-PH')}</b> item${changing.length === 1 ? '' : 's'} getting a new price · about <b>${peso(Math.round(extra))}</b> more every 3 months${rateText}`
+    : ratesChanging ? `No item prices change${rateText}` : '<span class="muted">No item would change price yet.</span>';
 
   const mode = whenMode();
   const btn = $('primaryBtn');
@@ -260,13 +284,34 @@ function updateBar() {
     const v = $('scheduleInput').value;
     btn.textContent = v ? `Schedule for ${fmtDateShort(new Date(v))}` : 'Schedule';
   } else btn.textContent = editingBatchId ? 'Save changes' : 'Save draft';
-  btn.disabled = changing.length === 0;
+  btn.disabled = changing.length === 0 && ratesChanging === 0;
+}
+
+function renderRates(k) {
+  lastRates = rateRows.map((r) => computeRate(r, k));
+  const tbody = $('rateTableBody');
+  if (!tbody.dataset.error) {
+    tbody.innerHTML = lastRates.map((c) => {
+      const upPct = c.price > 0 && c.newPrice != null ? (c.newPrice / c.price - 1) * 100 : null;
+      const sub = c.st.newPrice != null
+        ? `<span class="pi-sub">typed · calc. ${peso(c.calcPrice)}</span>`
+        : upPct == null ? '' : upPct > 0 ? `<span class="pi-sub pi-up">+${upPct.toFixed(1)}%</span>` : '<span class="pi-sub">no change</span>';
+      return `
+        <tr class="${c.st.include ? '' : 'pi-row-excluded'}">
+          <td><input type="checkbox" class="pi-include pi-include-box" data-key="${esc(c.key)}" ${c.st.include ? 'checked' : ''} ${c.price == null ? 'disabled' : ''} aria-label="Include ${esc(c.r.name)}" /></td>
+          <td><b>${esc(c.r.name)}</b><span class="pi-sub">${c.r.kind === 'sticker' ? 'Sticker / accessory rate (Pricing Setup)' : c.price == null ? 'Not a plain number in General Setup - change it there' : 'Delivery Quote setting'}</span></td>
+          <td class="pi-num">${peso(c.price)}</td>
+          <td class="pi-num">${c.price == null ? '' : `<input type="number" class="pi-input pi-price${c.st.newPrice != null ? ' pi-overridden' : ''}" data-key="${esc(c.key)}" min="0" step="any" value="${c.newPrice ?? ''}" aria-label="New ${esc(c.r.name)}" /> ${sub}`}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="4" class="muted">No rates found.</td></tr>';
+  }
 }
 
 function render() {
   const k = knobs();
   syncPctChips();
   renderExample(k);
+  renderRates(k);
   lastComputed = sourceRows.map((r) => compute(r, k));
 
   // Tiles + tab counts (over everything, not just the search).
@@ -377,6 +422,24 @@ function bindTable() {
   });
 }
 
+function bindRateTable() {
+  $('rateTableBody').addEventListener('change', (e) => {
+    const el = e.target;
+    const st = rateState.get(el.dataset.key);
+    if (!st) return;
+    if (el.classList.contains('pi-include')) {
+      st.include = el.checked;
+    } else if (el.classList.contains('pi-price')) {
+      const c = lastRates.find((x) => x.key === el.dataset.key);
+      const v = num(el.value);
+      st.newPrice = v == null || v < 0 || v === c?.calcPrice ? null : Math.round(v * 100) / 100;
+      if (st.newPrice != null) st.include = true;
+    }
+    setDirty(true);
+    render();
+  });
+}
+
 function setShown(fn) {
   lastComputed.filter((c) => matchesView(c, activeView) && matchesSearch(c)).forEach((c) => { fn(c.st); c.st.touched = true; });
   setDirty(true);
@@ -413,6 +476,23 @@ async function loadSourceRows() {
   fillCategoryFilter();
 }
 
+// Never blocks the items: if the rates can't load (e.g. the SQL wasn't re-run yet), the table says so.
+async function loadRateRows() {
+  const tbody = $('rateTableBody');
+  delete tbody.dataset.error;
+  rateRows = [];
+  const { data, error } = await supabaseClient.rpc('admin_price_change_rate_rows', rpcArgs());
+  if (error) {
+    tbody.dataset.error = '1';
+    tbody.innerHTML = `<tr><td colspan="4" class="error-text">Couldn't load sticker &amp; delivery rates: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  const order = { DELIVERY_BASE_FEE: 1, DELIVERY_RATE_PER_KM: 2, DELIVERY_TOLL_FEE: 3 };
+  rateRows = (data || []).map((r) => ({ ...r, variation_id: null, price: num(r.price) }))
+    .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'sticker' ? -1 : 1)
+      || (order[a.item_code] || 0) - (order[b.item_code] || 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
 function showEditor(show) {
   $('editorBox').classList.toggle('hidden', !show);
   $('historyBox').classList.toggle('hidden', show);
@@ -423,6 +503,7 @@ async function openEditor(batchId) {
   editingBatchId = batchId || null;
   editingStatus = null;
   rowState.clear();
+  rateState.clear();
   activeView = '';
   shownLimit = PAGE_SIZE;
   $('searchInput').value = '';
@@ -433,7 +514,7 @@ async function openEditor(batchId) {
   $('editorTitle').textContent = batchId ? `Price change #${batchId}` : 'New price increase';
 
   try {
-    await loadSourceRows();
+    await Promise.all([loadSourceRows(), loadRateRows()]);
   } catch (err) {
     $('rowsTableBody').innerHTML = `<tr><td colspan="11" class="error-text">${esc(err.message)}</td></tr>`;
     return;
@@ -486,17 +567,31 @@ async function openEditor(batchId) {
     if (l.new_wholesale_price != null && num(l.new_wholesale_price) !== (c2.calcWs ?? c2.ws)) st.newWs = num(l.new_wholesale_price);
     if (l.new_wholesale_price == null && r.wholesale_price > 0) st.newWs = r.wholesale_price;
   });
-  const listed = new Set(sourceRows.map(rowKey));
+  // Rates: same rule - a saved rate whose old value still matches keeps its saved new value.
+  const ratesChangedSince = [];
+  rateRows.forEach((r) => {
+    const key = rowKey(r);
+    const l = saved.get(key);
+    const st = { include: false, newPrice: null };
+    rateState.set(key, st);
+    if (!l) return;
+    st.include = r.price != null;
+    if (num(l.old_price) !== r.price) { ratesChangedSince.push(r.name); return; }
+    if (num(l.new_price) !== computeRate(r, k).calcPrice) st.newPrice = num(l.new_price);
+  });
+
+  const listed = new Set([...sourceRows, ...rateRows].map(rowKey));
   const missing = (data.lines || []).filter((l) => !listed.has(lineKey(l)));
   const notes = [];
   if (data.apply_error) notes.push(`The scheduled run didn't go through: ${data.apply_error}`);
   if (changedSince.length) notes.push(`${changedSince.length} item price(s) were changed since this was saved, so they were recalculated from today's price: ${changedSince.slice(0, 8).join(', ')}${changedSince.length > 8 ? ` and ${changedSince.length - 8} more` : ''}.`);
+  if (ratesChangedSince.length) notes.push(`These rates were changed since this was saved, so they were recalculated from today's rate: ${ratesChangedSince.join(', ')}.`);
   if (missing.length) {
     const sets = missing.filter((l) => /^(AS|SET)-/i.test(l.item_code)).length;
     notes.push(`${missing.length} item(s) on it are no longer listed and will be dropped when you save${sets ? ` - ${sets} of them are aquarium sets, whose price is the Package Price on the Customer Aquarium page` : ' (deleted, or inactive and unsold)'}.`);
   }
   showNotice(notes.join(' '));
-  if (changedSince.length || missing.length) setDirty(true);
+  if (changedSince.length || ratesChangedSince.length || missing.length) setDirty(true);
   render();
 }
 
@@ -527,12 +622,22 @@ function buildLines() {
       new_price: c.retailChanges ? c.newPrice : null,
       old_wholesale_price: c.ws,
       new_wholesale_price: c.wsChanges ? c.newWs : null
-    }));
+    }))
+    .concat(lastRates.filter((c) => c.changes).map((c) => ({
+      kind: c.r.kind,
+      item_code: c.r.item_code,
+      variation_id: null,
+      name: c.r.name,
+      old_price: c.price,
+      new_price: c.newPrice,
+      old_wholesale_price: null,
+      new_wholesale_price: null
+    })));
 }
 
 async function saveDraft() {
   const lines = buildLines();
-  if (lines.length === 0) { await piAlert('Nothing to save', 'No item would get a new price.'); return null; }
+  if (lines.length === 0) { await piAlert('Nothing to save', 'No item or rate would get a new price.'); return null; }
   const k = knobs();
   const { data, error } = await supabaseClient.rpc('admin_price_change_save', rpcArgs({
     p_batch_id: editingBatchId,
@@ -551,7 +656,7 @@ async function saveDraft() {
 async function confirmApply(lineCount) {
   return piConfirm(
     'Apply the new prices now?',
-    `${lineCount.toLocaleString('en-PH')} item price(s) change right away. Order Now, Alice and the price list use them immediately, and the store POS on its next sync.\n\nYou can undo it later from the list.`,
+    `${lineCount.toLocaleString('en-PH')} price(s) / rate(s) change right away. Order Now, Alice, the price list and delivery quotes use them immediately, and the store POS on its next sync.\n\nYou can undo it later from the list.`,
     'Apply now'
   );
 }
@@ -559,7 +664,7 @@ async function confirmApply(lineCount) {
 async function runApply(batchId) {
   const { data, error } = await supabaseClient.rpc('admin_price_change_apply', rpcArgs({ p_batch_id: batchId }));
   if (error) { await piAlert('Not applied', error.message); return false; }
-  toast(`Done - ${data.retail_updated} retail and ${data.wholesale_updated} wholesale price(s) updated.`);
+  toast(`Done - ${data.retail_updated} retail and ${data.wholesale_updated} wholesale price(s)${data.rates_updated ? `, ${data.rates_updated} sticker/delivery rate(s)` : ''} updated.`);
   return true;
 }
 
@@ -594,7 +699,7 @@ async function onPrimary() {
       if (!(await runApply(id))) return;
     } else if (mode === 'schedule') {
       if (!(await schedule(id, when))) return;
-      toast(`Scheduled - ${lines.length.toLocaleString('en-PH')} item price(s) change on ${fmtDate(when)}.`);
+      toast(`Scheduled - ${lines.length.toLocaleString('en-PH')} price(s) / rate(s) change on ${fmtDate(when)}.`);
     } else {
       // Saving a scheduled one as "Save for later" takes it off the schedule.
       if (editingStatus === 'Scheduled' && !(await schedule(id, null))) return;
@@ -642,6 +747,7 @@ function batchCardHtml(b) {
   if (b.increase_pct != null) parts.push(`+${Number(b.increase_pct)}%`);
   parts.push(`${b.retail_lines} retail`);
   if (b.wholesale_lines) parts.push(`${b.wholesale_lines} wholesale`);
+  if (b.rate_lines) parts.push(`${b.rate_lines} sticker/delivery rate${b.rate_lines === 1 ? '' : 's'}`);
   let when = '';
   if (b.status === 'Scheduled') when = `🗓️ Applies <b>${fmtDate(b.scheduled_for_utc)}</b> · scheduled by ${esc(b.scheduled_by || '')}`;
   else if (b.status === 'Applied') when = `✅ Applied ${fmtDate(b.applied_at_utc)} by ${esc(b.applied_by || '')}${b.skipped_lines ? ` · <span style="color:#b45309;">${b.skipped_lines} skipped (price was changed before it ran)</span>` : ''}`;
@@ -681,7 +787,7 @@ async function viewBatch(batchId) {
   const change = (o, n) => (n == null ? '<span class="pi-sub">-</span>' : `${peso(num(o))}<span class="pi-arrow">→</span><b>${peso(num(n))}</b>`);
   $('viewTableBody').innerHTML = lines.map((l) => `
     <tr>
-      <td><b>${esc(l.name || l.item_code)}</b><span class="pi-sub">${esc(l.item_code)}</span></td>
+      <td><b>${esc(l.name || l.item_code)}</b><span class="pi-sub">${l.kind === 'sticker' ? 'Sticker / accessory rate' : l.kind === 'delivery' ? 'Delivery Quote setting' : esc(l.item_code)}</span></td>
       <td class="pi-num">${change(l.old_price, l.new_price)}</td>
       <td class="pi-num">${change(l.old_wholesale_price, l.new_wholesale_price)}</td>
       <td>${l.skipped ? `<span class="badge badge-warning">Skipped</span> <span class="pi-sub">${esc(l.skip_reason || '')}</span>` : ''}${l.retail_price_cleared ? `<span class="pi-sub">customers were seeing ${peso(num(l.old_retail_price))}</span>` : ''}</td>
@@ -717,7 +823,7 @@ function bindBatchList() {
           const { data, error } = await supabaseClient.rpc('admin_price_change_undo', rpcArgs({ p_batch_id: id }));
           if (error) toast(error.message, true);
           else {
-            toast(`Undone - ${data.retail_restored} retail and ${data.wholesale_restored} wholesale price(s) restored${data.skipped ? `, ${data.skipped} left alone` : ''}.`);
+            toast(`Undone - ${data.retail_restored} retail and ${data.wholesale_restored} wholesale price(s)${data.rates_restored ? `, ${data.rates_restored} sticker/delivery rate(s)` : ''} restored${data.skipped ? `, ${data.skipped} left alone` : ''}.`);
             await loadBatches();
           }
         }
@@ -752,6 +858,7 @@ function bindBatchList() {
 
   $('setupContent').classList.remove('hidden');
   bindTable();
+  bindRateTable();
   bindBatchList();
 
   const changed = () => { setDirty(true); render(); };
