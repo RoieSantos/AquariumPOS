@@ -284,6 +284,9 @@ function renderTopNavLinks(activeLabel) {
     reports.push({ href: 'payment-method-report.html', label: 'Payment Methods Report' });
     // Walk-in sales for BIR - journal / daily / monthly + CSV (supabase_bir_walkin_sales_report.sql).
     reports.push({ href: 'bir-sales-report.html', label: 'BIR Sales Report' });
+    // One day's online + walk-in sales by branch / tender / staff / category, cash count, expenses
+    // (supabase_daily_sales_report.sql).
+    reports.push({ href: 'daily-sales-report.html', label: 'Daily Sales Report' });
   }
 
   const admin = [];
@@ -476,6 +479,7 @@ const TELL_ME_KEYWORDS = {
   'gl-entries.html': 'gl accounting ledger finance',
   'payment-method-report.html': 'gcash cash bank collections',
   'bir-sales-report.html': 'bir tax vat walk-in sales journal sales book',
+  'daily-sales-report.html': 'eod end of day sales summary today yesterday z report',
   'general-setup.html': 'settings company config',
   'ai-bot-setup.html': 'alice chatbot',
   'gma-conversations.html': 'messages inbox chat messenger',

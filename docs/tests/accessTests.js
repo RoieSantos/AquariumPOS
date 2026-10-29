@@ -30,7 +30,7 @@
   const SUPER_USER_ONLY_PAGES = [
     'user-setup.html', 'general-setup.html', 'pricing-setup.html', 'price-increase.html', 'ai-bot-setup.html', 'ai-bot-sandbox.html',
     'gl-entries.html', 'gl-setup.html', 'owner-funds.html', 'expense-entries.html', 'expense-journal.html', 'tender-declarations.html',
-    'business-bills.html', 'payment-methods.html', 'bir-sales-report.html', 'video-ad-builder.html', 'system-tests.html'
+    'business-bills.html', 'payment-methods.html', 'bir-sales-report.html', 'daily-sales-report.html', 'video-ad-builder.html', 'system-tests.html'
   ];
   const PAYROLL_PAGES = ['payroll.html', 'payroll-setup.html', 'payroll-timesheets.html', 'payroll-ledger.html', 'payroll-run.html'];
 

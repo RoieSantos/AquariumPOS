@@ -7232,6 +7232,7 @@ async function loadOrders(search, status) {
   if (myAssignmentsOnly) renderMyAssignmentCards(rows);
   loadMyProductionOrderCards();
   loadMyAdvanceOrderCards();
+  loadMyRepairCards();
   loadDispatcherAdvanceShipCards();
 
   const tbody = document.getElementById('orderTableBody');
@@ -7445,7 +7446,7 @@ let myOnlineAssignmentCount = 0;
 let myProductionOrderCount = 0;
 function setMyAssignmentsCount(count) {
   if (count != null) myOnlineAssignmentCount = Number(count) || 0;
-  document.getElementById('myAssignmentsCount').textContent = String(myOnlineAssignmentCount + myProductionOrderCount + myAdvanceOrderCount + myAdvanceShipCount);
+  document.getElementById('myAssignmentsCount').textContent = String(myOnlineAssignmentCount + myProductionOrderCount + myAdvanceOrderCount + myAdvanceShipCount + myRepairCount);
 }
 
 // Tab buttons for the grouped (Online Order Staff) view - switching tabs re-renders from the
@@ -7678,6 +7679,7 @@ let advanceSendBackNo = null;
 let selectedAdvanceNo = null; // the list's selected row - what the action bar works on
 let myAdvanceOrderCount = 0;
 let myAdvanceShipCount = 0; // Dispatcher's To Ship advance orders (loadDispatcherAdvanceShipCards)
+let myRepairCount = 0; // Repairs In Repair with me as the maker (loadMyRepairCards)
 // TO FOLLOW (supabase_advance_order_to_follow.sql): fully paid, not shipped, and a serial-tracked unit
 // still has no serial - e.g. the POS's Paid-in-Full Advance Orders for out-of-stock tanks. Not a
 // production stage: the "To Follow" pill filters on staff_get_advance_orders_to_follow instead.
@@ -9059,6 +9061,88 @@ async function handleAdvanceDoneClick(btn) {
     }
   }
   loadMyAdvanceOrderCards();
+}
+
+// ---- Makers: repairs under My Assignments - per "why the repairs assigned to test cannot be found on my
+// makers assignment". Repair Returns In Repair with this user as the maker (sql/supabase_repair_returns.sql;
+// filtered to me here too, since a Super User / Production Manager gets every repair back), with the same
+// Mark repaired as repair-returns.html.
+
+async function loadMyRepairCards() {
+  const box = document.getElementById('myRepairCards');
+  if (!box) return;
+  if (!myAssignmentsOnly || !currentSession.isOrderMaker) {
+    box.classList.add('hidden');
+    return;
+  }
+  const me = currentSession.username;
+  const { data, error } = await supabaseClient.rpc('staff_list_repair_returns', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_status: 'In Repair',
+    p_search: null,
+    p_page: 1,
+    p_page_size: 100
+  });
+  // Quietly skipped until supabase_repair_returns.sql has been run.
+  if (error) { console.warn('staff_list_repair_returns:', error.message); box.classList.add('hidden'); return; }
+  const rows = (data || []).filter((r) => r.maker === me);
+  myRepairCount = rows.length;
+  setMyAssignmentsCount(null);
+  if (!myAssignmentsOnly || !rows.length) { box.classList.add('hidden'); return; }
+  document.querySelectorAll('#myAssignmentCards .oo-mc-empty, #orderTableBody .cell-msg').forEach((el) => {
+    el.textContent = 'No online orders assigned to you - see your Repairs below.';
+  });
+
+  box.innerHTML = `<h3 class="oo-prod-cards-title">Repairs</h3>` + rows.map((r) => `
+      <article class="oo-mc oo-prod-mc" data-repair-id="${escapeHtml(String(r.id))}">
+        <header class="oo-mc-head">
+          <span class="oo-mc-id">${escapeHtml(r.repair_no)}</span>
+          <span class="oo-mc-status">Repair</span>
+        </header>
+        <div class="oo-mc-customer">${escapeHtml(r.item_code)}${r.item_name ? ' - ' + escapeHtml(r.item_name) : ''}</div>
+        ${r.variant_name ? `<div class="oo-mc-line"><span>Variant</span>${escapeHtml(r.variant_name)}</div>` : ''}
+        <div class="oo-mc-line"><span>Qty</span><b>${formatProdQty(r.quantity)}</b></div>
+        <div class="oo-mc-line"><span>From</span>${escapeHtml(r.from_warehouse_name || '-')} &rarr; ${escapeHtml(r.repair_warehouse_name || '-')}</div>
+        <div class="oo-mc-rework"><b>Problem</b> ${escapeHtml(r.problem || '')}${r.note ? ' - ' + escapeHtml(r.note) : ''}</div>
+        ${r.serial_nos ? `<div class="oo-mc-note">S/N ${escapeHtml(r.serial_nos)}</div>` : ''}
+        ${r.photo_url ? `<a href="${escapeHtml(r.photo_url)}" target="_blank" rel="noopener"><img src="${escapeHtml(r.photo_url)}" alt="Damage photo" loading="lazy" style="max-width:100%;max-height:160px;border-radius:6px;margin-top:6px" /></a>` : ''}
+        <div class="oo-mc-actions">
+          <button type="button" class="oo-mc-btn primary" data-repair-done="${escapeHtml(String(r.id))}" data-repair-no="${escapeHtml(r.repair_no)}">&#10003; Mark repaired</button>
+        </div>
+      </article>`).join('');
+  box.classList.remove('hidden');
+
+  if (!box.dataset.wired) {
+    box.dataset.wired = '1';
+    box.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-repair-done]');
+      if (btn) handleRepairDoneClick(btn);
+    });
+  }
+}
+
+async function handleRepairDoneClick(btn) {
+  const no = btn.dataset.repairNo;
+  const note = window.prompt(`What was repaired on ${no}?`);
+  if (note === null) return;
+  if (!note.trim()) { window.alert('Say what was repaired.'); return; }
+  btn.disabled = true;
+  const { error } = await supabaseClient.rpc('staff_repair_return_action', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_id: Number(btn.dataset.repairDone),
+    p_action: 'repaired',
+    p_return_warehouse_id: null,
+    p_note: note.trim(),
+    p_maker: null
+  });
+  if (error) {
+    btn.disabled = false;
+    window.alert(`Could not mark ${no} repaired: ${error.message}`);
+    return;
+  }
+  loadMyRepairCards();
 }
 
 // ---- Dispatchers: To Ship advance orders under My Assignments - per "if the order is advance order will

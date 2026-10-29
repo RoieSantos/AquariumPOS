@@ -207,6 +207,10 @@
           <div class="va-controls">
             <button class="btn btn-success" id="exportBtn" type="button" style="flex:1;">Export MP4</button>
           </div>
+          <div class="va-controls">
+            <button class="btn btn-secondary btn-sm" id="coverViewBtn" type="button" style="flex:1;">🖼 Show cover</button>
+            <button class="btn btn-secondary btn-sm" id="coverDownloadBtn" type="button" style="flex:1;">⬇ Download cover</button>
+          </div>
           <div class="va-progress hidden" id="exportProgress"><div></div></div>
           <div class="va-export-status" id="exportStatus"></div>
         </div>
@@ -249,6 +253,34 @@
                 </label>
               </div>
             </div>
+          </div>
+
+          <div class="va-box" id="coverBox">
+            <h3>🖼 Cover</h3>
+            <p class="muted" style="margin:0 0 10px; font-size:12.5px;">The still picture people see before they tap play. Click <b>Download cover</b> and pick it as the thumbnail when you post the Reel or ad.</p>
+            <div class="va-grid">
+              <label class="va-label">Headline
+                <input type="text" data-cover="headline" maxlength="80" placeholder="e.g. Still worrying what setup to buy?" />
+              </label>
+              <label class="va-label">Big yellow word(s) - from the headline
+                <input type="text" data-cover="highlight" maxlength="30" placeholder="e.g. buy?" />
+              </label>
+              <label class="va-label">Note by the play button
+                <input type="text" data-cover="tag" maxlength="40" placeholder="e.g. Watch our video now!" />
+              </label>
+              <label class="va-label">Button at the bottom
+                <input type="text" data-cover="button" maxlength="30" placeholder="e.g. Click to watch now!" />
+              </label>
+            </div>
+            <div class="va-label" style="margin-top:10px;">Topics row (up to 4, leave blank to hide)
+              <div class="va-grid" style="grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));">
+                <input type="text" data-cover-topic="0" maxlength="24" />
+                <input type="text" data-cover-topic="1" maxlength="24" />
+                <input type="text" data-cover-topic="2" maxlength="24" />
+                <input type="text" data-cover-topic="3" maxlength="24" />
+              </div>
+            </div>
+            <div class="va-media" id="coverMediaRow" style="margin-top:10px;"></div>
           </div>
 
           <div class="va-box">
@@ -385,9 +417,9 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=stok1"></script>
   <script src="js/nav.js?v=vad1"></script>
-  <script src="js/videoAdRenderer.js?v=vad10"></script>
-  <script src="js/videoAdMusic.js?v=vad2"></script>
-  <script src="js/videoAdBuilder.js?v=vad10"></script>
+  <script src="js/videoAdRenderer.js?v=vadstick1"></script>
+  <script src="js/videoAdMusic.js?v=vadmusic3"></script>
+  <script src="js/videoAdBuilder.js?v=vadstick1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

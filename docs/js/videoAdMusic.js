@@ -1,12 +1,12 @@
 // Video Ad Builder background music (video-ad-builder.html). Two sources:
-//   - built-in tracks ('upbeat', 'chill', 'ocean'), synthesised here with an OfflineAudioContext at
+//   - built-in tracks (MOODS: 'upbeat', 'chill', 'ocean', 'pop', 'tropical', 'lofi', 'funky', 'hype', 'epic'), synthesised here with an OfflineAudioContext at
 //     exactly the ad's length - nothing to license, so Facebook/Instagram have no reason to mute them;
 //   - a song the staff upload (any format the browser decodes), started at music.start seconds.
 // buildTrack() returns the finished soundtrack (volume, fade-in/out, looped if the song is shorter
 // than the ad) as one 48 kHz stereo AudioBuffer - used for the preview and muxed into the MP4 by
 // js/videoAdRenderer.js.
 //
-// music (saved in the ad config): { track: 'none'|'upbeat'|'chill'|'ocean'|'custom', src, name, start, volume }
+// music (saved in the ad config): { track: 'none'|<a MOODS key>|'custom', src, name, start, volume }
 //
 // Voice-over clips (Google voices, made by supabase/functions/video-ad-voice) are mixed in on top at
 // their scene's start, and the music dips under them.
@@ -15,7 +15,13 @@ window.VideoAdMusic = (function () {
   const MOODS = [
     { key: 'upbeat', label: '🎉 Upbeat' },
     { key: 'chill', label: '🌴 Chill' },
-    { key: 'ocean', label: '🌊 Ocean calm' }
+    { key: 'ocean', label: '🌊 Ocean calm' },
+    { key: 'pop', label: '😊 Feel-good pop' },
+    { key: 'tropical', label: '🏝 Tropical' },
+    { key: 'lofi', label: '🎧 Lo-fi' },
+    { key: 'funky', label: '🕺 Funky' },
+    { key: 'hype', label: '⚡ Hype / sale' },
+    { key: 'epic', label: '🎬 Epic' }
   ];
   const cache = new Map();
 
@@ -128,7 +134,60 @@ window.VideoAdMusic = (function () {
     s.start(t); s.stop(t + dur);
   }
 
-  // ---------- the three tracks ----------
+  function clap(ctx, out, noise, t, vol) {
+    for (let k = 0; k < 3; k++) noiseHit(ctx, out, noise, t + k * 0.011, 'bandpass', 1200, 0.03, vol * 0.7);
+    noiseHit(ctx, out, noise, t + 0.033, 'bandpass', 1200, 0.18, vol);
+  }
+  // Wooden mallet: a sine with a quickly-dying 4th harmonic on top.
+  function marimba(ctx, out, t, m, vol, decay = 0.35) {
+    const g = env(ctx, t, 0.003, 0, decay, vol);
+    g.connect(out);
+    const o = ctx.createOscillator();
+    o.type = 'sine'; o.frequency.value = midiHz(m);
+    const o2 = ctx.createOscillator();
+    o2.type = 'sine'; o2.frequency.value = midiHz(m) * 4;
+    const g2 = env(ctx, t, 0.002, 0, 0.05, 0.4);
+    o.connect(g); o2.connect(g2); g2.connect(g);
+    o.start(t); o2.start(t); o.stop(t + decay + 0.05); o2.stop(t + 0.1);
+  }
+  // Short detuned-saw chord through a filter: guitar chops, synth stabs.
+  function stab(ctx, out, t, notes, vol, decay, freq, type = 'lowpass') {
+    const f = ctx.createBiquadFilter();
+    f.type = type; f.frequency.value = freq; f.Q.value = type === 'bandpass' ? 1.2 : 0.5;
+    const g = env(ctx, t, 0.004, 0, decay, vol);
+    f.connect(g); g.connect(out);
+    for (const m of notes) {
+      for (const detune of [-12, 12]) {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth'; o.frequency.value = midiHz(m); o.detune.value = detune;
+        o.connect(f); o.start(t); o.stop(t + decay + 0.05);
+      }
+    }
+  }
+  // Rising "whoosh" into the next section.
+  function riser(ctx, out, noise, t, dur, vol) {
+    const s = ctx.createBufferSource();
+    s.buffer = noise; s.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass'; f.Q.value = 2;
+    f.frequency.setValueAtTime(400, t);
+    f.frequency.exponentialRampToValueAtTime(7000, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + dur);
+    g.gain.linearRampToValueAtTime(0, t + dur + 0.05);
+    s.connect(f); f.connect(g); g.connect(out);
+    s.start(t); s.stop(t + dur + 0.1);
+  }
+  function boom(ctx, out, t, vol) {
+    const o = ctx.createOscillator();
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(32, t + 0.5);
+    const g = env(ctx, t, 0.004, 0.05, 1.1, vol);
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + 1.3);
+  }
+
+  // ---------- the tracks ----------
   const SONGS = {
     upbeat: {
       bpm: 112,
@@ -181,6 +240,127 @@ window.VideoAdMusic = (function () {
         });
         for (let w = 0; w < seconds; w += 6) swell(ctx, rev, noise, w, 6.5, 0.05);
         for (let b = 0.4; b < seconds; b += 0.35 + rnd() * 1.1) bubble(ctx, rev, b, 0.04, 500 + rnd() * 700);
+      }
+    },
+    pop: {
+      bpm: 118,
+      chords: [[55, 59, 62], [54, 57, 62], [55, 59, 64], [55, 60, 64]], // G D Em C
+      roots: [43, 38, 40, 36],
+      play(ctx, bus, rev, noise, rnd, beat, bars) {
+        // A short square-wave hook every other bar, rests marked null.
+        const hook = [2, null, 1, 2, null, 0, 1, null];
+        bars.forEach(({ t, chord, root, bar }) => {
+          pad(ctx, rev, t, beat * 4, chord, 0.03);
+          if (bar % 2) hook.forEach((i, k) => { if (i != null) pluck(ctx, rev, t + k * beat / 2, chord[i] + 12, 0.06, 0.22, 'square'); });
+          for (let e = 0; e < 8; e++) {
+            const et = t + e * beat / 2;
+            bass(ctx, bus, et, root, beat * 0.35, e % 2 ? 0.13 : 0.2);
+            noiseHit(ctx, bus, noise, et, 'highpass', 8000, 0.04, e % 2 ? 0.1 : 0.06);
+            if (e % 4 === 0) kick(ctx, bus, et, 0.7);
+            if (e % 4 === 2) clap(ctx, rev, noise, et, 0.3);
+          }
+          [0, 1, 2].forEach((i) => pluck(ctx, bus, t + beat * 1.5 + i * 0.02, chord[i], 0.05, 0.4));
+        });
+      }
+    },
+    tropical: {
+      bpm: 102,
+      chords: [[57, 60, 64], [57, 60, 65], [55, 60, 64], [55, 59, 62]], // Am F C G
+      roots: [45, 41, 36, 43],
+      play(ctx, bus, rev, noise, rnd, beat, bars) {
+        const lead = [0, null, 2, null, 1, null, 2, 0, null, 2, null, 1, 2, null, 1, null];
+        bars.forEach(({ t, chord, root, bar }) => {
+          pad(ctx, rev, t, beat * 4, chord, 0.022);
+          for (let b = 0; b < 4; b++) {
+            const bt = t + b * beat;
+            if (bar > 0 || b >= 2) kick(ctx, bus, bt, 0.5);
+            chord.forEach((m) => marimba(ctx, rev, bt + beat / 2, m + 12, 0.05, 0.25));
+            if (b % 2) noiseHit(ctx, rev, noise, bt, 'highpass', 3000, 0.08, 0.28); // snap
+            for (let s = 0; s < 4; s++) noiseHit(ctx, bus, noise, bt + s * beat / 4, 'highpass', 9000, 0.03, s % 2 ? 0.04 : 0.025);
+          }
+          lead.forEach((i, k) => { if (i != null) marimba(ctx, rev, t + k * beat / 4, chord[i] + 24, 0.07, 0.3); });
+          bass(ctx, bus, t, root, beat * 1.2, 0.22);
+          bass(ctx, bus, t + beat * 2.5, root, beat * 1, 0.18);
+        });
+      }
+    },
+    lofi: {
+      bpm: 76,
+      chords: [[53, 57, 60, 64], [52, 55, 59, 62], [50, 53, 57, 60], [48, 52, 55, 59]], // Fmaj7 Em7 Dm7 Cmaj7
+      roots: [41, 40, 38, 36],
+      play(ctx, bus, rev, noise, rnd, beat, bars, seconds) {
+        // Everything through a dark filter, like an old tape.
+        const tape = ctx.createBiquadFilter();
+        tape.type = 'lowpass'; tape.frequency.value = 2400;
+        tape.connect(bus);
+        const swing = beat * 0.62;
+        bars.forEach(({ t, chord, root }) => {
+          chord.forEach((m, i) => pluck(ctx, tape, t + i * 0.03, m + 12, 0.06, 1.6, 'sine'));
+          chord.forEach((m, i) => pluck(ctx, tape, t + beat * 2.5 + i * 0.03, m + 12, 0.04, 1.0, 'sine'));
+          bass(ctx, tape, t, root, beat * 1.6, 0.22);
+          bass(ctx, tape, t + beat * 2.5, root + 7, beat * 1.2, 0.16);
+          kick(ctx, tape, t, 0.55); kick(ctx, tape, t + beat * 2.5, 0.45);
+          noiseHit(ctx, tape, noise, t + beat, 'bandpass', 1800, 0.14, 0.22);
+          noiseHit(ctx, tape, noise, t + beat * 3, 'bandpass', 1800, 0.14, 0.22);
+          for (let b = 0; b < 4; b++) {
+            noiseHit(ctx, tape, noise, t + b * beat, 'highpass', 6000, 0.04, 0.07);
+            noiseHit(ctx, tape, noise, t + b * beat + swing, 'highpass', 6000, 0.03, 0.05);
+          }
+        });
+        // Vinyl crackle.
+        for (let c = rnd() * 0.2; c < seconds; c += 0.05 + rnd() * 0.25) noiseHit(ctx, bus, noise, c, 'highpass', 2500, 0.008, 0.02 + rnd() * 0.04);
+      }
+    },
+    funky: {
+      bpm: 106,
+      chords: [[52, 55, 59, 62], [52, 55, 59, 62], [57, 61, 64, 67], [55, 59, 62, 65]], // Em7 Em7 A7 G7
+      roots: [40, 40, 45, 43],
+      play(ctx, bus, rev, noise, rnd, beat, bars) {
+        const s16 = beat / 4;
+        const bassSteps = { 0: 0, 3: 0, 6: 12, 8: 0, 10: 10, 11: 12, 14: 7 };
+        bars.forEach(({ t, chord, root }) => {
+          Object.entries(bassSteps).forEach(([s, up]) => bass(ctx, bus, t + s * s16, root + up, s16 * 1.5, 0.24));
+          [2, 6, 7, 10, 13].forEach((s) => stab(ctx, rev, t + s * s16, chord.map((m) => m + 12), 0.035, 0.07, 1600, 'bandpass'));
+          [0, 7, 8].forEach((s) => kick(ctx, bus, t + s * s16, 0.65));
+          clap(ctx, rev, noise, t + beat, 0.3); clap(ctx, rev, noise, t + beat * 3, 0.3);
+          for (let s = 0; s < 16; s++) noiseHit(ctx, bus, noise, t + s * s16, 'highpass', 8500, 0.03, s % 4 === 2 ? 0.1 : 0.045);
+        });
+      }
+    },
+    hype: {
+      bpm: 126,
+      chords: [[57, 60, 64], [53, 57, 60], [55, 60, 64], [55, 59, 62]], // Am F C G
+      roots: [45, 41, 36, 43],
+      play(ctx, bus, rev, noise, rnd, beat, bars) {
+        bars.forEach(({ t, chord, root, bar }) => {
+          for (let b = 0; b < 4; b++) {
+            const bt = t + b * beat;
+            kick(ctx, bus, bt, 0.85);
+            bass(ctx, bus, bt + beat / 2, root, beat * 0.4, 0.26);
+            noiseHit(ctx, bus, noise, bt + beat / 2, 'highpass', 7000, 0.12, 0.13); // open hat
+            if (b % 2) clap(ctx, rev, noise, bt, 0.32);
+          }
+          [0, 3, 6, 10, 12].forEach((s) => stab(ctx, rev, t + s * beat / 4, chord.map((m) => m + 12), 0.045, 0.16, 3200));
+          pad(ctx, rev, t, beat * 4, chord, 0.025);
+          if (bar % 4 === 3) riser(ctx, rev, noise, t, beat * 4, 0.12);
+        });
+      }
+    },
+    epic: {
+      bpm: 88,
+      chords: [[50, 53, 57, 62], [50, 53, 58, 62], [48, 53, 57, 60], [48, 52, 55, 60]], // Dm Bb F C
+      roots: [38, 34, 41, 36],
+      play(ctx, bus, rev, noise, rnd, beat, bars) {
+        bars.forEach(({ t, chord, root, bar }) => {
+          pad(ctx, rev, t, beat * 4, chord, 0.06);
+          pad(ctx, rev, t, beat * 4, [root - 12], 0.03);
+          // Driving string ostinato in eighths.
+          for (let e = 0; e < 8; e++) pluck(ctx, rev, t + e * beat / 2, (e % 2 ? chord[2] : chord[0]) + 12, 0.035, 0.2, 'sawtooth');
+          boom(ctx, rev, t, 0.8); boom(ctx, rev, t + beat * 2, 0.6);
+          if (bar % 2) for (let s = 12; s < 16; s++) boom(ctx, rev, t + s * beat / 4, 0.25 + (s - 12) * 0.08);
+          if (bar > 0 && bar % 4 === 0) noiseHit(ctx, rev, noise, t, 'highpass', 4000, 1.6, 0.18); // cymbal
+          if (bar % 4 === 3) riser(ctx, rev, noise, t + beat * 2, beat * 2, 0.08);
+        });
       }
     }
   };

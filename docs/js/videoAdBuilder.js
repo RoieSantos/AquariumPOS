@@ -28,6 +28,7 @@ const STYLES = [
   { key: 'delivery', label: '🚚 Delivery' },
   { key: 'photo', label: '📷 Photo / video' },
   { key: 'montage', label: '🎞️ Our builds' },
+  { key: 'stickman', label: '🧍 Stickman' },
   { key: 'water', label: '🌊 Text only' },
   { key: 'cta', label: '📣 End card' }
 ];
@@ -98,6 +99,18 @@ function renameOldStyles(scenes) {
   return scenes;
 }
 
+// 🧍 Stickman scenes (js/videoAdRenderer.js drawStickman).
+const STICKMAN_DEFAULTS = { action: 'walk', prop: 'phone', tag: 'Free quote', room: 'shop', shirt: '#5f7180', caption: '' };
+const STICKMAN_OPTIONS = {
+  action: [['walk', 'Walks in, looking at what he holds'], ['wave', 'Waves hello'], ['point', 'Points up at the headline, talking'],
+    ['think', 'Thinks (hand on chin, "?" bubble)'], ['happy', 'Jumps for joy'], ['shrug', 'Shrugs, confused']],
+  prop: [['phone', 'Phone (your logo on it)'], ['fishbag', 'Bag with a fish'], ['tank', 'Small aquarium'], ['sign', 'Sign (tag text on it)'], ['none', 'Nothing']],
+  room: [['shop', 'Our shop - shelves of tanks'], ['room', 'A room with a door']],
+  shirt: [['#5f7180', 'Grey'], ['#2f6fb5', 'Blue'], ['#d9534f', 'Red'], ['#3a9a5b', 'Green'], ['#f0b429', 'Yellow']]
+};
+// Styles the AI can't write (supabase/functions/video-ad-generate STYLES) - kept out of a revise and put back after.
+const NOT_AI_STYLES = new Set(['montage', 'stickman']);
+
 // Default sizes (inches) for the drawn styles - same as js/videoAdRenderer.js DEFAULT_DIMS.
 const BUILD_DIMS = { tank: [48, 18, 20], stand: [48, 18, 30], sump: [30, 14, 16] };
 
@@ -108,6 +121,7 @@ function newScene(style) {
   if (style === 'cta') Object.assign(base, { headline: 'Message us today', button: 'rspetstop.com', footer: '' });
   if (style === 'reviews') Object.assign(base, { duration: 4, headline: 'Our customers say', reviews: [] });
   if (style === 'montage') Object.assign(base, { duration: 5, headline: 'Setups we built', photos: [] });
+  if (style === 'stickman') Object.assign(base, STICKMAN_DEFAULTS, { duration: 4, headline: 'Still looking for the right tank?' });
   if (style === 'payments') Object.assign(base, { headline: 'Pay your way', sub: 'Cards, e-wallets, bank transfer or cash' });
   if (style === 'delivery') Object.assign(base, { duration: 3.8, headline: 'We deliver it safely', sub: 'Our own team - we handle the rest at your home' });
   return base;
@@ -239,6 +253,9 @@ async function openEditor(id, name, config) {
   config.accent = config.accent || '#3fe0d0';
   config.music = config.music || { track: 'none', volume: 0.8 };
   config.voice = config.voice || { name: '', rate: 1, volume: 1 };
+  config.cover = config.cover || defaultCover(config);
+  coverView = false;
+  $('coverViewBtn').textContent = '🖼 Show cover';
   previewAudioStop();
   musicBuffer = null;
   musicKey = '';
@@ -254,6 +271,7 @@ async function openEditor(id, name, config) {
   renderVoice();
   renderAiResult();
   renderScenes();
+  renderCover();
   await renderer.setAd(config);
   renderScenes(); // media thumbnails/failed states are known now
   cur = 0; t0 = performance.now(); playing = true; $('playBtn').textContent = 'Pause';
@@ -293,6 +311,117 @@ function renderAdFields() {
     b.onclick = () => { c.accent = hex; $('accent').value = hex; setDirty(true); };
     row.appendChild(b);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Cover - the still thumbnail (drawn by VideoAdRenderer drawCover), downloaded as a JPEG
+// ---------------------------------------------------------------------------
+
+let coverView = false; // the stage shows the cover instead of playing the ad
+
+// A new cover borrows the ad's own words: the first scene's headline (its last word in yellow) and the
+// middle scenes' headlines as the topics row.
+function defaultCover(config) {
+  const scenes = config.scenes || [];
+  const headline = (scenes[0] && scenes[0].headline) || 'Still worrying what setup to buy?';
+  const topics = scenes.filter((s) => s.style !== 'logo' && s.style !== 'cta' && s.headline)
+    .map((s) => s.headline.slice(0, 24)).slice(0, 4);
+  return { headline, highlight: headline.split(/\s+/).pop(), tag: 'Watch our video now!', button: 'Click to watch now!', topics, media: '', mediaType: '' };
+}
+
+function renderCover() {
+  const c = current.config.cover;
+  document.querySelectorAll('[data-cover]').forEach((el) => { el.value = c[el.dataset.cover] || ''; });
+  document.querySelectorAll('[data-cover-topic]').forEach((el) => { el.value = (c.topics || [])[Number(el.dataset.coverTopic)] || ''; });
+  renderCoverMedia();
+}
+
+function renderCoverMedia() {
+  const c = current.config.cover;
+  const isVid = c.media && VideoAdRenderer.isVideo(c.media, c.mediaType);
+  const failed = c.media && renderer.isMediaFailed(c.media);
+  const busy = c.media && c.media.startsWith('blob:');
+  const thumb = !c.media ? '<div class="va-media-thumb"></div>'
+    : isVid ? `<video class="va-media-thumb" src="${escapeHtml(c.media)}" muted playsinline preload="metadata" crossorigin="anonymous"></video>`
+    : `<img class="va-media-thumb" src="${escapeHtml(c.media)}" alt="" crossorigin="anonymous" />`;
+  $('coverMediaRow').innerHTML = `
+    ${thumb}
+    <div class="va-media-info">
+      <b>${!c.media ? 'Photo in the phone' : busy ? 'Uploading...' : failed ? 'Could not load this file' : isVid ? 'Your video' : 'Your photo'}</b>
+      ${!c.media ? "Uses the ad's first photo or clip until you choose one." : isVid ? 'Shows the frame 1 second in.' : ''}
+    </div>
+    <label class="btn btn-secondary btn-sm" for="coverFile">${c.media ? 'Change' : 'Choose photo / video'}</label>
+    <input type="file" id="coverFile" accept="image/*,video/mp4,video/webm,video/quicktime" />
+    <button class="btn btn-secondary btn-sm" id="coverFbBtn" type="button" ${fbMediaBusy ? 'disabled' : ''}>📘 From our Facebook page</button>
+    ${c.media ? '<button class="btn btn-secondary btn-sm" id="coverMediaClear" type="button">Remove</button>' : ''}`;
+  if (coverView) renderer.prepareCover();
+}
+
+function onCoverInput(e) {
+  const c = current.config.cover;
+  if (e.target.dataset.cover) c[e.target.dataset.cover] = e.target.value;
+  else if (e.target.dataset.coverTopic != null) {
+    c.topics = [0, 1, 2, 3].map((i) => (c.topics || [])[i] || '');
+    c.topics[Number(e.target.dataset.coverTopic)] = e.target.value;
+  } else return;
+  setDirty(true);
+  if (!coverView) setCoverView(true);
+}
+
+function onCoverClick(e) {
+  const c = current.config.cover;
+  if (e.target.id === 'coverFbBtn') {
+    openFbPicker({
+      title: 'Pick the photo or video for the cover',
+      multi: false, imagesOnly: false,
+      room: () => 1, used: () => new Set(),
+      apply: ([p]) => { c.media = p.url; c.mediaType = p.kind; setCoverView(true); }
+    });
+  } else if (e.target.id === 'coverMediaClear') {
+    c.media = ''; c.mediaType = '';
+    setDirty(true);
+    renderCoverMedia();
+  }
+}
+
+function onCoverFileChange(e) {
+  if (e.target.id !== 'coverFile') return;
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  const c = current.config.cover;
+  setCoverView(true);
+  pickMedia(file, { get: () => c.media || null, getType: () => c.mediaType, set: (url, type) => { c.media = url; c.mediaType = type; } });
+}
+
+async function setCoverView(on) {
+  coverView = on;
+  $('coverViewBtn').textContent = on ? '▶ Show video' : '🖼 Show cover';
+  if (on) {
+    renderer.pauseVideos();
+    await renderer.prepareCover();
+  } else {
+    t0 = performance.now() - cur * 1000;
+  }
+}
+
+async function downloadCover() {
+  if (!current || exporting) return;
+  if (uploading) { toast('Wait for the upload to finish first.', true); return; }
+  await setCoverView(true);
+  renderer.drawCover();
+  try {
+    $('stage').toBlob((blob) => {
+      if (!blob) { toast('Could not make the cover picture.', true); return; }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = slug($('adName').value) + '-cover.jpg';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      toast('Cover downloaded - choose it as the thumbnail when you post.');
+    }, 'image/jpeg', 0.92);
+  } catch (err) {
+    toast(err.name === 'SecurityError' ? 'One of the photos could not be used. Choose it again and retry.' : 'Could not make the cover: ' + err.message, true);
+  }
 }
 
 function sceneStart(index) {
@@ -405,6 +534,21 @@ function sceneCardHtml(s, i, count) {
       <div class="va-label">Payment methods to show (each drops in as a card)
         <div class="va-opts">${checks}</div>
       </div>`;
+  }
+  if (s.style === 'stickman') {
+    const select = (k, label) => `<label class="va-label">${label}
+        <select data-k="${k}">${STICKMAN_OPTIONS[k].map(([v, text]) =>
+          `<option value="${v}"${v === (s[k] || STICKMAN_DEFAULTS[k]) ? ' selected' : ''}>${text}</option>`).join('')}</select></label>`;
+    fields += `
+      <div class="va-grid">
+        ${select('action', 'What he does')}
+        ${select('prop', 'Holding')}
+        ${select('room', 'Background')}
+        ${select('shirt', 'Shirt')}
+      </div>
+      <label class="va-label">Price tag text (on a sign: the sign's text) <input type="text" data-k="tag" maxlength="30" value="${escapeHtml(s.tag)}" placeholder="e.g. FREE, ₱999, 20% off" /></label>
+      <label class="va-label">Captions - big words popping in a few at a time (empty = the voice-over line) <input type="text" data-k="caption" maxlength="160" value="${escapeHtml(s.caption)}" placeholder="e.g. So there's a free aquarium calculator" /></label>
+      <p class="muted" style="margin:0; font-size:12.5px;">A cartoon explainer scene. "Walks in" takes about 2 seconds, so give it 4 seconds or more. Captions are spread evenly over the scene - fill in the voice-over and leave captions empty to show what the voice says.</p>`;
   }
   if (s.style === 'delivery') {
     fields += `<p class="muted" style="margin:0; font-size:12.5px;">Our truck (with your logo and shop name) drives up to a house and the wrapped aquarium goes to the door. The animation takes about 3 seconds - keep this scene at least 3.5 seconds long.</p>`;
@@ -557,6 +701,10 @@ function onSceneClick(e) {
     if (style === 'delivery' && s.duration < 3.6) s.duration = 3.8;
     if (style === 'reviews') { s.reviews = s.reviews || []; if (s.duration < 4) s.duration = 4; }
     if (style === 'montage') { s.photos = s.photos || []; if (s.duration < 4) s.duration = 5; }
+    if (style === 'stickman') {
+      for (const [k, v] of Object.entries(STICKMAN_DEFAULTS)) if (s[k] == null) s[k] = v;
+      if (s.duration < 4) s.duration = 4;
+    }
     finishStructuralChange(i);
     return;
   }
@@ -1249,6 +1397,7 @@ async function pickMedia(file, target) {
 function renderAfterMedia() {
   if (!current) return;
   renderScenes();
+  renderCoverMedia();
   $('logoThumb').src = current.config.brand.logo || '';
   $('logoThumb').classList.toggle('hidden', !current.config.brand.logo);
 }
@@ -1384,8 +1533,8 @@ async function runAi(prompt, files, baseConfig, setStatus) {
     current = {
       accent: baseConfig.accent,
       // Same field names the AI answers with (supabase/functions/video-ad-generate OUTPUT_SCHEMA).
-      // 🎞️ Our builds scenes aren't an AI style - onAiRevise puts them back afterwards.
-      scenes: baseConfig.scenes.filter((s) => s.style !== 'montage').map((s) => ({
+      // 🎞️ Our builds / 🧍 Stickman scenes aren't AI styles - onAiRevise puts them back afterwards.
+      scenes: baseConfig.scenes.filter((s) => !NOT_AI_STYLES.has(s.style)).map((s) => ({
         style: s.style,
         seconds: s.duration,
         headline: s.headline || '',
@@ -1467,7 +1616,7 @@ async function onAiRevise(picker) {
       return true;
     });
     const scenes = renameOldStyles(result.config.scenes);
-    c.scenes.forEach((s, at) => { if (s.style === 'montage') scenes.splice(Math.min(at, scenes.length), 0, s); });
+    c.scenes.forEach((s, at) => { if (NOT_AI_STYLES.has(s.style)) scenes.splice(Math.min(at, scenes.length), 0, s); });
     c.scenes = scenes.slice(0, MAX_SCENES);
     c.accent = result.config.accent;
     c.caption = result.caption;
@@ -1509,7 +1658,7 @@ async function saveAd() {
   const name = $('adName').value.trim();
   if (!name) { toast('Give the ad a name first.', true); $('adName').focus(); return; }
   const c = current.config;
-  if ([c.brand.logo, c.music && c.music.src, ...c.scenes.map((s) => s.media)].some((u) => u && u.startsWith('blob:'))) {
+  if ([c.brand.logo, c.music && c.music.src, c.cover && c.cover.media, ...c.scenes.map((s) => s.media)].some((u) => u && u.startsWith('blob:'))) {
     toast('A photo/video did not finish uploading. Choose it again, then save.', true);
     return;
   }
@@ -1571,6 +1720,7 @@ function tick() {
   if (exporting || !current) return;
   const total = renderer.totalDuration();
   if (!total) return;
+  if (coverView) { previewAudioStop(); renderer.drawCover(); return; }
   if (playing) cur = ((performance.now() - t0) / 1000) % total;
   renderer.syncVideos(cur, playing);
   renderer.drawFrame(cur);
@@ -1622,12 +1772,19 @@ function tick() {
   $('backBtn').addEventListener('click', closeEditor);
   $('saveBtn').addEventListener('click', saveAd);
   $('exportBtn').addEventListener('click', exportVideo);
+  $('coverViewBtn').addEventListener('click', () => setCoverView(!coverView));
+  $('coverDownloadBtn').addEventListener('click', downloadCover);
+  $('coverBox').addEventListener('input', onCoverInput);
+  $('coverBox').addEventListener('click', onCoverClick);
+  $('coverBox').addEventListener('change', onCoverFileChange);
   $('playBtn').addEventListener('click', () => {
+    if (coverView) { setCoverView(false); playing = true; $('playBtn').textContent = 'Pause'; return; }
     playing = !playing;
     if (playing) t0 = performance.now() - cur * 1000;
     $('playBtn').textContent = playing ? 'Pause' : 'Play';
   });
   $('scrub').addEventListener('input', () => {
+    if (coverView) setCoverView(false);
     playing = false;
     $('playBtn').textContent = 'Play';
     cur = ($('scrub').value / 1000) * renderer.totalDuration();

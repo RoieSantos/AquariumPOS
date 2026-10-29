@@ -21,6 +21,9 @@
 //          | 'montage' (our finished setups from scene.photos = [url...]: layout 'cuts' (default) = quick cuts,
 //            each punching in after a short flash; 'showcase' = slower, framed prints sliding in and stacking.
 //            Falls back to water until photos are added)
+//          | 'stickman' (a cartoon stick figure in our shop or a room, with a prop, a price tag and
+//            word-by-word captions - see drawStickman)
+//   cover (optional): the still thumbnail - see drawCover.
 window.VideoAdRenderer = (function () {
   const W = 1080, H = 1920, FPS = 30, FADE = 0.75; // FADE = length of the tide transition
   const FONT = 'Montserrat, system-ui, sans-serif';
@@ -106,7 +109,8 @@ window.VideoAdRenderer = (function () {
       const photos = ad.scenes.flatMap((s) => (s.style === 'montage' && Array.isArray(s.photos) ? s.photos
         : s.style === 'reviews' && Array.isArray(s.reviews) ? s.reviews.map((r) => r && r.photo).filter(Boolean) : []));
       return Promise.all(ad.scenes.map((s) => loadMedia(s.media, s.mediaType))
-        .concat(photos.map((src) => loadMedia(src, 'image')), loadMedia(ad.brand && ad.brand.logo)));
+        .concat(photos.map((src) => loadMedia(src, 'image')), loadMedia(ad.brand && ad.brand.logo),
+          loadMedia(ad.cover && ad.cover.media, ad.cover && ad.cover.mediaType)));
     }
 
     // ---------- timeline ----------
@@ -1700,6 +1704,7 @@ window.VideoAdRenderer = (function () {
 
     function drawScene(s, lt, dur, t) {
       if (s.style === 'cta') { drawCta(s, lt, t); return; }
+      if (s.style === 'stickman') { drawStickman(s, lt, dur, t); return; }
       const logoScene = s.style === 'logo' || s.style === 'fish'; // 'fish' = older saved ads
       const m = sceneMedia(s);
       if (m) drawMediaBg(m, lt, dur, t);
@@ -1767,6 +1772,668 @@ window.VideoAdRenderer = (function () {
       }
       drawGlassFrame(t);
       ctx.restore();
+    }
+
+    // ---------- cover (the still thumbnail people see before they tap play) ----------
+    // ad.cover = { headline, highlight (words of the headline that go big on a yellow brush stroke), tag
+    // (handwritten note pointing at the play button), topics[] (up to 4 labels in a row), button (call to
+    // action on a yellow stroke), media/mediaType (shown in the phone; none = the ad's first photo/clip) }.
+    const COVER_T = 2.6; // the water frozen at a moment where the bubbles and rays are spread out nicely
+    const YELLOW = '#ffd93b', BRUSH = '#f5b800', INK = '#06142c';
+
+    function coverMedia() {
+      const c = ad.cover || {};
+      if (c.media) return getMedia(c.media);
+      const photo = ad.scenes.find((s) => s.style === 'photo' && getMedia(s.media));
+      if (photo) return getMedia(photo.media);
+      for (const s of ad.scenes) {
+        if (s.style !== 'montage' || !Array.isArray(s.photos)) continue;
+        const m = s.photos.map(getMedia).find(Boolean);
+        if (m) return m;
+      }
+      return null;
+    }
+
+    // A clip on the cover shows a frame 1 s in (the first frame is often dark or blurred).
+    async function prepareCover() {
+      await loadAll();
+      const m = coverMedia();
+      if (!m || m.kind !== 'video') return;
+      const v = m.el, at = Math.min(1, (v.duration || 2) / 2);
+      v.pause();
+      if (Math.abs(v.currentTime - at) < 0.05) return;
+      await new Promise((res) => {
+        const timer = setTimeout(res, 3000);
+        v.addEventListener('seeked', () => { clearTimeout(timer); res(); }, { once: true });
+        v.currentTime = at;
+      });
+    }
+
+    // A ragged paint stroke over (x, y, w, h), with dry-brush streaks trailing off both ends.
+    function brushStroke(x, y, w, h, fill, seed) {
+      const n = 16, j = h * 0.1;
+      ctx.beginPath();
+      ctx.moveTo(x, y + rand(seed) * j);
+      for (let i = 1; i <= n; i++) ctx.lineTo(x + (w * i) / n, y + (rand(seed + i) - 0.5) * j * 2);
+      for (let i = 1; i < 6; i++) ctx.lineTo(x + w + rand(seed + 20 + i) * h * 0.3, y + (h * i) / 6);
+      for (let i = n; i >= 0; i--) ctx.lineTo(x + (w * i) / n, y + h + (rand(seed + 40 + i) - 0.5) * j * 2);
+      for (let i = 5; i > 0; i--) ctx.lineTo(x - rand(seed + 70 + i) * h * 0.3, y + (h * i) / 6);
+      ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+      for (let i = 0; i < 6; i++) {
+        const sy = y + h * (0.08 + rand(seed + 90 + i) * 0.84), len = h * (0.3 + rand(seed + 100 + i) * 0.6);
+        const th = 3 + rand(seed + 110 + i) * 6;
+        if (i % 2) ctx.fillRect(x + w, sy, len, th); else ctx.fillRect(x - len, sy, len, th);
+      }
+    }
+
+    // Big poster text: thick dark outline and a drop shadow, so it reads over anything.
+    function outlinedText(text, x, y, size, fill) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = size * 0.2; ctx.shadowOffsetY = size * 0.06;
+      ctx.strokeStyle = INK; ctx.lineWidth = size * 0.16; ctx.strokeText(text, x, y);
+      ctx.shadowColor = 'transparent';
+      ctx.fillStyle = fill; ctx.fillText(text, x, y);
+      ctx.restore();
+    }
+
+    // Splits the headline around the highlight words (matched ignoring case and punctuation; the last
+    // match wins, so "...setup to buy?" with highlight "buy" lifts the final word).
+    function coverHeadlineParts(c) {
+      const words = String(c.headline || '').split(/\s+/).filter(Boolean);
+      const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+      const want = String(c.highlight || '').split(/\s+/).map(norm).filter(Boolean);
+      let at = -1;
+      for (let i = words.length - want.length; want.length && i >= 0; i--) {
+        if (want.every((w, k) => norm(words[i + k]) === w)) { at = i; break; }
+      }
+      if (at < 0) return [{ text: words.join(' '), hl: false }];
+      return [
+        { text: words.slice(0, at).join(' '), hl: false },
+        { text: words.slice(at, at + want.length).join(' '), hl: true },
+        { text: words.slice(at + want.length).join(' '), hl: false }
+      ].filter((p) => p.text);
+    }
+
+    function drawCoverHeadline(c, y) {
+      const parts = coverHeadlineParts(c), maxW = 940;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.font = `700 118px ${HEAD}`;
+      const plainLines = parts.filter((p) => !p.hl).reduce((a, p) => a + wrap(p.text, maxW).length, 0);
+      const size = plainLines > 3 ? 96 : 118;
+      for (const p of parts) {
+        if (!p.hl) {
+          ctx.font = `700 ${size}px ${HEAD}`;
+          for (const line of wrap(p.text, maxW)) { y += size * 1.02; outlinedText(line, W / 2, y, size, '#ffffff'); }
+          y += size * 0.1;
+          continue;
+        }
+        let hs = 230;
+        ctx.font = `700 ${hs}px ${HEAD}`;
+        const tw = ctx.measureText(p.text).width;
+        if (tw > maxW) hs = Math.max(120, Math.floor((hs * maxW) / tw));
+        ctx.font = `700 ${hs}px ${HEAD}`;
+        wrap(p.text, maxW).forEach((line, k) => {
+          const lw = ctx.measureText(line).width;
+          y += hs * 0.95;
+          ctx.save();
+          ctx.translate(W / 2, y - hs * 0.34); ctx.rotate(-0.03);
+          brushStroke(-lw / 2 - 50, -hs * 0.33, lw + 100, hs * 0.66, BRUSH, 7 + k * 31);
+          ctx.restore();
+          outlinedText(line, W / 2, y, hs, YELLOW);
+        });
+        y += hs * 0.15;
+      }
+      return y;
+    }
+
+    // A landscape phone playing the ad: the cover photo/clip on screen, a play button and a red progress bar.
+    function drawCoverPhone(x, y, w, h) {
+      const m = coverMedia();
+      ctx.save();
+      ctx.translate(x + w / 2, y + h / 2); ctx.rotate(-0.025); ctx.translate(-w / 2, -h / 2);
+      ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 50; ctx.shadowOffsetY = 20;
+      roundRect(0, 0, w, h, 56); ctx.fillStyle = '#0b0f15'; ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.lineWidth = 6; ctx.strokeStyle = '#6b7684'; ctx.stroke();
+      const sx = 22, sy = 22, sw = w - 44, sh = h - 44;
+      ctx.save();
+      roundRect(sx, sy, sw, sh, 36); ctx.clip();
+      if (m) {
+        const iw = m.kind === 'video' ? m.el.videoWidth : m.el.naturalWidth;
+        const ih = m.kind === 'video' ? m.el.videoHeight : m.el.naturalHeight;
+        const sc = Math.max(sw / iw, sh / ih);
+        ctx.drawImage(m.el, sx + (sw - iw * sc) / 2, sy + (sh - ih * sc) / 2, iw * sc, ih * sc);
+      } else {
+        const g = ctx.createLinearGradient(0, sy, 0, sy + sh);
+        g.addColorStop(0, '#1d63ad'); g.addColorStop(1, '#04163a');
+        ctx.fillStyle = g; ctx.fillRect(sx, sy, sw, sh);
+        drawCaustics(COVER_T, sx, sy, sw, sh, 0.35);
+      }
+      const shade = ctx.createLinearGradient(0, sy + sh * 0.55, 0, sy + sh);
+      shade.addColorStop(0, 'rgba(0,0,0,0)'); shade.addColorStop(1, 'rgba(0,0,0,0.55)');
+      ctx.fillStyle = shade; ctx.fillRect(sx, sy, sw, sh);
+      const cx = sx + sw / 2, cy = sy + sh / 2;
+      ctx.beginPath(); ctx.arc(cx, cy, 70, 0, TAU);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fill();
+      ctx.lineWidth = 6; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 20, cy - 32); ctx.lineTo(cx + 34, cy); ctx.lineTo(cx - 20, cy + 32); ctx.closePath();
+      ctx.fillStyle = '#ffffff'; ctx.fill();
+      const py = sy + sh - 42, pw = sw - 80;
+      ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(sx + 40, py, pw, 8);
+      ctx.fillStyle = '#ff2a2a'; ctx.fillRect(sx + 40, py, pw * 0.35, 8);
+      ctx.beginPath(); ctx.arc(sx + 40 + pw * 0.35, py + 4, 14, 0, TAU); ctx.fill();
+      ctx.restore();
+      // Glare across the glass.
+      const glare = ctx.createLinearGradient(0, 0, w, h);
+      glare.addColorStop(0, 'rgba(255,255,255,0.10)'); glare.addColorStop(0.35, 'rgba(255,255,255,0)');
+      roundRect(sx, sy, sw, sh, 36); ctx.fillStyle = glare; ctx.fill();
+      ctx.restore();
+    }
+
+    function drawPlayButton(cx, cy, r) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(255,40,40,0.9)'; ctx.shadowBlur = r * 0.7;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.restore();
+      const g = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.35, r * 0.1, cx, cy, r * 0.9);
+      g.addColorStop(0, '#ff5a5a'); g.addColorStop(1, '#c80010');
+      ctx.beginPath(); ctx.arc(cx, cy, r * 0.87, 0, TAU); ctx.fillStyle = g; ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx, cy - r * 0.45, r * 0.55, r * 0.24, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx - r * 0.26, cy - r * 0.4); ctx.lineTo(cx + r * 0.45, cy); ctx.lineTo(cx - r * 0.26, cy + r * 0.4); ctx.closePath();
+      ctx.lineJoin = 'round'; ctx.lineWidth = r * 0.1; ctx.strokeStyle = '#ffffff'; ctx.fillStyle = '#ffffff';
+      ctx.fill(); ctx.stroke();
+      ctx.lineWidth = 11; ctx.lineCap = 'round';
+      for (const a of [-0.6, 0, 0.6]) {
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * (r + 32), cy + Math.sin(a) * (r + 32));
+        ctx.lineTo(cx + Math.cos(a) * (r + 78), cy + Math.sin(a) * (r + 78));
+        ctx.stroke();
+      }
+    }
+
+    // The handwritten note on a dark stroke, last line in yellow. Returns its bottom edge (unrotated).
+    function drawCoverTag(text, cx, cy) {
+      const size = 66, lh = size * 1.08;
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(-0.12);
+      ctx.font = `italic 600 ${size}px ${SERIF}`;
+      const lines = wrap(text, 360).slice(0, 3);
+      const lw = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      const bh = lines.length * lh + 36;
+      brushStroke(-lw / 2 - 30, -bh / 2, lw + 60, bh, 'rgba(4,12,30,0.92)', 41);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      lines.forEach((l, i) => {
+        ctx.fillStyle = lines.length > 1 && i === lines.length - 1 ? YELLOW : '#ffffff';
+        ctx.fillText(l, 0, -((lines.length - 1) * lh) / 2 + i * lh);
+      });
+      ctx.restore();
+      return cy + bh / 2;
+    }
+
+    function drawCoverArrow(x0, y0, x1, y1) {
+      const qx = x0 + 40, qy = y1 + 60;
+      ctx.save();
+      ctx.strokeStyle = YELLOW; ctx.lineWidth = 9; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(qx, qy, x1, y1); ctx.stroke();
+      const a = Math.atan2(y1 - qy, x1 - qx);
+      ctx.beginPath();
+      ctx.moveTo(x1 - Math.cos(a - 0.5) * 34, y1 - Math.sin(a - 0.5) * 34);
+      ctx.lineTo(x1, y1);
+      ctx.lineTo(x1 - Math.cos(a + 0.5) * 34, y1 - Math.sin(a + 0.5) * 34);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawFishIcon(cx, cy, color) {
+      ctx.save();
+      ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.ellipse(cx - 6, cy, 30, 17, 0, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + 22, cy); ctx.lineTo(cx + 42, cy - 15); ctx.lineTo(cx + 42, cy + 15); ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx - 22, cy - 3, 4, 0, TAU); ctx.fillStyle = color; ctx.fill();
+      ctx.restore();
+    }
+
+    function drawCoverTopics(list, top) {
+      const colW = (W - 100) / list.length;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.font = `800 ${list.length > 3 ? 34 : 40}px ${FONT}`;
+      list.forEach((label, i) => {
+        const cx = 50 + colW * (i + 0.5);
+        if (i) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(50 + colW * i - 1, top, 2, 170); }
+        drawFishIcon(cx, top + 32, ad.accent || '#3fe0d0');
+        ctx.fillStyle = '#ffffff';
+        wrap(label.toUpperCase(), colW - 24).slice(0, 2).forEach((l, j) => ctx.fillText(l, cx, top + 112 + j * 42));
+      });
+    }
+
+    function drawCoverButton(text, cy) {
+      text = text.toUpperCase();
+      let size = 72;
+      ctx.font = `italic 800 ${size}px ${FONT}`;
+      let tw = ctx.measureText(text).width;
+      if (tw > 820) { size = Math.floor((size * 820) / tw); ctx.font = `italic 800 ${size}px ${FONT}`; tw = ctx.measureText(text).width; }
+      ctx.save();
+      ctx.translate(W / 2, cy); ctx.rotate(-0.035);
+      brushStroke(-tw / 2 - 70, -size * 0.85, tw + 140, size * 1.7, YELLOW, 77);
+      ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, 0, 0);
+      ctx.beginPath(); ctx.moveTo(-tw * 0.38, size * 0.6); ctx.quadraticCurveTo(0, size * 0.8, tw * 0.42, size * 0.52);
+      ctx.strokeStyle = INK; ctx.lineWidth = 7; ctx.lineCap = 'round'; ctx.stroke();
+      ctx.restore();
+    }
+
+    // The whole cover, top to bottom: logo, headline, play button + note over the phone, topics, button.
+    // The phone takes whatever height is left, so a longer headline just makes it a little shorter.
+    function drawCover() {
+      if (!ad) return;
+      const c = ad.cover || {};
+      ctx.save();
+      drawWater(COVER_T);
+
+      const logoY = 210;
+      ctx.save();
+      ctx.shadowColor = 'rgba(180,230,255,0.9)'; ctx.shadowBlur = 60;
+      if (getMedia(ad.brand && ad.brand.logo)) { ctx.beginPath(); ctx.arc(W / 2, logoY, 128, 0, TAU); ctx.fillStyle = '#ffffff'; ctx.fill(); }
+      ctx.restore();
+      if (!drawLogoCircle(W / 2, logoY, 124, '#ffffff', 8) && ad.brand && ad.brand.name) {
+        ctx.font = `700 72px ${HEAD}`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+        outlinedText(ad.brand.name, W / 2, logoY + 25, 72, '#ffffff');
+      }
+
+      const headBottom = drawCoverHeadline(c, 350);
+
+      let bottom = H - 40;
+      const btnY = H - 165;
+      if (c.button) bottom = btnY - 115;
+      const topics = (Array.isArray(c.topics) ? c.topics : []).map((s) => String(s || '').trim()).filter(Boolean).slice(0, 4);
+      const topicsTop = bottom - 175;
+      if (topics.length) bottom = topicsTop - 40;
+
+      const r = 118, phoneMin = headBottom + 175;
+      const ph = Math.max(300, Math.min(560, bottom - phoneMin));
+      const phoneTop = phoneMin + Math.max(0, (bottom - phoneMin - ph) / 2);
+      drawCoverPhone(60, phoneTop, W - 120, ph);
+
+      const tag = String(c.tag || '').trim();
+      const px = tag ? W / 2 + 120 : W / 2, py = phoneTop - 15;
+      drawPlayButton(px, py, r);
+      if (tag) {
+        const tagBottom = drawCoverTag(tag, 245, py - 30);
+        drawCoverArrow(245 + 40, tagBottom - 4, px - r - 28, py + r * 0.3);
+      }
+      if (topics.length) drawCoverTopics(topics, topicsTop);
+      if (c.button) drawCoverButton(String(c.button), btnY);
+      ctx.restore();
+    }
+
+    // ---------- 'stickman': a cartoon explainer scene ----------
+    // scene.action 'walk' (walks in, looking at what he holds) | 'wave' | 'point' (up at the headline, talking)
+    //   | 'think' (hand on chin, "?" bubble) | 'happy' (jumping) | 'shrug';
+    // scene.prop 'none' | 'phone' (your logo on screen) | 'fishbag' | 'tank' | 'sign'; scene.tag = text on the
+    // price tag hanging off the prop (on a sign, the sign's own text); scene.room 'shop' | 'room';
+    // scene.shirt = colour; scene.caption = big word-by-word captions (empty = the voice-over line).
+    const SKIN = '#f6c39c', LINE = '#111111';
+
+    // Two-bone limb: from joint (sx, sy) towards (tx, ty); bend +1 / -1 picks which side the elbow/knee goes.
+    function ik(sx, sy, tx, ty, l1, l2, bend) {
+      const dx = tx - sx, dy = ty - sy;
+      let d = Math.hypot(dx, dy);
+      const max = (l1 + l2) * 0.999;
+      if (d > max) { tx = sx + (dx / d) * max; ty = sy + (dy / d) * max; d = max; }
+      const a = Math.acos(clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * Math.max(d, 0.001)), -1, 1));
+      const base = Math.atan2(ty - sy, tx - sx) + bend * a;
+      return { ex: sx + Math.cos(base) * l1, ey: sy + Math.sin(base) * l1, tx, ty };
+    }
+    function drawLimb(s, target, l1, l2, bend, width) {
+      const j = ik(s[0], s[1], target[0], target[1], l1, l2, bend);
+      ctx.beginPath(); ctx.moveTo(s[0], s[1]); ctx.lineTo(j.ex, j.ey); ctx.lineTo(j.tx, j.ty);
+      ctx.lineWidth = width; ctx.strokeStyle = LINE; ctx.stroke();
+      return j;
+    }
+
+    function drawMiniTank(x, y, w, h, t, seed) {
+      ctx.save();
+      const g = ctx.createLinearGradient(0, y, 0, y + h);
+      g.addColorStop(0, '#7fd0f0'); g.addColorStop(1, '#2a86c0');
+      ctx.fillStyle = g; ctx.fillRect(x, y + 14, w, h - 14);
+      ctx.fillStyle = '#d8b98a'; ctx.fillRect(x, y + h - 26, w, 26);
+      ctx.strokeStyle = '#2f9b4a'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      for (let i = 0; i < 4; i++) {
+        const px = x + 25 + rand(seed + i) * (w - 50), ph = 50 + rand(seed + 10 + i) * 70;
+        ctx.beginPath(); ctx.moveTo(px, y + h - 22);
+        ctx.quadraticCurveTo(px + Math.sin(t * 1.5 + i) * 14, y + h - 22 - ph / 2, px + Math.sin(t * 1.5 + i + 1) * 10, y + h - 22 - ph);
+        ctx.stroke();
+      }
+      for (let f = 0; f < 2; f++) {
+        const sp = 30 + rand(seed + 20 + f) * 40, span = w - 60;
+        const p = (t * sp + rand(seed + 30 + f) * span * 2) % (span * 2);
+        const dir = p < span ? 1 : -1, fx = x + 30 + (p < span ? p : span * 2 - p);
+        const fy = y + 50 + rand(seed + 40 + f) * (h - 100);
+        ctx.fillStyle = f ? '#ff8c1a' : '#ffd23f';
+        ctx.beginPath(); ctx.ellipse(fx, fy, 16, 9, 0, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(fx - dir * 12, fy); ctx.lineTo(fx - dir * 26, fy - 9); ctx.lineTo(fx - dir * 26, fy + 9); ctx.closePath(); ctx.fill();
+      }
+      ctx.lineWidth = 6; ctx.strokeStyle = LINE; ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = LINE; ctx.fillRect(x - 4, y - 4, w + 8, 12);
+      ctx.restore();
+    }
+
+    function drawToonRoom(kind, floorY, t) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      if (kind === 'room') {
+        ctx.fillStyle = '#80918b'; ctx.fillRect(0, 0, W, floorY);
+        // A doorway on the left (he walks in past it), its door swung open, and a fish picture on the wall.
+        ctx.fillStyle = '#4a5853'; ctx.fillRect(70, floorY - 860, 330, 860);
+        ctx.fillStyle = '#e8eae4'; ctx.strokeStyle = LINE; ctx.lineWidth = 7;
+        for (const [rx, ry, rw, rh] of [[46, floorY - 884, 24, 884], [400, floorY - 884, 24, 884], [46, floorY - 884, 378, 24]]) {
+          ctx.fillRect(rx, ry, rw, rh); ctx.strokeRect(rx, ry, rw, rh);
+        }
+        ctx.beginPath(); ctx.moveTo(424, floorY - 860); ctx.lineTo(560, floorY - 905); ctx.lineTo(560, floorY + 45); ctx.lineTo(424, floorY); ctx.closePath();
+        ctx.fillStyle = '#d9a35a'; ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(535, floorY - 420, 11, 0, TAU); ctx.fillStyle = LINE; ctx.fill();
+        ctx.fillStyle = '#cfe8f5'; ctx.fillRect(690, floorY - 780, 280, 200);
+        ctx.lineWidth = 10; ctx.strokeRect(690, floorY - 780, 280, 200);
+        ctx.fillStyle = '#ff8c1a';
+        ctx.beginPath(); ctx.ellipse(820, floorY - 680, 50, 28, 0, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(860, floorY - 680); ctx.lineTo(905, floorY - 710); ctx.lineTo(905, floorY - 650); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#c9a46a';
+      } else {
+        // Our shop: shelves of lit tanks along the back wall.
+        const g = ctx.createLinearGradient(0, 0, 0, floorY);
+        g.addColorStop(0, '#5e9fbb'); g.addColorStop(1, '#a9d3e3');
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, floorY);
+        for (let row = 0; row < 2; row++) {
+          const shelfY = floorY - 330 - row * 330;
+          for (let col = 0; col < 3; col++) drawMiniTank(85 + col * 320, shelfY - 200, 270, 190, t, row * 10 + col * 3 + 1);
+          ctx.fillStyle = '#8a5a33'; ctx.fillRect(50, shelfY, W - 100, 24);
+          ctx.lineWidth = 6; ctx.strokeStyle = LINE; ctx.strokeRect(50, shelfY, W - 100, 24);
+        }
+        ctx.fillStyle = '#d9d4c8';
+      }
+      ctx.fillRect(0, floorY, W, H - floorY);
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 4;
+      for (let fy = floorY + 70, gap = 70; fy < H; gap *= 1.25, fy += gap) { ctx.beginPath(); ctx.moveTo(0, fy); ctx.lineTo(W, fy); ctx.stroke(); }
+      ctx.fillStyle = '#ece8de'; ctx.fillRect(0, floorY - 16, W, 16);
+      ctx.strokeStyle = LINE; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(0, floorY - 16); ctx.lineTo(W, floorY - 16); ctx.moveTo(0, floorY); ctx.lineTo(W, floorY); ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawToonHead(hx, hy, r, face, lc, lookX) {
+      ctx.beginPath(); ctx.arc(hx, hy, r, 0, TAU);
+      ctx.fillStyle = SKIN; ctx.fill(); ctx.lineWidth = 7; ctx.strokeStyle = LINE; ctx.stroke();
+      const ox = hx + lookX, ex = r * 0.34, ey = hy - r * 0.08;
+      const blink = lc % 3.3 > 3.17;
+      ctx.fillStyle = LINE; ctx.lineWidth = 6;
+      for (const d of [-1, 1]) {
+        ctx.beginPath();
+        if (blink) { ctx.moveTo(ox + d * ex - 11, ey); ctx.lineTo(ox + d * ex + 11, ey); ctx.stroke(); }
+        else { ctx.ellipse(ox + d * ex, ey, 9, 12, 0, 0, TAU); ctx.fill(); }
+      }
+      // Brows per face: [left tilt, left lift, right tilt, right lift]; tilt > 0 = inner end down (determined).
+      const BROWS = { skeptic: [0.35, 0, -0.1, 14], hmm: [0, 4, -0.2, 18], worried: [-0.35, 10, -0.35, 10], grin: [0, 12, 0, 12], smile: [0, 5, 0, 5], talk: [0, 7, 0, 7] };
+      const b = BROWS[face] || BROWS.smile;
+      for (const d of [-1, 1]) {
+        const tilt = d < 0 ? b[0] : b[2], up = d < 0 ? b[1] : b[3];
+        ctx.save();
+        ctx.translate(ox + d * ex, ey - r * 0.27 - up); ctx.rotate(-d * tilt);
+        ctx.beginPath(); ctx.moveTo(-18, 0); ctx.lineTo(18, 0); ctx.stroke();
+        ctx.restore();
+      }
+      const my = hy + r * 0.42;
+      ctx.beginPath();
+      if (face === 'grin') {
+        ctx.arc(ox, my - 10, 34, 0, Math.PI); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(ox, my + 13, 14, 8, 0, 0, TAU); ctx.fillStyle = '#e2595b'; ctx.fill();
+      } else if (face === 'smile') {
+        ctx.arc(ox, my - 20, 28, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke();
+      } else if (face === 'talk' && Math.sin(lc * 17) > -0.2) {
+        ctx.ellipse(ox, my, 17, 6 + 9 * Math.abs(Math.sin(lc * 17)), 0, 0, TAU); ctx.fill();
+      } else if (face === 'hmm') {
+        ctx.moveTo(ox - 2, my + 2); ctx.lineTo(ox + 30, my - 6); ctx.stroke();
+      } else if (face === 'worried') {
+        ctx.moveTo(ox - 26, my); ctx.quadraticCurveTo(ox - 13, my - 10, ox, my); ctx.quadraticCurveTo(ox + 13, my + 10, ox + 26, my); ctx.stroke();
+      } else {
+        ctx.moveTo(ox - 24, my); ctx.lineTo(ox + 22, my - 3); ctx.stroke();
+      }
+    }
+
+    // The price tag on a string, swinging a little: from the prop's corner (x, y).
+    function drawPriceTag(text, x, y, lc) {
+      if (!text) return;
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(0.55 + Math.sin(lc * 3) * 0.08);
+      ctx.font = `800 40px ${FONT}`;
+      const tw = Math.min(260, ctx.measureText(text.toUpperCase()).width), w = tw + 70, h = 72, off = 50;
+      ctx.strokeStyle = LINE; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(off * 0.5, 14, off, 0); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(off, 0); ctx.lineTo(off + 26, -h / 2); ctx.lineTo(off + w, -h / 2); ctx.lineTo(off + w, h / 2); ctx.lineTo(off + 26, h / 2); ctx.closePath();
+      ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.lineWidth = 5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(off + 22, 0, 7, 0, TAU); ctx.stroke();
+      ctx.fillStyle = LINE; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text.toUpperCase(), off + 38 + tw / 2, 2, tw);
+      ctx.restore();
+    }
+
+    // A prop centred on (x, y); returns the corner the price tag hangs from.
+    const PROP_SIZE = { phone: [120, 200], fishbag: [150, 200], tank: [290, 185], sign: [340, 200] };
+    function drawProp(kind, x, y, s, lc) {
+      const [w, h] = PROP_SIZE[kind];
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.strokeStyle = LINE; ctx.lineJoin = 'round';
+      if (kind === 'phone') {
+        ctx.rotate(-0.12);
+        roundRect(-w / 2, -h / 2, w, h, 18); ctx.fillStyle = '#4b4f57'; ctx.fill(); ctx.lineWidth = 6; ctx.stroke();
+        ctx.fillStyle = '#e9eef3'; ctx.fillRect(-w / 2 + 12, -h / 2 + 18, w - 24, h - 36);
+        if (!drawLogoCircle(0, -22, 36, '#ffffff', 3)) {
+          ctx.fillStyle = '#5f7180';
+          [30, 55, 42].forEach((bh, i) => ctx.fillRect(-36 + i * 26, 10 - bh, 18, bh));
+        }
+        ctx.fillStyle = '#5f7180'; ctx.fillRect(-36, 34, 72, 8); ctx.fillRect(-36, 50, 50, 8);
+      } else if (kind === 'fishbag') {
+        ctx.beginPath();
+        ctx.moveTo(-12, -h / 2 + 26);
+        ctx.bezierCurveTo(-w * 0.62, -h * 0.05, -w * 0.62, h / 2, 0, h / 2);
+        ctx.bezierCurveTo(w * 0.62, h / 2, w * 0.62, -h * 0.05, 12, -h / 2 + 26);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(225,242,255,0.55)'; ctx.fill();
+        ctx.save(); ctx.clip();
+        ctx.fillStyle = 'rgba(70,165,235,0.6)'; ctx.fillRect(-w, -h * 0.08 + Math.sin(lc * 3) * 4, w * 2, h);
+        const fx = Math.sin(lc * 1.8) * 26, dir = Math.cos(lc * 1.8) >= 0 ? 1 : -1;
+        ctx.fillStyle = '#ff8c1a';
+        ctx.beginPath(); ctx.ellipse(fx, h * 0.2, 26, 15, 0, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(fx - dir * 20, h * 0.2); ctx.lineTo(fx - dir * 40, h * 0.2 - 14); ctx.lineTo(fx - dir * 40, h * 0.2 + 14); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(fx + dir * 12, h * 0.2 - 4, 3.5, 0, TAU); ctx.fillStyle = LINE; ctx.fill();
+        ctx.restore();
+        ctx.lineWidth = 5; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-12, -h / 2 + 26); ctx.lineTo(-30, -h / 2); ctx.moveTo(12, -h / 2 + 26); ctx.lineTo(30, -h / 2); ctx.stroke();
+        ctx.fillStyle = '#e04848'; ctx.fillRect(-16, -h / 2 + 14, 32, 12); ctx.lineWidth = 3; ctx.strokeRect(-16, -h / 2 + 14, 32, 12);
+      } else if (kind === 'tank') {
+        drawMiniTank(-w / 2, -h / 2, w, h, lc, 77);
+      } else if (kind === 'sign') {
+        ctx.rotate(-0.05);
+        ctx.fillStyle = '#d9b27c'; ctx.fillRect(-w / 2, -h / 2, w, h);
+        ctx.lineWidth = 7; ctx.strokeRect(-w / 2, -h / 2, w, h);
+        const text = String(s.tag || '').toUpperCase();
+        ctx.font = `800 54px ${FONT}`;
+        const lines = wrap(text, w - 40).slice(0, 3);
+        ctx.fillStyle = LINE; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        lines.forEach((l, i) => ctx.fillText(l, 0, (i - (lines.length - 1) / 2) * 58, w - 30));
+      }
+      ctx.restore();
+      return [x + w / 2 - 12, y + h / 2 - 24];
+    }
+
+    // Poster-style headline (white, outlined - reads on any wall) and a yellow sub-text. Returns the bottom.
+    function drawToonText(s, lt) {
+      let y = 400 - UP();
+      ctx.save();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      const pop = (line, delay, size, fill) => {
+        const p = easeOut((lt - delay) / 0.4);
+        if (p <= 0) return;
+        ctx.save(); ctx.globalAlpha = p; ctx.translate(W / 2, y); ctx.scale(0.8 + 0.2 * p, 0.8 + 0.2 * p);
+        outlinedText(line, 0, 0, size, fill);
+        ctx.restore();
+      };
+      ctx.font = `700 96px ${HEAD}`;
+      wrap(s.headline, 940).forEach((l, i) => { y += 106; pop(l, i * 0.12, 96, '#ffffff'); });
+      if (s.sub) {
+        ctx.font = `800 54px ${FONT}`;
+        y += 10;
+        wrap(s.sub, 920).forEach((l) => { y += 66; pop(l, 0.3, 54, YELLOW); });
+      }
+      ctx.restore();
+      return y;
+    }
+
+    // Big captions, a few words at a time, each word popping in; the newest one in yellow.
+    function drawToonCaption(text, lt, dur, y) {
+      const words = String(text || '').toUpperCase().split(/\s+/).filter(Boolean);
+      if (!words.length || lt < 0) return;
+      const per = 3, span = Math.max(0.3, dur - 0.4) / words.length;
+      const wi = Math.min(words.length - 1, Math.floor(lt / span));
+      const chunk = words.slice(Math.floor(wi / per) * per, Math.floor(wi / per) * per + per);
+      let size = 92;
+      ctx.save();
+      ctx.font = `800 ${size}px ${FONT}`;
+      const space = size * 0.28;
+      const total = chunk.reduce((a, w) => a + ctx.measureText(w).width, 0) + space * (chunk.length - 1);
+      if (total > 960) { size = Math.floor((size * 960) / total); ctx.font = `800 ${size}px ${FONT}`; }
+      const widths = chunk.map((w) => ctx.measureText(w).width);
+      let x = W / 2 - (widths.reduce((a, b) => a + b, 0) + size * 0.28 * (chunk.length - 1)) / 2;
+      const shown = wi % per;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      chunk.forEach((w, i) => {
+        if (i <= shown) {
+          const sc = i === shown ? 1 + 0.25 * (1 - easeOut((lt - wi * span) / 0.12)) : 1;
+          ctx.save(); ctx.translate(x + widths[i] / 2, y); ctx.scale(sc, sc);
+          outlinedText(w, 0, 0, size, i === shown ? YELLOW : '#ffffff');
+          ctx.restore();
+        }
+        x += widths[i] + size * 0.28;
+      });
+      ctx.restore();
+    }
+
+    function drawStickman(s, lt, dur, t) {
+      const lc = Math.max(0, lt);
+      const groundY = BOTTOM() - 120, floorY = groundY - 110;
+      drawToonRoom(s.room === 'room' ? 'room' : 'shop', floorY, t);
+      drawBrandTag();
+      const textBottom = drawToonText(s, lt);
+      const k = clamp((groundY - (textBottom + 50)) / 900, 0.55, 1);
+
+      const action = s.action || 'walk';
+      const prop = PROP_SIZE[s.prop] ? s.prop : null;
+      const homeX = W * ({ point: 0.36, think: 0.44 }[action] || 0.5);
+      let cx = homeX, amp = 0, phase = 0;
+      if (action === 'walk') {
+        const walkDur = Math.min(2.4, dur * 0.55), q = clamp(lc / walkDur);
+        cx = -260 + (homeX + 260) * (1 - (1 - q) * (1 - q));
+        amp = Math.min(1, (1 - q) * 3);
+        phase = lc * TAU * 1.7;
+      }
+
+      // Pose, in figure units: x from the body's centre, y up from the floor (negative).
+      const breathe = Math.sin(lc * 2.4) * 4, sp = Math.sin(phase);
+      let hipY = -330 - Math.abs(Math.cos(phase)) * 8 * amp, shY = -630 + breathe, lift = 0;
+      let feet = [[-55, 0], [55, 0]];
+      if (amp > 0) {
+        feet = [[-45 + 75 * sp * amp, -Math.max(0, Math.cos(phase)) * 40 * amp], [45 - 75 * sp * amp, -Math.max(0, -Math.cos(phase)) * 40 * amp]];
+      }
+      let hands = [[-92 - 20 * sp * amp, -385], [92 - 20 * sp * amp, -385]];
+      let holder = null, face = 'smile', thought = false, finger = false;
+      if (action === 'walk') {
+        if (prop) { hands = [[-24, -470], [24, -470]]; holder = 'both'; }
+        face = 'skeptic';
+      } else if (action === 'wave') {
+        hands[1] = [175 + Math.sin(lc * 10) * 30, -880];
+        if (prop) { hands[0] = [-155, -490]; holder = 0; }
+        face = 'grin';
+      } else if (action === 'point') {
+        hands[1] = [255, -900]; finger = true;
+        if (prop) { hands[0] = [-155, -490]; holder = 0; } else hands[0] = [-80, -400];
+        face = 'talk';
+      } else if (action === 'think') {
+        hands[1] = [12, -650];
+        if (prop) { hands[0] = [-155, -490]; holder = 0; } else hands[0] = [30, -470];
+        face = 'hmm'; thought = true;
+      } else if (action === 'happy') {
+        const j = Math.abs(Math.sin(lc * 5.5));
+        lift = j * 90;
+        hands = [[-180, -960 + j * 20], [180, -960 + j * 20]];
+        feet = [[-60, -j * 30], [60, -j * 30]];
+        if (prop) holder = 1;
+        face = 'grin';
+      } else if (action === 'shrug') {
+        shY -= 18 * easeOut(clamp(lc / 0.5));
+        hands = [[-215, -610], [215, -610]];
+        if (prop) holder = 0;
+        face = 'worried';
+      }
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.beginPath(); ctx.ellipse(cx, groundY + 8, 150 * k * (1 - lift / 300), 22 * k, 0, 0, TAU); ctx.fill();
+      ctx.translate(cx, groundY - lift * k); ctx.scale(k, k);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+      [[-34, hipY], [34, hipY]].forEach((hip, i) => {
+        const j = drawLimb(hip, feet[i], 178, 170, i ? -1 : 1, 15);
+        ctx.beginPath(); ctx.ellipse(j.tx + (i ? 16 : -16), j.ty - 8, 30, 13, 0, 0, TAU); ctx.fillStyle = LINE; ctx.fill();
+      });
+
+      ctx.beginPath();
+      ctx.moveTo(-34, shY); ctx.quadraticCurveTo(-90, shY + 6, -88, shY + 42);
+      ctx.lineTo(-70, hipY + 22); ctx.quadraticCurveTo(0, hipY + 34, 70, hipY + 22);
+      ctx.lineTo(88, shY + 42); ctx.quadraticCurveTo(90, shY + 6, 34, shY); ctx.closePath();
+      ctx.fillStyle = /^#[0-9a-f]{6}$/i.test(s.shirt || '') ? s.shirt : '#5f7180'; ctx.fill();
+      ctx.lineWidth = 7; ctx.strokeStyle = LINE; ctx.stroke();
+
+      const r = 105, hx = 0, hy = shY - 128;
+      ctx.beginPath(); ctx.moveTo(0, shY); ctx.lineTo(0, hy + r * 0.8); ctx.lineWidth = 13; ctx.stroke();
+      ctx.save();
+      const tilt = action === 'think' ? 0.12 : action === 'shrug' ? -0.1 : amp ? Math.sin(phase) * 0.03 : 0;
+      ctx.translate(hx, hy); ctx.rotate(tilt);
+      drawToonHead(0, 0, r, face, lc, amp > 0 ? 9 : action === 'point' ? 10 : 0);
+      ctx.restore();
+
+      const shoulders = [[-76, shY + 24], [76, shY + 24]];
+      const arms = shoulders.map((sh, i) => drawLimb(sh, hands[i], 140, 135, i ? -1 : 1, 13));
+
+      if (prop) {
+        let px, py;
+        const [, ph] = PROP_SIZE[prop];
+        if (holder === 'both') { px = (arms[0].tx + arms[1].tx) / 2; py = (arms[0].ty + arms[1].ty) / 2 - 30; }
+        else { px = arms[holder].tx; py = action === 'happy' ? arms[holder].ty - ph / 2 + 10 : arms[holder].ty + ph / 2 - 20; }
+        const corner = drawProp(prop, px, py, s, lc);
+        if (prop !== 'sign') drawPriceTag(String(s.tag || '').trim(), corner[0], corner[1], lc);
+      }
+
+      arms.forEach((a) => { ctx.beginPath(); ctx.arc(a.tx, a.ty, 15, 0, TAU); ctx.fillStyle = LINE; ctx.fill(); });
+      if (finger) {
+        const a = arms[1], ang = Math.atan2(a.ty - a.ey, a.tx - a.ex);
+        ctx.beginPath(); ctx.moveTo(a.tx, a.ty); ctx.lineTo(a.tx + Math.cos(ang) * 34, a.ty + Math.sin(ang) * 34);
+        ctx.lineWidth = 9; ctx.strokeStyle = LINE; ctx.stroke();
+      }
+      if (thought) {
+        const bob = Math.sin(lc * 2.5) * 8;
+        ctx.fillStyle = '#ffffff'; ctx.strokeStyle = LINE; ctx.lineWidth = 6;
+        for (const [bx, by, br] of [[r * 0.95, hy - r * 0.95, 12], [r * 1.3, hy - r * 1.35, 20], [r * 1.95, hy - r * 2.05 + bob, 70]]) {
+          ctx.beginPath(); ctx.arc(bx, by, br, 0, TAU); ctx.fill(); ctx.stroke();
+        }
+        ctx.fillStyle = LINE; ctx.font = `800 84px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('?', r * 1.95, hy - r * 2.05 + bob + 4);
+      }
+      ctx.restore();
+
+      drawToonCaption(s.caption || s.say, lt, dur, groundY - 210 * k);
     }
 
     // Live preview: keep each visible clip roughly in step with the timeline.
@@ -1891,7 +2558,7 @@ window.VideoAdRenderer = (function () {
 
     return {
       setAd(next) { ad = next; return loadAll(); },
-      loadMedia, loadAll, totalDuration, timeline, drawFrame, syncVideos, pauseVideos, exportMp4,
+      loadMedia, loadAll, totalDuration, timeline, drawFrame, drawCover, prepareCover, syncVideos, pauseVideos, exportMp4,
       isMediaFailed: (src) => !!(src && media[src] && media[src].failed)
     };
   }

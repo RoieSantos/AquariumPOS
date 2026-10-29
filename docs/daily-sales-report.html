@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily Sales Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    #dsResults th.num, #dsResults td.num { text-align: right; white-space: nowrap; }
+    #dsResults tr.ds-total td { font-weight: 700; }
+    #dsResults h2 { margin: 20px 0 8px; }
+    .ds-short { color: #c0392b; font-weight: 600; }
+    .ds-over { color: #1e8449; font-weight: 600; }
+    .ds-clickable { cursor: pointer; }
+    .ds-clickable:hover, .ds-clickable:focus-visible { outline: 2px solid var(--primary, #1d4f91); outline-offset: 2px; }
+    a.ds-exp-link { cursor: pointer; }
+    @media print {
+      #topnav, .pm-toolbar { display: none !important; }
+      .table-wrap { overflow: visible !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Daily Sales</h1>
+    <p class="muted">One day's online and walk-in sales: per branch, tender, category and staff, the day's receipts, advance orders, the POS cash count and expenses. Same rules as the Dashboard's "Today" cards (online by confirmed date, walk-in by sale date, cancelled left out), so today's figures match it.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" id="prevDayBtn" type="button" aria-label="Previous day">&larr;</button>
+        <input type="date" id="reportDate" aria-label="Date" />
+        <button class="btn btn-secondary btn-sm" id="nextDayBtn" type="button" aria-label="Next day">&rarr;</button>
+        <button class="btn btn-secondary btn-sm" id="todayBtn" type="button">Today</button>
+        <button class="btn btn-secondary btn-sm" id="yesterdayBtn" type="button">Yesterday</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="warehouseSelect" aria-label="Branch">
+          <option value="">All branches</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="exportBtn" type="button">Export receipts (CSV)</button>
+        <button class="btn btn-secondary btn-sm" id="printBtn" type="button">Print</button>
+      </div>
+    </div>
+
+    <div id="dsLoading" class="muted">Loading...</div>
+    <div id="dsError" class="error-text hidden"></div>
+
+    <div id="dsResults" class="hidden">
+      <p class="muted" id="dateLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card ds-clickable" id="totalCard" role="button" tabindex="0" title="Show all receipts">
+          <div class="stat-label"><span class="stat-icon">💰</span> Total Sales</div>
+          <div class="stat-value" id="statTotal">-</div>
+          <div class="muted" id="statTotalSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card ds-clickable" id="onlineCard" role="button" tabindex="0" title="Show the online orders">
+          <div class="stat-label"><span class="stat-icon">🌐</span> Online Sales <span class="muted" style="font-size:12px;">(click for details)</span></div>
+          <div class="stat-value" id="statOnline">-</div>
+          <div class="muted" id="statOnlineSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card ds-clickable" id="walkinCard" role="button" tabindex="0" title="Show the walk-in receipts">
+          <div class="stat-label"><span class="stat-icon">🏪</span> Walk-In Sales <span class="muted" style="font-size:12px;">(click for details)</span></div>
+          <div class="stat-value" id="statWalkin">-</div>
+          <div class="muted" id="statWalkinSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card ds-clickable" id="expenseCard" role="button" tabindex="0" title="Show this day's expenses">
+          <div class="stat-label"><span class="stat-icon">🧾</span> Expenses <span class="muted" style="font-size:12px;">(click for details)</span></div>
+          <div class="stat-value" id="statExpense">-</div>
+          <div class="muted" id="statExpenseSub" style="font-size:13px;"></div>
+        </div>
+      </div>
+      <p class="muted" id="compareNote" style="font-size:13px;margin:4px 0 16px;"></p>
+
+      <h2>By Branch</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Branch</th><th class="num">Online</th><th class="num">Walk-In</th><th class="num">Total</th><th class="num">Orders</th><th class="num">Expenses</th></tr></thead>
+          <tbody id="branchBody"></tbody>
+        </table>
+      </div>
+
+      <div id="expenseSection" class="hidden">
+        <div class="toolbar" style="margin-top:16px;">
+          <h2 id="expenseTitle" style="margin:0;">Expenses</h2>
+          <div class="pm-filter-group">
+            <button class="btn btn-secondary btn-sm hidden" id="expenseAllBtn" type="button">All branches</button>
+            <button class="btn btn-secondary btn-sm" id="expenseCloseBtn" type="button">Hide</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Source</th><th>Receipt</th><th>Time</th><th>Branch</th><th>Category</th><th>Description</th><th>Staff</th><th class="num">Amount</th></tr></thead>
+            <tbody id="expenseBody"></tbody>
+          </table>
+        </div>
+        <p class="muted" style="font-size:13px;">POS = expense rung up at the store POS (click the receipt for its lines); Journal = entered on the portal's Expense Journal. Bills &amp; Dues payments (rent, utilities, loans...) are not included - see the Bills &amp; Dues page.</p>
+      </div>
+
+      <h2>By Tender</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Tender</th><th class="num">Online</th><th class="num">Walk-In</th><th class="num">Total</th><th class="num">Orders</th></tr></thead>
+          <tbody id="tenderBody"></tbody>
+        </table>
+      </div>
+
+      <h2>By Staff</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Staff</th><th class="num">Online</th><th class="num">Walk-In</th><th class="num">Total</th><th class="num">Orders</th></tr></thead>
+          <tbody id="staffBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Online orders count under whoever confirmed them; walk-ins under the cashier who rang them up.</p>
+
+      <h2>By Category</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Category</th><th class="num">Units</th><th class="num">Revenue</th><th class="num">Share</th></tr></thead>
+          <tbody id="categoryBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Category revenue is the line amount, so it won't match Total Sales exactly: delivery fees and order discounts aren't lines, and items inside a set count under the set.</p>
+
+      <h2>Advance Orders</h2>
+      <p class="muted" style="font-size:13px;margin:0 0 8px;">Kept apart from the sales above, like the Dashboard's advance card. <strong>Placed</strong> = new advance orders this day (full order value); <strong>Collected</strong> = money taken this day on any advance order (downpayments and balances, incl. portal Mark Fully Paid / delivery remits; a void's refund shows as negative).</p>
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📝</span> Advance Orders Placed</div>
+          <div class="stat-value" id="statAdvPlaced">-</div>
+          <div class="muted" id="statAdvPlacedSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💵</span> Advance Collected</div>
+          <div class="stat-value" id="statAdvCollected">-</div>
+          <div class="muted" id="statAdvCollectedSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🧮</span> Sales + Advance Collected</div>
+          <div class="stat-value" id="statAllIn">-</div>
+          <div class="muted" style="font-size:13px;">Total Sales plus money taken on advance orders (fully paid advance orders counted once)</div>
+        </div>
+      </div>
+      <p class="muted" id="advCopyNote" style="font-size:13px;"></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Collected by Tender</th><th>Branch</th><th class="num">Payments</th><th class="num">Amount</th></tr></thead>
+          <tbody id="advTenderBody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Advance Order Placed</th><th>Time</th><th>Branch</th><th>Customer</th><th>Order</th><th>Staff</th><th class="num">Order Value</th><th class="num">Downpayment</th><th class="num">Balance</th></tr></thead>
+          <tbody id="advPlacedBody"></tbody>
+        </table>
+      </div>
+
+      <h2>Cash Count (POS End of Day)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Branch</th><th>Cashier</th><th>Time</th><th class="num">Float</th><th class="num">Cash Sales</th><th class="num">Expected</th><th class="num">Declared</th><th class="num">Short / Over</th><th>Reason</th></tr></thead>
+          <tbody id="cashBody"></tbody>
+        </table>
+      </div>
+
+      <div class="toolbar" id="ordersSection" style="margin-top:16px;">
+        <h2 id="ordersTitle" style="margin:0;">Receipts</h2>
+        <button class="btn btn-secondary btn-sm hidden" id="ordersAllBtn" type="button">Show all receipts</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Order / Receipt</th><th>Time</th><th>Branch</th><th>Customer</th><th>Staff</th><th>Status</th><th>Paid Via</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
+          <tbody id="ordersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=stok1"></script>
+  <script src="js/nav.js?v=dailysales1"></script>
+  <script src="js/dailySalesReport.js?v=dailysales4"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>
