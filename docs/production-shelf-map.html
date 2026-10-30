@@ -163,6 +163,8 @@
     /* Forecast (sql/supabase_production_forecast.sql): Use buttons, days of stock shorter than the build lead time. */
     .min-table .min-use { padding: 1px 8px; font-size: 12px; margin-left: 4px; }
     .min-table td.cover-short { color: #c0392b; font-weight: 700; }
+    /* In stock number opens the rack's serials (same modal as a Stock list card). */
+    .min-table .min-stock-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: #1a5fb4; text-decoration: underline; cursor: pointer; }
     .stock-cover { font-size: 12px; color: var(--muted-text, #5b6b80); }
     .stock-cover.short { color: #c0392b; font-weight: 700; }
     /* Forecast view (js/productionShelfMap.js renderForecast) - series + status colours validated for CVD / contrast. */
@@ -406,9 +408,9 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=stok1"></script>
-  <script src="js/nav.js?v=dailysales1"></script>
-  <script src="js/productionShelfMap.js?v=29"></script>
+  <script src="js/auth.js?v=tenderdeposit1"></script>
+  <script src="js/nav.js?v=tenderdeposit1"></script>
+  <script src="js/productionShelfMap.js?v=30"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

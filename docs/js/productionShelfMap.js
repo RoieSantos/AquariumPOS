@@ -442,7 +442,7 @@ function renderMinimums(body) {
             return `<tr class="st-${p.status}">
               <td><b>${escapeHtml(p.title)}</b>
                 <div class="muted" style="font-size:12px;">${escapeHtml(p.spot.item_code)}${p.spot.variant_name ? ' · ' + escapeHtml(p.spot.variant_name) : ' · any variant'}${only ? ` · <b>${escapeHtml(only)} only</b>` : ''}</div></td>
-              <td class="num">${p.count}</td>
+              <td class="num"><button type="button" class="min-stock-link" data-spot-id="${p.spot.id}" title="See the serial numbers">${p.count}</button></td>
               <td class="num">${p.onOrder || ''}</td>
               <td class="num">${p.capacity || ''}</td>
               <td class="num" title="${escapeHtml(forecastTip(p.fc))}">${p.fc ? fmtRate(p.fc.weekly_demand) : ''}${p.fc && !isForecastable(p.fc) ? `<div class="muted" style="font-size:11px;">${escapeHtml(p.fc.pattern)}</div>` : ''}</td>
@@ -1727,7 +1727,7 @@ function wireFloorDrag() {
   // Rack taps: view mode lists its aquarium's serials; grid layout editing opens the spot's settings;
   // floor-plan editing is handled by wireFloorDrag.
   const onSpot = (target) => {
-    const spotEl = target.closest('.pspot, .stock-card');
+    const spotEl = target.closest('.pspot, .stock-card, .min-stock-link');
     if (!spotEl) return;
     if (draft) {
       if (draft.layout === 'grid') openCellModal({ r: Number(spotEl.dataset.r), c: Number(spotEl.dataset.c) });

@@ -34,9 +34,15 @@
 -- Undo only restores lines still at the batch's new price, so it never overwrites a later edit (reported as
 -- skipped). Refused while Pancake still syncs products (_items_pancake_sync_active) - the next sync would undo it.
 --
--- Aquarium SETS (category SET) are never included: their price is the Package Price on the Customer Aquarium
--- page (the Items row is a trigger-maintained copy, and the POS sells at PackagePrice). Set lines already on a
--- draft are refused by Apply Now / skipped by a schedule; re-opening the draft drops them.
+-- Aquarium SETS (category SET) are never included as ITEM lines: their price is the Package Price on the
+-- Customer Aquarium page (the Items row is a trigger-maintained copy, and the POS sells at PackagePrice). Old
+-- set item lines on a draft are refused by Apply Now / skipped by a schedule; re-opening the draft drops them.
+-- Instead (per "in the price increase will the set package price be updated too?" - "can you also increase
+-- it?") each package rides on the batch as its own 'set' line:
+--   set line      - CompleteAquariumSetHeader."PackagePrice" (ItemCode = the package's "SetCode"). Its
+--                   TR_CompleteAquariumSetHeader_SyncItem trigger copies the new price to the set's Items row,
+--                   so Order Now, Alice, the website and the POS all sell at the new Package Price. The parts
+--                   lines (CompleteAquariumSetLine."Price") are left as they are - they're only a breakdown.
 --
 -- Sticker & delivery RATES ride on the same batch (per "is the price increase also include custom stickers?
 -- deliver quote?" - "yes please add that too"), so one increase / schedule / undo covers them:
@@ -109,7 +115,7 @@ alter table public."PriceChangeBatchLines" add column if not exists "SkipReason"
 alter table public."PriceChangeBatchLines" drop constraint if exists "PriceChangeBatchLines_Kind_check";
 alter table public."PriceChangeBatchLines" drop constraint if exists "CK_PriceChangeBatchLines_Kind";
 alter table public."PriceChangeBatchLines" add constraint "CK_PriceChangeBatchLines_Kind"
-  check ("Kind" in ('item', 'variant', 'sticker', 'delivery'));
+  check ("Kind" in ('item', 'variant', 'sticker', 'delivery', 'set'));
 
 create index if not exists "IX_PriceChangeBatchLines_Item" on public."PriceChangeBatchLines" ("ItemCode");
 
@@ -223,12 +229,13 @@ $$;
 
 grant execute on function public.admin_price_change_source_rows(text, text) to anon;
 
--- Sticker & delivery rates the page can raise with the same %. A delivery setting that isn't a plain number
--- comes back with price null (shown, never changed).
+-- Sticker & delivery rates and aquarium set Package Prices the page can raise with the same %. A delivery
+-- setting that isn't a plain number comes back with price null (shown, never changed). note = the set's
+-- SetCode (+ "not sold online"), shown under its name.
 drop function if exists public.admin_price_change_rate_rows(text, text);
 
 create or replace function public.admin_price_change_rate_rows(p_admin_username text, p_admin_password text)
-returns table(kind text, item_code text, name text, price numeric)
+returns table(kind text, item_code text, name text, price numeric, note text)
 language plpgsql
 stable
 security definer
@@ -242,17 +249,23 @@ begin
   return query
   select 'sticker'::text, s."Id"::text,
          (s."StickerType" || coalesce(' ' || nullif(trim(s."Thickness"), '') || 'mm', ''))::text,
-         round(s."PricePerSqFt", 2)
+         round(s."PricePerSqFt", 2), null::text
     from public."StickerPricingSetup" s
    where s."StickerType" <> 'Acrylic Sump Cover'
   union all
   select 'delivery'::text, k.key,
          k.label,
-         case when trim(coalesce(p."SettingValue", '')) ~ '^[0-9]+(\.[0-9]+)?$' then round(trim(p."SettingValue")::numeric, 2) end
+         case when trim(coalesce(p."SettingValue", '')) ~ '^[0-9]+(\.[0-9]+)?$' then round(trim(p."SettingValue")::numeric, 2) end,
+         null::text
     from (values ('DELIVERY_BASE_FEE', 'Delivery base fee', 1),
                  ('DELIVERY_RATE_PER_KM', 'Delivery rate per km', 2),
                  ('DELIVERY_TOLL_FEE', 'Delivery toll fee (when Google has no toll price)', 3)) as k(key, label, ord)
-    join public."PortalSettings" p on p."SettingKey" = k.key;
+    join public."PortalSettings" p on p."SettingKey" = k.key
+  union all
+  select 'set'::text, trim(h."SetCode")::text, h."PackageName"::text, round(h."PackagePrice", 2),
+         (trim(h."SetCode") || case when h."SellOnline" then '' else ' · not sold online' end)::text
+    from public."CompleteAquariumSetHeader" h
+   where nullif(trim(h."SetCode"), '') is not null;
 end;
 $$;
 
@@ -267,7 +280,7 @@ drop function if exists public.admin_price_change_list(text, text);
 create or replace function public.admin_price_change_list(p_admin_username text, p_admin_password text)
 returns table(
   batch_id bigint, description text, increase_pct numeric, keep_discount numeric, status text,
-  line_count int, retail_lines int, wholesale_lines int, rate_lines int, skipped_lines int,
+  line_count int, retail_lines int, wholesale_lines int, rate_lines int, set_lines int, skipped_lines int,
   created_by text, created_at_utc timestamptz, updated_by text, updated_at_utc timestamptz,
   scheduled_for_utc timestamptz, scheduled_by text, apply_error text, apply_error_at_utc timestamptz,
   applied_by text, applied_at_utc timestamptz, undone_by text, undone_at_utc timestamptz, undo_skipped int
@@ -288,6 +301,7 @@ begin
          count(l."LineNo") filter (where l."NewPrice" is not null and l."Kind" in ('item', 'variant'))::int,
          count(l."LineNo") filter (where l."NewWholesalePrice" is not null)::int,
          count(l."LineNo") filter (where l."Kind" in ('sticker', 'delivery'))::int,
+         count(l."LineNo") filter (where l."Kind" = 'set')::int,
          count(l."LineNo") filter (where l."Skipped")::int,
          b."CreatedBy", b."CreatedAtUtc", b."UpdatedBy", b."UpdatedAtUtc",
          b."ScheduledForUtc", b."ScheduledBy", b."ApplyError", b."ApplyErrorAtUtc",
@@ -382,14 +396,14 @@ begin
 
   select string_agg(coalesce(e ->> 'item_code', '?'), ', ') into v_bad
     from jsonb_array_elements(p_lines) e
-   where coalesce(e ->> 'kind', '') not in ('item', 'variant', 'sticker', 'delivery')
+   where coalesce(e ->> 'kind', '') not in ('item', 'variant', 'sticker', 'delivery', 'set')
       or nullif(trim(coalesce(e ->> 'item_code', '')), '') is null
       or (e ->> 'kind' = 'variant' and nullif(trim(coalesce(e ->> 'variation_id', '')), '') is null)
       or ((e ->> 'new_price') is null and (e ->> 'new_wholesale_price') is null)
       or coalesce((e ->> 'new_price')::numeric, 0) < 0
       or coalesce((e ->> 'new_wholesale_price')::numeric, 0) < 0
-      or (e ->> 'kind' in ('variant', 'sticker', 'delivery') and (e ->> 'new_wholesale_price') is not null)
-      or (e ->> 'kind' in ('sticker', 'delivery') and ((e ->> 'new_price') is null or (e ->> 'old_price') is null))
+      or (e ->> 'kind' in ('variant', 'sticker', 'delivery', 'set') and (e ->> 'new_wholesale_price') is not null)
+      or (e ->> 'kind' in ('sticker', 'delivery', 'set') and ((e ->> 'new_price') is null or (e ->> 'old_price') is null))
       or (e ->> 'kind' = 'delivery'
           and e ->> 'item_code' not in ('DELIVERY_BASE_FEE', 'DELIVERY_RATE_PER_KM', 'DELIVERY_TOLL_FEE'))
       or (e ->> 'kind' = 'sticker' and coalesce(e ->> 'item_code', '') !~ '^[0-9]+$');
@@ -531,6 +545,7 @@ declare
   v_cleared int := 0;
   v_skipped int := 0;
   v_rates int := 0;
+  v_sets int := 0;
 begin
   if public._items_pancake_sync_active() then
     raise exception 'Products are still synced from Pancake - the next sync would undo the new prices. Finish the portal cutover first.';
@@ -583,6 +598,16 @@ begin
        or (l."Kind" = 'delivery'
            and case when trim(coalesce(p."SettingValue", '')) ~ '^[0-9]+(\.[0-9]+)?$'
                     then round(trim(p."SettingValue")::numeric, 2) end is distinct from round(l."OldPrice", 2)));
+
+  -- Set packages: gone, or Package Price no longer the old one.
+  insert into _pc_bad
+  select l."LineNo", coalesce(l."Name", l."ItemCode"),
+         case when h."SetCode" is null then 'set package no longer exists'
+              else 'Package Price edited since the draft was saved' end
+    from public."PriceChangeBatchLines" l
+    left join public."CompleteAquariumSetHeader" h on trim(h."SetCode") = l."ItemCode"
+   where l."BatchId" = p_batch_id and l."Kind" = 'set'
+     and (h."SetCode" is null or round(h."PackagePrice", 2) is distinct from round(l."OldPrice", 2));
 
   select count(*), string_agg(label, ', ') into v_changed_count, v_changed
     from (select label from _pc_bad order by line_no limit 20) x;
@@ -664,13 +689,20 @@ begin
   get diagnostics v_n = row_count;
   v_rates := v_rates + v_n;
 
+  -- Set packages (the header trigger copies the new price to the set's Items row).
+  update public."CompleteAquariumSetHeader" h
+     set "PackagePrice" = round(l."NewPrice", 2), "UpdatedDate" = now()
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'set' and trim(h."SetCode") = l."ItemCode";
+  get diagnostics v_sets = row_count;
+
   update public."PriceChangeBatches"
      set "Status" = 'Applied', "AppliedBy" = p_actor, "AppliedAtUtc" = now(),
          "ApplyError" = null, "ApplyErrorAtUtc" = null
    where "BatchId" = p_batch_id;
 
   return jsonb_build_object('retail_updated', v_retail, 'wholesale_updated', v_wholesale, 'rates_updated', v_rates,
-                            'retail_price_cleared', v_cleared, 'skipped', v_skipped);
+                            'sets_updated', v_sets, 'retail_price_cleared', v_cleared, 'skipped', v_skipped);
 end;
 $$;
 
@@ -758,6 +790,7 @@ declare
   v_n int;
   v_skipped int;
   v_rates int := 0;
+  v_sets int := 0;
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -845,14 +878,22 @@ begin
   get diagnostics v_n = row_count;
   v_rates := v_rates + v_n;
 
-  v_skipped := greatest(v_total - v_retail - v_wholesale - v_rates, 0);
+  -- Set packages, only where the Package Price is still the batch's new price.
+  update public."CompleteAquariumSetHeader" h
+     set "PackagePrice" = round(l."OldPrice", 2), "UpdatedDate" = now()
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'set' and trim(h."SetCode") = l."ItemCode"
+     and round(h."PackagePrice", 2) = round(l."NewPrice", 2);
+  get diagnostics v_sets = row_count;
+
+  v_skipped := greatest(v_total - v_retail - v_wholesale - v_rates - v_sets, 0);
 
   update public."PriceChangeBatches"
      set "Status" = 'Undone', "UndoneBy" = p_admin_username, "UndoneAtUtc" = now(), "UndoSkipped" = v_skipped
    where "BatchId" = p_batch_id;
 
   return jsonb_build_object('retail_restored', v_retail, 'wholesale_restored', v_wholesale, 'rates_restored', v_rates,
-                            'skipped', v_skipped);
+                            'sets_restored', v_sets, 'skipped', v_skipped);
 end;
 $$;
 

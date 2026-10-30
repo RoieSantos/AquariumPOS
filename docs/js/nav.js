@@ -288,6 +288,11 @@ function renderTopNavLinks(activeLabel) {
     // (supabase_daily_sales_report.sql).
     reports.push({ href: 'daily-sales-report.html', label: 'Daily Sales Report' });
   }
+  // Store Managers: their own store's declarations, to attach the bank deposit receipts
+  // (supabase_tender_deposit_receipts.sql).
+  if (isStoreManager && !isSuperUser) {
+    reports.push({ href: 'tender-declarations.html', label: 'Tender Declarations' });
+  }
 
   const admin = [];
   if (isSuperUser) {

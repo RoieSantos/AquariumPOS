@@ -12,13 +12,21 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .deposit-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 8px; }
+    .deposit-form .field label { display: block; font-size: 13px; margin-bottom: 2px; }
+    .deposit-form .field input { width: 100%; box-sizing: border-box; }
+    .deposit-form .wide { grid-column: 1 / -1; }
+    .photo-preview { max-width: 220px; max-height: 180px; border-radius: 6px; margin-top: 6px; display: block; }
+    .deposit-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--panel-border); display: block; }
+  </style>
 </head>
 <body>
   <div id="topnav"></div>
 
   <div class="page">
     <h1>Tender Declarations</h1>
-    <p class="muted">Cashiers' end-of-day cash counts from the POS, with the Short / Over against expected cash. Only visible to super users.</p>
+    <p class="muted" id="pageIntro">Cashiers' end-of-day cash counts from the POS, with the Short / Over against expected cash, and the bank deposit receipts attached to each.</p>
 
     <!-- Not authorized -->
     <div id="notAuthorizedBox" class="hidden">
@@ -43,11 +51,18 @@
           <option value="over">Over only</option>
           <option value="balanced">Balanced only</option>
         </select>
+        <select id="depositSelect">
+          <option value="">All deposits</option>
+          <option value="none">No deposit yet</option>
+          <option value="mismatch">Deposit doesn't match</option>
+          <option value="matched">Deposit matches</option>
+        </select>
       </div>
 
       <div class="stat-card-grid">
         <div class="stat-card"><div class="stat-label">Declarations</div><div class="stat-value" id="statCount">-</div></div>
         <div class="stat-card"><div class="stat-label">Total Declared Cash</div><div class="stat-value" id="statDeclared">-</div></div>
+        <div class="stat-card"><div class="stat-label">Total Deposited</div><div class="stat-value" id="statDeposited">-</div></div>
         <div class="stat-card stat-cancelled"><div class="stat-label">Total Short</div><div class="stat-value" id="statShort">-</div></div>
         <div class="stat-card stat-shipped"><div class="stat-label">Total Over</div><div class="stat-value" id="statOver">-</div></div>
       </div>
@@ -64,11 +79,12 @@
               <th>Expected Cash</th>
               <th>Declared Cash</th>
               <th>Short / Over</th>
+              <th>Deposit</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="declTableBody">
-            <tr><td colspan="9" class="muted">Loading...</td></tr>
+            <tr><td colspan="10" class="muted">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -84,6 +100,50 @@
         <button class="btn" type="button" id="detailCloseBtn">Close</button>
       </div>
       <p class="muted" id="detailMeta"></p>
+
+      <h3>Bank Deposits</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Receipt</th><th>Deposit Date</th><th>Amount</th><th>Reference / Note</th><th>Attached by</th><th></th></tr></thead>
+          <tbody id="depositsBody"></tbody>
+        </table>
+      </div>
+      <div id="depositSummary" class="muted" style="margin-top:6px;"></div>
+
+      <div style="margin-top:10px;">
+        <button class="btn btn-primary btn-sm" type="button" id="showDepositFormBtn">Attach deposit receipt</button>
+      </div>
+      <div id="depositFormBox" class="card hidden" style="margin-top:10px;">
+        <div class="deposit-form">
+          <div class="field">
+            <label for="depositAmountInput">Deposit Amount</label>
+            <input type="number" id="depositAmountInput" min="0" step="0.01" />
+          </div>
+          <div class="field">
+            <label for="depositDateInput">Deposit Date</label>
+            <input type="date" id="depositDateInput" />
+          </div>
+          <div class="field">
+            <label for="depositRefInput">Reference no. (optional)</label>
+            <input type="text" id="depositRefInput" maxlength="100" />
+          </div>
+          <div class="field">
+            <label for="depositNoteInput">Note (optional)</label>
+            <input type="text" id="depositNoteInput" maxlength="500" placeholder="e.g. BDO Ortigas" />
+          </div>
+          <div class="field wide">
+            <label for="depositPhotoInput">Deposit receipt photo (required)</label>
+            <input type="file" id="depositPhotoInput" accept="image/*" capture="environment" />
+            <img id="depositPhotoPreview" class="photo-preview hidden" alt="Receipt preview" />
+            <div id="depositReadStatus" class="muted hidden" style="margin-top:6px; font-size:13px;"></div>
+          </div>
+        </div>
+        <div id="depositFormError" class="error-text hidden" style="margin-top:8px;"></div>
+        <div style="margin-top:10px; display:flex; gap:8px;">
+          <button class="btn btn-primary" type="button" id="saveDepositBtn">Save deposit</button>
+          <button class="btn" type="button" id="cancelDepositBtn">Cancel</button>
+        </div>
+      </div>
 
       <h3>Cash Count</h3>
       <div class="table-wrap">
@@ -112,10 +172,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=stok1"></script>
-  <script src="js/nav.js?v=dailysales1"></script>
+  <script src="js/auth.js?v=tenderdeposit1"></script>
+  <script src="js/nav.js?v=tenderdeposit1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/tenderDeclarations.js?v=tenderlatest1"></script>
+  <script src="js/tenderDeclarations.js?v=tenderdeposit5"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
