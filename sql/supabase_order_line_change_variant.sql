@@ -1,4 +1,4 @@
--- Change a line's item / variant on an order - Super Users only. Per "in the online orders / walkin orders and
+-- Change a line's item / variant on an order - Super Users and Sales Users. Per "in the online orders / walkin orders and
 -- advance orders can a super user change the item.. i notice that the punched is black paint but the actual is
 -- white paint" / "yes please allow a super user to edit it manually in the order".
 --
@@ -19,12 +19,14 @@
 --
 -- WALK-IN ORDERS are not covered: they're posted POS receipts (stock already moved) - do a POS exchange.
 --
--- Blocked once the order is at To Ship or later (serials / stock already taken for the old variant - Undo
--- Stage first on an advance order), and while a serial for the old variant is tagged to the order.
+-- Blocked while a serial for the line's item is tagged to the order. Online orders: allowed up to and
+-- including To Ship (Packing and later locked); at To Ship also not on SET lines / SET parts, nor swapping
+-- TO a serial-tracked item (the serial pick is already done). Advance orders: blocked from To Ship on (Undo
+-- Stage first).
 --
 -- Run AFTER supabase_online_order_set_explode.sql, supabase_bot_orders_portal_confirm.sql,
 -- supabase_advance_order_serials.sql and supabase_item_ledger_advance_orders.sql. Safe to re-run.
--- Needs js/onlineOrders.js ?v=chgvariant2.
+-- Needs js/onlineOrders.js ?v=chgsales1.
 
 -- ============================================================================
 -- 1. Tables
@@ -114,6 +116,22 @@ $$;
 
 revoke execute on function public._is_active_super_user(text) from public, anon, authenticated;
 
+-- Who may Change Item: Super Users and Sales Users (per "can you let the sales user change it too?") -
+-- same people as the line edit (supabase_online_order_line_edit.sql).
+create or replace function public._can_change_order_line_item(p_username text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from public."StaffUsers" s
+                 where s."Username" = p_username and s."IsActive"
+                   and (coalesce(s."SuperUser", false) or coalesce(s."SalesUser", false)));
+$$;
+
+revoke execute on function public._can_change_order_line_item(text) from public, anon, authenticated;
+
 -- Every sellable Pancake variant (plus items without variants that have their own VariationId).
 -- tag   = what tells the variants apart (SKU / variant item code, e.g. AST-003-WhitePaint) - the POS puts it
 --         at the end of its line text ("DUALSTAND-50G (...) - AST-003-BlackPaint").
@@ -165,6 +183,42 @@ as $$
 $$;
 
 revoke execute on function public._order_line_variant_candidates() from public, anon, authenticated;
+
+-- Does this item take a serial? Same rule as admin_get_online_order_serial_requirements
+-- (supabase_online_order_serial_lines_dedupe.sql): AQ- / custom aquarium / stand / sump codes or a production category.
+create or replace function public._order_line_item_needs_serial(p_variation_id text, p_item_code text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select r.code is not null
+     and (upper(r.code) like 'AQ-%'
+          or upper(r.code) like 'CUSTOM-AQUARIUM%'
+          or upper(r.code) like 'CUSTOM_STAND%'
+          or upper(r.code) like 'CUSTOM-SUMP%'
+          or upper(r.code) like 'CUSTOM_SUMP%'
+          or coalesce((select c."IsProductionCategory" from public."Categories" c where c."Code" = r.cat), false))
+  from (
+    select coalesce(nullif(trim(v."ItemCode"), ''), nullif(trim(i."Code"), ''), nullif(trim(p_item_code), '')) as code,
+           coalesce(v."CategoryCode", i."CategoryCode") as cat
+    from (select 1) x
+    left join lateral (
+      select v0."ItemCode", v0."CategoryCode" from public."Variants" v0
+      where nullif(trim(p_variation_id), '') is not null and v0."VariationId" = p_variation_id
+      limit 1
+    ) v on true
+    left join lateral (
+      select i0."Code", i0."CategoryCode" from public."Items" i0
+      where i0."Code" = p_item_code or i0."VariationId" = p_item_code
+      order by (i0."Code" = p_item_code) desc
+      limit 1
+    ) i on true
+  ) r;
+$$;
+
+revoke execute on function public._order_line_item_needs_serial(text, text) from public, anon, authenticated;
 
 -- The line text after a variant swap: keep the POS / Pancake wording and swap just the variant part
 -- (SKU, then variant item code, then variant name); otherwise the new variant's label.
@@ -229,8 +283,8 @@ declare
   v_result jsonb;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
-     or not public._is_active_super_user(p_admin_username) then
-    raise exception 'Only a Super User can change an order line''s item.';
+     or not public._can_change_order_line_item(p_admin_username) then
+    raise exception 'Only a Super User or Sales User can change an order line''s item.';
   end if;
 
   if p_advance_no is not null then
@@ -290,6 +344,9 @@ declare
   v_new record;
   v_old_variation text;
   v_old_desc text;
+  v_old_item text;
+  v_old_note text;
+  v_to_ship boolean;
   v_serial text;
   v_url text;
   v_get_response extensions.http_response;
@@ -303,18 +360,21 @@ declare
   v_resynced boolean := true;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
-     or not public._is_active_super_user(p_admin_username) then
-    raise exception 'Only a Super User can change an order line''s item.';
+     or not public._can_change_order_line_item(p_admin_username) then
+    raise exception 'Only a Super User or Sales User can change an order line''s item.';
   end if;
 
   select "Status" into v_status from public."OnlineOrders" where "OrderID" = v_order_id;
   if not found then
     raise exception 'Order % not found.', v_order_id;
   end if;
-  if lower(trim(coalesce(v_status, ''))) in ('to ship', 'packing', 'packed', 'shipped', 'delivered', 'completed',
+  -- To Ship is allowed (per "can we also change the to-ship but ... cannot change the items that has tagged
+  -- serials already") - guarded below: no tagged serial, no SET line, no swap to a serial-tracked item.
+  if lower(trim(coalesce(v_status, ''))) in ('packing', 'packed', 'shipped', 'delivered', 'completed',
                                              'received', 'canceled', 'cancelled', 'returned', 'returning', 'deleted') then
-    raise exception 'Order % is % - the item can only be changed before To Ship.', v_order_id, v_status;
+    raise exception 'Order % is % - the item can only be changed up to To Ship.', v_order_id, v_status;
   end if;
+  v_to_ship := lower(trim(coalesce(v_status, ''))) = 'to ship';
 
   select * into v_new from public._order_line_variant_candidates() c where c.variation_id = trim(coalesce(p_variation_id, '')) limit 1;
   if not found then
@@ -323,7 +383,9 @@ begin
 
   -- ---- Portal-only order: no Pancake order, edit the line here.
   if public._is_portal_only_online_order(v_order_id) then
-    select nullif(trim(l."VariationId"), ''), l."Description" into v_old_variation, v_old_desc
+    select nullif(trim(l."VariationId"), ''), l."Description",
+           coalesce(nullif(trim(l."ItemCode"), ''), nullif(trim(l."product_display_id"), '')), l."Note"
+      into v_old_variation, v_old_desc, v_old_item, v_old_note
     from public."OnlineOrderLines" l where l."OrderID" = v_order_id and l."LineID" = p_line_id;
     if not found then
       raise exception 'Line % is no longer on order % - close and reopen the order.', p_line_id, v_order_id;
@@ -377,7 +439,7 @@ begin
       case when jsonb_typeof(it -> 'is_wholesale') = 'boolean' then it -> 'is_wholesale' else 'false'::jsonb end
     from jsonb_array_elements(v_order_obj -> 'items') with ordinality as e(it, ord);
 
-    select variation_id, coalesce(name, detail) into v_old_variation, v_old_desc
+    select variation_id, coalesce(name, detail), item_code, note into v_old_variation, v_old_desc, v_old_item, v_old_note
     from _variant_swap_items where line_id = p_line_id;
     if not found then
       raise exception 'Line % is no longer on order % in Pancake - close and reopen the order, then try again.', p_line_id, v_order_id;
@@ -388,12 +450,28 @@ begin
     raise exception 'The line is already %.', v_new.label;
   end if;
 
+  -- A serial tagged to the order for this line's item (by variant, or by item code for items without
+  -- variants) locks the line - untag it first.
   select s."SerialNo" into v_serial from public."ItemSerialTracking" s
   where s."SoldOnlineOrderId" = v_order_id and s."Status" = 'SOLD'
-    and v_old_variation is not null and coalesce(s."VariantCode", '') = v_old_variation
+    and ((v_old_variation is not null and coalesce(s."VariantCode", '') = v_old_variation)
+         or (v_old_item is not null and s."ItemCode" = v_old_item
+             and (v_old_variation is null or coalesce(s."VariantCode", '') = '')))
   limit 1;
   if v_serial is not null then
-    raise exception 'Serial % is already tagged to this line''s current variant - the item can''t be changed now.', v_serial;
+    raise exception 'Serial % is already tagged to this line''s item - the item can''t be changed now.', v_serial;
+  end if;
+
+  if v_to_ship then
+    -- SET lines / SET parts: assembled and their serials reserved at Ready to Ship.
+    if p_line_id like '%~SETMAT~%' or trim(coalesce(v_old_note, '')) like 'SET Material for %'
+       or upper(coalesce(public._online_order_line_category(v_old_variation, v_old_item), '')) = 'SET' then
+      raise exception 'Order % is at To Ship and this line is part of an assembled SET - it can only be changed before To Ship.', v_order_id;
+    end if;
+    -- The serial pick happened at Ready to Ship, so the new item would ship with no serial.
+    if public._order_line_item_needs_serial(v_new.variation_id, v_new.item_code) then
+      raise exception '% takes a serial and order % is already at To Ship (serials were picked at Ready to Ship) - it can only be changed to it before To Ship.', v_new.label, v_order_id;
+    end if;
   end if;
 
   if public._is_portal_only_online_order(v_order_id) then
@@ -515,8 +593,8 @@ declare
   v_serial text;
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
-     or not public._is_active_super_user(p_admin_username) then
-    raise exception 'Only a Super User can change an order line''s item.';
+     or not public._can_change_order_line_item(p_admin_username) then
+    raise exception 'Only a Super User or Sales User can change an order line''s item.';
   end if;
 
   if exists (select 1 from public."AdvanceOrderProduction" p where p."TransactionNo" = p_no and p."ToShipAtUtc" is not null) then

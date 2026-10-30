@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-10-30
+- **Sales Users can now use Change Item too** (online and advance order cards), same status / serial rules as Super Users - new `_can_change_order_line_item` check in [supabase_order_line_change_variant.sql](sql/supabase_order_line_change_variant.sql), [onlineOrders.js](docs/js/onlineOrders.js) ?v=chgsales1.
+- **Change Item now works on online orders at To Ship** (Packing and later stay locked). The server refuses a line that has a serial tagged to it (the check now also catches items without variants), and at To Ship it also refuses SET lines / SET parts and a swap *to* a serial-tracked item (the serial pick is already done). Advance orders are unchanged ([supabase_order_line_change_variant.sql](sql/supabase_order_line_change_variant.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html) ?v=chgtoship1).
+
 ## 2026-10-29
 
 - **My Assignments: Repairs.** Repairs assigned to a maker only showed on the Repairs page. My Assignments ([online-orders.html](docs/online-orders.html) / [onlineOrders.js](docs/js/onlineOrders.js) `loadMyRepairCards`) now lists the maker's In Repair repairs (item, qty, problem, serials, photo) with a Mark repaired button, and counts them in the badge. Uses the existing `staff_list_repair_returns` / `staff_repair_return_action`, so no SQL to run. JS cache `myrepairs1`.

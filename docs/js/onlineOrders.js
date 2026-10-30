@@ -5977,26 +5977,28 @@ async function saveTagSerials() {
 
 // ---------------------------------------------------------------- Change Item
 // Per "can a super user change the item.. the punched is black paint but the actual is white paint" - a
-// Super User swaps a line's product / variant (quantity, price, discount stay). Online orders go through
-// Pancake, advance orders are kept over the POS sync (sql/supabase_order_line_change_variant.sql). Only
-// before To Ship; walk-ins are posted POS receipts, so not here (POS exchange instead).
-const CHANGE_ITEM_LOCKED_STATUSES = ['to ship', 'packing', 'packed', 'shipped', 'delivered', 'completed', 'received',
+// Super User or Sales User swaps a line's product / variant (quantity, price, discount stay). Online orders go through
+// Pancake, advance orders are kept over the POS sync (sql/supabase_order_line_change_variant.sql). Online
+// orders up to To Ship (the server refuses a line with a tagged serial, a SET line, or a swap to a
+// serial-tracked item at To Ship); advance orders before To Ship; walk-ins are posted POS receipts, so not
+// here (POS exchange instead).
+const CHANGE_ITEM_LOCKED_STATUSES = ['packing', 'packed', 'shipped', 'delivered', 'completed', 'received',
   'canceled', 'cancelled', 'returned', 'returning', 'deleted'];
 let changeItemCtx = null; // { kind: 'online' | 'advance', orderNo, lineId, variationId, itemCode, description }
 let changeItemSearchGeneration = 0;
 let changeItemWired = false;
 
 function canChangeOnlineOrderLineItem(o) {
-  return !!currentSession?.isSuperUser && !!o && !o.walkin_stage
+  return !!(currentSession?.isSuperUser || currentSession?.isSalesUser) && !!o && !o.walkin_stage
     && !CHANGE_ITEM_LOCKED_STATUSES.includes((o.status || '').trim().toLowerCase());
 }
 
 function canChangeAdvanceOrderLineItem(o) {
-  return !!currentSession?.isSuperUser && !!o && !['To Ship', 'Shipped', 'Delivered'].includes(advanceStatus(o));
+  return !!(currentSession?.isSuperUser || currentSession?.isSalesUser) && !!o && !['To Ship', 'Shipped', 'Delivered'].includes(advanceStatus(o));
 }
 
 function changeItemLinkHtml(lineId) {
-  return ` <button type="button" class="bc-link oc-change-item" data-change-line="${escapeHtml(String(lineId))}" title="Change this line's item / variant (Super User)">Change</button>`;
+  return ` <button type="button" class="bc-link oc-change-item" data-change-line="${escapeHtml(String(lineId))}" title="Change this line's item / variant (Super User / Sales User)">Change</button>`;
 }
 
 function openChangeItemDialog(ctx) {
