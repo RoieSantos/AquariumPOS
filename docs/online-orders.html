@@ -601,7 +601,7 @@
         </details>
 
         <div class="bc-doc-part">
-          <div class="bc-doc-part-head">Lines <button type="button" class="bc-link oc-lines-history-btn hidden" id="ocLinesHistoryBtn" title="Who changed what on these lines">Edit History</button></div>
+          <div class="bc-doc-part-head">Lines <button type="button" class="bc-link oc-lines-history-btn hidden" id="ocLinesHistoryBtn" title="Who changed what on these lines">Edit History</button> <button type="button" class="bc-link hidden" id="ocAddLineBtn" title="Add an item to this order (Super User / Sales User)">+ Add Item</button></div>
           <!-- Walk-ins and POS-made online orders: the cashier's POS order description (Pancake order note, js/onlineOrders.js
                renderPosDescription, sql/supabase_walkin_order_pos_description.sql). -->
           <div class="oc-pos-desc hidden" id="ocPosDescription"></div>
@@ -1181,6 +1181,44 @@
     </div>
   </div>
 
+  <!-- Add Item (js/onlineOrders.js "Add Item", sql/supabase_online_order_add_line.sql) - portal orders. -->
+  <div id="addLineDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="addLineTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">ADD ITEM</div>
+          <h2 id="addLineTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeAddLineBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <div class="bc-field">
+          <label for="addLineSearch">Search product</label>
+          <input type="text" id="addLineSearch" autocomplete="off" placeholder="e.g. white paint, AST-003" />
+        </div>
+        <div id="addLineOptions" class="oo-sb-parts" style="max-height:260px; overflow:auto;"></div>
+        <div class="bc-field">
+          <label for="addLineQty">Quantity</label>
+          <input type="number" id="addLineQty" min="1" step="1" value="1" />
+        </div>
+        <div class="bc-field" id="addLinePriceField">
+          <label for="addLinePrice">Unit Price (list price filled in - change if agreed otherwise)</label>
+          <input type="number" id="addLinePrice" min="0" step="0.01" />
+        </div>
+        <div class="bc-field">
+          <label for="addLineNote">Note (optional)</label>
+          <input type="text" id="addLineNote" autocomplete="off" />
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="addLineError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveAddLineBtn" type="button">Add Item</button>
+        <button class="bc-btn" id="cancelAddLineBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="assignDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="assignDialogTitle">
       <div class="bc-dialog-head">
@@ -1419,7 +1457,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
-  <script src="js/onlineOrders.js?v=chgsales1"></script>
+  <script src="js/onlineOrders.js?v=addline1"></script>
   <script src="js/onlineNewOrders.js?v=newconv1"></script>
   <script src="js/pwa.js"></script>
 </body>

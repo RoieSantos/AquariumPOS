@@ -5775,6 +5775,7 @@ async function loadOrderCardLines(orderId) {
   cardLines = [];
   cardLineEdits = [];
   renderLinesHistoryButton();
+  document.getElementById('ocAddLineBtn')?.classList.add('hidden');
   cardAttachmentsByLineId = {};
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines from Pancake...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
@@ -5812,6 +5813,7 @@ async function loadOrderCardLines(orderId) {
   cardLines = (linesRes.data || []).filter((l) => l.line_id || l.item_code || l.description);
   renderPosDescription(findFlatOrder(orderId), linesRes.data?.[0]?.order_note || findFlatOrder(orderId)?.pos_note);
   renderOrderCardLines();
+  renderAddLineButton();
   loadOrderCardGlassTanks();
   loadOrderCardStock(orderId);
 }
@@ -6109,6 +6111,126 @@ function wireChangeItemDialog() {
   document.getElementById('saveChangeItemBtn').addEventListener('click', saveChangeItem);
   document.getElementById('cancelChangeItemBtn').addEventListener('click', closeChangeItemDialog);
   document.getElementById('closeChangeItemBtn').addEventListener('click', closeChangeItemDialog);
+  wireAddLineDialog();
+}
+
+// ---------------------------------------------------------------- Add Item
+// Per "can we add items too?" - a Super User or Sales User adds a line to a portal order, up to To Ship
+// (sql/supabase_online_order_add_line.sql: money moves with it; at To Ship no SET / serial-tracked item;
+// old Pancake orders are refused there). Same product search as Change Item.
+let addLineOrderNo = null;
+let addLineSearchGeneration = 0;
+let addLineOptions = [];
+
+function canAddOnlineOrderLine(o) {
+  return !isMakerFocus() && canChangeOnlineOrderLineItem(o);
+}
+
+function renderAddLineButton() {
+  const btn = document.getElementById('ocAddLineBtn');
+  if (btn) btn.classList.toggle('hidden', !openCardOrderId || !canAddOnlineOrderLine(findFlatOrder(openCardOrderId)));
+}
+
+function openAddLineDialog() {
+  if (!openCardOrderId) return;
+  addLineOrderNo = openCardOrderId;
+  addLineOptions = [];
+  document.getElementById('addLineTitle').textContent = `Order ${addLineOrderNo}`;
+  document.getElementById('addLineSearch').value = '';
+  document.getElementById('addLineQty').value = '1';
+  document.getElementById('addLinePrice').value = '';
+  document.getElementById('addLinePriceField').classList.toggle('hidden', hidePrices());
+  document.getElementById('addLineNote').value = '';
+  document.getElementById('addLineError').classList.add('hidden');
+  document.getElementById('addLineOptions').innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+  document.getElementById('addLineDialog').classList.remove('hidden');
+  document.getElementById('addLineSearch').focus();
+}
+
+function closeAddLineDialog() {
+  addLineOrderNo = null;
+  document.getElementById('addLineDialog').classList.add('hidden');
+}
+
+async function loadAddLineOptions() {
+  const box = document.getElementById('addLineOptions');
+  const query = document.getElementById('addLineSearch').value.trim();
+  const generation = ++addLineSearchGeneration;
+  if (!query) {
+    addLineOptions = [];
+    box.innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="muted">Loading...</div>';
+  const { data, error } = await supabaseClient.rpc('staff_search_order_line_variants', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_query: query
+  });
+  if (generation !== addLineSearchGeneration || !addLineOrderNo) return;
+  if (error) {
+    box.innerHTML = `<div class="error-text">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  addLineOptions = data?.options || [];
+  box.innerHTML = addLineOptions.length
+    ? addLineOptions.map((v) => `
+      <label class="oo-sb-part"><input type="radio" name="addLinePick" value="${escapeHtml(v.variation_id)}" />
+        <span><b>${escapeHtml(v.label || v.name)}</b>
+        <small>${escapeHtml([v.item_code, v.sku].filter(Boolean).join(' · '))}${hidePrices() ? '' : ` · list price ${money(v.price)}`}</small></span></label>`).join('')
+    : '<div class="muted">No matching products.</div>';
+}
+
+async function saveAddLine() {
+  const orderNo = addLineOrderNo;
+  if (!orderNo) return;
+  const errorEl = document.getElementById('addLineError');
+  const showError = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+  const picked = document.querySelector('#addLineOptions input[name="addLinePick"]:checked');
+  if (!picked) return showError('Pick the product to add.');
+  const qty = Number(document.getElementById('addLineQty').value);
+  if (!Number.isInteger(qty) || qty < 1) return showError('Quantity must be a whole number, 1 or more.');
+  const priceText = document.getElementById('addLinePrice').value.trim();
+  const price = hidePrices() || priceText === '' ? null : Number(priceText);
+  if (price !== null && (!Number.isFinite(price) || price < 0)) return showError('Unit Price can\'t be negative.');
+
+  const btn = document.getElementById('saveAddLineBtn');
+  btn.disabled = true;
+  errorEl.classList.add('hidden');
+  const { data, error } = await supabaseClient.rpc('staff_add_online_order_line', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderNo,
+    p_variation_id: picked.value,
+    p_quantity: qty,
+    p_price: price,
+    p_note: document.getElementById('addLineNote').value.trim() || null
+  });
+  btn.disabled = false;
+  if (error) {
+    return showError(/function|schema cache/i.test(error.message)
+      ? `${error.message} - run sql/supabase_online_order_add_line.sql.` : error.message);
+  }
+  closeAddLineDialog();
+  if (openCardOrderId === orderNo) loadOrderCardLines(orderNo);
+  alert(`Added: ${data?.quantity} x ${data?.description || '-'}${hidePrices() ? '' : ` @ ${money(data?.price)}`}`);
+}
+
+function wireAddLineDialog() {
+  document.getElementById('ocAddLineBtn').addEventListener('click', openAddLineDialog);
+  let debounce = null;
+  document.getElementById('addLineSearch').addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(loadAddLineOptions, 300);
+  });
+  // Picking a product fills in its list price (still editable).
+  document.getElementById('addLineOptions').addEventListener('change', (e) => {
+    const v = addLineOptions.find((x) => x.variation_id === e.target.value);
+    if (v) document.getElementById('addLinePrice').value = linePriceText(v.price);
+  });
+  document.getElementById('saveAddLineBtn').addEventListener('click', saveAddLine);
+  document.getElementById('cancelAddLineBtn').addEventListener('click', closeAddLineDialog);
+  document.getElementById('closeAddLineBtn').addEventListener('click', closeAddLineDialog);
 }
 
 // ---------------------------------------------------------------- Edit order lines (Business Central style)
