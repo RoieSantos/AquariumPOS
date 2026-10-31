@@ -911,6 +911,16 @@
     return lookup;
   }
 
+  // Exact-size match to an active ready-made aquarium, so one tank size has one price. Rows come from
+  // public_get_aquarium_extra_pricing (supabase_ready_made_price_match.sql). Null when nothing matches.
+  function findReadyMadePrice(extraPrices, lengthInches, widthInches, heightInches, glass, isAio, isTempered) {
+    var round1 = function (value) { return Math.round(value * 10) / 10; };
+    var key = 'ReadyMade|' + round1(Math.max(lengthInches, widthInches)) + 'x' + round1(Math.min(lengthInches, widthInches)) + 'x' + round1(heightInches) +
+      '|' + extractGlassMm(glass) + '|' + (isAio ? 1 : 0) + '|' + (isTempered ? 1 : 0);
+    var price = Number(extraPrices[key]);
+    return price > 0 ? price : null;
+  }
+
   // Thinnest glass that's safe for a tank's size - shop standard (2026-10-02). Height drives the
   // water pressure and length drives how far the long panel bows, so the limits are height/length
   // based instead of the old flat "6mm over 50 gallons" cutoff (which wrongly pushed standard
@@ -1179,6 +1189,19 @@
     var calculatedPrice = glassAreaSqFt * finalPricePerSqFt;
     components.glass = round2(calculatedPrice);
 
+    // A ready-made match replaces the glass price and is added after the multipliers and round-to-10 below, so
+    // the customer sees the item's exact price. Low iron, enclosure, turtle tank and the old sump option multiply
+    // the whole build, so those keep the calculator price.
+    var lowerOptionType = optionType.toLowerCase();
+    var readyMadePrice = (isLowIron || hasEnclosure || hasTurtleTank ||
+      lowerOptionType === 'undersump' || lowerOptionType === 'overheadsump' || lowerOptionType === 'overhead sump')
+      ? null
+      : findReadyMadePrice(extraPrices, lengthInches, widthInches, heightInches, glass, isAio, isTempered);
+    if (readyMadePrice != null) {
+      components.glass = readyMadePrice;
+      calculatedPrice = 0;
+    }
+
     if (hasHighStrip) {
       var highStripLinearFeet = ((lengthInches + widthInches) * 2) / 12;
       components.highStrip = round2(highStripLinearFeet * extraPrices['High Strip per ft']);
@@ -1304,6 +1327,10 @@
       calculatedPrice = roundNearest10(calculatedPrice);
     }
 
+    if (readyMadePrice != null) {
+      calculatedPrice += readyMadePrice;
+    }
+
     if (components.piping > 0) {
       calculatedPrice += components.piping;
     }
@@ -1354,6 +1381,7 @@
       ok: true,
       totalPrice: round2(calculatedPrice),
       aquariumOnlyPrice: round2(aquariumOnlyPrice),
+      readyMadePrice: readyMadePrice,
       gallons: round2(gallons),
       components: components,
       requested: {

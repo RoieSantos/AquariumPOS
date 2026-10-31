@@ -888,7 +888,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js?v=flatrates1"></script>
+  <script src="./custom-aquarium-calculator.js?v=readymade1"></script>
   <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -2554,6 +2554,10 @@
 
       if (result.normalized && result.normalized.temperedGlass && !(result.requested && result.requested.temperedGlass)) {
         messages.push('Tempered glass was enabled automatically based on the safety rules.');
+      }
+
+      if (result.readyMadePrice != null) {
+        messages.push('Standard size: this tank is priced the same as our ready-made tank, ₱' + Number(result.readyMadePrice).toLocaleString('en-PH') + '.');
       }
 
       if (messages.length === 0) {

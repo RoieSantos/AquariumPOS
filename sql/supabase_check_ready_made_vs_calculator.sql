@@ -5,14 +5,17 @@
 -- One row per active AQUARIUM item, biggest gap first. Size and glass are read from the item's name, then its
 -- description: "72x18x18" (inches) and "6MM". The calculator price is its plain "Aquarium only" price at that
 -- size and glass, using live rates: glass area x rate (small 6mm rate, 12mm surcharges), doubled when tempered,
--- rounded to the nearest 10 from P1,000.
+-- x 2.4 when the name says AIO, rounded to the nearest 10 from P1,000. Rimless changes only the glass safety
+-- rules in the calculator, not the price, so it is priced like any other tank.
 --
 --   status        OK (within tolerance_pct) / CALCULATOR CHEAPER / CALCULATOR DEARER / CAN'T COMPARE
 --   item_price    what customers are quoted: coalesce(RetailPrice, Price), same as Order Now and Alice
 --   gap_pct       calculator vs item (negative = the calculator is cheaper)
 --
--- NOT modelled, so check these rows by hand: a name saying rimless, low iron, AIO, sump, stand or a set (flagged
--- in "note"), and the calculator's automatic glass upgrade for sizes where the thickness in the name isn't safe.
+-- calc_price is the price from the RATES, before the exact-size match (supabase_ready_made_price_match.sql), so
+-- this still shows how far the rates are from your ready-made prices.
+--
+-- NOT modelled, so check these rows by hand: a name saying low iron, sump, stand or a set (flagged in "note"), and the calculator's automatic glass upgrade for sizes where the thickness in the name isn't safe.
 
 with params as (
   select 2.0::numeric as tolerance_pct
@@ -43,7 +46,7 @@ parsed as (
          regexp_match(it.txt, '(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)') as dims,
          (regexp_match(it.txt, '(\d+)\s*[mM][mM]'))[1] as mm,
          it.txt ~* 'tempered' as named_tempered,
-         (regexp_match(it.txt, '(?i)(rimless|low[ -]?iron|\maio\M|sump|stand\M|complete|\mset\M)'))[1] as special
+         (regexp_match(it.txt, '(?i)(low[ -]?iron|sump|stand\M|complete|\mset\M)'))[1] as special
   from items it
 ),
 sized as (
@@ -69,7 +72,8 @@ rated as (
 priced as (
   select r.*,
          case when r.area_sqft is null or r.rate_used is null then null
-              else r.area_sqft * r.rate_used * case when r.tempered then 2 else 1 end end as raw_calc
+              else r.area_sqft * r.rate_used * case when r.tempered then 2 else 1 end
+                   * case when r.txt ~* '\maio\M' then 2.4 else 1 end end as raw_calc
   from rated r
 ),
 final as (

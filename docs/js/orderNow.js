@@ -1816,7 +1816,7 @@ async function updateCustomPriceEstimate() {
 
   // All three steps show the computed gallon volume right under the price, so the customer has a
   // sense of tank size at every point in the custom-aquarium flow.
-  const priceHtml = `${customPriceHtml(result.totalPrice)}<div class="custom-price-gallons-badge">${result.gallons} gallons</div>`;
+  const priceHtml = `${customPriceHtml(result.totalPrice)}<div class="custom-price-gallons-badge">${result.gallons} gallons</div>${result.readyMadePrice != null ? `<div class="custom-price-gallons-badge">Standard size - same price as our ready-made tank</div>` : ''}`;
   boxes.forEach((box) => { box.innerHTML = priceHtml; });
 }
 
