@@ -44,6 +44,16 @@
 --                   so Order Now, Alice, the website and the POS all sell at the new Package Price. The parts
 --                   lines (CompleteAquariumSetLine."Price") are left as they are - they're only a breakdown.
 --
+-- CALCULATOR rates ride on it too (per "price mismatch" between a ready-made aquarium and the calculator, so
+-- both go up together):
+--   glass line    - GlassPricingSetup."PricePerSqFt" (ItemCode = "Id")
+--   tubular line  - TubularPricingSetup."PricePerFt" (ItemCode = "Id")
+--   extra line    - AquariumExtraPricingSetup."Price" (ItemCode = "FeatureKey"). Only peso amounts: waste %,
+--                   markups (multipliers) and 'Piping Separate Drain' (it reads item A-070's price) are never
+--                   listed. The calculators' flat prices that used to be hardcoded (small 6mm glass rate, 12mm
+--                   surcharges, filter media, overflow box, piping sets, high strip, aquascape) are seeded
+--                   below at today's values, so seeding them changes no quote.
+--
 -- Sticker & delivery RATES ride on the same batch (per "is the price increase also include custom stickers?
 -- deliver quote?" - "yes please add that too"), so one increase / schedule / undo covers them:
 --   sticker line  - StickerPricingSetup."PricePerSqFt" (ItemCode = the row's "Id"). The 'Acrylic Sump Cover'
@@ -57,6 +67,23 @@
 --
 -- Super users only (is_admin_authorized), like Item Setup's price edit.
 -- Run AFTER supabase_item_master_portal_owned.sql. Safe to re-run (re-creates the cron job).
+
+-- ---------------------------------------------------------------------------
+-- Flat calculator prices (today's values; existing rows are never overwritten)
+-- ---------------------------------------------------------------------------
+
+insert into public."AquariumExtraPricingSetup" ("FeatureKey", "Price")
+values
+  ('Small 6mm Glass per sq ft', 117.00),
+  ('12mm Surcharge 170+ gal per sq ft', 110.00),
+  ('12mm Surcharge 300+ gal per sq ft', 145.00),
+  ('High Strip per ft', 90.00),
+  ('Filter Media per kg', 300.00),
+  ('Overflow Box', 1900.00),
+  ('Overhead Piping Set', 540.00),
+  ('Undersump Piping Set', 2500.00),
+  ('Aquascape per gallon', 210.00)
+on conflict ("FeatureKey") do nothing;
 
 -- ---------------------------------------------------------------------------
 -- Tables
@@ -115,7 +142,7 @@ alter table public."PriceChangeBatchLines" add column if not exists "SkipReason"
 alter table public."PriceChangeBatchLines" drop constraint if exists "PriceChangeBatchLines_Kind_check";
 alter table public."PriceChangeBatchLines" drop constraint if exists "CK_PriceChangeBatchLines_Kind";
 alter table public."PriceChangeBatchLines" add constraint "CK_PriceChangeBatchLines_Kind"
-  check ("Kind" in ('item', 'variant', 'sticker', 'delivery', 'set'));
+  check ("Kind" in ('item', 'variant', 'sticker', 'delivery', 'set', 'glass', 'tubular', 'extra'));
 
 create index if not exists "IX_PriceChangeBatchLines_Item" on public."PriceChangeBatchLines" ("ItemCode");
 
@@ -265,7 +292,22 @@ begin
   select 'set'::text, trim(h."SetCode")::text, h."PackageName"::text, round(h."PackagePrice", 2),
          (trim(h."SetCode") || case when h."SellOnline" then '' else ' · not sold online' end)::text
     from public."CompleteAquariumSetHeader" h
-   where nullif(trim(h."SetCode"), '') is not null;
+   where nullif(trim(h."SetCode"), '') is not null
+  union all
+  select 'glass'::text, g."Id"::text, (g."Thickness" || lower(g."Uom") || ' glass')::text, round(g."PricePerSqFt", 2),
+         'Per sq ft - glass (Pricing Setup). Repairs and the sticker Glass type use it too.'::text
+    from public."GlassPricingSetup" g
+  union all
+  select 'tubular'::text, t."Id"::text, (t."TubularSize" || ' tubular')::text, round(t."PricePerFt", 2),
+         'Per ft - stand frame (Pricing Setup)'::text
+    from public."TubularPricingSetup" t
+  union all
+  select 'extra'::text, x."FeatureKey"::text, x."FeatureKey"::text, round(x."Price", 2),
+         'Aquarium extra (Pricing Setup)'::text
+    from public."AquariumExtraPricingSetup" x
+   where x."FeatureKey" <> 'Piping Separate Drain'
+     and x."FeatureKey" not ilike '%markup%'
+     and x."FeatureKey" not like '%\%%';
 end;
 $$;
 
@@ -280,7 +322,7 @@ drop function if exists public.admin_price_change_list(text, text);
 create or replace function public.admin_price_change_list(p_admin_username text, p_admin_password text)
 returns table(
   batch_id bigint, description text, increase_pct numeric, keep_discount numeric, status text,
-  line_count int, retail_lines int, wholesale_lines int, rate_lines int, set_lines int, skipped_lines int,
+  line_count int, retail_lines int, wholesale_lines int, rate_lines int, set_lines int, calc_lines int, skipped_lines int,
   created_by text, created_at_utc timestamptz, updated_by text, updated_at_utc timestamptz,
   scheduled_for_utc timestamptz, scheduled_by text, apply_error text, apply_error_at_utc timestamptz,
   applied_by text, applied_at_utc timestamptz, undone_by text, undone_at_utc timestamptz, undo_skipped int
@@ -302,6 +344,7 @@ begin
          count(l."LineNo") filter (where l."NewWholesalePrice" is not null)::int,
          count(l."LineNo") filter (where l."Kind" in ('sticker', 'delivery'))::int,
          count(l."LineNo") filter (where l."Kind" = 'set')::int,
+         count(l."LineNo") filter (where l."Kind" in ('glass', 'tubular', 'extra'))::int,
          count(l."LineNo") filter (where l."Skipped")::int,
          b."CreatedBy", b."CreatedAtUtc", b."UpdatedBy", b."UpdatedAtUtc",
          b."ScheduledForUtc", b."ScheduledBy", b."ApplyError", b."ApplyErrorAtUtc",
@@ -396,14 +439,17 @@ begin
 
   select string_agg(coalesce(e ->> 'item_code', '?'), ', ') into v_bad
     from jsonb_array_elements(p_lines) e
-   where coalesce(e ->> 'kind', '') not in ('item', 'variant', 'sticker', 'delivery', 'set')
+   where coalesce(e ->> 'kind', '') not in ('item', 'variant', 'sticker', 'delivery', 'set', 'glass', 'tubular', 'extra')
       or nullif(trim(coalesce(e ->> 'item_code', '')), '') is null
       or (e ->> 'kind' = 'variant' and nullif(trim(coalesce(e ->> 'variation_id', '')), '') is null)
       or ((e ->> 'new_price') is null and (e ->> 'new_wholesale_price') is null)
       or coalesce((e ->> 'new_price')::numeric, 0) < 0
       or coalesce((e ->> 'new_wholesale_price')::numeric, 0) < 0
-      or (e ->> 'kind' in ('variant', 'sticker', 'delivery', 'set') and (e ->> 'new_wholesale_price') is not null)
-      or (e ->> 'kind' in ('sticker', 'delivery', 'set') and ((e ->> 'new_price') is null or (e ->> 'old_price') is null))
+      or (e ->> 'kind' in ('variant', 'sticker', 'delivery', 'set', 'glass', 'tubular', 'extra') and (e ->> 'new_wholesale_price') is not null)
+      or (e ->> 'kind' in ('sticker', 'delivery', 'set', 'glass', 'tubular', 'extra') and ((e ->> 'new_price') is null or (e ->> 'old_price') is null))
+      or (e ->> 'kind' in ('glass', 'tubular') and coalesce(e ->> 'item_code', '') !~ '^[0-9]+$')
+      or (e ->> 'kind' = 'extra' and (e ->> 'item_code' = 'Piping Separate Drain'
+          or e ->> 'item_code' ilike '%markup%' or e ->> 'item_code' like '%\%%'))
       or (e ->> 'kind' = 'delivery'
           and e ->> 'item_code' not in ('DELIVERY_BASE_FEE', 'DELIVERY_RATE_PER_KM', 'DELIVERY_TOLL_FEE'))
       or (e ->> 'kind' = 'sticker' and coalesce(e ->> 'item_code', '') !~ '^[0-9]+$');
@@ -546,6 +592,7 @@ declare
   v_skipped int := 0;
   v_rates int := 0;
   v_sets int := 0;
+  v_calc int := 0;
 begin
   if public._items_pancake_sync_active() then
     raise exception 'Products are still synced from Pancake - the next sync would undo the new prices. Finish the portal cutover first.';
@@ -608,6 +655,18 @@ begin
     left join public."CompleteAquariumSetHeader" h on trim(h."SetCode") = l."ItemCode"
    where l."BatchId" = p_batch_id and l."Kind" = 'set'
      and (h."SetCode" is null or round(h."PackagePrice", 2) is distinct from round(l."OldPrice", 2));
+
+  -- Calculator rates: gone, or no longer the old value.
+  insert into _pc_bad
+  select l."LineNo", coalesce(l."Name", l."ItemCode"),
+         case when coalesce(g."Id"::text, t."Id"::text, x."FeatureKey") is null then 'rate no longer exists'
+              else 'rate edited since the draft was saved' end
+    from public."PriceChangeBatchLines" l
+    left join public."GlassPricingSetup" g on l."Kind" = 'glass' and g."Id"::text = l."ItemCode"
+    left join public."TubularPricingSetup" t on l."Kind" = 'tubular' and t."Id"::text = l."ItemCode"
+    left join public."AquariumExtraPricingSetup" x on l."Kind" = 'extra' and x."FeatureKey" = l."ItemCode"
+   where l."BatchId" = p_batch_id and l."Kind" in ('glass', 'tubular', 'extra')
+     and round(coalesce(g."PricePerSqFt", t."PricePerFt", x."Price"), 2) is distinct from round(l."OldPrice", 2);
 
   select count(*), string_agg(label, ', ') into v_changed_count, v_changed
     from (select label from _pc_bad order by line_no limit 20) x;
@@ -696,13 +755,34 @@ begin
    where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'set' and trim(h."SetCode") = l."ItemCode";
   get diagnostics v_sets = row_count;
 
+  -- Calculator rates.
+  update public."GlassPricingSetup" g
+     set "PricePerSqFt" = round(l."NewPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_actor
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'glass' and g."Id"::text = l."ItemCode";
+  get diagnostics v_calc = row_count;
+
+  update public."TubularPricingSetup" t
+     set "PricePerFt" = round(l."NewPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_actor
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'tubular' and t."Id"::text = l."ItemCode";
+  get diagnostics v_n = row_count;
+  v_calc := v_calc + v_n;
+
+  update public."AquariumExtraPricingSetup" x
+     set "Price" = round(l."NewPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_actor
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'extra' and x."FeatureKey" = l."ItemCode";
+  get diagnostics v_n = row_count;
+  v_calc := v_calc + v_n;
+
   update public."PriceChangeBatches"
      set "Status" = 'Applied', "AppliedBy" = p_actor, "AppliedAtUtc" = now(),
          "ApplyError" = null, "ApplyErrorAtUtc" = null
    where "BatchId" = p_batch_id;
 
   return jsonb_build_object('retail_updated', v_retail, 'wholesale_updated', v_wholesale, 'rates_updated', v_rates,
-                            'sets_updated', v_sets, 'retail_price_cleared', v_cleared, 'skipped', v_skipped);
+                            'sets_updated', v_sets, 'calc_updated', v_calc, 'retail_price_cleared', v_cleared, 'skipped', v_skipped);
 end;
 $$;
 
@@ -791,6 +871,7 @@ declare
   v_skipped int;
   v_rates int := 0;
   v_sets int := 0;
+  v_calc int := 0;
 begin
   if not public.is_admin_authorized(p_admin_username, p_admin_password) then
     raise exception 'Not authorized.';
@@ -886,14 +967,38 @@ begin
      and round(h."PackagePrice", 2) = round(l."NewPrice", 2);
   get diagnostics v_sets = row_count;
 
-  v_skipped := greatest(v_total - v_retail - v_wholesale - v_rates - v_sets, 0);
+  -- Calculator rates, only where still at the batch's new value.
+  update public."GlassPricingSetup" g
+     set "PricePerSqFt" = round(l."OldPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_admin_username
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'glass' and g."Id"::text = l."ItemCode"
+     and round(g."PricePerSqFt", 2) = round(l."NewPrice", 2);
+  get diagnostics v_calc = row_count;
+
+  update public."TubularPricingSetup" t
+     set "PricePerFt" = round(l."OldPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_admin_username
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'tubular' and t."Id"::text = l."ItemCode"
+     and round(t."PricePerFt", 2) = round(l."NewPrice", 2);
+  get diagnostics v_n = row_count;
+  v_calc := v_calc + v_n;
+
+  update public."AquariumExtraPricingSetup" x
+     set "Price" = round(l."OldPrice", 2), "UpdatedAtUtc" = now(), "UpdatedBy" = p_admin_username
+    from public."PriceChangeBatchLines" l
+   where l."BatchId" = p_batch_id and not l."Skipped" and l."Kind" = 'extra' and x."FeatureKey" = l."ItemCode"
+     and round(x."Price", 2) = round(l."NewPrice", 2);
+  get diagnostics v_n = row_count;
+  v_calc := v_calc + v_n;
+
+  v_skipped := greatest(v_total - v_retail - v_wholesale - v_rates - v_sets - v_calc, 0);
 
   update public."PriceChangeBatches"
      set "Status" = 'Undone', "UndoneBy" = p_admin_username, "UndoneAtUtc" = now(), "UndoSkipped" = v_skipped
    where "BatchId" = p_batch_id;
 
   return jsonb_build_object('retail_restored', v_retail, 'wholesale_restored', v_wholesale, 'rates_restored', v_rates,
-                            'sets_restored', v_sets, 'skipped', v_skipped);
+                            'sets_restored', v_sets, 'calc_restored', v_calc, 'skipped', v_skipped);
 end;
 $$;
 

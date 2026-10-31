@@ -18,7 +18,7 @@
 
   <div class="page">
     <h1>Category Sales</h1>
-    <p class="muted">Sales per category - e.g. Accessories - and the best-selling items and variants inside each one. Covers online and walk-in orders by order date; cancelled orders are left out. Click a category to see its items.</p>
+    <p class="muted">Sales per category - e.g. Accessories - and the best-selling items and variants inside each one. Covers online and walk-in orders by order date; cancelled orders are left out. Click a category to see its items, or search for an item sold in the period.</p>
 
     <div class="toolbar pm-toolbar">
       <div class="pm-filter-group">
@@ -47,6 +47,7 @@
         <select id="categorySelect" aria-label="Category">
           <option value="">All categories</option>
         </select>
+        <input type="search" id="itemSearch" placeholder="Search item, code or SKU..." aria-label="Search item" />
       </div>
     </div>
 
@@ -104,7 +105,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=tenderdeposit1"></script>
-  <script src="js/categorySalesReport.js"></script>
+  <script src="js/categorySalesReport.js?v=itemsearch1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

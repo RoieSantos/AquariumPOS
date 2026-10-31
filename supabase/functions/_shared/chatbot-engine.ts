@@ -581,7 +581,17 @@ const DEFAULT_EXTRA_PRICES: Record<string, number> = {
   'Aluminum Markup': 1.8,
   'Aluminum Canopy Markup': 1.5,
   'Aluminum Minimum': 3000,
-  'Aluminum Door Hardware per sq ft': 60
+  'Aluminum Door Hardware per sq ft': 60,
+  // Flat calculator prices, editable on Pricing Setup and raised by the Price Increase page.
+  'Small 6mm Glass per sq ft': 117,
+  '12mm Surcharge 170+ gal per sq ft': 110,
+  '12mm Surcharge 300+ gal per sq ft': 145,
+  'High Strip per ft': 90,
+  'Filter Media per kg': 300,
+  'Overflow Box': 1900,
+  'Overhead Piping Set': 540,
+  'Undersump Piping Set': 2500,
+  'Aquascape per gallon': 210
 };
 
 function buildExtraPriceLookup(rows: Array<Record<string, unknown>> | undefined): Record<string, number> {
@@ -721,11 +731,11 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   };
 
   if (gallons < 90 && glass === '6mm') {
-    finalPricePerSqFt = 117;
+    finalPricePerSqFt = extraPrices['Small 6mm Glass per sq ft'];
   } else if (gallons >= 300 && glass === '12mm') {
-    finalPricePerSqFt += 145;
+    finalPricePerSqFt += extraPrices['12mm Surcharge 300+ gal per sq ft'];
   } else if (gallons >= 170 && glass === '12mm') {
-    finalPricePerSqFt += 110;
+    finalPricePerSqFt += extraPrices['12mm Surcharge 170+ gal per sq ft'];
   }
 
   if (isTempered) {
@@ -737,7 +747,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
 
   if (hasHighStrip) {
     const highStripLinearFeet = ((lengthInches + widthInches) * 2) / 12;
-    components.highStrip = round2(highStripLinearFeet * 90);
+    components.highStrip = round2(highStripLinearFeet * extraPrices['High Strip per ft']);
     calculatedPrice += components.highStrip;
   }
 
@@ -772,12 +782,12 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     if (sump.filterMedias) {
       const liters = (sumpLengthInches / 12) * (sumpWidthInches / 12) * (sumpHeightInches / 12) * 28.316;
       const mediaKg = Math.round(liters * (isOverhead ? 0.18 : 0.04));
-      components.filterMedia = round2(mediaKg * 300);
+      components.filterMedia = round2(mediaKg * extraPrices['Filter Media per kg']);
       calculatedPrice += components.filterMedia;
       normalizedSump.filterMediaKg = mediaKg;
     }
     if (sump.overflowBox) {
-      components.overflowBox = 1900;
+      components.overflowBox = extraPrices['Overflow Box'];
       calculatedPrice += components.overflowBox;
     }
     if (sump.lightPrice) {
@@ -794,7 +804,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     if (isOverhead && sump.pipingSeparateDrain) {
       components.piping = Number(extraPrices['Piping Separate Drain']) || DEFAULT_EXTRA_PRICES['Piping Separate Drain'];
     } else if (sump.piping) {
-      components.piping = isOverhead ? 540 : 2500;
+      components.piping = isOverhead ? extraPrices['Overhead Piping Set'] : extraPrices['Undersump Piping Set'];
     }
     if (sump.allumTopCover) {
       const effectiveWidthInches = isOverhead ? Math.max(0, widthInches - sumpWidthInches) : widthInches;
@@ -851,7 +861,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   }
 
   if (hasAquascapeService) {
-    components.aquascapeService = Math.round(gallons * 210);
+    components.aquascapeService = Math.round(gallons * extraPrices['Aquascape per gallon']);
     calculatedPrice += components.aquascapeService;
   }
 
@@ -1489,6 +1499,7 @@ export function buildSystemPrompt(
     '',
     'WHEN TO ESCALATE TO STAFF:',
     '- Refund requests, complaints and damaged/wrong/missing items (after understanding and checking them per HANDLING COMPLAINTS above), or the customer explicitly asking for a human.',
+    '- Return or exchange requests. Before escalating, ask for the order number, the item, the reason and photos, and explain the policy: defective or incorrect items must be reported within 24 hours of receipt, and we cover return shipping and refund the delivery fee; change-of-mind returns are for standard, unused, unopened items within 3 days, with return shipping at the customer\'s cost and the delivery fee not refunded. Custom or made-to-order items have no change-of-mind returns. Staff decide the outcome, so never promise a replacement or refund.',
     '- A repair quote from compute_repair_quote that the customer wants to proceed with - staff need to arrange drop-off/scheduling since there is no create_order path for repairs.',
     '- Call the escalate_to_staff tool, then let the customer know a team member will follow up with them in this same conversation.',
     '',
@@ -1623,6 +1634,7 @@ function calculateStandaloneFiltration(options: {
   const glass = normalizeGlass(options.glassThickness || '6mm');
   const glassPrices = buildGlassPriceLookup(options.glassPricingSetupRows as never, 'MM');
   const basePricePerSqFt = Number(glassPrices[glass]) || 100;
+  const extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows as never);
   const components = { sumpGlass: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0 };
   let filterMediaKg = 0;
 
@@ -1630,20 +1642,19 @@ function calculateStandaloneFiltration(options: {
   if (options.filterMedias) {
     const liters = (lengthInches / 12) * (widthInches / 12) * (heightInches / 12) * 28.316;
     filterMediaKg = Math.round(liters * (isOverhead ? 0.18 : 0.04));
-    components.filterMedia = round2(filterMediaKg * 300);
+    components.filterMedia = round2(filterMediaKg * extraPrices['Filter Media per kg']);
   }
-  if (options.overflowBox) components.overflowBox = 1900;
+  if (options.overflowBox) components.overflowBox = extraPrices['Overflow Box'];
   components.light = round2(Number(options.lightPrice) || 0);
   components.pump = round2(Number(options.pumpPrice) || 0);
 
   let subtotal = components.sumpGlass + components.filterMedia + components.overflowBox + components.light + components.pump;
   if (subtotal >= 1000) subtotal = roundNearest10(subtotal);
 
-  const extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows as never);
   if (isOverhead && options.pipingSeparateDrain) {
     components.piping = Number(extraPrices['Piping Separate Drain']) || DEFAULT_EXTRA_PRICES['Piping Separate Drain'];
   } else if (options.piping) {
-    components.piping = isOverhead ? 540 : 2500;
+    components.piping = isOverhead ? extraPrices['Overhead Piping Set'] : extraPrices['Undersump Piping Set'];
   }
   if (options.allumTopCover) {
     const allumRate = buildStickerPriceLookup(options.stickerPricingSetupRows as never).flat['Allum TopCover'];

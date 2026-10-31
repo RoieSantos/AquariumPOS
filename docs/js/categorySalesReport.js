@@ -3,7 +3,7 @@
 // admin_get_category_sales_report (supabase_category_sales_report.sql) returns one row per
 // warehouse x online/walk-in x category x item x variant for the date range. Everything else -
 // the scope / warehouse filters, the category ranking, drilling into one category (Per Item /
-// Per Variant) and the rank-by switch - happens here, so none of it re-queries.
+// Per Variant), the item search and the rank-by switch - happens here, so none of it re-queries.
 //
 // The chosen category is kept in the URL (?category=ACCESSORIES) so a drill-down can be
 // bookmarked or shared.
@@ -119,17 +119,28 @@ function filteredRows() {
     .filter((r) => !warehouse || r.warehouse_name === warehouse);
 }
 
+// Every word typed must appear in the item's name / code or the variant's name / SKU.
+function searchTerms() {
+  return document.getElementById('itemSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function matchesSearch(row, terms) {
+  const text = [row.item_name, row.item_code, row.variant_name, row.variant_sku].join(' ').toLowerCase();
+  return terms.every((term) => text.includes(term));
+}
+
 // Rolls rows up by keyFn; init(row) gives a new entry's label fields. `members` collects the
-// item|variant keys inside each entry.
+// item|variant keys inside each entry; `categories` the category names.
 function rollUp(rows, keyFn, init) {
   const byKey = new Map();
   rows.forEach((r) => {
     const key = keyFn(r);
     let entry = byKey.get(key);
     if (!entry) {
-      entry = { ...init(r), qty: 0, revenue: 0, orders: 0, members: new Set() };
+      entry = { ...init(r), qty: 0, revenue: 0, orders: 0, members: new Set(), categories: new Set() };
       byKey.set(key, entry);
     }
+    entry.categories.add(r.category_name);
     entry.qty += Number(r.qty_sold) || 0;
     entry.revenue += Number(r.revenue) || 0;
     entry.orders += Number(r.order_count) || 0;
@@ -191,7 +202,8 @@ function renderCategories(rows, rankKey) {
   return cats;
 }
 
-function renderCategoryDetail(rows, rankKey) {
+// showCategory: a search across all categories, so each row says which category it sits in.
+function renderCategoryDetail(rows, rankKey, showCategory, emptyMessage) {
   const perVariant = view === 'variants';
   const entries = perVariant
     ? rollUp(rows, (r) => `${r.item_code}|${r.variant_id || ''}`, (r) => ({
@@ -206,16 +218,17 @@ function renderCategoryDetail(rows, rankKey) {
     <tr>
       <th style="width:40px;">#</th>
       <th>Item</th>
+      ${showCategory ? '<th>Category</th>' : ''}
       ${perVariant ? '<th>Variant</th><th>SKU</th>' : ''}
       <th style="text-align:right;">Revenue</th>
       <th style="text-align:right;">Units</th>
       <th style="min-width:160px;">Share</th>
       <th style="text-align:right;">${perVariant ? 'Orders' : 'Variants Sold'}</th>
     </tr>`;
-  const cols = perVariant ? 8 : 6;
+  const cols = (perVariant ? 8 : 6) + (showCategory ? 1 : 0);
   const tbody = document.getElementById('csTableBody');
   if (entries.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="${cols}" class="muted">No sales in this category for this period.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${cols}" class="muted">${escapeHtml(emptyMessage)}</td></tr>`;
     return entries;
   }
   const top = Math.max(...entries.map((e) => e[rankKey]));
@@ -227,6 +240,7 @@ function renderCategoryDetail(rows, rankKey) {
       <tr>
         <td>${i + 1}</td>
         <td>${itemCell(e.name, e.code)}</td>
+        ${showCategory ? `<td>${escapeHtml([...e.categories].join(', '))}</td>` : ''}
         ${perVariant ? `<td>${e.hasVariant ? escapeHtml(e.variant || '-') : '<span class="muted">No variant</span>'}</td><td>${escapeHtml(e.sku || '-')}</td>` : ''}
         <td style="text-align:right;">${formatMoney(e.revenue)}</td>
         <td style="text-align:right;">${formatQty(e.qty)}</td>
@@ -241,7 +255,9 @@ function renderCategoryDetail(rows, rankKey) {
 function render() {
   const rankKey = document.getElementById('rankSelect').value;
   const category = selectedCategory();
-  const rows = filteredRows();
+  const terms = searchTerms();
+  const searching = terms.length > 0;
+  const rows = searching ? filteredRows().filter((r) => matchesSearch(r, terms)) : filteredRows();
   const inCategory = category ? rows.filter((r) => r.category_code === category) : rows;
 
   const revenue = inCategory.reduce((sum, r) => sum + (Number(r.revenue) || 0), 0);
@@ -250,14 +266,15 @@ function render() {
   document.getElementById('statUnits').textContent = formatQty(units);
 
   document.getElementById('backBtn').classList.toggle('hidden', !category);
-  document.getElementById('viewToggle').classList.toggle('hidden', !category);
+  document.getElementById('viewToggle').classList.toggle('hidden', !category && !searching);
 
-  if (category) {
-    const name = reportRows.find((r) => r.category_code === category)?.category_name || category;
-    document.getElementById('tableTitle').textContent = name;
-    document.getElementById('statRevenueLabel').textContent = `${name} Revenue`;
+  if (category || searching) {
+    const name = category ? (reportRows.find((r) => r.category_code === category)?.category_name || category) : '';
+    document.getElementById('tableTitle').textContent = searching ? `Search results${name ? ` in ${name}` : ''}` : name;
+    document.getElementById('statRevenueLabel').textContent = searching ? 'Matching Revenue' : `${name} Revenue`;
     document.getElementById('statTopLabel').textContent = view === 'variants' ? 'Top Variant' : 'Top Item';
-    const entries = renderCategoryDetail(inCategory, rankKey);
+    const entries = renderCategoryDetail(inCategory, rankKey, !category,
+      searching ? 'No item sold in this period matches your search.' : 'No sales in this category for this period.');
     const best = entries[0];
     document.getElementById('statTop').textContent = best
       ? (view === 'variants' && best.variant ? `${best.name} - ${best.variant}` : best.name)
@@ -337,6 +354,7 @@ async function loadReport() {
   document.getElementById('applyRangeBtn').addEventListener('click', loadReport);
   document.getElementById('backBtn').addEventListener('click', () => selectCategory(''));
   document.getElementById('categorySelect').addEventListener('change', (e) => selectCategory(e.target.value));
+  document.getElementById('itemSearch').addEventListener('input', render);
   ['scopeSelect', 'warehouseSelect', 'rankSelect'].forEach((id) => {
     document.getElementById(id).addEventListener('change', render);
   });

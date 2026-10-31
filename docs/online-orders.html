@@ -440,6 +440,9 @@
         <!-- Super User / Production Manager / Sales User / Store Manager, open orders before To Ship -
              js/onlineOrders.js cancelCardOrder, sql/supabase_online_order_cancel.sql. -->
         <button class="bc-cmd bc-cmd-danger hidden" id="cardCancelOrderBtn" type="button" title="Cancel this order (in Pancake too) - a reason is required">Cancel Order</button>
+        <!-- Super User / Sales User / Store Manager, shipped orders - js/onlineOrders.js "Return / Exchange",
+             sql/supabase_online_order_returns.sql. -->
+        <button class="bc-cmd hidden" id="cardReturnBtn" type="button" title="The customer is returning or exchanging an item from this shipped order">Return / Exchange</button>
         <button class="bc-cmd bc-cmd-danger hidden" id="cardDeleteOrderBtn" type="button" title="Super Users only - permanently delete this order from the portal (cleanup of junk/test orders)">Delete Order</button>
       </div>
 
@@ -599,6 +602,13 @@
             <div id="ocAoPayments" class="ao-pay"></div>
           </div>
         </details>
+
+        <!-- Returns on this order, or the return this replacement order came from (js/onlineOrders.js
+             loadOrderCardReturns). Hidden when there are none. -->
+        <div class="bc-doc-part hidden" id="ocReturnsPart">
+          <div class="bc-doc-part-head">Returns / Exchanges</div>
+          <div id="ocReturnsList"></div>
+        </div>
 
         <div class="bc-doc-part">
           <div class="bc-doc-part-head">Lines <button type="button" class="bc-link oc-lines-history-btn hidden" id="ocLinesHistoryBtn" title="Who changed what on these lines">Edit History</button> <button type="button" class="bc-link hidden" id="ocAddLineBtn" title="Add an item to this order (Super User / Sales User)">+ Add Item</button></div>
@@ -1219,6 +1229,95 @@
     </div>
   </div>
 
+  <!-- Return / Exchange (js/onlineOrders.js, sql/supabase_online_order_returns.sql) - shipped orders. -->
+  <div id="returnDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="returnTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">RETURN / EXCHANGE</div>
+          <h2 id="returnTitle">Order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeReturnBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="muted" style="margin-top:0;">Defective or wrong item: reported within 24 hours with photos. Change of mind: unused, in original condition, within 3 days.</p>
+        <div class="bc-field">
+          <label for="returnLine">Item being returned</label>
+          <select id="returnLine"></select>
+        </div>
+        <div class="bc-field">
+          <label for="returnQty">Quantity returned</label>
+          <input type="number" id="returnQty" min="1" step="1" value="1" />
+        </div>
+        <div class="bc-field">
+          <label for="returnReason">Reason</label>
+          <input type="text" id="returnReason" autocomplete="off" placeholder="e.g. Defective, doesn't turn on" />
+        </div>
+        <div class="bc-field">
+          <label for="returnResolution">What the customer gets</label>
+          <select id="returnResolution">
+            <option value="Exchange">Exchange for another item</option>
+            <option value="Refund">Refund</option>
+          </select>
+        </div>
+        <div id="returnExchangeFields">
+          <div class="bc-field">
+            <label for="returnSearch">Exchange for</label>
+            <input type="text" id="returnSearch" autocomplete="off" placeholder="Search name, code or SKU" />
+          </div>
+          <div id="returnOptions" class="oo-sb-parts" style="max-height:220px; overflow:auto;"></div>
+          <div class="bc-field">
+            <label for="returnNewQty">New quantity</label>
+            <input type="number" id="returnNewQty" min="1" step="1" value="1" />
+          </div>
+        </div>
+        <div id="returnPreview" class="hidden" style="margin-top:10px;"></div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="returnError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveReturnBtn" type="button">Save</button>
+        <button class="bc-btn" id="cancelReturnBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Receive a returned item (js/onlineOrders.js openReturnReceiveDialog). -->
+  <div id="returnReceiveDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="returnReceiveTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">RECEIVE RETURN</div>
+          <h2 id="returnReceiveTitle">Return</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeReturnReceiveBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <div class="bc-field">
+          <label for="returnCondition">Condition</label>
+          <select id="returnCondition">
+            <option value="Resellable">Resellable - goes back into stock</option>
+            <option value="Defective">Defective - logged in Defect Items, not sellable</option>
+          </select>
+        </div>
+        <div class="bc-field hidden" id="returnPhotoField">
+          <label for="returnPhoto">Photo of the defect (required)</label>
+          <input type="file" id="returnPhoto" accept="image/*" />
+        </div>
+        <div class="bc-field">
+          <label for="returnReceiveNote">Note (optional)</label>
+          <input type="text" id="returnReceiveNote" autocomplete="off" />
+        </div>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="returnReceiveError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveReturnReceiveBtn" type="button">Receive</button>
+        <button class="bc-btn" id="cancelReturnReceiveBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="assignDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="assignDialogTitle">
       <div class="bc-dialog-head">
@@ -1457,7 +1556,7 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
-  <script src="js/onlineOrders.js?v=addline1"></script>
+  <script src="js/onlineOrders.js?v=returns1"></script>
   <script src="js/onlineNewOrders.js?v=newconv1"></script>
   <script src="js/pwa.js"></script>
 </body>

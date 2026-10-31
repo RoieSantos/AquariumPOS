@@ -42,7 +42,18 @@
     'Aluminum Markup': 1.8,
     'Aluminum Canopy Markup': 1.5,
     'Aluminum Minimum': 3000,
-    'Aluminum Door Hardware per sq ft': 60
+    'Aluminum Door Hardware per sq ft': 60,
+    // Flat calculator prices (2026-10-31) - were hardcoded here, moved to Pricing Setup so the Price
+    // Increase page can raise them with the glass rates (supabase_price_change_batches.sql).
+    'Small 6mm Glass per sq ft': 117,
+    '12mm Surcharge 170+ gal per sq ft': 110,
+    '12mm Surcharge 300+ gal per sq ft': 145,
+    'High Strip per ft': 90,
+    'Filter Media per kg': 300,
+    'Overflow Box': 1900,
+    'Overhead Piping Set': 540,
+    'Undersump Piping Set': 2500,
+    'Aquascape per gallon': 210
   };
 
   // Cabinet Type -> its Pricing Setup keys and panel thickness (for the approx. outer size).
@@ -591,10 +602,11 @@
     return String(sumpType).toLowerCase() === 'overhead sump';
   }
   function getSumpPipingPrice(sumpType, piping, separateDrain, extraPricingSetupRows) {
+    var extraPrices = buildExtraPriceLookup(extraPricingSetupRows);
     if (isOverheadSump(sumpType) && separateDrain) {
-      return Number(buildExtraPriceLookup(extraPricingSetupRows)['Piping Separate Drain']) || DEFAULT_EXTRA_PRICES['Piping Separate Drain'];
+      return Number(extraPrices['Piping Separate Drain']) || DEFAULT_EXTRA_PRICES['Piping Separate Drain'];
     }
-    if (piping) return isOverheadSump(sumpType) ? 540 : 2500;
+    if (piping) return isOverheadSump(sumpType) ? extraPrices['Overhead Piping Set'] : extraPrices['Undersump Piping Set'];
     return 0;
   }
 
@@ -622,6 +634,7 @@
       options.glassPricesPerSqFt
     );
     var basePricePerSqFt = Number(glassPrices[glass]) || 100;
+    var extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
 
     var components = { sumpGlass: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0 };
     var normalizedExtra = {};
@@ -634,12 +647,12 @@
       var liters = volumeCuFt * 28.316;
       var fillRatio = String(sumpType).toLowerCase() === 'overhead sump' ? 0.18 : 0.04;
       var mediaKg = Math.round(liters * fillRatio);
-      components.filterMedia = round2(mediaKg * 300);
+      components.filterMedia = round2(mediaKg * extraPrices['Filter Media per kg']);
       normalizedExtra.filterMediaKg = mediaKg;
     }
 
     if (options.overflowBox) {
-      components.overflowBox = 1900;
+      components.overflowBox = extraPrices['Overflow Box'];
     }
 
     // Optional flat submersible light/pump totals (item price x qty) - the staff calculator's
@@ -1152,11 +1165,11 @@
     };
 
     if (gallons < 90 && glass === '6mm') {
-      finalPricePerSqFt = 117;
+      finalPricePerSqFt = extraPrices['Small 6mm Glass per sq ft'];
     } else if (gallons >= 300 && glass === '12mm') {
-      finalPricePerSqFt += 145;
+      finalPricePerSqFt += extraPrices['12mm Surcharge 300+ gal per sq ft'];
     } else if (gallons >= 170 && glass === '12mm') {
-      finalPricePerSqFt += 110;
+      finalPricePerSqFt += extraPrices['12mm Surcharge 170+ gal per sq ft'];
     }
 
     if (isTempered) {
@@ -1168,7 +1181,7 @@
 
     if (hasHighStrip) {
       var highStripLinearFeet = ((lengthInches + widthInches) * 2) / 12;
-      components.highStrip = round2(highStripLinearFeet * 90);
+      components.highStrip = round2(highStripLinearFeet * extraPrices['High Strip per ft']);
       calculatedPrice += components.highStrip;
     }
 
@@ -1221,7 +1234,7 @@
           var liters = volumeCuFt * 28.316;
           var fillRatio = String(sumpType).toLowerCase() === 'overhead sump' ? 0.18 : 0.04;
           var mediaKg = Math.round(liters * fillRatio);
-          components.filterMedia = round2(mediaKg * 300);
+          components.filterMedia = round2(mediaKg * extraPrices['Filter Media per kg']);
           calculatedPrice += components.filterMedia;
           normalizedSump.filterMediaKg = mediaKg;
           normalizedSump.meshBags = mediaKg;
@@ -1229,7 +1242,7 @@
         }
 
         if (sump.overflowBox) {
-          components.overflowBox = 1900;
+          components.overflowBox = extraPrices['Overflow Box'];
           calculatedPrice += components.overflowBox;
         }
 
@@ -1320,7 +1333,7 @@
     }
 
     if (hasAquascapeService) {
-      components.aquascapeService = Math.round(gallons * 210);
+      components.aquascapeService = Math.round(gallons * extraPrices['Aquascape per gallon']);
       calculatedPrice += components.aquascapeService;
     }
 

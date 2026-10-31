@@ -19,6 +19,7 @@ const PAGE_SIZE = 100;
 const peso = (n) => (n == null || Number.isNaN(n) ? '' : '₱' + Number(n).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
 const pct = (n) => (n == null || !Number.isFinite(n) ? '' : `${n.toFixed(1)}%`);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const CALC_KINDS = ['glass', 'tubular', 'extra']; // calculator rates (Pricing Setup)
 const rowKey = (r) => `${r.kind}|${r.item_code}|${r.variation_id || ''}`;
 const lineKey = (l) => `${l.kind}|${l.item_code}|${l.variation_id || ''}`;
 const num = (v) => (v == null || v === '' ? null : Number(v));
@@ -43,6 +44,15 @@ function roundUpRate(x) {
   if (!(x > 0)) return 0;
   const v = Math.round(x * 100) / 100;
   return v < 100 ? Math.ceil(v * 2) / 2 : roundUpPrice(v);
+}
+
+// Calculator rates feed whole quotes, so they step as finely as they can to stay close to the chosen %:
+// under ₱100 by ₱0.50, under ₱1,000 by ₱1 (₱117 + 5% = ₱123, not the item-price step of ₱125), then by ₱10.
+function roundUpCalcRate(x) {
+  if (!(x > 0)) return 0;
+  const v = Math.round(x * 100) / 100;
+  if (v < 100) return Math.ceil(v * 2) / 2;
+  return v < 1000 ? Math.ceil(v) : Math.ceil(v / 10) * 10;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +235,7 @@ function computeRate(r, k) {
   const key = rowKey(r);
   if (!rateState.has(key)) rateState.set(key, { include: defaultIncludeRate(r), newPrice: null });
   const st = rateState.get(key);
-  const round = r.kind === 'set' ? roundUpPrice : roundUpRate;
+  const round = r.kind === 'set' ? roundUpPrice : CALC_KINDS.includes(r.kind) ? roundUpCalcRate : roundUpRate;
   const calcPrice = r.price > 0 ? round(r.price * (1 + k.increasePct / 100)) : r.price;
   const newPrice = st.newPrice != null ? st.newPrice : calcPrice;
   return { r, st, key, price: r.price, calcPrice, newPrice, changes: st.include && r.price != null && newPrice !== r.price };
@@ -272,13 +282,15 @@ function renderExample(k) {
 function updateBar() {
   const changing = lastComputed.filter((c) => c.retailChanges || c.wsChanges);
   const setsChanging = lastRates.filter((c) => c.changes && c.r.kind === 'set').length;
-  const ratesChanging = lastRates.filter((c) => c.changes).length - setsChanging;
+  const calcChanging = lastRates.filter((c) => c.changes && CALC_KINDS.includes(c.r.kind)).length;
+  const ratesChanging = lastRates.filter((c) => c.changes).length - setsChanging - calcChanging;
   const extra = changing.reduce((s, c) => s + c.extraRetail + c.extraWs, 0);
   const rateText = (ratesChanging ? ` · <b>${ratesChanging}</b> sticker/delivery rate${ratesChanging === 1 ? '' : 's'}` : '')
-    + (setsChanging ? ` · <b>${setsChanging}</b> aquarium set${setsChanging === 1 ? '' : 's'}` : '');
+    + (setsChanging ? ` · <b>${setsChanging}</b> aquarium set${setsChanging === 1 ? '' : 's'}` : '')
+    + (calcChanging ? ` · <b>${calcChanging}</b> calculator rate${calcChanging === 1 ? '' : 's'}` : '');
   $('barInfo').innerHTML = changing.length
     ? `<b>${changing.length.toLocaleString('en-PH')}</b> item${changing.length === 1 ? '' : 's'} getting a new price · about <b>${peso(Math.round(extra))}</b> more every 3 months${rateText}`
-    : ratesChanging || setsChanging ? `No item prices change${rateText}` : '<span class="muted">No item would change price yet.</span>';
+    : ratesChanging || setsChanging || calcChanging ? `No item prices change${rateText}` : '<span class="muted">No item would change price yet.</span>';
 
   const mode = whenMode();
   const btn = $('primaryBtn');
@@ -288,18 +300,19 @@ function updateBar() {
     const v = $('scheduleInput').value;
     btn.textContent = v ? `Schedule for ${fmtDateShort(new Date(v))}` : 'Schedule';
   } else btn.textContent = editingBatchId ? 'Save changes' : 'Save draft';
-  btn.disabled = changing.length === 0 && ratesChanging === 0 && setsChanging === 0;
+  btn.disabled = changing.length === 0 && ratesChanging === 0 && setsChanging === 0 && calcChanging === 0;
 }
 
 function rateSubLabel(c) {
-  if (c.r.kind === 'set') return esc(c.r.note || c.r.item_code);
+  if (c.r.kind === 'set' || CALC_KINDS.includes(c.r.kind)) return esc(c.r.note || c.r.item_code);
   if (c.r.kind === 'sticker') return 'Sticker / accessory rate (Pricing Setup)';
   return c.price == null ? 'Not a plain number in General Setup - change it there' : 'Delivery Quote setting';
 }
 
 function renderRates(k) {
   lastRates = rateRows.map((r) => computeRate(r, k));
-  renderRateTable($('rateTableBody'), lastRates.filter((c) => c.r.kind !== 'set'), 'No rates found.');
+  renderRateTable($('rateTableBody'), lastRates.filter((c) => c.r.kind === 'sticker' || c.r.kind === 'delivery'), 'No rates found.');
+  renderRateTable($('calcTableBody'), lastRates.filter((c) => CALC_KINDS.includes(c.r.kind)), 'No calculator rates found.');
   renderRateTable($('setTableBody'), lastRates.filter((c) => c.r.kind === 'set'), 'No aquarium sets found.');
 }
 
@@ -492,7 +505,7 @@ async function loadSourceRows() {
 
 // Never blocks the items: if the rates can't load (e.g. the SQL wasn't re-run yet), the table says so.
 async function loadRateRows() {
-  const tbodies = [$('rateTableBody'), $('setTableBody')];
+  const tbodies = [$('rateTableBody'), $('setTableBody'), $('calcTableBody')];
   tbodies.forEach((t) => delete t.dataset.error);
   rateRows = [];
   const { data, error } = await supabaseClient.rpc('admin_price_change_rate_rows', rpcArgs());
@@ -504,7 +517,7 @@ async function loadRateRows() {
     return;
   }
   const order = { DELIVERY_BASE_FEE: 1, DELIVERY_RATE_PER_KM: 2, DELIVERY_TOLL_FEE: 3 };
-  const kindOrder = { sticker: 1, delivery: 2, set: 3 };
+  const kindOrder = { sticker: 1, delivery: 2, set: 3, glass: 4, tubular: 5, extra: 6 };
   rateRows = (data || []).map((r) => ({ ...r, variation_id: null, price: num(r.price) }))
     .sort((a, b) => (kindOrder[a.kind] || 9) - (kindOrder[b.kind] || 9)
       || (order[a.item_code] || 0) - (order[b.item_code] || 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -600,6 +613,12 @@ async function openEditor(batchId) {
   const listed = new Set([...sourceRows, ...rateRows].map(rowKey));
   const missing = (data.lines || []).filter((l) => !listed.has(lineKey(l)));
   const notes = [];
+  // A draft saved before these existed has no lines for them, so they load unticked.
+  const hasKind = (kinds) => (data.lines || []).some((l) => kinds.includes(l.kind));
+  const notOnDraft = [];
+  if (!hasKind(CALC_KINDS)) notOnDraft.push('calculator rates');
+  if (!hasKind(['set'])) notOnDraft.push('aquarium sets');
+  if (notOnDraft.length) notes.push(`This draft doesn't raise ${notOnDraft.join(' or ')} - tick them below if it should.`);
   if (data.apply_error) notes.push(`The scheduled run didn't go through: ${data.apply_error}`);
   if (changedSince.length) notes.push(`${changedSince.length} item price(s) were changed since this was saved, so they were recalculated from today's price: ${changedSince.slice(0, 8).join(', ')}${changedSince.length > 8 ? ` and ${changedSince.length - 8} more` : ''}.`);
   if (ratesChangedSince.length) notes.push(`These rates were changed since this was saved, so they were recalculated from today's rate: ${ratesChangedSince.join(', ')}.`);
@@ -682,7 +701,7 @@ async function confirmApply(lineCount) {
 async function runApply(batchId) {
   const { data, error } = await supabaseClient.rpc('admin_price_change_apply', rpcArgs({ p_batch_id: batchId }));
   if (error) { await piAlert('Not applied', error.message); return false; }
-  toast(`Done - ${data.retail_updated} retail and ${data.wholesale_updated} wholesale price(s)${data.rates_updated ? `, ${data.rates_updated} sticker/delivery rate(s)` : ''}${data.sets_updated ? `, ${data.sets_updated} aquarium set(s)` : ''} updated.`);
+  toast(`Done - ${data.retail_updated} retail and ${data.wholesale_updated} wholesale price(s)${data.rates_updated ? `, ${data.rates_updated} sticker/delivery rate(s)` : ''}${data.sets_updated ? `, ${data.sets_updated} aquarium set(s)` : ''}${data.calc_updated ? `, ${data.calc_updated} calculator rate(s)` : ''} updated.`);
   return true;
 }
 
@@ -766,6 +785,7 @@ function batchCardHtml(b) {
   parts.push(`${b.retail_lines} retail`);
   if (b.wholesale_lines) parts.push(`${b.wholesale_lines} wholesale`);
   if (b.rate_lines) parts.push(`${b.rate_lines} sticker/delivery rate${b.rate_lines === 1 ? '' : 's'}`);
+  if (b.calc_lines) parts.push(`${b.calc_lines} calculator rate${b.calc_lines === 1 ? '' : 's'}`);
   if (b.set_lines) parts.push(`${b.set_lines} aquarium set${b.set_lines === 1 ? '' : 's'}`);
   let when = '';
   if (b.status === 'Scheduled') when = `🗓️ Applies <b>${fmtDate(b.scheduled_for_utc)}</b> · scheduled by ${esc(b.scheduled_by || '')}`;
@@ -806,7 +826,7 @@ async function viewBatch(batchId) {
   const change = (o, n) => (n == null ? '<span class="pi-sub">-</span>' : `${peso(num(o))}<span class="pi-arrow">→</span><b>${peso(num(n))}</b>`);
   $('viewTableBody').innerHTML = lines.map((l) => `
     <tr>
-      <td><b>${esc(l.name || l.item_code)}</b><span class="pi-sub">${l.kind === 'sticker' ? 'Sticker / accessory rate' : l.kind === 'delivery' ? 'Delivery Quote setting' : l.kind === 'set' ? `Aquarium set · ${esc(l.item_code)}` : esc(l.item_code)}</span></td>
+      <td><b>${esc(l.name || l.item_code)}</b><span class="pi-sub">${l.kind === 'sticker' ? 'Sticker / accessory rate' : l.kind === 'delivery' ? 'Delivery Quote setting' : l.kind === 'set' ? `Aquarium set · ${esc(l.item_code)}` : CALC_KINDS.includes(l.kind) ? 'Calculator rate' : esc(l.item_code)}</span></td>
       <td class="pi-num">${change(l.old_price, l.new_price)}</td>
       <td class="pi-num">${change(l.old_wholesale_price, l.new_wholesale_price)}</td>
       <td>${l.skipped ? `<span class="badge badge-warning">Skipped</span> <span class="pi-sub">${esc(l.skip_reason || '')}</span>` : ''}${l.retail_price_cleared ? `<span class="pi-sub">customers were seeing ${peso(num(l.old_retail_price))}</span>` : ''}</td>
@@ -842,7 +862,7 @@ function bindBatchList() {
           const { data, error } = await supabaseClient.rpc('admin_price_change_undo', rpcArgs({ p_batch_id: id }));
           if (error) toast(error.message, true);
           else {
-            toast(`Undone - ${data.retail_restored} retail and ${data.wholesale_restored} wholesale price(s)${data.rates_restored ? `, ${data.rates_restored} sticker/delivery rate(s)` : ''}${data.sets_restored ? `, ${data.sets_restored} aquarium set(s)` : ''} restored${data.skipped ? `, ${data.skipped} left alone` : ''}.`);
+            toast(`Undone - ${data.retail_restored} retail and ${data.wholesale_restored} wholesale price(s)${data.rates_restored ? `, ${data.rates_restored} sticker/delivery rate(s)` : ''}${data.sets_restored ? `, ${data.sets_restored} aquarium set(s)` : ''}${data.calc_restored ? `, ${data.calc_restored} calculator rate(s)` : ''} restored${data.skipped ? `, ${data.skipped} left alone` : ''}.`);
             await loadBatches();
           }
         }
@@ -879,6 +899,7 @@ function bindBatchList() {
   bindTable();
   bindRateTable($('rateTableBody'));
   bindRateTable($('setTableBody'));
+  bindRateTable($('calcTableBody'));
   bindBatchList();
 
   const changed = () => { setDirty(true); render(); };

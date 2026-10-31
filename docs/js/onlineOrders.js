@@ -5508,6 +5508,7 @@ function fillOrderCardHeader(o) {
     fillBranchSelect(o);
   }
   document.getElementById('cardCancelOrderBtn').classList.toggle('hidden', !canCancelOrder(o));
+  document.getElementById('cardReturnBtn').classList.toggle('hidden', !canOpenOrderReturn(o));
   setCardText('ocConfirmedBy', o.confirmed_by);
   setCardText('ocConfirmedAt', o.confirmed_at_utc ? new Date(o.confirmed_at_utc).toLocaleString() : '');
   setCardText('ocCreatedBy', o.created_by);
@@ -5776,6 +5777,7 @@ async function loadOrderCardLines(orderId) {
   cardLineEdits = [];
   renderLinesHistoryButton();
   document.getElementById('ocAddLineBtn')?.classList.add('hidden');
+  document.getElementById('ocReturnsPart').classList.add('hidden');
   cardAttachmentsByLineId = {};
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines from Pancake...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
@@ -5814,6 +5816,7 @@ async function loadOrderCardLines(orderId) {
   renderPosDescription(findFlatOrder(orderId), linesRes.data?.[0]?.order_note || findFlatOrder(orderId)?.pos_note);
   renderOrderCardLines();
   renderAddLineButton();
+  loadOrderCardReturns(orderId);
   loadOrderCardGlassTanks();
   loadOrderCardStock(orderId);
 }
@@ -6112,6 +6115,7 @@ function wireChangeItemDialog() {
   document.getElementById('cancelChangeItemBtn').addEventListener('click', closeChangeItemDialog);
   document.getElementById('closeChangeItemBtn').addEventListener('click', closeChangeItemDialog);
   wireAddLineDialog();
+  wireReturnDialogs();
 }
 
 // ---------------------------------------------------------------- Add Item
@@ -6231,6 +6235,343 @@ function wireAddLineDialog() {
   document.getElementById('saveAddLineBtn').addEventListener('click', saveAddLine);
   document.getElementById('cancelAddLineBtn').addEventListener('click', closeAddLineDialog);
   document.getElementById('closeAddLineBtn').addEventListener('click', closeAddLineDialog);
+}
+
+// ---------------------------------------------------------------- Return / Exchange
+// Per "on online orders i choose the order they want to return then swap it to the item that is exchanging" -
+// on a shipped order, staff pick the line and the new item. sql/supabase_online_order_returns.sql makes a linked
+// replacement order; the original order stays as shipped, and stock only moves when the item is received.
+const RETURNABLE_STATUSES = ['shipped', 'delivered', 'completed', 'received'];
+let returnOrderNo = null;
+let returnSearchGeneration = 0;
+let returnPreviewGeneration = 0;
+let cardReturns = []; // staff_list_order_returns rows for the open order
+let returnReceiveCtx = null;
+
+function canOpenOrderReturn(o) {
+  const s = currentSession || {};
+  return !!(s.isSuperUser || s.isSalesUser || s.isStoreManager) && !isMakerFocus() && !!o && !o.received_at_shop
+    && RETURNABLE_STATUSES.includes((o.status || '').trim().toLowerCase());
+}
+
+function returnMissingSetupMessage(message) {
+  return /could not find the function|schema cache/i.test(message)
+    ? `${message} - run sql/supabase_online_order_returns.sql.` : message;
+}
+
+async function loadOrderCardReturns(orderId) {
+  const { data, error } = await supabaseClient.rpc('staff_list_order_returns', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+  if (openCardOrderId !== orderId) return;
+  // Not set up yet shows nothing here - saving a return says what to run.
+  cardReturns = error ? [] : (data || []);
+  renderOrderCardReturns();
+}
+
+function orderReturnRowHtml(r) {
+  const s = currentSession || {};
+  const peso = (v) => (hidePrices() ? '' : money(v));
+  const isReplacement = r.replacement_order_id === openCardOrderId;
+  const canReceive = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isStoreManager);
+  const canCancel = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isSalesUser || s.isStoreManager);
+  const canRefund = !isReplacement && r.status === 'Received' && Number(r.refund_due) > 0 && !r.refunded_at_utc && s.isSuperUser;
+  const details = [
+    `${Number(r.quantity)} x ${escapeHtml(r.description || '-')}`,
+    r.resolution === 'Exchange'
+      ? `exchange for ${r.new_quantity} x ${escapeHtml(r.new_description || '-')}`
+      : 'refund',
+    r.replacement_order_id ? `${isReplacement ? 'from order' : 'order'} ${escapeHtml(isReplacement ? r.order_id : r.replacement_order_id)}${isReplacement ? '' : ` (${escapeHtml(r.replacement_status || '-')})`}` : '',
+    !hidePrices() && Number(r.customer_pays) > 0 ? `customer pays ${peso(r.customer_pays)}` : '',
+    !hidePrices() && Number(r.refund_due) > 0
+      ? (r.refunded_at_utc ? `refunded ${peso(r.refund_due)} by ${escapeHtml(r.refund_method || '-')}${r.refund_reference ? ` (${escapeHtml(r.refund_reference)})` : ''}` : `refund due ${peso(r.refund_due)}`)
+      : ''
+  ].filter(Boolean).join(' · ');
+  const statusText = r.status === 'Received' ? `Received, ${r.condition}` : r.status === 'Open' ? 'Waiting for item' : r.status;
+  return `<div style="padding:6px 0; border-bottom:1px solid var(--panel-border);">
+    <b>${escapeHtml(r.return_no)}</b> <span class="badge badge-neutral">${escapeHtml(statusText)}</span>
+    ${r.defect_report_no ? `<span class="muted">${escapeHtml(r.defect_report_no)}</span>` : ''}
+    <div>${details}</div>
+    <div class="muted">${escapeHtml(r.reason || '')} · by ${escapeHtml(r.created_by || '-')}</div>
+    ${canReceive ? `<button type="button" class="bc-link" data-return-receive="${r.id}">Receive item</button>` : ''}
+    ${canCancel ? `<button type="button" class="bc-link" data-return-cancel="${r.id}">Cancel return</button>` : ''}
+    ${canRefund ? `<button type="button" class="bc-link" data-return-refund="${r.id}">Record refund</button>` : ''}
+  </div>`;
+}
+
+function renderOrderCardReturns() {
+  document.getElementById('ocReturnsPart').classList.toggle('hidden', !cardReturns.length);
+  document.getElementById('ocReturnsList').innerHTML = cardReturns.map(orderReturnRowHtml).join('');
+}
+
+function openReturnDialog() {
+  if (!openCardOrderId) return;
+  returnOrderNo = openCardOrderId;
+  const select = document.getElementById('returnLine');
+  select.innerHTML = cardLines.filter((l) => l.line_id).map((l) =>
+    `<option value="${escapeHtml(String(l.line_id))}" data-qty="${Number(l.quantity) || 1}">${escapeHtml(`${l.quantity ?? ''} x ${l.description || l.item_code || '-'}`)}</option>`).join('');
+  document.getElementById('returnTitle').textContent = `Order ${returnOrderNo}`;
+  document.getElementById('returnQty').value = '1';
+  document.getElementById('returnNewQty').value = '1';
+  document.getElementById('returnReason').value = '';
+  document.getElementById('returnResolution').value = 'Exchange';
+  document.getElementById('returnSearch').value = '';
+  document.getElementById('returnExchangeFields').classList.remove('hidden');
+  document.getElementById('returnOptions').innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+  document.getElementById('returnPreview').classList.add('hidden');
+  document.getElementById('returnError').classList.add('hidden');
+  document.getElementById('returnDialog').classList.remove('hidden');
+}
+
+function closeReturnDialog() {
+  returnOrderNo = null;
+  document.getElementById('returnDialog').classList.add('hidden');
+}
+
+async function loadReturnOptions() {
+  const box = document.getElementById('returnOptions');
+  const query = document.getElementById('returnSearch').value.trim();
+  const generation = ++returnSearchGeneration;
+  if (!query) {
+    box.innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="muted">Loading...</div>';
+  const { data, error } = await supabaseClient.rpc('staff_search_order_line_variants', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_query: query
+  });
+  if (generation !== returnSearchGeneration || !returnOrderNo) return;
+  if (error) {
+    box.innerHTML = `<div class="error-text">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  const options = data?.options || [];
+  box.innerHTML = options.length
+    ? options.map((v) => `
+      <label class="oo-sb-part"><input type="radio" name="returnPick" value="${escapeHtml(v.variation_id)}" />
+        <span><b>${escapeHtml(v.label || v.name)}</b>
+        <small>${escapeHtml([v.item_code, v.sku].filter(Boolean).join(' · '))}${hidePrices() ? '' : ` · list price ${money(v.price)}`}</small></span></label>`).join('')
+    : '<div class="muted">No matching products.</div>';
+}
+
+function returnFormArgs(dryRun) {
+  const resolution = document.getElementById('returnResolution').value;
+  const exchange = resolution === 'Exchange';
+  return {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: returnOrderNo,
+    p_line_id: document.getElementById('returnLine').value,
+    p_quantity: Number(document.getElementById('returnQty').value),
+    p_reason: document.getElementById('returnReason').value.trim() || null,
+    p_resolution: resolution,
+    p_new_variation_id: exchange ? document.querySelector('#returnOptions input[name="returnPick"]:checked')?.value || null : null,
+    p_new_quantity: exchange ? Number(document.getElementById('returnNewQty').value) : null,
+    p_dry_run: dryRun
+  };
+}
+
+async function refreshReturnPreview() {
+  const box = document.getElementById('returnPreview');
+  const errorEl = document.getElementById('returnError');
+  const args = returnFormArgs(true);
+  const generation = ++returnPreviewGeneration;
+  errorEl.classList.add('hidden');
+  if (!args.p_line_id || (args.p_resolution === 'Exchange' && !args.p_new_variation_id)) {
+    box.classList.add('hidden');
+    return;
+  }
+  const { data, error } = await supabaseClient.rpc('staff_create_order_return', args);
+  if (generation !== returnPreviewGeneration || !returnOrderNo) return;
+  if (error) {
+    box.classList.add('hidden');
+    errorEl.textContent = returnMissingSetupMessage(error.message);
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const rows = hidePrices() ? [] : [
+    `Credit for the returned item: ${money(data.credit)}`,
+    args.p_resolution === 'Exchange' ? `New item: ${money(data.new_total)}` : '',
+    Number(data.customer_pays) > 0 ? `<b>Customer pays ${money(data.customer_pays)}</b>` : '',
+    Number(data.refund_due) > 0 ? `<b>Refund due ${money(data.refund_due)}</b>` : '',
+    !Number(data.customer_pays) && !Number(data.refund_due) ? '<b>No payment or refund</b>' : ''
+  ].filter(Boolean);
+  const warnings = (data.warnings || []).map((w) => `<div class="error-text">${escapeHtml(w)}</div>`);
+  box.innerHTML = rows.map((t) => `<div>${t}</div>`).concat(warnings).join('');
+  box.classList.toggle('hidden', !rows.length && !warnings.length);
+}
+
+async function saveReturn() {
+  const orderNo = returnOrderNo;
+  if (!orderNo) return;
+  const errorEl = document.getElementById('returnError');
+  const showError = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+  const args = returnFormArgs(false);
+  if (!args.p_line_id) return showError('Pick the item being returned.');
+  if (!Number.isInteger(args.p_quantity) || args.p_quantity < 1) return showError('Quantity must be a whole number, 1 or more.');
+  if (!args.p_reason) return showError('A reason is required.');
+  if (args.p_resolution === 'Exchange') {
+    if (!args.p_new_variation_id) return showError('Pick the item they\'re exchanging it for.');
+    if (!Number.isInteger(args.p_new_quantity) || args.p_new_quantity < 1) return showError('New quantity must be a whole number, 1 or more.');
+  }
+  const btn = document.getElementById('saveReturnBtn');
+  btn.disabled = true;
+  errorEl.classList.add('hidden');
+  const { data, error } = await supabaseClient.rpc('staff_create_order_return', args);
+  btn.disabled = false;
+  if (error) return showError(returnMissingSetupMessage(error.message));
+  closeReturnDialog();
+  if (openCardOrderId === orderNo) loadOrderCardReturns(orderNo);
+  await refreshCurrentOrders();
+  alert(`${data.return_no} saved.${data.replacement_order_id ? `\nReplacement order: ${data.replacement_order_id}` : ''}\nThe customer is NOT messaged.`);
+}
+
+function openReturnReceiveDialog(r) {
+  returnReceiveCtx = r;
+  document.getElementById('returnReceiveTitle').textContent = r.return_no;
+  document.getElementById('returnCondition').value = 'Resellable';
+  document.getElementById('returnPhotoField').classList.add('hidden');
+  document.getElementById('returnPhoto').value = '';
+  document.getElementById('returnReceiveNote').value = '';
+  document.getElementById('returnReceiveError').classList.add('hidden');
+  document.getElementById('returnReceiveDialog').classList.remove('hidden');
+}
+
+function closeReturnReceiveDialog() {
+  returnReceiveCtx = null;
+  document.getElementById('returnReceiveDialog').classList.add('hidden');
+}
+
+// Same size and format as the Repair Returns page's photos, which share this bucket.
+function compressReturnPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not process the photo.'))), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a readable image.')); };
+    img.src = url;
+  });
+}
+
+async function uploadReturnPhoto(file) {
+  const blob = await compressReturnPhoto(file);
+  const { data, error } = await supabaseClient.rpc('staff_create_defect_photo_upload', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_file_name: `return_${(file.name || 'photo').replace(/\.[^.]+$/, '')}.jpg`
+  });
+  if (error || !data?.[0]) throw new Error(`Could not prepare the photo upload: ${error ? error.message : 'unknown error'}`);
+  const { storage_path, upload_token, public_url } = data[0];
+  const { error: uploadError } = await supabaseClient.storage.from('defect-photos').uploadToSignedUrl(storage_path, upload_token, blob);
+  if (uploadError) throw new Error(`Photo upload failed: ${uploadError.message}`);
+  return { path: storage_path, url: public_url };
+}
+
+async function saveReturnReceive() {
+  const r = returnReceiveCtx;
+  if (!r) return;
+  const errorEl = document.getElementById('returnReceiveError');
+  const showError = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+  const condition = document.getElementById('returnCondition').value;
+  const file = document.getElementById('returnPhoto').files?.[0];
+  if (condition === 'Defective' && !file) return showError('A photo of the defective item is required.');
+  const btn = document.getElementById('saveReturnReceiveBtn');
+  btn.disabled = true;
+  errorEl.classList.add('hidden');
+  try {
+    const photo = condition === 'Defective' ? await uploadReturnPhoto(file) : null;
+    const { error } = await supabaseClient.rpc('staff_receive_order_return', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_id: r.id,
+      p_condition: condition,
+      p_note: document.getElementById('returnReceiveNote').value.trim() || null,
+      p_photo_path: photo?.path || null,
+      p_photo_url: photo?.url || null
+    });
+    if (error) return showError(error.message);
+    closeReturnReceiveDialog();
+    if (openCardOrderId) loadOrderCardReturns(openCardOrderId);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function cancelOrderReturn(r) {
+  const note = window.prompt(`Cancel ${r.return_no}? Reason (required):`);
+  if (note === null) return;
+  const { error } = await supabaseClient.rpc('staff_cancel_order_return', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_id: r.id,
+    p_note: note.trim()
+  });
+  if (error) return alert(error.message);
+  if (openCardOrderId) loadOrderCardReturns(openCardOrderId);
+}
+
+async function recordOrderReturnRefund(r) {
+  const method = window.prompt(`Refund ${money(r.refund_due)} on ${r.return_no}.\nThis only records it: send the money yourself.\n\nHow was it refunded? (e.g. GCash, bank transfer)`);
+  if (method === null) return;
+  const reference = window.prompt('Reference no. (optional):');
+  if (reference === null) return;
+  const { error } = await supabaseClient.rpc('admin_record_order_return_refund', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_id: r.id,
+    p_method: method.trim(),
+    p_reference: reference.trim() || null
+  });
+  if (error) return alert(error.message);
+  if (openCardOrderId) loadOrderCardReturns(openCardOrderId);
+}
+
+function wireReturnDialogs() {
+  document.getElementById('cardReturnBtn').addEventListener('click', openReturnDialog);
+  document.getElementById('ocReturnsList').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-return-receive],[data-return-cancel],[data-return-refund]');
+    if (!btn) return;
+    const id = Number(btn.dataset.returnReceive || btn.dataset.returnCancel || btn.dataset.returnRefund);
+    const r = cardReturns.find((x) => x.id === id);
+    if (!r) return;
+    if (btn.dataset.returnReceive) openReturnReceiveDialog(r);
+    else if (btn.dataset.returnCancel) cancelOrderReturn(r);
+    else recordOrderReturnRefund(r);
+  });
+  let searchDebounce = null;
+  document.getElementById('returnSearch').addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(loadReturnOptions, 300);
+  });
+  document.getElementById('returnResolution').addEventListener('change', (e) => {
+    document.getElementById('returnExchangeFields').classList.toggle('hidden', e.target.value !== 'Exchange');
+    refreshReturnPreview();
+  });
+  ['returnLine', 'returnQty', 'returnNewQty', 'returnOptions'].forEach((id) =>
+    document.getElementById(id).addEventListener('change', refreshReturnPreview));
+  document.getElementById('saveReturnBtn').addEventListener('click', saveReturn);
+  document.getElementById('cancelReturnBtn').addEventListener('click', closeReturnDialog);
+  document.getElementById('closeReturnBtn').addEventListener('click', closeReturnDialog);
+  document.getElementById('returnCondition').addEventListener('change', (e) => {
+    document.getElementById('returnPhotoField').classList.toggle('hidden', e.target.value !== 'Defective');
+  });
+  document.getElementById('saveReturnReceiveBtn').addEventListener('click', saveReturnReceive);
+  document.getElementById('cancelReturnReceiveBtn').addEventListener('click', closeReturnReceiveDialog);
+  document.getElementById('closeReturnReceiveBtn').addEventListener('click', closeReturnReceiveDialog);
 }
 
 // ---------------------------------------------------------------- Edit order lines (Business Central style)
